@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { applyFilters, applySort, paginate, totalPagesFor } from '../components/chat/discover-filter-util';
+import type { DiscoverRow } from '../../core/state';
+
+function mkRow(i: number, chat: boolean): DiscoverRow {
+  return {
+    rowKey: `p${i}:s${i}`,
+    serviceId: `s${i}`, serviceLabel: `Svc${i}`, categories: [i % 2 === 0 ? 'math' : 'coding'],
+    provider: 'openai', protocol: 'openai-chat-completions',
+    peerId: `p${i}`, peerEvmAddress: `0xp${i}`, peerDisplayName: `P${i}`, peerLabel: `P${i}`,
+    inputUsdPerMillion: i, outputUsdPerMillion: i * 2, cachedInputUsdPerMillion: null,
+    lifetimeSessions: chat ? i : 0, lifetimeRequests: 0, lifetimeInputTokens: 0, lifetimeOutputTokens: 0,
+    lifetimeFirstSessionAt: null, lifetimeLastSessionAt: chat ? i * 1000 : null,
+    onChainChannelCount: null,
+    agentId: 1, stakeUsdc: String(i * 1_000_000), stakedAt: 0,
+    onChainActiveChannelCount: 0, onChainGhostCount: 0, onChainTotalVolumeUsdc: '0', onChainLastSettledAt: 0,
+    selectionValue: '',
+  };
+}
+
+test('pipeline: filter → sort → paginate on 25 rows', () => {
+  const rows = Array.from({ length: 25 }, (_, i) => mkRow(i + 1, i % 3 === 0));
+  const filtered = applyFilters(rows, {
+    search: '', categorySet: new Set(), priceBucket: 'any',
+    cachedOnly: false, chattedOnly: true, minStakeUsdc: '',
+  });
+  assert.equal(filtered.length, 9);
+  const sorted = applySort(filtered, 'recentlyUsed', 'desc');
+  assert.equal(sorted[0]!.serviceLabel, 'Svc25');
+  const paged = paginate(sorted, 1, 5);
+  assert.equal(paged.length, 5);
+  assert.equal(totalPagesFor(sorted.length, 5), 2);
+});
+
+test('pipeline: chattedOnly + stake filter', () => {
+  const rows = [mkRow(1, true), mkRow(50, true), mkRow(100, false)];
+  const filtered = applyFilters(rows, {
+    search: '', categorySet: new Set(), priceBucket: 'any',
+    cachedOnly: false, chattedOnly: true, minStakeUsdc: '50',
+  });
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]!.serviceLabel, 'Svc50');
+});

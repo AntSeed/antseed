@@ -1,6 +1,7 @@
-import type { RendererUiState } from '../core/state';
+import type { DiscoverRow, RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
+import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
 import type {
   ChatWorkspaceGitStatus,
   DesktopBridge,
@@ -255,30 +256,6 @@ export function initChatModule({
 
   function normalizeChatServiceId(service: unknown): string {
     return String(service ?? '').trim();
-  }
-
-  function normalizeChatServiceEntry(raw: unknown): NormalizedChatServiceEntry | null {
-    if (!raw || typeof raw !== 'object') return null;
-    const entry = raw as ChatServiceCatalogEntry & { peerId?: string; peerLabel?: string };
-    const id = normalizeChatServiceId(entry.id);
-    if (!id) return null;
-    const provider = String(entry.provider ?? '').trim().toLowerCase() || 'unknown';
-    const protocol = String(entry.protocol ?? '').trim().toLowerCase() || 'unknown';
-    const count = Math.max(0, Math.floor(Number(entry.count) || 0));
-    const peerId = String(entry.peerId ?? '').trim();
-    const peerLabel = String(entry.peerLabel ?? '').trim() || (peerId ? peerId.slice(0, 12) + '...' : '');
-    const label = String(entry.label ?? '').trim() || `${id} · ${provider}`;
-    const inputUsd = Number(entry.inputUsdPerMillion);
-    const outputUsd = Number(entry.outputUsdPerMillion);
-    const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : [];
-    const description = typeof entry.description === 'string' ? entry.description.trim() : '';
-    return {
-      id, label, provider, protocol, count, peerId, peerLabel,
-      inputUsdPerMillion: Number.isFinite(inputUsd) && inputUsd >= 0 ? inputUsd : null,
-      outputUsdPerMillion: Number.isFinite(outputUsd) && outputUsd >= 0 ? outputUsd : null,
-      categories,
-      description,
-    };
   }
 
   function encodeChatServiceSelection(serviceId: string, provider: string | null, peerId?: string): string {
@@ -967,7 +944,7 @@ export function initChatModule({
   async function listChatServicesWithTimeout(
     refreshToken: number,
   ): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    if (!bridge?.chatAiListServices) {
+    if (!bridge?.chatAiListDiscoverRows) {
       return { ok: false, data: [], error: 'Service catalog bridge unavailable' };
     }
 
@@ -987,7 +964,7 @@ export function initChatModule({
         }, CHAT_SERVICE_LIST_TIMEOUT_MS);
       });
 
-      const result = await Promise.race([bridge.chatAiListServices(), timeoutPromise]);
+      const result = await Promise.race([bridge.chatAiListDiscoverRows(), timeoutPromise]);
 
       if (refreshToken !== serviceRefreshToken) {
         return { ok: false, data: [], error: 'stale service refresh' };
@@ -1007,7 +984,7 @@ export function initChatModule({
     const refreshToken = ++serviceRefreshToken;
     const fallback = fallbackChatServices.map((entry) => ({ ...entry }));
 
-    if (!bridge?.chatAiListServices) {
+    if (!bridge?.chatAiListDiscoverRows) {
       updateChatServiceOptions(fallback);
       setServiceCatalogStatus('warn', 'Services unavailable');
       setRuntimeActivity('warn', 'Service catalog unavailable (bridge missing).');
@@ -1029,10 +1006,12 @@ export function initChatModule({
         return;
       }
 
-      const parsed = result.data
-        .map((entry) => normalizeChatServiceEntry(entry))
-        .filter((entry): entry is NormalizedChatServiceEntry => entry !== null);
-      const optionsToRender = parsed.length > 0 ? parsed : fallback;
+      const rawRows = Array.isArray(result.data) ? result.data : [];
+      const rows = rawRows
+        .map((raw) => normalizeDiscoverRow(raw))
+        .filter((row): row is DiscoverRow => row !== null);
+      uiState.discoverRows = rows;
+      const optionsToRender = rows.length > 0 ? projectRowsToChatServiceOptions(rows) : fallback;
       updateChatServiceOptions(optionsToRender);
       setServiceCatalogStatus(
         optionsToRender.length > 0 ? 'active' : 'warn',

@@ -162,8 +162,8 @@ const api = {
   chatAiCreateConversation(service: string, provider?: string, peerId?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId);
   },
-  chatAiListServices(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-list-services');
+  chatAiListDiscoverRows(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-list-discover-rows');
   },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
