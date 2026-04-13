@@ -77,7 +77,10 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
 
     const enrichedPeers = await Promise.all(
       snapshot.peers.map(async (peer) => {
-        const agentId = await resolveAgentId(stakingClient, (peer as { publicAddress?: string }).publicAddress);
+        // peerId is the lowercased seller EVM address without the 0x prefix.
+        const peerId = (peer as { peerId?: string }).peerId;
+        const address = peerId ? `0x${peerId}` : null;
+        const agentId = await resolveAgentId(stakingClient, address);
         if (agentId === null || agentId === 0) {
           return { ...peer, onChainStats: null };
         }

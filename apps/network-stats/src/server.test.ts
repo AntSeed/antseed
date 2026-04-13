@@ -34,10 +34,13 @@ function makeEvent(overrides: Partial<DecodedMetadataRecorded> = {}): DecodedMet
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fakePeer(id: string, publicAddress: string | undefined) {
+// peerId is the lowercased seller EVM address without the 0x prefix.
+// Tests pass either a 0x-prefixed address or undefined; we strip the prefix
+// so the field looks like it does on the wire.
+function fakePeer(_id: string, address: string | undefined) {
+  const peerId = address === undefined ? undefined : address.replace(/^0x/, '');
   const peer: Record<string, unknown> = {
-    peerId: 'peer-' + id,
-    publicAddress,
+    peerId,
     providers: [],
     region: 'eu-west-1',
     timestamp: 1700000000000,
@@ -202,12 +205,12 @@ describe('createServer — enriched: unstaked peer returns agentId 0', () => {
   });
 });
 
-// ── Test 5: Enriched — missing publicAddress ─────────────────────────────────
+// ── Test 5: Enriched — missing peerId ─────────────────────────────────
 
-describe('createServer — enriched: peer missing publicAddress', () => {
+describe('createServer — enriched: peer missing peerId', () => {
   const PORT = nextPort();
   const store = makeStore();
-  const peers = [fakePeer('d', undefined)]; // no publicAddress
+  const peers = [fakePeer('d', undefined)]; // no peerId
   const poller = makePoller(peers);
   const counter = { calls: 0 };
   const stakingClient = makeStakingClient(() => 99, counter);
@@ -224,7 +227,7 @@ describe('createServer — enriched: peer missing publicAddress', () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: unknown }> };
     assert.equal(body.peers[0]!.onChainStats, null);
-    assert.equal(counter.calls, 0, 'getAgentId must not be called when publicAddress is missing');
+    assert.equal(counter.calls, 0, 'getAgentId must not be called when peerId is missing');
   });
 });
 
