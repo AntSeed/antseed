@@ -673,15 +673,20 @@ describe('SellerPaymentManager', () => {
       vi.spyOn(mgr.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
 
       await seedAcceptedAuth(mgr, channelId, 104_000n);
-      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+      const getSessionSpy = vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
         // delta = 104000 - 100000 = 4000 < 5000 → skip
         makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 100_000n }),
       );
       const settleSpy = vi.spyOn(mgr.channelsClient, 'settle').mockResolvedValue('0xsettle-hash');
 
       await mgr.settleSession(buyerIdentity.peerId, { settleOnly: true });
+      // Second tick with no new requests: cache must short-circuit so we
+      // don't burn an RPC every idle interval until the delta crosses the
+      // threshold. Regression guard for the dust-skip caching gap.
+      await mgr.settleSession(buyerIdentity.peerId, { settleOnly: true });
 
       expect(settleSpy).not.toHaveBeenCalled();
+      expect(getSessionSpy).toHaveBeenCalledOnce();
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
     });
 

@@ -722,6 +722,9 @@ export class SellerPaymentManager {
         return;
       }
       if (delta < this._minSettleDelta) {
+        // Mark this cumulative as a no-op so the next tick short-circuits
+        // without re-querying getSession until amount actually advances.
+        this._lastSettledCumulative.set(channelId, amount);
         debugLog(`[SellerPayment] Skip settle ${channelId.slice(0, 18)}... — delta=${delta} below minSettleDelta=${this._minSettleDelta}`);
         return;
       }
