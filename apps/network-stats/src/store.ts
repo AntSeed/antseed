@@ -8,6 +8,8 @@ export interface SellerTotals {
   settlementCount: number;
   firstSettledBlock: number;
   lastSettledBlock: number;
+  firstSeenAt: number | null;
+  lastSeenAt: number | null;
   uniqueBuyers: number;
   uniqueChannels: number;
   avgRequestsPerChannel: number;
@@ -21,6 +23,8 @@ interface SellerRow {
   total_request_count: string;
   settlement_count: number;
   first_settled_block: number | null;
+  first_seen_at: number | null;
+  last_seen_at: number | null;
 }
 
 interface BuyerOrChannelRow {
@@ -38,6 +42,8 @@ interface SellerTotalsRow {
   settlement_count: number;
   first_settled_block: number | null;
   last_settled_block: number | null;
+  first_seen_at: number | null;
+  last_seen_at: number | null;
   last_updated_at: number;
 }
 
@@ -47,10 +53,10 @@ export class SqliteStore {
   // Prepared statements — compiled once in init(), reused on every applyBatch /
   // read call. Re-preparing on every invocation is measurable overhead when
   // catch-up indexing fires applyBatch many times in quick succession.
-  private _selectCheckpoint!: Database.Statement<[string, string], { last_block: number }>;
-  private _upsertCheckpoint!: Database.Statement<[string, string, number]>;
+  private _selectCheckpoint!: Database.Statement<[string, string], { last_block: number; last_block_timestamp: number | null }>;
+  private _upsertCheckpoint!: Database.Statement<[string, string, number, number | null]>;
   private _selectSeller!: Database.Statement<[number], SellerRow>;
-  private _upsertSeller!: Database.Statement<[number, string, string, string, number, number, number, number]>;
+  private _upsertSeller!: Database.Statement<[number, string, string, string, number, number, number, number | null, number | null, number]>;
   private _selectBuyer!: Database.Statement<[number, string], BuyerOrChannelRow>;
   private _upsertBuyer!: Database.Statement<[number, string, string, string, string, number, number, number]>;
   private _selectChannel!: Database.Statement<[number, string], BuyerOrChannelRow & { buyer: string }>;
@@ -74,6 +80,8 @@ export class SqliteStore {
         settlement_count INTEGER NOT NULL DEFAULT 0,
         first_settled_block INTEGER,
         last_settled_block INTEGER,
+        first_seen_at INTEGER,
+        last_seen_at INTEGER,
         last_updated_at INTEGER NOT NULL
       );
 
@@ -106,29 +114,33 @@ export class SqliteStore {
         chain_id TEXT NOT NULL,
         contract_address TEXT NOT NULL,
         last_block INTEGER NOT NULL,
+        last_block_timestamp INTEGER,
         PRIMARY KEY (chain_id, contract_address)
       );
     `);
 
     this._selectCheckpoint = this.db.prepare(
-      'SELECT last_block FROM indexer_checkpoint WHERE chain_id = ? AND contract_address = ?',
+      'SELECT last_block, last_block_timestamp FROM indexer_checkpoint WHERE chain_id = ? AND contract_address = ?',
     );
 
     this._upsertCheckpoint = this.db.prepare(
-      `INSERT INTO indexer_checkpoint (chain_id, contract_address, last_block)
-       VALUES (?, ?, ?)
-       ON CONFLICT(chain_id, contract_address) DO UPDATE SET last_block = excluded.last_block`,
+      `INSERT INTO indexer_checkpoint (chain_id, contract_address, last_block, last_block_timestamp)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(chain_id, contract_address) DO UPDATE SET
+         last_block = excluded.last_block,
+         last_block_timestamp = excluded.last_block_timestamp`,
     );
 
     this._selectSeller = this.db.prepare(
-      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_metadata_totals WHERE agent_id = ?',
+      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block, first_seen_at, last_seen_at FROM seller_metadata_totals WHERE agent_id = ?',
     );
 
     this._upsertSeller = this.db.prepare(
       `INSERT OR REPLACE INTO seller_metadata_totals
          (agent_id, total_input_tokens, total_output_tokens, total_request_count,
-          settlement_count, first_settled_block, last_settled_block, last_updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          settlement_count, first_settled_block, last_settled_block,
+          first_seen_at, last_seen_at, last_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     this._selectBuyer = this.db.prepare(
@@ -154,7 +166,7 @@ export class SqliteStore {
     );
 
     this._selectSellerTotals = this.db.prepare(
-      'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, last_updated_at FROM seller_metadata_totals WHERE agent_id = ?',
+      'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, first_seen_at, last_seen_at, last_updated_at FROM seller_metadata_totals WHERE agent_id = ?',
     );
 
     this._countBuyers = this.db.prepare(
@@ -189,6 +201,8 @@ export class SqliteStore {
     contractAddress: string,
     events: DecodedMetadataRecorded[],
     newCheckpoint: number,
+    blockTimestamps?: Map<number, number>,
+    newCheckpointTimestamp?: number | null,
   ): void {
     this.db.transaction(() => {
       for (const event of events) {
@@ -211,6 +225,13 @@ export class SqliteStore {
         const prevSellerCount = existingSeller ? BigInt(existingSeller.total_request_count) : 0n;
         const prevSellerSettlements = existingSeller?.settlement_count ?? 0;
         const prevSellerFirstBlock = existingSeller?.first_settled_block ?? null;
+        const prevSellerFirstSeen = existingSeller?.first_seen_at ?? null;
+        const prevSellerLastSeen = existingSeller?.last_seen_at ?? null;
+        const eventTimestamp = blockTimestamps?.get(event.blockNumber) ?? null;
+        const firstSeenAt = prevSellerFirstSeen ?? eventTimestamp;
+        // Events arrive sorted ascending by (blockNumber, logIndex), so the
+        // current event's block is always >= the stored last_seen_at.
+        const lastSeenAt = eventTimestamp ?? prevSellerLastSeen;
 
         this._upsertSeller.run(
           agentId,
@@ -220,6 +241,8 @@ export class SqliteStore {
           prevSellerSettlements + 1,
           prevSellerFirstBlock ?? event.blockNumber,
           event.blockNumber,
+          firstSeenAt,
+          lastSeenAt,
           now,
         );
 
@@ -263,8 +286,23 @@ export class SqliteStore {
         );
       }
 
-      this._upsertCheckpoint.run(chainId, contractAddress.toLowerCase(), newCheckpoint);
+      this._upsertCheckpoint.run(
+        chainId,
+        contractAddress.toLowerCase(),
+        newCheckpoint,
+        newCheckpointTimestamp ?? null,
+      );
     })();
+  }
+
+  /** Returns last indexed block + block timestamp, or null if no checkpoint. */
+  getCheckpointInfo(
+    chainId: string,
+    contractAddress: string,
+  ): { lastBlock: number; lastBlockTimestamp: number | null } | null {
+    const row = this._selectCheckpoint.get(chainId, contractAddress.toLowerCase());
+    if (row === undefined) return null;
+    return { lastBlock: row.last_block, lastBlockTimestamp: row.last_block_timestamp };
   }
 
   /** Returns cumulative totals for a single agentId, or null if never seen. */
@@ -288,6 +326,8 @@ export class SqliteStore {
       settlementCount: row.settlement_count,
       firstSettledBlock: row.first_settled_block ?? 0,
       lastSettledBlock: row.last_settled_block ?? 0,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
       uniqueBuyers,
       uniqueChannels,
       avgRequestsPerChannel,
