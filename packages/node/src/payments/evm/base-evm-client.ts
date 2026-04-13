@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, type AbstractSigner, type InterfaceAbi } from 'ethers';
+import { Contract, JsonRpcProvider, type AbstractSigner, type InterfaceAbi, type TransactionRequest, type TransactionResponse } from 'ethers';
 
 export const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
@@ -40,22 +40,9 @@ export abstract class BaseEvmClient {
   ): Promise<string> {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
-    const nonce = await this._reserveNonce(signerAddress);
     const contract = new Contract(this._contractAddress, abi, connected);
-    let tx;
-    try {
-      const fn = contract.getFunction(method);
-      const populated = await fn.populateTransaction(...args);
-      populated.nonce = nonce;
-      const estimated = await connected.estimateGas(populated);
-      populated.gasLimit = (estimated * GAS_BUFFER_NUMERATOR) / GAS_BUFFER_DENOMINATOR;
-      tx = await connected.sendTransaction(populated);
-    } catch (err) {
-      // Tx was never sent (e.g. estimateGas reverted) — roll back the nonce cursor
-      // so subsequent txs don't skip a nonce and hang forever.
-      this._nonceCursor.delete(signerAddress);
-      throw err;
-    }
+    const populated = await contract.getFunction(method).populateTransaction(...args);
+    const tx = await this._sendBuffered(connected, signerAddress, populated);
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
@@ -75,11 +62,35 @@ export abstract class BaseEvmClient {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
     const usdc = new Contract(usdcAddress, ERC20_ABI, connected);
-    const approveNonce = await this._reserveNonce(signerAddress);
-    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
+    const approvePopulated = await usdc.getFunction('approve').populateTransaction(this._contractAddress, amount);
+    const approveTx = await this._sendBuffered(connected, signerAddress, approvePopulated);
     const approveReceipt = await approveTx.wait();
     if (!approveReceipt) throw new Error('Approve transaction was dropped or replaced');
     return this._execWrite(signer, abi, method, ...args);
+  }
+
+  /**
+   * Reserve a nonce, apply the gas buffer, and broadcast. On any failure —
+   * estimateGas revert, RPC timeout, submission error — roll back the nonce
+   * cursor. `_reserveNonce` reads `getTransactionCount(..., 'pending')` on
+   * the next call, so an in-flight tx (if sendTransaction failed after the
+   * node accepted it) is still accounted for and we won't reuse its nonce.
+   */
+  private async _sendBuffered(
+    connected: AbstractSigner,
+    signerAddress: string,
+    populated: TransactionRequest,
+  ): Promise<TransactionResponse> {
+    const nonce = await this._reserveNonce(signerAddress);
+    populated.nonce = nonce;
+    try {
+      const estimated = await connected.estimateGas(populated);
+      populated.gasLimit = (estimated * GAS_BUFFER_NUMERATOR) / GAS_BUFFER_DENOMINATOR;
+      return await connected.sendTransaction(populated);
+    } catch (err) {
+      this._nonceCursor.delete(signerAddress);
+      throw err;
+    }
   }
 
   protected async _reserveNonce(address: string): Promise<number> {
