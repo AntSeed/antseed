@@ -32,6 +32,7 @@ type CardItem = {
   name: string;
   displayName: string;
   peerLabel: string;
+  peerId: string;
   value: string;
   provider: string;
   providerCount: number;
@@ -113,6 +114,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
       name: rawName,
       displayName: normalizeServiceName(rawName),
       peerLabel: opt.peerLabel || '',
+      peerId: opt.peerId || '',
       value: opt.value,
       provider: opt.provider,
       providerCount: opt.count,
@@ -164,6 +166,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       name: rawName,
       displayName: normalizeServiceName(rawName),
       peerLabel,
+      peerId: row.peerId,
       value: row.selectionValue,
       provider: row.provider,
       providerCount: 1,
@@ -241,7 +244,7 @@ function ProviderAvatar({ name, gradient }: { name: string; gradient: string }) 
 
 type DiscoverWelcomeProps = {
   serviceOptions: ChatServiceOptionEntry[];
-  onStartChatting: (serviceValue: string) => void;
+  onStartChatting: (serviceValue: string, peerId?: string) => void;
 };
 
 const PAGE_SIZE = 9;
@@ -296,8 +299,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   const statusText = `${rangeStart}-${rangeEnd} of ${filtered.length} total service${filtered.length === 1 ? '' : 's'}`;
 
   const handleClick = useCallback(
-    (value: string) => {
-      if (value) onStartChatting(value);
+    (value: string, peerId: string) => {
+      if (value) onStartChatting(value, peerId || undefined);
     },
     [onStartChatting],
   );
@@ -465,7 +468,7 @@ function Card({
   onClick,
 }: {
   item: CardItem;
-  onClick: (v: string) => void;
+  onClick: (v: string, peerId: string) => void;
 }) {
   const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
   const hasInput = item.inputUsdPerMillion != null;
@@ -475,10 +478,10 @@ function Card({
   return (
     <div
       className={styles.card}
-      onClick={() => onClick(item.value)}
+      onClick={() => onClick(item.value, item.peerId)}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value); } }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value, item.peerId); } }}
     >
       <div className={styles.cardBody}>
         <div className={styles.cardTags}>

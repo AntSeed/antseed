@@ -57,8 +57,8 @@ export function AppShell() {
   }, [hasConversations]);
 
   const handleStartChatting = useCallback(
-    (serviceValue: string) => {
-      actions.handleServiceChange(serviceValue);
+    (serviceValue: string, peerId?: string) => {
+      actions.handleServiceChange(serviceValue, peerId);
       actions.startNewChat();
       setOnboardingDismissed(true);
       setActiveView('chat');

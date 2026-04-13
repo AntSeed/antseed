@@ -75,7 +75,7 @@ export type ChatModuleApi = {
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
-  handleServiceChange: (value: string) => void;
+  handleServiceChange: (value: string, explicitPeerId?: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
@@ -1638,13 +1638,18 @@ export function initChatModule({
   // Service select handlers (called by ChatView)
   // ---------------------------------------------------------------------------
 
-  function handleServiceChange(value: string): void {
+  function handleServiceChange(value: string, explicitPeerId?: string): void {
     uiState.chatSelectedServiceValue = value;
     pendingServiceOptions = null;
 
-    // Extract peerId from the selected option and trigger eager connection
-    const selectedOption = uiState.chatServiceOptions.find((o) => o.value === value);
-    const peerId = selectedOption?.peerId || '';
+    // Prefer an explicit peerId (e.g. from a Discover card click) so we don't
+    // depend on chatServiceOptions.value matching the encoded form exactly.
+    // Fall back to looking up the option by value for the dropdown case.
+    let peerId = explicitPeerId?.trim() ?? '';
+    if (!peerId) {
+      const selectedOption = uiState.chatServiceOptions.find((o) => o.value === value);
+      peerId = selectedOption?.peerId || '';
+    }
     uiState.chatSelectedPeerId = peerId;
     if (peerId && bridge?.chatAiSelectPeer) {
       void bridge.chatAiSelectPeer(peerId).catch(() => undefined);

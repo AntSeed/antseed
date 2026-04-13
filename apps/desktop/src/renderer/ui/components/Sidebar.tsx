@@ -27,11 +27,9 @@ type NavEntry = {
   label: string;
   view: ViewName;
   icon: IconData;
-  action?: 'new-chat';
 };
 
 const baseEntries: NavEntry[] = [
-  { label: 'New Chat', view: 'chat', icon: Add01Icon, action: 'new-chat' },
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
@@ -445,8 +443,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 }
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
-  const actions = useActions();
-  const { devMode, chatActiveConversation } = useUiSnapshot();
+  const { devMode } = useUiSnapshot();
   const navEntries = devMode ? [...baseEntries, ...devEntries, ...configEntries] : [...baseEntries, ...configEntries];
 
   return (
@@ -454,10 +451,8 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
       <SidebarWarning />
 
       <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
-        {navEntries.map(({ label, view, icon, action }) => {
-          const isActive = action === 'new-chat'
-            ? activeView === view && chatActiveConversation === null
-            : activeView === view;
+        {navEntries.map(({ label, view, icon }) => {
+          const isActive = activeView === view;
           return (
             <li key={view}>
               <button
@@ -465,12 +460,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => {
-                  if (action === 'new-chat') {
-                    actions.startNewChat();
-                  }
-                  onSelectView(view);
-                }}
+                onClick={() => onSelectView(view)}
               >
                 <HugeiconsIcon icon={icon} size={18} strokeWidth={1.5} />
                 {label}
