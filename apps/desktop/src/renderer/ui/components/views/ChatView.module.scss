@@ -21,6 +21,12 @@
   min-width: 0;
 }
 
+.service-switcher-anchor {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .preview-toggle {
   display: flex;
   align-items: center;
