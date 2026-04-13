@@ -470,7 +470,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           {peerDisplayName && (
             <>
               <span className={styles.peerName}>{peerDisplayName}</span>
-              <span className={styles.serviceSeparator}>·</span>
             </>
           )}
           {peerServiceOptions.length > 0 ? (

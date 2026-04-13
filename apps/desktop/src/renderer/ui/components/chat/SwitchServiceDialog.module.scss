@@ -87,10 +87,10 @@
 
 .btnPrimary {
   border-color: var(--accent-green);
-  background: rgba(var(--accent-green-rgb), 0.1);
-  color: var(--accent-green);
+  background: var(--accent-green);
+  color: #ffffff;
 
   &:hover {
-    background: rgba(var(--accent-green-rgb), 0.18);
+    background: rgba(var(--accent-green-rgb), 0.9);
   }
 }

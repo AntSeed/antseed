@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import type { ChatServiceOptionEntry } from '../../../core/state';
+import { formatPerMillionPrice } from '../../../core/peer-utils';
 import styles from './ServiceDropdown.module.scss';
 
 type ServiceDropdownProps = {
@@ -15,6 +16,12 @@ type ServiceDropdownProps = {
 
 function normalizeServiceName(name: string): string {
   return name.replace(/[-_]+/g, ' ');
+}
+
+function withAnonTag(categories: string[]): string[] {
+  return categories.some((c) => c.toLowerCase() === 'anon')
+    ? categories
+    : ['anon', ...categories];
 }
 
 export function ServiceDropdown({ options, value, disabled, onChange, onFocus, onBlur }: ServiceDropdownProps) {
@@ -51,19 +58,52 @@ export function ServiceDropdown({ options, value, disabled, onChange, onFocus, o
       </button>
       {open && options.length > 0 && (
         <div className={styles.serviceDropdownMenu}>
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              className={`${styles.serviceDropdownItem}${opt.value === value ? ` ${styles.active}` : ''}`}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-                onBlur?.();
-              }}
-            >
-              {normalizeServiceName(opt.label)}
-            </button>
-          ))}
+          {options.map((opt) => {
+            const tags = withAnonTag(opt.categories);
+            const hasInput = opt.inputUsdPerMillion != null;
+            const hasOutput = opt.outputUsdPerMillion != null;
+            const isFree =
+              hasInput && hasOutput && opt.inputUsdPerMillion === 0 && opt.outputUsdPerMillion === 0;
+            return (
+              <button
+                key={opt.value}
+                className={`${styles.serviceDropdownItem}${opt.value === value ? ` ${styles.active}` : ''}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                  onBlur?.();
+                }}
+              >
+                <span className={styles.itemTopRow}>
+                  <span className={styles.itemName}>{normalizeServiceName(opt.label)}</span>
+                  {(hasInput || hasOutput) && (
+                    <span className={styles.itemPricing}>
+                      {isFree ? (
+                        <span>Free</span>
+                      ) : (
+                        <>
+                          {hasInput && (
+                            <span>{formatPerMillionPrice(opt.inputUsdPerMillion!)} in</span>
+                          )}
+                          {hasInput && hasOutput && <span className={styles.pricingDot} />}
+                          {hasOutput && (
+                            <span>{formatPerMillionPrice(opt.outputUsdPerMillion!)} out</span>
+                          )}
+                        </>
+                      )}
+                    </span>
+                  )}
+                </span>
+                {tags.length > 0 && (
+                  <span className={styles.itemTags}>
+                    {tags.map((t) => (
+                      <span key={t} className={styles.itemTag}>{t}</span>
+                    ))}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
