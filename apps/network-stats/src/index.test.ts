@@ -103,7 +103,7 @@ describe('createServer', () => {
     const peers = [fakePeer('peer-1', ['kimi-k2.5']), fakePeer('peer-2', ['glm-5'])];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (poller as any).snapshot = { peers, updatedAt: '2026-03-04T12:00:00.000Z' };
-    serverHandle = createServer(poller, PORT);
+    serverHandle = createServer({ poller, port: PORT });
     await serverHandle.start();
   });
 
