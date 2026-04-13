@@ -98,6 +98,13 @@ export interface PaymentsCLIConfig {
   platformFeeRate: number;
   /** Minimum USDC per request in base units (seller). Default: "10000" ($0.01). */
   minBudgetPerRequest?: string;
+  /**
+   * Minimum unsettled delta (base units) required before the seller's idle
+   * settle loop submits a tx. Skips dust settles whose gas cost exceeds the
+   * amount. Only applied in idle settle — close() still settles the full
+   * amount. Default: "2000" (~$0.002).
+   */
+  minSettleDelta?: string;
   /** Maximum USDC the buyer authorizes per single request in base units. Default: "100000" ($0.10). */
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */

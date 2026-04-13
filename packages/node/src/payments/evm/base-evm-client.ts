@@ -6,6 +6,13 @@ export const ERC20_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ] as const;
 
+/** Gas limit buffer multiplier over `eth_estimateGas` (30%). Protects against
+ *  non-deterministic gas in contract branches (cold vs. warm SSTOREs, try/catch
+ *  fallback paths, variable-length metadata hashing) — without a buffer, a tx
+ *  whose actual gas is even a hair above the estimate reverts with OOG. */
+const GAS_BUFFER_NUMERATOR = 130n;
+const GAS_BUFFER_DENOMINATOR = 100n;
+
 export abstract class BaseEvmClient {
   protected readonly _provider: JsonRpcProvider;
   protected readonly _contractAddress: string;
@@ -25,9 +32,6 @@ export abstract class BaseEvmClient {
     return signer.connect(this._provider);
   }
 
-  /**
-   * Execute a write transaction: connect signer, reserve nonce, send, wait for receipt.
-   */
   protected async _execWrite(
     signer: AbstractSigner,
     abi: InterfaceAbi,
@@ -40,7 +44,12 @@ export abstract class BaseEvmClient {
     const contract = new Contract(this._contractAddress, abi, connected);
     let tx;
     try {
-      tx = await contract.getFunction(method)(...args, { nonce });
+      const fn = contract.getFunction(method);
+      const populated = await fn.populateTransaction(...args);
+      populated.nonce = nonce;
+      const estimated = await connected.estimateGas(populated);
+      populated.gasLimit = (estimated * GAS_BUFFER_NUMERATOR) / GAS_BUFFER_DENOMINATOR;
+      tx = await connected.sendTransaction(populated);
     } catch (err) {
       // Tx was never sent (e.g. estimateGas reverted) — roll back the nonce cursor
       // so subsequent txs don't skip a nonce and hang forever.

@@ -7,7 +7,7 @@ import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
 import { AntseedNode, type Provider, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
-import { checkSellerReadiness } from '@antseed/node/payments'
+import { checkSellerReadiness, DEFAULT_MIN_SETTLE_DELTA_STR } from '@antseed/node/payments'
 import {
   createIdentityClient,
   createStakingClient,
@@ -288,6 +288,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
     .option('--output-usd-per-million <number>', 'runtime-only output pricing override in USD per 1M tokens', parseFloat)
     .option('--dht-port <number>', 'UDP port for DHT (default: 6881)', parseInt)
     .option('--signaling-port <number>', 'TCP port for P2P signaling (default: 6882)', parseInt)
+    .option('--min-settle-delta <usdc>', 'minimum unsettled delta (USDC decimal, e.g. 0.002) before idle settle submits a tx')
     .option('--skip-prereq-check', 'skip pre-flight checks (services configured, on-chain registration + stake). Use only for local testing.')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(sellerCmd)
@@ -458,6 +459,12 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       const minBudgetPerRequest = config.payments.minBudgetPerRequest ?? '10000'
       console.log(chalk.dim(`  min budget per request: ${minBudgetPerRequest} base units`))
+      // CLI flag (decimal USDC) overrides config JSON (base-unit string).
+      const minSettleDeltaFlag = options.minSettleDelta as string | undefined
+      const minSettleDelta = minSettleDeltaFlag !== undefined
+        ? toUSDCBaseUnits(minSettleDeltaFlag, DEFAULT_MIN_SETTLE_DELTA_STR)
+        : (config.payments.minSettleDelta ?? DEFAULT_MIN_SETTLE_DELTA_STR)
+      console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       console.log('')
@@ -484,6 +491,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           sellerWalletAddress,
           paymentConfig,
           minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
+          minSettleDelta,
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
