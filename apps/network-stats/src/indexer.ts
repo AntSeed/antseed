@@ -26,6 +26,7 @@ export class MetadataIndexer {
   private readonly _reorgSafetyBlocks: number;
   private readonly _maxBlocksPerTick: number;
   private _timer: ReturnType<typeof setInterval> | undefined;
+  private _running = false;
 
   constructor(options: MetadataIndexerOptions) {
     if (options.deployBlock < 0) {
@@ -58,8 +59,17 @@ export class MetadataIndexer {
     clearInterval(this._timer);
   }
 
-  /** Exposed for tests — runs one iteration end-to-end. Never throws out. */
+  /**
+   * Exposed for tests — runs one iteration end-to-end. Never throws out.
+   *
+   * Re-entrancy guard: if a prior tick is still in flight (slow RPC), the next
+   * interval fire short-circuits. Without this, two concurrent ticks would read
+   * the same checkpoint, fetch the same block range, and both apply deltas —
+   * permanently doubling every affected agent's cumulative totals.
+   */
   async tick(): Promise<void> {
+    if (this._running) return;
+    this._running = true;
     try {
       const latest = await this._statsClient.getBlockNumber();
       const safeTo = latest - this._reorgSafetyBlocks;
@@ -84,6 +94,8 @@ export class MetadataIndexer {
       console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
     } catch (err) {
       console.error('[indexer] tick error:', err);
+    } finally {
+      this._running = false;
     }
   }
 }

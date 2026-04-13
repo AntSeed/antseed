@@ -15,14 +15,55 @@ export interface SellerTotals {
   lastUpdatedAt: number;
 }
 
+interface SellerRow {
+  total_input_tokens: string;
+  total_output_tokens: string;
+  total_request_count: string;
+  settlement_count: number;
+  first_settled_block: number | null;
+}
+
+interface BuyerOrChannelRow {
+  total_input_tokens: string;
+  total_output_tokens: string;
+  total_request_count: string;
+  settlement_count: number;
+  first_settled_block: number;
+}
+
+interface SellerTotalsRow {
+  total_request_count: string;
+  total_input_tokens: string;
+  total_output_tokens: string;
+  settlement_count: number;
+  first_settled_block: number | null;
+  last_settled_block: number | null;
+  last_updated_at: number;
+}
+
 export class SqliteStore {
   private db: Database.Database;
+
+  // Prepared statements — compiled once in init(), reused on every applyBatch /
+  // read call. Re-preparing on every invocation is measurable overhead when
+  // catch-up indexing fires applyBatch many times in quick succession.
+  private _selectCheckpoint!: Database.Statement<[string, string], { last_block: number }>;
+  private _upsertCheckpoint!: Database.Statement<[string, string, number]>;
+  private _selectSeller!: Database.Statement<[number], SellerRow>;
+  private _upsertSeller!: Database.Statement<[number, string, string, string, number, number, number, number]>;
+  private _selectBuyer!: Database.Statement<[number, string], BuyerOrChannelRow>;
+  private _upsertBuyer!: Database.Statement<[number, string, string, string, string, number, number, number]>;
+  private _selectChannel!: Database.Statement<[number, string], BuyerOrChannelRow & { buyer: string }>;
+  private _upsertChannel!: Database.Statement<[number, string, string, string, string, string, number, number, number]>;
+  private _selectSellerTotals!: Database.Statement<[number], SellerTotalsRow>;
+  private _countBuyers!: Database.Statement<[number], { c: number }>;
+  private _countChannels!: Database.Statement<[number], { c: number }>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
   }
 
-  /** Creates tables if missing. Idempotent. */
+  /** Creates tables if missing and compiles prepared statements. Idempotent. */
   init(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS seller_metadata_totals (
@@ -68,16 +109,66 @@ export class SqliteStore {
         PRIMARY KEY (chain_id, contract_address)
       );
     `);
+
+    this._selectCheckpoint = this.db.prepare(
+      'SELECT last_block FROM indexer_checkpoint WHERE chain_id = ? AND contract_address = ?',
+    );
+
+    this._upsertCheckpoint = this.db.prepare(
+      `INSERT INTO indexer_checkpoint (chain_id, contract_address, last_block)
+       VALUES (?, ?, ?)
+       ON CONFLICT(chain_id, contract_address) DO UPDATE SET last_block = excluded.last_block`,
+    );
+
+    this._selectSeller = this.db.prepare(
+      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_metadata_totals WHERE agent_id = ?',
+    );
+
+    this._upsertSeller = this.db.prepare(
+      `INSERT OR REPLACE INTO seller_metadata_totals
+         (agent_id, total_input_tokens, total_output_tokens, total_request_count,
+          settlement_count, first_settled_block, last_settled_block, last_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectBuyer = this.db.prepare(
+      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_buyer_totals WHERE agent_id = ? AND buyer = ?',
+    );
+
+    this._upsertBuyer = this.db.prepare(
+      `INSERT OR REPLACE INTO seller_buyer_totals
+         (agent_id, buyer, total_input_tokens, total_output_tokens, total_request_count,
+          settlement_count, first_settled_block, last_settled_block)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectChannel = this.db.prepare(
+      'SELECT buyer, total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_channel_totals WHERE agent_id = ? AND channel_id = ?',
+    );
+
+    this._upsertChannel = this.db.prepare(
+      `INSERT OR REPLACE INTO seller_channel_totals
+         (agent_id, channel_id, buyer, total_input_tokens, total_output_tokens, total_request_count,
+          settlement_count, first_settled_block, last_settled_block)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectSellerTotals = this.db.prepare(
+      'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, last_updated_at FROM seller_metadata_totals WHERE agent_id = ?',
+    );
+
+    this._countBuyers = this.db.prepare(
+      'SELECT COUNT(*) AS c FROM seller_buyer_totals WHERE agent_id = ?',
+    );
+
+    this._countChannels = this.db.prepare(
+      'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
+    );
   }
 
   /** Returns last indexed block for (chainId, contractAddress), or null if no checkpoint. */
   getCheckpoint(chainId: string, contractAddress: string): number | null {
-    const row = this.db
-      .prepare<[string, string], { last_block: number }>(
-        'SELECT last_block FROM indexer_checkpoint WHERE chain_id = ? AND contract_address = ?',
-      )
-      .get(chainId, contractAddress.toLowerCase());
-
+    const row = this._selectCheckpoint.get(chainId, contractAddress.toLowerCase());
     return row !== undefined ? row.last_block : null;
   }
 
@@ -99,80 +190,29 @@ export class SqliteStore {
     events: DecodedMetadataRecorded[],
     newCheckpoint: number,
   ): void {
-    const selectSeller = this.db.prepare<[number], {
-      total_input_tokens: string;
-      total_output_tokens: string;
-      total_request_count: string;
-      settlement_count: number;
-      first_settled_block: number | null;
-    }>(
-      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_metadata_totals WHERE agent_id = ?',
-    );
-
-    const upsertSeller = this.db.prepare<[number, string, string, string, number, number, number, number]>(
-      `INSERT OR REPLACE INTO seller_metadata_totals
-         (agent_id, total_input_tokens, total_output_tokens, total_request_count,
-          settlement_count, first_settled_block, last_settled_block, last_updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const selectBuyer = this.db.prepare<[number, string], {
-      total_input_tokens: string;
-      total_output_tokens: string;
-      total_request_count: string;
-      settlement_count: number;
-      first_settled_block: number;
-    }>(
-      'SELECT total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_buyer_totals WHERE agent_id = ? AND buyer = ?',
-    );
-
-    const upsertBuyer = this.db.prepare<[number, string, string, string, string, number, number, number]>(
-      `INSERT OR REPLACE INTO seller_buyer_totals
-         (agent_id, buyer, total_input_tokens, total_output_tokens, total_request_count,
-          settlement_count, first_settled_block, last_settled_block)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const selectChannel = this.db.prepare<[number, string], {
-      buyer: string;
-      total_input_tokens: string;
-      total_output_tokens: string;
-      total_request_count: string;
-      settlement_count: number;
-      first_settled_block: number;
-    }>(
-      'SELECT buyer, total_input_tokens, total_output_tokens, total_request_count, settlement_count, first_settled_block FROM seller_channel_totals WHERE agent_id = ? AND channel_id = ?',
-    );
-
-    const upsertChannel = this.db.prepare<[number, string, string, string, string, string, number, number, number]>(
-      `INSERT OR REPLACE INTO seller_channel_totals
-         (agent_id, channel_id, buyer, total_input_tokens, total_output_tokens, total_request_count,
-          settlement_count, first_settled_block, last_settled_block)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const upsertCheckpoint = this.db.prepare<[string, string, number]>(
-      `INSERT INTO indexer_checkpoint (chain_id, contract_address, last_block)
-       VALUES (?, ?, ?)
-       ON CONFLICT(chain_id, contract_address) DO UPDATE SET last_block = excluded.last_block`,
-    );
-
     this.db.transaction(() => {
       for (const event of events) {
+        // uint256 → number narrowing. In practice agentIds are sequential and small,
+        // but the ERC-8004 IdentityRegistry is uint256, so guard against a pathological
+        // future value that would silently collide or miss the PK lookup.
+        if (event.agentId > BigInt(Number.MAX_SAFE_INTEGER)) {
+          console.warn(`[store] agentId ${event.agentId} exceeds MAX_SAFE_INTEGER — skipping event`);
+          continue;
+        }
         const agentId = Number(event.agentId);
         const buyer = event.buyer.toLowerCase();
         const channelId = event.channelId.toLowerCase();
         const now = Math.floor(Date.now() / 1000);
 
         // ── seller_metadata_totals ───────────────────────────────────
-        const existingSeller = selectSeller.get(agentId);
+        const existingSeller = this._selectSeller.get(agentId);
         const prevSellerInput = existingSeller ? BigInt(existingSeller.total_input_tokens) : 0n;
         const prevSellerOutput = existingSeller ? BigInt(existingSeller.total_output_tokens) : 0n;
         const prevSellerCount = existingSeller ? BigInt(existingSeller.total_request_count) : 0n;
         const prevSellerSettlements = existingSeller?.settlement_count ?? 0;
         const prevSellerFirstBlock = existingSeller?.first_settled_block ?? null;
 
-        upsertSeller.run(
+        this._upsertSeller.run(
           agentId,
           (prevSellerInput + event.inputTokens).toString(),
           (prevSellerOutput + event.outputTokens).toString(),
@@ -184,14 +224,14 @@ export class SqliteStore {
         );
 
         // ── seller_buyer_totals ──────────────────────────────────────
-        const existingBuyer = selectBuyer.get(agentId, buyer);
+        const existingBuyer = this._selectBuyer.get(agentId, buyer);
         const prevBuyerInput = existingBuyer ? BigInt(existingBuyer.total_input_tokens) : 0n;
         const prevBuyerOutput = existingBuyer ? BigInt(existingBuyer.total_output_tokens) : 0n;
         const prevBuyerCount = existingBuyer ? BigInt(existingBuyer.total_request_count) : 0n;
         const prevBuyerSettlements = existingBuyer?.settlement_count ?? 0;
         const prevBuyerFirstBlock = existingBuyer?.first_settled_block ?? event.blockNumber;
 
-        upsertBuyer.run(
+        this._upsertBuyer.run(
           agentId,
           buyer,
           (prevBuyerInput + event.inputTokens).toString(),
@@ -203,14 +243,14 @@ export class SqliteStore {
         );
 
         // ── seller_channel_totals ────────────────────────────────────
-        const existingChannel = selectChannel.get(agentId, channelId);
+        const existingChannel = this._selectChannel.get(agentId, channelId);
         const prevChannelInput = existingChannel ? BigInt(existingChannel.total_input_tokens) : 0n;
         const prevChannelOutput = existingChannel ? BigInt(existingChannel.total_output_tokens) : 0n;
         const prevChannelCount = existingChannel ? BigInt(existingChannel.total_request_count) : 0n;
         const prevChannelSettlements = existingChannel?.settlement_count ?? 0;
         const prevChannelFirstBlock = existingChannel?.first_settled_block ?? event.blockNumber;
 
-        upsertChannel.run(
+        this._upsertChannel.run(
           agentId,
           channelId,
           buyer,
@@ -223,43 +263,17 @@ export class SqliteStore {
         );
       }
 
-      upsertCheckpoint.run(chainId, contractAddress.toLowerCase(), newCheckpoint);
+      this._upsertCheckpoint.run(chainId, contractAddress.toLowerCase(), newCheckpoint);
     })();
   }
 
   /** Returns cumulative totals for a single agentId, or null if never seen. */
   getSellerTotals(agentId: number): SellerTotals | null {
-    const row = this.db
-      .prepare<[number], {
-        total_request_count: string;
-        total_input_tokens: string;
-        total_output_tokens: string;
-        settlement_count: number;
-        first_settled_block: number | null;
-        last_settled_block: number | null;
-        last_updated_at: number;
-      }>(
-        'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, last_updated_at FROM seller_metadata_totals WHERE agent_id = ?',
-      )
-      .get(agentId);
-
+    const row = this._selectSellerTotals.get(agentId);
     if (row === undefined) return null;
 
-    const uniqueBuyers = (
-      this.db
-        .prepare<[number], { c: number }>(
-          'SELECT COUNT(*) AS c FROM seller_buyer_totals WHERE agent_id = ?',
-        )
-        .get(agentId) ?? { c: 0 }
-    ).c;
-
-    const uniqueChannels = (
-      this.db
-        .prepare<[number], { c: number }>(
-          'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
-        )
-        .get(agentId) ?? { c: 0 }
-    ).c;
+    const uniqueBuyers = (this._countBuyers.get(agentId) ?? { c: 0 }).c;
+    const uniqueChannels = (this._countChannels.get(agentId) ?? { c: 0 }).c;
 
     const totalRequests = BigInt(row.total_request_count);
     const avgRequestsPerBuyer =

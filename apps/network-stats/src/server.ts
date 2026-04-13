@@ -17,7 +17,17 @@ export interface CreateServerDeps {
   port?: number;
 }
 
-const agentIdCache = new Map<string, number>(); // module-scoped, key: lowercased address
+// module-scoped cache, key: lowercased address. Staked peers are cached
+// indefinitely (agentId assignments don't change). Unstaked peers (agentId=0)
+// are cached with a short TTL so a peer that stakes shortly after being
+// observed picks up its real agentId on the next request instead of being
+// permanently pinned to `onChainStats: null`.
+const UNSTAKED_TTL_MS = 5 * 60 * 1000;
+interface CacheEntry {
+  agentId: number;
+  expiresAt: number; // Infinity for staked (never expires)
+}
+const agentIdCache = new Map<string, CacheEntry>();
 
 async function resolveAgentId(
   client: StakingClient,
@@ -26,10 +36,15 @@ async function resolveAgentId(
   if (!address) return null;
   const key = address.toLowerCase();
   const cached = agentIdCache.get(key);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && cached.expiresAt > Date.now()) {
+    return cached.agentId;
+  }
   try {
     const agentId = await client.getAgentId(key);
-    agentIdCache.set(key, agentId);
+    agentIdCache.set(key, {
+      agentId,
+      expiresAt: agentId === 0 ? Date.now() + UNSTAKED_TTL_MS : Infinity,
+    });
     return agentId;
   } catch (err) {
     console.warn(`[network-stats] getAgentId failed for ${key}:`, err);
