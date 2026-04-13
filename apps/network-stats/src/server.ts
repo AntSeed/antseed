@@ -9,11 +9,15 @@ import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
+import type { MetadataIndexer } from './indexer.js';
 
 export interface CreateServerDeps {
   poller: NetworkPoller;
   store?: SqliteStore;            // undefined when indexer disabled for this chain
   stakingClient?: StakingClient;  // undefined when indexer disabled
+  indexer?: MetadataIndexer;      // source of chain head + reorg buffer for sync status
+  chainId?: string;               // used to look up the indexer checkpoint
+  contractAddress?: string;       // contract whose checkpoint to expose
   port?: number;
 }
 
@@ -57,7 +61,7 @@ export function __resetAgentIdCacheForTests(): void {
 }
 
 export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
-  const { poller, store, stakingClient, port = 4000 } = deps;
+  const { poller, store, stakingClient, indexer, chainId, contractAddress, port = 4000 } = deps;
   const app = express();
 
   app.use((_req, res, next) => {
@@ -100,6 +104,8 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
             uniqueChannels: totals.uniqueChannels,
             firstSettledBlock: totals.firstSettledBlock,
             lastSettledBlock: totals.lastSettledBlock,
+            firstSeenAt: totals.firstSeenAt,
+            lastSeenAt: totals.lastSeenAt,
             avgRequestsPerChannel: totals.avgRequestsPerChannel,
             avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
             lastUpdatedAt: totals.lastUpdatedAt,
@@ -108,7 +114,32 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
       }),
     );
 
-    res.json({ ...snapshot, peers: enrichedPeers });
+    const indexerInfo =
+      chainId && contractAddress
+        ? store.getCheckpointInfo(chainId, contractAddress.toLowerCase())
+        : null;
+
+    // Chain head comes from the indexer's in-memory cache, refreshed on every
+    // tick. `synced` is true when the checkpoint has caught up to (latest − reorg
+    // buffer), i.e. there's nothing else the indexer could have processed.
+    const chainHead = indexer?.getChainHead();
+    const indexerPayload = indexerInfo
+      ? {
+          ...indexerInfo,
+          ...(chainHead?.latestBlock != null
+            ? {
+                latestBlock: chainHead.latestBlock,
+                synced: indexerInfo.lastBlock >= chainHead.latestBlock - chainHead.reorgSafetyBlocks,
+              }
+            : {}),
+        }
+      : null;
+
+    res.json({
+      ...snapshot,
+      peers: enrichedPeers,
+      ...(indexerPayload ? { indexer: indexerPayload } : {}),
+    });
   });
 
   app.get('/health', (_req, res) => {
