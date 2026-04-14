@@ -1,6 +1,6 @@
 {
   "name": "@antseed/api-adapter",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "HTTP-level format translation between LLM API protocols (Anthropic Messages, OpenAI Chat Completions, OpenAI Responses)",
   "type": "module",
   "files": [
