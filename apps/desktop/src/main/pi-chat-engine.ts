@@ -468,14 +468,11 @@ async function discoverChatServiceCatalog(
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
-    const now = Date.now();
-    const SERVICE_STALE_MS = 2 * 60 * 60_000; // 2 hours — peers re-announce via DHT every 5 min
+    // Show every cached peer regardless of lastSeen — the sidebar already
+    // surfaces them offline, and filtering here leaves Discover empty on
+    // cold-start (e.g. laptop opened after overnight) until DHT rediscovers.
     peers = rawPeers
       .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
-      .filter((p) => {
-        const lastSeen = typeof p.lastSeen === 'number' ? p.lastSeen : 0;
-        return lastSeen === 0 || now - lastSeen < SERVICE_STALE_MS;
-      })
       .map((p) => ({
         peerId: typeof p.peerId === 'string' ? p.peerId : '',
         displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
