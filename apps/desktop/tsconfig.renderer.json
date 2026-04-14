@@ -8,5 +8,6 @@
     "noImplicitAny": false,
     "types": ["vite/client"]
   },
-  "include": ["src/renderer/**/*"]
+  "include": ["src/renderer/**/*"],
+  "exclude": ["src/renderer/**/*.test.ts"]
 }

@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
 import { browserPreviewTool, startDevServerTool } from './chat-dev-tools.js';
 import { webFetchTool } from './chat-web-fetch.js';
+import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
 import {
   CHAT_DATA_DIR,
@@ -16,6 +17,7 @@ import {
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
 import { asErrorMessage } from './utils.js';
+import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
   AuthStorage,
   createAgentSession,
@@ -158,6 +160,40 @@ type ChatServiceCatalogEntry = {
   outputUsdPerMillion?: number;
   categories?: string[];
   description?: string;
+};
+
+type DiscoverRowEntry = {
+  rowKey: string;
+  serviceId: string;
+  serviceLabel: string;
+  categories: string[];
+  provider: string;
+  protocol: ChatServiceProtocol;
+  peerId: string;
+  peerEvmAddress: string;
+  peerDisplayName: string | null;
+  peerLabel: string;
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion: number | null;
+  lifetimeSessions: number;
+  lifetimeRequests: number;
+  lifetimeInputTokens: number;
+  lifetimeOutputTokens: number;
+  lifetimeFirstSessionAt: number | null;
+  lifetimeLastSessionAt: number | null;
+  onChainChannelCount: number | null;
+  agentId: number;
+  stakeUsdc: string;
+  stakedAt: number;
+  onChainActiveChannelCount: number;
+  onChainGhostCount: number;
+  onChainTotalVolumeUsdc: string;
+  onChainLastSettledAt: number;
+  networkRequests: string | null;
+  networkInputTokens: string | null;
+  networkOutputTokens: string | null;
+  selectionValue: string;
 };
 
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
@@ -432,14 +468,11 @@ async function discoverChatServiceCatalog(
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
-    const now = Date.now();
-    const SERVICE_STALE_MS = 2 * 60 * 60_000; // 2 hours — peers re-announce via DHT every 5 min
+    // Show every cached peer regardless of lastSeen — the sidebar already
+    // surfaces them offline, and filtering here leaves Discover empty on
+    // cold-start (e.g. laptop opened after overnight) until DHT rediscovers.
     peers = rawPeers
       .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
-      .filter((p) => {
-        const lastSeen = typeof p.lastSeen === 'number' ? p.lastSeen : 0;
-        return lastSeen === 0 || now - lastSeen < SERVICE_STALE_MS;
-      })
       .map((p) => ({
         peerId: typeof p.peerId === 'string' ? p.peerId : '',
         displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
@@ -535,7 +568,194 @@ async function discoverChatServiceCatalog(
   return sortChatServiceCatalogEntries(results);
 }
 
+type OnChainPeerEnrichment = {
+  agentId: number;
+  stakeUsdc: string;
+  stakedAt: number;
+  onChainActiveChannelCount: number;
+  onChainGhostCount: number;
+  onChainTotalVolumeUsdc: string;
+  onChainLastSettledAt: number;
+};
 
+const ON_CHAIN_ENRICHMENT_TTL_MS = 2 * 60_000;
+let onChainEnrichmentCache: Map<string, { fetchedAt: number; data: OnChainPeerEnrichment }> = new Map();
+
+export function invalidateOnChainEnrichmentCache(): void {
+  onChainEnrichmentCache.clear();
+  cachedStakingClient = null;
+  cachedChannelsClient = null;
+}
+
+let cachedStakingClient: StakingClient | null = null;
+let cachedChannelsClient: ChannelsClient | null = null;
+
+async function loadOnChainClients(configPath: string): Promise<{ stakingClient: StakingClient; channelsClient: ChannelsClient } | null> {
+  if (cachedStakingClient && cachedChannelsClient) {
+    return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };
+  }
+  let overrides: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const payments = (parsed.payments && typeof parsed.payments === 'object') ? parsed.payments as Record<string, unknown> : {};
+    overrides = (payments.crypto && typeof payments.crypto === 'object') ? payments.crypto as Record<string, unknown> : {};
+  } catch {
+    // No config — use defaults
+  }
+  const selectedChain = (typeof overrides.chainId === 'string' && overrides.chainId.trim().length > 0)
+    ? overrides.chainId
+    : 'base-mainnet';
+  const cc = resolveChainConfig({
+    chainId: selectedChain,
+    ...(typeof overrides.rpcUrl === 'string' && overrides.rpcUrl.trim().length > 0 ? { rpcUrl: overrides.rpcUrl } : {}),
+  });
+  if (!cc.stakingContractAddress) return null;
+  cachedStakingClient = new StakingClient({
+    rpcUrl: cc.rpcUrl,
+    contractAddress: cc.stakingContractAddress,
+    usdcAddress: cc.usdcContractAddress,
+  });
+  cachedChannelsClient = new ChannelsClient({
+    rpcUrl: cc.rpcUrl,
+    contractAddress: cc.channelsContractAddress,
+  });
+  return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };
+}
+
+async function fetchOnChainEnrichment(
+  peerEvmAddresses: string[],
+  stakingClient: import('@antseed/node').StakingClient,
+  channelsClient: import('@antseed/node').ChannelsClient,
+): Promise<Map<string, OnChainPeerEnrichment>> {
+  const now = Date.now();
+  const out = new Map<string, OnChainPeerEnrichment>();
+  const toFetch: string[] = [];
+
+  for (const addr of peerEvmAddresses) {
+    const cached = onChainEnrichmentCache.get(addr);
+    if (cached && now - cached.fetchedAt < ON_CHAIN_ENRICHMENT_TTL_MS) {
+      out.set(addr, cached.data);
+    } else {
+      toFetch.push(addr);
+    }
+  }
+
+  await Promise.all(toFetch.map(async (addr) => {
+    try {
+      const [agentId, stake] = await Promise.all([
+        stakingClient.getAgentId(addr),
+        stakingClient.getStake(addr),
+      ]);
+      if (agentId === 0) {
+        const sentinel: OnChainPeerEnrichment = {
+          agentId: 0,
+          stakeUsdc: '0',
+          stakedAt: 0,
+          onChainActiveChannelCount: 0,
+          onChainGhostCount: 0,
+          onChainTotalVolumeUsdc: '0',
+          onChainLastSettledAt: 0,
+        };
+        onChainEnrichmentCache.set(addr, { fetchedAt: now, data: sentinel });
+        out.set(addr, sentinel);
+        return;
+      }
+      const stats = await channelsClient.getAgentStats(agentId);
+      const data: OnChainPeerEnrichment = {
+        agentId,
+        stakeUsdc: stake.toString(),
+        stakedAt: 0,
+        onChainActiveChannelCount: stats.channelCount,
+        onChainGhostCount: stats.ghostCount,
+        onChainTotalVolumeUsdc: stats.totalVolumeUsdc.toString(),
+        onChainLastSettledAt: stats.lastSettledAt,
+      };
+      onChainEnrichmentCache.set(addr, { fetchedAt: now, data });
+      out.set(addr, data);
+    } catch {
+      // Leave out of the result map; row will be dropped by the caller.
+    }
+  }));
+
+  return out;
+}
+
+async function buildDiscoverRows(
+  catalog: ChatServiceCatalogEntry[],
+  peerStats: Map<string, {
+    totalSessions: number;
+    totalRequests: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    firstSessionAt: number | null;
+    lastSessionAt: number | null;
+  }>,
+  enrichment: Map<string, OnChainPeerEnrichment>,
+  buyerStateDiscoveredPeers: Record<string, {
+    onChainChannelCount: number | null;
+    providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
+  }>,
+  networkStats: Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>,
+): Promise<DiscoverRowEntry[]> {
+  const rows: DiscoverRowEntry[] = [];
+  for (const entry of catalog) {
+    const peerId = entry.peerId ?? '';
+    if (!peerId) continue;
+    const evmAddress = '0x' + peerId;
+    const enrichmentRow = enrichment.get(evmAddress);
+    if (!enrichmentRow || enrichmentRow.agentId === 0) continue;
+
+    const stats = peerStats.get(peerId);
+    const peerBlob = buyerStateDiscoveredPeers[peerId];
+    const cachedPricingEntry = peerBlob?.providerPricing?.[entry.provider]?.services?.[entry.id];
+    const cachedInputUsdPerMillion = Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
+      ? cachedPricingEntry!.cachedInputUsdPerMillion!
+      : null;
+
+    const netForAgent = enrichmentRow.agentId > 0
+      ? networkStats.get(enrichmentRow.agentId) ?? null
+      : null;
+    const networkRequests = netForAgent ? netForAgent.requests.toString() : null;
+    const networkInputTokens = netForAgent ? netForAgent.inputTokens.toString() : null;
+    const networkOutputTokens = netForAgent ? netForAgent.outputTokens.toString() : null;
+
+    rows.push({
+      rowKey: `${peerId}:${entry.id}`,
+      serviceId: entry.id,
+      serviceLabel: entry.label,
+      categories: entry.categories ?? [],
+      provider: entry.provider,
+      protocol: entry.protocol,
+      peerId,
+      peerEvmAddress: evmAddress,
+      peerDisplayName: entry.peerLabel?.split(' (')[0] ?? null,
+      peerLabel: entry.peerLabel ?? peerId.slice(0, 12) + '...',
+      inputUsdPerMillion: entry.inputUsdPerMillion ?? null,
+      outputUsdPerMillion: entry.outputUsdPerMillion ?? null,
+      cachedInputUsdPerMillion,
+      lifetimeSessions: stats?.totalSessions ?? 0,
+      lifetimeRequests: stats?.totalRequests ?? 0,
+      lifetimeInputTokens: stats?.totalInputTokens ?? 0,
+      lifetimeOutputTokens: stats?.totalOutputTokens ?? 0,
+      lifetimeFirstSessionAt: stats?.firstSessionAt ?? null,
+      lifetimeLastSessionAt: stats?.lastSessionAt ?? null,
+      onChainChannelCount: peerBlob?.onChainChannelCount ?? null,
+      agentId: enrichmentRow.agentId,
+      stakeUsdc: enrichmentRow.stakeUsdc,
+      stakedAt: enrichmentRow.stakedAt,
+      onChainActiveChannelCount: enrichmentRow.onChainActiveChannelCount,
+      onChainGhostCount: enrichmentRow.onChainGhostCount,
+      onChainTotalVolumeUsdc: enrichmentRow.onChainTotalVolumeUsdc,
+      onChainLastSettledAt: enrichmentRow.onChainLastSettledAt,
+      networkRequests,
+      networkInputTokens,
+      networkOutputTokens,
+      selectionValue: `${entry.provider}\u0001${entry.id}\u0001${peerId}`,
+    });
+  }
+  return rows;
+}
 
 function toUsage(value: unknown): Usage {
   const usage = (value ?? {}) as Record<string, unknown>;
@@ -1895,12 +2115,134 @@ export function registerPiChatHandlers({
     };
   });
 
-  ipcMain.handle('chat:ai-list-services', async () => {
+  ipcMain.handle('api:try-proxy-request', async (
+    _event,
+    params: { port: number; path: string; method: string; headers: Record<string, string>; body: string },
+  ) => {
+    try {
+      const url = `http://127.0.0.1:${params.port}${params.path}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      const res = await fetch(url, {
+        method: params.method || 'POST',
+        headers: params.headers || {},
+        body: params.body || undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const text = await res.text();
+      return { ok: true, status: res.status, body: text, error: null as string | null };
+    } catch (e) {
+      const err = e as Error;
+      return { ok: false, status: 0, body: '', error: err?.message ?? String(e) };
+    }
+  });
+
+  ipcMain.handle('chat:ai-list-discover-rows', async () => {
     try {
       const entries = await refreshServiceCatalogFromNetwork();
-      return { ok: true, data: entries };
+
+      const buyerPort = await resolveProxyPort(configPath);
+      const statsMap = new Map<string, {
+        totalSessions: number;
+        totalRequests: number;
+        totalInputTokens: number;
+        totalOutputTokens: number;
+        firstSessionAt: number | null;
+        lastSessionAt: number | null;
+      }>();
+      // Per-peer lifetime metering. The buyer-proxy exposes
+      // /_antseed/metering/<peerId>; fetch in parallel for every catalog peer.
+      const uniqueCatalogPeerIds = Array.from(new Set(
+        entries.map((e) => e.peerId ?? '').filter((p) => p.length > 0)
+      ));
+      await Promise.all(uniqueCatalogPeerIds.map(async (peerId) => {
+        try {
+          const resp = await fetch(
+            `http://127.0.0.1:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
+          );
+          if (!resp.ok) return;
+          const body = await resp.json() as Record<string, unknown> | null;
+          if (!body || typeof body !== 'object') return;
+          const sessions = Number(body.lifetimeSessions) || 0;
+          const reqs = Number(body.lifetimeRequests) || 0;
+          const inTok = Number(body.lifetimeInputTokens) || 0;
+          const outTok = Number(body.lifetimeOutputTokens) || 0;
+          const firstAt = typeof body.lifetimeFirstSessionAt === 'number' ? body.lifetimeFirstSessionAt : null;
+          const lastAt = typeof body.lifetimeLastSessionAt === 'number' ? body.lifetimeLastSessionAt : null;
+          if (sessions === 0 && reqs === 0 && inTok === 0 && outTok === 0 && firstAt == null && lastAt == null) return;
+          statsMap.set(peerId, {
+            totalSessions: sessions,
+            totalRequests: reqs,
+            totalInputTokens: inTok,
+            totalOutputTokens: outTok,
+            firstSessionAt: firstAt,
+            lastSessionAt: lastAt,
+          });
+        } catch {
+          // Ignore — peer simply has no metering info
+        }
+      }));
+
+      const { readFile } = await import('node:fs/promises');
+      const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');
+      let discoveredPeersMap: Record<string, {
+        onChainChannelCount: number | null;
+        providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
+      }> = {};
+      try {
+        const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const arr = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+        for (const p of arr) {
+          if (p && typeof p === 'object' && typeof (p as { peerId?: unknown }).peerId === 'string') {
+            const rec = p as Record<string, unknown>;
+            discoveredPeersMap[rec.peerId as string] = {
+              onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,
+              providerPricing: rec.providerPricing as Record<string, {
+                services?: Record<string, { cachedInputUsdPerMillion?: number }>
+              }> | undefined,
+            };
+          }
+        }
+      } catch {
+        // No state file yet
+      }
+
+      const uniqueAddresses = Array.from(new Set(
+        entries
+          .map((e) => (e.peerId ? '0x' + e.peerId : ''))
+          .filter((a) => a.length === 42)
+      ));
+      const clients = await loadOnChainClients(configPath);
+      if (!clients) {
+        return { ok: true, data: [] as DiscoverRowEntry[] };
+      }
+      const { stakingClient, channelsClient } = clients;
+      const enrichment = await fetchOnChainEnrichment(uniqueAddresses, stakingClient, channelsClient);
+
+      // Network-wide stats from @antseed/network-stats. On non-mainnet chains and on any
+      // failure this returns an empty map and buildDiscoverRows falls back to local stats.
+      const networkStats = await (async () => {
+        try {
+          const raw = await readFile(configPath, 'utf8');
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const payments = (parsed.payments && typeof parsed.payments === 'object') ? parsed.payments as Record<string, unknown> : {};
+          const overrides = (payments.crypto && typeof payments.crypto === 'object') ? payments.crypto as Record<string, unknown> : {};
+          const selectedChain = (typeof overrides.chainId === 'string' && overrides.chainId.trim().length > 0)
+            ? overrides.chainId
+            : 'base-mainnet';
+          const cc = resolveChainConfig({ chainId: selectedChain });
+          return await fetchNetworkStats(cc.networkStatsUrl);
+        } catch {
+          return new Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>();
+        }
+      })();
+
+      const rows = await buildDiscoverRows(entries, statsMap, enrichment, discoveredPeersMap, networkStats);
+      return { ok: true, data: rows };
     } catch (error) {
-      return { ok: false, data: [] as ChatServiceCatalogEntry[], error: asErrorMessage(error) };
+      return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };
     }
   });
 

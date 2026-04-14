@@ -14,8 +14,8 @@ export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
   const actions = useActions();
 
   const handleStartChatting = useCallback(
-    (serviceValue: string) => {
-      actions.handleServiceChange(serviceValue);
+    (serviceValue: string, peerId?: string) => {
+      actions.handleServiceChange(serviceValue, peerId);
       actions.startNewChat();
       onSelectView('chat');
     },

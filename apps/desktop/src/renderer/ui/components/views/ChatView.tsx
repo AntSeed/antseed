@@ -4,7 +4,6 @@ import {
   Add01Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
-  RepeatIcon,
   BrowserIcon,
   Folder01Icon,
   GitBranchIcon
@@ -16,11 +15,17 @@ import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
+import { ServiceDropdown } from '../chat/ServiceDropdown';
+import { SwitchServiceDialog } from '../chat/SwitchServiceDialog';
+import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 import type { ChatWorkspaceGitStatus } from '../../../types/bridge';
 import { AntStationStackedLogo } from '../AntStationLogo';
+
+const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
+const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
 
 import styles from './ChatView.module.scss';
 
@@ -115,6 +120,19 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
+  const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
+  const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
+  const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
+  });
+
+  const handleDismissTooltip = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SWITCH_TOOLTIP_DISMISSED_KEY, 'true');
+    }
+    setTooltipDismissed(true);
+  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -218,6 +236,89 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setPreviewTargetUrl(url);
     setPreviewOpen(true);
   }, []);
+
+  // Services filtered to the currently-routed peer — lets the user switch
+  // between services offered by the same peer without going back to Discover.
+  const currentPeerId = snap.chatRoutedPeerId || snap.chatSelectedPeerId || '';
+  const peerServiceOptions = useMemo(
+    () =>
+      currentPeerId
+        ? snap.chatServiceOptions.filter((o) => o.peerId === currentPeerId)
+        : [],
+    [snap.chatServiceOptions, currentPeerId],
+  );
+  const currentServiceOption = useMemo(
+    () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
+    [snap.chatServiceOptions, snap.chatSelectedServiceValue],
+  );
+  const peerDisplayName =
+    snap.chatRoutedPeer || currentServiceOption?.peerLabel || '';
+
+  const applyServiceChange = useCallback(
+    (value: string) => {
+      const option = snap.chatServiceOptions.find((o) => o.value === value);
+      actions.handleServiceChange(value, option?.peerId);
+    },
+    [actions, snap.chatServiceOptions],
+  );
+
+  const handleServiceSwitch = useCallback(
+    (nextValue: string) => {
+      if (!nextValue || nextValue === snap.chatSelectedServiceValue) return;
+      const hasMessages =
+        Boolean(snap.chatActiveConversation) && visibleMessages.length > 0;
+      const dismissed =
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem(SWITCH_DIALOG_DISMISSED_KEY) === 'true';
+      if (!hasMessages || dismissed) {
+        applyServiceChange(nextValue);
+        return;
+      }
+      setPendingSwitchValue(nextValue);
+      setSwitchDialogOpen(true);
+    },
+    [snap.chatSelectedServiceValue, snap.chatActiveConversation, visibleMessages.length, applyServiceChange],
+  );
+
+  const persistDismissed = useCallback((dontShowAgain: boolean) => {
+    if (dontShowAgain && typeof window !== 'undefined') {
+      window.localStorage.setItem(SWITCH_DIALOG_DISMISSED_KEY, 'true');
+    }
+  }, []);
+
+  const handleSwitchContinue = useCallback(
+    (dontShowAgain: boolean) => {
+      persistDismissed(dontShowAgain);
+      if (pendingSwitchValue) applyServiceChange(pendingSwitchValue);
+      setSwitchDialogOpen(false);
+      setPendingSwitchValue(null);
+    },
+    [pendingSwitchValue, applyServiceChange, persistDismissed],
+  );
+
+  const handleSwitchStartNew = useCallback(
+    (dontShowAgain: boolean) => {
+      persistDismissed(dontShowAgain);
+      if (pendingSwitchValue) applyServiceChange(pendingSwitchValue);
+      actions.startNewChat();
+      setSwitchDialogOpen(false);
+      setPendingSwitchValue(null);
+    },
+    [pendingSwitchValue, applyServiceChange, actions, persistDismissed],
+  );
+
+  const handleSwitchCancel = useCallback(() => {
+    setSwitchDialogOpen(false);
+    setPendingSwitchValue(null);
+  }, []);
+
+  const pendingSwitchOption = useMemo(
+    () =>
+      pendingSwitchValue
+        ? snap.chatServiceOptions.find((o) => o.value === pendingSwitchValue)
+        : null,
+    [pendingSwitchValue, snap.chatServiceOptions],
+  );
 
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
@@ -366,21 +467,29 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          {snap.chatRoutedPeer ? (
-            <button
-              className={styles.peerServiceIndicator}
-              onClick={() => { actions.clearPinnedPeer(); onSelectView?.('discover'); }}
-            >
-              <span className={styles.peerName}>{snap.chatRoutedPeer}</span>
-              <span className={styles.serviceSeparator}>·</span>
-              <span className={styles.serviceName}>
-                {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || snap.chatSelectedServiceValue || 'Service'}
-              </span>
-              <HugeiconsIcon icon={RepeatIcon} size={14} strokeWidth={1.5} />
-            </button>
+          {peerDisplayName && (
+            <>
+              <span className={styles.peerName}>{peerDisplayName}</span>
+            </>
+          )}
+          {peerServiceOptions.length > 0 ? (
+            <div className={styles.serviceSwitcherAnchor}>
+              <ServiceDropdown
+                options={peerServiceOptions}
+                value={snap.chatSelectedServiceValue}
+                disabled={snap.chatInputDisabled || snap.chatSending}
+                onChange={handleServiceSwitch}
+              />
+              {!tooltipDismissed && peerServiceOptions.length >= 2 && (
+                <ServiceSwitchTooltip
+                  modelCount={peerServiceOptions.length}
+                  onDismiss={handleDismissTooltip}
+                />
+              )}
+            </div>
           ) : (
             <span className={styles.serviceLabel}>
-              {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || 'No peer selected'}
+              {currentServiceOption?.label || 'No peer selected'}
             </span>
           )}
         </div>
@@ -470,7 +579,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
-              <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
+              <WalkingAnt
+                elapsedMs={snap.chatThinkingElapsedMs}
+                phaseLabel={snap.chatThinkingPhase}
+              />
             )}
             <SessionApprovalCard
               visible={snap.chatPaymentApprovalVisible}
@@ -582,6 +694,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           </>
         )}
       </div>
+      <SwitchServiceDialog
+        visible={switchDialogOpen}
+        currentLabel={currentServiceOption?.label || 'current service'}
+        nextLabel={pendingSwitchOption?.label || 'new service'}
+        onContinue={handleSwitchContinue}
+        onStartNew={handleSwitchStartNew}
+        onCancel={handleSwitchCancel}
+      />
     </section>
   );
 }

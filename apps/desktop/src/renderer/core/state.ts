@@ -65,6 +65,62 @@ export type ChatServiceOptionEntry = {
   description: string;
 };
 
+export type DiscoverRow = {
+  // Identity
+  rowKey: string;              // `${peerId}:${serviceId}`
+  serviceId: string;
+  serviceLabel: string;
+  categories: string[];
+  provider: string;            // internal, not shown
+  protocol: string;
+
+  // Peer
+  peerId: string;
+  peerEvmAddress: string;
+  peerDisplayName: string | null;
+  peerLabel: string;
+
+  // Pricing
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion: number | null;
+
+  // Local buyer history (from ChannelStore)
+  lifetimeSessions: number;
+  lifetimeRequests: number;
+  lifetimeInputTokens: number;
+  lifetimeOutputTokens: number;
+  lifetimeFirstSessionAt: number | null;
+  lifetimeLastSessionAt: number | null;
+
+  // Peer metadata
+  onChainChannelCount: number | null;
+
+  // On-chain staking (AntseedStaking)
+  agentId: number;
+  stakeUsdc: string;            // bigint as string, 6-decimal USDC
+  stakedAt: number;             // unix seconds
+
+  // On-chain agent stats (AntseedChannels.getAgentStats)
+  onChainActiveChannelCount: number;
+  onChainGhostCount: number;
+  onChainTotalVolumeUsdc: string;
+  onChainLastSettledAt: number;
+
+  /**
+   * Network-wide totals from @antseed/network-stats, indexed from AntseedStats.MetadataRecorded.
+   * Null when the chain has no stats contract (e.g. sepolia), the indexer hasn't seen events
+   * for this agentId yet, or network-stats is unreachable. Stored as bigint-string because
+   * token/request counts can exceed Number.MAX_SAFE_INTEGER on long-lived agents.
+   */
+  networkRequests: string | null;
+  networkInputTokens: string | null;
+  networkOutputTokens: string | null;
+
+  // Derived — encoded selection for existing chat open path
+  selectionValue: string;
+};
+
 export type ActiveChannelInfo = {
   reservedUsdc: string;
   peerName: string;
@@ -179,6 +235,7 @@ export type RendererUiState = {
   chatLifetimeTotalTokens: string;
   chatLifetimeSessions: string;
   chatServiceOptions: ChatServiceOptionEntry[];
+  discoverRows: DiscoverRow[];
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
   chatServiceStatus: BadgeState;
@@ -201,6 +258,7 @@ export type RendererUiState = {
   chatStreamingActive: boolean;
   chatThinkingElapsedMs: number;
   chatWaitingForStream: boolean;
+  chatThinkingPhase: string | null;
 
   // --- Router input value (for plugin setup + chat) ---
   connectRouterValue: string;
@@ -319,6 +377,7 @@ export function createInitialUiState(): RendererUiState {
     chatLifetimeTotalTokens: '',
     chatLifetimeSessions: '',
     chatServiceOptions: [],
+    discoverRows: [],
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',
     chatServiceStatus: { tone: 'idle', label: 'Services idle' },
@@ -352,6 +411,7 @@ export function createInitialUiState(): RendererUiState {
     chatStreamingActive: false,
     chatThinkingElapsedMs: 0,
     chatWaitingForStream: false,
+    chatThinkingPhase: null,
 
     // Router / dashboard port
     connectRouterValue: 'local',

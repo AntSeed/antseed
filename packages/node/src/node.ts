@@ -493,6 +493,7 @@ export class AntseedNode extends EventEmitter {
     lifetimeTotalTokens: number;
     lifetimeAuthorizedUsdc: string;
     lifetimeFirstSessionAt: number | null;
+    lifetimeLastSessionAt: number | null;
   } | null {
     const buyerAddress = this._identity?.wallet.address ?? null;
     const channel = (buyerAddress != null)
@@ -535,6 +536,7 @@ export class AntseedNode extends EventEmitter {
       lifetimeTotalTokens: (lifetime?.totalInputTokens ?? 0) + (lifetime?.totalOutputTokens ?? 0),
       lifetimeAuthorizedUsdc: (lifetime?.totalAuthorizedUsdc ?? 0n).toString(),
       lifetimeFirstSessionAt: lifetime?.firstSessionAt ?? null,
+      lifetimeLastSessionAt: lifetime?.lastSessionAt ?? null,
     };
   }
 

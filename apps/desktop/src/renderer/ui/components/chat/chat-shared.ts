@@ -226,13 +226,72 @@ export type AssistantMeta = {
   latencyMs: number;
 };
 
-const myrmecochoryPhrases = [
-  'Myrmecochory scouting for the right peer',
-  'Myrmecochory optimizing route and cost',
-  'Myrmecochory validating marketplace path',
-  'Myrmecochory checking tool and context trail',
-  'Myrmecochory preparing the next inference hop',
+export const THINKING_PHRASES: readonly string[] = [
+  'Hodl',
+  'Brrrr',
+  'NGMI',
+  'WAGMI',
+  'To the moon',
+  'Wen channel',
+  'gm',
+  'Stacking sats',
+  'Few understand',
+  'LFG',
+  'Probably nothing',
+  'Aping in',
+  'This is the way',
+  'Ser, pls wait',
+  'Number go up',
+  'Diamond hands',
+  'p2p2pinging',
+  'Foraging for tokens',
+  'Pinning to the DHT',
+  'Sharding the prompt',
 ];
+
+const myrmecochoryPhrases = THINKING_PHRASES;
+
+export function paymentLogToThinkingPhase(line: string): string | null {
+  if (!line) return null;
+
+  // Ignore no-op lines so they don't stick as the phase label.
+  if (line.includes('NeedAuth stale')) return null;
+  if (line.includes('NeedAuth: maxSignable')) return null;
+  if (line.includes('NeedAuth responded')) return null;
+
+  // --- Payment negotiation ---
+  if (line.includes('[PaymentMux] ← recv PaymentRequired')) return 'Received 402 Payment Required';
+  if (line.includes('[BuyerNegotiator] Got 402')) return 'Auto-negotiating payment';
+  if (line.includes('[BuyerNegotiator] PaymentRequired')) return 'Parsing payment terms';
+  if (line.includes('[BuyerPayment] authorizeSpending')) return 'Signing SpendingAuth';
+  if (line.includes('[BuyerPayment] signPerRequestAuth')) return 'Signing per-request auth';
+  if (line.includes('[BuyerPayment] topUpReserve sent')) return 'Reserve top-up broadcast';
+  if (line.includes('[BuyerPayment] topUpReserve')) return 'Topping up reserve';
+  if (line.includes('[BuyerPayment] Depositing')) return 'Depositing to escrow';
+  if (line.includes('[BuyerPayment] Withdrawing')) return 'Withdrawing from escrow';
+  if (line.includes('[BuyerPayment] NeedAuth: channel')) return 'Co-signing request cost';
+  if (line.includes('[BuyerPayment] AuthAck confirmed')) return 'Auth confirmed by seller';
+  if (line.includes('[BuyerNegotiator] Per-request SpendingAuth sent')) return 'Per-request auth sent';
+  if (line.includes('[BuyerNegotiator] SpendingAuth sent to seller')) return 'Awaiting seller ack';
+  if (line.includes('[BuyerNegotiator] AuthAck received')) return 'Seller acked auth';
+  if (line.includes('[BuyerNegotiator] Payment negotiated')) return 'Payment ready';
+  if (line.includes('[BuyerNegotiator] Reserve top-up needed')) return 'Reserve top-up needed';
+
+  // --- Payment wire ---
+  if (line.includes('[PaymentMux] → send SpendingAuth')) return 'Sending SpendingAuth';
+  if (line.includes('[PaymentMux] → send ReserveAuth')) return 'Sending ReserveAuth';
+  if (line.includes('[PaymentMux] → send AuthAck')) return 'Acking seller auth';
+  if (line.includes('[PaymentMux] ← recv SpendingAuth')) return 'Received SpendingAuth';
+  if (line.includes('[PaymentMux] ← recv ReserveAuth')) return 'Received ReserveAuth';
+  if (line.includes('[PaymentMux] ← recv AuthAck')) return 'Received auth ack';
+  if (line.includes('[PaymentMux] ← recv NeedAuth')) return 'Settling request with seller';
+
+  // --- Cold-start connection events (only fire when a new peer dial happens) ---
+  if (line.includes('[Node] Connecting to')) return 'Dialing peer';
+  if (line.includes('[Node] Connection state: open')) return 'Peer connection open';
+
+  return null;
+}
 
 export function formatChatTime(timestamp: unknown): string {
   const ts = Number(timestamp);

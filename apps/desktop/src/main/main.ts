@@ -17,7 +17,7 @@ import {
   type RuntimeProcessState,
   type StartOptions,
 } from './process-manager.js';
-import { registerPiChatHandlers } from './pi-chat-engine.js';
+import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
 import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
@@ -565,6 +565,7 @@ ipcMain.handle(
     try {
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
       cachedCryptoConfig = null; // Invalidate cached crypto config
+      invalidateOnChainEnrichmentCache();
       creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
       // Restart payments portal if running so it picks up new contract/chain config
       void stopPaymentsPortal().catch(() => {});

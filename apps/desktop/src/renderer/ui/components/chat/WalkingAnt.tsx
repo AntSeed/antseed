@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from './WalkingAnt.module.scss';
+import { THINKING_PHRASES } from './chat-shared';
 
 type WalkingAntProps = {
   elapsedMs: number;
+  phaseLabel?: string | null;
 };
 
 function formatElapsed(ms: number): string {
@@ -13,14 +15,43 @@ function formatElapsed(ms: number): string {
   return `${m}:${String(rem).padStart(2, '0')}`;
 }
 
-export function WalkingAnt({ elapsedMs: initialElapsedMs }: WalkingAntProps) {
+function pickRandomPhrase(exclude?: string): string {
+  if (THINKING_PHRASES.length <= 1) return THINKING_PHRASES[0];
+  for (let i = 0; i < 6; i += 1) {
+    const pick = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+    if (pick !== exclude) return pick;
+  }
+  return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+}
+
+export function WalkingAnt({ elapsedMs: initialElapsedMs, phaseLabel }: WalkingAntProps) {
   const [elapsed, setElapsed] = useState(initialElapsedMs);
+  const [turnPhrase, setTurnPhrase] = useState(() => pickRandomPhrase());
+  const prevPhaseRef = useRef<string | null | undefined>(phaseLabel);
 
   useEffect(() => {
     setElapsed(initialElapsedMs);
     const id = setInterval(() => setElapsed((prev) => prev + 1000), 1000);
     return () => clearInterval(id);
   }, [initialElapsedMs]);
+
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = phaseLabel;
+    if (prev && !phaseLabel) {
+      setTurnPhrase((current) => pickRandomPhrase(current));
+    }
+  }, [phaseLabel]);
+
+  useEffect(() => {
+    if (phaseLabel) return;
+    const id = setInterval(() => {
+      setTurnPhrase((current) => pickRandomPhrase(current));
+    }, 5000);
+    return () => clearInterval(id);
+  }, [phaseLabel]);
+
+  const label = phaseLabel ?? turnPhrase;
 
   /*
    * Original path 4 (legs) split into two independent paths:
@@ -113,9 +144,10 @@ l-36 76 -57 15 c-127 36 -224 43 -349 26z" />
         </svg>
       </div>
 
-      {elapsed >= 1000 && (
-        <span className={styles.timer}>Thinking for {formatElapsed(elapsed)}</span>
-      )}
+      <span className={styles.timer}>
+        {label}...
+        {elapsed >= 2000 ? ` · ${formatElapsed(elapsed)}` : null}
+      </span>
     </div>
   );
 }

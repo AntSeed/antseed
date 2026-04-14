@@ -162,8 +162,8 @@ const api = {
   chatAiCreateConversation(service: string, provider?: string, peerId?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId);
   },
-  chatAiListServices(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-list-services');
+  chatAiListDiscoverRows(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-list-discover-rows');
   },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
@@ -185,6 +185,15 @@ const api = {
   },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
+  },
+  apiTryProxyRequest(params: {
+    port: number;
+    path: string;
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+  }): Promise<{ ok: boolean; status: number; body: string; error: string | null }> {
+    return ipcRenderer.invoke('api:try-proxy-request', params);
   },
   chatAiGetWorkspace(): Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-workspace');
