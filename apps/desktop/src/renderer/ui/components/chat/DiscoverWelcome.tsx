@@ -244,6 +244,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   const hasActiveFilters =
     filterState.search.trim() !== '' ||
     filterState.categorySet.size > 0 ||
+    filterState.peerSet.size > 0 ||
     filterState.maxInputPrice < MAX_INPUT_PRICE_SLIDER_USD ||
     filterState.maxOutputPrice < MAX_OUTPUT_PRICE_SLIDER_USD ||
     filterState.cachedOnly ||
@@ -251,9 +252,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.minStakeUsdc > 0 ||
     filterState.lastSeenWindow !== 'any' ||
     filterState.lastSettledWindow !== 'any' ||
-    filterState.minChannels > 0 ||
-    filterState.minRequests > 0 ||
-    filterState.minTokens > 0;
+    filterState.minVolumeUsdc > 0;
 
   const hasNetworkData = serviceOptions.length > 0 || rows.length > 0;
   const cards = useMemo(() => {
@@ -271,6 +270,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   useEffect(() => { setPage(1); }, [
     filterState.search,
     filterState.categorySet,
+    filterState.peerSet,
     filterState.maxInputPrice,
     filterState.maxOutputPrice,
     filterState.cachedOnly,
@@ -278,9 +278,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.minStakeUsdc,
     filterState.lastSeenWindow,
     filterState.lastSettledWindow,
-    filterState.minChannels,
-    filterState.minRequests,
-    filterState.minTokens,
+    filterState.minVolumeUsdc,
     filterState.sortKey,
   ]);
 
@@ -315,6 +313,25 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
           </div>
 
           <div className={styles.controlsRow}>
+            <div className={styles.searchBox}>
+              <svg
+                className={styles.searchIcon}
+                width="14" height="14" viewBox="0 0 16 16" fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <circle cx="7" cy="7" r="5.25" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M11 11L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <input
+                type="text"
+                className={styles.searchInput}
+                value={filterState.search}
+                onChange={(e) => filterState.setSearch(e.target.value)}
+                placeholder="Search services, peers, categories…"
+                aria-label="Search services"
+              />
+            </div>
             <button
               type="button"
               className={`${styles.filterTrigger}${drawerOpen && !drawerClosing ? ` ${styles.filterTriggerActive}` : ''}`}

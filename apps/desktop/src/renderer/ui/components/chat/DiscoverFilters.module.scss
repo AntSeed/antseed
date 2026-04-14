@@ -5,9 +5,6 @@
   flex-direction: column;
   gap: 12px;
   flex-shrink: 0;
-  min-height: 0;
-  max-height: 100%;
-  overflow: hidden;
   padding: 8px;
 }
 
@@ -123,6 +120,90 @@
   &::placeholder { color: var(--text-muted); }
   &:hover { border-color: var(--border-strong); }
   &:focus { border-color: var(--text-primary); }
+}
+
+/* ── Peers list ─────────────────────────────────────────────────────── */
+
+.field-peers {
+  max-height: 220px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 4px;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 2px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
+}
+
+.peer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  margin: 0 -2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s ease, color 0.1s ease;
+
+  &:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+  }
+}
+
+.peer-row-active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.peer-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.peer-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-check {
+  flex-shrink: 0;
+  color: var(--text-primary);
 }
 
 /* ── Vertical list (checkboxes / radios) ────────────────────────────── */

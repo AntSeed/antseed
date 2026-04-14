@@ -65,9 +65,39 @@
 .controls-row {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
   width: 100%;
+}
+
+.search-box {
+  position: relative;
+  flex: 1;
+  max-width: 420px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px 0 32px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+
+  &::placeholder { color: var(--text-muted); }
 }
 
 .sort-select {
@@ -107,6 +137,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-left: auto;
   width: 32px;
   height: 32px;
   padding: 0;

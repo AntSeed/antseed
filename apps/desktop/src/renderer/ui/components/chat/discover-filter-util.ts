@@ -15,12 +15,8 @@ export const MAX_INPUT_PRICE_SLIDER_USD = 3;
 export const INPUT_PRICE_SLIDER_STEP = 0.1;
 export const MAX_OUTPUT_PRICE_SLIDER_USD = 3;
 export const OUTPUT_PRICE_SLIDER_STEP = 0.1;
-export const MAX_CHANNELS_SLIDER = 100;
-export const CHANNELS_SLIDER_STEP = 10;
-export const MAX_REQUESTS_SLIDER = 5000;
-export const REQUESTS_SLIDER_STEP = 100;
-export const MAX_TOKENS_SLIDER = 100_000_000;
-export const TOKENS_SLIDER_STEP = 500_000;
+export const MAX_VOLUME_SLIDER_USDC = 100;
+export const VOLUME_SLIDER_STEP = 5;
 export const MAX_STAKE_SLIDER_USDC = 1000;
 
 export type TimeWindow = 'any' | 'today' | 'week' | 'month';
@@ -28,6 +24,7 @@ export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 export type DiscoverFilterInputs = {
   search: string;
   categorySet: Set<string>;
+  peerSet: Set<string>;
   maxInputPrice: number;
   maxOutputPrice: number;
   cachedOnly: boolean;
@@ -35,9 +32,7 @@ export type DiscoverFilterInputs = {
   lastSeenWindow: TimeWindow;
   lastSettledWindow: TimeWindow;
   minStakeUsdc: number;
-  minChannels: number;
-  minRequests: number;
-  minTokens: number;
+  minVolumeUsdc: number;
 };
 
 function parseBigintSafe(value: string | null | undefined): bigint {
@@ -85,6 +80,11 @@ export function matchesCategoryFilter(row: DiscoverRow, set: Set<string>): boole
   return row.categories.some((c) => set.has(c.toLowerCase()));
 }
 
+export function matchesPeerFilter(row: DiscoverRow, set: Set<string>): boolean {
+  if (set.size === 0) return true;
+  return set.has(row.peerId);
+}
+
 export function matchesCachedOnly(row: DiscoverRow, enabled: boolean): boolean {
   if (!enabled) return true;
   const cached = row.cachedInputUsdPerMillion;
@@ -124,31 +124,11 @@ export function matchesLastSettled(row: DiscoverRow, window: TimeWindow, nowMs?:
   return matchesTimeWindow(row.onChainLastSettledAt, window, 'sec', nowMs);
 }
 
-export function matchesMinChannels(row: DiscoverRow, minChannels: number): boolean {
-  if (minChannels <= 0) return true;
-  return row.onChainActiveChannelCount >= minChannels;
-}
-
-export function pickRequests(row: DiscoverRow): bigint {
-  if (row.networkRequests !== null) return parseBigintSafe(row.networkRequests);
-  return BigInt(row.lifetimeRequests);
-}
-
-export function pickTokens(row: DiscoverRow): bigint {
-  if (row.networkInputTokens !== null || row.networkOutputTokens !== null) {
-    return parseBigintSafe(row.networkInputTokens) + parseBigintSafe(row.networkOutputTokens);
-  }
-  return BigInt(row.lifetimeInputTokens + row.lifetimeOutputTokens);
-}
-
-export function matchesMinRequests(row: DiscoverRow, minRequests: number): boolean {
-  if (minRequests <= 0) return true;
-  return pickRequests(row) >= BigInt(minRequests);
-}
-
-export function matchesMinTokens(row: DiscoverRow, minTokens: number): boolean {
-  if (minTokens <= 0) return true;
-  return pickTokens(row) >= BigInt(minTokens);
+export function matchesMinVolume(row: DiscoverRow, minVolumeUsdc: number): boolean {
+  if (minVolumeUsdc <= 0) return true;
+  const volume = parseBigintSafe(row.onChainTotalVolumeUsdc);
+  const threshold = BigInt(Math.floor(minVolumeUsdc * 1_000_000));
+  return volume >= threshold;
 }
 
 export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs): DiscoverRow[] {
@@ -156,6 +136,7 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
   return rows.filter((row) =>
     matchesSearch(row, inputs.search)
     && matchesCategoryFilter(row, inputs.categorySet)
+    && matchesPeerFilter(row, inputs.peerSet)
     && matchesMaxInputPrice(row, inputs.maxInputPrice)
     && matchesMaxOutputPrice(row, inputs.maxOutputPrice)
     && matchesCachedOnly(row, inputs.cachedOnly)
@@ -163,9 +144,7 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
     && matchesMinStake(row, inputs.minStakeUsdc)
     && matchesLastSeen(row, inputs.lastSeenWindow, nowMs)
     && matchesLastSettled(row, inputs.lastSettledWindow, nowMs)
-    && matchesMinChannels(row, inputs.minChannels)
-    && matchesMinRequests(row, inputs.minRequests)
-    && matchesMinTokens(row, inputs.minTokens)
+    && matchesMinVolume(row, inputs.minVolumeUsdc)
   );
 }
 

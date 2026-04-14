@@ -4,7 +4,7 @@ import {
   matchesSearch, matchesMaxInputPrice, matchesMaxOutputPrice,
   matchesCachedOnly, matchesMinStake,
   matchesLastSeen, matchesLastSettled,
-  matchesMinChannels, matchesMinRequests, matchesMinTokens,
+  matchesMinVolume,
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
@@ -91,25 +91,11 @@ test('matchesLastSettled uses onChainLastSettledAt in seconds', () => {
   assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: monthAgoSec }), 'month', nowMs));
 });
 
-test('matchesMinChannels compares onChainActiveChannelCount to slider value', () => {
-  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 5 }), 5));
-  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 3 }), 5));
-  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 0 }), 1));
-  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0 }), 0));
-});
-
-test('matchesMinRequests parses networkRequests bigint', () => {
-  assert.ok(matchesMinRequests(mkRow({ networkRequests: '100' }), 100));
-  assert.ok(!matchesMinRequests(mkRow({ networkRequests: '50' }), 100));
-  assert.ok(!matchesMinRequests(mkRow({ networkRequests: null }), 100));
-  assert.ok(matchesMinRequests(mkRow({ networkRequests: null }), 0));
-});
-
-test('matchesMinTokens sums input+output token strings', () => {
-  assert.ok(matchesMinTokens(mkRow({ networkInputTokens: '600', networkOutputTokens: '500' }), 1000));
-  assert.ok(!matchesMinTokens(mkRow({ networkInputTokens: '300', networkOutputTokens: '200' }), 1000));
-  assert.ok(matchesMinTokens(mkRow({ networkInputTokens: null, networkOutputTokens: null }), 0));
-  assert.ok(!matchesMinTokens(mkRow({ networkInputTokens: null, networkOutputTokens: null }), 1));
+test('matchesMinVolume compares base-6 USDC bigint to slider value', () => {
+  assert.ok(matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '10000000' }), 10));
+  assert.ok(!matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '9999999' }), 10));
+  assert.ok(matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '0' }), 0));
+  assert.ok(!matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '0' }), 1));
 });
 
 test('applyFilters composes all predicates', () => {
@@ -118,13 +104,13 @@ test('applyFilters composes all predicates', () => {
     mkRow({ serviceLabel: 'B', inputUsdPerMillion: 10, categories: ['coding'] }),
   ];
   const filtered = applyFilters(rows, {
-    search: '', categorySet: new Set(['coding']),
+    search: '', categorySet: new Set(['coding']), peerSet: new Set(),
     maxInputPrice: MAX_INPUT_PRICE_SLIDER_USD,
     maxOutputPrice: MAX_OUTPUT_PRICE_SLIDER_USD,
     cachedOnly: false, chattedOnly: false,
     minStakeUsdc: 0,
     lastSeenWindow: 'any', lastSettledWindow: 'any',
-    minChannels: 0, minRequests: 0, minTokens: 0,
+    minVolumeUsdc: 0,
   });
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0]!.serviceLabel, 'B');
