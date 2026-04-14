@@ -2,16 +2,23 @@ import { useMemo, useState, useCallback } from 'react';
 import type { DiscoverRow } from '../../core/state';
 import {
   applyFilters, applySort,
-  type DiscoverSortKey, type DiscoverPriceBucket,
+  MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
+  type DiscoverSortKey, type TimeWindow,
 } from '../components/chat/discover-filter-util';
 
 export type DiscoverFilterState = {
   search: string;
   categorySet: Set<string>;
-  priceBucket: DiscoverPriceBucket;
+  maxInputPrice: number;
+  maxOutputPrice: number;
   cachedOnly: boolean;
   chattedOnly: boolean;
-  minStakeUsdc: string;
+  minStakeUsdc: number;
+  lastSeenWindow: TimeWindow;
+  lastSettledWindow: TimeWindow;
+  minChannels: number;
+  minRequests: number;
+  minTokens: number;
   sortKey: DiscoverSortKey;
 
   sortedRows: DiscoverRow[];
@@ -19,10 +26,16 @@ export type DiscoverFilterState = {
 
   setSearch: (v: string) => void;
   toggleCategory: (cat: string) => void;
-  setPriceBucket: (b: DiscoverPriceBucket) => void;
+  setMaxInputPrice: (v: number) => void;
+  setMaxOutputPrice: (v: number) => void;
   setCachedOnly: (v: boolean) => void;
   setChattedOnly: (v: boolean) => void;
-  setMinStakeUsdc: (v: string) => void;
+  setMinStakeUsdc: (v: number) => void;
+  setLastSeenWindow: (v: TimeWindow) => void;
+  setLastSettledWindow: (v: TimeWindow) => void;
+  setMinChannels: (v: number) => void;
+  setMinRequests: (v: number) => void;
+  setMinTokens: (v: number) => void;
   setSortKey: (k: DiscoverSortKey) => void;
   resetAll: () => void;
 };
@@ -30,10 +43,16 @@ export type DiscoverFilterState = {
 export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   const [search, setSearch] = useState('');
   const [categorySet, setCategorySet] = useState<Set<string>>(() => new Set());
-  const [priceBucket, setPriceBucket] = useState<DiscoverPriceBucket>('any');
+  const [maxInputPrice, setMaxInputPrice] = useState<number>(MAX_INPUT_PRICE_SLIDER_USD);
+  const [maxOutputPrice, setMaxOutputPrice] = useState<number>(MAX_OUTPUT_PRICE_SLIDER_USD);
   const [cachedOnly, setCachedOnly] = useState(false);
   const [chattedOnly, setChattedOnly] = useState(false);
-  const [minStakeUsdc, setMinStakeUsdc] = useState('');
+  const [minStakeUsdc, setMinStakeUsdc] = useState<number>(0);
+  const [lastSeenWindow, setLastSeenWindow] = useState<TimeWindow>('any');
+  const [lastSettledWindow, setLastSettledWindow] = useState<TimeWindow>('any');
+  const [minChannels, setMinChannels] = useState<number>(0);
+  const [minRequests, setMinRequests] = useState<number>(0);
+  const [minTokens, setMinTokens] = useState<number>(0);
   const [sortKey, setSortKey] = useState<DiscoverSortKey>('recentlyUsed');
 
   const toggleCategory = useCallback((cat: string) => {
@@ -49,10 +68,16 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   const resetAll = useCallback(() => {
     setSearch('');
     setCategorySet(new Set());
-    setPriceBucket('any');
+    setMaxInputPrice(MAX_INPUT_PRICE_SLIDER_USD);
+    setMaxOutputPrice(MAX_OUTPUT_PRICE_SLIDER_USD);
     setCachedOnly(false);
     setChattedOnly(false);
-    setMinStakeUsdc('');
+    setMinStakeUsdc(0);
+    setLastSeenWindow('any');
+    setLastSettledWindow('any');
+    setMinChannels(0);
+    setMinRequests(0);
+    setMinTokens(0);
     setSortKey('recentlyUsed');
   }, []);
 
@@ -63,8 +88,12 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   }, [rows]);
 
   const filteredRows = useMemo(
-    () => applyFilters(rows, { search, categorySet, priceBucket, cachedOnly, chattedOnly, minStakeUsdc }),
-    [rows, search, categorySet, priceBucket, cachedOnly, chattedOnly, minStakeUsdc],
+    () => applyFilters(rows, {
+      search, categorySet, maxInputPrice, maxOutputPrice, cachedOnly, chattedOnly, minStakeUsdc,
+      lastSeenWindow, lastSettledWindow, minChannels, minRequests, minTokens,
+    }),
+    [rows, search, categorySet, maxInputPrice, maxOutputPrice, cachedOnly, chattedOnly, minStakeUsdc,
+      lastSeenWindow, lastSettledWindow, minChannels, minRequests, minTokens],
   );
 
   const sortedRows = useMemo(
@@ -75,10 +104,16 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   return {
     search,
     categorySet,
-    priceBucket,
+    maxInputPrice,
+    maxOutputPrice,
     cachedOnly,
     chattedOnly,
     minStakeUsdc,
+    lastSeenWindow,
+    lastSettledWindow,
+    minChannels,
+    minRequests,
+    minTokens,
     sortKey,
 
     sortedRows,
@@ -86,10 +121,16 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
 
     setSearch,
     toggleCategory,
-    setPriceBucket,
+    setMaxInputPrice,
+    setMaxOutputPrice,
     setCachedOnly,
     setChattedOnly,
     setMinStakeUsdc,
+    setLastSeenWindow,
+    setLastSettledWindow,
+    setMinChannels,
+    setMinRequests,
+    setMinTokens,
     setSortKey,
     resetAll,
   };

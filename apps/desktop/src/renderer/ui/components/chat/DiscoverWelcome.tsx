@@ -283,10 +283,16 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   useEffect(() => { setPage(1); }, [
     filterState.search,
     filterState.categorySet,
-    filterState.priceBucket,
+    filterState.maxInputPrice,
+    filterState.maxOutputPrice,
     filterState.cachedOnly,
     filterState.chattedOnly,
     filterState.minStakeUsdc,
+    filterState.lastSeenWindow,
+    filterState.lastSettledWindow,
+    filterState.minChannels,
+    filterState.minRequests,
+    filterState.minTokens,
     filterState.sortKey,
   ]);
 

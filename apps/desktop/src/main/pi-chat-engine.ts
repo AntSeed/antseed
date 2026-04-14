@@ -2149,26 +2149,38 @@ export function registerPiChatHandlers({
         firstSessionAt: number | null;
         lastSessionAt: number | null;
       }>();
-      try {
-        const resp = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/peer-stats`);
-        const body = await resp.json() as { ok?: boolean; totals?: Array<Record<string, unknown>> };
-        if (body.ok && Array.isArray(body.totals)) {
-          for (const t of body.totals) {
-            if (typeof t.peerId === 'string') {
-              statsMap.set(t.peerId, {
-                totalSessions: Number(t.totalSessions) || 0,
-                totalRequests: Number(t.totalRequests) || 0,
-                totalInputTokens: Number(t.totalInputTokens) || 0,
-                totalOutputTokens: Number(t.totalOutputTokens) || 0,
-                firstSessionAt: typeof t.firstSessionAt === 'number' ? t.firstSessionAt : null,
-                lastSessionAt: typeof t.lastSessionAt === 'number' ? t.lastSessionAt : null,
-              });
-            }
-          }
+      // Per-peer lifetime metering. The buyer-proxy exposes
+      // /_antseed/metering/<peerId>; fetch in parallel for every catalog peer.
+      const uniqueCatalogPeerIds = Array.from(new Set(
+        entries.map((e) => e.peerId ?? '').filter((p) => p.length > 0)
+      ));
+      await Promise.all(uniqueCatalogPeerIds.map(async (peerId) => {
+        try {
+          const resp = await fetch(
+            `http://127.0.0.1:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
+          );
+          if (!resp.ok) return;
+          const body = await resp.json() as Record<string, unknown> | null;
+          if (!body || typeof body !== 'object') return;
+          const sessions = Number(body.lifetimeSessions) || 0;
+          const reqs = Number(body.lifetimeRequests) || 0;
+          const inTok = Number(body.lifetimeInputTokens) || 0;
+          const outTok = Number(body.lifetimeOutputTokens) || 0;
+          const firstAt = typeof body.lifetimeFirstSessionAt === 'number' ? body.lifetimeFirstSessionAt : null;
+          const lastAt = typeof body.lifetimeLastSessionAt === 'number' ? body.lifetimeLastSessionAt : null;
+          if (sessions === 0 && reqs === 0 && inTok === 0 && outTok === 0 && firstAt == null && lastAt == null) return;
+          statsMap.set(peerId, {
+            totalSessions: sessions,
+            totalRequests: reqs,
+            totalInputTokens: inTok,
+            totalOutputTokens: outTok,
+            firstSessionAt: firstAt,
+            lastSessionAt: lastAt,
+          });
+        } catch {
+          // Ignore — peer simply has no metering info
         }
-      } catch {
-        // Proxy unavailable — stats map stays empty
-      }
+      }));
 
       const { readFile } = await import('node:fs/promises');
       const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');

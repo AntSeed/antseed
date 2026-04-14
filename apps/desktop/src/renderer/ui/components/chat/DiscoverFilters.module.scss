@@ -30,6 +30,59 @@
   gap: 5px;
 }
 
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 170px;
+  overflow-y: auto;
+  padding-right: 4px;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 2px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  text-transform: capitalize;
+  line-height: 1.4;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  user-select: none;
+
+  &:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+}
+
+.tag-active {
+  background: var(--text-primary);
+  color: var(--bg-card);
+  border-color: var(--text-primary);
+
+  &:hover {
+    background: var(--text-primary);
+    color: var(--bg-card);
+    border-color: var(--text-primary);
+  }
+}
+
 .label {
   font-size: 10px;
   font-weight: 700;
@@ -105,17 +158,14 @@
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 3px 5px;
+  padding: 4px;
+  margin-left: -4px;
+  margin-right: -4px;
   border-radius: 5px;
   transition: background 0.1s ease, color 0.1s ease;
   user-select: none;
   flex-shrink: 0;
   line-height: 1.3;
-
-  &:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-  }
 
   input {
     margin: 0;
@@ -127,23 +177,106 @@
   }
 }
 
-/* ── Number input ───────────────────────────────────────────────────── */
+/* ── Slider ─────────────────────────────────────────────────────────── */
 
-.number-input {
+.slider-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.slider-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 4px 0 2px;
+
+  &:hover { background: var(--border-strong); }
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 1px var(--border-strong);
+    cursor: grab;
+    transition: transform 0.1s ease;
+  }
+
+  &::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+  }
+
+  &::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.15);
+  }
+
+  &::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 0 1px var(--border-strong);
+    cursor: grab;
+  }
+}
+
+/* ── Section header ─────────────────────────────────────────────────── */
+
+.section-header {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 0 2px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Select ─────────────────────────────────────────────────────────── */
+
+.select {
   width: 100%;
   height: 30px;
-  padding: 0 12px;
-  font-size: 13px;
+  padding: 0 28px 0 10px;
+  font-size: 12px;
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1L5 5L9 1' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
   transition: border-color 0.12s ease;
-  font-variant-numeric: tabular-nums;
 
-  &::placeholder { color: var(--text-muted); }
   &:hover { border-color: var(--border-strong); }
   &:focus { border-color: var(--text-primary); }
 }

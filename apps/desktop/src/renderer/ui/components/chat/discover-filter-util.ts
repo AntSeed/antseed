@@ -11,16 +11,47 @@ export type DiscoverSortKey =
   | 'lastSettledDesc'
   | 'stakedAtAsc' | 'stakedAtDesc';
 
-export type DiscoverPriceBucket = 'any' | 'free' | 'lt1' | '1to5' | 'gt5';
+export const MAX_INPUT_PRICE_SLIDER_USD = 3;
+export const INPUT_PRICE_SLIDER_STEP = 0.1;
+export const MAX_OUTPUT_PRICE_SLIDER_USD = 3;
+export const OUTPUT_PRICE_SLIDER_STEP = 0.1;
+export const MAX_CHANNELS_SLIDER = 100;
+export const CHANNELS_SLIDER_STEP = 10;
+export const MAX_REQUESTS_SLIDER = 5000;
+export const REQUESTS_SLIDER_STEP = 100;
+export const MAX_TOKENS_SLIDER = 100_000_000;
+export const TOKENS_SLIDER_STEP = 500_000;
+export const MAX_STAKE_SLIDER_USDC = 1000;
+
+export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 
 export type DiscoverFilterInputs = {
   search: string;
   categorySet: Set<string>;
-  priceBucket: DiscoverPriceBucket;
+  maxInputPrice: number;
+  maxOutputPrice: number;
   cachedOnly: boolean;
   chattedOnly: boolean;
-  minStakeUsdc: string;
+  lastSeenWindow: TimeWindow;
+  lastSettledWindow: TimeWindow;
+  minStakeUsdc: number;
+  minChannels: number;
+  minRequests: number;
+  minTokens: number;
 };
+
+function parseBigintSafe(value: string | null | undefined): bigint {
+  if (!value) return 0n;
+  try { return BigInt(value); } catch { return 0n; }
+}
+
+export function hasBeenUsed(row: DiscoverRow): boolean {
+  return row.lifetimeRequests > 0
+    || row.lifetimeSessions > 0
+    || row.lifetimeInputTokens > 0
+    || row.lifetimeOutputTokens > 0
+    || row.lifetimeLastSessionAt != null;
+}
 
 export function matchesSearch(row: DiscoverRow, q: string): boolean {
   if (!q) return true;
@@ -35,17 +66,18 @@ export function matchesSearch(row: DiscoverRow, q: string): boolean {
   return false;
 }
 
-export function matchesPriceBucket(row: DiscoverRow, bucket: DiscoverPriceBucket): boolean {
-  if (bucket === 'any') return true;
+export function matchesMaxInputPrice(row: DiscoverRow, maxPrice: number): boolean {
+  if (maxPrice >= MAX_INPUT_PRICE_SLIDER_USD) return true;
   const input = row.inputUsdPerMillion;
   if (input == null) return false;
-  switch (bucket) {
-    case 'free':  return input === 0;
-    case 'lt1':   return input > 0 && input < 1;
-    case '1to5':  return input >= 1 && input <= 5;
-    case 'gt5':   return input > 5;
-    default:      return true;
-  }
+  return input <= maxPrice;
+}
+
+export function matchesMaxOutputPrice(row: DiscoverRow, maxPrice: number): boolean {
+  if (maxPrice >= MAX_OUTPUT_PRICE_SLIDER_USD) return true;
+  const output = row.outputUsdPerMillion;
+  if (output == null) return false;
+  return output <= maxPrice;
 }
 
 export function matchesCategoryFilter(row: DiscoverRow, set: Set<string>): boolean {
@@ -60,22 +92,80 @@ export function matchesCachedOnly(row: DiscoverRow, enabled: boolean): boolean {
   return cached != null && input != null && cached < input;
 }
 
-export function matchesMinStake(row: DiscoverRow, minStakeUsdc: string): boolean {
-  if (!minStakeUsdc.trim()) return true;
-  const parsed = Number(minStakeUsdc);
-  if (!Number.isFinite(parsed) || parsed < 0) return true;
+export function matchesMinStake(row: DiscoverRow, minStakeUsdc: number): boolean {
+  if (minStakeUsdc <= 0) return true;
   const rowStake = Number(BigInt(row.stakeUsdc) / 1_000_000n);
-  return rowStake >= parsed;
+  return rowStake >= minStakeUsdc;
+}
+
+export function matchesTimeWindow(
+  ts: number | null | undefined,
+  window: TimeWindow,
+  unit: 'ms' | 'sec',
+  nowMs: number = Date.now(),
+): boolean {
+  if (window === 'any') return true;
+  if (!ts || ts <= 0) return false;
+  const tsMs = unit === 'sec' ? ts * 1000 : ts;
+  const diffMs = nowMs - tsMs;
+  switch (window) {
+    case 'today': return diffMs < 24 * 3600 * 1000;
+    case 'week':  return diffMs < 7 * 24 * 3600 * 1000;
+    case 'month': return diffMs < 30 * 24 * 3600 * 1000;
+  }
+  return true;
+}
+
+export function matchesLastSeen(row: DiscoverRow, window: TimeWindow, nowMs?: number): boolean {
+  return matchesTimeWindow(row.lifetimeLastSessionAt, window, 'ms', nowMs);
+}
+
+export function matchesLastSettled(row: DiscoverRow, window: TimeWindow, nowMs?: number): boolean {
+  return matchesTimeWindow(row.onChainLastSettledAt, window, 'sec', nowMs);
+}
+
+export function matchesMinChannels(row: DiscoverRow, minChannels: number): boolean {
+  if (minChannels <= 0) return true;
+  return row.onChainActiveChannelCount >= minChannels;
+}
+
+export function pickRequests(row: DiscoverRow): bigint {
+  if (row.networkRequests !== null) return parseBigintSafe(row.networkRequests);
+  return BigInt(row.lifetimeRequests);
+}
+
+export function pickTokens(row: DiscoverRow): bigint {
+  if (row.networkInputTokens !== null || row.networkOutputTokens !== null) {
+    return parseBigintSafe(row.networkInputTokens) + parseBigintSafe(row.networkOutputTokens);
+  }
+  return BigInt(row.lifetimeInputTokens + row.lifetimeOutputTokens);
+}
+
+export function matchesMinRequests(row: DiscoverRow, minRequests: number): boolean {
+  if (minRequests <= 0) return true;
+  return pickRequests(row) >= BigInt(minRequests);
+}
+
+export function matchesMinTokens(row: DiscoverRow, minTokens: number): boolean {
+  if (minTokens <= 0) return true;
+  return pickTokens(row) >= BigInt(minTokens);
 }
 
 export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs): DiscoverRow[] {
+  const nowMs = Date.now();
   return rows.filter((row) =>
     matchesSearch(row, inputs.search)
     && matchesCategoryFilter(row, inputs.categorySet)
-    && matchesPriceBucket(row, inputs.priceBucket)
+    && matchesMaxInputPrice(row, inputs.maxInputPrice)
+    && matchesMaxOutputPrice(row, inputs.maxOutputPrice)
     && matchesCachedOnly(row, inputs.cachedOnly)
-    && (inputs.chattedOnly ? row.lifetimeSessions > 0 : true)
+    && (inputs.chattedOnly ? hasBeenUsed(row) : true)
     && matchesMinStake(row, inputs.minStakeUsdc)
+    && matchesLastSeen(row, inputs.lastSeenWindow, nowMs)
+    && matchesLastSettled(row, inputs.lastSettledWindow, nowMs)
+    && matchesMinChannels(row, inputs.minChannels)
+    && matchesMinRequests(row, inputs.minRequests)
+    && matchesMinTokens(row, inputs.minTokens)
   );
 }
 

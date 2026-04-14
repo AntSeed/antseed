@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  matchesSearch, matchesPriceBucket, matchesCachedOnly, matchesMinStake,
+  matchesSearch, matchesMaxInputPrice, matchesMaxOutputPrice,
+  matchesCachedOnly, matchesMinStake,
+  matchesLastSeen, matchesLastSettled,
+  matchesMinChannels, matchesMinRequests, matchesMinTokens,
   applyFilters, applySort, paginate, totalPagesFor,
+  MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
 import type { DiscoverRow } from '../../../core/state';
 
@@ -18,6 +22,7 @@ function mkRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainChannelCount: null,
     agentId: 1, stakeUsdc: '0', stakedAt: 0,
     onChainActiveChannelCount: 0, onChainGhostCount: 0, onChainTotalVolumeUsdc: '0', onChainLastSettledAt: 0,
+    networkRequests: null, networkInputTokens: null, networkOutputTokens: null,
     selectionValue: '',
     ...overrides,
   };
@@ -31,13 +36,23 @@ test('matchesSearch finds query in service, peer, categories', () => {
   assert.ok(!matchesSearch(r, 'zzz'));
 });
 
-test('matchesPriceBucket handles all buckets', () => {
-  assert.ok(matchesPriceBucket(mkRow({ inputUsdPerMillion: 0 }), 'free'));
-  assert.ok(!matchesPriceBucket(mkRow({ inputUsdPerMillion: 0.5 }), 'free'));
-  assert.ok(matchesPriceBucket(mkRow({ inputUsdPerMillion: 0.5 }), 'lt1'));
-  assert.ok(matchesPriceBucket(mkRow({ inputUsdPerMillion: 3 }), '1to5'));
-  assert.ok(matchesPriceBucket(mkRow({ inputUsdPerMillion: 10 }), 'gt5'));
-  assert.ok(matchesPriceBucket(mkRow({ inputUsdPerMillion: 0 }), 'any'));
+test('matchesMaxInputPrice filters rows by the input slider ceiling', () => {
+  assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 5 }), MAX_INPUT_PRICE_SLIDER_USD));
+  assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: null }), MAX_INPUT_PRICE_SLIDER_USD));
+  assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 0.3 }), 0.5));
+  assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 0.5 }), 0.5));
+  assert.ok(!matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 0.6 }), 0.5));
+  assert.ok(!matchesMaxInputPrice(mkRow({ inputUsdPerMillion: null }), 0.5));
+  assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 0 }), 0));
+  assert.ok(!matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 0.05 }), 0));
+});
+
+test('matchesMaxOutputPrice filters rows by the output slider ceiling', () => {
+  assert.ok(matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: 20 }), MAX_OUTPUT_PRICE_SLIDER_USD));
+  assert.ok(matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: null }), MAX_OUTPUT_PRICE_SLIDER_USD));
+  assert.ok(matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: 0.4 }), 0.6));
+  assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: 0.7 }), 0.6));
+  assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: null }), 0.6));
 });
 
 test('matchesCachedOnly requires cached < input', () => {
@@ -47,10 +62,54 @@ test('matchesCachedOnly requires cached < input', () => {
   assert.ok(matchesCachedOnly(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: null }), false));
 });
 
-test('matchesMinStake compares base-6 USDC bigint to human input', () => {
-  assert.ok(matchesMinStake(mkRow({ stakeUsdc: '10000000' }), '10'));
-  assert.ok(!matchesMinStake(mkRow({ stakeUsdc: '9000000' }), '10'));
-  assert.ok(matchesMinStake(mkRow({ stakeUsdc: '0' }), ''));
+test('matchesMinStake compares base-6 USDC bigint to slider value', () => {
+  assert.ok(matchesMinStake(mkRow({ stakeUsdc: '10000000' }), 10));
+  assert.ok(!matchesMinStake(mkRow({ stakeUsdc: '9000000' }), 10));
+  assert.ok(matchesMinStake(mkRow({ stakeUsdc: '0' }), 0));
+});
+
+test('matchesLastSeen uses lifetimeLastSessionAt in ms', () => {
+  const now = 10_000_000_000;
+  const hourAgo = now - 3600 * 1000;
+  const tenDaysAgo = now - 10 * 86_400 * 1000;
+  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: null }), 'any', now));
+  assert.ok(!matchesLastSeen(mkRow({ lifetimeLastSessionAt: null }), 'today', now));
+  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: hourAgo }), 'today', now));
+  assert.ok(!matchesLastSeen(mkRow({ lifetimeLastSessionAt: tenDaysAgo }), 'week', now));
+  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: tenDaysAgo }), 'month', now));
+});
+
+test('matchesLastSettled uses onChainLastSettledAt in seconds', () => {
+  const nowMs = 10_000_000_000;
+  const nowSec = Math.floor(nowMs / 1000);
+  const dayAgoSec = nowSec - 86_400;
+  const monthAgoSec = nowSec - 86_400 * 40;
+  assert.ok(matchesLastSettled(mkRow({ onChainLastSettledAt: 0 }), 'any', nowMs));
+  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: 0 }), 'today', nowMs));
+  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: dayAgoSec }), 'today', nowMs));
+  assert.ok(matchesLastSettled(mkRow({ onChainLastSettledAt: dayAgoSec }), 'week', nowMs));
+  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: monthAgoSec }), 'month', nowMs));
+});
+
+test('matchesMinChannels compares onChainActiveChannelCount to slider value', () => {
+  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 5 }), 5));
+  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 3 }), 5));
+  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 0 }), 1));
+  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0 }), 0));
+});
+
+test('matchesMinRequests parses networkRequests bigint', () => {
+  assert.ok(matchesMinRequests(mkRow({ networkRequests: '100' }), 100));
+  assert.ok(!matchesMinRequests(mkRow({ networkRequests: '50' }), 100));
+  assert.ok(!matchesMinRequests(mkRow({ networkRequests: null }), 100));
+  assert.ok(matchesMinRequests(mkRow({ networkRequests: null }), 0));
+});
+
+test('matchesMinTokens sums input+output token strings', () => {
+  assert.ok(matchesMinTokens(mkRow({ networkInputTokens: '600', networkOutputTokens: '500' }), 1000));
+  assert.ok(!matchesMinTokens(mkRow({ networkInputTokens: '300', networkOutputTokens: '200' }), 1000));
+  assert.ok(matchesMinTokens(mkRow({ networkInputTokens: null, networkOutputTokens: null }), 0));
+  assert.ok(!matchesMinTokens(mkRow({ networkInputTokens: null, networkOutputTokens: null }), 1));
 });
 
 test('applyFilters composes all predicates', () => {
@@ -60,7 +119,12 @@ test('applyFilters composes all predicates', () => {
   ];
   const filtered = applyFilters(rows, {
     search: '', categorySet: new Set(['coding']),
-    priceBucket: 'gt5', cachedOnly: false, chattedOnly: false, minStakeUsdc: '',
+    maxInputPrice: MAX_INPUT_PRICE_SLIDER_USD,
+    maxOutputPrice: MAX_OUTPUT_PRICE_SLIDER_USD,
+    cachedOnly: false, chattedOnly: false,
+    minStakeUsdc: 0,
+    lastSeenWindow: 'any', lastSettledWindow: 'any',
+    minChannels: 0, minRequests: 0, minTokens: 0,
   });
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0]!.serviceLabel, 'B');

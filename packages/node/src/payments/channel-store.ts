@@ -183,7 +183,8 @@ export class ChannelStore {
           COALESCE(SUM(CAST(tokens_delivered AS INTEGER)), 0) as total_input_tokens,
           COALESCE(SUM(CAST(previous_consumption AS INTEGER)), 0) as total_output_tokens,
           COALESCE(SUM(CAST(auth_max AS INTEGER)), 0) as total_authorized,
-          MIN(reserved_at) as first_session_at
+          MIN(reserved_at) as first_session_at,
+          MAX(updated_at) as last_session_at
         FROM payment_channels
         WHERE peer_id = ? AND role = ? AND buyer_evm_addr = ?
       `),
@@ -301,6 +302,7 @@ export class ChannelStore {
     totalOutputTokens: number;
     totalAuthorizedUsdc: bigint;
     firstSessionAt: number | null;
+    lastSessionAt: number | null;
   } {
     const row = this._db.prepare(`
       SELECT
@@ -309,7 +311,8 @@ export class ChannelStore {
         COALESCE(SUM(CAST(tokens_delivered AS INTEGER)), 0) as total_input_tokens,
         COALESCE(SUM(CAST(previous_consumption AS INTEGER)), 0) as total_output_tokens,
         COALESCE(SUM(CAST(auth_max AS INTEGER)), 0) as total_authorized,
-        MIN(reserved_at) as first_session_at
+        MIN(reserved_at) as first_session_at,
+        MAX(updated_at) as last_session_at
       FROM payment_channels
       WHERE peer_id = ? AND role = ?
     `).get(peerId, role) as {
@@ -319,6 +322,7 @@ export class ChannelStore {
       total_output_tokens: number;
       total_authorized: number;
       first_session_at: number | null;
+      last_session_at: number | null;
     };
     return {
       totalSessions: row.total_sessions,
@@ -327,6 +331,7 @@ export class ChannelStore {
       totalOutputTokens: row.total_output_tokens,
       totalAuthorizedUsdc: BigInt(row.total_authorized),
       firstSessionAt: row.first_session_at,
+      lastSessionAt: row.last_session_at,
     };
   }
 
@@ -337,6 +342,7 @@ export class ChannelStore {
     totalOutputTokens: number;
     totalAuthorizedUsdc: bigint;
     firstSessionAt: number | null;
+    lastSessionAt: number | null;
   } {
     const row = this._stmts.getTotalsByPeerAndBuyer.get(peerId, role, buyerEvmAddr) as {
       total_sessions: number;
@@ -345,6 +351,7 @@ export class ChannelStore {
       total_output_tokens: number;
       total_authorized: number;
       first_session_at: number | null;
+      last_session_at: number | null;
     };
     return {
       totalSessions: row.total_sessions,
@@ -353,6 +360,7 @@ export class ChannelStore {
       totalOutputTokens: row.total_output_tokens,
       totalAuthorizedUsdc: BigInt(row.total_authorized),
       firstSessionAt: row.first_session_at,
+      lastSessionAt: row.last_session_at,
     };
   }
 
