@@ -45,6 +45,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
     extendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
+    getCumulativeAmount: vi.fn().mockReturnValue(0n),
     resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
@@ -219,6 +220,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const activeSession = makeActiveSession(peer.peerId);
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.getCumulativeAmount as ReturnType<typeof vi.fn>).mockReturnValueOnce(0n).mockReturnValueOnce(100n);
       (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       });

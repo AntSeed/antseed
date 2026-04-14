@@ -30,14 +30,9 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     chainId: 'base-mainnet',
     evmChainId: 8453,
-    // base-rpc.publicnode.com is the most reliable public Base endpoint we've
-    // tested — it handles concurrent eth_call reads (Promise.all of
-    // getBuyerBalance + getBuyerCreditLimit + getOperator) without 429s.
-    // mainnet.base.org and llamarpc both rate-limit under that load and
-    // produce `CALL_EXCEPTION missing revert data` in ethers, which is what
-    // was making the desktop credits pill show $0.00.
-    // Users can override via payments.crypto.rpcUrl in config.json.
-    rpcUrl: 'https://base-rpc.publicnode.com',
+    // Official Base mainnet RPC. Users can override via payments.crypto.rpcUrl
+    // in config.json if they hit rate limits or want a different provider.
+    rpcUrl: 'https://mainnet.base.org',
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',

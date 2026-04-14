@@ -242,6 +242,25 @@ export class BuyerPaymentManager {
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
     let maxSignable = this._maxSignable(sellerPeerId);
+
+    // If the overdraft window has collapsed to the current cumulative, the buyer has already
+    // signed up to verified + maxPerRequest and the seller returned 402 because spent caught up
+    // to the accepted cumulative. The buyer has already committed to pay currentCumulative via
+    // the signed SpendingAuth, so advancing verified to match reclaims the overdraft headroom
+    // without adding new exposure. Per-request cost claims are still tolerance-checked at
+    // NeedAuth time, so this is not a new attack surface.
+    if (maxSignable <= currentCumulative) {
+      const previousVerified = this._verifiedCost.get(sellerPeerId) ?? 0n;
+      if (currentCumulative > previousVerified) {
+        this._verifiedCost.set(sellerPeerId, currentCumulative);
+        maxSignable = this._maxSignable(sellerPeerId);
+        debugLog(
+          `[BuyerPayment] extendCurrentSpendingAuth: advanced verifiedCost ${previousVerified} → ${currentCumulative} ` +
+          `to unblock overdraft window for ${sellerPeerId.slice(0, 12)}...`,
+        );
+      }
+    }
+
     const ceiling = this._getCeiling(sellerPeerId);
     const requestedAmount = currentCumulative + minBudgetPerRequest;
 
