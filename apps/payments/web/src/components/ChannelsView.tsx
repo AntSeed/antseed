@@ -4,6 +4,7 @@ import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import { getChannels, getOperatorInfo, signOperatorAuth, type ChannelData } from '../api';
 import { CHANNELS_ABI } from '../channels-abi';
+import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 
 interface ChannelsViewProps {
   config: PaymentConfig | null;
@@ -59,6 +60,8 @@ const parsedAbi = parseAbi(CHANNELS_ABI);
 
 function SessionCard({ session, config, onRefresh }: { session: ChannelData; config: PaymentConfig; onRefresh: () => void }) {
   const status = getSessionStatus(session);
+  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+  const [error, setError] = useState<string | null>(null);
 
   const {
     writeContract: writeRequestClose,
@@ -67,6 +70,7 @@ function SessionCard({ session, config, onRefresh }: { session: ChannelData; con
 
   const { isSuccess: closeConfirmed } = useWaitForTransactionReceipt({
     hash: closeTxHash,
+    chainId: expectedChainId,
   });
 
   const {
@@ -76,25 +80,40 @@ function SessionCard({ session, config, onRefresh }: { session: ChannelData; con
 
   const { isSuccess: withdrawConfirmed } = useWaitForTransactionReceipt({
     hash: withdrawTxHash,
+    chainId: expectedChainId,
   });
 
-  const handleRequestClose = useCallback(() => {
-    writeRequestClose({
-      address: config.channelsContractAddress as `0x${string}`,
-      abi: parsedAbi,
-      functionName: 'requestClose',
-      args: [session.channelId as `0x${string}`],
-    });
-  }, [config.channelsContractAddress, session.channelId, writeRequestClose]);
+  const handleRequestClose = useCallback(async () => {
+    setError(null);
+    try {
+      await ensureCorrectNetwork();
+      writeRequestClose({
+        address: config.channelsContractAddress as `0x${string}`,
+        abi: parsedAbi,
+        functionName: 'requestClose',
+        chainId: expectedChainId,
+        args: [session.channelId as `0x${string}`],
+      });
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeRequestClose]);
 
-  const handleWithdraw = useCallback(() => {
-    writeWithdraw({
-      address: config.channelsContractAddress as `0x${string}`,
-      abi: parsedAbi,
-      functionName: 'withdraw',
-      args: [session.channelId as `0x${string}`],
-    });
-  }, [config.channelsContractAddress, session.channelId, writeWithdraw]);
+  const handleWithdraw = useCallback(async () => {
+    setError(null);
+    try {
+      await ensureCorrectNetwork();
+      writeWithdraw({
+        address: config.channelsContractAddress as `0x${string}`,
+        abi: parsedAbi,
+        functionName: 'withdraw',
+        chainId: expectedChainId,
+        args: [session.channelId as `0x${string}`],
+      });
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeWithdraw]);
 
   return (
     <div style={{
@@ -140,6 +159,9 @@ function SessionCard({ session, config, onRefresh }: { session: ChannelData; con
       )}
       {withdrawConfirmed && (
         <div className="status-msg status-success" style={{ fontSize: 11 }}>Withdrawn. Tx: {withdrawTxHash?.slice(0, 18)}... <button className="btn-link" onClick={onRefresh} style={{ fontSize: 11 }}>Refresh</button></div>
+      )}
+      {error && (
+        <div className="status-msg status-error" style={{ fontSize: 11 }}>{error}</div>
       )}
     </div>
   );
@@ -266,9 +288,10 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
   const { address } = useAccount();
   const [setting, setSetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
 
   const { writeContract, data: txHash, reset } = useWriteContract();
-  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash, chainId: expectedChainId });
 
   useEffect(() => {
     if (isSuccess && setting) {
@@ -284,6 +307,7 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
     reset();
 
     try {
+      await ensureCorrectNetwork();
       const signResult = await signOperatorAuth(address);
       if (!signResult.ok) {
         setSetting(false);
@@ -295,18 +319,19 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
         address: config.depositsContractAddress as `0x${string}`,
         abi: DEPOSITS_OPERATOR_ABI,
         functionName: 'setOperator',
+        chainId: expectedChainId,
         args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
       }, {
         onError: (err) => {
           setSetting(false);
-          setError(err.message.split('\n')[0] ?? err.message);
+          setError(getErrorMessage(err));
         },
       });
     } catch (err) {
       setSetting(false);
-      setError(err instanceof Error ? err.message : 'Failed to set wallet');
+      setError(getErrorMessage(err, 'Failed to set wallet'));
     }
-  }, [address, config, writeContract, reset]);
+  }, [address, config, ensureCorrectNetwork, expectedChainId, writeContract, reset]);
 
   return (
     <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12 }}>

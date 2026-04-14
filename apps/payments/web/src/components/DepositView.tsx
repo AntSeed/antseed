@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import {
   useAccount,
+  useChainId,
   useWriteContract,
   useSimulateContract,
   useWaitForTransactionReceipt,
@@ -9,6 +10,7 @@ import {
 } from 'wagmi';
 import { parseUnits } from 'viem';
 import type { PaymentConfig } from '../types';
+import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -103,13 +105,20 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   buyerAddress: string | null;
   onDeposited: () => void;
 }) {
-  const { address, isConnected, chain } = useAccount();
+  const { address, isConnected } = useAccount();
+  const connectedChainId = useChainId();
   const [amount, setAmount] = useState('10');
   const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  const expectedChainId = config?.evmChainId;
-  const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
+  const {
+    expectedChainId,
+    targetChainName,
+    walletChainId,
+    wrongChain,
+    isSwitchingChain,
+    ensureCorrectNetwork,
+  } = usePaymentNetwork(config);
   const depositTarget = buyerAddress ?? address;
 
   // Read on-chain allowance (always, when connected)
@@ -117,6 +126,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     address: config?.usdcContractAddress as `0x${string}`,
     abi: ERC20_ABI,
     functionName: 'allowance',
+    chainId: expectedChainId,
     args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
     query: { enabled: isConnected && !!config && !!address },
   });
@@ -133,6 +143,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
     hash: approveTxHash,
+    chainId: expectedChainId,
     query: { enabled: step === 'approving' && !!approveTxHash },
   });
 
@@ -141,6 +152,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     address: config?.depositsContractAddress as `0x${string}`,
     abi: DEPOSITS_ABI,
     functionName: 'deposit',
+    chainId: expectedChainId,
     args: [depositTarget as `0x${string}`, usdcAmount],
     query: { enabled: hasAllowance && !!config && !!depositTarget, retry: 3, retryDelay: 2000 },
   });
@@ -154,6 +166,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
     hash: depositTxHash,
+    chainId: expectedChainId,
     query: { enabled: step === 'depositing' && !!depositTxHash },
   });
 
@@ -167,13 +180,13 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   useEffect(() => {
     if (step !== 'approving' || !depositSim?.request) return;
     setStep('depositing');
-    writeDeposit(depositSim.request, {
+    writeDeposit({ ...depositSim.request, chainId: expectedChainId }, {
       onError: (err) => {
         setStep('idle');
-        setError(err.message.split('\n')[0] ?? err.message);
+        setError(getErrorMessage(err));
       },
     });
-  }, [step, depositSim, writeDeposit]);
+  }, [step, depositSim, expectedChainId, writeDeposit]);
 
   // After deposit confirms → done
   useEffect(() => {
@@ -183,10 +196,18 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     }
   }, [depositConfirmed, step, onDeposited]);
 
-  function handleDeposit() {
+  async function handleDeposit() {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
 
     setError(null);
+
+    try {
+      await ensureCorrectNetwork();
+    } catch (err) {
+      setError(getErrorMessage(err, `Please switch your wallet to ${targetChainName}.`));
+      return;
+    }
+
     resetApprove();
     resetDeposit();
 
@@ -194,10 +215,10 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     if (depositSim?.request) {
       setStep('depositing');
       const { gas: _gas, ...depositRequest } = depositSim.request;
-      writeDeposit(depositRequest, {
+      writeDeposit({ ...depositRequest, chainId: expectedChainId }, {
         onError: (err) => {
           setStep('idle');
-          setError(err.message.split('\n')[0] ?? err.message);
+          setError(getErrorMessage(err));
         },
       });
       return;
@@ -209,11 +230,12 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'approve',
+      chainId: expectedChainId,
       args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
     }, {
       onError: (err) => {
         setStep('idle');
-        setError(err.message.split('\n')[0] ?? err.message);
+        setError(getErrorMessage(err));
       },
     });
   }
@@ -230,13 +252,6 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     <div className="deposit-form">
       {!isConnected ? (
         <div className="deposit-connect-wrapper">
-          <ConnectButton />
-        </div>
-      ) : wrongChain ? (
-        <div className="deposit-wrong-chain">
-          <div className="deposit-wrong-chain-text">
-            Please switch to the correct network in your wallet.
-          </div>
           <ConnectButton />
         </div>
       ) : step === 'done' ? (
@@ -271,6 +286,12 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
             <span className="deposit-connected-label">Connected</span>
           </div>
 
+          {wrongChain && (
+            <div className="status-msg" style={{ marginTop: 0, marginBottom: 16 }}>
+              Wallet is on chain {walletChainId ?? connectedChainId}. Switch to {targetChainName} before depositing.
+            </div>
+          )}
+
           <div className="input-group">
             <label className="input-label">Amount (USDC)</label>
             <input
@@ -289,9 +310,11 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
           <button
             className="btn-primary"
             onClick={handleDeposit}
-            disabled={step !== 'idle' || !amount || parseFloat(amount) <= 0 || !config}
+            disabled={step !== 'idle' || !amount || parseFloat(amount) <= 0 || !config || isSwitchingChain}
           >
-            {step === 'approving' ? 'Approving USDC...' :
+            {isSwitchingChain ? `Switching to ${targetChainName}...` :
+             wrongChain ? `Switch to ${targetChainName}` :
+             step === 'approving' ? 'Approving USDC...' :
              step === 'depositing' ? 'Depositing...' :
              'Deposit USDC'}
           </button>
