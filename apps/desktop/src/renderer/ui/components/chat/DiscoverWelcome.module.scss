@@ -102,6 +102,7 @@
 /* ── Filters button (opens drawer) — icon only ──────────────────────── */
 
 .filter-trigger {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -126,6 +127,18 @@
 
 .filter-trigger-active {
   background: var(--bg-primary) !important;
+}
+
+.filter-trigger-dot {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--bg-secondary, #fff);
+  pointer-events: none;
 }
 
 /* ── Results area (fixed-height holder for grid + pagination bar) ─── */

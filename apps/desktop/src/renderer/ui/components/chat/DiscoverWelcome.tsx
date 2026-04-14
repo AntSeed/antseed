@@ -4,7 +4,11 @@ import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useDiscoverFilters } from '../../hooks/useDiscoverFilters';
-import type { DiscoverSortKey } from './discover-filter-util';
+import {
+  type DiscoverSortKey,
+  MAX_INPUT_PRICE_SLIDER_USD,
+  MAX_OUTPUT_PRICE_SLIDER_USD,
+} from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
@@ -237,6 +241,20 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
   const filterState = useDiscoverFilters(rows);
 
+  const hasActiveFilters =
+    filterState.search.trim() !== '' ||
+    filterState.categorySet.size > 0 ||
+    filterState.maxInputPrice < MAX_INPUT_PRICE_SLIDER_USD ||
+    filterState.maxOutputPrice < MAX_OUTPUT_PRICE_SLIDER_USD ||
+    filterState.cachedOnly ||
+    filterState.chattedOnly ||
+    filterState.minStakeUsdc > 0 ||
+    filterState.lastSeenWindow !== 'any' ||
+    filterState.lastSettledWindow !== 'any' ||
+    filterState.minChannels > 0 ||
+    filterState.minRequests > 0 ||
+    filterState.minTokens > 0;
+
   const hasNetworkData = serviceOptions.length > 0 || rows.length > 0;
   const cards = useMemo(() => {
     if (rows.length > 0) {
@@ -312,6 +330,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
                 <path d="M2.5 5.83325H5M2.5 14.1666H7.5M15 14.1666H17.5M12.5 5.83325H17.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 <path d="M5 5.83325C5 5.05659 5 4.66825 5.12667 4.36242C5.21043 4.16007 5.33325 3.97621 5.4881 3.82135C5.64296 3.6665 5.82682 3.54368 6.02917 3.45992C6.335 3.33325 6.72333 3.33325 7.5 3.33325C8.27667 3.33325 8.665 3.33325 8.97083 3.45992C9.17318 3.54368 9.35704 3.6665 9.5119 3.82135C9.66675 3.97621 9.78957 4.16007 9.87333 4.36242C10 4.66825 10 5.05659 10 5.83325C10 6.60992 10 6.99825 9.87333 7.30409C9.78957 7.50643 9.66675 7.69029 9.5119 7.84515C9.35704 8.00001 9.17318 8.12282 8.97083 8.20658C8.665 8.33325 8.27667 8.33325 7.5 8.33325C6.72333 8.33325 6.335 8.33325 6.02917 8.20658C5.82682 8.12282 5.64296 8.00001 5.4881 7.84515C5.33325 7.69029 5.21043 7.50643 5.12667 7.30409C5 6.99825 5 6.60992 5 5.83325ZM10 14.1666C10 13.3899 10 13.0016 10.1267 12.6958C10.2104 12.4934 10.3332 12.3095 10.4881 12.1547C10.643 11.9998 10.8268 11.877 11.0292 11.7933C11.335 11.6666 11.7233 11.6666 12.5 11.6666C13.2767 11.6666 13.665 11.6666 13.9708 11.7933C14.1732 11.877 14.357 11.9998 14.5119 12.1547C14.6668 12.3095 14.7896 12.4934 14.8733 12.6958C15 13.0016 15 13.3899 15 14.1666C15 14.9433 15 15.3316 14.8733 15.6374C14.7896 15.8398 14.6668 16.0236 14.5119 16.1785C14.357 16.3333 14.1732 16.4562 13.9708 16.5399C13.665 16.6666 13.2767 16.6666 12.5 16.6666C11.7233 16.6666 11.335 16.6666 11.0292 16.5399C10.8268 16.4562 10.643 16.3333 10.4881 16.1785C10.3332 16.0236 10.2104 15.8398 10.1267 15.6374C10 15.3316 10 14.9433 10 14.1666Z" stroke="currentColor" strokeWidth="1.5"/>
               </svg>
+              {hasActiveFilters && <span className={styles.filterTriggerDot} aria-hidden="true" />}
             </button>
             <select
               className={styles.sortSelect}
