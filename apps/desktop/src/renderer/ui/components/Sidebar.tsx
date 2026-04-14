@@ -31,7 +31,6 @@ type NavEntry = {
 
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
-  { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
 ];
 
@@ -40,6 +39,7 @@ const configEntries: NavEntry[] = [
 ];
 
 const devEntries: NavEntry[] = [
+  { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'Connection', view: 'connection', icon: PeerToPeer02Icon },
   { label: 'Peers', view: 'peers', icon: UserGroupIcon },
   { label: 'Logs', view: 'desktop', icon: CommandLineIcon },
