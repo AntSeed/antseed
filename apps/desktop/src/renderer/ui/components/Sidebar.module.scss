@@ -57,13 +57,36 @@
   &.active {
     background: var(--bg-hover);
     color: var(--text-primary);
-    font-weight: 500;
   }
 }
 
 .sidebar-footer {
   padding: 12px 8px;
   border-top: 1px solid var(--border);
+}
+
+.dev-section {
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 4px 0 0;
+}
+
+.dev-section-label {
+  padding: 12px 16px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.sidebar-btn-dev {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .runtime-chip-wrap {

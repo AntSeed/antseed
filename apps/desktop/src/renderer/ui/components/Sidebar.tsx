@@ -444,7 +444,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const { devMode } = useUiSnapshot();
-  const navEntries = devMode ? [...baseEntries, ...devEntries, ...configEntries] : [...baseEntries, ...configEntries];
+  const navEntries = [...baseEntries, ...configEntries];
 
   return (
     <aside className={styles.sidebar}>
@@ -469,6 +469,31 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
           );
         })}
       </ul>
+
+      {devMode && (
+        <>
+          <div className={styles.devSectionLabel}>Dev Mode</div>
+          <ul className={styles.devSection} role="tablist" aria-label="Dev Mode Views">
+            {devEntries.map(({ label, view, icon }) => {
+              const isActive = activeView === view;
+              return (
+                <li key={view}>
+                  <button
+                    className={`${styles.sidebarBtn} ${styles.sidebarBtnDev}${isActive ? ` ${styles.active}` : ''}`}
+                    data-view={view}
+                    role="tab"
+                    aria-selected={isActive ? 'true' : 'false'}
+                    onClick={() => onSelectView(view)}
+                  >
+                    <HugeiconsIcon icon={icon} size={16} strokeWidth={1.5} />
+                    {label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
 
       <ChatSidebar onSelectView={onSelectView} />
 
