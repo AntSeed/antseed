@@ -117,6 +117,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     address: config?.usdcContractAddress as `0x${string}`,
     abi: ERC20_ABI,
     functionName: 'allowance',
+    chainId: expectedChainId,
     args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
     query: { enabled: isConnected && !!config && !!address },
   });
@@ -133,6 +134,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
     hash: approveTxHash,
+    chainId: expectedChainId,
     query: { enabled: step === 'approving' && !!approveTxHash },
   });
 
@@ -141,6 +143,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     address: config?.depositsContractAddress as `0x${string}`,
     abi: DEPOSITS_ABI,
     functionName: 'deposit',
+    chainId: expectedChainId,
     args: [depositTarget as `0x${string}`, usdcAmount],
     query: { enabled: hasAllowance && !!config && !!depositTarget, retry: 3, retryDelay: 2000 },
   });
@@ -154,6 +157,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
     hash: depositTxHash,
+    chainId: expectedChainId,
     query: { enabled: step === 'depositing' && !!depositTxHash },
   });
 
@@ -167,13 +171,13 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   useEffect(() => {
     if (step !== 'approving' || !depositSim?.request) return;
     setStep('depositing');
-    writeDeposit(depositSim.request, {
+    writeDeposit({ ...depositSim.request, chainId: expectedChainId }, {
       onError: (err) => {
         setStep('idle');
         setError(err.message.split('\n')[0] ?? err.message);
       },
     });
-  }, [step, depositSim, writeDeposit]);
+  }, [step, depositSim, expectedChainId, writeDeposit]);
 
   // After deposit confirms → done
   useEffect(() => {
@@ -185,6 +189,10 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   function handleDeposit() {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
+    if (!expectedChainId || wrongChain) {
+      setError('Please switch to the configured payments network before depositing.');
+      return;
+    }
 
     setError(null);
     resetApprove();
@@ -194,7 +202,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     if (depositSim?.request) {
       setStep('depositing');
       const { gas: _gas, ...depositRequest } = depositSim.request;
-      writeDeposit(depositRequest, {
+      writeDeposit({ ...depositRequest, chainId: expectedChainId }, {
         onError: (err) => {
           setStep('idle');
           setError(err.message.split('\n')[0] ?? err.message);
@@ -209,6 +217,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'approve',
+      chainId: expectedChainId,
       args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
     }, {
       onError: (err) => {
