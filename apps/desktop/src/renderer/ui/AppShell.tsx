@@ -12,7 +12,7 @@ import type { ViewName } from './types';
 export function AppShell() {
   const snap = useUiSnapshot();
   const actions = useActions();
-  const [activeView, setActiveView] = useState<ViewName>('chat');
+  const [activeView, setActiveView] = useState<ViewName>('discover');
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [setupVisible, setSetupVisible] = useState(false);
 
