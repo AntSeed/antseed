@@ -20,7 +20,7 @@ Hermes agent  →  127.0.0.1:8377  →  AntSeed P2P  →  Provider peer  →  Up
 
 - Buyer proxy discovers providers via DHT, opens a payment channel per seller, signs per-request vouchers.
 - Exposes an OpenAI-compatible `/v1/*` endpoint — that's what Hermes points at as `OPENAI_BASE_URL`.
-- The model ID Hermes passes is the AntSeed **service ID** (e.g. `minimax-m2.5`), not an OpenAI model name.
+- The model ID Hermes passes is the AntSeed **service ID** (e.g. `minimax-m2.7`), not an OpenAI model name.
 
 The buyer proxy and Hermes can run on the same machine (laptop, VPS, cloud box — anywhere). The only requirement is that Hermes can reach `127.0.0.1:8377`.
 
@@ -175,22 +175,44 @@ If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, th
 
 ## Wiring Hermes to the buyer proxy
 
-Hermes reads `OPENAI_API_KEY` and `OPENAI_BASE_URL` from its `.env`:
+Register AntSeed as a custom provider in `~/.hermes/config.yaml` and point `model.default` at an AntSeed service ID. Hermes reads this file at startup; nothing needs to be in `.env` for the AntSeed route itself.
 
+```yaml
+model:
+  default: minimax-m2.7
+  provider: antseed
+
+custom_providers:
+  - name: antseed
+    base_url: http://127.0.0.1:8377/v1
+    api_key: antseed-p2p
+    api_mode: chat_completions
+    models:
+      - deepseek-v3.1
+      - minimax-m2.7
+      - kimi-k2.5
+      - glm-5.1
+      - qwen3-coder-next
 ```
-OPENAI_API_KEY=antseed-p2p
-OPENAI_BASE_URL=http://127.0.0.1:8377/v1
-```
 
-The API key value doesn't matter — the buyer proxy ignores it — but Hermes refuses to start if `OPENAI_API_KEY` is unset, so always set it to something non-empty.
+Notes:
 
-In the Hermes config, register AntSeed as a custom provider pointing at `http://127.0.0.1:8377/v1`, then set the model ID to an AntSeed service ID. List what's live on the network:
+- `base_url` must match the buyer proxy port. Default is `8377`; if you started the buyer with `--port 5005`, use `http://127.0.0.1:5005/v1` here instead.
+- `api_key` is required by Hermes' OpenAI client but ignored by the buyer proxy — any non-empty string works. `antseed-p2p` is the convention.
+- `api_mode: chat_completions` is required — the buyer proxy speaks OpenAI chat-completions, not the Responses API.
+- `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `antseed network browse` (or `curl -s http://127.0.0.1:8377/v1/models`) so you don't advertise models no peer serves.
+- `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` pins it to this custom provider.
+
+### Swapping the routed model
+
+Edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call:
 
 ```bash
-antseed network browse
+sudo systemctl restart hermes
+sudo journalctl -u hermes --no-pager -n 20
 ```
 
-To swap the routed model later, edit only the Hermes config and restart Hermes — the buyer proxy stays up. No CLI change, no contract call.
+On a remote host, the same two commands prefixed with `ssh user@host`.
 
 ## Sanity check
 
