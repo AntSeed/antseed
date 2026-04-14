@@ -761,9 +761,8 @@
     font-weight: 400;
   }
 
-  .tdStat:nth-of-type(4)::before { content: 'Settled'; }
-  .tdStat:nth-of-type(5)::before { content: 'Requests'; }
-  .tdStat:nth-of-type(6)::before { content: 'Users'; }
+  .tdStat:nth-of-type(4)::before { content: 'Tokens'; }
+  .tdStat:nth-of-type(5)::before { content: 'Users'; }
 
   .statValue {
     font-size: 12px;

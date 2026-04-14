@@ -102,8 +102,7 @@ interface ServiceRow {
   peerName: string;     // the specific peer for this row
   categories: string[];
   // On-chain stats for this peer
-  settlements: number;
-  totalRequests: number;
+  totalTokens: number;
   uniqueBuyers: number;
 }
 
@@ -150,8 +149,7 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
           peerNames: [...peersForService],
           peerName: pName,
           categories: cats,
-          settlements: stats?.settlementCount ?? 0,
-          totalRequests: parseInt(stats?.totalRequests ?? '0', 10),
+          totalTokens: (parseInt(stats?.totalInputTokens ?? '0', 10) + parseInt(stats?.totalOutputTokens ?? '0', 10)),
           uniqueBuyers: stats?.uniqueBuyers ?? 0,
         });
       }
@@ -198,7 +196,7 @@ const TAG_CLASS: Record<string, string> = {
   enterprise: styles.tagEnterprise,
 };
 
-type SortKey = 'name' | 'inputPrice' | 'outputPrice' | 'peerCount' | 'settlements' | 'totalRequests' | 'uniqueBuyers';
+type SortKey = 'name' | 'inputPrice' | 'outputPrice' | 'peerCount' | 'totalTokens' | 'uniqueBuyers';
 type SortDir = 'asc' | 'desc';
 
 function formatPrice(p: number): string {
@@ -239,7 +237,7 @@ export default function PricingPage() {
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('settlements');
+  const [sortKey, setSortKey] = useState<SortKey>('totalTokens');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -273,13 +271,12 @@ export default function PricingPage() {
   const uniqueServiceCount = useMemo(() => new Set(models.map(m => m.serviceId)).size, [models]);
 
   // Totals and bounds for stats bar + sliders
-  const totalSettlements = useMemo(() => peers.reduce((s, p) => s + (p.onChainStats?.settlementCount ?? 0), 0), [peers]);
-  const totalRequests = useMemo(() => peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalRequests ?? '0', 10), 0), [peers]);
+  const totalTokens = useMemo(() => peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalInputTokens ?? '0', 10) + parseInt(p.onChainStats?.totalOutputTokens ?? '0', 10), 0), [peers]);
 
   const bounds = useMemo(() => ({
     maxInput: Math.max(...models.map(m => m.inputPrice), 1),
     maxOutput: Math.max(...models.map(m => m.outputPrice), 1),
-    maxSettlements: Math.max(...models.map(m => m.settlements), 1),
+    maxTokens: Math.max(...models.map(m => m.totalTokens), 1),
     maxRequests: Math.max(...models.map(m => m.totalRequests), 1),
     maxBuyers: Math.max(...models.map(m => m.uniqueBuyers), 1),
   }), [models]);
@@ -303,8 +300,8 @@ export default function PricingPage() {
       // Price sliders: 100=Any, lower=stricter
       if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;
       if (filters.maxOutputPct < 100 && m.outputPrice > bounds.maxOutput * filters.maxOutputPct / 100) return false;
-      // Volume slider: 0=Any, higher=require more settlements
-      if (filters.minVolume > 0 && m.settlements < bounds.maxSettlements * filters.minVolume / 100) return false;
+      // Volume slider: 0=Any, higher=require more tokens served
+      if (filters.minVolume > 0 && m.totalTokens < bounds.maxTokens * filters.minVolume / 100) return false;
       return true;
     });
 
@@ -315,8 +312,7 @@ export default function PricingPage() {
         case 'inputPrice': cmp = a.inputPrice - b.inputPrice; break;
         case 'outputPrice': cmp = a.outputPrice - b.outputPrice; break;
         case 'peerCount': cmp = a.peerCount - b.peerCount; break;
-        case 'settlements': cmp = a.settlements - b.settlements; break;
-        case 'totalRequests': cmp = a.totalRequests - b.totalRequests; break;
+        case 'totalTokens': cmp = a.totalTokens - b.totalTokens; break;
         case 'uniqueBuyers': cmp = a.uniqueBuyers - b.uniqueBuyers; break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
@@ -364,13 +360,8 @@ export default function PricingPage() {
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
-            <div className={styles.statNum}>{loading ? '—' : formatNum(totalSettlements)}</div>
-            <div className={styles.statLabel}>Settlements</div>
-          </div>
-          <div className={styles.statDivider} />
-          <div className={styles.stat}>
-            <div className={styles.statNum}>{loading ? '—' : formatNum(totalRequests)}</div>
-            <div className={styles.statLabel}>Requests Served</div>
+            <div className={styles.statNum}>{loading ? '—' : formatNum(totalTokens)}</div>
+            <div className={styles.statLabel}>Tokens Served</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
@@ -443,9 +434,9 @@ export default function PricingPage() {
               </div>
               <div className={styles.filterGroup}>
                 <div className={styles.filterHeader}>
-                  <span className={styles.filterLabel}>Volume Served</span>
+                  <span className={styles.filterLabel}>Tokens Served</span>
                   <span className={styles.filterValue}>
-                    {filters.minVolume <= 0 ? 'Any' : `≥ ${formatNum(Math.round(bounds.maxSettlements * filters.minVolume / 100))} settled`}
+                    {filters.minVolume <= 0 ? 'Any' : `≥ ${formatNum(Math.round(bounds.maxTokens * filters.minVolume / 100))}`}
                   </span>
                 </div>
                 <input type="range" min="0" max="100" step="1"
@@ -522,11 +513,8 @@ export default function PricingPage() {
                 <th className={styles.thPrice} onClick={() => toggleSort('outputPrice')}>
                   Output /M {sortIcon('outputPrice')}
                 </th>
-                <th className={styles.thStat} onClick={() => toggleSort('settlements')}>
-                  Settled {sortIcon('settlements')}
-                </th>
-                <th className={styles.thStat} onClick={() => toggleSort('totalRequests')}>
-                  Requests {sortIcon('totalRequests')}
+                <th className={styles.thStat} onClick={() => toggleSort('totalTokens')}>
+                  Tokens {sortIcon('totalTokens')}
                 </th>
                 <th className={styles.thStat} onClick={() => toggleSort('uniqueBuyers')}>
                   Users {sortIcon('uniqueBuyers')}
@@ -536,13 +524,13 @@ export default function PricingPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className={styles.emptyRow}>
+                  <td colSpan={5} className={styles.emptyRow}>
                     Discovering peers on the network...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className={styles.emptyRow}>
+                  <td colSpan={5} className={styles.emptyRow}>
                     {error ? 'Could not reach the network stats server.' : 'No services match your search. Try a different query or clear filters.'}
                   </td>
                 </tr>
@@ -580,10 +568,7 @@ export default function PricingPage() {
                     </span>
                   </td>
                   <td className={styles.tdStat}>
-                    <span className={styles.statValue}>{formatNum(m.settlements)}</span>
-                  </td>
-                  <td className={styles.tdStat}>
-                    <span className={styles.statValue}>{formatNum(m.totalRequests)}</span>
+                    <span className={styles.statValue}>{formatNum(m.totalTokens)}</span>
                   </td>
                   <td className={styles.tdStat}>
                     <span className={styles.statValue}>{formatNum(m.uniqueBuyers)}</span>
@@ -596,7 +581,7 @@ export default function PricingPage() {
 
         {/* CTA */}
         <div className={styles.footer}>
-          <p>Prices are the best available rate from live AntSeed network peers. On-chain stats from Base. Updates every 30s.</p>
+          <p>Prices and token volumes from live AntSeed network peers. On-chain stats from Base. Updates every 30s.</p>
           <p>Want to become a provider? <Link to="/docs/install">Read the docs →</Link></p>
         </div>
       </div>
