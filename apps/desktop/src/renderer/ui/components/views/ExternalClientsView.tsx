@@ -38,7 +38,7 @@ const TOOLS: Tool[] = [
     steps: [
       { label: 'Install Claude Code', command: 'npm install -g @anthropic-ai/claude-code' },
       { label: 'Set the proxy endpoint', command: 'export ANTHROPIC_BASE_URL=http://localhost:{port}' },
-      { label: 'Run — requests route through AntSeed', command: 'claude' },
+      { label: 'Run — requests route through AntSeed', command: 'claude --model <service-id>' },
     ],
     persist: 'echo \'export ANTHROPIC_BASE_URL=http://localhost:{port}\' >> ~/.zshrc',
   },
@@ -53,6 +53,7 @@ const TOOLS: Tool[] = [
       { label: 'Install OpenCode', command: 'npm install -g opencode-ai' },
       { label: 'Set the proxy endpoint', command: 'export ANTHROPIC_BASE_URL=http://localhost:{port}' },
       { label: 'Run in your project directory', command: 'opencode' },
+      { label: 'Or launch pinned to a specific model', command: 'opencode --model <service-id>' },
     ],
     persist: 'echo \'export ANTHROPIC_BASE_URL=http://localhost:{port}\' >> ~/.zshrc',
   },
@@ -67,7 +68,7 @@ const TOOLS: Tool[] = [
       { label: 'Install Codex', command: 'npm install -g @openai/codex' },
       { label: 'Set the proxy endpoint', command: 'export OPENAI_BASE_URL=http://localhost:{port}/v1' },
       { label: 'Also set a dummy API key if required', command: 'export OPENAI_API_KEY=antseed' },
-      { label: 'Run', command: 'codex' },
+      { label: 'Launch pinned to a specific model', command: 'codex --model <service-id>' },
     ],
     persist: 'echo \'export OPENAI_BASE_URL=http://localhost:{port}/v1\' >> ~/.zshrc',
   },
@@ -80,8 +81,8 @@ const TOOLS: Tool[] = [
     getEndpoint: (port) => `http://localhost:${port}/v1`,
     steps: [
       { label: 'Find the "Custom base URL" or "OpenAI API base" setting in your tool' },
-      { label: 'Set it to the proxy endpoint below' },
-      { label: 'Set any API key field to a placeholder value (e.g. antseed)', command: 'antseed' },
+      { label: 'Set it to the proxy endpoint below', command: 'http://localhost:{port}/v1/chat/completions' },
+      { label: 'Set any API key field to a placeholder value (e.g. antseed)' },
       { label: 'Select a service — requests are routed by AntSeed automatically' },
     ],
     persist: '',
@@ -179,11 +180,49 @@ function CopyButton({ value, label }: { value: string; label?: string }) {
   );
 }
 
+function CodeBlock({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [value]);
+  return (
+    <div className={styles.codeBlock}>
+      <code className={styles.codeBlockText}>{value}</code>
+      <button
+        className={`${styles.codeBlockCopy}${copied ? ` ${styles.copied}` : ''}`}
+        onClick={handleCopy}
+        aria-label={copied ? 'Copied' : 'Copy'}
+        title={copied ? 'Copied' : 'Copy'}
+      >
+        <HugeiconsIcon icon={Copy01Icon} size={13} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
+function buildToolScript(tool: Tool, displayPort: number): string {
+  const lines: string[] = [];
+  for (const step of tool.steps) {
+    lines.push(`# ${step.label}`);
+    if (step.command) {
+      lines.push(step.command.replace(/{port}/g, String(displayPort)));
+    }
+    lines.push('');
+  }
+  const persistLine = tool.persist.replace(/{port}/g, String(displayPort));
+  if (persistLine) {
+    lines.push('# Persist to your shell');
+    lines.push(persistLine);
+  }
+  return lines.join('\n').replace(/\n+$/, '');
+}
+
 function ToolModal({ tool, port, isOnline, onClose }: { tool: Tool; port: number; isOnline: boolean; onClose: () => void }) {
   const displayPort = isOnline ? port : 8377;
-  const endpoint = tool.getEndpoint(displayPort);
-  const exportLine = `export ${tool.envVar}=${endpoint}`;
-  const persistLine = tool.persist.replace(/{port}/g, String(displayPort));
+  const script = buildToolScript(tool, displayPort);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -217,45 +256,7 @@ function ToolModal({ tool, port, isOnline, onClose }: { tool: Tool; port: number
 
         <p className={styles.toolDesc}>{tool.description}</p>
 
-        <div className={styles.endpointRow}>
-          <span className={styles.endpointLabel}>{tool.envVar}</span>
-          <span className={styles.endpointValue}>{endpoint}</span>
-          <CopyButton value={endpoint} />
-        </div>
-
-        <div className={styles.stepsSection}>
-          <p className={styles.stepsLabel}>Setup</p>
-          <ol className={styles.stepsList}>
-            {tool.steps.map((step, i) => (
-              <li key={i} className={styles.step}>
-                <span className={styles.stepText}>{step.label}</span>
-                {step.command && (
-                  <div className={styles.stepCommand}>
-                    <code className={styles.stepCode}>
-                      {step.command.replace(/{port}/g, String(displayPort))}
-                    </code>
-                    <CopyButton value={step.command.replace(/{port}/g, String(displayPort))} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        {persistLine && (
-          <div className={styles.persistRow}>
-            <span className={styles.persistLabel}>Persist to shell</span>
-            <div className={styles.persistCommand}>
-              <code className={styles.stepCode}>{persistLine}</code>
-              <CopyButton value={persistLine} />
-            </div>
-          </div>
-        )}
-
-        <div className={styles.exportRow}>
-          <code className={styles.exportCode}>{exportLine}</code>
-          <CopyButton value={exportLine} label="Copy export" />
-        </div>
+        <CodeBlock value={script} />
       </div>
     </div>
   );
