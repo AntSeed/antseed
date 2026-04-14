@@ -720,11 +720,11 @@ describe('BuyerPaymentManager', () => {
     expect(channel!.authMax).toBe(extended.cumulativeAmount);
   });
 
-  it('extendCurrentSpendingAuth no-ops when top-up does not increase signable budget', async () => {
+  it('extendCurrentSpendingAuth advances verifiedCost to unblock a collapsed overdraft window', async () => {
     const sellerPeerId = fakePeerId('seller-extend-stalled');
     const stalledConfig = makeConfig(tempDir, {
       maxPerRequestUsdc: 10_000n,
-      maxReserveAmountUsdc: 10_000n,
+      maxReserveAmountUsdc: 100_000n,
     });
 
     store.close();
@@ -733,10 +733,13 @@ describe('BuyerPaymentManager', () => {
     manager.setSigner(identity.wallet);
     mux = createMockPaymentMux();
 
-    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 100_000n, TEST_PRICING);
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
     manager.handleAuthAck(sellerPeerId, { channelId });
 
+    // Drive cumulative up to the overdraft cap (verified=0 + maxPerRequest=10_000) without
+    // advancing verifiedCost — mirrors the real deadlock where NeedAuth arrived without a
+    // cost claim.
     await manager.handleNeedAuth(sellerPeerId, {
       channelId,
       requiredCumulativeAmount: '10000',
@@ -744,19 +747,21 @@ describe('BuyerPaymentManager', () => {
       deposit: '10000',
     }, mux);
 
-    const topUpSpy = vi.spyOn(manager, 'topUpReserve').mockResolvedValue(undefined);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(10_000n);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
+
     mux.sentSpendingAuths.length = 0;
 
     const returnedChannelId = await manager.extendCurrentSpendingAuth(sellerPeerId, 10_000n, mux);
 
+    // verifiedCost advances to currentCumulative (10_000), unblocking the overdraft window so
+    // maxSignable becomes verified (10_000) + maxPerRequest (10_000) = 20_000, still under the
+    // 100_000 reserve ceiling. The new SpendingAuth is signed at 20_000.
     expect(returnedChannelId).toBe(channelId);
-    expect(topUpSpy).toHaveBeenCalledOnce();
-    expect(mux.sentSpendingAuths).toHaveLength(0);
-    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(10_000n);
-
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
-    expect(channel).not.toBeNull();
-    expect(channel!.authMax).toBe('10000');
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(10_000n);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(20_000n);
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    expect((mux.sentSpendingAuths[0] as Record<string, string>).cumulativeAmount).toBe('20000');
   });
 
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {

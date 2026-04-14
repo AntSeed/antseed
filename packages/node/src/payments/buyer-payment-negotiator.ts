@@ -769,7 +769,22 @@ export class BuyerPaymentNegotiator {
 
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
     if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
+      const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
       await this._bpm.extendCurrentSpendingAuth(peer.peerId, minBudgetPerRequest, pmux);
+      const cumulativeAfter = this._bpm.getCumulativeAmount(peer.peerId);
+      if (cumulativeAfter <= cumulativeBefore) {
+        // extendCurrentSpendingAuth was a no-op — the overdraft window and reserve ceiling
+        // are both wedged. Retire the session so the caller negotiates a fresh channel
+        // instead of spinning in an infinite 402 retry loop.
+        debugWarn(
+          `[BuyerNegotiator] extendCurrentSpendingAuth made no progress for ${peer.peerId.slice(0, 12)}... ` +
+          `(cumulative=${cumulativeAfter}); retiring session`,
+        );
+        this._bpm.retireSession(peer.peerId, 'ghost');
+        this._lockedPeers.delete(peer.peerId);
+        this._firstRequestSent.delete(peer.peerId);
+        return false;
+      }
     } else {
       await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
     }

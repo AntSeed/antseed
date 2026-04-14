@@ -45,6 +45,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
     extendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
+    getCumulativeAmount: vi.fn().mockReturnValue(0n),
     resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
@@ -219,6 +220,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const activeSession = makeActiveSession(peer.peerId);
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.getCumulativeAmount as ReturnType<typeof vi.fn>).mockReturnValueOnce(0n).mockReturnValueOnce(100n);
       (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       });
@@ -233,6 +235,33 @@ describe('BuyerPaymentNegotiator', () => {
       );
       expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('retires session as ghost and negotiates fresh reserve when extendCurrentSpendingAuth makes no progress', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      // Collapsed overdraft: extend is a no-op, so cumulative is identical before and after.
+      (bpm.getCumulativeAmount as ReturnType<typeof vi.fn>).mockReturnValue(500n);
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      // After retire, the active session should disappear so handle402 falls through
+      // to open a fresh reserve instead of returning a negotiation failure.
+      (bpm.retireSession as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      });
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalled();
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
 
