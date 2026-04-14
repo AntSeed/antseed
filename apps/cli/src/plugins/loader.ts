@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
@@ -39,8 +39,8 @@ async function loadPlugin<T>(
   try {
     mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
-    if (isModuleNotFound(err) && isTrusted) {
-      console.error(`Plugin "${pkgName}" not installed. Installing...`)
+    if (isModuleNotFound(err) && isTrusted && !existsSync(resolved)) {
+      console.log(`Plugin "${pkgName}" not installed. Installing...`)
       try {
         await installPlugin(pkgName)
       } catch (installErr) {
