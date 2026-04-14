@@ -277,7 +277,6 @@ export default function PricingPage() {
     maxInput: Math.max(...models.map(m => m.inputPrice), 1),
     maxOutput: Math.max(...models.map(m => m.outputPrice), 1),
     maxTokens: Math.max(...models.map(m => m.totalTokens), 1),
-    maxRequests: Math.max(...models.map(m => m.totalRequests), 1),
     maxBuyers: Math.max(...models.map(m => m.uniqueBuyers), 1),
   }), [models]);
 
