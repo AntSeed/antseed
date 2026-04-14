@@ -583,6 +583,8 @@ let onChainEnrichmentCache: Map<string, { fetchedAt: number; data: OnChainPeerEn
 
 export function invalidateOnChainEnrichmentCache(): void {
   onChainEnrichmentCache.clear();
+  cachedStakingClient = null;
+  cachedChannelsClient = null;
 }
 
 let cachedStakingClient: StakingClient | null = null;

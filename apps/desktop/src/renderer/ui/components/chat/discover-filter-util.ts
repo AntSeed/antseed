@@ -94,8 +94,8 @@ export function matchesCachedOnly(row: DiscoverRow, enabled: boolean): boolean {
 
 export function matchesMinStake(row: DiscoverRow, minStakeUsdc: number): boolean {
   if (minStakeUsdc <= 0) return true;
-  const rowStake = Number(BigInt(row.stakeUsdc) / 1_000_000n);
-  return rowStake >= minStakeUsdc;
+  const stakeUsdc = Number(row.stakeUsdc) / 1_000_000;
+  return stakeUsdc >= minStakeUsdc;
 }
 
 export function matchesTimeWindow(
