@@ -6,7 +6,7 @@ import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useDiscoverFilters } from '../../hooks/useDiscoverFilters';
 import type { DiscoverSortKey } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
-import { stringHash, PEER_GRADIENTS, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
+import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
@@ -52,36 +52,6 @@ function normalizeServiceName(name: string): string {
   return name.replace(/[-_]+/g, ' ');
 }
 
-/* ── Service-name → visual gradient (for provider avatars) ─────────── */
-
-const SERVICE_GRADIENTS: Record<string, string> = {
-  llama:     'linear-gradient(180deg, #0668E1, #0553B7)',
-  deepseek:  'linear-gradient(180deg, #536DFE, #304FFE)',
-  kimi:      'linear-gradient(180deg, #0D0D18, #252545)',
-  qwen:      'linear-gradient(180deg, #615CED, #4440C4)',
-  flux:      'linear-gradient(180deg, #1C1C1E, #3A3A3C)',
-  mistral:   'linear-gradient(180deg, #FF7000, #E05800)',
-  claude:    'linear-gradient(180deg, #DA6B47, #C45D3D)',
-  gpt:       'linear-gradient(180deg, #0FA37F, #0D8C6D)',
-  openai:    'linear-gradient(180deg, #0FA37F, #0D8C6D)',
-  gemini:    'linear-gradient(180deg, #4285F4, #1A73E8)',
-  phi:       'linear-gradient(180deg, #0078D4, #005A9E)',
-  command:   'linear-gradient(180deg, #39594D, #2A4A3D)',
-  glm:       'linear-gradient(180deg, #00B4D8, #0096C7)',
-  minimax:   'linear-gradient(180deg, #E040FB, #AA00FF)',
-  yi:        'linear-gradient(180deg, #1A1A2E, #16213E)',
-  gemma:     'linear-gradient(180deg, #4285F4, #1A73E8)',
-  community: 'linear-gradient(180deg, #1FD87A, #17C46E)',
-};
-
-function getGradient(name: string): string {
-  const lower = name.toLowerCase();
-  for (const [key, gradient] of Object.entries(SERVICE_GRADIENTS)) {
-    if (lower.includes(key)) return gradient;
-  }
-  return PEER_GRADIENTS[stringHash(lower) % PEER_GRADIENTS.length];
-}
-
 /* ── Generate description from service name ──────────────────────────── */
 
 function generateDescription(serviceId: string, categories: string[], provider: string): string {
@@ -119,7 +89,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
       provider: opt.provider,
       providerCount: opt.count,
       tags,
-      gradient: getGradient(opt.peerLabel || opt.provider || opt.id),
+      gradient: getPeerGradient(opt.peerId || opt.peerLabel || opt.provider || opt.id),
       description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
       inputUsdPerMillion: opt.inputUsdPerMillion,
       outputUsdPerMillion: opt.outputUsdPerMillion,
@@ -171,7 +141,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       provider: row.provider,
       providerCount: 1,
       tags,
-      gradient: getGradient(peerLabel || row.provider || row.serviceId),
+      gradient: getPeerGradient(row.peerId || peerLabel || row.provider || row.serviceId),
       description: generateDescription(row.serviceId, row.categories, peerLabel || row.provider),
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
