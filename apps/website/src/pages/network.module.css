@@ -235,21 +235,21 @@
 }
 
 .thModel {
-  composes: thBase from global;
-  width: 45%;
-}
-
-.thContext {
-  width: 12%;
+  width: 30%;
 }
 
 .thPrice {
-  width: 15%;
+  width: 12%;
+  text-align: right !important;
+}
+
+.thStat {
+  width: 10%;
   text-align: right !important;
 }
 
 .thProviders {
-  width: 10%;
+  width: 6%;
   text-align: center !important;
 }
 
@@ -392,11 +392,176 @@
   font-weight: 700;
 }
 
+.tdStat {
+  padding: 16px 20px;
+  text-align: right;
+}
+
+.statValue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0d1117;
+}
+
 .emptyRow {
   padding: 60px 20px !important;
   text-align: center;
   color: #8b949e;
   font-size: 14px;
+}
+
+/* ── Search row + filter toggle ───────────────────────────────────── */
+
+.searchRow {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.searchRow .searchWrap {
+  flex: 1;
+}
+
+.filterToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 500;
+  background: white;
+  color: #666e7a;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.filterToggle:hover {
+  border-color: #1FD87A;
+  color: #0d1117;
+}
+
+.filterToggleActive {
+  border-color: #1FD87A;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+/* ── Advanced filters panel ───────────────────────────────────────── */
+
+.advancedFilters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px 24px;
+  padding: 24px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filterHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.filterLabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.filterValue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0d1117;
+}
+
+.filterRange {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #e2e8f0;
+  outline: none;
+  cursor: pointer;
+}
+
+.filterRange::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0d1117;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+.filterRange::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0d1117;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+.filterGroupToggle {
+  display: flex;
+  align-items: flex-end;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0d1117;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #1FD87A;
+  cursor: pointer;
+}
+
+.clearFilters {
+  padding: 8px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: 'Space Grotesk', sans-serif;
+  background: white;
+  color: #8b949e;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.clearFilters:hover {
+  border-color: #ef4444;
+  color: #ef4444;
 }
 
 /* ── Live data extras ─────────────────────────────────────────────── */
@@ -496,6 +661,14 @@
     display: none;
   }
 
+  .filterToggle {
+    display: none;
+  }
+
+  .advancedFilters {
+    display: none;
+  }
+
   /* Card-based layout instead of table on mobile */
   .tableWrap {
     border: none;
@@ -514,7 +687,7 @@
   }
 
   .table thead {
-    display: none !important;
+    display: none;
   }
 
   .row {
@@ -571,12 +744,13 @@
     content: 'Output /M';
   }
 
-  .tdProviders {
+  .tdStat {
     padding: 0 !important;
     text-align: left !important;
+    flex: 1;
   }
 
-  .tdProviders::before {
+  .tdStat::before {
     font-family: 'JetBrains Mono', monospace;
     font-size: 9px;
     color: #8b949e;
@@ -584,19 +758,30 @@
     letter-spacing: 0.05em;
     display: block;
     margin-bottom: 2px;
-    content: 'Peers';
     font-weight: 400;
   }
 
-  .peerCount {
-    width: 24px;
-    height: 24px;
-    font-size: 11px;
+  .tdStat:nth-of-type(4)::before { content: 'Tokens'; }
+  .tdStat:nth-of-type(5)::before { content: 'Users'; }
+
+  .statValue {
+    font-size: 12px;
   }
+
 
   .tagBadge {
     font-size: 8px;
     padding: 1px 5px;
+  }
+
+  .searchRow {
+    flex-direction: column;
+  }
+
+  .advancedFilters {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 16px;
   }
 
   .emptyRow {

@@ -11,6 +11,7 @@ const DEV_STATS_URL = 'http://localhost:4000/stats';
 interface TokenPricing {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
 }
 
 interface ProviderAnnouncement {
@@ -23,6 +24,19 @@ interface ProviderAnnouncement {
   currentLoad: number;
 }
 
+interface OnChainStats {
+  agentId: number;
+  totalRequests: string;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  settlementCount: number;
+  uniqueBuyers: number;
+  uniqueChannels: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  lastUpdatedAt: number;
+}
+
 interface PeerMetadata {
   peerId: string;
   displayName?: string;
@@ -33,6 +47,8 @@ interface PeerMetadata {
   trustScore?: number;
   onChainReputation?: number;
   onChainSessionCount?: number;
+  onChainChannelCount?: number;
+  onChainStats?: OnChainStats;
 }
 
 interface StatsResponse {
@@ -41,8 +57,6 @@ interface StatsResponse {
 }
 
 /* ── Static model enrichment (logos, context, tags) ───────────────── */
-// The stats API provides pricing & availability; this map adds metadata
-// that the protocol doesn't carry (logos, context windows, tags).
 
 interface ModelMeta {
   displayName: string;
@@ -52,124 +66,94 @@ interface ModelMeta {
 }
 
 const MODEL_META: Record<string, ModelMeta> = {
-  // Anthropic
   'claude-opus-4-6':      {displayName:'Claude Opus 4.6',    provider:'Anthropic', contextWindow:'200K', tags:['chat','code','reasoning']},
   'claude-sonnet-4-6':    {displayName:'Claude Sonnet 4.6',  provider:'Anthropic', contextWindow:'200K', tags:['chat','code','fast']},
   'claude-haiku-4-5':     {displayName:'Claude Haiku 4.5',   provider:'Anthropic', contextWindow:'200K', tags:['chat','fast','cheap']},
-  // OpenAI
   'gpt-4.1':              {displayName:'GPT-4.1',            provider:'OpenAI',    contextWindow:'1M',   tags:['chat','code','reasoning']},
   'gpt-4.1-mini':         {displayName:'GPT-4.1 Mini',       provider:'OpenAI',    contextWindow:'1M',   tags:['chat','fast','cheap']},
   'gpt-4.1-nano':         {displayName:'GPT-4.1 Nano',       provider:'OpenAI',    contextWindow:'1M',   tags:['chat','fast','cheap']},
   'o3':                   {displayName:'o3',                  provider:'OpenAI',    contextWindow:'200K', tags:['reasoning','code']},
   'o4-mini':              {displayName:'o4-mini',             provider:'OpenAI',    contextWindow:'200K', tags:['reasoning','fast']},
-  // Google
   'gemini-2.5-pro':       {displayName:'Gemini 2.5 Pro',     provider:'Google',    contextWindow:'1M',   tags:['chat','code','reasoning']},
   'gemini-2.5-flash':     {displayName:'Gemini 2.5 Flash',   provider:'Google',    contextWindow:'1M',   tags:['chat','fast','cheap']},
-  // Meta
   'llama-4-maverick':     {displayName:'Llama 4 Maverick',   provider:'Meta',      contextWindow:'1M',   tags:['chat','code','open-source']},
   'llama-4-scout':        {displayName:'Llama 4 Scout',      provider:'Meta',      contextWindow:'512K', tags:['chat','fast','open-source']},
-  // DeepSeek
   'deepseek-r1':          {displayName:'DeepSeek R1',         provider:'DeepSeek',  contextWindow:'128K', tags:['reasoning','code','open-source']},
   'deepseek-v3':          {displayName:'DeepSeek V3',         provider:'DeepSeek',  contextWindow:'128K', tags:['chat','code','open-source']},
-  // Mistral
   'mistral-large':        {displayName:'Mistral Large',       provider:'Mistral',   contextWindow:'128K', tags:['chat','code','reasoning']},
   'codestral':            {displayName:'Codestral',            provider:'Mistral',   contextWindow:'256K', tags:['code','fast']},
-  // Cohere
   'command-a':            {displayName:'Command A',            provider:'Cohere',    contextWindow:'256K', tags:['chat','rag','enterprise']},
 };
 
-/* ── Aggregated model row (derived from live peers) ───────────────── */
+/* ── One row per service per peer ──────────────────────────────────── */
 
-interface ModelRow {
-  id: string;
+interface ServiceRow {
+  id: string;           // serviceId::peerName (unique key)
+  serviceId: string;
   name: string;
   provider: string;
   logoUrl: string;
   contextWindow: string;
   tags: string[];
-  inputPrice: number;      // best (cheapest) across all peers
-  outputPrice: number;     // best (cheapest) across all peers
-  peerCount: number;       // how many peers serve this model
-  peerNames: string[];     // all peer names serving this model
-  categories: string[];    // on-chain categories from providers
-  bestPeerName?: string;   // cheapest provider peer name
-  avgReputation?: number;  // average on-chain reputation of serving peers
+  inputPrice: number;
+  outputPrice: number;
+  peerCount: number;    // how many peers serve this same service
+  peerNames: string[];
+  peerName: string;     // the specific peer for this row
+  categories: string[];
+  // On-chain stats for this peer
+  totalTokens: number;
+  uniqueBuyers: number;
 }
 
-function aggregateModels(peers: PeerMetadata[]): ModelRow[] {
-  // Map: serviceId → aggregated data
-  const map = new Map<string, {
-    bestInput: number;
-    bestOutput: number;
-    peerCount: number;
-    peerNames: Set<string>;
-    bestPeerName?: string;
-    categories: Set<string>;
-    reputations: number[];
-  }>();
-
+function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
+  // First pass: count how many peers serve each service
+  const peerCountMap = new Map<string, Set<string>>();
   for (const peer of peers) {
     const pName = peer.displayName ?? peer.peerId.slice(0, 12);
     for (const ann of peer.providers) {
       for (const service of ann.services) {
-        const pricing = ann.servicePricing?.[service] ?? ann.defaultPricing;
-
-        const existing = map.get(service);
-        if (!existing) {
-          map.set(service, {
-            bestInput: pricing.inputUsdPerMillion,
-            bestOutput: pricing.outputUsdPerMillion,
-            peerCount: 1,
-            peerNames: new Set([pName]),
-            bestPeerName: pName,
-            categories: new Set(ann.serviceCategories?.[service] ?? []),
-            reputations: peer.onChainReputation != null ? [peer.onChainReputation] : [],
-          });
-        } else {
-          existing.peerCount++;
-          existing.peerNames.add(pName);
-          if (peer.onChainReputation != null) existing.reputations.push(peer.onChainReputation);
-          for (const cat of ann.serviceCategories?.[service] ?? []) existing.categories.add(cat);
-
-          // Track cheapest input price
-          if (pricing.inputUsdPerMillion < existing.bestInput) {
-            existing.bestInput = pricing.inputUsdPerMillion;
-            existing.bestPeerName = peer.displayName;
-          }
-          // Track cheapest output price independently
-          if (pricing.outputUsdPerMillion < existing.bestOutput) {
-            existing.bestOutput = pricing.outputUsdPerMillion;
-          }
-        }
+        if (!peerCountMap.has(service)) peerCountMap.set(service, new Set());
+        peerCountMap.get(service)!.add(pName);
       }
     }
   }
 
-  const rows: ModelRow[] = [];
-  for (const [serviceId, data] of map) {
-    const meta = MODEL_META[serviceId];
-    // Clean up the service ID into a display name
-    const fallbackName = serviceId
-      .replace(/[-_]/g, ' ')
-      .replace(/\b\w/g, c => c.toUpperCase());
+  // Second pass: one row per service per peer
+  const rows: ServiceRow[] = [];
+  for (const peer of peers) {
+    const pName = peer.displayName ?? peer.peerId.slice(0, 12);
+    const stats = peer.onChainStats;
 
-    rows.push({
-      id: serviceId,
-      name: meta?.displayName ?? fallbackName,
-      provider: meta?.provider ?? guessProvider(serviceId),
-      logoUrl: guessLogo(serviceId),
-      contextWindow: meta?.contextWindow ?? '—',
-      tags: ['anon', ...(meta?.tags ?? [...data.categories])],
-      inputPrice: data.bestInput,
-      outputPrice: data.bestOutput,
-      peerCount: data.peerCount,
-      peerNames: [...data.peerNames],
-      categories: [...data.categories],
-      bestPeerName: data.bestPeerName,
-      avgReputation: data.reputations.length > 0
-        ? data.reputations.reduce((a, b) => a + b, 0) / data.reputations.length
-        : undefined,
-    });
+    for (const ann of peer.providers) {
+      for (const service of ann.services) {
+        const pricing = ann.servicePricing?.[service] ?? ann.defaultPricing;
+        const meta = MODEL_META[service];
+        const cats = ann.serviceCategories?.[service] ?? [];
+        const fallbackName = service
+          .replace(/[-_]/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+        const peersForService = peerCountMap.get(service)!;
+
+        rows.push({
+          id: `${service}::${pName}`,
+          serviceId: service,
+          name: meta?.displayName ?? fallbackName,
+          provider: meta?.provider ?? guessProvider(service),
+          logoUrl: guessLogo(service),
+          contextWindow: meta?.contextWindow ?? '—',
+          tags: ['anon', ...(meta?.tags ?? cats)],
+          inputPrice: pricing.inputUsdPerMillion,
+          outputPrice: pricing.outputUsdPerMillion,
+          peerCount: peersForService.size,
+          peerNames: [...peersForService],
+          peerName: pName,
+          categories: cats,
+          totalTokens: (parseInt(stats?.totalInputTokens ?? '0', 10) + parseInt(stats?.totalOutputTokens ?? '0', 10)),
+          uniqueBuyers: stats?.uniqueBuyers ?? 0,
+        });
+      }
+    }
   }
 
   return rows;
@@ -198,7 +182,6 @@ function guessProvider(serviceId: string): string {
 
 function guessLogo(serviceId: string): string {
   for (const [re, hint] of PROVIDER_HINTS) if (re.test(serviceId)) return hint.logo;
-  // Fallback: generate a letter logo from the first character
   const letter = (serviceId[0] ?? '?').toUpperCase();
   return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#64748b"/><text x="20" y="27" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="20" fill="#fff">${letter}</text></svg>`)}`;
 }
@@ -213,15 +196,36 @@ const TAG_CLASS: Record<string, string> = {
   enterprise: styles.tagEnterprise,
 };
 
-type SortKey = 'name' | 'inputPrice' | 'outputPrice' | 'peerCount';
+type SortKey = 'name' | 'inputPrice' | 'outputPrice' | 'peerCount' | 'totalTokens' | 'uniqueBuyers';
 type SortDir = 'asc' | 'desc';
 
 function formatPrice(p: number): string {
-  if (p === 0) return 'Free';
-  if (p < 0.01) return 'Free';
+  if (p === 0 || p < 0.01) return 'Free';
   if (p < 1) return `$${p.toFixed(2)}`;
   return `$${p % 1 === 0 ? p : p.toFixed(2)}`;
 }
+
+function formatNum(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/* ── Filters state ────────────────────────────────────────────────── */
+
+interface Filters {
+  maxInputPct: number;       // 100=Any (right), drag left to limit price
+  maxOutputPct: number;      // 100=Any (right), drag left to limit price
+  minVolume: number;         // 0=Any (left), drag right to require more volume
+  supportsCaching: boolean;
+}
+
+const DEFAULT_FILTERS: Filters = {
+  maxInputPct: 100,
+  maxOutputPct: 100,
+  minVolume: 0,
+  supportsCaching: false,
+};
 
 /* ── Component ────────────────────────────────────────────────────── */
 
@@ -233,11 +237,11 @@ export default function PricingPage() {
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
-  const [sortKey, setSortKey] = useState<SortKey>(isMobile ? 'name' : 'inputPrice');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortKey, setSortKey] = useState<SortKey>('totalTokens');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
-  // Fetch live network data
   useEffect(() => {
     const refresh = async () => {
       for (const url of [STATS_URL, DEV_STATS_URL]) {
@@ -260,15 +264,26 @@ export default function PricingPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Aggregate models from live peers
-  const models = useMemo(() => aggregateModels(peers), [peers]);
+  const models = useMemo(() => buildServiceRows(peers), [peers]);
 
   const allPeerNames = useMemo(() => [...new Set(peers.map(p => p.displayName ?? p.peerId.slice(0, 12)))].sort(), [peers]);
   const allTags = useMemo(() => [...new Set(models.flatMap(m => m.tags))].sort(), [models]);
+  const uniqueServiceCount = useMemo(() => new Set(models.map(m => m.serviceId)).size, [models]);
+
+  // Totals and bounds for stats bar + sliders
+  const totalTokens = useMemo(() => peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalInputTokens ?? '0', 10) + parseInt(p.onChainStats?.totalOutputTokens ?? '0', 10), 0), [peers]);
+
+  const bounds = useMemo(() => ({
+    maxInput: Math.max(...models.map(m => m.inputPrice), 1),
+    maxOutput: Math.max(...models.map(m => m.outputPrice), 1),
+    maxTokens: Math.max(...models.map(m => m.totalTokens), 1),
+    maxRequests: Math.max(...models.map(m => m.totalRequests), 1),
+    maxBuyers: Math.max(...models.map(m => m.uniqueBuyers), 1),
+  }), [models]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('asc'); }
+    else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc'); }
   };
 
   const sortIcon = (key: SortKey) => {
@@ -282,6 +297,11 @@ export default function PricingPage() {
       if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
       if (providerFilter && !m.peerNames.includes(providerFilter)) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
+      // Price sliders: 100=Any, lower=stricter
+      if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;
+      if (filters.maxOutputPct < 100 && m.outputPrice > bounds.maxOutput * filters.maxOutputPct / 100) return false;
+      // Volume slider: 0=Any, higher=require more tokens served
+      if (filters.minVolume > 0 && m.totalTokens < bounds.maxTokens * filters.minVolume / 100) return false;
       return true;
     });
 
@@ -292,12 +312,14 @@ export default function PricingPage() {
         case 'inputPrice': cmp = a.inputPrice - b.inputPrice; break;
         case 'outputPrice': cmp = a.outputPrice - b.outputPrice; break;
         case 'peerCount': cmp = a.peerCount - b.peerCount; break;
+        case 'totalTokens': cmp = a.totalTokens - b.totalTokens; break;
+        case 'uniqueBuyers': cmp = a.uniqueBuyers - b.uniqueBuyers; break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
 
     return list;
-  }, [models, query, providerFilter, tagFilter, sortKey, sortDir]);
+  }, [models, query, providerFilter, tagFilter, sortKey, sortDir, filters]);
 
   const cheapestInput = models.length > 0 ? Math.min(...models.map(m => m.inputPrice)) : 0;
   const totalPeers = peers.length;
@@ -306,8 +328,10 @@ export default function PricingPage() {
     ? `Updated ${new Date(updatedAt).toLocaleTimeString()}`
     : null;
 
+  const hasActiveFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching;
+
   return (
-    <Layout title="Pricing" description="Compare AI model pricing across AntSeed network providers. Find the best rates for input and output tokens.">
+    <Layout title="Pricing" description="Compare AI service pricing across AntSeed network providers. Find the best rates for input and output tokens.">
       <div className={styles.page}>
         {/* Hero */}
         <div className={styles.header}>
@@ -318,7 +342,7 @@ export default function PricingPage() {
               ? 'Loading live network data...'
               : error
                 ? 'Unable to reach the network. Showing cached data if available.'
-                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {models.length} services. Best rate per million tokens.</>
+                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} services. Best rate per million tokens.</>
             }
           </p>
         </div>
@@ -326,13 +350,18 @@ export default function PricingPage() {
         {/* Stats */}
         <div className={styles.statsBar}>
           <div className={styles.stat}>
-            <div className={styles.statNum}>{loading ? '—' : models.length}</div>
+            <div className={styles.statNum}>{loading ? '—' : uniqueServiceCount}</div>
             <div className={styles.statLabel}>Services</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
             <div className={styles.statNum}>{loading ? '—' : totalPeers}</div>
             <div className={styles.statLabel}>Active Peers</div>
+          </div>
+          <div className={styles.statDivider} />
+          <div className={styles.stat}>
+            <div className={styles.statNum}>{loading ? '—' : formatNum(totalTokens)}</div>
+            <div className={styles.statLabel}>Tokens Served</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
@@ -348,20 +377,89 @@ export default function PricingPage() {
 
         {/* Search + Filters */}
         <div className={styles.filterBar}>
-          <div className={styles.searchWrap}>
-            <svg className={styles.searchIcon} viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd"/>
-            </svg>
-            <input
-              className={styles.searchInput}
-              placeholder="Search services, providers, or capabilities..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
-            {query && (
-              <button className={styles.clearBtn} onClick={() => setQuery('')} aria-label="Clear search">×</button>
-            )}
+          <div className={styles.searchRow}>
+            <div className={styles.searchWrap}>
+              <svg className={styles.searchIcon} viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+                <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd"/>
+              </svg>
+              <input
+                className={styles.searchInput}
+                placeholder="Search services, providers, or capabilities..."
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+              />
+              {query && (
+                <button className={styles.clearBtn} onClick={() => setQuery('')} aria-label="Clear search">×</button>
+              )}
+            </div>
+            <button
+              className={`${styles.filterToggle} ${hasActiveFilters ? styles.filterToggleActive : ''}`}
+              onClick={() => setShowFilters(v => !v)}
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+                <path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd"/>
+              </svg>
+              Filters{hasActiveFilters ? ' ●' : ''}
+            </button>
           </div>
+
+          {/* Advanced filters panel — hidden on mobile */}
+          {showFilters && (
+            <div className={styles.advancedFilters}>
+              <div className={styles.filterGroup}>
+                <div className={styles.filterHeader}>
+                  <span className={styles.filterLabel}>Input Price /M</span>
+                  <span className={styles.filterValue}>
+                    {filters.maxInputPct >= 100 ? 'Any' : `≤ $${(bounds.maxInput * filters.maxInputPct / 100).toFixed(2)}`}
+                  </span>
+                </div>
+                <input type="range" min="0" max="100" step="1"
+                  className={styles.filterRange}
+                  value={filters.maxInputPct}
+                  onChange={e => setFilters(f => ({...f, maxInputPct: Number(e.target.value)}))}
+                />
+              </div>
+              <div className={styles.filterGroup}>
+                <div className={styles.filterHeader}>
+                  <span className={styles.filterLabel}>Output Price /M</span>
+                  <span className={styles.filterValue}>
+                    {filters.maxOutputPct >= 100 ? 'Any' : `≤ $${(bounds.maxOutput * filters.maxOutputPct / 100).toFixed(2)}`}
+                  </span>
+                </div>
+                <input type="range" min="0" max="100" step="1"
+                  className={styles.filterRange}
+                  value={filters.maxOutputPct}
+                  onChange={e => setFilters(f => ({...f, maxOutputPct: Number(e.target.value)}))}
+                />
+              </div>
+              <div className={styles.filterGroup}>
+                <div className={styles.filterHeader}>
+                  <span className={styles.filterLabel}>Tokens Served</span>
+                  <span className={styles.filterValue}>
+                    {filters.minVolume <= 0 ? 'Any' : `≥ ${formatNum(Math.round(bounds.maxTokens * filters.minVolume / 100))}`}
+                  </span>
+                </div>
+                <input type="range" min="0" max="100" step="1"
+                  className={styles.filterRange}
+                  value={filters.minVolume}
+                  onChange={e => setFilters(f => ({...f, minVolume: Number(e.target.value)}))}
+                />
+              </div>
+              <div className={styles.filterGroupToggle}>
+                <label className={styles.checkboxLabel}>
+                  <input type="checkbox"
+                    className={styles.checkbox}
+                    checked={filters.supportsCaching}
+                    onChange={e => setFilters(f => ({...f, supportsCaching: e.target.checked}))}
+                  />
+                  Supports prompt caching
+                </label>
+              </div>
+              {hasActiveFilters && (
+                <button className={styles.clearFilters} onClick={() => setFilters(DEFAULT_FILTERS)}>Clear all</button>
+              )}
+            </div>
+          )}
 
           {allPeerNames.length > 0 && (
             <div className={styles.filterChips}>
@@ -415,21 +513,24 @@ export default function PricingPage() {
                 <th className={styles.thPrice} onClick={() => toggleSort('outputPrice')}>
                   Output /M {sortIcon('outputPrice')}
                 </th>
-                <th className={styles.thProviders} onClick={() => toggleSort('peerCount')}>
-                  Peers {sortIcon('peerCount')}
+                <th className={styles.thStat} onClick={() => toggleSort('totalTokens')}>
+                  Tokens {sortIcon('totalTokens')}
+                </th>
+                <th className={styles.thStat} onClick={() => toggleSort('uniqueBuyers')}>
+                  Users {sortIcon('uniqueBuyers')}
                 </th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={4} className={styles.emptyRow}>
+                  <td colSpan={5} className={styles.emptyRow}>
                     Discovering peers on the network...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className={styles.emptyRow}>
+                  <td colSpan={5} className={styles.emptyRow}>
                     {error ? 'Could not reach the network stats server.' : 'No services match your search. Try a different query or clear filters.'}
                   </td>
                 </tr>
@@ -448,18 +549,11 @@ export default function PricingPage() {
                       <div className={styles.modelInfo}>
                         <div className={styles.modelName}>{m.name}</div>
                         <div className={styles.modelMeta}>
-                          {m.bestPeerName && (
-                            <span className={styles.providerName}>via {m.bestPeerName}</span>
-                          )}
+                          <span className={styles.providerName}>via {m.peerName}</span>
                           {m.tags.map(t => (
                             <span key={t} className={`${styles.tagBadge} ${TAG_CLASS[t] ?? styles.tagDefault}`}>{t}</span>
                           ))}
                         </div>
-                        {m.avgReputation != null && (
-                          <div className={styles.reputation}>
-                            Rep: {m.avgReputation.toFixed(1)}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </td>
@@ -473,8 +567,11 @@ export default function PricingPage() {
                       {formatPrice(m.outputPrice)}
                     </span>
                   </td>
-                  <td className={styles.tdProviders}>
-                    <span className={styles.peerCount}>{m.peerCount}</span>
+                  <td className={styles.tdStat}>
+                    <span className={styles.statValue}>{formatNum(m.totalTokens)}</span>
+                  </td>
+                  <td className={styles.tdStat}>
+                    <span className={styles.statValue}>{formatNum(m.uniqueBuyers)}</span>
                   </td>
                 </tr>
               ))}
@@ -484,7 +581,7 @@ export default function PricingPage() {
 
         {/* CTA */}
         <div className={styles.footer}>
-          <p>Prices are the best available rate from live AntSeed network peers. Updates every 30s.</p>
+          <p>Prices and token volumes from live AntSeed network peers. On-chain stats from Base. Updates every 30s.</p>
           <p>Want to become a provider? <Link to="/docs/install">Read the docs →</Link></p>
         </div>
       </div>
