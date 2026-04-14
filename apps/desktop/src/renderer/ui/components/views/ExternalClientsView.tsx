@@ -401,6 +401,19 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
               Read the API docs
             </button>
           </div>
+
+          <div className={styles.clientLinks}>
+            <span className={styles.sectionLabel}>External clients</span>
+            <ul className={styles.clientLinkList}>
+              {TOOLS.map((tool) => (
+                <li key={tool.tag}>
+                  <button className={styles.linkBtn} onClick={() => setOpenTool(tool)}>
+                    {tool.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
 
         <div className={styles.tryBlock}>
@@ -476,20 +489,6 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
             )}
           </div>
         </div>
-        </div>
-
-        <div className={styles.clientsSection}>
-          <span className={styles.sectionLabel}>Integrate with external clients</span>
-          <div className={styles.clientsRow}>
-            {TOOLS.map((tool) => (
-              <button key={tool.tag} className={styles.clientTile} onClick={() => setOpenTool(tool)}>
-                <div className={styles.clientIcon}>
-                  <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} strokeWidth={1.5} />
-                </div>
-                <span className={styles.clientName}>{tool.name}</span>
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 

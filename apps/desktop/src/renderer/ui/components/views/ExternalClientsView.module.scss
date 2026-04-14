@@ -124,6 +124,22 @@
   padding-top: 2px;
 }
 
+.client-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.client-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .section-title {
   font-size: 14px;
   font-weight: 600;
@@ -367,56 +383,6 @@
 
 .response-error {
   color: var(--danger);
-}
-
-/* ── Clients row ── */
-
-.clients-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.clients-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.client-tile {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
-
-  &:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent-green);
-  }
-}
-
-.client-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--bg-surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.client-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
 }
 
 /* ── Modal overlay ── */
