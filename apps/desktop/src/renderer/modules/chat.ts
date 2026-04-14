@@ -1537,17 +1537,6 @@ export function initChatModule({
               reportChatError(result.error, 'Request failed');
               setChatSending(false);
             }
-          } else if (uiState.chatSending) {
-            // Fallback timeout in case stream completion event is missed
-            setTimeout(() => {
-              if (!uiState.chatSending) return;
-              setChatSending(false);
-              clearChatError();
-              void refreshChatConversations();
-              if (uiState.chatActiveConversation) {
-                void openConversation(uiState.chatActiveConversation);
-              }
-            }, 120_000);
           }
         } catch (err) {
           reportChatError(err, 'Chat send failed');
