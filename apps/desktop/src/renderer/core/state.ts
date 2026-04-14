@@ -258,6 +258,7 @@ export type RendererUiState = {
   chatStreamingActive: boolean;
   chatThinkingElapsedMs: number;
   chatWaitingForStream: boolean;
+  chatThinkingPhase: string | null;
 
   // --- Router input value (for plugin setup + chat) ---
   connectRouterValue: string;
@@ -410,6 +411,7 @@ export function createInitialUiState(): RendererUiState {
     chatStreamingActive: false,
     chatThinkingElapsedMs: 0,
     chatWaitingForStream: false,
+    chatThinkingPhase: null,
 
     // Router / dashboard port
     connectRouterValue: 'local',

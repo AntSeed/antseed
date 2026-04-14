@@ -579,7 +579,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
-              <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
+              <WalkingAnt
+                elapsedMs={snap.chatThinkingElapsedMs}
+                phaseLabel={snap.chatThinkingPhase}
+              />
             )}
             <SessionApprovalCard
               visible={snap.chatPaymentApprovalVisible}

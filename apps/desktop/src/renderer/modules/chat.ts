@@ -17,6 +17,7 @@ import {
   formatUsd,
   getMyrmecochoryLabel,
   normalizeAssistantMeta,
+  paymentLogToThinkingPhase,
   shortServiceName,
 } from '../ui/components/chat/chat-shared';
 
@@ -79,6 +80,7 @@ export type ChatModuleApi = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  handleLogLineForThinkingPhase: (line: string) => void;
 };
 
 export function initChatModule({
@@ -716,8 +718,16 @@ export function initChatModule({
     uiState.chatInputDisabled = sending;
     uiState.chatSendDisabled = sending;
     uiState.chatAbortVisible = sending;
-    if (sending) uiState.chatWaitingForStream = true;
-    if (!sending) uiState.chatWaitingForStream = false;
+    if (sending) {
+      uiState.chatWaitingForStream = true;
+      uiState.chatThinkingPhase = null;
+      clearThinkingPhaseExpiry();
+    }
+    if (!sending) {
+      uiState.chatWaitingForStream = false;
+      uiState.chatThinkingPhase = null;
+      clearThinkingPhaseExpiry();
+    }
 
     if (sending) {
       if (activeStreamStartedAt <= 0) activeStreamStartedAt = Date.now();
@@ -1821,6 +1831,8 @@ export function initChatModule({
           uiState.chatWaitingForStream
         ) {
           uiState.chatWaitingForStream = false;
+          uiState.chatThinkingPhase = null;
+          clearThinkingPhaseExpiry();
           notifyUiStateChanged();
         }
 
@@ -2151,7 +2163,34 @@ export function initChatModule({
   // Public API
   // ---------------------------------------------------------------------------
 
+  let thinkingPhaseExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearThinkingPhaseExpiry(): void {
+    if (thinkingPhaseExpiryTimer !== null) {
+      clearTimeout(thinkingPhaseExpiryTimer);
+      thinkingPhaseExpiryTimer = null;
+    }
+  }
+
+  function handleLogLineForThinkingPhase(line: string): void {
+    if (!uiState.chatSending) return;
+    const phase = paymentLogToThinkingPhase(line);
+    if (!phase) return;
+    clearThinkingPhaseExpiry();
+    thinkingPhaseExpiryTimer = setTimeout(() => {
+      thinkingPhaseExpiryTimer = null;
+      if (uiState.chatThinkingPhase !== null) {
+        uiState.chatThinkingPhase = null;
+        notifyUiStateChanged();
+      }
+    }, 3500);
+    if (uiState.chatThinkingPhase === phase) return;
+    uiState.chatThinkingPhase = phase;
+    notifyUiStateChanged();
+  }
+
   return {
+    handleLogLineForThinkingPhase,
     refreshChatServiceOptions,
     refreshChatProxyStatus,
     refreshChatConversations,

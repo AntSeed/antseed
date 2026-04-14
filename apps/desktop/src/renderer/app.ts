@@ -498,6 +498,9 @@ function initializeBridge(): void {
     }
 
     appendLog(event);
+    if (event.mode === 'connect') {
+      chatApi.handleLogLineForThinkingPhase(event.line);
+    }
     renderPluginSetupState();
     if (!hasStructuredRuntimeActivity) {
       updateRuntimeActivityFromLog(event.mode, event.line);
