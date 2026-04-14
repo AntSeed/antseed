@@ -120,20 +120,20 @@ function buildRequest(option: ChatServiceOptionEntry | undefined, port: number):
     path = '/v1/chat/completions';
     body = {
       model: serviceId || 'auto',
-      messages: [{ role: 'user', content: 'Say hi in 5 words.' }],
+      messages: [{ role: 'user', content: 'Hello.' }],
     };
   } else if (protocol === 'openai-responses') {
     path = '/v1/responses';
     body = {
       model: serviceId || 'auto',
-      input: 'Say hi in 5 words.',
+      input: 'Hello.',
     };
   } else {
     headers['anthropic-version'] = '2023-06-01';
     body = {
       model: serviceId || 'auto',
       max_tokens: 256,
-      messages: [{ role: 'user', content: 'Say hi in 5 words.' }],
+      messages: [{ role: 'user', content: 'Hello.' }],
     };
   }
 
