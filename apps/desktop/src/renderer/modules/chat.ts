@@ -118,7 +118,7 @@ export function initChatModule({
     categories: string[];
     description: string;
   };
-  type ChatServiceSelection = { id: string; provider: string | null };
+  type ChatServiceSelection = { id: string; provider: string | null; peerId?: string };
   type ChatServiceOption = ChatServiceSelection & { label: string; value: string };
 
   const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
@@ -281,17 +281,30 @@ export function initChatModule({
     // Format: "provider\x01service" or "provider\x01service\x01peerId"
     const provider = normalizeProviderId(parts[0]);
     const id = normalizeChatServiceId(parts[1]);
-    return { id, provider };
+    const peerId = parts[2]?.trim() || undefined;
+    return { id, provider, peerId };
   }
 
   function findMatchingChatServiceOptionValue(
     options: ChatServiceOption[],
     targetServiceId: unknown,
     targetProvider?: unknown,
+    targetPeerId?: unknown,
   ): string | null {
     const serviceId = normalizeChatServiceId(targetServiceId);
     if (!serviceId) return null;
     const provider = normalizeProviderId(targetProvider);
+    const peerId = typeof targetPeerId === 'string' ? targetPeerId.trim() : '';
+    if (peerId && provider) {
+      const exactPeer = options.find(
+        (o) => o.id === serviceId && o.provider === provider && o.peerId === peerId,
+      );
+      if (exactPeer) return exactPeer.value;
+    }
+    if (peerId) {
+      const peerMatch = options.find((o) => o.id === serviceId && o.peerId === peerId);
+      if (peerMatch) return peerMatch.value;
+    }
     if (provider) {
       const exact = options.find((o) => o.id === serviceId && o.provider === provider);
       if (exact) return exact.value;
@@ -827,13 +840,14 @@ export function initChatModule({
   function getAvailableChatServiceOptions(): ChatServiceOption[] {
     if (uiState.chatServiceOptions.length > 0) {
       return uiState.chatServiceOptions
-        .map((entry) => {
+        .map((entry): ChatServiceOption | null => {
           const selection = decodeChatServiceSelection(entry.value);
           if (!selection.id) return null;
           return {
             id: selection.id,
             label: entry.label,
             provider: selection.provider,
+            peerId: selection.peerId ?? entry.peerId ?? undefined,
             value: entry.value,
           };
         })
@@ -889,20 +903,24 @@ export function initChatModule({
     const optionCandidates: ChatServiceOption[] = options.map((entry) => ({
       id: entry.id,
       provider: normalizeProviderId(entry.provider),
+      peerId: entry.peerId || undefined,
       label: entry.label,
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
 
+    const activeConversationPeerId = activeConversation?.peerId?.trim() ?? '';
     const preferred =
       findMatchingChatServiceOptionValue(
         optionCandidates,
         currentSelection.id,
         currentSelection.provider,
+        currentSelection.peerId,
       ) ??
       findMatchingChatServiceOptionValue(
         optionCandidates,
         activeConversationModel,
         activeConversationProvider,
+        activeConversationPeerId,
       ) ??
       optionCandidates[0]?.value ??
       '';
@@ -1237,6 +1255,7 @@ export function initChatModule({
 
     uiState.chatActiveConversation = convId;
     uiState.chatRoutedPeerId = '';
+    uiState.chatSelectedPeerId = '';
     uiState.chatSessionStarted = '';
     uiState.chatSessionReservedUsdc = '';
     uiState.chatSessionAccumulatedCostUsd = '';
@@ -1268,13 +1287,22 @@ export function initChatModule({
         uiState.chatSendDisabled = false;
 
         const optionCandidates = getAvailableChatServiceOptions();
+        const convPeerIdForMatch = conv.peerId?.trim() ?? '';
         const preferredValue = findMatchingChatServiceOptionValue(
           optionCandidates,
           conv.service,
           conv.provider,
+          convPeerIdForMatch,
         );
         if (preferredValue) {
           uiState.chatSelectedServiceValue = preferredValue;
+          const matchedOption = optionCandidates.find((o) => o.value === preferredValue);
+          if (matchedOption?.peerId) {
+            uiState.chatSelectedPeerId = matchedOption.peerId;
+          }
+        }
+        if (!uiState.chatSelectedPeerId && convPeerIdForMatch) {
+          uiState.chatSelectedPeerId = convPeerIdForMatch;
         }
 
         setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);

@@ -58,6 +58,35 @@
   }
 }
 
+.title-bar-update-btn-downloading {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: default;
+
+  &:hover {
+    background: var(--bg-hover);
+    opacity: 1;
+  }
+}
+
+.title-bar-update-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--accent-green);
+  opacity: 0.35;
+  transition: width 0.2s ease;
+  pointer-events: none;
+}
+
+.title-bar-update-label {
+  position: relative;
+  z-index: 1;
+}
+
 .title-bar-theme-toggle {
   display: flex;
   align-items: center;

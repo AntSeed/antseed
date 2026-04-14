@@ -21,7 +21,11 @@ export function TitleBar() {
     if (saved !== null) return saved === 'dark';
     return document.body.classList.contains('dark-theme');
   });
-  const [updateReady, setUpdateReady] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<
+    | { status: 'downloading'; version: string; percent: number }
+    | { status: 'ready'; version: string }
+    | null
+  >(null);
 
   useEffect(() => {
     if (isDark) {
@@ -33,10 +37,18 @@ export function TitleBar() {
   }, [isDark]);
 
   useEffect(() => {
-    const bridge = (window as unknown as { antseedDesktop?: { onUpdateStatus?: (h: (d: { status: string; version: string }) => void) => () => void } }).antseedDesktop;
+    const bridge = (window as unknown as { antseedDesktop?: { onUpdateStatus?: (h: (d: { status: string; version: string; percent?: number }) => void) => () => void } }).antseedDesktop;
     if (!bridge?.onUpdateStatus) return;
     return bridge.onUpdateStatus((data) => {
-      if (data.status === 'ready') setUpdateReady(data.version);
+      if (data.status === 'ready') {
+        setUpdateState({ status: 'ready', version: data.version });
+      } else if (data.status === 'downloading') {
+        const percent = typeof data.percent === 'number' ? data.percent : 0;
+        setUpdateState((prev) => {
+          if (prev?.status === 'ready') return prev;
+          return { status: 'downloading', version: data.version, percent };
+        });
+      }
     });
   }, []);
 
@@ -90,15 +102,27 @@ export function TitleBar() {
         <AntStationLogo height={20} className={styles.titleBarLogo} />
       </div>
       <div className={styles.titleBarRight}>
-        {updateReady && (
-          <button
-            className={styles.titleBarUpdateBtn}
-            onClick={handleUpdate}
-            aria-label={`Install v${updateReady} and restart`}
-            title={`Install v${updateReady} and restart`}
-          >
-            Update to v{updateReady}
-          </button>
+        {updateState && (
+          updateState.status === 'ready' ? (
+            <button
+              className={styles.titleBarUpdateBtn}
+              onClick={handleUpdate}
+              aria-label={`Install v${updateState.version} and restart`}
+              title={`Install v${updateState.version} and restart`}
+            >
+              Update to v{updateState.version}
+            </button>
+          ) : (
+            <button
+              className={`${styles.titleBarUpdateBtn} ${styles.titleBarUpdateBtnDownloading}`}
+              disabled
+              aria-label={`Downloading v${updateState.version} ${updateState.percent}%`}
+              title={`Downloading v${updateState.version} — ${updateState.percent}%`}
+            >
+              <span className={styles.titleBarUpdateFill} style={{ width: `${updateState.percent}%` }} aria-hidden="true" />
+              <span className={styles.titleBarUpdateLabel}>Downloading v{updateState.version} · {updateState.percent}%</span>
+            </button>
+          )
         )}
         <div className={styles.alphaHint}>
           Alpha Version

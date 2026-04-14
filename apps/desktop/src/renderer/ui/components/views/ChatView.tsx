@@ -494,41 +494,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           )}
         </div>
         {snap.chatActiveConversation && (
-          <div className={styles.sessionMeta}>
-            {/* {snap.chatRoutedPeerId && (
-              <span className={styles.sessionMetaItem} title={snap.chatRoutedPeerId}>
-                {snap.chatRoutedPeerId.slice(0, 10)}...
-              </span>
-            )} */}
-            {snap.chatSessionReservedUsdc && (
-              <span className={styles.sessionMetaItem}>
-                reserve ${snap.chatSessionReservedUsdc}
-              </span>
-            )}
-            {snap.chatSessionAccumulatedCostUsd && (
-              <span className={styles.sessionMetaItem}>
-                used ${snap.chatSessionAccumulatedCostUsd}
-              </span>
-            )}
-            {snap.chatSessionTotalTokens && (
-              <span className={styles.sessionMetaItem}>
-                {snap.chatSessionTotalTokens} tok
-              </span>
-            )}
-            {snap.chatLifetimeSpentUsdc && (
-              <span className={styles.sessionMetaItem} title="Total spent across all sessions with this peer">
-                total ${snap.chatLifetimeSpentUsdc}
-              </span>
-            )}
-            {snap.chatLifetimeTotalTokens && (
-              <span className={styles.sessionMetaItem} title="Total tokens across all sessions">
-                total {snap.chatLifetimeTotalTokens} tok
-              </span>
-            )}
-            {snap.chatSessionStarted && (
-              <span className={styles.sessionMetaItem}>{snap.chatSessionStarted}</span>
-            )}
-          </div>
+          <ChatSessionStats
+            sessionCost={snap.chatSessionAccumulatedCostUsd}
+            sessionTokens={snap.chatSessionTotalTokens}
+            lifetimeCost={snap.chatLifetimeSpentUsdc}
+            lifetimeTokens={snap.chatLifetimeTotalTokens}
+            reserved={snap.chatSessionReservedUsdc}
+            started={snap.chatSessionStarted}
+          />
         )}
       </div>
 
@@ -703,5 +676,108 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         onCancel={handleSwitchCancel}
       />
     </section>
+  );
+}
+
+function compactTokensFromFormatted(formatted: string): string {
+  const n = Number(formatted.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return String(Math.floor(n));
+}
+
+function compactUsd(raw: string): string {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return `$${raw}`;
+  if (n === 0) return '$0.00';
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function ChatSessionStats({
+  sessionCost,
+  sessionTokens,
+  lifetimeCost,
+  lifetimeTokens,
+  reserved,
+  started,
+}: {
+  sessionCost: string;
+  sessionTokens: string;
+  lifetimeCost: string;
+  lifetimeTokens: string;
+  reserved: string;
+  started: string;
+}) {
+  const hasSession = Boolean(sessionCost || sessionTokens);
+  const sessionCostLabel = sessionCost ? compactUsd(sessionCost) : '$0.00';
+  const sessionTokenLabel = sessionTokens ? compactTokensFromFormatted(sessionTokens) : '0';
+  const reservedMaxNum = Number(reserved);
+  const sessionCostNum = Number(sessionCost);
+  const hasReserveCeiling = Number.isFinite(reservedMaxNum) && reservedMaxNum > 0;
+  const reserveRemainingNum = hasReserveCeiling
+    ? Math.max(0, reservedMaxNum - (Number.isFinite(sessionCostNum) ? sessionCostNum : 0))
+    : 0;
+  return (
+    <div className={styles.sessionStats} tabIndex={0} aria-label="Usage stats">
+      <svg
+        className={styles.sessionStatsIcon}
+        width="12" height="12" viewBox="0 0 16 16" fill="none"
+        aria-hidden="true"
+      >
+        <path d="M2.5 13.5V10M6.5 13.5V6M10.5 13.5V8M14 13.5V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
+      <span className={styles.sessionStatsSummary}>
+        {hasSession ? (
+          <>
+            {sessionCostLabel}
+            <span className={styles.sessionStatsDot} />
+            {sessionTokenLabel} tok
+          </>
+        ) : (
+          'Usage'
+        )}
+      </span>
+      <div className={styles.sessionStatsPopover} role="tooltip">
+        <div className={styles.sessionStatsGroup}>
+          <div className={styles.sessionStatsGroupLabel}>Current payment channel</div>
+          <div className={styles.sessionStatsRow}>
+            <span>Cost</span>
+            <span>{sessionCost ? `$${sessionCost}` : '—'}</span>
+          </div>
+          <div className={styles.sessionStatsRow}>
+            <span>Tokens</span>
+            <span>{sessionTokens || '—'}</span>
+          </div>
+        </div>
+        <div className={styles.sessionStatsGroup}>
+          <div className={styles.sessionStatsGroupLabel}>All-time with peer</div>
+          <div className={styles.sessionStatsRow}>
+            <span>Cost</span>
+            <span>{lifetimeCost ? `$${lifetimeCost}` : '—'}</span>
+          </div>
+          <div className={styles.sessionStatsRow}>
+            <span>Tokens</span>
+            <span>{lifetimeTokens || '—'}</span>
+          </div>
+        </div>
+        <div className={styles.sessionStatsFooter}>
+          {hasReserveCeiling && (
+            <div className={styles.sessionStatsRow}>
+              <span>Reserve remaining</span>
+              <span>{compactUsd(String(reserveRemainingNum))} / {compactUsd(reserved)}</span>
+            </div>
+          )}
+          {started && (
+            <div className={styles.sessionStatsRow}>
+              <span>Started</span>
+              <span>{started}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

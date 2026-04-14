@@ -893,7 +893,21 @@ app.whenReady().then(async () => {
 
   let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
 
+  let pendingUpdateVersion: string | null = null;
+  autoUpdater.on('update-available', (info) => {
+    pendingUpdateVersion = info.version;
+    getMainWindow()?.webContents.send('app:update-status', { status: 'downloading', version: info.version, percent: 0 });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    if (!pendingUpdateVersion) return;
+    getMainWindow()?.webContents.send('app:update-status', {
+      status: 'downloading',
+      version: pendingUpdateVersion,
+      percent: Math.max(0, Math.min(100, Math.round(progress.percent ?? 0))),
+    });
+  });
   autoUpdater.on('update-downloaded', (info) => {
+    pendingUpdateVersion = null;
     getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
