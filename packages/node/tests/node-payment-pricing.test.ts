@@ -157,6 +157,77 @@ describe('SellerRequestHandler payment pricing selection', () => {
     }));
   });
 
+  it('skips the 402 / ReserveAuth handshake when the service is free', async () => {
+    const provider = makeProvider(0, 0, {
+      name: 'free-tier',
+      services: ['local-test'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ ok: true })),
+    }));
+
+    const sendPaymentRequired = vi.fn();
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      // No active session — this is the "first request" condition that
+      // previously triggered 402 → ReserveAuth → on-chain reserve().
+      sellerPaymentManager: {
+        hasSession: () => false,
+        getChannelByPeer: () => undefined,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }),
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth,
+      sendPaymentRequired,
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    const request: SerializedHttpRequest = {
+      requestId: 'req-free-service',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
+    };
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest(request),
+    });
+
+    // Provider handled the request — not blocked by payment handshake.
+    expect(provider.handleRequest).toHaveBeenCalledOnce();
+    // No 402, no PaymentRequired, no NeedAuth — free services bypass the
+    // channel handshake entirely so the seller never calls reserve().
+    expect(sendPaymentRequired).not.toHaveBeenCalled();
+    expect(sendNeedAuth).not.toHaveBeenCalled();
+
+    const responseFrames = sentFrames
+      .map((f) => decodeFrame(f))
+      .filter((d) => d?.message.type === MessageType.HttpResponse);
+    expect(responseFrames).toHaveLength(1);
+    const response = decodeHttpResponse(responseFrames[0]!.message.payload);
+    expect(response.statusCode).toBe(200);
+  });
+
   it('stops serving once delivered spend has caught up to the last accepted auth', async () => {
     const provider = makeProvider(1, 1, {
       name: 'paid-tier',

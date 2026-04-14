@@ -73,39 +73,48 @@ export class SellerRequestHandler {
         const providerPricing = matchedProvider
           ? this.resolveProviderPricing(matchedProvider, request)
           : undefined;
-        const requirements = spm?.getPaymentRequirements(
-          request.requestId, buyerPeerId, providerPricing,
-        );
-        if (requirements) {
-          debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
-          const paymentBody = JSON.stringify({
-            error: 'payment_required',
-            minBudgetPerRequest: requirements.minBudgetPerRequest,
-            suggestedAmount: requirements.suggestedAmount,
-            ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-            ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-            ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
-          });
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(paymentBody),
-          });
-          paymentMux.sendPaymentRequired(requirements);
+        // Free services (both input and output priced at 0) skip the payment
+        // channel handshake entirely — no 402, no ReserveAuth, no on-chain reserve.
+        const isFree = providerPricing
+          ? providerPricing.inputUsdPerMillion === 0 && providerPricing.outputUsdPerMillion === 0
+          : false;
+        if (isFree) {
+          debugLog(`[SellerHandler] Free service for ${buyerPeerId.slice(0, 12)}... — skipping 402 / payment channel`);
         } else {
-          debugWarn(`[SellerHandler] No payment session — returning 402`);
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(JSON.stringify({
+          const requirements = spm?.getPaymentRequirements(
+            request.requestId, buyerPeerId, providerPricing,
+          );
+          if (requirements) {
+            debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
+            const paymentBody = JSON.stringify({
               error: 'payment_required',
-              message: 'Seller not ready, try again later',
-            })),
-          });
+              minBudgetPerRequest: requirements.minBudgetPerRequest,
+              suggestedAmount: requirements.suggestedAmount,
+              ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
+              ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
+              ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
+            });
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 402,
+              headers: { "content-type": "application/json" },
+              body: new TextEncoder().encode(paymentBody),
+            });
+            paymentMux.sendPaymentRequired(requirements);
+          } else {
+            debugWarn(`[SellerHandler] No payment session — returning 402`);
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 402,
+              headers: { "content-type": "application/json" },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: 'payment_required',
+                message: 'Seller not ready, try again later',
+              })),
+            });
+          }
+          return;
         }
-        return;
       }
 
       // Check budget before routing — reject if buyer hasn't authorized enough
