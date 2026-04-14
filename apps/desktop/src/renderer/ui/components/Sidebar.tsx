@@ -367,7 +367,7 @@ function PeerGroupSection({
 const EMPTY_CONVERSATIONS: unknown[] = [];
 
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
+  const { chatConversations, chatActiveConversation, chatActiveChannels, chatServiceOptions } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -401,10 +401,29 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     onSelectView('chat');
   }, [actions, onSelectView]);
 
-  const handleNewChat = useCallback((_peerId: string) => {
+  const handleNewChat = useCallback((peerId: string) => {
+    if (peerId) {
+      // Pin the new chat to this peer and pre-select a service it offers.
+      // Prefer a service matching the most recent conversation with the peer
+      // (conv.service matches option.id), otherwise fall back to any option
+      // for that peer.
+      const group = peerGroups.find((g) => g.peerId === peerId);
+      const recentService = group && group.conversations.length > 0
+        ? String((group.conversations[0] as ConvRecord).service || '').trim()
+        : '';
+      const options = Array.isArray(chatServiceOptions) ? chatServiceOptions : [];
+      const match =
+        (recentService
+          ? options.find((o) => o.peerId === peerId && o.id === recentService)
+          : undefined) ||
+        options.find((o) => o.peerId === peerId);
+      if (match) {
+        actions.handleServiceChange(match.value, peerId);
+      }
+    }
     actions.startNewChat();
     onSelectView('chat');
-  }, [actions, onSelectView]);
+  }, [actions, onSelectView, peerGroups, chatServiceOptions]);
 
   const handleCloseChannel = useCallback(() => {
     actions.requestChannelClose();
