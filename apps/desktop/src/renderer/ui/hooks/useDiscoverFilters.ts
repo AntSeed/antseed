@@ -20,7 +20,6 @@ export type DiscoverFilterState = {
   peerSet: Set<string>;
   maxInputPrice: number;
   maxOutputPrice: number;
-  cachedOnly: boolean;
   chattedOnly: boolean;
   minStakeUsdc: number;
   lastSeenWindow: TimeWindow;
@@ -37,7 +36,6 @@ export type DiscoverFilterState = {
   togglePeer: (peerId: string) => void;
   setMaxInputPrice: (v: number) => void;
   setMaxOutputPrice: (v: number) => void;
-  setCachedOnly: (v: boolean) => void;
   setChattedOnly: (v: boolean) => void;
   setMinStakeUsdc: (v: number) => void;
   setLastSeenWindow: (v: TimeWindow) => void;
@@ -53,13 +51,12 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   const [peerSet, setPeerSet] = useState<Set<string>>(() => new Set());
   const [maxInputPrice, setMaxInputPrice] = useState<number>(MAX_INPUT_PRICE_SLIDER_USD);
   const [maxOutputPrice, setMaxOutputPrice] = useState<number>(MAX_OUTPUT_PRICE_SLIDER_USD);
-  const [cachedOnly, setCachedOnly] = useState(false);
   const [chattedOnly, setChattedOnly] = useState(false);
   const [minStakeUsdc, setMinStakeUsdc] = useState<number>(0);
   const [lastSeenWindow, setLastSeenWindow] = useState<TimeWindow>('any');
   const [lastSettledWindow, setLastSettledWindow] = useState<TimeWindow>('any');
   const [minVolumeUsdc, setMinVolumeUsdc] = useState<number>(0);
-  const [sortKey, setSortKey] = useState<DiscoverSortKey>('recentlyUsed');
+  const [sortKey, setSortKey] = useState<DiscoverSortKey>('volumeDesc');
 
   const toggleCategory = useCallback((cat: string) => {
     setCategorySet((prev) => {
@@ -86,13 +83,12 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     setPeerSet(new Set());
     setMaxInputPrice(MAX_INPUT_PRICE_SLIDER_USD);
     setMaxOutputPrice(MAX_OUTPUT_PRICE_SLIDER_USD);
-    setCachedOnly(false);
     setChattedOnly(false);
     setMinStakeUsdc(0);
     setLastSeenWindow('any');
     setLastSettledWindow('any');
     setMinVolumeUsdc(0);
-    setSortKey('recentlyUsed');
+    setSortKey('volumeDesc');
   }, []);
 
   const availableCategories = useMemo(() => {
@@ -115,10 +111,10 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
 
   const filteredRows = useMemo(
     () => applyFilters(rows, {
-      search, categorySet, peerSet, maxInputPrice, maxOutputPrice, cachedOnly, chattedOnly, minStakeUsdc,
+      search, categorySet, peerSet, maxInputPrice, maxOutputPrice, chattedOnly, minStakeUsdc,
       lastSeenWindow, lastSettledWindow, minVolumeUsdc,
     }),
-    [rows, search, categorySet, peerSet, maxInputPrice, maxOutputPrice, cachedOnly, chattedOnly, minStakeUsdc,
+    [rows, search, categorySet, peerSet, maxInputPrice, maxOutputPrice, chattedOnly, minStakeUsdc,
       lastSeenWindow, lastSettledWindow, minVolumeUsdc],
   );
 
@@ -133,7 +129,6 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     peerSet,
     maxInputPrice,
     maxOutputPrice,
-    cachedOnly,
     chattedOnly,
     minStakeUsdc,
     lastSeenWindow,
@@ -150,7 +145,6 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     togglePeer,
     setMaxInputPrice,
     setMaxOutputPrice,
-    setCachedOnly,
     setChattedOnly,
     setMinStakeUsdc,
     setLastSeenWindow,

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   matchesSearch, matchesMaxInputPrice, matchesMaxOutputPrice,
-  matchesCachedOnly, matchesMinStake,
+  matchesMinStake,
   matchesLastSeen, matchesLastSettled,
   matchesMinVolume,
   applyFilters, applySort, paginate, totalPagesFor,
@@ -55,13 +55,6 @@ test('matchesMaxOutputPrice filters rows by the output slider ceiling', () => {
   assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: null }), 0.6));
 });
 
-test('matchesCachedOnly requires cached < input', () => {
-  assert.ok(matchesCachedOnly(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 0.1 }), true));
-  assert.ok(!matchesCachedOnly(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: null }), true));
-  assert.ok(!matchesCachedOnly(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 1 }), true));
-  assert.ok(matchesCachedOnly(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: null }), false));
-});
-
 test('matchesMinStake compares base-6 USDC bigint to slider value', () => {
   assert.ok(matchesMinStake(mkRow({ stakeUsdc: '10000000' }), 10));
   assert.ok(!matchesMinStake(mkRow({ stakeUsdc: '9000000' }), 10));
@@ -107,7 +100,7 @@ test('applyFilters composes all predicates', () => {
     search: '', categorySet: new Set(['coding']), peerSet: new Set(),
     maxInputPrice: MAX_INPUT_PRICE_SLIDER_USD,
     maxOutputPrice: MAX_OUTPUT_PRICE_SLIDER_USD,
-    cachedOnly: false, chattedOnly: false,
+    chattedOnly: false,
     minStakeUsdc: 0,
     lastSeenWindow: 'any', lastSettledWindow: 'any',
     minVolumeUsdc: 0,
@@ -132,10 +125,24 @@ test('applySort serviceAsc sorts alphabetically', () => {
   assert.deepEqual(sorted.map((r) => r.serviceLabel), ['A', 'B', 'C']);
 });
 
-test('applySort inputDesc reverses input price order', () => {
-  const rows = [mkRow({ inputUsdPerMillion: 1 }), mkRow({ inputUsdPerMillion: 5 }), mkRow({ inputUsdPerMillion: 3 })];
-  const sorted = applySort(rows, 'inputDesc', 'desc');
-  assert.deepEqual(sorted.map((r) => r.inputUsdPerMillion), [5, 3, 1]);
+test('applySort priceAsc sorts by combined input+output price ascending', () => {
+  const rows = [
+    mkRow({ inputUsdPerMillion: 1, outputUsdPerMillion: 4 }), // 5
+    mkRow({ inputUsdPerMillion: 2, outputUsdPerMillion: 1 }), // 3
+    mkRow({ inputUsdPerMillion: 3, outputUsdPerMillion: 5 }), // 8
+  ];
+  const sorted = applySort(rows, 'priceAsc', 'asc');
+  assert.deepEqual(sorted.map((r) => (r.inputUsdPerMillion ?? 0) + (r.outputUsdPerMillion ?? 0)), [3, 5, 8]);
+});
+
+test('applySort priceDesc sorts by combined price descending', () => {
+  const rows = [
+    mkRow({ inputUsdPerMillion: 1, outputUsdPerMillion: 4 }), // 5
+    mkRow({ inputUsdPerMillion: 2, outputUsdPerMillion: 1 }), // 3
+    mkRow({ inputUsdPerMillion: 3, outputUsdPerMillion: 5 }), // 8
+  ];
+  const sorted = applySort(rows, 'priceDesc', 'desc');
+  assert.deepEqual(sorted.map((r) => (r.inputUsdPerMillion ?? 0) + (r.outputUsdPerMillion ?? 0)), [8, 5, 3]);
 });
 
 test('paginate returns the right slice and totalPagesFor rounds up', () => {

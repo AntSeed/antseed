@@ -35,6 +35,27 @@ export function getPeerGradient(key: string): string {
   return PEER_GRADIENTS[stringHash(key) % PEER_GRADIENTS.length];
 }
 
+export function getTagTint(tag: string): { background: string; color: string } {
+  const hue = stringHash(tag.toLowerCase()) % 360;
+  return {
+    background: `hsla(${hue}, 70%, 55%, 0.16)`,
+    color: `hsl(${hue}, 65%, 42%)`,
+  };
+}
+
+export function getTagOutlineTint(tag: string): {
+  background: string;
+  borderColor: string;
+  color: string;
+} {
+  const hue = stringHash(tag.toLowerCase()) % 360;
+  return {
+    background: 'transparent',
+    borderColor: `hsla(${hue}, 65%, 45%, 0.55)`,
+    color: `hsl(${hue}, 65%, 42%)`,
+  };
+}
+
 /**
  * Strip parenthesized suffix from peer labels.
  * "Ember Forge (0x1234ab)" → "Ember Forge"

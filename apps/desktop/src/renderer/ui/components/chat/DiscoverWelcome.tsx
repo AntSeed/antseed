@@ -10,24 +10,18 @@ import {
   MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
-import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
+import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
+  { key: 'volumeDesc',      label: 'Most volume' },
   { key: 'recentlyUsed',    label: 'Recently used' },
   { key: 'serviceAsc',      label: 'Name A–Z' },
   { key: 'serviceDesc',     label: 'Name Z–A' },
-  { key: 'inputAsc',        label: 'Cheapest input' },
-  { key: 'inputDesc',       label: 'Priciest input' },
-  { key: 'outputAsc',       label: 'Cheapest output' },
-  { key: 'outputDesc',      label: 'Priciest output' },
-  { key: 'cachedInputAsc',  label: 'Cheapest cached input' },
-  { key: 'cachedInputDesc', label: 'Priciest cached input' },
+  { key: 'priceAsc',        label: 'Price low to high' },
+  { key: 'priceDesc',       label: 'Price high to low' },
   { key: 'stakeDesc',       label: 'Most staked' },
-  { key: 'volumeDesc',      label: 'Most volume' },
   { key: 'lastSettledDesc', label: 'Recently settled' },
-  { key: 'stakedAtDesc',    label: 'Newest validators' },
-  { key: 'stakedAtAsc',     label: 'Oldest validators' },
 ];
 
 /* ── Card data type ──────────────────────────────────────────────────── */
@@ -242,12 +236,10 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   const filterState = useDiscoverFilters(rows);
 
   const hasActiveFilters =
-    filterState.search.trim() !== '' ||
     filterState.categorySet.size > 0 ||
     filterState.peerSet.size > 0 ||
     filterState.maxInputPrice < MAX_INPUT_PRICE_SLIDER_USD ||
     filterState.maxOutputPrice < MAX_OUTPUT_PRICE_SLIDER_USD ||
-    filterState.cachedOnly ||
     filterState.chattedOnly ||
     filterState.minStakeUsdc > 0 ||
     filterState.lastSeenWindow !== 'any' ||
@@ -273,7 +265,6 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.peerSet,
     filterState.maxInputPrice,
     filterState.maxOutputPrice,
-    filterState.cachedOnly,
     filterState.chattedOnly,
     filterState.minStakeUsdc,
     filterState.lastSeenWindow,
@@ -498,14 +489,14 @@ function Card({
       <div className={styles.cardBody}>
         <div className={styles.cardTags}>
           {item.tags.map((t) => (
-            <span key={t} className={styles.tag}>{t}</span>
+            <span key={t} className={styles.tag} style={getTagTint(t)}>{t}</span>
           ))}
         </div>
         <div className={styles.cardName}>{item.displayName}</div>
         <div className={styles.cardDesc}>{item.description}</div>
         <div className={styles.cardPricing}>
           {isFree ? (
-            <span>Free</span>
+            <span className={styles.pricingFree}>Free</span>
           ) : hasInput && hasOutput ? (
             <>
               <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>

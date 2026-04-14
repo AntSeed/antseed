@@ -3,13 +3,10 @@ import type { DiscoverRow } from '../../../core/state';
 export type DiscoverSortKey =
   | 'recentlyUsed'
   | 'serviceAsc' | 'serviceDesc'
-  | 'inputAsc' | 'inputDesc'
-  | 'outputAsc' | 'outputDesc'
-  | 'cachedInputAsc' | 'cachedInputDesc'
+  | 'priceAsc' | 'priceDesc'
   | 'stakeDesc'
   | 'volumeDesc'
-  | 'lastSettledDesc'
-  | 'stakedAtAsc' | 'stakedAtDesc';
+  | 'lastSettledDesc';
 
 export const MAX_INPUT_PRICE_SLIDER_USD = 3;
 export const INPUT_PRICE_SLIDER_STEP = 0.1;
@@ -27,7 +24,6 @@ export type DiscoverFilterInputs = {
   peerSet: Set<string>;
   maxInputPrice: number;
   maxOutputPrice: number;
-  cachedOnly: boolean;
   chattedOnly: boolean;
   lastSeenWindow: TimeWindow;
   lastSettledWindow: TimeWindow;
@@ -85,13 +81,6 @@ export function matchesPeerFilter(row: DiscoverRow, set: Set<string>): boolean {
   return set.has(row.peerId);
 }
 
-export function matchesCachedOnly(row: DiscoverRow, enabled: boolean): boolean {
-  if (!enabled) return true;
-  const cached = row.cachedInputUsdPerMillion;
-  const input = row.inputUsdPerMillion;
-  return cached != null && input != null && cached < input;
-}
-
 export function matchesMinStake(row: DiscoverRow, minStakeUsdc: number): boolean {
   if (minStakeUsdc <= 0) return true;
   const stakeUsdc = Number(row.stakeUsdc) / 1_000_000;
@@ -139,7 +128,6 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
     && matchesPeerFilter(row, inputs.peerSet)
     && matchesMaxInputPrice(row, inputs.maxInputPrice)
     && matchesMaxOutputPrice(row, inputs.maxOutputPrice)
-    && matchesCachedOnly(row, inputs.cachedOnly)
     && (inputs.chattedOnly ? hasBeenUsed(row) : true)
     && matchesMinStake(row, inputs.minStakeUsdc)
     && matchesLastSeen(row, inputs.lastSeenWindow, nowMs)
@@ -150,6 +138,12 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
 
 export function applySort(rows: DiscoverRow[], key: DiscoverSortKey, dir: 'asc' | 'desc'): DiscoverRow[] {
   const out = rows.slice();
+  const priceOf = (r: DiscoverRow): number => {
+    const inp = r.inputUsdPerMillion;
+    const out = r.outputUsdPerMillion;
+    if (inp == null && out == null) return Number.POSITIVE_INFINITY;
+    return (inp ?? 0) + (out ?? 0);
+  };
   const cmp = (a: DiscoverRow, b: DiscoverRow): number => {
     switch (key) {
       case 'recentlyUsed': {
@@ -166,24 +160,18 @@ export function applySort(rows: DiscoverRow[], key: DiscoverSortKey, dir: 'asc' 
       case 'serviceAsc':
       case 'serviceDesc':
         return a.serviceLabel.localeCompare(b.serviceLabel);
-      case 'inputAsc':
-      case 'inputDesc':
-        return (a.inputUsdPerMillion ?? Number.POSITIVE_INFINITY) - (b.inputUsdPerMillion ?? Number.POSITIVE_INFINITY);
-      case 'outputAsc':
-      case 'outputDesc':
-        return (a.outputUsdPerMillion ?? Number.POSITIVE_INFINITY) - (b.outputUsdPerMillion ?? Number.POSITIVE_INFINITY);
-      case 'cachedInputAsc':
-      case 'cachedInputDesc':
-        return (a.cachedInputUsdPerMillion ?? Number.POSITIVE_INFINITY) - (b.cachedInputUsdPerMillion ?? Number.POSITIVE_INFINITY);
+      case 'priceAsc':
+      case 'priceDesc':
+        return priceOf(a) - priceOf(b);
       case 'stakeDesc':
         return Number(BigInt(b.stakeUsdc) - BigInt(a.stakeUsdc));
-      case 'volumeDesc':
-        return Number(BigInt(b.onChainTotalVolumeUsdc) - BigInt(a.onChainTotalVolumeUsdc));
+      case 'volumeDesc': {
+        const diff = Number(BigInt(b.onChainTotalVolumeUsdc) - BigInt(a.onChainTotalVolumeUsdc));
+        if (diff !== 0) return diff;
+        return priceOf(a) - priceOf(b);
+      }
       case 'lastSettledDesc':
         return b.onChainLastSettledAt - a.onChainLastSettledAt;
-      case 'stakedAtAsc':
-      case 'stakedAtDesc':
-        return a.stakedAt - b.stakedAt;
       default:
         return 0;
     }
@@ -191,11 +179,8 @@ export function applySort(rows: DiscoverRow[], key: DiscoverSortKey, dir: 'asc' 
 
   out.sort((a, b) => {
     const base = cmp(a, b);
-    if (key === 'serviceDesc' || key === 'inputDesc' || key === 'outputDesc' || key === 'cachedInputDesc' || key === 'stakedAtDesc') {
+    if (key === 'serviceDesc' || key === 'priceDesc') {
       return -base;
-    }
-    if (dir === 'desc' && (key === 'recentlyUsed' || key === 'stakeDesc' || key === 'volumeDesc' || key === 'lastSettledDesc')) {
-      return base;
     }
     return base;
   });

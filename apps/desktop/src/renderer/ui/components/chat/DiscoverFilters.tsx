@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
+import { getTagOutlineTint } from '../../../core/peer-utils';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
@@ -95,6 +96,7 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
                   key={c}
                   type="button"
                   className={`${styles.tag} ${active ? styles.tagActive : ''}`}
+                  style={active ? undefined : getTagOutlineTint(c)}
                   onClick={() => filters.toggleCategory(c)}
                 >
                   {c}
@@ -146,16 +148,6 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
           />
         </div>
       </div>
-
-      {/* Service-level toggle */}
-      <label className={styles.listItem}>
-        <input
-          type="checkbox"
-          checked={filters.cachedOnly}
-          onChange={(e) => filters.setCachedOnly(e.target.checked)}
-        />
-        <span>Supports prompt caching</span>
-      </label>
 
       {/* Min volume served slider */}
       <div className={styles.field}>

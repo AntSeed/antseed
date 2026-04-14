@@ -396,7 +396,7 @@ function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceC
     if (!entry) {
       continue;
     }
-    const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+    const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}\u0000${entry.peerId ?? ''}`;
     const existing = deduped.get(key);
     if (existing) {
       existing.count = Math.max(existing.count, entry.count);
