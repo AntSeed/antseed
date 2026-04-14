@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { getPluginsDir } from './manager.js'
+import { getPluginsDir, installPlugin } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey } from '@antseed/node'
 
@@ -27,24 +27,44 @@ async function loadPlugin<T>(
     throw new Error(`Invalid plugin path: ${pkgName}`)
   }
 
+  const isModuleNotFound = (err: unknown): boolean =>
+    !!err &&
+    typeof err === 'object' &&
+    'code' in err &&
+    (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
+
+  const isTrusted = TRUSTED_PLUGINS.some(p => p.package === pkgName)
+
   let mod: { default?: unknown }
   try {
     mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
-    const cause = err instanceof Error ? err.message : String(err)
-    if (
-      err &&
-      typeof err === 'object' &&
-      'code' in err &&
-      (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
-    ) {
+    if (isModuleNotFound(err) && isTrusted && !existsSync(resolved)) {
+      console.log(`Plugin "${pkgName}" not installed. Installing...`)
+      try {
+        await installPlugin(pkgName)
+      } catch (installErr) {
+        const cause = installErr instanceof Error ? installErr.message : String(installErr)
+        throw new Error(`Failed to install plugin "${pkgName}".\nCause: ${cause}`)
+      }
+      try {
+        mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
+      } catch (retryErr) {
+        const cause = retryErr instanceof Error ? retryErr.message : String(retryErr)
+        throw new Error(
+          `Plugin "${pkgName}" failed to load after install from ${resolved}.\nCause: ${cause}`
+        )
+      }
+    } else if (isModuleNotFound(err)) {
       throw new Error(
         `Plugin "${pkgName}" not found. Install it first, then retry your command.`
       )
+    } else {
+      const cause = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `Plugin "${pkgName}" failed to load from ${resolved}.\nCause: ${cause}`
+      )
     }
-    throw new Error(
-      `Plugin "${pkgName}" failed to load from ${resolved}.\nCause: ${cause}`
-    )
   }
 
   const plugin = mod.default
