@@ -3,9 +3,7 @@ import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
-  MAX_CHANNELS_SLIDER, CHANNELS_SLIDER_STEP,
-  MAX_REQUESTS_SLIDER, REQUESTS_SLIDER_STEP,
-  MAX_TOKENS_SLIDER, TOKENS_SLIDER_STEP,
+  MAX_VOLUME_SLIDER_USDC, VOLUME_SLIDER_STEP,
   type TimeWindow,
 } from './discover-filter-util';
 import styles from './DiscoverFilters.module.scss';
@@ -20,24 +18,14 @@ function formatPriceLabel(value: number, max: number): string {
   return `Up to $${value.toFixed(2)}/M`;
 }
 
-function formatChannelsLabel(value: number): string {
+function formatVolumeLabel(value: number): string {
   if (value <= 0) return 'Any';
-  if (value >= MAX_CHANNELS_SLIDER) return `${MAX_CHANNELS_SLIDER}+`;
-  return `${value}+`;
-}
-
-function formatRequestsLabel(value: number): string {
-  if (value <= 0) return 'Any';
-  if (value >= MAX_REQUESTS_SLIDER) return `${MAX_REQUESTS_SLIDER}+`;
-  return `${value}+`;
-}
-
-function formatTokensLabel(value: number): string {
-  if (value <= 0) return 'Any';
-  const suffix = value >= MAX_TOKENS_SLIDER ? '+' : '+';
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M${suffix}`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K${suffix}`;
-  return `${value}${suffix}`;
+  if (value >= 1_000) {
+    const k = value / 1_000;
+    const str = k % 1 === 0 ? k.toFixed(0) : k.toFixed(1);
+    return `$${str}K+`;
+  }
+  return `$${value}+`;
 }
 
 const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> = [
@@ -50,28 +38,50 @@ const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> =
 export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props) {
   return (
     <aside className={styles.filters}>
-      {/* Search */}
-      <div className={styles.field}>
-        <div className={styles.label}>Search</div>
-        <div className={styles.searchBox}>
-          <svg
-            className={styles.searchIcon}
-            width="14" height="14" viewBox="0 0 16 16" fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true"
-          >
-            <circle cx="7" cy="7" r="5.25" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M11 11L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            className={styles.searchInput}
-            value={filters.search}
-            onChange={(e) => filters.setSearch(e.target.value)}
-            placeholder="Service, peer, category…"
-          />
+      {/* Peers */}
+      {filters.availablePeers.length > 0 && (
+        <div className={`${styles.field} ${styles.fieldPeers}`}>
+          <div className={styles.label}>Peers</div>
+          <div className={styles.peerList}>
+            {filters.availablePeers.map((p) => {
+              const active = filters.peerSet.has(p.peerId);
+              return (
+                <button
+                  key={p.peerId}
+                  type="button"
+                  className={`${styles.peerRow} ${active ? styles.peerRowActive : ''}`}
+                  onClick={() => filters.togglePeer(p.peerId)}
+                  aria-pressed={active}
+                  title={p.peerId}
+                >
+                  <span className={styles.peerAvatar} style={{ background: p.gradient }}>
+                    {p.letter}
+                  </span>
+                  <span className={styles.peerLabel}>{p.label}</span>
+                  {active && (
+                    <svg
+                      className={styles.peerCheck}
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M3.5 8.5L6.5 11.5L12.5 5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Categories */}
       {filters.availableCategories.length > 0 && (
@@ -147,62 +157,21 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
         <span>Supports prompt caching</span>
       </label>
 
-      {/* ── Peer subsection ─────────────────────────────────────────── */}
-      <div className={styles.sectionHeader} />
-
-      {/* Min channels served slider */}
+      {/* Min volume served slider */}
       <div className={styles.field}>
         <div className={styles.sliderHeader}>
-          <span className={styles.label}>Channels served</span>
-          <span className={styles.sliderValue}>{formatChannelsLabel(filters.minChannels)}</span>
+          <span className={styles.label}>Volume served</span>
+          <span className={styles.sliderValue}>{formatVolumeLabel(filters.minVolumeUsdc)}</span>
         </div>
         <div className={styles.sliderWrapper}>
           <input
             type="range"
             className={styles.slider}
             min={0}
-            max={MAX_CHANNELS_SLIDER}
-            step={CHANNELS_SLIDER_STEP}
-            value={filters.minChannels}
-            onChange={(e) => filters.setMinChannels(Number(e.target.value))}
-          />
-        </div>
-      </div>
-
-      {/* Min requests served slider */}
-      <div className={styles.field}>
-        <div className={styles.sliderHeader}>
-          <span className={styles.label}>Requests served</span>
-          <span className={styles.sliderValue}>{formatRequestsLabel(filters.minRequests)}</span>
-        </div>
-        <div className={styles.sliderWrapper}>
-          <input
-            type="range"
-            className={styles.slider}
-            min={0}
-            max={MAX_REQUESTS_SLIDER}
-            step={REQUESTS_SLIDER_STEP}
-            value={filters.minRequests}
-            onChange={(e) => filters.setMinRequests(Number(e.target.value))}
-          />
-        </div>
-      </div>
-
-      {/* Min tokens served slider */}
-      <div className={styles.field}>
-        <div className={styles.sliderHeader}>
-          <span className={styles.label}>Tokens served</span>
-          <span className={styles.sliderValue}>{formatTokensLabel(filters.minTokens)}</span>
-        </div>
-        <div className={styles.sliderWrapper}>
-          <input
-            type="range"
-            className={styles.slider}
-            min={0}
-            max={MAX_TOKENS_SLIDER}
-            step={TOKENS_SLIDER_STEP}
-            value={filters.minTokens}
-            onChange={(e) => filters.setMinTokens(Number(e.target.value))}
+            max={MAX_VOLUME_SLIDER_USDC}
+            step={VOLUME_SLIDER_STEP}
+            value={filters.minVolumeUsdc}
+            onChange={(e) => filters.setMinVolumeUsdc(Number(e.target.value))}
           />
         </div>
       </div>
