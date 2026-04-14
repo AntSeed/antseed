@@ -2116,6 +2116,29 @@ export function registerPiChatHandlers({
     };
   });
 
+  ipcMain.handle('api:try-proxy-request', async (
+    _event,
+    params: { port: number; path: string; method: string; headers: Record<string, string>; body: string },
+  ) => {
+    try {
+      const url = `http://127.0.0.1:${params.port}${params.path}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      const res = await fetch(url, {
+        method: params.method || 'POST',
+        headers: params.headers || {},
+        body: params.body || undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const text = await res.text();
+      return { ok: true, status: res.status, body: text, error: null as string | null };
+    } catch (e) {
+      const err = e as Error;
+      return { ok: false, status: 0, body: '', error: err?.message ?? String(e) };
+    }
+  });
+
   ipcMain.handle('chat:ai-list-discover-rows', async () => {
     try {
       const entries = await refreshServiceCatalogFromNetwork();

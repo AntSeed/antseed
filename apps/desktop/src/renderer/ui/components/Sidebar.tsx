@@ -32,7 +32,7 @@ type NavEntry = {
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
-  { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
+  { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
 ];
 
 const configEntries: NavEntry[] = [

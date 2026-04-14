@@ -128,6 +128,13 @@ export type DesktopBridge = {
   chatAiAbort?: () => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
+  apiTryProxyRequest?: (params: {
+    port: number;
+    path: string;
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+  }) => Promise<{ ok: boolean; status: number; body: string; error: string | null }>;
   chatAiGetWorkspace?: () => Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }>;
   chatAiGetWorkspaceGitStatus?: () => Promise<{ ok: boolean; data?: ChatWorkspaceGitStatus; error?: string }>;
   chatAiSetWorkspace?: (workspacePath: string) => Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }>;
