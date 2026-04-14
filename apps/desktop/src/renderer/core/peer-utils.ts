@@ -19,6 +19,16 @@ export const PEER_GRADIENTS = [
   'linear-gradient(180deg, #EAB308, #CA8A04)',
   'linear-gradient(180deg, #0EA5E9, #0284C7)',
   'linear-gradient(180deg, #84CC16, #65A30D)',
+  'linear-gradient(180deg, #F97316, #C2410C)',
+  'linear-gradient(180deg, #EC4899, #BE185D)',
+  'linear-gradient(180deg, #14B8A6, #0F766E)',
+  'linear-gradient(180deg, #A855F7, #7E22CE)',
+  'linear-gradient(180deg, #F43F5E, #BE123C)',
+  'linear-gradient(180deg, #10B981, #047857)',
+  'linear-gradient(180deg, #6366F1, #4338CA)',
+  'linear-gradient(180deg, #D946EF, #A21CAF)',
+  'linear-gradient(180deg, #F59E0B, #B45309)',
+  'linear-gradient(180deg, #22D3EE, #0E7490)',
 ];
 
 export function getPeerGradient(key: string): string {
