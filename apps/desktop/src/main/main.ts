@@ -276,7 +276,12 @@ ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
     if (token) params.set('token', token);
     if (tab) params.set('tab', tab);
     const qs = params.toString();
-    const url = qs ? `http://127.0.0.1:${PAYMENTS_PORT}?${qs}` : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    // In dev mode, open the Vite HMR dev server (which proxies /api to the Fastify port).
+    // Set ANTSEED_PAYMENTS_DEV_URL to override (default: http://localhost:5175).
+    // When dev mode is detected but the dev server is not reachable, we still fall back to the Fastify URL.
+    const devUrl = isDev ? (process.env['ANTSEED_PAYMENTS_DEV_URL'] || 'http://localhost:5175') : null;
+    const base = devUrl ?? `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const url = qs ? `${base}?${qs}` : base;
     const { default: open } = await import('open');
     await open(url);
     return { ok: true, url };

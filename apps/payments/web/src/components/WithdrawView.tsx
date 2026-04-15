@@ -48,6 +48,9 @@ export function WithdrawView({ balance, onAction }: WithdrawViewProps) {
     <div className="withdraw">
       <div className="card">
         <div className="card-section-title">Withdraw USDC</div>
+        <div className="wallet-role-hint">
+          Withdrawals are sent to the wallet you've authorized on-chain. Connect and authorize a wallet from the top-right Wallet menu first.
+        </div>
 
         <div className="withdraw-request">
           <div className="input-group">

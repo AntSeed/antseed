@@ -1,6 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { ChannelsClient, DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
+import {
+  ChannelsClient,
+  DepositsClient,
+  EmissionsClient,
+  ANTSTokenClient,
+  formatUsdc,
+  parseUsdc,
+  signSetOperator,
+  makeDepositsDomain,
+  type ChainConfig,
+} from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -40,6 +50,33 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return channelsClient;
   }
 
+  let emissionsClient: EmissionsClient | null = null;
+  function getEmissionsClient(): EmissionsClient | null {
+    if (!ctx.chainConfig.emissionsContractAddress) return null;
+    if (!emissionsClient) {
+      emissionsClient = new EmissionsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: ctx.chainConfig.emissionsContractAddress,
+      });
+    }
+    return emissionsClient;
+  }
+
+  let antsTokenClient: ANTSTokenClient | null = null;
+  function getAntsTokenClient(): ANTSTokenClient | null {
+    // ANTSToken address is typically fetched via the registry, but for v1 we
+    // plumb it through the chain config. Fall back to null if unavailable.
+    const addr = (ctx.chainConfig as { antsTokenAddress?: string }).antsTokenAddress;
+    if (!addr) return null;
+    if (!antsTokenClient) {
+      antsTokenClient = new ANTSTokenClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: addr,
+      });
+    }
+    return antsTokenClient;
+  }
+
   fastify.get('/api/balance', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
       return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
@@ -73,6 +110,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       depositsContractAddress: ctx.cryptoConfig.depositsContractAddress,
       channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
+      emissionsContractAddress: ctx.chainConfig.emissionsContractAddress ?? null,
+      networkStatsUrl: ctx.chainConfig.networkStatsUrl ?? null,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
   });
@@ -210,6 +249,56 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
+  fastify.get('/api/buyer-usage', async (_request, _reply) => {
+    // Sourced from the buyer proxy's local ChannelStore — fully answerable
+    // from the local DB, no network aggregator required.
+    try {
+      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/buyer-usage`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        fastify.log.warn(`[/api/buyer-usage] buyer proxy returned ${resp.status}`);
+        return {
+          totalRequests: 0,
+          totalInputTokens: '0',
+          totalOutputTokens: '0',
+          totalSettlements: 0,
+          uniqueSellers: 0,
+          activeChannels: 0,
+          channels: [],
+        };
+      }
+      const body = await resp.json() as {
+        ok: boolean;
+        totals: {
+          totalRequests: number;
+          totalInputTokens: string;
+          totalOutputTokens: string;
+          totalSettlements: number;
+          uniqueSellers: number;
+          activeChannels: number;
+          channels: Array<{
+            reservedAt: number;
+            updatedAt: number;
+            requestCount: number;
+            inputTokens: string;
+            outputTokens: string;
+          }>;
+        };
+      };
+      return body.totals;
+    } catch (err) {
+      fastify.log.warn(`[/api/buyer-usage] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
+      return {
+        totalRequests: 0,
+        totalInputTokens: '0',
+        totalOutputTokens: '0',
+        totalSettlements: 0,
+        uniqueSellers: 0,
+        activeChannels: 0,
+      };
+    }
+  });
+
   fastify.get('/api/operator', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
       return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
@@ -256,6 +345,115 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         nonce,
       });
       return { ok: true, signature, nonce: Number(nonce), buyer: ctx.cryptoCtx.evmAddress };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions', async (_request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    try {
+      const [info, genesis, halving, emission] = await Promise.all([
+        client.getEpochInfo(),
+        client.getGenesis(),
+        client.getHalvingInterval(),
+        // current epoch emission budget
+        (async () => {
+          const epochInfo = await client.getEpochInfo();
+          return client.getEpochEmission(epochInfo.epoch);
+        })(),
+      ]);
+      return {
+        currentEpoch: info.epoch,
+        epochDuration: info.epochDuration,
+        currentRate: info.emission.toString(),
+        epochEmission: emission.toString(),
+        genesis,
+        halvingInterval: halving,
+      };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/pending', async (request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    const query = request.query as { address?: string; epochs?: string } | undefined;
+    const address = query?.address;
+    if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return reply.status(400).send({ ok: false, error: 'Invalid address' });
+    }
+    const scanN = Math.min(Math.max(parseInt(query?.epochs ?? '10', 10) || 10, 1), 104);
+    try {
+      const info = await client.getEpochInfo();
+      const current = info.epoch;
+      const startEpoch = Math.max(0, current - (scanN - 1));
+      const epochList = Array.from({ length: current - startEpoch + 1 }, (_, i) => startEpoch + i);
+
+      // Per-epoch pending (so we can render a row per epoch), not just totals.
+      // For each epoch, we need: user points, total points, claimed flag, and
+      // the pending delta. We derive per-epoch amounts by calling pendingEmissions
+      // with a single-element epoch array.
+      const rows = await Promise.all(
+        epochList.map(async (epoch) => {
+          const [pending, userSP, userBP, sellerClaimed, buyerClaimed] = await Promise.all([
+            client.pendingEmissions(address, [epoch]),
+            client.userSellerPoints(address, epoch),
+            client.userBuyerPoints(address, epoch),
+            client.sellerEpochClaimed(address, epoch),
+            client.buyerEpochClaimed(address, epoch),
+          ]);
+          return {
+            epoch,
+            seller: {
+              amount: pending.seller.toString(),
+              userPoints: userSP.toString(),
+              claimed: sellerClaimed,
+            },
+            buyer: {
+              amount: pending.buyer.toString(),
+              userPoints: userBP.toString(),
+              claimed: buyerClaimed,
+            },
+            isCurrent: epoch === current,
+          };
+        }),
+      );
+
+      return { currentEpoch: current, rows };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/shares', async (_request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    try {
+      return await client.getShares();
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/transfers-enabled', async (_request, reply) => {
+    const client = getAntsTokenClient();
+    if (!client) {
+      // When the ANTS token address isn't configured, treat as "not enabled yet"
+      // — the UI uses this to decide whether to show the locked banner.
+      return { enabled: false, configured: false };
+    }
+    try {
+      const enabled = await client.transfersEnabled();
+      return { enabled, configured: true };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }

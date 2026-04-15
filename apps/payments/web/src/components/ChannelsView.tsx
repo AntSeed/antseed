@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
-import { getChannels, getOperatorInfo, signOperatorAuth, type ChannelData } from '../api';
+import { getChannels, getOperatorInfo, type ChannelData } from '../api';
 import { CHANNELS_ABI } from '../channels-abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { useSetOperator } from '../hooks/useSetOperator';
 
 interface ChannelsViewProps {
   config: PaymentConfig | null;
@@ -236,39 +237,37 @@ export function ChannelsView({ config }: ChannelsViewProps) {
   }, [fetchData]);
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div className="card-section-title" style={{ marginBottom: 0 }}>Active Channels</div>
-        <button
-          className="btn-outline"
-          onClick={fetchData}
-          style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }}
-        >
-          Refresh
-        </button>
-      </div>
-
+    <div className="channels-view">
       {operatorSet === false && (
         <SetOperatorBanner config={config} onSet={fetchData} />
       )}
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 13 }}>
-          Loading channels...
+      <div className="card">
+        <div className="channels-view-header">
+          <div className="card-section-title" style={{ marginBottom: 0 }}>Active Channels</div>
+          <button
+            className="btn-outline"
+            onClick={fetchData}
+            style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }}
+          >
+            Refresh
+          </button>
         </div>
-      ) : channels.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 13 }}>
-          No active channels
-        </div>
-      ) : (
-        config && channels.map((session) => (
-          <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
-        ))
-      )}
+
+        {loading ? (
+          <div className="channels-view-empty">Loading channels…</div>
+        ) : channels.length === 0 ? (
+          <div className="channels-view-empty">No active channels</div>
+        ) : (
+          config && channels.map((session) => (
+            <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
+          ))
+        )}
+      </div>
 
       {history.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div className="card-section-title" style={{ marginBottom: 12 }}>History</div>
+        <div className="card">
+          <div className="card-section-title">History</div>
           {history.map((session) => (
             <HistoryCard key={session.channelId} session={session} />
           ))}
@@ -280,58 +279,9 @@ export function ChannelsView({ config }: ChannelsViewProps) {
 
 /* ── Set Operator Banner ── */
 
-const DEPOSITS_OPERATOR_ABI = parseAbi([
-  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
-]);
-
 function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; onSet: () => void }) {
   const { address } = useAccount();
-  const [setting, setSetting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
-
-  const { writeContract, data: txHash, reset } = useWriteContract();
-  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash, chainId: expectedChainId });
-
-  useEffect(() => {
-    if (isSuccess && setting) {
-      setSetting(false);
-      onSet();
-    }
-  }, [isSuccess, setting, onSet]);
-
-  const handleSetOperator = useCallback(async () => {
-    if (!address || !config?.depositsContractAddress) return;
-    setError(null);
-    setSetting(true);
-    reset();
-
-    try {
-      await ensureCorrectNetwork();
-      const signResult = await signOperatorAuth(address);
-      if (!signResult.ok) {
-        setSetting(false);
-        setError('Failed to sign wallet authorization');
-        return;
-      }
-
-      writeContract({
-        address: config.depositsContractAddress as `0x${string}`,
-        abi: DEPOSITS_OPERATOR_ABI,
-        functionName: 'setOperator',
-        chainId: expectedChainId,
-        args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
-      }, {
-        onError: (err) => {
-          setSetting(false);
-          setError(getErrorMessage(err));
-        },
-      });
-    } catch (err) {
-      setSetting(false);
-      setError(getErrorMessage(err, 'Failed to set wallet'));
-    }
-  }, [address, config, ensureCorrectNetwork, expectedChainId, writeContract, reset]);
+  const { run, running, error } = useSetOperator(config, onSet);
 
   return (
     <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12 }}>
@@ -341,10 +291,10 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
       <button
         className="btn-outline"
         style={{ fontSize: 12, padding: '4px 12px' }}
-        onClick={handleSetOperator}
-        disabled={setting || !address}
+        onClick={run}
+        disabled={running || !address}
       >
-        {setting ? 'Setting wallet...' : 'Set Your Wallet'}
+        {running ? 'Setting wallet...' : 'Set Your Wallet'}
       </button>
       {error && <div style={{ color: 'var(--error)', marginTop: 6 }}>{error}</div>}
     </div>
