@@ -687,7 +687,7 @@
   }
 
   .table thead {
-    display: none;
+    display: none !important;
   }
 
   .row {
