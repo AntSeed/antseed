@@ -16,6 +16,13 @@ export interface PaymentsServerOptions {
   port: number;
   dataDir?: string;
   identityHex?: string;
+  /**
+   * Fallback RPC URL used when the user has not set `payments.crypto.rpcUrl`
+   * in config.json. Lets the host app (e.g. desktop) override the protocol
+   * default (`mainnet.base.org`) with a more reliable endpoint, matching the
+   * RPC the rest of the app is already using for on-chain reads.
+   */
+  defaultRpcUrl?: string;
 }
 
 export async function createServer(options: PaymentsServerOptions) {
@@ -82,9 +89,17 @@ export async function createServer(options: PaymentsServerOptions) {
     // No config file — use protocol defaults
   }
 
+  const userRpcUrl = typeof userOverrides.rpcUrl === 'string' && userOverrides.rpcUrl.trim().length > 0
+    ? (userOverrides.rpcUrl as string)
+    : undefined;
+  const selectedChainId = (userOverrides.chainId as string | undefined) ?? 'base-mainnet';
+  // Only fall back to the host's preferred RPC for base-mainnet — the only
+  // chain whose protocol default (mainnet.base.org) rate-limits the channels
+  // enrichment fan-out. Other chains keep their own presets.
+  const effectiveRpcUrl = userRpcUrl ?? (selectedChainId === 'base-mainnet' ? options.defaultRpcUrl : undefined);
   const chainConfig = resolveChainConfig({
     chainId: userOverrides.chainId as string | undefined,
-    rpcUrl: userOverrides.rpcUrl as string | undefined,
+    ...(effectiveRpcUrl ? { rpcUrl: effectiveRpcUrl } : {}),
     depositsContractAddress: userOverrides.depositsContractAddress as string | undefined,
     channelsContractAddress: userOverrides.channelsContractAddress as string | undefined,
     usdcContractAddress: userOverrides.usdcContractAddress as string | undefined,

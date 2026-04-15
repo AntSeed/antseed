@@ -248,6 +248,7 @@ async function startPaymentsPortal(): Promise<void> {
     paymentsServer = await createPaymentsServer({
       port: PAYMENTS_PORT,
       identityHex,
+      defaultRpcUrl: DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL,
     });
     await paymentsServer.listen({ port: PAYMENTS_PORT, host: '127.0.0.1' });
     console.log(`[desktop] Payments portal running at http://127.0.0.1:${PAYMENTS_PORT}`);

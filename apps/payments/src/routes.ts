@@ -167,12 +167,14 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           let closeRequestedAt = 0;
           let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
           let onchainSettled: bigint | null = null;
+          let onchainDeposit: bigint | null = null;
           if (cc) {
             try {
               const onchain = await cc.getSession(c.channelId);
               closeRequestedAt = Number(onchain.closeRequestedAt);
               onchainStatus = onchain.status;
               onchainSettled = onchain.settled;
+              onchainDeposit = onchain.deposit;
             } catch (err) {
               fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
             }
@@ -180,7 +182,10 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           enriched[i] = {
             channelId: c.channelId,
             seller: c.seller,
-            deposit: formatUsdc6(BigInt(c.reserveMax)),
+            // Prefer the authoritative on-chain deposit (USDC actually locked
+            // in the Channels contract). Fall back to the local proxy's
+            // reserveMax only if the on-chain read failed.
+            deposit: formatUsdc6(onchainDeposit ?? BigInt(c.reserveMax)),
             settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
             deadline: c.deadline,
             closeRequestedAt,
