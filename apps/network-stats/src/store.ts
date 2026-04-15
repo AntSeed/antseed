@@ -159,6 +159,12 @@ export class SqliteStore {
         last_block_timestamp INTEGER,
         PRIMARY KEY (chain_id, contract_address)
       );
+
+      -- buyer is not the leading PK column on seller_buyer_totals, so
+      -- WHERE buyer = ? lookups (per-buyer stats endpoint) would otherwise
+      -- scan the whole table.
+      CREATE INDEX IF NOT EXISTS idx_seller_buyer_totals_buyer
+        ON seller_buyer_totals (buyer);
     `);
 
     this._selectCheckpoint = this.db.prepare(

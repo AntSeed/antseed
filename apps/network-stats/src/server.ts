@@ -6,6 +6,7 @@
  */
 
 import express from 'express';
+import { isAddress } from 'ethers';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
@@ -143,11 +144,12 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
   });
 
   app.get('/stats/buyer/:address', async (req, res) => {
-    const rawAddress = String(req.params.address ?? '').toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(rawAddress)) {
+    const raw = String(req.params.address ?? '');
+    if (!isAddress(raw)) {
       res.status(400).json({ error: 'Invalid buyer address' });
       return;
     }
+    const rawAddress = raw.toLowerCase();
 
     if (!store) {
       res.status(503).json({ error: 'Indexer not configured for this instance' });
