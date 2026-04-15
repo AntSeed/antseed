@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { BalanceData, PaymentConfig } from '../types';
 import { DepositView } from '../components/DepositView';
-import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import type { OverlayPhase } from '../App';
 
 interface EmptyStateOverlayProps {
@@ -10,7 +9,7 @@ interface EmptyStateOverlayProps {
   balance: BalanceData | null;
   buyerAddress: string | null;
   onDeposited: () => void;
-  onSkipAuthorize: () => void;
+  onContinue: () => void;
 }
 
 function CopyIcon() {
@@ -30,16 +29,24 @@ function CheckIcon() {
   );
 }
 
+function BigCheckIcon() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="32" cy="32" r="30" fill="var(--accent-dim)" stroke="var(--accent)" strokeWidth="2" />
+      <path d="M20 33L28.5 41.5L44.5 23" stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function EmptyStateOverlay({
   phase,
   config,
   balance,
   buyerAddress,
   onDeposited,
-  onSkipAuthorize,
+  onContinue,
 }: EmptyStateOverlayProps) {
   const [copied, setCopied] = useState(false);
-  const { requireAuthorization } = useAuthorizedWallet();
 
   const isVisible = phase !== null;
 
@@ -112,42 +119,25 @@ export function EmptyStateOverlay({
             </div>
           </>
         ) : (
-          <>
-            <div className="empty-state-header">
-              <div className="empty-state-eyebrow">One more step</div>
-              <h2 className="empty-state-title">Authorize a wallet</h2>
-              <p className="empty-state-subtitle">
-                Your account is funded. Now designate an external wallet that can
-                withdraw USDC, claim ANTS rewards, and close channels — without one,
-                losing this node means losing your funds.
-              </p>
+          <div className="empty-state-success">
+            <div className="empty-state-success-icon">
+              <BigCheckIcon />
             </div>
-
-            <div className="empty-state-step empty-state-step--warn">
-              <div className="empty-state-step-label">Why this matters</div>
-              <p className="empty-state-step-desc">
-                Your AntSeed signer lives on this node and authorizes spending, but it
-                never holds USDC or ANTS. To move funds out, the contracts need to
-                trust an external wallet you control.
-              </p>
-              <div className="empty-state-step-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => requireAuthorization()}
-                >
-                  Authorize wallet
-                </button>
-                <button
-                  type="button"
-                  className="btn-link empty-state-step-later"
-                  onClick={onSkipAuthorize}
-                >
-                  Later
-                </button>
-              </div>
+            <h2 className="empty-state-title">You're all set</h2>
+            <p className="empty-state-subtitle">
+              Your deposit is in. AntSeed will now route requests across the network —
+              you only pay for what you use.
+            </p>
+            <div className="empty-state-success-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={onContinue}
+              >
+                Continue
+              </button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

@@ -12,10 +12,10 @@ import { WithdrawView } from './components/WithdrawView';
 import { DashboardView } from './views/DashboardView';
 import { EmissionsView } from './views/EmissionsView';
 import { ChannelsView } from './components/ChannelsView';
-import { AuthorizedWalletProvider, useAuthorizedWallet } from './context/AuthorizedWalletContext';
+import { AuthorizedWalletProvider } from './context/AuthorizedWalletContext';
 import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
 
-export type OverlayPhase = 'deposit' | 'authorize' | null;
+export type OverlayPhase = 'deposit' | 'success' | null;
 
 const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions']);
 
@@ -139,14 +139,9 @@ function AppShell({
   buyerEvmAddress,
   refreshBalance,
 }: AppShellProps) {
-  const { operatorSet } = useAuthorizedWallet();
-  const [authorizeSkipped, setAuthorizeSkipped] = useState(false);
+  const [justDeposited, setJustDeposited] = useState(false);
 
   const isLoading = !balanceLoaded;
-  const hasFunds =
-    balanceLoaded &&
-    balance !== null &&
-    (parseFloat(balance.total) > 0 || parseFloat(balance.reserved) > 0);
   const isEmptyBuyer =
     balanceLoaded &&
     balance !== null &&
@@ -154,10 +149,18 @@ function AppShell({
     parseFloat(balance.reserved) === 0;
 
   let overlayPhase: OverlayPhase = null;
-  if (isEmptyBuyer) overlayPhase = 'deposit';
-  else if (hasFunds && operatorSet === false && !authorizeSkipped) overlayPhase = 'authorize';
+  if (justDeposited) overlayPhase = 'success';
+  else if (isEmptyBuyer) overlayPhase = 'deposit';
 
   const shellBlurred = isLoading || overlayPhase !== null;
+
+  const handleDeposited = useCallback(async () => {
+    setJustDeposited(true);
+    onCloseActionModal();
+    await refreshBalance();
+  }, [refreshBalance, onCloseActionModal]);
+
+  const dismissSuccess = useCallback(() => setJustDeposited(false), []);
 
   return (
     <>
@@ -197,8 +200,8 @@ function AppShell({
         config={config}
         balance={balance}
         buyerAddress={buyerEvmAddress}
-        onDeposited={refreshBalance}
-        onSkipAuthorize={() => setAuthorizeSkipped(true)}
+        onDeposited={handleDeposited}
+        onContinue={dismissSuccess}
       />
       <ActionModal
         isOpen={actionModal === 'deposit'}
@@ -210,7 +213,7 @@ function AppShell({
           config={config}
           balance={balance}
           buyerAddress={buyerEvmAddress}
-          onDeposited={refreshBalance}
+          onDeposited={handleDeposited}
         />
       </ActionModal>
       <ActionModal
