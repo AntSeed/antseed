@@ -4,38 +4,38 @@ import ora from 'ora';
 import Table from 'cli-table3';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import { AntseedNode, type PeerInfo } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { parsePersistedPeers } from '../../../proxy/buyer-proxy.js';
 
-async function readPeersAt(path: string): Promise<PeerInfo[] | null> {
+function isProcessAlive(pid: number): boolean {
   try {
-    const raw = await readFile(path, 'utf-8');
-    const peers = parsePersistedPeers(JSON.parse(raw) as unknown);
-    return peers.length > 0 ? peers : null;
+    process.kill(pid, 0);
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
 /**
- * Try to load discovered peers from a running buyer daemon's state file.
- * Prefers the user-specified dataDir, falling back to the default ~/.antseed
- * location (which is where BuyerProxy currently persists regardless of dataDir).
+ * Try to load discovered peers from a live buyer daemon's state file.
+ * Returns null unless the file exists, the daemon reports `state === 'connected'`,
+ * its PID is still alive, and the peer list is non-empty. This avoids surfacing
+ * stale peer data from a daemon that exited without clearing the file.
  */
 async function loadPeersFromBuyerState(dataDir: string): Promise<PeerInfo[] | null> {
-  const dataDirPath = join(dataDir, 'buyer.state.json');
-  const fromDataDir = await readPeersAt(dataDirPath);
-  if (fromDataDir) return fromDataDir;
-
-  const defaultPath = join(homedir(), '.antseed', 'buyer.state.json');
-  if (defaultPath !== dataDirPath) {
-    return readPeersAt(defaultPath);
+  try {
+    const raw = await readFile(join(dataDir, 'buyer.state.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { state?: unknown; pid?: unknown };
+    if (parsed.state !== 'connected') return null;
+    if (typeof parsed.pid !== 'number' || !isProcessAlive(parsed.pid)) return null;
+    const peers = parsePersistedPeers(parsed);
+    return peers.length > 0 ? peers : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function getReputationColor(reputation: number): (message: string) => string {

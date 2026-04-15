@@ -21,14 +21,13 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
         const config = await loadConfig(globalOpts.config);
         const effectiveSeller = resolveEffectiveSellerConfig({ config });
         const status = await getNodeStatus(config, globalOpts.dataDir);
-        let identityAddress: string | null = null;
-        try {
-          const cryptoContext = await loadCryptoContext(globalOpts.dataDir);
-          identityAddress = cryptoContext.address;
-        } catch {
-          // Identity unavailable — fall through and show "not configured"
-        }
-        const walletAddress = status.walletAddress ?? identityAddress;
+        const walletAddress = status.walletAddress ?? await (async () => {
+          try {
+            return (await loadCryptoContext(globalOpts.dataDir)).address;
+          } catch {
+            return null;
+          }
+        })();
 
         const providerSummary = Object.entries(effectiveSeller.providers).map(([name, cfg]) => {
           const defaults = cfg.defaults;
