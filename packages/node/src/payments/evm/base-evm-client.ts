@@ -1,4 +1,35 @@
-import { Contract, JsonRpcProvider, type AbstractSigner, type InterfaceAbi, type TransactionRequest, type TransactionResponse } from 'ethers';
+import {
+  Contract,
+  FallbackProvider,
+  JsonRpcProvider,
+  type AbstractProvider,
+  type AbstractSigner,
+  type InterfaceAbi,
+  type TransactionRequest,
+  type TransactionResponse,
+} from 'ethers';
+
+/**
+ * Build an ethers Provider for a list of RPC URLs. When `fallbackRpcUrls` is
+ * non-empty, returns a `FallbackProvider` with quorum=1 and priorities in the
+ * order [primary, ...fallbacks], so the first successful response wins and a
+ * failing endpoint transparently rolls over to the next. For a single URL,
+ * returns a plain `JsonRpcProvider` to avoid the FallbackProvider startup
+ * network-detection handshake.
+ */
+function buildProvider(rpcUrl: string, fallbackRpcUrls?: string[]): AbstractProvider {
+  if (!fallbackRpcUrls || fallbackRpcUrls.length === 0) {
+    return new JsonRpcProvider(rpcUrl);
+  }
+  const urls = [rpcUrl, ...fallbackRpcUrls];
+  const configs = urls.map((url, i) => ({
+    provider: new JsonRpcProvider(url),
+    priority: i + 1,
+    stallTimeout: 2000,
+    weight: 1,
+  }));
+  return new FallbackProvider(configs, undefined, { quorum: 1 });
+}
 
 export const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
@@ -14,17 +45,17 @@ const GAS_BUFFER_NUMERATOR = 130n;
 const GAS_BUFFER_DENOMINATOR = 100n;
 
 export abstract class BaseEvmClient {
-  protected readonly _provider: JsonRpcProvider;
+  protected readonly _provider: AbstractProvider;
   protected readonly _contractAddress: string;
   protected readonly _nonceCursor = new Map<string, number>();
   private readonly _nonceLocks = new Map<string, Promise<void>>();
 
-  constructor(rpcUrl: string, contractAddress: string) {
-    this._provider = new JsonRpcProvider(rpcUrl);
+  constructor(rpcUrl: string, contractAddress: string, fallbackRpcUrls?: string[]) {
+    this._provider = buildProvider(rpcUrl, fallbackRpcUrls);
     this._contractAddress = contractAddress;
   }
 
-  get provider(): JsonRpcProvider { return this._provider; }
+  get provider(): AbstractProvider { return this._provider; }
   get contractAddress(): string { return this._contractAddress; }
 
   protected _ensureConnected(signer: AbstractSigner): AbstractSigner {

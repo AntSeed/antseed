@@ -85,6 +85,9 @@ export async function createServer(options: PaymentsServerOptions) {
   const chainConfig = resolveChainConfig({
     chainId: userOverrides.chainId as string | undefined,
     rpcUrl: userOverrides.rpcUrl as string | undefined,
+    ...(Array.isArray(userOverrides.fallbackRpcUrls)
+      ? { fallbackRpcUrls: userOverrides.fallbackRpcUrls as string[] }
+      : {}),
     depositsContractAddress: userOverrides.depositsContractAddress as string | undefined,
     channelsContractAddress: userOverrides.channelsContractAddress as string | undefined,
     usdcContractAddress: userOverrides.usdcContractAddress as string | undefined,
@@ -92,6 +95,7 @@ export async function createServer(options: PaymentsServerOptions) {
 
   const cryptoConfig: PaymentCryptoConfig = {
     rpcUrl: chainConfig.rpcUrl,
+    ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
     depositsContractAddress: chainConfig.depositsContractAddress,
     channelsContractAddress: chainConfig.channelsContractAddress,
     usdcContractAddress: chainConfig.usdcContractAddress,

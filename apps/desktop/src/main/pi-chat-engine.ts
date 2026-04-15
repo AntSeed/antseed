@@ -616,11 +616,13 @@ async function loadOnChainClients(configPath: string): Promise<{ stakingClient: 
   if (!cc.stakingContractAddress) return null;
   cachedStakingClient = new StakingClient({
     rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
     contractAddress: cc.stakingContractAddress,
     usdcAddress: cc.usdcContractAddress,
   });
   cachedChannelsClient = new ChannelsClient({
     rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
     contractAddress: cc.channelsContractAddress,
   });
   return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };

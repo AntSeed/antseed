@@ -374,6 +374,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
           chainId: cc.chainId,
           rpcUrl: cc.rpcUrl,
+          ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
           depositsContractAddress: cc.depositsContractAddress,
           channelsContractAddress: cc.channelsContractAddress,
           usdcAddress: cc.usdcContractAddress,
@@ -495,6 +496,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
+            ...(paymentConfig.crypto.fallbackRpcUrls ? { fallbackRpcUrls: paymentConfig.crypto.fallbackRpcUrls } : {}),
             depositsAddress: paymentConfig.crypto.depositsContractAddress,
             channelsAddress: paymentConfig.crypto.channelsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,

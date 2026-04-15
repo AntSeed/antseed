@@ -3,6 +3,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ChannelsClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
 }
 
@@ -47,7 +48,7 @@ export interface CloseRequestedEvent {
 
 export class ChannelsClient extends BaseEvmClient {
   constructor(config: ChannelsClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
   }
 
   async reserve(

@@ -20,6 +20,7 @@ import { classifyOnChainChannel, matchesChannelParties } from './channel-session
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   channelsContractAddress: string;
   chainId: number;
   dataDir: string;
@@ -99,6 +100,7 @@ export class SellerPaymentManager {
     this._signer = identity.wallet;
     this._channelsClient = new ChannelsClient({
       rpcUrl: config.rpcUrl,
+      ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.channelsContractAddress,
     });
     this._channelStore = channelStore;

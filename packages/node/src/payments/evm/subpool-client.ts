@@ -3,6 +3,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface SubPoolClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
 }
@@ -36,7 +37,7 @@ export class SubPoolClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: SubPoolClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
     this._usdcAddress = config.usdcAddress;
   }
 

@@ -4,6 +4,13 @@ export interface ChainConfig {
   chainId: ChainId;
   evmChainId: number;
   rpcUrl: string;
+  /**
+   * Additional RPC endpoints tried in order when the primary `rpcUrl` fails.
+   * Wired into ethers `FallbackProvider` with quorum=1 so the first successful
+   * response wins. Ordered by preference (first entry is highest priority
+   * after the primary).
+   */
+  fallbackRpcUrls?: string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
   stakingContractAddress?: string;
@@ -30,9 +37,15 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     chainId: 'base-mainnet',
     evmChainId: 8453,
-    // Official Base mainnet RPC. Users can override via payments.crypto.rpcUrl
-    // in config.json if they hit rate limits or want a different provider.
-    rpcUrl: 'https://mainnet.base.org',
+    // dRPC public endpoint — free tier, generous limits, flat 20 CU per call
+    // (no eth_getLogs penalty), built-in multi-provider routing. Users can
+    // override via payments.crypto.rpcUrl in config.json.
+    rpcUrl: 'https://base.drpc.org',
+    fallbackRpcUrls: [
+      'https://base.publicnode.com',
+      'https://base.llamarpc.com',
+      'https://mainnet.base.org',
+    ],
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
@@ -89,6 +102,7 @@ export function getChainConfig(chainId?: ChainId | string): ChainConfig {
 export function resolveChainConfig(overrides?: {
   chainId?: ChainId | string;
   rpcUrl?: string;
+  fallbackRpcUrls?: string[];
   depositsContractAddress?: string;
   channelsContractAddress?: string;
   stakingContractAddress?: string;
@@ -98,9 +112,16 @@ export function resolveChainConfig(overrides?: {
   subPoolContractAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
+  // If the caller overrode the primary rpcUrl without providing their own
+  // fallbacks, drop the defaults — they picked a specific endpoint, respect
+  // that choice and don't silently route around it.
+  const rpcOverridden = !!overrides?.rpcUrl;
+  const resolvedFallbacks = overrides?.fallbackRpcUrls
+    ?? (rpcOverridden ? [] : base.fallbackRpcUrls);
   return {
     ...base,
     ...(overrides?.rpcUrl ? { rpcUrl: overrides.rpcUrl } : {}),
+    ...(resolvedFallbacks !== undefined ? { fallbackRpcUrls: resolvedFallbacks } : {}),
     ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
     ...(overrides?.channelsContractAddress ? { channelsContractAddress: overrides.channelsContractAddress } : {}),
     ...(overrides?.stakingContractAddress ? { stakingContractAddress: overrides.stakingContractAddress } : {}),

@@ -594,7 +594,7 @@ let cachedCreditsInfo: CreditsInfo | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
+let cachedCryptoConfig: { rpcUrl: string; fallbackRpcUrls?: string[]; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -612,7 +612,7 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   const userRpcUrl = asString(overrides.rpcUrl as string, '');
   const rpcUrl = userRpcUrl || (selectedChain === 'base-mainnet' ? DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL : '');
   const cc = resolveChainConfig({ chainId: selectedChain, ...(rpcUrl ? { rpcUrl } : {}) });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
 
@@ -644,7 +644,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     creditsRpcFailCount = 0;
   }
 
-  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
+  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
 
   try {
     const [balance, creditLimit, operatorAddress] = await Promise.all([
