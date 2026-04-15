@@ -33,4 +33,30 @@ describe('EmissionsClient', () => {
     const result = client.pendingEmissions('0x' + '1'.repeat(40), [0]);
     expect(result).toBeInstanceOf(Promise);
   });
+
+  it('has all new ABI methods', () => {
+    const client = new EmissionsClient({
+      rpcUrl: 'http://localhost:8545',
+      contractAddress: '0x' + '3'.repeat(40),
+    });
+    expect(typeof client.getEpochEmission).toBe('function');
+    expect(typeof client.getGenesis).toBe('function');
+    expect(typeof client.getHalvingInterval).toBe('function');
+    expect(typeof client.getShares).toBe('function');
+    expect(typeof client.epochTotalSellerPoints).toBe('function');
+    expect(typeof client.epochTotalBuyerPoints).toBe('function');
+    expect(typeof client.userSellerPoints).toBe('function');
+    expect(typeof client.userBuyerPoints).toBe('function');
+    expect(typeof client.sellerEpochClaimed).toBe('function');
+    expect(typeof client.buyerEpochClaimed).toBe('function');
+  });
+
+  it('does not expose the removed stale ABI methods', () => {
+    const client = new EmissionsClient({
+      rpcUrl: 'http://localhost:8545',
+      contractAddress: '0x' + '3'.repeat(40),
+    }) as unknown as Record<string, unknown>;
+    expect(client.totalSellerPoints).toBeUndefined();
+    expect(client.totalBuyerPoints).toBeUndefined();
+  });
 });

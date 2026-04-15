@@ -283,3 +283,84 @@ describe('SqliteStore', () => {
     store.close();
   });
 });
+
+describe('SqliteStore — buyer totals', () => {
+  it('returns null for unknown buyer', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    assert.equal(store.getBuyerTotals('0x' + 'f'.repeat(40)), null);
+    store.close();
+  });
+
+  it('aggregates across multiple seller rows for one buyer', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const buyer = '0x' + 'b'.repeat(40);
+    // Simulate two sellers each settling twice with the same buyer
+    store.applyBatch(
+      'base-local',
+      '0x' + 'c'.repeat(40),
+      [
+        {
+          blockNumber: 100, txHash: '0x' + '0'.repeat(64), logIndex: 0,
+          agentId: 1n, buyer, channelId: '0x' + '1'.repeat(64),
+          metadataHash: '0x' + '2'.repeat(64),
+          inputTokens: 100n, outputTokens: 200n, requestCount: 5n,
+        },
+        {
+          blockNumber: 101, txHash: '0x' + '0'.repeat(64), logIndex: 0,
+          agentId: 1n, buyer, channelId: '0x' + '3'.repeat(64),
+          metadataHash: '0x' + '2'.repeat(64),
+          inputTokens: 50n, outputTokens: 80n, requestCount: 3n,
+        },
+        {
+          blockNumber: 102, txHash: '0x' + '0'.repeat(64), logIndex: 0,
+          agentId: 2n, buyer, channelId: '0x' + '4'.repeat(64),
+          metadataHash: '0x' + '2'.repeat(64),
+          inputTokens: 10n, outputTokens: 20n, requestCount: 1n,
+        },
+      ],
+      102,
+    );
+
+    const totals = store.getBuyerTotals(buyer);
+    assert.ok(totals);
+    assert.equal(totals.totalRequests, 9n); // 5+3+1
+    assert.equal(totals.totalInputTokens, 160n);
+    assert.equal(totals.totalOutputTokens, 300n);
+    assert.equal(totals.totalSettlements, 3);
+    assert.equal(totals.uniqueSellers, 2);
+    assert.equal(totals.firstBlock, 100);
+    assert.equal(totals.lastBlock, 102);
+
+    const bySeller = store.getBuyerPerSellerBreakdown(buyer);
+    assert.equal(bySeller.length, 2);
+    // Ordered by total_request_count DESC — agent 1 (8 requests) first
+    assert.equal(bySeller[0]!.agentId, 1);
+    assert.equal(bySeller[0]!.totalRequests, 8n);
+    assert.equal(bySeller[1]!.agentId, 2);
+    assert.equal(bySeller[1]!.totalRequests, 1n);
+
+    store.close();
+  });
+
+  it('lookups are case-insensitive', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const lower = '0x' + 'a'.repeat(40);
+    const upper = '0X' + 'A'.repeat(40);
+    store.applyBatch(
+      'base-local',
+      '0x' + 'c'.repeat(40),
+      [{
+        blockNumber: 1, txHash: '0x' + '0'.repeat(64), logIndex: 0,
+        agentId: 1n, buyer: lower, channelId: '0x' + '1'.repeat(64),
+        metadataHash: '0x' + '2'.repeat(64),
+        inputTokens: 1n, outputTokens: 1n, requestCount: 1n,
+      }],
+      1,
+    );
+    assert.ok(store.getBuyerTotals(upper));
+    store.close();
+  });
+});

@@ -142,6 +142,92 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     });
   });
 
+  app.get('/stats/buyer/:address', async (req, res) => {
+    const rawAddress = String(req.params.address ?? '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(rawAddress)) {
+      res.status(400).json({ error: 'Invalid buyer address' });
+      return;
+    }
+
+    if (!store) {
+      res.status(503).json({ error: 'Indexer not configured for this instance' });
+      return;
+    }
+
+    const totals = store.getBuyerTotals(rawAddress);
+    const perSeller = store.getBuyerPerSellerBreakdown(rawAddress);
+
+    // Enrich per-seller rows with peer metadata (peerId + anything else the
+    // poller exposes). We do a single pass over the snapshot peers, look up
+    // each one's agentId via resolveAgentId (cached), and build an
+    // agentId → peer map. Then join.
+    const snapshot = poller.getSnapshot();
+    const peerByAgentId = new Map<number, Record<string, unknown>>();
+    if (stakingClient) {
+      await Promise.all(
+        snapshot.peers.map(async (peer) => {
+          const peerId = (peer as { peerId?: string }).peerId;
+          const address = peerId ? `0x${peerId}` : null;
+          const agentId = await resolveAgentId(stakingClient, address);
+          if (agentId !== null && agentId !== 0) {
+            peerByAgentId.set(agentId, peer as unknown as Record<string, unknown>);
+          }
+        }),
+      );
+    }
+
+    const bySeller = perSeller.map((row) => {
+      const peer = peerByAgentId.get(row.agentId);
+      const peerId = peer?.peerId as string | undefined;
+      return {
+        agentId: row.agentId,
+        peerId: peerId ?? null,
+        publicAddress: peerId ? `0x${peerId}` : null,
+        totalRequests:     row.totalRequests.toString(),
+        totalInputTokens:  row.totalInputTokens.toString(),
+        totalOutputTokens: row.totalOutputTokens.toString(),
+        settlementCount:   row.settlementCount,
+        firstBlock:        row.firstBlock,
+        lastBlock:         row.lastBlock,
+      };
+    });
+
+    // Indexer info — mirror the shape from /stats so consumers can reuse logic.
+    const indexerInfo =
+      chainId && contractAddress
+        ? store.getCheckpointInfo(chainId, contractAddress.toLowerCase())
+        : null;
+    const chainHead = indexer?.getChainHead();
+    const indexerPayload = indexerInfo
+      ? {
+          ...indexerInfo,
+          ...(chainHead?.latestBlock != null
+            ? {
+                latestBlock: chainHead.latestBlock,
+                synced: indexerInfo.lastBlock >= chainHead.latestBlock - chainHead.reorgSafetyBlocks,
+              }
+            : {}),
+        }
+      : null;
+
+    res.json({
+      buyer: rawAddress,
+      totals: totals
+        ? {
+            totalRequests:     totals.totalRequests.toString(),
+            totalInputTokens:  totals.totalInputTokens.toString(),
+            totalOutputTokens: totals.totalOutputTokens.toString(),
+            totalSettlements:  totals.totalSettlements,
+            uniqueSellers:     totals.uniqueSellers,
+            firstBlock:        totals.firstBlock,
+            lastBlock:         totals.lastBlock,
+          }
+        : null,
+      bySeller,
+      ...(indexerPayload ? { indexer: indexerPayload } : {}),
+    });
+  });
+
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
   });

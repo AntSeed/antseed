@@ -47,6 +47,46 @@ interface SellerTotalsRow {
   last_updated_at: number;
 }
 
+export interface BuyerTotals {
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  totalSettlements: number;
+  uniqueSellers: number;
+  firstBlock: number | null;
+  lastBlock: number | null;
+}
+
+export interface BuyerPerSellerRow {
+  agentId: number;
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+  firstBlock: number;
+  lastBlock: number;
+}
+
+interface BuyerTotalsRow {
+  total_request_count: string | null;
+  total_input_tokens: string | null;
+  total_output_tokens: string | null;
+  total_settlements: number | null;
+  unique_sellers: number;
+  first_block: number | null;
+  last_block: number | null;
+}
+
+interface BuyerPerSellerDbRow {
+  agent_id: number;
+  total_input_tokens: string;
+  total_output_tokens: string;
+  total_request_count: string;
+  settlement_count: number;
+  first_settled_block: number;
+  last_settled_block: number;
+}
+
 export class SqliteStore {
   private db: Database.Database;
 
@@ -64,6 +104,8 @@ export class SqliteStore {
   private _selectSellerTotals!: Database.Statement<[number], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
+  private _selectBuyerTotals!: Database.Statement<[string], BuyerTotalsRow>;
+  private _selectBuyerPerSeller!: Database.Statement<[string], BuyerPerSellerDbRow>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -175,6 +217,38 @@ export class SqliteStore {
 
     this._countChannels = this.db.prepare(
       'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
+    );
+
+    // Aggregates across all (agent_id, buyer) rows for a given buyer.
+    // NOTE: SQLite's SUM treats TEXT columns as INTEGER after CAST. Values up to
+    // 2^63-1 fit cleanly; token counts in practice are far below this ceiling.
+    // If a single row has a value exceeding INT64, rework this to use a
+    // JavaScript-side fold.
+    this._selectBuyerTotals = this.db.prepare(
+      `SELECT
+         CAST(SUM(CAST(total_request_count AS INTEGER)) AS TEXT) AS total_request_count,
+         CAST(SUM(CAST(total_input_tokens  AS INTEGER)) AS TEXT) AS total_input_tokens,
+         CAST(SUM(CAST(total_output_tokens AS INTEGER)) AS TEXT) AS total_output_tokens,
+         SUM(settlement_count) AS total_settlements,
+         COUNT(*) AS unique_sellers,
+         MIN(first_settled_block) AS first_block,
+         MAX(last_settled_block)  AS last_block
+       FROM seller_buyer_totals
+       WHERE buyer = ?`,
+    );
+
+    this._selectBuyerPerSeller = this.db.prepare(
+      `SELECT
+         agent_id,
+         total_input_tokens,
+         total_output_tokens,
+         total_request_count,
+         settlement_count,
+         first_settled_block,
+         last_settled_block
+       FROM seller_buyer_totals
+       WHERE buyer = ?
+       ORDER BY CAST(total_request_count AS INTEGER) DESC`,
     );
   }
 
@@ -334,6 +408,41 @@ export class SqliteStore {
       avgRequestsPerBuyer,
       lastUpdatedAt: row.last_updated_at,
     };
+  }
+
+  /**
+   * Returns aggregated totals across all sellers a buyer has settled with.
+   * Returns null if the buyer has no rows in seller_buyer_totals.
+   */
+  getBuyerTotals(buyer: string): BuyerTotals | null {
+    const row = this._selectBuyerTotals.get(buyer.toLowerCase());
+    if (!row || row.unique_sellers === 0) return null;
+    return {
+      totalRequests:     BigInt(row.total_request_count ?? '0'),
+      totalInputTokens:  BigInt(row.total_input_tokens  ?? '0'),
+      totalOutputTokens: BigInt(row.total_output_tokens ?? '0'),
+      totalSettlements:  row.total_settlements ?? 0,
+      uniqueSellers:     row.unique_sellers,
+      firstBlock:        row.first_block,
+      lastBlock:         row.last_block,
+    };
+  }
+
+  /**
+   * Returns one row per seller the buyer has settled with, ordered by
+   * total_request_count DESC. Empty array if the buyer has no activity.
+   */
+  getBuyerPerSellerBreakdown(buyer: string): BuyerPerSellerRow[] {
+    const rows = this._selectBuyerPerSeller.all(buyer.toLowerCase());
+    return rows.map((r) => ({
+      agentId:           r.agent_id,
+      totalRequests:     BigInt(r.total_request_count),
+      totalInputTokens:  BigInt(r.total_input_tokens),
+      totalOutputTokens: BigInt(r.total_output_tokens),
+      settlementCount:   r.settlement_count,
+      firstBlock:        r.first_settled_block,
+      lastBlock:         r.last_settled_block,
+    }));
   }
 
   /** Closes the underlying DB handle. */
