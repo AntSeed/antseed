@@ -225,6 +225,18 @@ export class SellerPaymentManager {
     return result;
   }
 
+  /**
+   * Wait for any in-flight SpendingAuth processing for this buyer to complete.
+   * Used by the request handler so a budget check doesn't race an on-chain top-up
+   * (whose follow-up auths are queued behind the per-buyer mutex).
+   */
+  async waitForPendingAuths(buyerPeerId: string): Promise<void> {
+    const pending = this._buyerLocks.get(buyerPeerId);
+    if (pending) {
+      await pending;
+    }
+  }
+
   private async _handleSpendingAuthInner(
     buyerPeerId: string,
     payload: SpendingAuthPayload,
