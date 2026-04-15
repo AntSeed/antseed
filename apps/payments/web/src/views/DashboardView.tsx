@@ -3,35 +3,19 @@ import type { PaymentConfig } from '../types';
 import {
   getBuyerUsage,
   getNetworkStats,
+  type BuyerUsageChannelPoint,
   type BuyerUsageTotals,
   type NetworkStatsResponse,
 } from '../api';
 import { UsageChart } from '../components/UsageChart';
+import { formatCompact, formatNumber, bigintFromString } from '../utils/format';
 import './DashboardView.scss';
 
 interface DashboardViewProps {
   config: PaymentConfig | null;
 }
 
-function formatNumber(n: string | number): string {
-  const num = typeof n === 'string' ? Number(n) : n;
-  if (!Number.isFinite(num)) return '0';
-  return num.toLocaleString('en-US');
-}
-
-function formatCompact(value: string | number | bigint): string {
-  const num = typeof value === 'bigint' ? Number(value) : typeof value === 'string' ? Number(value) : value;
-  if (!Number.isFinite(num)) return '0';
-  if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
-  if (num >= 10_000) return `${(num / 1_000).toFixed(1)}K`;
-  return num.toLocaleString('en-US');
-}
-
-function bigintFromString(s: string | undefined): bigint {
-  if (!s) return 0n;
-  try { return BigInt(s); } catch { return 0n; }
-}
+const EMPTY_CHANNELS: BuyerUsageChannelPoint[] = [];
 
 export function DashboardView({ config }: DashboardViewProps) {
   const networkStatsUrl = config?.networkStatsUrl ?? null;
@@ -41,8 +25,6 @@ export function DashboardView({ config }: DashboardViewProps) {
   const [buyerUsageError, setBuyerUsageError] = useState<string | null>(null);
   const [networkStatsError, setNetworkStatsError] = useState<string | null>(null);
 
-  // Local buyer usage — has no external dependency, so fire once on mount
-  // and never re-run it when config trickles in asynchronously.
   useEffect(() => {
     let cancelled = false;
     getBuyerUsage()
@@ -55,13 +37,9 @@ export function DashboardView({ config }: DashboardViewProps) {
         if (cancelled) return;
         setBuyerUsageError(err instanceof Error ? err.message : String(err));
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Global network stats — depends on networkStatsUrl from /api/config, so
-  // deferred until that's available.
   useEffect(() => {
     if (!networkStatsUrl) return;
     let cancelled = false;
@@ -75,15 +53,8 @@ export function DashboardView({ config }: DashboardViewProps) {
         if (cancelled) return;
         setNetworkStatsError(err instanceof Error ? err.message : String(err));
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [networkStatsUrl]);
-
-  const statsError = [
-    buyerUsageError && `buyer usage — ${buyerUsageError}`,
-    networkStatsError && `network stats — ${networkStatsError}`,
-  ].filter(Boolean).join(' · ') || null;
 
   const personalRequests = buyerUsage?.totalRequests ?? 0;
   const personalTokens =
@@ -101,44 +72,6 @@ export function DashboardView({ config }: DashboardViewProps) {
 
   return (
     <div className="dashboard-view">
-      <section className="dashboard-section">
-        <header className="dashboard-section-head">
-          <div className="dashboard-section-eyebrow">Your activity</div>
-          <h2 className="dashboard-section-title">Your usage</h2>
-          <p className="dashboard-section-sub">
-            Requests and tokens flowing through your signer over time.
-          </p>
-        </header>
-
-        <div className="dashboard-chart-card">
-          <div className="dashboard-kpi-row">
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Requests</div>
-              <div className="dashboard-kpi-value">{formatNumber(personalRequests)}</div>
-            </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Tokens</div>
-              <div className="dashboard-kpi-value">{formatCompact(personalTokens)}</div>
-            </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Settlements</div>
-              <div className="dashboard-kpi-value">{formatNumber(personalSettlements)}</div>
-            </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Sellers</div>
-              <div className="dashboard-kpi-value">{formatNumber(personalUniqueSellers)}</div>
-            </div>
-          </div>
-
-          <UsageChart channels={buyerUsage?.channels ?? []} />
-          {buyerUsageError && (
-            <div className="dashboard-stats-error">
-              Couldn&apos;t load your usage: {buyerUsageError}
-            </div>
-          )}
-        </div>
-      </section>
-
       <section className="dashboard-section">
         <header className="dashboard-section-head">
           <div className="dashboard-section-eyebrow">Network</div>
@@ -171,12 +104,51 @@ export function DashboardView({ config }: DashboardViewProps) {
           </div>
         </div>
 
-        {statsError && (
+        {networkStatsError && (
           <div className="dashboard-stats-error">
-            Couldn&apos;t load network stats: {statsError}
+            Couldn&apos;t load network stats: {networkStatsError}
           </div>
         )}
       </section>
+
+      <section className="dashboard-section">
+        <header className="dashboard-section-head">
+          <div className="dashboard-section-eyebrow">Your activity</div>
+          <h2 className="dashboard-section-title">Your usage</h2>
+          <p className="dashboard-section-sub">
+            Requests and tokens flowing through your signer over time.
+          </p>
+        </header>
+
+        <div className="dashboard-chart-card">
+          <div className="dashboard-kpi-row">
+            <div className="dashboard-kpi">
+              <div className="dashboard-kpi-label">Requests</div>
+              <div className="dashboard-kpi-value">{formatNumber(personalRequests)}</div>
+            </div>
+            <div className="dashboard-kpi">
+              <div className="dashboard-kpi-label">Tokens</div>
+              <div className="dashboard-kpi-value">{formatCompact(personalTokens)}</div>
+            </div>
+            <div className="dashboard-kpi">
+              <div className="dashboard-kpi-label">Settlements</div>
+              <div className="dashboard-kpi-value">{formatNumber(personalSettlements)}</div>
+            </div>
+            <div className="dashboard-kpi">
+              <div className="dashboard-kpi-label">Sellers</div>
+              <div className="dashboard-kpi-value">{formatNumber(personalUniqueSellers)}</div>
+            </div>
+          </div>
+
+          <UsageChart channels={buyerUsage?.channels ?? EMPTY_CHANNELS} />
+          {buyerUsageError && (
+            <div className="dashboard-stats-error">
+              Couldn&apos;t load your usage: {buyerUsageError}
+            </div>
+          )}
+        </div>
+      </section>
+
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import type { BuyerUsageChannelPoint } from '../api';
+import { formatCompact } from '../utils/format';
 import './UsageChart.scss';
 
 interface UsageChartProps {
@@ -92,14 +93,6 @@ function formatShortDate(ms: number): string {
 
 function formatFullDate(ms: number): string {
   return new Date(ms).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function formatCompact(n: number): string {
-  if (!Number.isFinite(n)) return '0';
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toLocaleString('en-US');
 }
 
 function ChartTooltip({ active, payload }: TooltipProps<number, string>) {

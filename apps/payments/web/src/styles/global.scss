@@ -652,7 +652,7 @@ $dash-sidebar-width: 240px;
     padding: 8px 14px 8px 12px;
     background: var(--card-bg);
     border: 1px solid var(--card-border);
-    border-radius: 999px;
+    border-radius: 12px;
     color: var(--text-secondary);
     cursor: pointer;
     transition: border-color 0.14s, background 0.14s, color 0.14s, transform 0.14s;
@@ -701,7 +701,6 @@ $dash-sidebar-width: 240px;
 
 .dash-content {
   padding: 24px 32px 48px;
-  max-width: 1200px;
   width: 100%;
 }
 
