@@ -703,6 +703,10 @@
     gap: 8px;
   }
 
+  .row td {
+    border: none !important;
+  }
+
   .tdModel {
     width: 100%;
     padding: 0 !important;
