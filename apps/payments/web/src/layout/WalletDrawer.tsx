@@ -228,11 +228,18 @@ export function WalletDrawer({
                   fund your AntSeed account above.
                 </p>
                 <div className="wallet-drawer-connect-wrap">
-                  <ConnectButton
-                    chainStatus="icon"
-                    accountStatus="full"
-                    showBalance={false}
-                  />
+                  <ConnectButton.Custom>
+                    {({ openConnectModal, mounted }) => (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={openConnectModal}
+                        disabled={!mounted}
+                      >
+                        Connect wallet
+                      </button>
+                    )}
+                  </ConnectButton.Custom>
                 </div>
               </div>
             ) : (

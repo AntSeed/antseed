@@ -28,13 +28,9 @@ function DashboardIcon() {
 
 function ChannelsIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-      <circle cx="9" cy="9" r="2.5"/>
-      <circle cx="3" cy="5" r="1.5"/>
-      <circle cx="15" cy="5" r="1.5"/>
-      <circle cx="3" cy="13" r="1.5"/>
-      <circle cx="15" cy="13" r="1.5"/>
-      <path d="M7 7.5L4.5 6M11 7.5L13.5 6M7 10.5L4.5 12M11 10.5L13.5 12"/>
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="4.25" width="15" height="9.5" rx="1.25"/>
+      <circle cx="9" cy="9" r="2"/>
     </svg>
   );
 }
