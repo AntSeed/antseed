@@ -397,7 +397,7 @@ html, body {
   &--error { color: var(--danger); }
 }
 
-/* ── Shared overview + stat grid (dashboard, analytics, emissions) ── */
+/* ── Shared overview + stat grid (dashboard, emissions) ── */
 
 .overview {
   display: flex;
@@ -817,80 +817,6 @@ $dash-sidebar-width: 240px;
 
 .emissions-ants-info { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
 .emissions-ants-info p { margin: 0 0 10px 0; &:last-child { margin-bottom: 0; } }
-
-/* ── Analytics view ──────────────────────────────────────────── */
-
-.analytics-view {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.analytics-topline {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  @media (max-width: 840px) { grid-template-columns: repeat(2, 1fr); }
-}
-
-.analytics-top-card { padding: 18px; }
-.analytics-top-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.analytics-top-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-top: 6px;
-}
-
-.analytics-live-strip {
-  .analytics-live-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-top: 12px;
-  }
-}
-.analytics-live-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-.analytics-live-value { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-top: 2px; }
-
-.analytics-sync {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.analytics-sync-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: var(--amber-dim, rgba(245, 158, 11, 0.08));
-  color: var(--amber, #f59e0b);
-  font-weight: 600;
-}
-
-.analytics-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 8px;
-  font-size: 12px;
-
-  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--card-border); }
-  th { font-weight: 600; color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
-  td { color: var(--text-secondary); }
-  tbody tr:hover td { background: var(--card-hover, rgba(148, 163, 184, 0.05)); }
-}
-
-.analytics-sort { cursor: pointer; user-select: none; }
-.analytics-sort--active { color: var(--accent-text); }
-
-.analytics-error .btn-outline { display: inline-block; width: auto; padding: 6px 14px; }
 
 /* ── Wallet drawer ───────────────────────────────────────────── */
 

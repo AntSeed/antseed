@@ -163,61 +163,6 @@ export async function getBuyerUsage(): Promise<BuyerUsageTotals> {
   return fetchJson('/api/buyer-usage');
 }
 
-export interface BuyerStatsTotals {
-  totalRequests: string;
-  totalInputTokens: string;
-  totalOutputTokens: string;
-  totalSettlements: number;
-  uniqueSellers: number;
-  firstBlock: number | null;
-  lastBlock: number | null;
-}
-
-export interface BuyerStatsSellerRow {
-  agentId: number;
-  peerId: string | null;
-  publicAddress: string | null;
-  totalRequests: string;
-  totalInputTokens: string;
-  totalOutputTokens: string;
-  settlementCount: number;
-  firstBlock: number;
-  lastBlock: number;
-}
-
-export interface BuyerStatsResponse {
-  buyer: string;
-  totals: BuyerStatsTotals | null;
-  bySeller: BuyerStatsSellerRow[];
-  indexer?: {
-    lastBlock: number;
-    lastBlockTimestamp: number | null;
-    latestBlock?: number;
-    synced?: boolean;
-  };
-}
-
-/**
- * Calls the network-stats `/stats/buyer/:address` endpoint directly.
- * The base URL comes from `config.networkStatsUrl` — we don't proxy
- * through the payments server because it's a purely-public read.
- *
- * 404 means the indexer has no activity for this buyer yet — we treat that
- * as an empty result rather than an error so first-time buyers see zeros
- * instead of a scary banner.
- */
-export async function getBuyerStats(networkStatsUrl: string, buyerAddress: string): Promise<BuyerStatsResponse> {
-  const url = `${networkStatsUrl.replace(/\/$/, '')}/stats/buyer/${buyerAddress.toLowerCase()}`;
-  const res = await fetch(url);
-  if (res.status === 404) {
-    return { buyer: buyerAddress, totals: null, bySeller: [] };
-  }
-  if (!res.ok) {
-    throw new Error(`network-stats returned ${res.status}`);
-  }
-  return res.json() as Promise<BuyerStatsResponse>;
-}
-
 export interface NetworkStatsTotals {
   activePeers: number;
   totalRequests: string;        // sum across peers, bigint as string

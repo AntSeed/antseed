@@ -11,10 +11,9 @@ import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
 import { DashboardView } from './views/DashboardView';
 import { EmissionsView } from './views/EmissionsView';
-import { AnalyticsView } from './views/AnalyticsView';
 import { ChannelsView } from './components/ChannelsView';
 
-const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions', 'analytics']);
+const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions']);
 
 function parseTabFromUrl(): TabId {
   const raw = new URLSearchParams(window.location.search).get('tab');
@@ -103,7 +102,6 @@ export function App() {
           {activeTab === 'dashboard' && <DashboardView config={config} />}
           {activeTab === 'channels'  && <ChannelsView  config={config} />}
           {activeTab === 'emissions' && <EmissionsView config={config} />}
-          {activeTab === 'analytics' && <AnalyticsView config={config} />}
         </main>
       </div>
       <WalletDrawer

@@ -11,14 +11,12 @@ const TAB_TITLES: Record<TabId, string> = {
   dashboard: 'Dashboard',
   channels:  'Channels',
   emissions: 'Emissions',
-  analytics: 'Analytics',
 };
 
 const TAB_SUBTITLES: Record<TabId, string> = {
   dashboard: 'Your balance, usage, and network activity at a glance.',
   channels:  'Active and historical payment channels.',
   emissions: 'Earn and claim ANTS rewards from network activity.',
-  analytics: 'Your buyer activity across the network.',
 };
 
 function formatUsd(n: number): string {

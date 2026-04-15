@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type TabId = 'dashboard' | 'channels' | 'emissions' | 'analytics';
+export type TabId = 'dashboard' | 'channels' | 'emissions';
 
 interface SidebarProps {
   activeTab: TabId;
@@ -47,14 +47,6 @@ function EmissionsIcon() {
   );
 }
 
-function AnalyticsIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-      <path d="M2 14V10M6 14V7M10 14V4M14 14V9" strokeLinejoin="round"/>
-    </svg>
-  );
-}
-
 function SunIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2"/><path d="M8 2V3.5M8 12.5V14M2 8H3.5M12.5 8H14M3.8 3.8L4.8 4.8M11.2 11.2L12.2 12.2M3.8 12.2L4.8 11.2M11.2 4.8L12.2 3.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
@@ -89,7 +81,6 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { id: 'channels',  label: 'Channels',  icon: <ChannelsIcon /> },
   { id: 'emissions', label: 'Emissions', icon: <EmissionsIcon /> },
-  { id: 'analytics', label: 'Analytics', icon: <AnalyticsIcon /> },
 ];
 
 export function Sidebar({ activeTab, onSelect, isDark, onToggleTheme }: SidebarProps) {
