@@ -8,7 +8,6 @@ import { registerConfigCommand } from './commands/config/index.js';
 import { registerNetworkCommands } from './commands/network/index.js';
 import { registerIdentityCommands } from './commands/identity/index.js';
 import { registerAgentCommand } from './commands/agent.js';
-import { registerDashboardCommand } from './commands/dashboard.js';
 import { registerDevCommand } from './commands/dev.js';
 import { registerPaymentsCommand } from './commands/payments.js';
 
@@ -34,7 +33,6 @@ registerNetworkCommands(program);
 registerIdentityCommands(program);
 registerDevCommand(program);
 registerAgentCommand(program);
-registerDashboardCommand(program);
 registerPaymentsCommand(program);
 
 program.parse(process.argv);

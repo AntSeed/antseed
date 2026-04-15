@@ -47,7 +47,6 @@ antseed buyer status                  Show buyer status
 antseed config                        Manage config file
 antseed peer <peerId>                 View a peer's profile
 antseed profile                       Manage your peer profile
-antseed dashboard                     Launch the local web dashboard
 antseed buyer channels                List payment channels
 antseed seller emissions info         View epoch info and ANTS emissions
 antseed network bootstrap             Run a dedicated DHT bootstrap node
