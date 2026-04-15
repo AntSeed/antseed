@@ -98,7 +98,7 @@ async function buildSpendingAuth(
     metadata: encodedMetadata,
     spendingAuthSig,
     reserveSalt: salt,
-    reserveMaxAmount: '10000000',
+    reserveMaxAmount: reserveMaxAmount.toString(),
     reserveDeadline: deadline,
   };
 }
@@ -188,6 +188,80 @@ describe('SellerPaymentManager', () => {
 
     expect(mux.sentAuthAcks.length).toBe(1);
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+  });
+
+  it('waitForPendingAuths drains queued SpendingAuths while an on-chain top-up is in flight', async () => {
+    const channelId = makeChannelId(99);
+
+    // Initial reserve with ceiling 1_000_000.
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    // Advance cumulative to 900_000 and record matching spend so the channel is
+    // right at the edge of budget exhaustion.
+    const auth900k = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 900_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth900k, mux);
+    manager.recordSpend(channelId, 900_000n);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(900_000n);
+    expect(manager.getCumulativeSpend(channelId)).toBe(900_000n);
+
+    // Make topUp() block until we release it so we can observe the window
+    // where the per-buyer mutex holds queued SpendingAuths.
+    let releaseTopUp!: () => void;
+    const topUpBlocker = new Promise<void>((resolve) => { releaseTopUp = resolve; });
+    const topUpSpy = vi.spyOn(manager.channelsClient, 'topUp').mockImplementation(async () => {
+      await topUpBlocker;
+      return '0xtopup-hash';
+    });
+
+    // Top-up auth (new ceiling 2_000_000) — this fires the blocking topUp() call.
+    const topUpPayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '2000000',
+      salt: '0x' + '02'.repeat(32),
+    });
+    const topUpPromise = manager.handleSpendingAuth(buyerIdentity.peerId, topUpPayload, mux);
+
+    // Wait until the handler is parked inside the topUp() call.
+    while (topUpSpy.mock.calls.length === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+
+    // Queue a follow-up SpendingAuth above the old ceiling. This should sit
+    // behind the top-up in the per-buyer mutex until the top-up unblocks.
+    const followUpPayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 1_500_000n,
+      reserveMaxAmount: '2000000',
+    });
+    const followUpPromise = manager.handleSpendingAuth(buyerIdentity.peerId, followUpPayload, mux);
+    await new Promise<void>((r) => setImmediate(r));
+
+    // The follow-up is queued — accepted cumulative is still stale at 900_000,
+    // which is the racing state where a request handler would return 402.
+    expect(manager.getAcceptedCumulative(channelId)).toBe(900_000n);
+
+    // waitForPendingAuths must not resolve while the top-up is still in flight.
+    let waitResolved = false;
+    const waitPromise = manager
+      .waitForPendingAuths(buyerIdentity.peerId)
+      .then(() => { waitResolved = true; });
+    await new Promise<void>((r) => setImmediate(r));
+    expect(waitResolved).toBe(false);
+
+    // Release the top-up. The queued follow-up now applies and waitForPendingAuths resolves.
+    releaseTopUp();
+    await Promise.all([topUpPromise, followUpPromise, waitPromise]);
+
+    expect(waitResolved).toBe(true);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(1_500_000n);
+    // A budget check after draining sees the advanced cumulative — no bogus 402.
+    expect(manager.getCumulativeSpend(channelId) >= manager.getAcceptedCumulative(channelId)).toBe(false);
   });
 
   it('recovers an active on-chain channel when local seller session is missing', async () => {
