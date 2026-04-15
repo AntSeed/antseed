@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
 import {
-  ChannelsClient,
   DepositsClient,
   EmissionsClient,
   ANTSTokenClient,
@@ -10,7 +9,18 @@ import {
   signSetOperator,
   makeDepositsDomain,
   type ChainConfig,
+  type BuyerUsageTotals,
 } from '@antseed/node';
+
+const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
+  totalRequests: 0,
+  totalInputTokens: '0',
+  totalOutputTokens: '0',
+  totalSettlements: 0,
+  uniqueSellers: 0,
+  activeChannels: 0,
+  channels: [],
+};
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -37,17 +47,6 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   function getClient(): DepositsClient | null {
     if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
     return depositsClient;
-  }
-
-  let channelsClient: ChannelsClient | null = null;
-  function getChannelsClient(): ChannelsClient | null {
-    if (!channelsClient) {
-      channelsClient = new ChannelsClient({
-        rpcUrl: ctx.cryptoConfig.rpcUrl,
-        contractAddress: ctx.cryptoConfig.channelsContractAddress,
-      });
-    }
-    return channelsClient;
   }
 
   let emissionsClient: EmissionsClient | null = null;
@@ -142,160 +141,36 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
-  fastify.get('/api/channels', async (_request, _reply) => {
-    if (!ctx.cryptoCtx) {
-      return { channels: [], history: [] };
-    }
-
-    // Fetch channels from the buyer proxy's local ChannelStore via its
-    // control-plane endpoint (source of truth for the list). Avoids
-    // eth_getLogs scans which are capped on public RPCs. Then enrich each
-    // channel with a point-read against channels(bytes32) to get the
-    // authoritative on-chain status + closeRequestedAt, and split into
-    // active vs history based on on-chain state.
+  fastify.get('/api/channels', async () => {
+    if (!ctx.cryptoCtx) return { channels: [] };
     try {
       const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels?all=1`;
       const resp = await fetch(url);
       if (!resp.ok) {
         fastify.log.warn(`[/api/channels] buyer proxy returned ${resp.status}`);
-        return { channels: [], history: [] };
+        return { channels: [] };
       }
-      const body = await resp.json() as {
-        ok: boolean;
-        channels: Array<{
-          channelId: string;
-          seller: string;
-          reserveMax: string;
-          cumulativeSigned: string;
-          deadline: number;
-          status: string;
-        }>;
-      };
-      // Initialize the channels client outside the enrichment loop and catch
-      // init failures independently — a bad RPC URL must not discard the
-      // channel list we already have from the buyer proxy.
-      let cc: ChannelsClient | null = null;
-      try {
-        cc = getChannelsClient();
-      } catch (err) {
-        fastify.log.warn(`[/api/channels] channels client init failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      const rawChannels = body.channels ?? [];
-      // Cap concurrent eth_call fan-out. Public RPCs rate-limit concurrent
-      // reads — the default wagmi primary (publicnode) was picked for 3/3
-      // reliability at 3 concurrent eth_calls; more than that and responses
-      // start coming back stale, which would resurrect the exact bug this
-      // PR fixes (status=1 / closeRequestedAt=0 placeholders).
-      const ON_CHAIN_READ_CONCURRENCY = 3;
-      const enriched: Array<{
-        channelId: string;
-        seller: string;
-        deposit: string;
-        settled: string;
-        deadline: number;
-        closeRequestedAt: number;
-        status: number;
-      }> = new Array(rawChannels.length);
-      let cursor = 0;
-      async function worker() {
-        while (true) {
-          const i = cursor++;
-          if (i >= rawChannels.length) return;
-          const c = rawChannels[i]!;
-          let closeRequestedAt = 0;
-          let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
-          let onchainSettled: bigint | null = null;
-          let onchainDeposit: bigint | null = null;
-          if (cc) {
-            try {
-              const onchain = await cc.getSession(c.channelId);
-              closeRequestedAt = Number(onchain.closeRequestedAt);
-              onchainStatus = onchain.status;
-              onchainSettled = onchain.settled;
-              onchainDeposit = onchain.deposit;
-            } catch (err) {
-              fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
-            }
-          }
-          enriched[i] = {
-            channelId: c.channelId,
-            seller: c.seller,
-            // Prefer the authoritative on-chain deposit (USDC actually locked
-            // in the Channels contract). Fall back to the local proxy's
-            // reserveMax only if the on-chain read failed.
-            deposit: formatUsdc6(onchainDeposit ?? BigInt(c.reserveMax)),
-            settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
-            deadline: c.deadline,
-            closeRequestedAt,
-            status: onchainStatus,
-          };
-        }
-      }
-      const workers = Array.from(
-        { length: Math.min(ON_CHAIN_READ_CONCURRENCY, rawChannels.length) },
-        () => worker(),
-      );
-      await Promise.all(workers);
-      // Active = on-chain status Active (1). Everything else is history
-      // (Settled=2, TimedOut=3, None=0 means the channel no longer exists
-      // on-chain — e.g., withdrawn and cleared).
-      const channels = enriched.filter((c) => c.status === 1);
-      const history = enriched.filter((c) => c.status !== 1);
-      return { channels, history };
+      const body = await resp.json() as { ok: boolean; channels: unknown[] };
+      return { channels: body.channels ?? [] };
     } catch (err) {
       fastify.log.warn(`[/api/channels] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return { channels: [], history: [] };
+      return { channels: [] };
     }
   });
 
-  fastify.get('/api/buyer-usage', async (_request, _reply) => {
-    // Sourced from the buyer proxy's local ChannelStore — fully answerable
-    // from the local DB, no network aggregator required.
+  fastify.get('/api/buyer-usage', async (): Promise<BuyerUsageTotals> => {
     try {
       const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/buyer-usage`;
       const resp = await fetch(url);
       if (!resp.ok) {
         fastify.log.warn(`[/api/buyer-usage] buyer proxy returned ${resp.status}`);
-        return {
-          totalRequests: 0,
-          totalInputTokens: '0',
-          totalOutputTokens: '0',
-          totalSettlements: 0,
-          uniqueSellers: 0,
-          activeChannels: 0,
-          channels: [],
-        };
+        return EMPTY_BUYER_USAGE;
       }
-      const body = await resp.json() as {
-        ok: boolean;
-        totals: {
-          totalRequests: number;
-          totalInputTokens: string;
-          totalOutputTokens: string;
-          totalSettlements: number;
-          uniqueSellers: number;
-          activeChannels: number;
-          channels: Array<{
-            reservedAt: number;
-            updatedAt: number;
-            requestCount: number;
-            inputTokens: string;
-            outputTokens: string;
-          }>;
-        };
-      };
+      const body = await resp.json() as { ok: boolean; totals: BuyerUsageTotals };
       return body.totals;
     } catch (err) {
       fastify.log.warn(`[/api/buyer-usage] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return {
-        totalRequests: 0,
-        totalInputTokens: '0',
-        totalOutputTokens: '0',
-        totalSettlements: 0,
-        uniqueSellers: 0,
-        activeChannels: 0,
-      };
+      return EMPTY_BUYER_USAGE;
     }
   });
 

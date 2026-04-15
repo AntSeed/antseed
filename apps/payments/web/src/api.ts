@@ -43,11 +43,28 @@ export async function withdraw(amount: string): Promise<{ ok: boolean; txHash?: 
   });
 }
 
+/** Raw channel row from the buyer proxy's local ChannelStore — no on-chain enrichment. */
+export interface RawChannel {
+  channelId: string;
+  peerId: string;
+  seller: string;
+  buyer: string;
+  reserveMax: string;
+  cumulativeSigned: string;
+  deadline: number;
+  reservedAt: number;
+  status: string;
+  requestCount: number;
+  tokensDelivered: string;
+}
+
+/** Client-side enriched channel — `deposit`/`settled`/`status` are from on-chain reads. */
 export interface ChannelData {
   channelId: string;
   seller: string;
   deposit: string;
   settled: string;
+  reservedAt: number;
   deadline: number;
   closeRequestedAt: number;
   status: number;
@@ -58,7 +75,7 @@ export interface OperatorData {
   nonce: number;
 }
 
-export async function getChannels(): Promise<{ channels: ChannelData[]; history: ChannelData[] }> {
+export async function getChannels(): Promise<{ channels: RawChannel[] }> {
   return fetchJson('/api/channels');
 }
 

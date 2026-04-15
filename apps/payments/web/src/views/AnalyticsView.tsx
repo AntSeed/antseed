@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { PaymentConfig } from '../types';
 import {
   getBuyerStats,
-  getChannels,
   type BuyerStatsResponse,
   type BuyerStatsSellerRow,
-  type ChannelData,
 } from '../api';
+import { useChannels } from '../hooks/useChannels';
 
 interface AnalyticsViewProps {
   config: PaymentConfig | null;
@@ -42,13 +41,14 @@ function formatDollars(s: string | undefined): string {
 
 export function AnalyticsView({ config }: AnalyticsViewProps) {
   const [stats, setStats] = useState<BuyerStatsResponse | null>(null);
-  const [channels, setChannels] = useState<{ channels: ChannelData[]; history: ChannelData[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('totalRequests');
 
   const buyerAddress = config?.evmAddress ?? null;
   const networkStatsUrl = config?.networkStatsUrl ?? null;
+
+  const { channels: activeChannels } = useChannels(config);
 
   const load = useCallback(async () => {
     if (!buyerAddress) {
@@ -58,27 +58,18 @@ export function AnalyticsView({ config }: AnalyticsViewProps) {
     setLoading(true);
     setError(null);
 
-    // Channels is a local call, fetch it unconditionally.
-    const channelsPromise = getChannels().catch(() => ({ channels: [], history: [] }));
-
     if (!networkStatsUrl) {
       setStats(null);
-      setChannels(await channelsPromise);
       setError('Network stats not configured for this chain');
       setLoading(false);
       return;
     }
 
     try {
-      const [statsRes, channelsRes] = await Promise.all([
-        getBuyerStats(networkStatsUrl, buyerAddress),
-        channelsPromise,
-      ]);
+      const statsRes = await getBuyerStats(networkStatsUrl, buyerAddress);
       setStats(statsRes);
-      setChannels(channelsRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load analytics');
-      setChannels(await channelsPromise);
     } finally {
       setLoading(false);
     }
@@ -98,14 +89,13 @@ export function AnalyticsView({ config }: AnalyticsViewProps) {
     return arr;
   }, [stats?.bySeller, sortKey]);
 
-  // Live channel strip — sum deposit/settled from /api/channels
+  // Live channel strip — sum deposit/settled across currently-active channels.
   const liveChannels = useMemo(() => {
-    if (!channels) return { count: 0, locked: 0, settled: 0 };
-    const count = channels.channels.length;
-    const locked  = channels.channels.reduce((a, c) => a + parseFloat(c.deposit), 0);
-    const settled = channels.channels.reduce((a, c) => a + parseFloat(c.settled), 0);
+    const count = activeChannels.length;
+    const locked  = activeChannels.reduce((a, c) => a + parseFloat(c.deposit), 0);
+    const settled = activeChannels.reduce((a, c) => a + parseFloat(c.settled), 0);
     return { count, locked, settled };
-  }, [channels]);
+  }, [activeChannels]);
 
   if (loading && !stats) {
     return (
