@@ -102,9 +102,9 @@ async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean
   }
 }
 
-async function getLocalSeederInfo(): Promise<LocalSeederInfo | null> {
+async function getLocalSeederInfo(dataDir: string): Promise<LocalSeederInfo | null> {
   try {
-    const stateFile = join(homedir(), '.antseed', 'daemon.state.json')
+    const stateFile = join(dataDir, 'daemon.state.json')
     const raw = await readFile(stateFile, 'utf-8')
     const state = JSON.parse(raw) as { state?: string; dhtPort?: number; signalingPort?: number; pid?: number }
     if (state.state === 'seeding' && state.dhtPort && state.pid) {
@@ -245,7 +245,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         }
       }
 
-      const seederInfo = await getLocalSeederInfo()
+      const seederInfo = await getLocalSeederInfo(globalOpts.dataDir)
       const allBootstrapEntries = buildBuyerBootstrapEntries(config.network?.bootstrapNodes, seederInfo?.dhtPort)
       const bootstrapNodes = toBootstrapConfig(parseBootstrapList(allBootstrapEntries))
 
@@ -346,7 +346,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
-      const proxy = new BuyerProxy({ port: proxyPort, node, pinnedPeerId })
+      const proxy = new BuyerProxy({ port: proxyPort, node, pinnedPeerId, dataDir: globalOpts.dataDir })
       let ownsProxyListener = false
 
       try {

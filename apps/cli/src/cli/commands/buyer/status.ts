@@ -3,13 +3,10 @@ import chalk from 'chalk';
 import Table from 'cli-table3';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { getGlobalOptions } from '../types.js';
 import { createDepositsClient, loadCryptoContext, formatUsdc } from '../../payment-utils.js';
 import { loadConfig } from '../../../config/loader.js';
 import { getNodeStatus } from '../../../status/node-status.js';
-
-const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json');
 
 interface BuyerStateFile {
   state?: string;
@@ -19,9 +16,9 @@ interface BuyerStateFile {
   pinnedPeerId?: string | null;
 }
 
-async function readBuyerState(): Promise<BuyerStateFile | null> {
+async function readBuyerState(dataDir: string): Promise<BuyerStateFile | null> {
   try {
-    const raw = await readFile(BUYER_STATE_FILE, 'utf-8');
+    const raw = await readFile(join(dataDir, 'buyer.state.json'), 'utf-8');
     return JSON.parse(raw) as BuyerStateFile;
   } catch {
     return null;
@@ -37,8 +34,8 @@ export function registerBuyerStatusCommand(buyerCmd: Command): void {
       try {
         const globalOpts = getGlobalOptions(buyerCmd);
         const config = await loadConfig(globalOpts.config);
-        const nodeStatus = await getNodeStatus(config);
-        const buyerState = await readBuyerState();
+        const nodeStatus = await getNodeStatus(config, globalOpts.dataDir);
+        const buyerState = await readBuyerState(globalOpts.dataDir);
         const identity = await loadCryptoContext(globalOpts.dataDir);
 
         let depositsAvailable: string | null = null;

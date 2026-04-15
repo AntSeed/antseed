@@ -5,6 +5,7 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import { resolveEffectiveSellerConfig } from '../../../config/effective.js';
 import { getNodeStatus } from '../../../status/node-status.js';
+import { loadCryptoContext } from '../../payment-utils.js';
 import { formatEarnings, formatTokens } from '../../formatters.js';
 
 type SellerNodeState = 'seeding' | 'connected' | 'idle';
@@ -19,7 +20,14 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
         const globalOpts = getGlobalOptions(sellerCmd);
         const config = await loadConfig(globalOpts.config);
         const effectiveSeller = resolveEffectiveSellerConfig({ config });
-        const status = await getNodeStatus(config);
+        const status = await getNodeStatus(config, globalOpts.dataDir);
+        const walletAddress = status.walletAddress ?? await (async () => {
+          try {
+            return (await loadCryptoContext(globalOpts.dataDir)).address;
+          } catch {
+            return null;
+          }
+        })();
 
         const providerSummary = Object.entries(effectiveSeller.providers).map(([name, cfg]) => {
           const defaults = cfg.defaults;
@@ -43,7 +51,7 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
             tokensToday: status.tokensToday,
             activeChannels: status.activeChannels,
             uptime: status.uptime,
-            walletAddress: status.walletAddress,
+            walletAddress,
             providers: providerSummary,
           }, null, 2));
           return;
@@ -69,7 +77,7 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
           ['Tokens today', formatTokens(status.tokensToday)],
           ['Active channels', String(status.activeChannels)],
           ['Uptime', status.uptime],
-          ['Wallet address', status.walletAddress ?? chalk.dim('not configured')],
+          ['Wallet address', walletAddress ?? chalk.dim('not configured')],
         );
 
         table.push([

@@ -113,6 +113,7 @@ describe('OpenAI SDK integration: Responses API over buyer proxy', () => {
     proxy = new BuyerProxy({
       node: buyerNode,
       port,
+      dataDir: buyerDataDir!,
       backgroundRefreshIntervalMs: 60_000,
       peerCacheTtlMs: 1_000,
     });

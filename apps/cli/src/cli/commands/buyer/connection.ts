@@ -1,11 +1,9 @@
 import type { Command } from 'commander'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import chalk from 'chalk'
-
-const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
+import { getGlobalOptions } from '../types.js'
 
 interface BuyerStateFile {
   state: 'connected' | 'stopped'
@@ -16,21 +14,24 @@ interface BuyerStateFile {
   [key: string]: unknown
 }
 
-async function readStateFile(): Promise<BuyerStateFile | null> {
+function stateFilePath(dataDir: string): string {
+  return join(dataDir, 'buyer.state.json')
+}
+
+async function readStateFile(dataDir: string): Promise<BuyerStateFile | null> {
   try {
-    const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+    const raw = await readFile(stateFilePath(dataDir), 'utf-8')
     return JSON.parse(raw) as BuyerStateFile
   } catch {
     return null
   }
 }
 
-async function writeStateFile(data: BuyerStateFile): Promise<void> {
-  const dir = join(homedir(), '.antseed')
-  const tmp = join(dir, `.buyer.state.${randomUUID()}.json.tmp`)
+async function writeStateFile(dataDir: string, data: BuyerStateFile): Promise<void> {
+  const tmp = join(dataDir, `.buyer.state.${randomUUID()}.json.tmp`)
   try {
     await writeFile(tmp, JSON.stringify(data, null, 2))
-    await rename(tmp, BUYER_STATE_FILE)
+    await rename(tmp, stateFilePath(dataDir))
   } catch (err) {
     console.error(chalk.red(`Failed to write session state: ${err instanceof Error ? err.message : String(err)}`))
     process.exit(1)
@@ -46,8 +47,8 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function requireRunningBuyer(): Promise<BuyerStateFile> {
-  const state = await readStateFile()
+async function requireRunningBuyer(dataDir: string): Promise<BuyerStateFile> {
+  const state = await readStateFile(dataDir)
   if (!state) {
     console.error(chalk.red('No buyer connection found. Run `antseed buyer start` first.'))
     process.exit(1)
@@ -68,7 +69,8 @@ export function registerBuyerConnectionCommand(buyerCmd: Command): void {
     .command('get')
     .description('Show current session state (pinned service, pinned peer)')
     .action(async () => {
-      const state = await readStateFile()
+      const globalOpts = getGlobalOptions(buyerCmd)
+      const state = await readStateFile(globalOpts.dataDir)
       if (!state) {
         console.log(chalk.yellow('No buyer connection state found. Run `antseed buyer start` first.'))
         return
@@ -87,7 +89,8 @@ export function registerBuyerConnectionCommand(buyerCmd: Command): void {
     .option('--service <service>', 'override service ID for all routed requests')
     .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address)')
     .action(async (options) => {
-      const state = await requireRunningBuyer()
+      const globalOpts = getGlobalOptions(buyerCmd)
+      const state = await requireRunningBuyer(globalOpts.dataDir)
 
       if (options.service === undefined && options.peer === undefined) {
         console.error(chalk.red('Error: specify at least --service or --peer.'))
@@ -112,7 +115,7 @@ export function registerBuyerConnectionCommand(buyerCmd: Command): void {
         state.pinnedPeerId = peer.toLowerCase()
       }
 
-      await writeStateFile(state)
+      await writeStateFile(globalOpts.dataDir, state)
 
       if (options.service !== undefined) console.log(chalk.green(`Pinned service set to: ${state.pinnedService}`))
       if (options.peer !== undefined) console.log(chalk.green(`Pinned peer set to: ${state.pinnedPeerId}`))
@@ -124,7 +127,8 @@ export function registerBuyerConnectionCommand(buyerCmd: Command): void {
     .option('--service', 'clear only the service override')
     .option('--peer', 'clear only the peer pin')
     .action(async (options) => {
-      const state = await requireRunningBuyer()
+      const globalOpts = getGlobalOptions(buyerCmd)
+      const state = await requireRunningBuyer(globalOpts.dataDir)
 
       const clearAll = !options.service && !options.peer
       const clearService = clearAll || Boolean(options.service)
@@ -133,7 +137,7 @@ export function registerBuyerConnectionCommand(buyerCmd: Command): void {
       if (clearService) state.pinnedService = null
       if (clearPeer) state.pinnedPeerId = null
 
-      await writeStateFile(state)
+      await writeStateFile(globalOpts.dataDir, state)
 
       if (clearService && clearPeer) {
         console.log(chalk.green('All session overrides cleared.'))

@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import { watch, type FSWatcher } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import type {
   AntseedNode,
   PeerInfo,
@@ -61,6 +60,8 @@ export { rewriteServiceInBody } from './request-utils.js'
 export interface BuyerProxyConfig {
   port: number
   node: AntseedNode
+  /** Data directory used to persist buyer.state.json (discovered peers, session overrides). */
+  dataDir: string
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -84,7 +85,6 @@ export interface BuyerProxyConfig {
   pinnedService?: string
 }
 
-const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 /** Max age for carrying forward peers not seen in the latest DHT scan. */
 const CARRY_FORWARD_TTL_MS = 30 * 60_000
@@ -267,6 +267,8 @@ export class BuyerProxy {
   private readonly _port: number
   private readonly _bgRefreshIntervalMs: number
   private readonly _peerCacheTtlMs: number
+  private readonly _stateDir: string
+  private readonly _stateFile: string
   private _pinnedPeer: string | null
   private _pinnedService: string | null
   private _stateFileWatcher: FSWatcher | null = null
@@ -288,6 +290,8 @@ export class BuyerProxy {
     this._port = config.port
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 6 * 60_000)
+    this._stateDir = config.dataDir
+    this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._pinnedService = config.pinnedService?.trim() ?? null
     this._server = createServer((req, res) => {
@@ -324,7 +328,7 @@ export class BuyerProxy {
 
   private async _hydratePeersFromStateFile(): Promise<void> {
     try {
-      const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+      const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
       const peers = parsePersistedPeers(parsed)
       if (peers.length === 0) {
@@ -338,7 +342,7 @@ export class BuyerProxy {
         ? peersUpdatedAt
         : Date.now()
       this._cacheMutationEpoch += 1
-      log(`Hydrated ${peers.length} peer(s) from ${BUYER_STATE_FILE}`)
+      log(`Hydrated ${peers.length} peer(s) from ${this._stateFile}`)
     } catch {
       // File missing, unreadable, or malformed — non-fatal. The background
       // refresh will populate the cache shortly.
@@ -366,7 +370,7 @@ export class BuyerProxy {
 
   private _watchStateFile(): void {
     try {
-      this._stateFileWatcher = watch(BUYER_STATE_FILE, { persistent: false }, () => {
+      this._stateFileWatcher = watch(this._stateFile, { persistent: false }, () => {
         if (this._stateWatchDebounce) clearTimeout(this._stateWatchDebounce)
         this._stateWatchDebounce = setTimeout(() => {
           this._stateWatchDebounce = null
@@ -383,7 +387,7 @@ export class BuyerProxy {
 
   private async _reloadSessionOverrides(): Promise<void> {
     try {
-      const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+      const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
       const pinnedService = typeof parsed.pinnedService === 'string' && parsed.pinnedService.trim().length > 0
         ? parsed.pinnedService.trim()
@@ -403,19 +407,18 @@ export class BuyerProxy {
   private _mergeStateFile(patch: Record<string, unknown>): Promise<void> {
     this._stateWriteChain = this._stateWriteChain.then(async () => {
       try {
-        const dir = join(homedir(), '.antseed')
-        await mkdir(dir, { recursive: true })
+        await mkdir(this._stateDir, { recursive: true })
         let existing: Record<string, unknown> = {}
         try {
-          const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+          const raw = await readFile(this._stateFile, 'utf-8')
           existing = JSON.parse(raw) as Record<string, unknown>
         } catch {
           // file doesn't exist yet
         }
         const data = { ...existing, ...patch }
-        const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+        const tmp = join(this._stateDir, `.buyer.state.${randomUUID()}.json.tmp`)
         await writeFile(tmp, JSON.stringify(data, null, 2))
-        await rename(tmp, BUYER_STATE_FILE)
+        await rename(tmp, this._stateFile)
       } catch {
         // non-fatal
       }
