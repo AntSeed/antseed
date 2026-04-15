@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
-import { getOperatorInfo, type ChannelData } from '../api';
+import type { ChannelData } from '../api';
 import { CHANNELS_ABI } from '../channels-abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { useSetOperator } from '../hooks/useSetOperator';
 import { useChannels } from '../hooks/useChannels';
+import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import '../views/DashboardView.scss';
 import './ChannelsView.scss';
 
@@ -82,6 +82,7 @@ function ChannelRow({
 }) {
   const status = getRowStatus(session);
   const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+  const { requireAuthorization } = useAuthorizedWallet();
   const [error, setError] = useState<string | null>(null);
 
   const { writeContract: writeRequestClose, data: closeTxHash } = useWriteContract();
@@ -96,37 +97,41 @@ function ChannelRow({
     chainId: expectedChainId,
   });
 
-  const handleRequestClose = useCallback(async () => {
-    setError(null);
-    try {
-      await ensureCorrectNetwork();
-      writeRequestClose({
-        address: config.channelsContractAddress as `0x${string}`,
-        abi: parsedAbi,
-        functionName: 'requestClose',
-        chainId: expectedChainId,
-        args: [session.channelId as `0x${string}`],
-      });
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeRequestClose]);
+  const handleRequestClose = useCallback(() => {
+    requireAuthorization(async () => {
+      setError(null);
+      try {
+        await ensureCorrectNetwork();
+        writeRequestClose({
+          address: config.channelsContractAddress as `0x${string}`,
+          abi: parsedAbi,
+          functionName: 'requestClose',
+          chainId: expectedChainId,
+          args: [session.channelId as `0x${string}`],
+        });
+      } catch (err) {
+        setError(getErrorMessage(err));
+      }
+    });
+  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeRequestClose, requireAuthorization]);
 
-  const handleWithdraw = useCallback(async () => {
-    setError(null);
-    try {
-      await ensureCorrectNetwork();
-      writeWithdraw({
-        address: config.channelsContractAddress as `0x${string}`,
-        abi: parsedAbi,
-        functionName: 'withdraw',
-        chainId: expectedChainId,
-        args: [session.channelId as `0x${string}`],
-      });
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeWithdraw]);
+  const handleWithdraw = useCallback(() => {
+    requireAuthorization(async () => {
+      setError(null);
+      try {
+        await ensureCorrectNetwork();
+        writeWithdraw({
+          address: config.channelsContractAddress as `0x${string}`,
+          abi: parsedAbi,
+          functionName: 'withdraw',
+          chainId: expectedChainId,
+          args: [session.channelId as `0x${string}`],
+        });
+      } catch (err) {
+        setError(getErrorMessage(err));
+      }
+    });
+  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeWithdraw, requireAuthorization]);
 
   const meta = STATUS_META[status];
   const pillLabel = status === 'closing'
@@ -169,21 +174,11 @@ function ChannelRow({
 
 export function ChannelsView({ config }: ChannelsViewProps) {
   const { channels, history, loading, refetch } = useChannels(config);
-  const [operatorSet, setOperatorSet] = useState<boolean | null>(null);
   const [page, setPage] = useState(0);
 
-  const fetchOperator = useCallback(async () => {
-    const operatorResult = await getOperatorInfo().catch(() => null);
-    if (operatorResult) {
-      setOperatorSet(operatorResult.operator !== '0x0000000000000000000000000000000000000000');
-    }
-  }, []);
-
-  useEffect(() => { void fetchOperator(); }, [fetchOperator]);
-
   const fetchData = useCallback(async () => {
-    await Promise.all([refetch(), fetchOperator()]);
-  }, [refetch, fetchOperator]);
+    await refetch();
+  }, [refetch]);
 
   // Active first, then history — keeps actionable rows on page one.
   const allChannels = useMemo(() => [...channels, ...history], [channels, history]);
@@ -213,8 +208,6 @@ export function ChannelsView({ config }: ChannelsViewProps) {
 
   return (
     <div className="channels-view dashboard-view">
-      {operatorSet === false && <SetOperatorBanner config={config} onSet={fetchData} />}
-
       <section className="dashboard-section">
         <div className="channels-section-head-row">
           <header className="dashboard-section-head">
@@ -324,26 +317,3 @@ export function ChannelsView({ config }: ChannelsViewProps) {
   );
 }
 
-/* ── Set Operator Banner ── */
-
-function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; onSet: () => void }) {
-  const { address } = useAccount();
-  const { run, running, error } = useSetOperator(config, onSet);
-
-  return (
-    <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12 }}>
-      <div style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
-        No wallet set. This is the wallet used to claim ANTS rewards and manage channels. Set your connected wallet to continue.
-      </div>
-      <button
-        className="btn-outline"
-        style={{ fontSize: 12, padding: '4px 12px' }}
-        onClick={run}
-        disabled={running || !address}
-      >
-        {running ? 'Setting wallet...' : 'Set Your Wallet'}
-      </button>
-      {error && <div style={{ color: 'var(--error)', marginTop: 6 }}>{error}</div>}
-    </div>
-  );
-}

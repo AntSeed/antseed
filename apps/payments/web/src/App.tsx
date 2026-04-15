@@ -12,6 +12,10 @@ import { WithdrawView } from './components/WithdrawView';
 import { DashboardView } from './views/DashboardView';
 import { EmissionsView } from './views/EmissionsView';
 import { ChannelsView } from './components/ChannelsView';
+import { AuthorizedWalletProvider, useAuthorizedWallet } from './context/AuthorizedWalletContext';
+import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
+
+export type OverlayPhase = 'deposit' | 'authorize' | null;
 
 const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions']);
 
@@ -73,76 +77,150 @@ export function App() {
   }, []);
 
   const buyerEvmAddress = config?.evmAddress ?? balance?.evmAddress ?? null;
-  // Loading = first balance fetch hasn't completed yet.
-  // Empty buyer = loaded, but nothing deposited and nothing reserved.
+
+  return (
+    <AuthorizedWalletProvider config={config}>
+      <AppShell
+        balance={balance}
+        balanceLoaded={balanceLoaded}
+        config={config}
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
+        isDark={isDark}
+        onToggleTheme={() => setIsDark((d) => !d)}
+        walletDrawerOpen={walletDrawerOpen}
+        onOpenWalletDrawer={() => setWalletDrawerOpen(true)}
+        onCloseWalletDrawer={() => setWalletDrawerOpen(false)}
+        actionModal={actionModal}
+        onOpenDeposit={() => setActionModal('deposit')}
+        onOpenWithdraw={() => setActionModal('withdraw')}
+        onCloseActionModal={() => setActionModal(null)}
+        buyerEvmAddress={buyerEvmAddress}
+        refreshBalance={refreshBalance}
+      />
+    </AuthorizedWalletProvider>
+  );
+}
+
+interface AppShellProps {
+  balance: BalanceData | null;
+  balanceLoaded: boolean;
+  config: PaymentConfig | null;
+  activeTab: TabId;
+  onSelectTab: (tab: TabId) => void;
+  isDark: boolean;
+  onToggleTheme: () => void;
+  walletDrawerOpen: boolean;
+  onOpenWalletDrawer: () => void;
+  onCloseWalletDrawer: () => void;
+  actionModal: 'deposit' | 'withdraw' | null;
+  onOpenDeposit: () => void;
+  onOpenWithdraw: () => void;
+  onCloseActionModal: () => void;
+  buyerEvmAddress: string | null;
+  refreshBalance: () => Promise<void>;
+}
+
+function AppShell({
+  balance,
+  balanceLoaded,
+  config,
+  activeTab,
+  onSelectTab,
+  isDark,
+  onToggleTheme,
+  walletDrawerOpen,
+  onOpenWalletDrawer,
+  onCloseWalletDrawer,
+  actionModal,
+  onOpenDeposit,
+  onOpenWithdraw,
+  onCloseActionModal,
+  buyerEvmAddress,
+  refreshBalance,
+}: AppShellProps) {
+  const { operatorSet } = useAuthorizedWallet();
+  const [authorizeSkipped, setAuthorizeSkipped] = useState(false);
+
   const isLoading = !balanceLoaded;
+  const hasFunds =
+    balanceLoaded &&
+    balance !== null &&
+    (parseFloat(balance.total) > 0 || parseFloat(balance.reserved) > 0);
   const isEmptyBuyer =
     balanceLoaded &&
     balance !== null &&
     parseFloat(balance.total) === 0 &&
     parseFloat(balance.reserved) === 0;
-  const shellBlurred = isLoading || isEmptyBuyer;
+
+  let overlayPhase: OverlayPhase = null;
+  if (isEmptyBuyer) overlayPhase = 'deposit';
+  else if (hasFunds && operatorSet === false && !authorizeSkipped) overlayPhase = 'authorize';
+
+  const shellBlurred = isLoading || overlayPhase !== null;
 
   return (
     <>
-    <div className={`dash-shell${shellBlurred ? ' dash-shell--blurred' : ''}`}>
-      <Sidebar
-        activeTab={activeTab}
-        onSelect={handleSelectTab}
-        isDark={isDark}
-        onToggleTheme={() => setIsDark((d) => !d)}
-      />
-      <div className="dash-main">
-        <TopBar
+      <div className={`dash-shell${shellBlurred ? ' dash-shell--blurred' : ''}`}>
+        <Sidebar
           activeTab={activeTab}
-          balance={balance}
-          onOpenWallet={() => setWalletDrawerOpen(true)}
+          onSelect={onSelectTab}
+          isDark={isDark}
+          onToggleTheme={onToggleTheme}
         />
-        <main className="dash-content">
-          {activeTab === 'dashboard' && <DashboardView config={config} />}
-          {activeTab === 'channels'  && <ChannelsView  config={config} />}
-          {activeTab === 'emissions' && <EmissionsView config={config} />}
-        </main>
+        <div className="dash-main">
+          <TopBar
+            activeTab={activeTab}
+            balance={balance}
+            onOpenWallet={onOpenWalletDrawer}
+          />
+          <AuthorizeWalletAlert />
+          <main className="dash-content">
+            {activeTab === 'dashboard' && <DashboardView config={config} />}
+            {activeTab === 'channels'  && <ChannelsView  config={config} />}
+            {activeTab === 'emissions' && <EmissionsView config={config} />}
+          </main>
+        </div>
+        <WalletDrawer
+          isOpen={walletDrawerOpen}
+          onClose={onCloseWalletDrawer}
+          balance={balance}
+          config={config}
+          buyerEvmAddress={buyerEvmAddress}
+          onOpenDeposit={onOpenDeposit}
+          onOpenWithdraw={onOpenWithdraw}
+        />
       </div>
-      <WalletDrawer
-        isOpen={walletDrawerOpen}
-        onClose={() => setWalletDrawerOpen(false)}
-        balance={balance}
-        config={config}
-        buyerEvmAddress={buyerEvmAddress}
-        onOpenDeposit={() => setActionModal('deposit')}
-        onOpenWithdraw={() => setActionModal('withdraw')}
-      />
-    </div>
-    <LoaderOverlay isVisible={isLoading} />
-    <EmptyStateOverlay
-      isVisible={isEmptyBuyer}
-      config={config}
-      balance={balance}
-      buyerAddress={buyerEvmAddress}
-      onDeposited={refreshBalance}
-    />
-    <ActionModal
-      isOpen={actionModal === 'deposit'}
-      onClose={() => setActionModal(null)}
-      title="Deposit USDC"
-      subtitle="Add funds to your AntSeed account."
-    >
-      <DepositView
+      <LoaderOverlay isVisible={isLoading} />
+      <EmptyStateOverlay
+        phase={overlayPhase}
         config={config}
         balance={balance}
         buyerAddress={buyerEvmAddress}
         onDeposited={refreshBalance}
+        onSkipAuthorize={() => setAuthorizeSkipped(true)}
       />
-    </ActionModal>
-    <ActionModal
-      isOpen={actionModal === 'withdraw'}
-      onClose={() => setActionModal(null)}
-      title="Withdraw USDC"
-      subtitle="Send funds to your authorized wallet."
-    >
-      <WithdrawView balance={balance} onAction={refreshBalance} />
-    </ActionModal>
+      <ActionModal
+        isOpen={actionModal === 'deposit'}
+        onClose={onCloseActionModal}
+        title="Deposit USDC"
+        subtitle="Add funds to your AntSeed account."
+      >
+        <DepositView
+          config={config}
+          balance={balance}
+          buyerAddress={buyerEvmAddress}
+          onDeposited={refreshBalance}
+        />
+      </ActionModal>
+      <ActionModal
+        isOpen={actionModal === 'withdraw'}
+        onClose={onCloseActionModal}
+        title="Withdraw USDC"
+        subtitle="Send funds to your authorized wallet."
+      >
+        <WithdrawView balance={balance} onAction={refreshBalance} />
+      </ActionModal>
     </>
   );
 }

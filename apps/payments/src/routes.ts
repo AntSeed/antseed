@@ -33,6 +33,25 @@ interface RouteContext {
 const formatUsdc6 = formatUsdc;
 const parseUsdc6 = parseUsdc;
 
+// Retry helper for on-chain view calls. Base RPC occasionally returns an
+// unparseable response (ethers surfaces it as CALL_EXCEPTION with null
+// revert data even though the call didn't actually revert); view calls are
+// idempotent, so retrying clears these transient failures.
+async function retryRead<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (i + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 function createClient(config: PaymentCryptoConfig): DepositsClient {
   return new DepositsClient({
     rpcUrl: config.rpcUrl,
@@ -83,10 +102,11 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
     try {
       const client = getClient()!;
+      const buyerAddress = ctx.cryptoCtx.evmAddress;
 
       const [balance, creditLimit] = await Promise.all([
-        client.getBuyerBalance(ctx.cryptoCtx.evmAddress),
-        client.getBuyerCreditLimit(ctx.cryptoCtx.evmAddress),
+        retryRead(() => client.getBuyerBalance(buyerAddress)),
+        retryRead(() => client.getBuyerCreditLimit(buyerAddress)),
       ]);
 
       return {
@@ -187,8 +207,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
       const buyerAddress = ctx.cryptoCtx.evmAddress;
       const [operator, nonce] = await Promise.all([
-        client.getOperator(buyerAddress),
-        client.getOperatorNonce(buyerAddress),
+        retryRead(() => client.getOperator(buyerAddress)),
+        retryRead(() => client.getOperatorNonce(buyerAddress)),
       ]);
 
       return { operator, nonce: Number(nonce) };

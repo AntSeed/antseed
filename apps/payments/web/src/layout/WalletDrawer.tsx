@@ -3,7 +3,7 @@ import { useAccount, useDisconnect } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import type { BalanceData, PaymentConfig } from '../types';
 import { useSetOperator } from '../hooks/useSetOperator';
-import { getOperatorInfo } from '../api';
+import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import { Button } from '../components/Button';
 
 interface WalletDrawerProps {
@@ -78,27 +78,14 @@ export function WalletDrawer({
   const { disconnect } = useDisconnect();
   const { copied, copy } = useCopyable();
 
-  const [onChainOperator, setOnChainOperator] = useState<string | null>(null);
-  const [operatorLoading, setOperatorLoading] = useState(false);
+  const { operator: onChainOperator, operatorSet, refetch: refetchOperator } = useAuthorizedWallet();
+  const operatorLoading = operatorSet === null;
 
-  const refreshOperator = useCallback(async () => {
-    if (!buyerEvmAddress) return;
-    setOperatorLoading(true);
-    try {
-      const info = await getOperatorInfo();
-      setOnChainOperator(info.operator);
-    } catch {
-      setOnChainOperator(null);
-    } finally {
-      setOperatorLoading(false);
-    }
-  }, [buyerEvmAddress]);
-
-  const setOperator = useSetOperator(config, refreshOperator);
+  const setOperator = useSetOperator(config, refetchOperator);
 
   useEffect(() => {
-    if (isOpen) void refreshOperator();
-  }, [isOpen, refreshOperator]);
+    if (isOpen) void refetchOperator();
+  }, [isOpen, refetchOperator]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -285,13 +272,22 @@ export function WalletDrawer({
                       <CheckIcon /> Authorized for withdrawals
                     </span>
                   ) : hasOperator ? (
-                    <span className="wallet-drawer-pill wallet-drawer-pill--warn">
-                      Another wallet is authorized ({onChainOperator ? truncate(onChainOperator) : ''})
-                    </span>
+                    <div className="wallet-drawer-warn">
+                      <div className="wallet-drawer-warn-title">Another wallet is authorized</div>
+                      <div className="wallet-drawer-warn-desc">
+                        Currently authorized: <strong>{onChainOperator ? truncate(onChainOperator) : ''}</strong>.
+                        Replace it with this wallet to withdraw, claim ANTS, and close channels from here.
+                      </div>
+                    </div>
                   ) : (
-                    <span className="wallet-drawer-pill wallet-drawer-pill--muted">
-                      Not yet authorized
-                    </span>
+                    <div className="wallet-drawer-warn">
+                      <div className="wallet-drawer-warn-title">No authorized wallet yet</div>
+                      <div className="wallet-drawer-warn-desc">
+                        Without an authorized wallet you cannot withdraw USDC, claim ANTS,
+                        or close channels. If you lose access to this node, your funds
+                        become unrecoverable. Authorize this wallet to keep your funds safe.
+                      </div>
+                    </div>
                   )}
                 </div>
 

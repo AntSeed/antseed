@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { BalanceData } from '../types';
 import { withdraw } from '../api';
+import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import './WithdrawView.scss';
 
 interface WithdrawViewProps {
@@ -12,6 +13,7 @@ export function WithdrawView({ balance, onAction }: WithdrawViewProps) {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const { requireAuthorization } = useAuthorizedWallet();
 
   if (!balance) {
     return (
@@ -24,24 +26,26 @@ export function WithdrawView({ balance, onAction }: WithdrawViewProps) {
 
   const availableAmount = parseFloat(balance.available);
 
-  async function handleWithdraw() {
+  function handleWithdraw() {
     if (!amount || parseFloat(amount) <= 0) return;
-    setLoading(true);
-    setStatus(null);
-    try {
-      const result = await withdraw(amount);
-      if (result.ok) {
-        setStatus({ type: 'success', message: `Withdrawal complete. TX: ${result.txHash ?? 'confirmed'}` });
-        setAmount('');
-        onAction();
-      } else {
-        setStatus({ type: 'error', message: result.error || 'Withdrawal failed' });
+    requireAuthorization(async () => {
+      setLoading(true);
+      setStatus(null);
+      try {
+        const result = await withdraw(amount);
+        if (result.ok) {
+          setStatus({ type: 'success', message: `Withdrawal complete. TX: ${result.txHash ?? 'confirmed'}` });
+          setAmount('');
+          onAction();
+        } else {
+          setStatus({ type: 'error', message: result.error || 'Withdrawal failed' });
+        }
+      } catch (err) {
+        setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
   return (
@@ -49,7 +53,8 @@ export function WithdrawView({ balance, onAction }: WithdrawViewProps) {
       <div className="card">
         <div className="card-section-title">Withdraw USDC</div>
         <div className="wallet-role-hint">
-          Withdrawals are sent to the wallet you've authorized on-chain. Connect and authorize a wallet from the top-right Wallet menu first.
+          Withdrawals are sent to your authorized wallet. You'll be prompted to
+          authorize one if you haven't already.
         </div>
 
         <div className="withdraw-request">

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useState, useEffect, useCallback } from 'react';
+import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi, formatUnits } from 'viem';
 import type { PaymentConfig } from '../types';
 import {
@@ -7,14 +7,13 @@ import {
   getEmissionsPending,
   getEmissionsShares,
   getTransfersEnabled,
-  getOperatorInfo,
   type EmissionsEpochInfo,
   type EmissionsPendingResponse,
   type EmissionsShares as SharesType,
 } from '../api';
 import { EMISSIONS_CLAIM_ABI } from '../emissions-abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { useSetOperator } from '../hooks/useSetOperator';
+import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 
 interface EmissionsViewProps {
   config: PaymentConfig | null;
@@ -44,17 +43,16 @@ function formatTimeRemaining(seconds: number): string {
 }
 
 export function EmissionsView({ config }: EmissionsViewProps) {
-  const { address } = useAccount();
   const [info, setInfo] = useState<EmissionsEpochInfo | null>(null);
   const [pending, setPending] = useState<EmissionsPendingResponse | null>(null);
   const [shares, setShares] = useState<SharesType | null>(null);
   const [transfersEnabled, setTransfersEnabled] = useState<boolean | null>(null);
-  const [operator, setOperator] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const buyerAddress = config?.evmAddress ?? null;
   const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+  const { requireAuthorization } = useAuthorizedWallet();
 
   const load = useCallback(async () => {
     if (!buyerAddress) {
@@ -64,18 +62,16 @@ export function EmissionsView({ config }: EmissionsViewProps) {
     setLoading(true);
     setLoadError(null);
     try {
-      const [infoRes, pendingRes, sharesRes, teRes, opRes] = await Promise.all([
+      const [infoRes, pendingRes, sharesRes, teRes] = await Promise.all([
         getEmissionsInfo().catch(() => null),
         getEmissionsPending(buyerAddress).catch(() => null),
         getEmissionsShares().catch(() => null),
         getTransfersEnabled().catch(() => ({ enabled: false, configured: false })),
-        getOperatorInfo().catch(() => null),
       ]);
       setInfo(infoRes);
       setPending(pendingRes);
       setShares(sharesRes);
       setTransfersEnabled(teRes.enabled);
-      setOperator(opRes?.operator ?? null);
       if (!infoRes) setLoadError('Emissions not available on this chain');
     } finally {
       setLoading(false);
@@ -83,14 +79,6 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   }, [buyerAddress]);
 
   useEffect(() => { void load(); }, [load]);
-
-  const isOperatorConnected = useMemo(() => {
-    if (!address || !operator) return false;
-    if (operator === '0x0000000000000000000000000000000000000000') return false;
-    return operator.toLowerCase() === address.toLowerCase();
-  }, [address, operator]);
-
-  const operatorFlow = useSetOperator(config, load);
 
   // Seller claim — wagmi write
   const {
@@ -146,28 +134,30 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   });
   const [buyerClaimError, setBuyerClaimError] = useState<string | null>(null);
 
-  const handleClaimBuyer = useCallback(async () => {
+  const handleClaimBuyer = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending || !buyerAddress) return;
     const epochs = pending.rows
       .filter((r) => !r.buyer.claimed && r.buyer.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
-    setBuyerClaimError(null);
-    try {
-      await ensureCorrectNetwork();
-      writeBuyerClaim({
-        address: config.emissionsContractAddress as `0x${string}`,
-        abi: parseAbi(EMISSIONS_CLAIM_ABI),
-        functionName: 'claimBuyerEmissions',
-        chainId: expectedChainId,
-        args: [buyerAddress as `0x${string}`, epochs],
-      }, {
-        onError: (err) => setBuyerClaimError(getErrorMessage(err)),
-      });
-    } catch (err) {
-      setBuyerClaimError(getErrorMessage(err));
-    }
-  }, [config, pending, buyerAddress, ensureCorrectNetwork, expectedChainId, writeBuyerClaim]);
+    requireAuthorization(async () => {
+      setBuyerClaimError(null);
+      try {
+        await ensureCorrectNetwork();
+        writeBuyerClaim({
+          address: config.emissionsContractAddress as `0x${string}`,
+          abi: parseAbi(EMISSIONS_CLAIM_ABI),
+          functionName: 'claimBuyerEmissions',
+          chainId: expectedChainId,
+          args: [buyerAddress as `0x${string}`, epochs],
+        }, {
+          onError: (err) => setBuyerClaimError(getErrorMessage(err)),
+        });
+      } catch (err) {
+        setBuyerClaimError(getErrorMessage(err));
+      }
+    });
+  }, [config, pending, buyerAddress, ensureCorrectNetwork, expectedChainId, writeBuyerClaim, requireAuthorization]);
 
   useEffect(() => {
     if (buyerClaimConfirmed) {
@@ -267,28 +257,15 @@ export function EmissionsView({ config }: EmissionsViewProps) {
       {/* Buyer claims */}
       <div className="card">
         <div className="card-section-title">Buyer Emissions</div>
-
-        {!isOperatorConnected ? (
-          <OperatorConnectBanner
-            operator={operator}
-            connectedWallet={address}
-            running={operatorFlow.running}
-            error={operatorFlow.error}
-            onConnect={operatorFlow.run}
-          />
-        ) : (
-          <>
-            <EmissionsRowList rows={pending?.rows ?? []} side="buyer" />
-            {buyerClaimError && <div className="status-msg status-error">{buyerClaimError}</div>}
-            <button
-              className="btn-primary emissions-claim-btn"
-              onClick={handleClaimBuyer}
-              disabled={!pending || pending.rows.every((r) => r.buyer.claimed || r.buyer.amount === '0')}
-            >
-              Claim buyer emissions
-            </button>
-          </>
-        )}
+        <EmissionsRowList rows={pending?.rows ?? []} side="buyer" />
+        {buyerClaimError && <div className="status-msg status-error">{buyerClaimError}</div>}
+        <button
+          className="btn-primary emissions-claim-btn"
+          onClick={handleClaimBuyer}
+          disabled={!pending || pending.rows.every((r) => r.buyer.claimed || r.buyer.amount === '0')}
+        >
+          Claim buyer emissions
+        </button>
       </div>
 
       {/* ANTS info panel */}
@@ -303,7 +280,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           </p>
           <p>
             Claims are non-custodial: seller claims mint to the claiming wallet,
-            buyer claims mint to the wallet you've connected as operator of your
+            and buyer claims mint to the wallet you've authorized for your
             buyer identity.
           </p>
           {transfersEnabled === false && (
@@ -353,42 +330,3 @@ function EmissionsRowList({ rows, side }: EmissionsRowListProps) {
   );
 }
 
-interface OperatorConnectBannerProps {
-  operator: string | null;
-  connectedWallet: string | undefined;
-  running: boolean;
-  error: string | null;
-  onConnect: () => void;
-}
-
-function OperatorConnectBanner({ operator, connectedWallet, running, error, onConnect }: OperatorConnectBannerProps) {
-  const zeroOperator = !operator || operator === '0x0000000000000000000000000000000000000000';
-  return (
-    <div className="emissions-operator-banner">
-      <div className="emissions-operator-title">Connect your wallet to your secret</div>
-      <div className="emissions-operator-desc">
-        Your buyer identity lives as a secret on this node and never enters the browser.
-        To claim buyer ANTS emissions, authorize your connected wallet as the operator
-        of that identity. The contract will then let your wallet claim on behalf of the
-        buyer, and emissions mint directly to your wallet.
-      </div>
-      <div className="emissions-operator-state">
-        {zeroOperator ? (
-          <span className="emissions-operator-pill">No operator set</span>
-        ) : (
-          <span className="emissions-operator-pill emissions-operator-pill--mismatch">
-            Current operator: {operator.slice(0, 6)}…{operator.slice(-4)} — not your connected wallet
-          </span>
-        )}
-      </div>
-      <button
-        className="btn-primary"
-        onClick={onConnect}
-        disabled={running || !connectedWallet}
-      >
-        {running ? 'Signing & submitting…' : 'Connect your wallet to your secret'}
-      </button>
-      {error && <div className="status-msg status-error" style={{ marginTop: 8 }}>{error}</div>}
-    </div>
-  );
-}
