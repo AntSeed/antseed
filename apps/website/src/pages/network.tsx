@@ -237,8 +237,8 @@ export default function PricingPage() {
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('totalTokens');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortKey, setSortKey] = useState<SortKey>('inputPrice');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
