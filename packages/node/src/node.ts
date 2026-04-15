@@ -60,6 +60,7 @@ import {
   ChannelsClient,
   StakingClient,
   ChannelStore,
+  CHANNEL_STATUS,
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
@@ -154,6 +155,34 @@ export interface NodeConfig {
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
 }
+
+export interface BuyerUsageChannelPoint {
+  reservedAt: number;
+  updatedAt: number;
+  requestCount: number;
+  inputTokens: string;
+  outputTokens: string;
+}
+
+export interface BuyerUsageTotals {
+  totalRequests: number;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalSettlements: number;
+  uniqueSellers: number;
+  activeChannels: number;
+  channels: BuyerUsageChannelPoint[];
+}
+
+const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
+  totalRequests: 0,
+  totalInputTokens: '0',
+  totalOutputTokens: '0',
+  totalSettlements: 0,
+  uniqueSellers: 0,
+  activeChannels: 0,
+  channels: [],
+};
 
 export class AntseedNode extends EventEmitter {
   private _config: NodeConfig;
@@ -622,40 +651,14 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
-   * Aggregate locally-tracked buyer usage across every channel the buyer has
-   * ever opened. Fully answerable from the local channel store — no network
-   * aggregator required. Input/output token split is semantically overloaded
-   * in the schema: on buyer rows, `tokensDelivered` = cumulative input tokens
-   * and `previousConsumption` = cumulative output tokens (see
-   * buyer-payment-manager.recordAndPersistTokens).
+   * On buyer rows in payment_channels, `tokensDelivered` stores cumulative
+   * input tokens and `previousConsumption` stores cumulative output tokens —
+   * columns are semantically overloaded vs seller rows. Set in
+   * buyer-payment-manager.recordAndPersistTokens.
    */
-  getBuyerUsageTotals(): {
-    totalRequests: number;
-    totalInputTokens: string;
-    totalOutputTokens: string;
-    totalSettlements: number;
-    uniqueSellers: number;
-    activeChannels: number;
-    channels: Array<{
-      reservedAt: number;
-      updatedAt: number;
-      requestCount: number;
-      inputTokens: string;
-      outputTokens: string;
-    }>;
-  } {
+  getBuyerUsageTotals(): BuyerUsageTotals {
     const buyerAddress = this._identity?.wallet.address ?? null;
-    if (!buyerAddress || !this._channelStore) {
-      return {
-        totalRequests: 0,
-        totalInputTokens: '0',
-        totalOutputTokens: '0',
-        totalSettlements: 0,
-        uniqueSellers: 0,
-        activeChannels: 0,
-        channels: [],
-      };
-    }
+    if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
     const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
     let totalRequests = 0;
     let totalInput = 0n;
@@ -663,19 +666,13 @@ export class AntseedNode extends EventEmitter {
     let totalSettlements = 0;
     let activeChannels = 0;
     const sellers = new Set<string>();
-    const channels: Array<{
-      reservedAt: number;
-      updatedAt: number;
-      requestCount: number;
-      inputTokens: string;
-      outputTokens: string;
-    }> = [];
+    const channels: BuyerUsageChannelPoint[] = [];
     for (const c of stored) {
       totalRequests += c.requestCount;
       try { totalInput += BigInt(c.tokensDelivered || '0'); } catch { /* skip */ }
       try { totalOutput += BigInt(c.previousConsumption || '0'); } catch { /* skip */ }
-      if (c.status === 'settled') totalSettlements += 1;
-      if (c.status === 'active') activeChannels += 1;
+      if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
+      if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
       if (c.peerId) sellers.add(c.peerId);
       channels.push({
         reservedAt: c.reservedAt,

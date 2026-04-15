@@ -5,6 +5,8 @@ export {
   type NodePaymentsConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
+  type BuyerUsageTotals,
+  type BuyerUsageChannelPoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export type { Router } from './interfaces/buyer-router.js';
