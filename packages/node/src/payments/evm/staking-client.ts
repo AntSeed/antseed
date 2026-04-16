@@ -4,6 +4,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface StakingClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
 }
@@ -22,7 +23,7 @@ export class StakingClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: StakingClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
     this._usdcAddress = config.usdcAddress;
   }
 

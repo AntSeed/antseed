@@ -38,6 +38,7 @@ export function registerBuyerBalanceCommand(buyerCmd: Command): void {
 
       const depositsClient = new DepositsClient({
         rpcUrl: chainConfig.rpcUrl,
+        ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
         contractAddress: chainConfig.depositsContractAddress,
         usdcAddress: chainConfig.usdcContractAddress,
       });

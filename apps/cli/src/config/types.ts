@@ -115,6 +115,8 @@ export interface PaymentsCLIConfig {
     chainId: 'base-local' | 'base-sepolia' | 'base-mainnet';
     /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for local anvil) */
     rpcUrl: string;
+    /** Additional RPC endpoints tried in order via ethers FallbackProvider. */
+    fallbackRpcUrls?: string[];
     /** Deployed AntseedDeposits contract address */
     depositsContractAddress: string;
     /** Deployed AntseedChannels contract address */

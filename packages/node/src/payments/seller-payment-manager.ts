@@ -20,6 +20,7 @@ import { classifyOnChainChannel, matchesChannelParties } from './channel-session
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   channelsContractAddress: string;
   chainId: number;
   dataDir: string;
@@ -99,6 +100,7 @@ export class SellerPaymentManager {
     this._signer = identity.wallet;
     this._channelsClient = new ChannelsClient({
       rpcUrl: config.rpcUrl,
+      ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.channelsContractAddress,
     });
     this._channelStore = channelStore;
@@ -223,6 +225,18 @@ export class SellerPaymentManager {
     this._buyerLocks.set(buyerPeerId, lock.catch(() => {}));
     await lock;
     return result;
+  }
+
+  /**
+   * Wait for any in-flight SpendingAuth processing for this buyer to complete.
+   * Used by the request handler so a budget check doesn't race an on-chain top-up
+   * (whose follow-up auths are queued behind the per-buyer mutex).
+   */
+  async waitForPendingAuths(buyerPeerId: string): Promise<void> {
+    const pending = this._buyerLocks.get(buyerPeerId);
+    if (pending) {
+      await pending;
+    }
   }
 
   private async _handleSpendingAuthInner(

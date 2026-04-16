@@ -55,6 +55,7 @@ async function retryRead<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
 function createClient(config: PaymentCryptoConfig): DepositsClient {
   return new DepositsClient({
     rpcUrl: config.rpcUrl,
+    ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
     contractAddress: config.depositsContractAddress,
     usdcAddress: config.usdcContractAddress,
   });
@@ -74,6 +75,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     if (!emissionsClient) {
       emissionsClient = new EmissionsClient({
         rpcUrl: ctx.cryptoConfig.rpcUrl,
+        ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
         contractAddress: ctx.chainConfig.emissionsContractAddress,
       });
     }

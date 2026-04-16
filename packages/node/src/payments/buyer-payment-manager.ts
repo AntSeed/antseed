@@ -32,6 +32,7 @@ const DEFAULT_TOPUP_THRESHOLD = 0.85;
 
 export interface BuyerPaymentConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
   usdcAddress: string;
@@ -107,6 +108,7 @@ export class BuyerPaymentManager {
     this._signer = identity.wallet;
     this._depositsClient = new DepositsClient({
       rpcUrl: config.rpcUrl,
+      ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.depositsContractAddress,
       usdcAddress: config.usdcAddress,
     });

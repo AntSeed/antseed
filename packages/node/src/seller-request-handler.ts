@@ -119,8 +119,28 @@ export class SellerRequestHandler {
 
       // Check budget before routing — reject if buyer hasn't authorized enough
       if (spm) {
-        const session = spm.getChannelByPeer(buyerPeerId);
-        if (session) {
+        const initialSession = spm.getChannelByPeer(buyerPeerId);
+        if (initialSession) {
+          // Drain any in-flight SpendingAuth processing (e.g. an on-chain top-up
+          // that has queued later auths behind its per-buyer mutex) so we don't
+          // 402 against a stale accepted cumulative.
+          await spm.waitForPendingAuths(buyerPeerId);
+          // Re-read after the await — the session may have been evicted (timeout
+          // checker, disconnect) while the on-chain top-up was confirming.
+          const session = spm.getChannelByPeer(buyerPeerId);
+          if (!session) {
+            debugWarn(`[SellerHandler] Session evicted during waitForPendingAuths for ${buyerPeerId.slice(0, 12)}... — returning 402`);
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 402,
+              headers: { "content-type": "application/json" },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: 'payment_required',
+                message: 'Session expired, please renegotiate',
+              })),
+            });
+            return;
+          }
           const accepted = spm.getAcceptedCumulative(session.sessionId);
           const spent = spm.getCumulativeSpend(session.sessionId);
           if (spent > 0n && spent >= accepted) {

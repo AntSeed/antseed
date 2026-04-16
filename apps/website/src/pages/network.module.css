@@ -687,7 +687,7 @@
   }
 
   .table thead {
-    display: none;
+    display: none !important;
   }
 
   .row {
@@ -701,6 +701,10 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+  }
+
+  .row td {
+    border: none !important;
   }
 
   .tdModel {

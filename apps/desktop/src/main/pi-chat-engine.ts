@@ -16,7 +16,6 @@ import {
   loadChatWorkspaceDir,
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
-import { DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL } from './constants.js';
 import { asErrorMessage } from './utils.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
@@ -608,19 +607,20 @@ async function loadOnChainClients(configPath: string): Promise<{ stakingClient: 
     ? overrides.chainId
     : 'base-mainnet';
   const userRpcUrl = typeof overrides.rpcUrl === 'string' && overrides.rpcUrl.trim().length > 0 ? overrides.rpcUrl : '';
-  const rpcUrl = userRpcUrl || (selectedChain === 'base-mainnet' ? DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL : '');
   const cc = resolveChainConfig({
     chainId: selectedChain,
-    ...(rpcUrl ? { rpcUrl } : {}),
+    ...(userRpcUrl ? { rpcUrl: userRpcUrl } : {}),
   });
   if (!cc.stakingContractAddress) return null;
   cachedStakingClient = new StakingClient({
     rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
     contractAddress: cc.stakingContractAddress,
     usdcAddress: cc.usdcContractAddress,
   });
   cachedChannelsClient = new ChannelsClient({
     rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
     contractAddress: cc.channelsContractAddress,
   });
   return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };

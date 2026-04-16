@@ -35,12 +35,8 @@ function ChannelsIcon() {
   );
 }
 
-function EmissionsIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-      <path d="M9 2L10.2 6.5H15L11.4 9.2L12.6 13.7L9 11L5.4 13.7L6.6 9.2L3 6.5H7.8L9 2Z" strokeLinejoin="round"/>
-    </svg>
-  );
+function AntsTabIcon() {
+  return <AntIcon size={18} />;
 }
 
 function SunIcon() {
@@ -76,7 +72,7 @@ function AntIcon({ size = 22 }: { size?: number }) {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { id: 'channels',  label: 'Channels',  icon: <ChannelsIcon /> },
-  { id: 'emissions', label: 'Emissions', icon: <EmissionsIcon /> },
+  { id: 'emissions', label: '$ANTS', icon: <AntsTabIcon /> },
 ];
 
 export function Sidebar({ activeTab, onSelect, isDark, onToggleTheme }: SidebarProps) {

@@ -3,6 +3,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ANTSTokenClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
 }
 
@@ -21,7 +22,7 @@ const ANTS_TOKEN_ABI = [
 
 export class ANTSTokenClient extends BaseEvmClient {
   constructor(config: ANTSTokenClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
   }
 
   async balanceOf(address: string): Promise<bigint> {

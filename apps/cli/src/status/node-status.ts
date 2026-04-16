@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { AntseedConfig } from '../config/types.js';
 
+const DEFAULT_DATA_DIR = join(homedir(), '.antseed');
+
 export interface NodeStatus {
   state: 'seeding' | 'connected' | 'idle';
   peerCount: number;
@@ -35,12 +37,12 @@ function isProcessAlive(pid: number): boolean {
 
 /**
  * Query the current node status.
- * Reads from the running daemon's state file at ~/.antseed/daemon.state.json.
+ * Reads from the running daemon's state file at <dataDir>/daemon.state.json.
  * Uses PID-based liveness check first, falls back to 30s stale threshold.
  * Returns idle state with zeroed metrics if no daemon is running or the state file is stale.
  */
-export async function getNodeStatus(config: AntseedConfig): Promise<NodeStatus> {
-  const stateFilePath = join(homedir(), '.antseed', 'daemon.state.json');
+export async function getNodeStatus(config: AntseedConfig, dataDir: string = DEFAULT_DATA_DIR): Promise<NodeStatus> {
+  const stateFilePath = join(dataDir, 'daemon.state.json');
 
   try {
     const raw = await readFile(stateFilePath, 'utf-8');
