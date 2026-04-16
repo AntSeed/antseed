@@ -23,15 +23,14 @@ describe('EmissionsClient', () => {
     expect(typeof client.flushReserve).toBe('function');
   });
 
-  it('pendingEmissions returns correct type shape', async () => {
+  it('pendingEmissions returns a promise', async () => {
     const client = new EmissionsClient({
       rpcUrl: 'http://localhost:8545',
       contractAddress: '0x' + '3'.repeat(40),
     });
-    // We can only verify the method exists and returns a promise
-    // (actual call would need a running node with deployed contract)
     const result = client.pendingEmissions('0x' + '1'.repeat(40), [0]);
     expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow();
   });
 
   it('has all new ABI methods', () => {
