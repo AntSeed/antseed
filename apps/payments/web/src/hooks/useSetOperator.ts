@@ -7,6 +7,7 @@ import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 
 const DEPOSITS_OPERATOR_ABI = parseAbi([
   'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
+  'function transferOperator(address buyer, address newOperator) external',
 ]);
 
 export interface UseSetOperatorResult {
@@ -78,4 +79,66 @@ export function useSetOperator(config: PaymentConfig | null, onSuccess?: () => v
   }, [resetWrite]);
 
   return { run, running, success: isSuccess, error, reset, txHash };
+}
+
+export interface UseTransferOperatorResult {
+  run: (buyerAddress: string, newOperator: string) => Promise<void>;
+  running: boolean;
+  success: boolean;
+  error: string | null;
+  reset: () => void;
+}
+
+export function useTransferOperator(config: PaymentConfig | null, onSuccess?: () => void): UseTransferOperatorResult {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+
+  const { writeContract, data: txHash, reset: resetWrite } = useWriteContract();
+  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash, chainId: expectedChainId });
+
+  useEffect(() => {
+    if (isSuccess && running) {
+      setRunning(false);
+      onSuccess?.();
+    }
+  }, [isSuccess, running, onSuccess]);
+
+  const run = useCallback(async (buyerAddress: string, newOperator: string) => {
+    if (!config?.depositsContractAddress) return;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(newOperator)) {
+      setError('Invalid wallet address');
+      return;
+    }
+    setError(null);
+    setRunning(true);
+    resetWrite();
+
+    try {
+      await ensureCorrectNetwork();
+      writeContract({
+        address: config.depositsContractAddress as `0x${string}`,
+        abi: DEPOSITS_OPERATOR_ABI,
+        functionName: 'transferOperator',
+        chainId: expectedChainId,
+        args: [buyerAddress as `0x${string}`, newOperator as `0x${string}`],
+      }, {
+        onError: (err) => {
+          setRunning(false);
+          setError(getErrorMessage(err));
+        },
+      });
+    } catch (err) {
+      setRunning(false);
+      setError(getErrorMessage(err, 'Failed to transfer operator'));
+    }
+  }, [config, ensureCorrectNetwork, expectedChainId, writeContract, resetWrite]);
+
+  const reset = useCallback(() => {
+    setError(null);
+    setRunning(false);
+    resetWrite();
+  }, [resetWrite]);
+
+  return { run, running, success: isSuccess, error, reset };
 }

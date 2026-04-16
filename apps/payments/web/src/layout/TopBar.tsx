@@ -50,7 +50,7 @@ export function TopBar({ activeTab, balance, onOpenWallet }: TopBarProps) {
         >
           <span className="dash-topbar-wallet-icon"><SignerIcon /></span>
           <span className="dash-topbar-wallet-text">
-            <span className="dash-topbar-wallet-label">Your AntSeed signer</span>
+            <span className="dash-topbar-wallet-label">AntSeed account</span>
             <span className="dash-topbar-wallet-value">
               {total !== null ? `$${formatUsd(total)}` : '—'}
             </span>
