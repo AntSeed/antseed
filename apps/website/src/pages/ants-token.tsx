@@ -96,7 +96,7 @@ function SupplyBar({totalSupply}: {totalSupply: number}) {
         <div className={styles.supplyBarFill} style={{width: `${Math.max(ratio, 0.3)}%`}} />
       </div>
       <div className={styles.supplyBarLabels}>
-        <span>{totalSupply === 0 ? '0' : `${(totalSupply / 1e6).toFixed(1)}M`} minted</span>
+        <span>{totalSupply === 0 ? '0' : `${(totalSupply / 1e6).toFixed(1)}M`} current supply</span>
         <span>{(MAX_SUPPLY / 1e6).toFixed(0)}M max</span>
       </div>
     </div>
@@ -138,6 +138,8 @@ function HalvingCurve({currentEpoch}: {currentEpoch: number}) {
 export default function AntsToken(): JSX.Element {
   const {dmgUrl} = useLatestRelease();
   const {epoch, timeLeft, started} = useEpochCountdown();
+
+  const totalSupply = epoch * INITIAL_EMISSION;
 
   const epochBudget = started
     ? INITIAL_EMISSION / Math.pow(2, Math.floor(epoch / HALVING_INTERVAL))
@@ -183,16 +185,16 @@ export default function AntsToken(): JSX.Element {
           <p>1.04 billion hard cap. No minting beyond emissions. No admin mint function.</p>
         </div>
 
-        <SupplyBar totalSupply={0} />
+        <SupplyBar totalSupply={totalSupply} />
 
         <div className={styles.statsGrid}>
           <div className={styles.statCard}>
-            <div className={styles.statValue}>0</div>
-            <div className={styles.statLabel}>Total Supply</div>
+            <div className={styles.statValue}>{totalSupply / 1e6}M</div>
+            <div className={styles.statLabel}>Current Supply</div>
           </div>
           <div className={styles.statCard}>
-            <div className={styles.statValue}>0%</div>
-            <div className={styles.statLabel}>Minted</div>
+            <div className={styles.statValue}>{Math.round(totalSupply / MAX_SUPPLY * 10000) / 100}%</div>
+            <div className={styles.statLabel}>Available</div>
           </div>
           <div className={styles.statCard}>
             <div className={styles.statValue}>Epoch {epoch}</div>
