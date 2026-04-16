@@ -113,6 +113,9 @@ function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
   if (typeof value['baseUrl'] === 'string' && value['baseUrl'].trim().length > 0) {
     out.baseUrl = value['baseUrl'].trim();
   }
+  if (typeof value['apiKeyEnv'] === 'string' && value['apiKeyEnv'].trim().length > 0) {
+    out.apiKeyEnv = value['apiKeyEnv'].trim();
+  }
   const defaults = normalizeTokenPricing(value['defaults']);
   if (defaults) {
     out.defaults = defaults;
@@ -138,6 +141,7 @@ function mergeSellerProviders(
     out[name] = {
       plugin: cfg.plugin,
       ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
+      ...(cfg.apiKeyEnv ? { apiKeyEnv: cfg.apiKeyEnv } : {}),
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
       services: { ...cfg.services },
     };
