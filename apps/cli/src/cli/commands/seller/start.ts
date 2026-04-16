@@ -248,6 +248,12 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.baseUrl) {
     runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
   }
+  if (providerCfg.apiKeyEnv) {
+    const apiKey = process.env[providerCfg.apiKeyEnv]
+    if (apiKey) {
+      runtimeEnv['OPENAI_API_KEY'] = apiKey
+    }
+  }
 
   return runtimeEnv
 }

@@ -42,6 +42,14 @@ export interface SellerProviderConfig {
   plugin: string;
   /** Optional upstream API base URL override (e.g. "https://api.together.ai"). */
   baseUrl?: string;
+  /**
+   * Name of the environment variable holding this provider's API key.
+   * Allows multiple providers on the same peer to use different credentials.
+   * Example: `"ZAI_API_KEY"` reads `process.env.ZAI_API_KEY` and injects it
+   * as `OPENAI_API_KEY` into the plugin config. When omitted, the plugin's
+   * default env var (`OPENAI_API_KEY`) is used.
+   */
+  apiKeyEnv?: string;
   /** Fallback pricing used by services that don't set their own `pricing`. */
   defaults?: TokenPricingUsdPerMillion;
   /** Services offered under this provider, keyed by announced service ID. */
