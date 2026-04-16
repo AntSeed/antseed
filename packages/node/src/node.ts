@@ -1322,38 +1322,57 @@ export class AntseedNode extends EventEmitter {
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
+      const provName = providerAnnouncement.provider;
       const serviceEntries: Record<string, TokenPricingUsdPerMillion> = {};
       for (const service of providerAnnouncement.services) {
         serviceEntries[service] =
           providerAnnouncement.servicePricing?.[service] ?? providerAnnouncement.defaultPricing;
       }
-      providerPricingEntries[providerAnnouncement.provider] = {
-        defaults: {
-          inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
-          outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
-          ...(providerAnnouncement.defaultPricing.cachedInputUsdPerMillion != null
-            ? { cachedInputUsdPerMillion: providerAnnouncement.defaultPricing.cachedInputUsdPerMillion }
-            : {}),
-        },
-        ...(Object.keys(serviceEntries).length > 0 ? { services: serviceEntries } : {}),
-      };
 
-      if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
-        providerServiceCategoryEntries[providerAnnouncement.provider] = {
-          services: Object.fromEntries(
-            Object.entries(providerAnnouncement.serviceCategories)
-              .map(([service, categories]) => [service, [...categories]]),
-          ),
+      const existing = providerPricingEntries[provName];
+      if (existing) {
+        // Merge services from duplicate provider names
+        Object.assign(existing.services ?? {}, serviceEntries);
+        if (!existing.services && Object.keys(serviceEntries).length > 0) {
+          existing.services = serviceEntries;
+        }
+      } else {
+        providerPricingEntries[provName] = {
+          defaults: {
+            inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
+            outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
+            ...(providerAnnouncement.defaultPricing.cachedInputUsdPerMillion != null
+              ? { cachedInputUsdPerMillion: providerAnnouncement.defaultPricing.cachedInputUsdPerMillion }
+              : {}),
+          },
+          ...(Object.keys(serviceEntries).length > 0 ? { services: serviceEntries } : {}),
         };
       }
 
+      if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
+        const existingCats = providerServiceCategoryEntries[provName];
+        const newEntries = Object.fromEntries(
+          Object.entries(providerAnnouncement.serviceCategories)
+            .map(([service, categories]) => [service, [...categories]]),
+        );
+        if (existingCats) {
+          Object.assign(existingCats.services, newEntries);
+        } else {
+          providerServiceCategoryEntries[provName] = { services: newEntries };
+        }
+      }
+
       if (providerAnnouncement.serviceApiProtocols && Object.keys(providerAnnouncement.serviceApiProtocols).length > 0) {
-        providerServiceApiProtocolEntries[providerAnnouncement.provider] = {
-          services: Object.fromEntries(
-            Object.entries(providerAnnouncement.serviceApiProtocols)
-              .map(([service, protocols]) => [service, [...protocols]]),
-          ),
-        };
+        const existingProtos = providerServiceApiProtocolEntries[provName];
+        const newEntries = Object.fromEntries(
+          Object.entries(providerAnnouncement.serviceApiProtocols)
+            .map(([service, protocols]) => [service, [...protocols]]),
+        );
+        if (existingProtos) {
+          Object.assign(existingProtos.services, newEntries);
+        } else {
+          providerServiceApiProtocolEntries[provName] = { services: newEntries };
+        }
       }
     }
 
