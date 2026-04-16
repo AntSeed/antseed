@@ -50,6 +50,12 @@ export interface SellerProviderConfig {
    * default env var (`OPENAI_API_KEY`) is used.
    */
   apiKeyEnv?: string;
+  /**
+   * Rewrite request paths before forwarding upstream. Keys are exact incoming
+   * paths, values are their replacements.
+   * Example: `{ "/v1/chat/completions": "/v4/chat/completions" }`
+   */
+  pathRewrite?: Record<string, string>;
   /** Fallback pricing used by services that don't set their own `pricing`. */
   defaults?: TokenPricingUsdPerMillion;
   /** Services offered under this provider, keyed by announced service ID. */

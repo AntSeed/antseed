@@ -248,6 +248,9 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.baseUrl) {
     runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
   }
+  if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
+    runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
+  }
   if (providerCfg.apiKeyEnv) {
     const apiKey = process.env[providerCfg.apiKeyEnv]
     if (apiKey) {

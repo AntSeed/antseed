@@ -77,6 +77,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
     { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name (generic, works across all providers)' },
+    { key: 'OPENAI_PATH_REWRITE_JSON', label: 'Path Rewrite', type: 'string', required: false, description: 'JSON map of path prefix rewrites, e.g. {"/v1":"/v4"} for APIs that use a different version prefix' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -120,6 +121,7 @@ const plugin: AntseedProviderPlugin = {
     const tokenProvider = new StaticTokenProvider(apiKey);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
+    const pathRewrite = parseJsonObject(config['OPENAI_PATH_REWRITE_JSON'], 'OPENAI_PATH_REWRITE_JSON') as Record<string, string> | undefined;
 
     return new BaseProvider({
       name: 'openai',
@@ -137,6 +139,7 @@ const plugin: AntseedProviderPlugin = {
         ...(effectiveStripHeaderPrefixes.length > 0 ? { stripHeaderPrefixes: effectiveStripHeaderPrefixes } : {}),
         ...(Object.keys(bodyInject).length > 0 ? { injectJsonFields: bodyInject } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
+        ...(pathRewrite ? { pathRewrite } : {}),
       },
     });
   },

@@ -44,6 +44,13 @@ export interface RelayConfig {
   retryBaseDelayMs?: number;
   /** Additional status codes eligible for retry. */
   retryStatusCodes?: number[];
+  /**
+   * Rewrite request paths before forwarding upstream.
+   * Keys are exact incoming paths, values are their replacements.
+   * Applied before URL construction; first match wins.
+   * Example: `{ "/v1/chat/completions": "/v4/chat/completions" }`
+   */
+  pathRewrite?: Record<string, string>;
 }
 
 export interface RelayCallbacks {
@@ -185,7 +192,10 @@ export class HttpRelay {
 
       // Build upstream URL
       const base = this._config.baseUrl.replace(/\/+$/, '');
-      const path = request.path.startsWith('/') ? request.path : `/${request.path}`;
+      let path = request.path.startsWith('/') ? request.path : `/${request.path}`;
+      if (this._config.pathRewrite && path in this._config.pathRewrite) {
+        path = this._config.pathRewrite[path]!;
+      }
       const url = `${base}${path}`;
 
       // Build fetch headers, stripping hop-by-hop and provider-specific prefixes
