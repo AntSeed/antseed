@@ -14,6 +14,7 @@ export interface PaymentConfig {
   channelsContractAddress: string;
   usdcContractAddress: string;
   emissionsContractAddress: string | null;
-  networkStatsUrl: string | null;            // added by PRD-06
+  antsTokenAddress: string | null;
+  networkStatsUrl: string | null;
   evmAddress: string | null;
 }

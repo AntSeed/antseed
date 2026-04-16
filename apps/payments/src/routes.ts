@@ -135,6 +135,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       emissionsContractAddress: ctx.chainConfig.emissionsContractAddress ?? null,
+      antsTokenAddress: (ctx.chainConfig as { antsTokenAddress?: string }).antsTokenAddress ?? null,
       networkStatsUrl: ctx.chainConfig.networkStatsUrl ?? null,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };

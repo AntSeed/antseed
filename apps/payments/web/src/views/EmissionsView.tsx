@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
 import { parseAbi, formatUnits } from 'viem';
 import type { PaymentConfig } from '../types';
 import {
@@ -97,6 +97,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const buyerAddress = config?.evmAddress ?? null;
   const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
   const { requireAuthorization } = useAuthorizedWallet();
+  const { connector } = useAccount();
 
   const load = useCallback(async () => {
     if (!buyerAddress) {
@@ -136,28 +137,30 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   });
   const [sellerClaimError, setSellerClaimError] = useState<string | null>(null);
 
-  const handleClaimSeller = useCallback(async () => {
+  const handleClaimSeller = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending) return;
     const epochs = pending.rows
       .filter((r) => !r.isCurrent && !r.seller.claimed && r.seller.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
-    setSellerClaimError(null);
-    try {
-      await ensureCorrectNetwork();
-      writeSellerClaim({
-        address: config.emissionsContractAddress as `0x${string}`,
-        abi: parseAbi(EMISSIONS_CLAIM_ABI),
-        functionName: 'claimSellerEmissions',
-        chainId: expectedChainId,
-        args: [epochs],
-      }, {
-        onError: (err) => setSellerClaimError(getErrorMessage(err)),
-      });
-    } catch (err) {
-      setSellerClaimError(getErrorMessage(err));
-    }
-  }, [config, pending, ensureCorrectNetwork, expectedChainId, writeSellerClaim]);
+    requireAuthorization(async () => {
+      setSellerClaimError(null);
+      try {
+        await ensureCorrectNetwork();
+        writeSellerClaim({
+          address: config.emissionsContractAddress as `0x${string}`,
+          abi: parseAbi(EMISSIONS_CLAIM_ABI),
+          functionName: 'claimSellerEmissions',
+          chainId: expectedChainId,
+          args: [epochs],
+        }, {
+          onError: (err) => setSellerClaimError(getErrorMessage(err)),
+        });
+      } catch (err) {
+        setSellerClaimError(getErrorMessage(err));
+      }
+    });
+  }, [config, pending, ensureCorrectNetwork, expectedChainId, writeSellerClaim, requireAuthorization]);
 
   useEffect(() => {
     if (sellerClaimConfirmed) {
@@ -386,6 +389,31 @@ export function EmissionsView({ config }: EmissionsViewProps) {
               buyer identity.
             </p>
           </div>
+          {config?.antsTokenAddress && connector && (
+            <button
+              className="btn-outline"
+              onClick={async () => {
+                try {
+                  const provider = await connector.getProvider();
+                  await (provider as { request: (args: unknown) => Promise<unknown> }).request({
+                    method: 'wallet_watchAsset',
+                    params: {
+                      type: 'ERC20',
+                      options: {
+                        address: config.antsTokenAddress,
+                        symbol: 'ANTS',
+                        decimals: 18,
+                      },
+                    },
+                  });
+                } catch {
+                  // user rejected or wallet doesn't support watchAsset
+                }
+              }}
+            >
+              Add ANTS to wallet
+            </button>
+          )}
         </div>
       </section>
 
