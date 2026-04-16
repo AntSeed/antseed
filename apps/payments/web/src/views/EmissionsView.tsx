@@ -139,7 +139,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const handleClaimSeller = useCallback(async () => {
     if (!config?.emissionsContractAddress || !pending) return;
     const epochs = pending.rows
-      .filter((r) => !r.seller.claimed && r.seller.amount !== '0')
+      .filter((r) => !r.isCurrent && !r.seller.claimed && r.seller.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
     setSellerClaimError(null);
@@ -181,7 +181,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const handleClaimBuyer = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending || !buyerAddress) return;
     const epochs = pending.rows
-      .filter((r) => !r.buyer.claimed && r.buyer.amount !== '0')
+      .filter((r) => !r.isCurrent && !r.buyer.claimed && r.buyer.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
     requireAuthorization(async () => {
@@ -352,14 +352,14 @@ export function EmissionsView({ config }: EmissionsViewProps) {
             <button
               className="btn-primary"
               onClick={handleClaimSeller}
-              disabled={!pending || pending.rows.every((r) => r.seller.claimed || r.seller.amount === '0')}
+              disabled={!pending || pending.rows.every((r) => r.isCurrent || r.seller.claimed || r.seller.amount === '0')}
             >
               Claim seller
             </button>
             <button
               className="btn-primary"
               onClick={handleClaimBuyer}
-              disabled={!pending || pending.rows.every((r) => r.buyer.claimed || r.buyer.amount === '0')}
+              disabled={!pending || pending.rows.every((r) => r.isCurrent || r.buyer.claimed || r.buyer.amount === '0')}
             >
               Claim buyer
             </button>
