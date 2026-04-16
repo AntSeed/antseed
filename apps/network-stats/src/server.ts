@@ -8,16 +8,19 @@
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
-import type { SqliteStore } from './store.js';
+import type { SqliteStore, LeaderboardRole, LeaderboardPeriod } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
+import type { SettlementIndexer } from './settlement-indexer.js';
 
 export interface CreateServerDeps {
   poller: NetworkPoller;
   store?: SqliteStore;            // undefined when indexer disabled for this chain
   stakingClient?: StakingClient;  // undefined when indexer disabled
   indexer?: MetadataIndexer;      // source of chain head + reorg buffer for sync status
+  settlementIndexer?: SettlementIndexer;
   chainId?: string;               // used to look up the indexer checkpoint
   contractAddress?: string;       // contract whose checkpoint to expose
+  channelsContractAddress?: string;
   port?: number;
 }
 
@@ -61,7 +64,7 @@ export function __resetAgentIdCacheForTests(): void {
 }
 
 export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
-  const { poller, store, stakingClient, indexer, chainId, contractAddress, port = 4000 } = deps;
+  const { poller, store, stakingClient, indexer, settlementIndexer, chainId, contractAddress, channelsContractAddress, port = 4000 } = deps;
   const app = express();
 
   app.use((_req, res, next) => {
@@ -139,6 +142,71 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
       ...snapshot,
       peers: enrichedPeers,
       ...(indexerPayload ? { indexer: indexerPayload } : {}),
+    });
+  });
+
+  /**
+   * GET /leaderboard?role=seller|buyer&period=day|month|all&date=YYYY-MM-DD&limit=50
+   *
+   * Returns a ranked list of sellers or buyers by USDC volume for the given period.
+   */
+  app.get('/leaderboard', (req, res) => {
+    if (!store) {
+      res.status(503).json({ error: 'Settlement indexer not configured' });
+      return;
+    }
+
+    const role = req.query['role'] as string | undefined;
+    if (role !== 'seller' && role !== 'buyer') {
+      res.status(400).json({ error: 'role must be "seller" or "buyer"' });
+      return;
+    }
+
+    const period = (req.query['period'] as string | undefined) ?? 'all';
+    if (period !== 'day' && period !== 'month' && period !== 'all') {
+      res.status(400).json({ error: 'period must be "day", "month", or "all"' });
+      return;
+    }
+
+    const limitStr = req.query['limit'] as string | undefined;
+    const limit = limitStr ? Math.min(Math.max(parseInt(limitStr, 10) || 50, 1), 200) : 50;
+
+    let date: Date | undefined;
+    const dateStr = req.query['date'] as string | undefined;
+    if (dateStr) {
+      const parsed = new Date(dateStr + 'T00:00:00Z');
+      if (isNaN(parsed.getTime())) {
+        res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+        return;
+      }
+      date = parsed;
+    }
+
+    const entries = store.getLeaderboard(role as LeaderboardRole, period as LeaderboardPeriod, date, limit);
+
+    // Include settlement indexer sync status if available
+    const settlementCheckpoint = channelsContractAddress && chainId
+      ? store.getCheckpointInfo(chainId, channelsContractAddress.toLowerCase())
+      : null;
+    const settlementHead = settlementIndexer?.getChainHead();
+    const indexerStatus = settlementCheckpoint
+      ? {
+          ...settlementCheckpoint,
+          ...(settlementHead?.latestBlock != null
+            ? {
+                latestBlock: settlementHead.latestBlock,
+                synced: settlementCheckpoint.lastBlock >= settlementHead.latestBlock - settlementHead.reorgSafetyBlocks,
+              }
+            : {}),
+        }
+      : null;
+
+    res.json({
+      role,
+      period,
+      ...(dateStr ? { date: dateStr } : {}),
+      entries,
+      ...(indexerStatus ? { indexer: indexerStatus } : {}),
     });
   });
 

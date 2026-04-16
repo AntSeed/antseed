@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { DecodedMetadataRecorded } from '@antseed/node';
+import type { DecodedMetadataRecorded, DecodedChannelSettled } from '@antseed/node';
 
 export interface SellerTotals {
   totalRequests: bigint;
@@ -35,6 +35,30 @@ interface BuyerOrChannelRow {
   first_settled_block: number;
 }
 
+export interface LeaderboardEntry {
+  /** agent_id for sellers, buyer address for buyers */
+  id: string;
+  totalRevenue: string;   // USDC amount as string (bigint)
+  totalFees: string;      // platform fees as string (bigint)
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalRequests: string;
+  settlementCount: number;
+}
+
+export type LeaderboardPeriod = 'day' | 'month' | 'all';
+export type LeaderboardRole = 'seller' | 'buyer';
+
+interface LeaderboardRow {
+  id: string;
+  total_revenue: string;
+  total_fees: string;
+  total_input_tokens: string;
+  total_output_tokens: string;
+  total_requests: string;
+  settlement_count: number;
+}
+
 interface SellerTotalsRow {
   total_request_count: string;
   total_input_tokens: string;
@@ -64,6 +88,11 @@ export class SqliteStore {
   private _selectSellerTotals!: Database.Statement<[number], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
+  private _insertSettlement!: Database.Statement<[number, number, string, number, string, number, string, string, string, string, string, string, string, string]>;
+  private _leaderboardSeller!: Database.Statement<[number, number, number], LeaderboardRow>;
+  private _leaderboardSellerAll!: Database.Statement<[number], LeaderboardRow>;
+  private _leaderboardBuyer!: Database.Statement<[number, number, number], LeaderboardRow>;
+  private _leaderboardBuyerAll!: Database.Statement<[number], LeaderboardRow>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -117,6 +146,32 @@ export class SqliteStore {
         last_block_timestamp INTEGER,
         PRIMARY KEY (chain_id, contract_address)
       );
+
+      CREATE TABLE IF NOT EXISTS settlement_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        block_number    INTEGER NOT NULL,
+        block_timestamp INTEGER NOT NULL,
+        tx_hash         TEXT NOT NULL,
+        log_index       INTEGER NOT NULL,
+        channel_id      TEXT NOT NULL,
+        agent_id        INTEGER NOT NULL,
+        seller          TEXT NOT NULL,
+        buyer           TEXT NOT NULL,
+        delta_amount    TEXT NOT NULL,
+        cumulative_amount TEXT NOT NULL,
+        platform_fee    TEXT NOT NULL,
+        input_tokens    TEXT NOT NULL DEFAULT '0',
+        output_tokens   TEXT NOT NULL DEFAULT '0',
+        request_count   TEXT NOT NULL DEFAULT '0',
+        UNIQUE(tx_hash, log_index)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_settlement_events_timestamp
+        ON settlement_events (block_timestamp);
+      CREATE INDEX IF NOT EXISTS idx_settlement_events_agent
+        ON settlement_events (agent_id, block_timestamp);
+      CREATE INDEX IF NOT EXISTS idx_settlement_events_buyer
+        ON settlement_events (buyer, block_timestamp);
     `);
 
     this._selectCheckpoint = this.db.prepare(
@@ -175,6 +230,76 @@ export class SqliteStore {
 
     this._countChannels = this.db.prepare(
       'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
+    );
+
+    this._insertSettlement = this.db.prepare(
+      `INSERT OR IGNORE INTO settlement_events
+         (block_number, block_timestamp, tx_hash, log_index, channel_id,
+          agent_id, seller, buyer, delta_amount, cumulative_amount,
+          platform_fee, input_tokens, output_tokens, request_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._leaderboardSeller = this.db.prepare(
+      `SELECT
+         CAST(agent_id AS TEXT) AS id,
+         COALESCE(SUM(CAST(delta_amount AS INTEGER)), 0) AS total_revenue,
+         COALESCE(SUM(CAST(platform_fee AS INTEGER)), 0) AS total_fees,
+         COALESCE(SUM(CAST(input_tokens AS INTEGER)), 0) AS total_input_tokens,
+         COALESCE(SUM(CAST(output_tokens AS INTEGER)), 0) AS total_output_tokens,
+         COALESCE(SUM(CAST(request_count AS INTEGER)), 0) AS total_requests,
+         COUNT(*) AS settlement_count
+       FROM settlement_events
+       WHERE block_timestamp >= ? AND block_timestamp < ?
+       GROUP BY agent_id
+       ORDER BY total_revenue DESC
+       LIMIT ?`,
+    );
+
+    this._leaderboardSellerAll = this.db.prepare(
+      `SELECT
+         CAST(agent_id AS TEXT) AS id,
+         COALESCE(SUM(CAST(delta_amount AS INTEGER)), 0) AS total_revenue,
+         COALESCE(SUM(CAST(platform_fee AS INTEGER)), 0) AS total_fees,
+         COALESCE(SUM(CAST(input_tokens AS INTEGER)), 0) AS total_input_tokens,
+         COALESCE(SUM(CAST(output_tokens AS INTEGER)), 0) AS total_output_tokens,
+         COALESCE(SUM(CAST(request_count AS INTEGER)), 0) AS total_requests,
+         COUNT(*) AS settlement_count
+       FROM settlement_events
+       GROUP BY agent_id
+       ORDER BY total_revenue DESC
+       LIMIT ?`,
+    );
+
+    this._leaderboardBuyer = this.db.prepare(
+      `SELECT
+         buyer AS id,
+         COALESCE(SUM(CAST(delta_amount AS INTEGER)), 0) AS total_revenue,
+         COALESCE(SUM(CAST(platform_fee AS INTEGER)), 0) AS total_fees,
+         COALESCE(SUM(CAST(input_tokens AS INTEGER)), 0) AS total_input_tokens,
+         COALESCE(SUM(CAST(output_tokens AS INTEGER)), 0) AS total_output_tokens,
+         COALESCE(SUM(CAST(request_count AS INTEGER)), 0) AS total_requests,
+         COUNT(*) AS settlement_count
+       FROM settlement_events
+       WHERE block_timestamp >= ? AND block_timestamp < ?
+       GROUP BY buyer
+       ORDER BY total_revenue DESC
+       LIMIT ?`,
+    );
+
+    this._leaderboardBuyerAll = this.db.prepare(
+      `SELECT
+         buyer AS id,
+         COALESCE(SUM(CAST(delta_amount AS INTEGER)), 0) AS total_revenue,
+         COALESCE(SUM(CAST(platform_fee AS INTEGER)), 0) AS total_fees,
+         COALESCE(SUM(CAST(input_tokens AS INTEGER)), 0) AS total_input_tokens,
+         COALESCE(SUM(CAST(output_tokens AS INTEGER)), 0) AS total_output_tokens,
+         COALESCE(SUM(CAST(request_count AS INTEGER)), 0) AS total_requests,
+         COUNT(*) AS settlement_count
+       FROM settlement_events
+       GROUP BY buyer
+       ORDER BY total_revenue DESC
+       LIMIT ?`,
     );
   }
 
@@ -336,8 +461,129 @@ export class SqliteStore {
     };
   }
 
+  /**
+   * Atomic transaction: inserts settlement events and advances the checkpoint.
+   *
+   * Each ChannelSettled event is correlated with its MetadataRecorded counterpart
+   * (from the same tx) to get token counts. If no matching MetadataRecorded exists
+   * (e.g. metadata recording was silently swallowed), token counts default to 0.
+   *
+   * Events with agentId=0 (unstaked sellers) are stored with agent_id=0 — the
+   * leaderboard can filter these out if needed.
+   *
+   * Uses INSERT OR IGNORE to safely handle re-indexing of already-processed events
+   * (e.g. after a reorg rollback that doesn't fully clear old data).
+   */
+  applySettlementBatch(
+    chainId: string,
+    contractAddress: string,
+    events: DecodedChannelSettled[],
+    metadataByTx: Map<string, DecodedMetadataRecorded[]>,
+    agentIdBySeller: Map<string, number>,
+    newCheckpoint: number,
+    blockTimestamps: Map<number, number>,
+    newCheckpointTimestamp?: number | null,
+  ): void {
+    this.db.transaction(() => {
+      for (const event of events) {
+        const agentId = agentIdBySeller.get(event.seller) ?? 0;
+        const blockTs = blockTimestamps.get(event.blockNumber);
+        if (blockTs === undefined) {
+          console.warn(`[store] missing block timestamp for block ${event.blockNumber} — skipping settlement`);
+          continue;
+        }
+
+        // Find matching MetadataRecorded from the same tx + channelId
+        const txMeta = metadataByTx.get(event.txHash);
+        const matched = txMeta?.find(
+          (m) => m.channelId.toLowerCase() === event.channelId,
+        );
+
+        this._insertSettlement.run(
+          event.blockNumber,
+          blockTs,
+          event.txHash,
+          event.logIndex,
+          event.channelId,
+          agentId,
+          event.seller,
+          event.buyer,
+          event.delta.toString(),
+          event.cumulativeAmount.toString(),
+          event.platformFee.toString(),
+          matched ? matched.inputTokens.toString() : '0',
+          matched ? matched.outputTokens.toString() : '0',
+          matched ? matched.requestCount.toString() : '0',
+        );
+      }
+
+      this._upsertCheckpoint.run(
+        chainId,
+        contractAddress.toLowerCase(),
+        newCheckpoint,
+        newCheckpointTimestamp ?? null,
+      );
+    })();
+  }
+
+  /**
+   * Returns a ranked leaderboard.
+   *
+   * @param role    'seller' groups by agent_id, 'buyer' groups by buyer address
+   * @param period  'day' | 'month' | 'all'
+   * @param date    Reference date for the period window (defaults to now).
+   *                For 'day': that calendar day (UTC). For 'month': that calendar month (UTC).
+   * @param limit   Max entries to return (default 50)
+   */
+  getLeaderboard(
+    role: LeaderboardRole,
+    period: LeaderboardPeriod,
+    date?: Date,
+    limit = 50,
+  ): LeaderboardEntry[] {
+    const ref = date ?? new Date();
+
+    let rows: LeaderboardRow[];
+    if (period === 'all') {
+      rows = role === 'seller'
+        ? this._leaderboardSellerAll.all(limit)
+        : this._leaderboardBuyerAll.all(limit);
+    } else {
+      const { from, to } = periodBounds(period, ref);
+      rows = role === 'seller'
+        ? this._leaderboardSeller.all(from, to, limit)
+        : this._leaderboardBuyer.all(from, to, limit);
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      totalRevenue: String(r.total_revenue),
+      totalFees: String(r.total_fees),
+      totalInputTokens: String(r.total_input_tokens),
+      totalOutputTokens: String(r.total_output_tokens),
+      totalRequests: String(r.total_requests),
+      settlementCount: r.settlement_count,
+    }));
+  }
+
   /** Closes the underlying DB handle. */
   close(): void {
     this.db.close();
   }
+}
+
+/** Returns inclusive-start / exclusive-end unix timestamps for the given period. */
+function periodBounds(period: 'day' | 'month', ref: Date): { from: number; to: number } {
+  const y = ref.getUTCFullYear();
+  const m = ref.getUTCMonth();
+  const d = ref.getUTCDate();
+  if (period === 'day') {
+    const from = Date.UTC(y, m, d) / 1000;
+    const to = Date.UTC(y, m, d + 1) / 1000;
+    return { from, to };
+  }
+  // month
+  const from = Date.UTC(y, m, 1) / 1000;
+  const to = Date.UTC(y, m + 1, 1) / 1000;
+  return { from, to };
 }

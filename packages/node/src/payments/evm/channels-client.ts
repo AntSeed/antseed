@@ -40,7 +40,22 @@ const CHANNELS_ABI = [
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
+  'event ChannelSettled(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 cumulativeAmount, uint128 delta, uint128 totalSettled, uint256 platformFee, bytes metadata)',
 ] as const;
+
+export interface DecodedChannelSettled {
+  blockNumber: number;
+  txHash: string;
+  logIndex: number;
+  channelId: string;   // 0x-prefixed hex, 32 bytes
+  buyer: string;       // lowercased EVM address
+  seller: string;      // lowercased EVM address
+  cumulativeAmount: bigint;  // cumulative USDC on this channel
+  delta: bigint;             // USDC delta this settlement
+  totalSettled: bigint;      // running total across all channels for this seller
+  platformFee: bigint;
+  metadata: string;          // raw metadata bytes
+}
 
 export interface CloseRequestedEvent {
   channelId: string;
@@ -156,6 +171,48 @@ export class ChannelsClient extends BaseEvmClient {
       totalVolumeUsdc: result[2] as bigint,
       lastSettledAt: Number(result[3]),
     };
+  }
+
+  /**
+   * Fetch and decode all ChannelSettled logs in the inclusive block range
+   * [fromBlock, toBlock]. Returns events sorted by (blockNumber, logIndex) ascending.
+   */
+  async getChannelSettledEvents(params: {
+    fromBlock: number;
+    toBlock: number;
+  }): Promise<DecodedChannelSettled[]> {
+    const iface = new ethers.Interface(CHANNELS_ABI);
+    const topic = iface.getEvent('ChannelSettled')!.topicHash;
+
+    const logs = await this._provider.getLogs({
+      address: this._contractAddress,
+      fromBlock: params.fromBlock,
+      toBlock: params.toBlock,
+      topics: [topic],
+    });
+
+    const out: DecodedChannelSettled[] = [];
+    for (const log of logs) {
+      const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+      if (!parsed || parsed.name !== 'ChannelSettled') continue;
+      out.push({
+        blockNumber: log.blockNumber,
+        txHash: log.transactionHash,
+        logIndex: log.index,
+        channelId: (parsed.args[0] as string).toLowerCase(),
+        buyer: (parsed.args[1] as string).toLowerCase(),
+        seller: (parsed.args[2] as string).toLowerCase(),
+        cumulativeAmount: parsed.args[3] as bigint,
+        delta: parsed.args[4] as bigint,
+        totalSettled: parsed.args[5] as bigint,
+        platformFee: parsed.args[6] as bigint,
+        metadata: parsed.args[7] as string,
+      });
+    }
+    out.sort((a, b) =>
+      a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex,
+    );
+    return out;
   }
 
   /**
