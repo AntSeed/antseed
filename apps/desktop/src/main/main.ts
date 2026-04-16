@@ -107,7 +107,7 @@ const APP_ICON_PATH = resolveAppIconPath();
 // in some surfaces because the underlying bundle is Electron.app.
 app.setName(APP_NAME);
 
-import { DEFAULT_CONFIG_PATH, DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL } from './constants.js';
+import { DEFAULT_CONFIG_PATH } from './constants.js';
 import { asRecord, asString } from './utils.js';
 
 function resolveActiveConfigPath(): string {
@@ -610,8 +610,7 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   // All contract addresses come from the preset in chain-config.ts.
   const selectedChain = asString(overrides.chainId as string, '') || 'base-mainnet';
   const userRpcUrl = asString(overrides.rpcUrl as string, '');
-  const rpcUrl = userRpcUrl || (selectedChain === 'base-mainnet' ? DESKTOP_DEFAULT_BASE_MAINNET_RPC_URL : '');
-  const cc = resolveChainConfig({ chainId: selectedChain, ...(rpcUrl ? { rpcUrl } : {}) });
+  const cc = resolveChainConfig({ chainId: selectedChain, ...(userRpcUrl ? { rpcUrl: userRpcUrl } : {}) });
   cachedCryptoConfig = { rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
