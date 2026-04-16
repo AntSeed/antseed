@@ -5,6 +5,11 @@ import { createConnection } from 'node:net';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
 import { browserPreviewTool, startDevServerTool } from './chat-dev-tools.js';
+import {
+  classifyChatStreamFailure,
+  formatChatStreamStopForLog,
+  type ChatStreamStopReason,
+} from './chat-stream-stop.js';
 import { webFetchTool } from './chat-web-fetch.js';
 import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
@@ -119,6 +124,12 @@ type RegisterPiChatHandlersOptions = {
   ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
+};
+
+type ChatStreamErrorPayload = {
+  conversationId: string;
+  error: string;
+  stopReason: ChatStreamStopReason;
 };
 
 type SessionPathInfo = {
@@ -1548,6 +1559,29 @@ export function registerPiChatHandlers({
     });
   };
 
+  const emitChatStreamError = (
+    payload: ChatStreamErrorPayload,
+  ): ChatStreamStopReason => {
+    sendToRenderer('chat:ai-stream-error', payload);
+    return payload.stopReason;
+  };
+
+  const emitPaymentRequiredStreamError = (
+    conversationId: string,
+    suggestedAmount: string,
+  ): ChatStreamStopReason => {
+    return emitChatStreamError({
+      conversationId,
+      error: `payment_required:${suggestedAmount}`,
+      stopReason: {
+        kind: 'payment_required',
+        source: 'billing',
+        retryable: false,
+        message: 'Payment is required before the stream can continue.',
+      },
+    });
+  };
+
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
       return;
@@ -1610,7 +1644,7 @@ export function registerPiChatHandlers({
     providerOverride?: string,
     imageBase64?: string,
     imageMimeType?: string,
-  ): Promise<{ ok: boolean; error?: string }> => {
+  ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
     if (trimmedMessage.length === 0 && !imageBase64) {
       return { ok: false, error: 'Empty message' };
@@ -1724,6 +1758,8 @@ export function registerPiChatHandlers({
     let userPersisted = false;
     let streamDone = false;
     let pendingAssistantMessage: AiChatMessage | null = null;
+    let terminalStreamError: string | null = null;
+    let terminalStreamFailure: ChatStreamStopReason | null = null;
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'turn_start') {
@@ -1925,10 +1961,7 @@ export function registerPiChatHandlers({
             } else {
               cacheFallbackPaymentRequired(conversationId, suggestedAmount);
             }
-            sendToRenderer('chat:ai-stream-error', {
-              conversationId,
-              error: `payment_required:${suggestedAmount}`,
-            });
+            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -1943,12 +1976,22 @@ export function registerPiChatHandlers({
               ? paymentBody.suggestedAmount : '100000';
             // Cache payment info so the approve IPC handler can build the SpendingAuth
             cachedPaymentRequired.set(conversationId, paymentBody);
-            sendToRenderer('chat:ai-stream-error', {
-              conversationId,
-              error: `payment_required:${suggestedAmount}`,
-            });
+            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
+            return;
+          }
+
+          if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+            terminalStreamError = errorMsg || rawContent || (message.stopReason === 'aborted'
+              ? 'Request aborted'
+              : 'The stream stopped before completion.');
+            terminalStreamFailure = classifyChatStreamFailure({
+              error: message,
+              message: terminalStreamError,
+              stopReason: message.stopReason,
+            });
+            pendingAssistantMessage = null;
             return;
           }
 
@@ -1974,6 +2017,34 @@ export function registerPiChatHandlers({
         return;
       }
 
+      if (event.type === 'auto_retry_start') {
+        const reason = classifyChatStreamFailure({
+          error: event.errorMessage,
+          message: event.errorMessage,
+          stopReason: 'error',
+        });
+        appendSystemLog(
+          `AI stream interrupted. Retrying in ${(event.delayMs / 1000).toFixed(1)}s `
+          + `(${String(event.attempt)}/${String(event.maxAttempts)}) `
+          + `[${formatChatStreamStopForLog(reason)}]`,
+        );
+        return;
+      }
+
+      if (event.type === 'auto_retry_end') {
+        if (event.success) {
+          appendSystemLog(`AI stream retry succeeded on attempt ${String(event.attempt)}.`);
+        } else if (event.finalError) {
+          const reason = classifyChatStreamFailure({
+            error: event.finalError,
+            message: event.finalError,
+            stopReason: 'error',
+          });
+          appendSystemLog(`AI stream retry exhausted: ${formatChatStreamStopForLog(reason)}`);
+        }
+        return;
+      }
+
       if (event.type === 'agent_end') {
         // Don't finalize here — auto-retry may follow with a new agent_start.
         // The post-session.prompt code handles final chat:ai-done / chat:ai-stream-done.
@@ -1988,6 +2059,21 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+
+      if (terminalStreamFailure !== null) {
+        const streamFailure = terminalStreamFailure as ChatStreamStopReason;
+        const reason = emitChatStreamError({
+          conversationId,
+          error: terminalStreamError ?? streamFailure.message,
+          stopReason: streamFailure,
+        });
+        appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
+        return {
+          ok: false,
+          error: terminalStreamError ?? streamFailure.message,
+          stopReason: reason,
+        };
+      }
 
       // Check if the agent received a 402 payment_required response.
       // The node returns JSON with "error":"payment_required" which the agent
@@ -2009,11 +2095,8 @@ export function registerPiChatHandlers({
             cacheFallbackPaymentRequired(conversationId, amt);
           }
           pendingAssistantMessage = null;
-          sendToRenderer('chat:ai-stream-error', {
-            conversationId,
-            error: `payment_required:${amt}`,
-          });
-          return { ok: false, error: 'Payment required' };
+          const reason = emitPaymentRequiredStreamError(conversationId, amt);
+          return { ok: false, error: 'Payment required', stopReason: reason };
         }
       }
 
@@ -2033,8 +2116,16 @@ export function registerPiChatHandlers({
       // Always discard any buffered assistant message on error — it will not be committed.
       pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
-        sendToRenderer('chat:ai-stream-error', { conversationId, error: 'Request aborted' });
-        return { ok: false, error: 'Aborted' };
+        const reason = emitChatStreamError({
+          conversationId,
+          error: 'Request aborted',
+          stopReason: classifyChatStreamFailure({
+            error,
+            message: 'Request aborted',
+            stopReason: 'aborted',
+          }),
+        });
+        return { ok: false, error: 'Aborted', stopReason: reason };
       }
       const message = asErrorMessage(error);
       // Map insufficient balance / 402 errors to payment_required format
@@ -2059,12 +2150,21 @@ export function registerPiChatHandlers({
             suggestedAmount: amt,
           });
         }
-        sendToRenderer('chat:ai-stream-error', { conversationId, error: `payment_required:${amt}` });
+        const reason = emitPaymentRequiredStreamError(conversationId, amt);
+        return { ok: false, error: message, stopReason: reason };
       } else {
-        sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
+        const reason = emitChatStreamError({
+          conversationId,
+          error: message,
+          stopReason: classifyChatStreamFailure({
+            error,
+            message,
+            stopReason: 'error',
+          }),
+        });
+        appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
+        return { ok: false, error: message, stopReason: reason };
       }
-      appendSystemLog(`Pi chat error: ${message}`);
-      return { ok: false, error: message };
     } finally {
       clearActiveRun(run);
       store.markPersistedIfAvailable(conversationId);
