@@ -5,6 +5,7 @@ export interface IdentityClientConfig {
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   contractAddress: string;
+  evmChainId?: number;
 }
 
 const IDENTITY_REGISTRY_ABI = [
@@ -25,7 +26,7 @@ const IDENTITY_REGISTRY_ABI = [
 
 export class IdentityClient extends BaseEvmClient {
   constructor(config: IdentityClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
   // ── Write methods ──────────────────────────────────────────────────

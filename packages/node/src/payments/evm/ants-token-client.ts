@@ -5,6 +5,7 @@ export interface ANTSTokenClientConfig {
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   contractAddress: string;
+  evmChainId?: number;
 }
 
 const ANTS_TOKEN_ABI = [
@@ -22,7 +23,7 @@ const ANTS_TOKEN_ABI = [
 
 export class ANTSTokenClient extends BaseEvmClient {
   constructor(config: ANTSTokenClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
   async balanceOf(address: string): Promise<bigint> {

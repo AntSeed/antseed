@@ -5,6 +5,7 @@ export interface ChannelsClientConfig {
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   contractAddress: string;
+  evmChainId?: number;
 }
 
 export interface AgentStats {
@@ -48,7 +49,7 @@ export interface CloseRequestedEvent {
 
 export class ChannelsClient extends BaseEvmClient {
   constructor(config: ChannelsClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
   async reserve(

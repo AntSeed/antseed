@@ -5,6 +5,7 @@ export interface EmissionsClientConfig {
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   contractAddress: string;
+  evmChainId?: number;
 }
 
 const EMISSIONS_ABI = [
@@ -42,7 +43,7 @@ const EMISSIONS_ABI = [
 
 export class EmissionsClient extends BaseEvmClient {
   constructor(config: EmissionsClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
   async claimSellerEmissions(signer: AbstractSigner, epochs: number[]): Promise<string> {

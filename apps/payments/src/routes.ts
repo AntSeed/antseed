@@ -52,12 +52,13 @@ async function retryRead<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
   throw lastErr;
 }
 
-function createClient(config: PaymentCryptoConfig): DepositsClient {
+function createClient(config: PaymentCryptoConfig, evmChainId?: number): DepositsClient {
   return new DepositsClient({
     rpcUrl: config.rpcUrl,
     ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
     contractAddress: config.depositsContractAddress,
     usdcAddress: config.usdcContractAddress,
+    evmChainId,
   });
 }
 
@@ -65,7 +66,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   // Shared deposits client — reused across requests (stateless, only holds RPC URL + ABI)
   let depositsClient: DepositsClient | null = null;
   function getClient(): DepositsClient | null {
-    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
+    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig, ctx.chainConfig.evmChainId);
     return depositsClient;
   }
 
@@ -77,6 +78,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         rpcUrl: ctx.cryptoConfig.rpcUrl,
         ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
         contractAddress: ctx.chainConfig.emissionsContractAddress,
+        evmChainId: ctx.chainConfig.evmChainId,
       });
     }
     return emissionsClient;
@@ -92,6 +94,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       antsTokenClient = new ANTSTokenClient({
         rpcUrl: ctx.cryptoConfig.rpcUrl,
         contractAddress: addr,
+        evmChainId: ctx.chainConfig.evmChainId,
       });
     }
     return antsTokenClient;

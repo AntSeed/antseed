@@ -37,12 +37,9 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     chainId: 'base-mainnet',
     evmChainId: 8453,
-    // dRPC public endpoint — free tier, generous limits, flat 20 CU per call
-    // (no eth_getLogs penalty), built-in multi-provider routing. Users can
-    // override via payments.crypto.rpcUrl in config.json.
-    rpcUrl: 'https://base.drpc.org',
+    rpcUrl: 'https://base.publicnode.com',
     fallbackRpcUrls: [
-      'https://base.publicnode.com',
+      'https://base.drpc.org',
       'https://base.llamarpc.com',
       'https://mainnet.base.org',
     ],

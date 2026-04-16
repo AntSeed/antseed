@@ -7,6 +7,7 @@ export interface StakingClientConfig {
   fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
+  evmChainId?: number;
 }
 
 const STAKING_ABI = [
@@ -23,7 +24,7 @@ export class StakingClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: StakingClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
     this._usdcAddress = config.usdcAddress;
   }
 

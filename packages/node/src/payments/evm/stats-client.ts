@@ -5,6 +5,7 @@ export interface StatsClientConfig {
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   contractAddress: string;
+  evmChainId?: number;
 }
 
 export interface DecodedMetadataRecorded {
@@ -26,7 +27,7 @@ const STATS_ABI = [
 
 export class StatsClient extends BaseEvmClient {
   constructor(config: StatsClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
   /**

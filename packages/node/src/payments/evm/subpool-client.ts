@@ -6,6 +6,7 @@ export interface SubPoolClientConfig {
   fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
+  evmChainId?: number;
 }
 
 const ERC20_ABI = [
@@ -37,7 +38,7 @@ export class SubPoolClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: SubPoolClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
     this._usdcAddress = config.usdcAddress;
   }
 
