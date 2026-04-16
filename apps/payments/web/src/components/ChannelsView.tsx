@@ -7,7 +7,6 @@ import { CHANNELS_ABI } from '../channels-abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 import { useChannels } from '../hooks/useChannels';
 import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
-import '../views/DashboardView.scss';
 import './ChannelsView.scss';
 
 interface ChannelsViewProps {

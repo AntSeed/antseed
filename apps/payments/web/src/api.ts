@@ -101,8 +101,8 @@ export interface EmissionsEpochInfo {
 
 export interface EmissionsPendingRow {
   epoch: number;
-  seller: { amount: string; userPoints: string; claimed: boolean };
-  buyer:  { amount: string; userPoints: string; claimed: boolean };
+  seller: { amount: string; userPoints: string; totalPoints: string; claimed: boolean };
+  buyer:  { amount: string; userPoints: string; totalPoints: string; claimed: boolean };
   isCurrent: boolean;
 }
 

@@ -397,6 +397,53 @@ html, body {
   &--error { color: var(--danger); }
 }
 
+/* ── Dashboard section (shared across views) ── */
+
+.dashboard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dashboard-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-section-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent-text);
+}
+
+.dashboard-section-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.dashboard-section-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.dashboard-chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+}
+
 /* ── Shared overview + stat grid (dashboard, emissions) ── */
 
 .overview {
@@ -831,6 +878,73 @@ $dash-sidebar-width: 240px;
   font-weight: 500;
 
   &--mismatch { color: var(--amber, #f59e0b); }
+}
+
+.emissions-table-wrap {
+  overflow-x: auto;
+  margin: 0 -24px;
+  padding: 0 24px;
+}
+
+.emissions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+
+  th, td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--card-border);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    background: transparent;
+
+    &:first-child { padding-left: 0; }
+    &:last-child  { padding-right: 0; }
+  }
+
+  td {
+    color: var(--text-secondary);
+
+    &:first-child { padding-left: 0; }
+    &:last-child  { padding-right: 0; }
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  tbody tr:hover td {
+    background: var(--card-hover, rgba(148, 163, 184, 0.05));
+  }
+}
+
+.emissions-table-current td {
+  background: var(--accent-dim);
+  border-color: var(--accent-border, var(--accent));
+}
+
+.emissions-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+
+  &--pending  { background: var(--accent-dim); color: var(--accent-text); }
+  &--claimed  { background: rgba(59, 130, 246, 0.08); color: #3b82f6; }
+  &--estimate { background: var(--amber-dim, rgba(192, 136, 0, 0.08)); color: var(--amber, #c08800); }
 }
 
 .emissions-ants-info { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }

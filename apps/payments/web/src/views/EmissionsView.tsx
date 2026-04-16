@@ -40,6 +40,42 @@ function formatAnts(amountWei: string): string {
   }
 }
 
+function estimateRowReward(
+  row: EmissionsPendingResponse['rows'][number],
+  epochEmission: string,
+  shares: SharesType,
+): string {
+  const emission = safeBigint(epochEmission);
+  const userSP = safeBigint(row.seller.userPoints);
+  const totalSP = safeBigint(row.seller.totalPoints);
+  const userBP = safeBigint(row.buyer.userPoints);
+  const totalBP = safeBigint(row.buyer.totalPoints);
+
+  let est = 0n;
+  if (totalSP > 0n) {
+    est += emission * BigInt(Math.round(shares.sellerSharePct * 100)) * userSP / (10000n * totalSP);
+  }
+  if (totalBP > 0n) {
+    est += emission * BigInt(Math.round(shares.buyerSharePct * 100)) * userBP / (10000n * totalBP);
+  }
+  return est.toString();
+}
+
+function computeEpochShare(
+  row: EmissionsPendingResponse['rows'][number] | undefined,
+  shares: SharesType,
+): number {
+  if (!row) return 0;
+  const userSP = safeBigint(row.seller.userPoints);
+  const totalSP = safeBigint(row.seller.totalPoints);
+  const userBP = safeBigint(row.buyer.userPoints);
+  const totalBP = safeBigint(row.buyer.totalPoints);
+  let pct = 0;
+  if (totalSP > 0n) pct += shares.sellerSharePct * Number((userSP * 10000n) / totalSP) / 10000;
+  if (totalBP > 0n) pct += shares.buyerSharePct * Number((userBP * 10000n) / totalBP) / 10000;
+  return pct;
+}
+
 function formatTimeRemaining(seconds: number): string {
   if (seconds <= 0) return 'ending now';
   const d = Math.floor(seconds / 86400);
@@ -207,11 +243,20 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const currentRow = rows.find((r) => r.isCurrent);
   const currentSellerPts = currentRow?.seller.userPoints ?? '0';
   const currentBuyerPts = currentRow?.buyer.userPoints ?? '0';
-  const currentEstimate = addWei(currentRow?.seller.amount ?? '0', currentRow?.buyer.amount ?? '0');
+  const totalSellerPts = currentRow?.seller.totalPoints ?? '0';
+  const totalBuyerPts = currentRow?.buyer.totalPoints ?? '0';
+  const currentEstimate = currentRow && info && shares
+    ? estimateRowReward(currentRow, info.epochEmission, shares)
+    : '0';
+
+  const epochSharePct = shares
+    ? computeEpochShare(currentRow, shares)
+    : 0;
 
   let totalClaimable = 0n;
   let totalClaimed = 0n;
   for (const r of rows) {
+    if (r.isCurrent) continue;
     const sellerAmt = safeBigint(r.seller.amount);
     const buyerAmt = safeBigint(r.buyer.amount);
     if (r.seller.claimed) totalClaimed += sellerAmt;
@@ -240,7 +285,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
             <div className="stat-card-value">{formatTimeRemaining(timeRemaining)}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-card-label">Epoch budget</div>
+            <div className="stat-card-label">Epoch pool</div>
             <div className="stat-card-value">{formatAnts(info.epochEmission)}</div>
             <div className="stat-card-hint">ANTS this epoch</div>
           </div>
@@ -262,7 +307,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           <div className="dashboard-section-eyebrow">Your position</div>
           <h2 className="dashboard-section-title">This epoch</h2>
           <p className="dashboard-section-sub">
-            Your points and estimated rewards for the current epoch. These update as activity flows through the network.
+            Your share of this epoch's rewards. Updates as activity flows through the network.
           </p>
         </header>
 
@@ -273,19 +318,19 @@ export function EmissionsView({ config }: EmissionsViewProps) {
             <div className="stat-card-hint">ANTS (not yet final)</div>
           </div>
           <div className="stat-card">
-            <div className="stat-card-label">Seller points</div>
-            <div className="stat-card-value">{formatAnts(currentSellerPts)}</div>
-            <div className="stat-card-hint">Your share of seller pool</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-card-label">Buyer points</div>
-            <div className="stat-card-value">{formatAnts(currentBuyerPts)}</div>
-            <div className="stat-card-hint">Your share of buyer pool</div>
+            <div className="stat-card-label">Your epoch share</div>
+            <div className="stat-card-value">{epochSharePct > 0 ? `${epochSharePct.toFixed(2)}%` : '—'}</div>
+            <div className="stat-card-hint">Of total epoch emission</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Claimable</div>
             <div className="stat-card-value">{formatAnts(totalClaimable.toString())}</div>
             <div className="stat-card-hint">From past epochs</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-card-label">Already claimed</div>
+            <div className="stat-card-value">{formatAnts(totalClaimed.toString())}</div>
+            <div className="stat-card-hint">ANTS total</div>
           </div>
         </div>
       </section>
@@ -299,7 +344,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           </p>
         </header>
         <div className="dashboard-chart-card">
-          <CombinedEmissionsList rows={pending?.rows ?? []} />
+          <EmissionsTable rows={pending?.rows ?? []} epochEmission={info.epochEmission} shares={shares} />
           {(sellerClaimError || buyerClaimError) && (
             <div className="status-msg status-error">{sellerClaimError || buyerClaimError}</div>
           )}
@@ -330,9 +375,9 @@ export function EmissionsView({ config }: EmissionsViewProps) {
         <div className="dashboard-chart-card">
           <div className="emissions-ants-info">
             <p>
-              $ANTS is the native reward token of the AntSeed network. It is minted
+              $ANTS is the native token of the AntSeed network. It is minted
               each epoch to active sellers and buyers in proportion to their
-              on-chain activity. There is no mining and no ANTS staking — you earn
+              on-chain activity. There is no pre-mining — you earn
               simply by using the network.
             </p>
             <p>
@@ -354,44 +399,58 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   );
 }
 
-function CombinedEmissionsList({ rows }: { rows: EmissionsPendingResponse['rows'] }) {
+function EmissionsTable({ rows, epochEmission, shares }: {
+  rows: EmissionsPendingResponse['rows'];
+  epochEmission?: string;
+  shares?: SharesType | null;
+}) {
   if (rows.length === 0) {
     return <div className="overview-empty-desc">No recent epochs to show.</div>;
   }
   return (
-    <div className="emissions-row-list">
-      {rows.slice().reverse().map((row) => {
-        const total = addWei(row.seller.amount, row.buyer.amount);
-        const allClaimed = row.seller.claimed && row.buyer.claimed;
-        const nothingToClaim = total === '0';
-        const statusLabel = allClaimed
-          ? 'Claimed'
-          : row.isCurrent
-            ? 'Estimate'
-            : nothingToClaim
-              ? '—'
-              : 'Claimable';
-        const statusClass = allClaimed
-          ? 'emissions-row-status emissions-row-status--claimed'
-          : row.isCurrent
-            ? 'emissions-row-status emissions-row-status--estimate'
-            : nothingToClaim
-              ? 'emissions-row-status'
-              : 'emissions-row-status emissions-row-status--pending';
-        return (
-          <div key={row.epoch} className={`emissions-row${row.isCurrent ? ' emissions-row--current' : ''}`}>
-            <span className="emissions-row-epoch">Epoch #{row.epoch}</span>
-            <span className="emissions-row-amount">{formatAnts(total)} ANTS</span>
-            <span className="emissions-row-breakdown">
-              {formatAnts(row.seller.amount)} seller · {formatAnts(row.buyer.amount)} buyer
-            </span>
-            <span className={statusClass}>{statusLabel}</span>
-            {row.isCurrent && (
-              <span className="emissions-row-hint">Updates as activity flows through the network</span>
-            )}
-          </div>
-        );
-      })}
+    <div className="emissions-table-wrap">
+      <table className="emissions-table">
+        <thead>
+          <tr>
+            <th>Epoch</th>
+            <th>Reward</th>
+            <th>Your share</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice().reverse().map((row) => {
+            const total = row.isCurrent && epochEmission && shares
+              ? estimateRowReward(row, epochEmission, shares)
+              : addWei(row.seller.amount, row.buyer.amount);
+            const share = shares ? computeEpochShare(row, shares) : 0;
+            const allClaimed = row.seller.claimed && row.buyer.claimed;
+            const nothingToClaim = total === '0';
+            const statusLabel = allClaimed
+              ? 'Claimed'
+              : row.isCurrent
+                ? 'Estimate'
+                : nothingToClaim
+                  ? '—'
+                  : 'Claimable';
+            const statusClass = allClaimed
+              ? 'emissions-status--claimed'
+              : row.isCurrent
+                ? 'emissions-status--estimate'
+                : nothingToClaim
+                  ? ''
+                  : 'emissions-status--pending';
+            return (
+              <tr key={row.epoch} className={row.isCurrent ? 'emissions-table-current' : ''}>
+                <td>#{row.epoch}</td>
+                <td>{formatAnts(total)} ANTS</td>
+                <td>{share > 0 ? `${share.toFixed(2)}%` : '—'}</td>
+                <td><span className={`emissions-status ${statusClass}`}>{statusLabel}</span></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
