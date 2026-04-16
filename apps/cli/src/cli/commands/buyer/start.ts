@@ -276,6 +276,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         paymentsConfig = {
           enabled: true,
           rpcUrl: chainConfig.rpcUrl,
+          ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
           depositsAddress: chainConfig.depositsContractAddress,
           channelsAddress: chainConfig.channelsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
@@ -332,6 +333,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           const address = identity.wallet.address
           const depositsClient = new DepositsClient({
             rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
             contractAddress: chainConfig.depositsContractAddress,
             usdcAddress: chainConfig.usdcContractAddress,
           })

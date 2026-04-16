@@ -70,6 +70,9 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
   return {
     ...crypto,
     rpcUrl: crypto.rpcUrl || resolved.rpcUrl,
+    ...(resolved.fallbackRpcUrls && resolved.fallbackRpcUrls.length > 0
+      ? { fallbackRpcUrls: resolved.fallbackRpcUrls }
+      : {}),
     usdcContractAddress: crypto.usdcContractAddress || resolved.usdcContractAddress,
     depositsContractAddress: crypto.depositsContractAddress || resolved.depositsContractAddress,
     channelsContractAddress: crypto.channelsContractAddress || resolved.channelsContractAddress,
@@ -79,6 +82,12 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
   };
 }
 
+function fallbackClientOpts(crypto: ReturnType<typeof requireCryptoConfig>) {
+  return crypto.fallbackRpcUrls && crypto.fallbackRpcUrls.length > 0
+    ? { fallbackRpcUrls: crypto.fallbackRpcUrls }
+    : {};
+}
+
 /**
  * Create a DepositsClient from the CLI config.
  */
@@ -86,6 +95,7 @@ export function createDepositsClient(config: AntseedConfig): DepositsClient {
   const crypto = requireCryptoConfig(config);
   return new DepositsClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.depositsContractAddress,
     usdcAddress: crypto.usdcContractAddress,
   });
@@ -98,6 +108,7 @@ export function createChannelsClient(config: AntseedConfig): ChannelsClient {
   const crypto = requireCryptoConfig(config);
   return new ChannelsClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.channelsContractAddress,
   });
 }
@@ -112,6 +123,7 @@ export function createIdentityClient(config: AntseedConfig): IdentityClient {
   }
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.identityRegistryAddress,
   });
 }
@@ -126,6 +138,7 @@ export function createStakingClient(config: AntseedConfig): StakingClient {
   }
   return new StakingClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.stakingContractAddress,
     usdcAddress: crypto.usdcContractAddress,
   });
@@ -141,6 +154,7 @@ export function createEmissionsClient(config: AntseedConfig): EmissionsClient {
   }
   return new EmissionsClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.emissionsContractAddress,
   });
 }
@@ -155,6 +169,7 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
   }
   return new SubPoolClient({
     rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
     contractAddress: crypto.subPoolContractAddress,
     usdcAddress: crypto.usdcContractAddress,
   });

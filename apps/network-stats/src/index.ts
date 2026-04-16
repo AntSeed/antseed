@@ -33,6 +33,7 @@ if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 
   store.init();
   const statsClient = new StatsClient({
     rpcUrl: chainConfig.rpcUrl,
+    ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
     contractAddress: chainConfig.statsContractAddress,
   });
   indexer = new MetadataIndexer({
@@ -49,6 +50,7 @@ if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 
   if (chainConfig.stakingContractAddress) {
     stakingClient = new StakingClient({
       rpcUrl: chainConfig.rpcUrl,
+      ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
       contractAddress: chainConfig.stakingContractAddress,
       usdcAddress: chainConfig.usdcContractAddress,
     });

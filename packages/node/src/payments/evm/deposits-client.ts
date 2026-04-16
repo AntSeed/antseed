@@ -4,6 +4,7 @@ import { BaseEvmClient, ERC20_ABI } from './base-evm-client.js';
 
 export interface DepositsClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
 }
@@ -31,7 +32,7 @@ export class DepositsClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: DepositsClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
     this._usdcAddress = config.usdcAddress;
   }
 

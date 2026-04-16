@@ -10,6 +10,7 @@ export interface CryptoContext {
 
 export interface PaymentCryptoConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
   usdcContractAddress: string;

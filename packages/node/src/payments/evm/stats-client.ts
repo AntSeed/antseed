@@ -3,6 +3,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface StatsClientConfig {
   rpcUrl: string;
+  fallbackRpcUrls?: string[];
   contractAddress: string;
 }
 
@@ -25,7 +26,7 @@ const STATS_ABI = [
 
 export class StatsClient extends BaseEvmClient {
   constructor(config: StatsClientConfig) {
-    super(config.rpcUrl, config.contractAddress);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
   }
 
   /**

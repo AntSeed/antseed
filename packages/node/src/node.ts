@@ -100,6 +100,8 @@ export interface NodePaymentsConfig {
   paymentConfig?: PaymentConfig | null;
   /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
   rpcUrl?: string;
+  /** Additional RPC endpoints for transparent failover via ethers FallbackProvider (quorum=1). */
+  fallbackRpcUrls?: string[];
   /** Deployed AntseedDeposits contract address */
   depositsAddress?: string;
   /** Deployed AntseedChannels contract address */
@@ -939,6 +941,7 @@ export class AntseedNode extends EventEmitter {
       if (this._channelStore) {
         const buyerPaymentConfig: BuyerPaymentConfig = {
           rpcUrl: payments.rpcUrl,
+          ...(payments.fallbackRpcUrls ? { fallbackRpcUrls: payments.fallbackRpcUrls } : {}),
           depositsContractAddress: payments.depositsAddress,
           channelsContractAddress: payments.channelsAddress,
           usdcAddress: payments.usdcAddress,
@@ -1024,10 +1027,13 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
+    const fallbackRpcUrls = payments.fallbackRpcUrls;
+
     // Initialize DepositsClient
     if (payments.rpcUrl && payments.depositsAddress && payments.usdcAddress) {
       this._depositsClient = new DepositsClient({
         rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.depositsAddress,
         usdcAddress: payments.usdcAddress,
       });
@@ -1038,6 +1044,7 @@ export class AntseedNode extends EventEmitter {
     if (payments.rpcUrl && payments.channelsAddress) {
       this._channelsClient = new ChannelsClient({
         rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.channelsAddress,
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
@@ -1047,6 +1054,7 @@ export class AntseedNode extends EventEmitter {
     if (payments.rpcUrl && payments.stakingAddress && payments.usdcAddress) {
       this._stakingClient = new StakingClient({
         rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.stakingAddress,
         usdcAddress: payments.usdcAddress,
       });
@@ -1057,6 +1065,7 @@ export class AntseedNode extends EventEmitter {
     if (payments.rpcUrl && payments.identityRegistryAddress) {
       this._identityClient = new IdentityClient({
         rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.identityRegistryAddress,
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
@@ -1078,6 +1087,7 @@ export class AntseedNode extends EventEmitter {
         payments.rpcUrl && payments.channelsAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         channelsContractAddress: payments.channelsAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,

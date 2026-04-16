@@ -36,6 +36,7 @@ export function registerBuyerWithdrawCommand(buyerCmd: Command): void {
 
       const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,
+        ...(payments.crypto.fallbackRpcUrls ? { fallbackRpcUrls: payments.crypto.fallbackRpcUrls } : {}),
         contractAddress: payments.crypto.depositsContractAddress,
         usdcAddress: payments.crypto.usdcContractAddress,
       });

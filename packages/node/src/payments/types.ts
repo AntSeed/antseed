@@ -43,6 +43,8 @@ export interface CryptoPaymentConfig {
   chainId: ChainId;
   /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
   rpcUrl: string;
+  /** Additional RPC endpoints for failover via ethers FallbackProvider. */
+  fallbackRpcUrls?: string[];
   /** Deployed AntseedDeposits contract address */
   depositsContractAddress: string;
   /** Deployed AntseedChannels contract address */
