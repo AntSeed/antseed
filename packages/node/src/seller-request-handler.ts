@@ -197,7 +197,8 @@ export class SellerRequestHandler {
 
       request.headers['x-antseed-buyer-peer-id'] = buyerPeerId;
 
-      debugLog(`[SellerHandler] Routing to provider "${provider.name}"`);
+      const requestedModel = this._extractRequestedService(request) ?? 'unknown';
+      debugLog(`[SellerHandler] Routing to provider "${provider.name}" model="${requestedModel}"`);
       const startTime = Date.now();
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
@@ -225,7 +226,12 @@ export class SellerRequestHandler {
           });
           statusCode = response.statusCode;
           responseBody = response.body ?? new Uint8Array(0);
-          debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b) bodyType=${typeof response.body} hasBody=${!!response.body}`);
+          if (statusCode >= 400) {
+            const errBody = new TextDecoder().decode(responseBody).slice(0, 200);
+            debugWarn(`[SellerHandler] Provider error response: status=${statusCode} provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) body=${errBody}`);
+          } else {
+            debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
+          }
           responseUsage = parseResponseUsage(responseBody);
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
@@ -241,7 +247,7 @@ export class SellerRequestHandler {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Internal error";
-          debugWarn(`[SellerHandler] Provider error after ${Date.now() - startTime}ms: ${message}`);
+          debugWarn(`[SellerHandler] Provider exception: provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) ${message}`);
           responseBody = new TextEncoder().encode(message);
           if (streamedResponseStarted) {
             mux.sendProxyChunk({
