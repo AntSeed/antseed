@@ -79,11 +79,6 @@ export function TitleBar() {
     actions.openPaymentsPortal?.();
   }, [actions]);
 
-  const handleManageChannels = useCallback(() => {
-    setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.('channels');
-  }, [actions]);
-
   useEffect(() => {
     if (!creditsDropdownOpen) return;
     const handler = (e: MouseEvent) => {
@@ -170,10 +165,7 @@ export function TitleBar() {
               </div>
               <div className={styles.creditsDropdownActions}>
                 <button className={styles.creditsDropdownAddBtn} onClick={handleAddCredits}>
-                  Add Credits
-                </button>
-                <button className={styles.creditsDropdownManageBtn} onClick={handleManageChannels}>
-                  Manage Channels
+                  Manage
                 </button>
               </div>
             </div>
