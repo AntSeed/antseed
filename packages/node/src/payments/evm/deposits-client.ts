@@ -7,6 +7,7 @@ export interface DepositsClientConfig {
   fallbackRpcUrls?: string[];
   contractAddress: string;
   usdcAddress: string;
+  evmChainId?: number;
 }
 
 export interface BuyerBalanceInfo {
@@ -32,7 +33,7 @@ export class DepositsClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
   constructor(config: DepositsClientConfig) {
-    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls);
+    super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
     this._usdcAddress = config.usdcAddress;
   }
 

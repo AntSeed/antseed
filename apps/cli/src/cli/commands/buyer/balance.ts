@@ -41,6 +41,7 @@ export function registerBuyerBalanceCommand(buyerCmd: Command): void {
         ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
         contractAddress: chainConfig.depositsContractAddress,
         usdcAddress: chainConfig.usdcContractAddress,
+        evmChainId: chainConfig.evmChainId,
       });
 
       const spinner = ora('Fetching balance...').start();

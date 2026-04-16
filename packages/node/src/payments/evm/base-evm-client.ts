@@ -2,6 +2,7 @@ import {
   Contract,
   FallbackProvider,
   JsonRpcProvider,
+  Network,
   type AbstractProvider,
   type AbstractSigner,
   type InterfaceAbi,
@@ -9,26 +10,20 @@ import {
   type TransactionResponse,
 } from 'ethers';
 
-/**
- * Build an ethers Provider for a list of RPC URLs. When `fallbackRpcUrls` is
- * non-empty, returns a `FallbackProvider` with quorum=1 and priorities in the
- * order [primary, ...fallbacks], so the first successful response wins and a
- * failing endpoint transparently rolls over to the next. For a single URL,
- * returns a plain `JsonRpcProvider` to avoid the FallbackProvider startup
- * network-detection handshake.
- */
-function buildProvider(rpcUrl: string, fallbackRpcUrls?: string[]): AbstractProvider {
+function buildProvider(rpcUrl: string, fallbackRpcUrls?: string[], evmChainId?: number): AbstractProvider {
+  const network = evmChainId ? Network.from(evmChainId) : undefined;
+  const opts = { batchMaxCount: 1, staticNetwork: network ? true : undefined };
   if (!fallbackRpcUrls || fallbackRpcUrls.length === 0) {
-    return new JsonRpcProvider(rpcUrl);
+    return new JsonRpcProvider(rpcUrl, network, opts);
   }
   const urls = [rpcUrl, ...fallbackRpcUrls];
   const configs = urls.map((url, i) => ({
-    provider: new JsonRpcProvider(url),
+    provider: new JsonRpcProvider(url, network, opts),
     priority: i + 1,
     stallTimeout: 2000,
     weight: 1,
   }));
-  return new FallbackProvider(configs, undefined, { quorum: 1 });
+  return new FallbackProvider(configs, network, { quorum: 1 });
 }
 
 export const ERC20_ABI = [
@@ -50,8 +45,8 @@ export abstract class BaseEvmClient {
   protected readonly _nonceCursor = new Map<string, number>();
   private readonly _nonceLocks = new Map<string, Promise<void>>();
 
-  constructor(rpcUrl: string, contractAddress: string, fallbackRpcUrls?: string[]) {
-    this._provider = buildProvider(rpcUrl, fallbackRpcUrls);
+  constructor(rpcUrl: string, contractAddress: string, fallbackRpcUrls?: string[], evmChainId?: number) {
+    this._provider = buildProvider(rpcUrl, fallbackRpcUrls, evmChainId);
     this._contractAddress = contractAddress;
   }
 

@@ -6,6 +6,7 @@ import { loadConfig } from '../../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
+  resolveChainConfig,
 } from '@antseed/node';
 
 export function registerBuyerWithdrawCommand(buyerCmd: Command): void {
@@ -34,11 +35,13 @@ export function registerBuyerWithdrawCommand(buyerCmd: Command): void {
       const wallet = identity.wallet;
       const address = identity.wallet.address;
 
+      const resolvedChain = resolveChainConfig({ chainId: payments.crypto.chainId });
       const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,
         ...(payments.crypto.fallbackRpcUrls ? { fallbackRpcUrls: payments.crypto.fallbackRpcUrls } : {}),
         contractAddress: payments.crypto.depositsContractAddress,
         usdcAddress: payments.crypto.usdcContractAddress,
+        evmChainId: resolvedChain.evmChainId,
       });
 
       console.log(chalk.dim(`Wallet: ${address}`));

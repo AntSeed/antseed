@@ -111,6 +111,7 @@ export class BuyerPaymentManager {
       ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.depositsContractAddress,
       usdcAddress: config.usdcAddress,
+      evmChainId: config.chainId,
     });
     this._channelStore = channelStore;
     this._channelsDomain = makeChannelsDomain(config.chainId, config.channelsContractAddress);

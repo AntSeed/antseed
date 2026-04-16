@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { createServer } from './server.js';
 
 export { createServer } from './server.js';
@@ -5,8 +6,12 @@ export type { PaymentsServerOptions } from './server.js';
 
 const DEFAULT_PORT = 3118;
 
-// Only auto-start if this file is the entry point (not imported as a library)
-const isMain = process.argv[1]?.endsWith('index.js') || process.argv[1]?.endsWith('index.ts');
+// Only auto-start when this file is the process entry point (not when the
+// CLI imports it as a library). Compare the module URL with argv[1] resolved
+// as a file:// URL — the standard ESM "main module" check.
+const isMain = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
 
 if (isMain) {
   const port = Number(process.env['ANTSEED_PAYMENTS_PORT']) || DEFAULT_PORT;

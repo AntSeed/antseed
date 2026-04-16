@@ -9,12 +9,19 @@ import {
   useReadContract,
 } from 'wagmi';
 import { parseUnits } from 'viem';
-import type { PaymentConfig } from '../types';
+import type { BalanceData, PaymentConfig } from '../types';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 import './DepositView.scss';
 
+const MIN_FIRST_DEPOSIT = 1; // USDC — matches AntseedDeposits.MIN_BUYER_DEPOSIT
+
+function formatUsd(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 interface DepositViewProps {
   config: PaymentConfig | null;
+  balance: BalanceData | null;
   buyerAddress: string | null;
   onDeposited: () => void;
 }
@@ -57,13 +64,16 @@ const ERC20_ABI = [
 
 type DepositMethod = 'crypto' | 'card';
 
-export function DepositView({ config, buyerAddress, onDeposited }: DepositViewProps) {
+export function DepositView({ config, balance, buyerAddress, onDeposited }: DepositViewProps) {
   const [method, setMethod] = useState<DepositMethod>('crypto');
 
   return (
     <div className="deposit">
       <div className="card">
         <div className="card-section-title">Deposit USDC</div>
+        <div className="wallet-role-hint">
+          Any wallet can fund your AntSeed account. Your signer authorizes spending; the contract holds the balance.
+        </div>
 
         <div className="deposit-methods">
           <button
@@ -89,7 +99,12 @@ export function DepositView({ config, buyerAddress, onDeposited }: DepositViewPr
         </div>
 
         {method === 'crypto' ? (
-          <CryptoDeposit config={config} buyerAddress={buyerAddress} onDeposited={onDeposited} />
+          <CryptoDeposit
+            config={config}
+            balance={balance}
+            buyerAddress={buyerAddress}
+            onDeposited={onDeposited}
+          />
         ) : (
           <CardDepositPlaceholder />
         )}
@@ -100,16 +115,48 @@ export function DepositView({ config, buyerAddress, onDeposited }: DepositViewPr
 
 /* ── Crypto Deposit (wagmi + RainbowKit) ── */
 
-function CryptoDeposit({ config, buyerAddress, onDeposited }: {
+function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   config: PaymentConfig | null;
+  balance: BalanceData | null;
   buyerAddress: string | null;
   onDeposited: () => void;
 }) {
   const { address, isConnected } = useAccount();
   const connectedChainId = useChainId();
-  const [amount, setAmount] = useState('10');
+  const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  const currentTotal = balance ? parseFloat(balance.total) : 0;
+  const creditLimit = balance ? parseFloat(balance.creditLimit) : 0;
+  const maxDeposit = Math.max(0, creditLimit - currentTotal);
+  const isFirstDeposit = currentTotal === 0;
+  const minDeposit = isFirstDeposit ? MIN_FIRST_DEPOSIT : 0;
+
+  // Default amount: suggest 10 USDC capped by remaining headroom (min 1 on first deposit).
+  useEffect(() => {
+    if (amount !== '' || !balance) return;
+    if (maxDeposit <= 0) return;
+    const floor = isFirstDeposit ? MIN_FIRST_DEPOSIT : 0;
+    const suggested = Math.max(floor, Math.min(10, maxDeposit));
+    setAmount(suggested.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance]);
+
+  const amountNum = amount ? parseFloat(amount) : 0;
+  let validationError: string | null = null;
+  if (amount !== '' && balance) {
+    if (isNaN(amountNum) || amountNum <= 0) {
+      validationError = 'Enter a valid amount';
+    } else if (amountNum < minDeposit) {
+      validationError = `Minimum first deposit is ${minDeposit} USDC`;
+    } else if (amountNum > maxDeposit) {
+      validationError = maxDeposit <= 0
+        ? 'You have reached your credit limit'
+        : `Exceeds your credit limit — max deposit is ${formatUsd(maxDeposit)} USDC`;
+    }
+  }
+  const isValidAmount = amount !== '' && !validationError && amountNum > 0;
 
   const {
     expectedChainId,
@@ -197,7 +244,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   }, [depositConfirmed, step, onDeposited]);
 
   async function handleDeposit() {
-    if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
+    if (!address || !isValidAmount || !config || !depositTarget) return;
 
     setError(null);
 
@@ -243,7 +290,12 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   function resetForm() {
     setStep('idle');
     setError(null);
-    setAmount('10');
+    if (maxDeposit > 0) {
+      const floor = isFirstDeposit ? MIN_FIRST_DEPOSIT : 0;
+      setAmount(Math.max(floor, Math.min(10, maxDeposit)).toString());
+    } else {
+      setAmount('');
+    }
     resetApprove();
     resetDeposit();
   }
@@ -252,7 +304,18 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     <div className="deposit-form">
       {!isConnected ? (
         <div className="deposit-connect-wrapper">
-          <ConnectButton />
+          <ConnectButton.Custom>
+            {({ openConnectModal, mounted }) => (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={openConnectModal}
+                disabled={!mounted}
+              >
+                Connect Wallet
+              </button>
+            )}
+          </ConnectButton.Custom>
         </div>
       ) : step === 'done' ? (
         <div className="deposit-success">
@@ -273,13 +336,6 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         </div>
       ) : (
         <>
-          {depositTarget && depositTarget !== address && (
-            <div className="deposit-target-info">
-              <span className="deposit-target-label">Depositing for</span>
-              <span className="deposit-target-addr">{depositTarget.slice(0, 6)}...{depositTarget.slice(-4)}</span>
-            </div>
-          )}
-
           <div className="deposit-connected">
             <div className="deposit-connected-dot" />
             <span className="deposit-connected-addr">{address?.slice(0, 6)}...{address?.slice(-4)}</span>
@@ -293,24 +349,52 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
           )}
 
           <div className="input-group">
-            <label className="input-label">Amount (USDC)</label>
+            <div className="deposit-amount-head">
+              <label className="input-label">Amount (USDC)</label>
+              {balance && maxDeposit > 0 && (
+                <button
+                  type="button"
+                  className="deposit-amount-max"
+                  onClick={() => setAmount(maxDeposit.toString())}
+                  disabled={step !== 'idle'}
+                >
+                  Max ${formatUsd(maxDeposit)}
+                </button>
+              )}
+            </div>
             <input
               className="input-field"
               type="number"
-              min="0"
+              min={minDeposit || 0}
+              max={maxDeposit || undefined}
               step="0.01"
-              placeholder="10.00"
+              placeholder={isFirstDeposit ? '10.00' : '0.00'}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               disabled={step !== 'idle'}
             />
-            <span className="hint">Minimum first deposit: 1 USDC</span>
+            {balance ? (
+              <span className="hint">
+                {isFirstDeposit
+                  ? `Min ${MIN_FIRST_DEPOSIT} USDC · `
+                  : ''}
+                You can deposit up to ${formatUsd(maxDeposit)} more (credit limit ${formatUsd(creditLimit)})
+              </span>
+            ) : (
+              <span className="hint">Loading your credit limit…</span>
+            )}
           </div>
+
+          {validationError && (
+            <div className="status-msg status-error" role="alert">
+              {validationError}
+            </div>
+          )}
 
           <button
             className="btn-primary"
             onClick={handleDeposit}
-            disabled={step !== 'idle' || !amount || parseFloat(amount) <= 0 || !config || isSwitchingChain}
+            disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain}
           >
             {isSwitchingChain ? `Switching to ${targetChainName}...` :
              wrongChain ? `Switch to ${targetChainName}` :

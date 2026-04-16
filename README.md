@@ -61,7 +61,6 @@ plugins/              Provider and router plugins
 apps/                 Applications
   cli/                CLI tool and plugin manager
   desktop/            Electron desktop app
-  dashboard/          Web dashboard (Fastify + React)
   website/            Marketing website
 
 e2e/                  End-to-end tests
@@ -77,8 +76,8 @@ docs/protocol/        Protocol specification
   │         provider-openai, provider-local-llm
   ├── router-core
   │     └── router-local
-  ├── dashboard (peer: node)
-  │     └── cli (depends: node + dashboard)
+  ├── payments (peer: node)
+  │     └── cli (depends: node + payments)
   │           └── desktop (Electron wrapper)
   └── website (standalone)
 ```

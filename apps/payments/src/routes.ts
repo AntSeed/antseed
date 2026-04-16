@@ -1,6 +1,26 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { ChannelsClient, DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
+import {
+  DepositsClient,
+  EmissionsClient,
+  ANTSTokenClient,
+  formatUsdc,
+  parseUsdc,
+  signSetOperator,
+  makeDepositsDomain,
+  type ChainConfig,
+  type BuyerUsageTotals,
+} from '@antseed/node';
+
+const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
+  totalRequests: 0,
+  totalInputTokens: '0',
+  totalOutputTokens: '0',
+  totalSettlements: 0,
+  uniqueSellers: 0,
+  activeChannels: 0,
+  channels: [],
+};
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -13,12 +33,32 @@ interface RouteContext {
 const formatUsdc6 = formatUsdc;
 const parseUsdc6 = parseUsdc;
 
-function createClient(config: PaymentCryptoConfig): DepositsClient {
+// Retry helper for on-chain view calls. Base RPC occasionally returns an
+// unparseable response (ethers surfaces it as CALL_EXCEPTION with null
+// revert data even though the call didn't actually revert); view calls are
+// idempotent, so retrying clears these transient failures.
+async function retryRead<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (i + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+function createClient(config: PaymentCryptoConfig, evmChainId?: number): DepositsClient {
   return new DepositsClient({
     rpcUrl: config.rpcUrl,
     ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
     contractAddress: config.depositsContractAddress,
     usdcAddress: config.usdcContractAddress,
+    evmChainId,
   });
 }
 
@@ -26,20 +66,38 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   // Shared deposits client — reused across requests (stateless, only holds RPC URL + ABI)
   let depositsClient: DepositsClient | null = null;
   function getClient(): DepositsClient | null {
-    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
+    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig, ctx.chainConfig.evmChainId);
     return depositsClient;
   }
 
-  let channelsClient: ChannelsClient | null = null;
-  function getChannelsClient(): ChannelsClient | null {
-    if (!channelsClient) {
-      channelsClient = new ChannelsClient({
+  let emissionsClient: EmissionsClient | null = null;
+  function getEmissionsClient(): EmissionsClient | null {
+    if (!ctx.chainConfig.emissionsContractAddress) return null;
+    if (!emissionsClient) {
+      emissionsClient = new EmissionsClient({
         rpcUrl: ctx.cryptoConfig.rpcUrl,
         ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
-        contractAddress: ctx.cryptoConfig.channelsContractAddress,
+        contractAddress: ctx.chainConfig.emissionsContractAddress,
+        evmChainId: ctx.chainConfig.evmChainId,
       });
     }
-    return channelsClient;
+    return emissionsClient;
+  }
+
+  let antsTokenClient: ANTSTokenClient | null = null;
+  function getAntsTokenClient(): ANTSTokenClient | null {
+    // ANTSToken address is typically fetched via the registry, but for v1 we
+    // plumb it through the chain config. Fall back to null if unavailable.
+    const addr = (ctx.chainConfig as { antsTokenAddress?: string }).antsTokenAddress;
+    if (!addr) return null;
+    if (!antsTokenClient) {
+      antsTokenClient = new ANTSTokenClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: addr,
+        evmChainId: ctx.chainConfig.evmChainId,
+      });
+    }
+    return antsTokenClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -49,10 +107,11 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
     try {
       const client = getClient()!;
+      const buyerAddress = ctx.cryptoCtx.evmAddress;
 
       const [balance, creditLimit] = await Promise.all([
-        client.getBuyerBalance(ctx.cryptoCtx.evmAddress),
-        client.getBuyerCreditLimit(ctx.cryptoCtx.evmAddress),
+        retryRead(() => client.getBuyerBalance(buyerAddress)),
+        retryRead(() => client.getBuyerCreditLimit(buyerAddress)),
       ]);
 
       return {
@@ -75,6 +134,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       depositsContractAddress: ctx.cryptoConfig.depositsContractAddress,
       channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
+      emissionsContractAddress: ctx.chainConfig.emissionsContractAddress ?? null,
+      networkStatsUrl: ctx.chainConfig.networkStatsUrl ?? null,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
   });
@@ -105,105 +166,36 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
-  fastify.get('/api/channels', async (_request, _reply) => {
-    if (!ctx.cryptoCtx) {
-      return { channels: [], history: [] };
-    }
-
-    // Fetch channels from the buyer proxy's local ChannelStore via its
-    // control-plane endpoint (source of truth for the list). Avoids
-    // eth_getLogs scans which are capped on public RPCs. Then enrich each
-    // channel with a point-read against channels(bytes32) to get the
-    // authoritative on-chain status + closeRequestedAt, and split into
-    // active vs history based on on-chain state.
+  fastify.get('/api/channels', async () => {
+    if (!ctx.cryptoCtx) return { channels: [] };
     try {
       const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels?all=1`;
       const resp = await fetch(url);
       if (!resp.ok) {
         fastify.log.warn(`[/api/channels] buyer proxy returned ${resp.status}`);
-        return { channels: [], history: [] };
+        return { channels: [] };
       }
-      const body = await resp.json() as {
-        ok: boolean;
-        channels: Array<{
-          channelId: string;
-          seller: string;
-          reserveMax: string;
-          cumulativeSigned: string;
-          deadline: number;
-          status: string;
-        }>;
-      };
-      // Initialize the channels client outside the enrichment loop and catch
-      // init failures independently — a bad RPC URL must not discard the
-      // channel list we already have from the buyer proxy.
-      let cc: ChannelsClient | null = null;
-      try {
-        cc = getChannelsClient();
-      } catch (err) {
-        fastify.log.warn(`[/api/channels] channels client init failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      const rawChannels = body.channels ?? [];
-      // Cap concurrent eth_call fan-out. Public RPCs rate-limit concurrent
-      // reads — the default wagmi primary (publicnode) was picked for 3/3
-      // reliability at 3 concurrent eth_calls; more than that and responses
-      // start coming back stale, which would resurrect the exact bug this
-      // PR fixes (status=1 / closeRequestedAt=0 placeholders).
-      const ON_CHAIN_READ_CONCURRENCY = 3;
-      const enriched: Array<{
-        channelId: string;
-        seller: string;
-        deposit: string;
-        settled: string;
-        deadline: number;
-        closeRequestedAt: number;
-        status: number;
-      }> = new Array(rawChannels.length);
-      let cursor = 0;
-      async function worker() {
-        while (true) {
-          const i = cursor++;
-          if (i >= rawChannels.length) return;
-          const c = rawChannels[i]!;
-          let closeRequestedAt = 0;
-          let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
-          let onchainSettled: bigint | null = null;
-          if (cc) {
-            try {
-              const onchain = await cc.getSession(c.channelId);
-              closeRequestedAt = Number(onchain.closeRequestedAt);
-              onchainStatus = onchain.status;
-              onchainSettled = onchain.settled;
-            } catch (err) {
-              fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
-            }
-          }
-          enriched[i] = {
-            channelId: c.channelId,
-            seller: c.seller,
-            deposit: formatUsdc6(BigInt(c.reserveMax)),
-            settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
-            deadline: c.deadline,
-            closeRequestedAt,
-            status: onchainStatus,
-          };
-        }
-      }
-      const workers = Array.from(
-        { length: Math.min(ON_CHAIN_READ_CONCURRENCY, rawChannels.length) },
-        () => worker(),
-      );
-      await Promise.all(workers);
-      // Active = on-chain status Active (1). Everything else is history
-      // (Settled=2, TimedOut=3, None=0 means the channel no longer exists
-      // on-chain — e.g., withdrawn and cleared).
-      const channels = enriched.filter((c) => c.status === 1);
-      const history = enriched.filter((c) => c.status !== 1);
-      return { channels, history };
+      const body = await resp.json() as { ok: boolean; channels: unknown[] };
+      return { channels: body.channels ?? [] };
     } catch (err) {
       fastify.log.warn(`[/api/channels] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return { channels: [], history: [] };
+      return { channels: [] };
+    }
+  });
+
+  fastify.get('/api/buyer-usage', async (): Promise<BuyerUsageTotals> => {
+    try {
+      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/buyer-usage`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        fastify.log.warn(`[/api/buyer-usage] buyer proxy returned ${resp.status}`);
+        return EMPTY_BUYER_USAGE;
+      }
+      const body = await resp.json() as { ok: boolean; totals: BuyerUsageTotals };
+      return body.totals;
+    } catch (err) {
+      fastify.log.warn(`[/api/buyer-usage] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
+      return EMPTY_BUYER_USAGE;
     }
   });
 
@@ -220,8 +212,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
       const buyerAddress = ctx.cryptoCtx.evmAddress;
       const [operator, nonce] = await Promise.all([
-        client.getOperator(buyerAddress),
-        client.getOperatorNonce(buyerAddress),
+        retryRead(() => client.getOperator(buyerAddress)),
+        retryRead(() => client.getOperatorNonce(buyerAddress)),
       ]);
 
       return { operator, nonce: Number(nonce) };
@@ -253,6 +245,111 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         nonce,
       });
       return { ok: true, signature, nonce: Number(nonce), buyer: ctx.cryptoCtx.evmAddress };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions', async (_request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    try {
+      const [info, genesis, halving] = await Promise.all([
+        retryRead(() => client.getEpochInfo()),
+        retryRead(() => client.getGenesis()),
+        retryRead(() => client.getHalvingInterval()),
+      ]);
+      const emission = await retryRead(() => client.getEpochEmission(info.epoch));
+      return {
+        currentEpoch: info.epoch,
+        epochDuration: info.epochDuration,
+        currentRate: info.emission.toString(),
+        epochEmission: emission.toString(),
+        genesis,
+        halvingInterval: halving,
+      };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/pending', async (request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    const query = request.query as { address?: string; epochs?: string } | undefined;
+    const address = query?.address;
+    if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return reply.status(400).send({ ok: false, error: 'Invalid address' });
+    }
+    const scanN = Math.min(Math.max(parseInt(query?.epochs ?? '10', 10) || 10, 1), 104);
+    try {
+      const info = await retryRead(() => client.getEpochInfo());
+      const current = info.epoch;
+      const startEpoch = Math.max(0, current - (scanN - 1));
+      const epochList = Array.from({ length: current - startEpoch + 1 }, (_, i) => startEpoch + i);
+
+      const rows = await Promise.all(
+        epochList.map(async (epoch) => {
+          const [pending, userSP, userBP, sellerClaimed, buyerClaimed, totalSP, totalBP] = await Promise.all([
+            retryRead(() => client.pendingEmissions(address, [epoch])),
+            retryRead(() => client.userSellerPoints(address, epoch)),
+            retryRead(() => client.userBuyerPoints(address, epoch)),
+            retryRead(() => client.sellerEpochClaimed(address, epoch)),
+            retryRead(() => client.buyerEpochClaimed(address, epoch)),
+            retryRead(() => client.epochTotalSellerPoints(epoch)),
+            retryRead(() => client.epochTotalBuyerPoints(epoch)),
+          ]);
+          return {
+            epoch,
+            seller: {
+              amount: pending.seller.toString(),
+              userPoints: userSP.toString(),
+              totalPoints: totalSP.toString(),
+              claimed: sellerClaimed,
+            },
+            buyer: {
+              amount: pending.buyer.toString(),
+              userPoints: userBP.toString(),
+              totalPoints: totalBP.toString(),
+              claimed: buyerClaimed,
+            },
+            isCurrent: epoch === current,
+          };
+        }),
+      );
+
+      return { currentEpoch: current, rows };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/shares', async (_request, reply) => {
+    const client = getEmissionsClient();
+    if (!client) {
+      return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
+    }
+    try {
+      return await retryRead(() => client.getShares());
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get('/api/emissions/transfers-enabled', async (_request, reply) => {
+    const client = getAntsTokenClient();
+    if (!client) {
+      // When the ANTS token address isn't configured, treat as "not enabled yet"
+      // — the UI uses this to decide whether to show the locked banner.
+      return { enabled: false, configured: false };
+    }
+    try {
+      const enabled = await client.transfersEnabled();
+      return { enabled, configured: true };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }

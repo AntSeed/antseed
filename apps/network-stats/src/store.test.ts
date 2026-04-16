@@ -283,3 +283,4 @@ describe('SqliteStore', () => {
     store.close();
   });
 });
+

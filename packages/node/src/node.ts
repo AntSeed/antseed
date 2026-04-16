@@ -60,6 +60,7 @@ import {
   ChannelsClient,
   StakingClient,
   ChannelStore,
+  CHANNEL_STATUS,
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
@@ -156,6 +157,34 @@ export interface NodeConfig {
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
 }
+
+export interface BuyerUsageChannelPoint {
+  reservedAt: number;
+  updatedAt: number;
+  requestCount: number;
+  inputTokens: string;
+  outputTokens: string;
+}
+
+export interface BuyerUsageTotals {
+  totalRequests: number;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalSettlements: number;
+  uniqueSellers: number;
+  activeChannels: number;
+  channels: BuyerUsageChannelPoint[];
+}
+
+const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
+  totalRequests: 0,
+  totalInputTokens: '0',
+  totalOutputTokens: '0',
+  totalSettlements: 0,
+  uniqueSellers: 0,
+  activeChannels: 0,
+  channels: [],
+};
 
 export class AntseedNode extends EventEmitter {
   private _config: NodeConfig;
@@ -623,6 +652,49 @@ export class AntseedNode extends EventEmitter {
     }));
   }
 
+  /**
+   * On buyer rows in payment_channels, `tokensDelivered` stores cumulative
+   * input tokens and `previousConsumption` stores cumulative output tokens —
+   * columns are semantically overloaded vs seller rows. Set in
+   * buyer-payment-manager.recordAndPersistTokens.
+   */
+  getBuyerUsageTotals(): BuyerUsageTotals {
+    const buyerAddress = this._identity?.wallet.address ?? null;
+    if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
+    const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
+    let totalRequests = 0;
+    let totalInput = 0n;
+    let totalOutput = 0n;
+    let totalSettlements = 0;
+    let activeChannels = 0;
+    const sellers = new Set<string>();
+    const channels: BuyerUsageChannelPoint[] = [];
+    for (const c of stored) {
+      totalRequests += c.requestCount;
+      try { totalInput += BigInt(c.tokensDelivered || '0'); } catch { /* skip */ }
+      try { totalOutput += BigInt(c.previousConsumption || '0'); } catch { /* skip */ }
+      if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
+      if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      if (c.peerId) sellers.add(c.peerId);
+      channels.push({
+        reservedAt: c.reservedAt,
+        updatedAt: c.updatedAt,
+        requestCount: c.requestCount,
+        inputTokens: c.tokensDelivered || '0',
+        outputTokens: c.previousConsumption || '0',
+      });
+    }
+    return {
+      totalRequests,
+      totalInputTokens: totalInput.toString(),
+      totalOutputTokens: totalOutput.toString(),
+      totalSettlements,
+      uniqueSellers: sellers.size,
+      activeChannels,
+      channels,
+    };
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,
@@ -1036,6 +1108,7 @@ export class AntseedNode extends EventEmitter {
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.depositsAddress,
         usdcAddress: payments.usdcAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] DepositsClient initialized (contract=${payments.depositsAddress.slice(0, 10)}...)`);
     }
@@ -1046,6 +1119,7 @@ export class AntseedNode extends EventEmitter {
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.channelsAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
     }
@@ -1057,6 +1131,7 @@ export class AntseedNode extends EventEmitter {
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.stakingAddress,
         usdcAddress: payments.usdcAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] StakingClient initialized (contract=${payments.stakingAddress.slice(0, 10)}...)`);
     }
@@ -1067,6 +1142,7 @@ export class AntseedNode extends EventEmitter {
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.identityRegistryAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
     }

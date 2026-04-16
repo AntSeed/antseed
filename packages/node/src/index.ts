@@ -5,6 +5,8 @@ export {
   type NodePaymentsConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
+  type BuyerUsageTotals,
+  type BuyerUsageChannelPoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export type { Router } from './interfaces/buyer-router.js';
@@ -39,6 +41,8 @@ export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
+export { EmissionsClient, type EmissionsClientConfig } from './payments/evm/emissions-client.js';
+export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {
   StatsClient,
   type StatsClientConfig,

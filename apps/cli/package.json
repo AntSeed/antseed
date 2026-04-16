@@ -20,7 +20,6 @@
     "dev": "tsx watch src/cli/index.ts",
     "start:seed": "node dist/cli/index.js seed",
     "start:connect": "node dist/cli/index.js connect",
-    "start:dashboard": "node dist/cli/index.js dashboard",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js"
   },
@@ -30,7 +29,6 @@
     "@antseed/payments": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",
-    "@antseed/dashboard": "workspace:*",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
     "commander": "^14.0.3",
