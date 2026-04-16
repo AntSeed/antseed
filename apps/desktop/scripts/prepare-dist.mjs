@@ -31,7 +31,6 @@ const nmDir = path.join(appDir, 'node_modules');
 const WORKSPACE_PACKAGES = {
   '@antseed/api-adapter': path.resolve(appDir, '..', '..', 'packages', 'api-adapter'),
   '@antseed/node': path.resolve(appDir, '..', '..', 'packages', 'node'),
-  '@antseed/dashboard': path.resolve(appDir, '..', 'dashboard'),
   '@antseed/payments': path.resolve(appDir, '..', 'payments'),
 };
 
