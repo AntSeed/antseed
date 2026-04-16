@@ -40,6 +40,14 @@ function formatAnts(amountWei: string): string {
   }
 }
 
+function estimateSideReward(epochEmission: string, sharePct: number, userPts: string, totalPts: string): bigint {
+  const emission = safeBigint(epochEmission);
+  const user = safeBigint(userPts);
+  const total = safeBigint(totalPts);
+  if (total === 0n) return 0n;
+  return emission * BigInt(Math.round(sharePct * 100)) * user / (10000n * total);
+}
+
 function estimateRowReward(
   row: EmissionsPendingResponse['rows'][number],
   epochEmission: string,
@@ -260,12 +268,18 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   let totalClaimed = 0n;
   for (const r of rows) {
     if (r.isCurrent) continue;
-    const sellerAmt = safeBigint(r.seller.amount);
-    const buyerAmt = safeBigint(r.buyer.amount);
-    if (r.seller.claimed) totalClaimed += sellerAmt;
-    else totalClaimable += sellerAmt;
-    if (r.buyer.claimed) totalClaimed += buyerAmt;
-    else totalClaimable += buyerAmt;
+    const ep = r.epochEmission ?? info.epochEmission;
+    // Per-side: pendingEmissions returns 0 for claimed sides, so estimate from points
+    if (r.seller.claimed && shares) {
+      totalClaimed += estimateSideReward(ep, shares.sellerSharePct, r.seller.userPoints, r.seller.totalPoints);
+    } else {
+      totalClaimable += safeBigint(r.seller.amount);
+    }
+    if (r.buyer.claimed && shares) {
+      totalClaimed += estimateSideReward(ep, shares.buyerSharePct, r.buyer.userPoints, r.buyer.totalPoints);
+    } else {
+      totalClaimable += safeBigint(r.buyer.amount);
+    }
   }
 
   return (
@@ -448,20 +462,24 @@ function EmissionsTable({ rows, epochEmission, shares }: {
         </thead>
         <tbody>
           {rows.slice().reverse().map((row) => {
-            const total = row.isCurrent && epochEmission && shares
-              ? estimateRowReward(row, epochEmission, shares)
+            const ep = row.epochEmission ?? epochEmission ?? '0';
+            const total = (row.isCurrent || row.seller.claimed || row.buyer.claimed) && shares
+              ? estimateRowReward(row, ep, shares)
               : addWei(row.seller.amount, row.buyer.amount);
             const share = shares ? computeEpochShare(row, shares) : 0;
-            const allClaimed = row.seller.claimed && row.buyer.claimed;
+            // "Fully resolved" = each side is either claimed or has no points
+            const sellerDone = row.seller.claimed || row.seller.userPoints === '0';
+            const buyerDone = row.buyer.claimed || row.buyer.userPoints === '0';
+            const fullyClaimed = !row.isCurrent && sellerDone && buyerDone && (row.seller.claimed || row.buyer.claimed);
             const nothingToClaim = total === '0';
-            const statusLabel = allClaimed
+            const statusLabel = fullyClaimed
               ? 'Claimed'
               : row.isCurrent
                 ? 'Estimate'
                 : nothingToClaim
                   ? '—'
                   : 'Claimable';
-            const statusClass = allClaimed
+            const statusClass = fullyClaimed
               ? 'emissions-status--claimed'
               : row.isCurrent
                 ? 'emissions-status--estimate'
