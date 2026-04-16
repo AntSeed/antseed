@@ -251,16 +251,12 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
     }
     try {
-      const [info, genesis, halving, emission] = await Promise.all([
-        client.getEpochInfo(),
-        client.getGenesis(),
-        client.getHalvingInterval(),
-        // current epoch emission budget
-        (async () => {
-          const epochInfo = await client.getEpochInfo();
-          return client.getEpochEmission(epochInfo.epoch);
-        })(),
+      const [info, genesis, halving] = await Promise.all([
+        retryRead(() => client.getEpochInfo()),
+        retryRead(() => client.getGenesis()),
+        retryRead(() => client.getHalvingInterval()),
       ]);
+      const emission = await retryRead(() => client.getEpochEmission(info.epoch));
       return {
         currentEpoch: info.epoch,
         epochDuration: info.epochDuration,
@@ -286,23 +282,19 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
     const scanN = Math.min(Math.max(parseInt(query?.epochs ?? '10', 10) || 10, 1), 104);
     try {
-      const info = await client.getEpochInfo();
+      const info = await retryRead(() => client.getEpochInfo());
       const current = info.epoch;
       const startEpoch = Math.max(0, current - (scanN - 1));
       const epochList = Array.from({ length: current - startEpoch + 1 }, (_, i) => startEpoch + i);
 
-      // Per-epoch pending (so we can render a row per epoch), not just totals.
-      // For each epoch, we need: user points, total points, claimed flag, and
-      // the pending delta. We derive per-epoch amounts by calling pendingEmissions
-      // with a single-element epoch array.
       const rows = await Promise.all(
         epochList.map(async (epoch) => {
           const [pending, userSP, userBP, sellerClaimed, buyerClaimed] = await Promise.all([
-            client.pendingEmissions(address, [epoch]),
-            client.userSellerPoints(address, epoch),
-            client.userBuyerPoints(address, epoch),
-            client.sellerEpochClaimed(address, epoch),
-            client.buyerEpochClaimed(address, epoch),
+            retryRead(() => client.pendingEmissions(address, [epoch])),
+            retryRead(() => client.userSellerPoints(address, epoch)),
+            retryRead(() => client.userBuyerPoints(address, epoch)),
+            retryRead(() => client.sellerEpochClaimed(address, epoch)),
+            retryRead(() => client.buyerEpochClaimed(address, epoch)),
           ]);
           return {
             epoch,
@@ -333,7 +325,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       return reply.status(503).send({ ok: false, error: 'Emissions contract not configured for this chain' });
     }
     try {
-      return await client.getShares();
+      return await retryRead(() => client.getShares());
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
