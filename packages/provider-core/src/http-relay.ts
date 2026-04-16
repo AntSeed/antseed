@@ -317,7 +317,9 @@ export class HttpRelay {
           const body = new TextDecoder().decode(
             debugChunks.reduce((a, b) => { const r = new Uint8Array(a.byteLength + b.byteLength); r.set(a); r.set(b, a.byteLength); return r; }, new Uint8Array(0))
           );
-          console.warn(`[http-relay] Short stream (${totalStreamBytes}b): ${JSON.stringify(body)}`);
+          let model = 'unknown';
+          try { model = JSON.parse(new TextDecoder().decode(request.body))?.model ?? 'unknown'; } catch {}
+          console.warn(`[http-relay] Short stream (${totalStreamBytes}b) model="${model}" url=${url}: ${JSON.stringify(body)}`);
         }
 
         this._callbacks.onResponseChunk?.({
