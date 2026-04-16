@@ -102,6 +102,7 @@ export class SellerPaymentManager {
       rpcUrl: config.rpcUrl,
       ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.channelsContractAddress,
+      evmChainId: config.chainId,
     });
     this._channelStore = channelStore;
     this._minSettleDelta = config.minSettleDelta !== undefined

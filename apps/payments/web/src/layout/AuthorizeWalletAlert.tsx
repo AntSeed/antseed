@@ -3,7 +3,7 @@ import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 export function AuthorizeWalletAlert() {
   const { operatorSet, bannerDismissed, dismissBanner, requireAuthorization } = useAuthorizedWallet();
 
-  if (operatorSet !== false || bannerDismissed) return null;
+  if (operatorSet !== false) return null;
 
   return (
     <div className="authorize-wallet-alert" role="status">

@@ -336,6 +336,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
             contractAddress: chainConfig.depositsContractAddress,
             usdcAddress: chainConfig.usdcContractAddress,
+            evmChainId: chainConfig.evmChainId,
           })
           const account = await depositsClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))

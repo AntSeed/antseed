@@ -1108,6 +1108,7 @@ export class AntseedNode extends EventEmitter {
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.depositsAddress,
         usdcAddress: payments.usdcAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] DepositsClient initialized (contract=${payments.depositsAddress.slice(0, 10)}...)`);
     }
@@ -1118,6 +1119,7 @@ export class AntseedNode extends EventEmitter {
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.channelsAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
     }
@@ -1129,6 +1131,7 @@ export class AntseedNode extends EventEmitter {
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.stakingAddress,
         usdcAddress: payments.usdcAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] StakingClient initialized (contract=${payments.stakingAddress.slice(0, 10)}...)`);
     }
@@ -1139,6 +1142,7 @@ export class AntseedNode extends EventEmitter {
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.identityRegistryAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
     }

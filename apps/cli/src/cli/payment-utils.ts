@@ -60,7 +60,7 @@ export async function loadCryptoContext(dataDir: string): Promise<CryptoContext>
  * Validate that crypto payment config is present and return it.
  * Exits with error if not configured.
  */
-export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedConfig['payments']['crypto']> {
+export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedConfig['payments']['crypto']> & { evmChainId: number } {
   const crypto = config.payments?.crypto;
   if (!crypto) {
     throw new Error('No crypto payment configuration found. Configure payments.crypto in your config file.');
@@ -79,6 +79,7 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
     stakingContractAddress: crypto.stakingContractAddress || resolved.stakingContractAddress,
     emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
+    evmChainId: resolved.evmChainId,
   };
 }
 
@@ -98,6 +99,7 @@ export function createDepositsClient(config: AntseedConfig): DepositsClient {
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.depositsContractAddress,
     usdcAddress: crypto.usdcContractAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 
@@ -110,6 +112,7 @@ export function createChannelsClient(config: AntseedConfig): ChannelsClient {
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.channelsContractAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 
@@ -125,6 +128,7 @@ export function createIdentityClient(config: AntseedConfig): IdentityClient {
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.identityRegistryAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 
@@ -141,6 +145,7 @@ export function createStakingClient(config: AntseedConfig): StakingClient {
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.stakingContractAddress,
     usdcAddress: crypto.usdcContractAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 
@@ -156,6 +161,7 @@ export function createEmissionsClient(config: AntseedConfig): EmissionsClient {
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.emissionsContractAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 
@@ -172,6 +178,7 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.subPoolContractAddress,
     usdcAddress: crypto.usdcContractAddress,
+    evmChainId: crypto.evmChainId,
   });
 }
 

@@ -53,6 +53,7 @@ if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 
       ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
       contractAddress: chainConfig.stakingContractAddress,
       usdcAddress: chainConfig.usdcContractAddress,
+      evmChainId: chainConfig.evmChainId,
     });
   } else {
     console.warn(`[network-stats] stats contract is configured for ${CHAIN_ID} but staking contract is not — /stats enrichment will fall back to the legacy non-enriched payload`);

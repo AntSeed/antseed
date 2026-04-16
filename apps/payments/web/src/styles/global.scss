@@ -741,7 +741,7 @@ $dash-sidebar-width: 240px;
 .emissions-view {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 32px;
 }
 
 .emissions-banner {
@@ -768,16 +768,23 @@ $dash-sidebar-width: 240px;
 .emissions-row-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .emissions-row {
   display: grid;
-  grid-template-columns: 100px 120px 100px 1fr;
+  grid-template-columns: 90px 120px 1fr auto;
   align-items: center;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 10px 14px;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 8px;
   font-size: 12px;
+
+  &--current {
+    border-color: var(--accent-border, var(--accent));
+    background: var(--accent-dim);
+  }
 }
 .emissions-row-epoch { font-weight: 600; color: var(--text-secondary); }
 .emissions-row-amount { font-weight: 600; color: var(--text-primary); }
+.emissions-row-breakdown { font-size: 11px; color: var(--text-muted); }
 .emissions-row-status {
   display: inline-block;
   padding: 2px 8px;
@@ -786,13 +793,24 @@ $dash-sidebar-width: 240px;
   font-weight: 600;
   background: rgba(148, 163, 184, 0.12);
   color: var(--text-muted);
+  justify-self: end;
 
   &--pending { background: var(--accent-dim); color: var(--accent-text); }
   &--claimed { background: rgba(59, 130, 246, 0.08); color: #3b82f6; }
+  &--estimate { background: var(--amber-dim, rgba(192, 136, 0, 0.08)); color: var(--amber, #c08800); }
 }
-.emissions-row-hint { font-size: 10px; color: var(--text-muted); justify-self: end; }
+.emissions-row-hint {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  color: var(--text-muted);
+}
 
-.emissions-claim-btn { margin-top: 12px; width: 100%; }
+.emissions-claim-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
 
 .emissions-operator-banner {
   padding: 16px;
