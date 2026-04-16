@@ -801,7 +801,7 @@ export class ConnectionManager extends EventEmitter {
       return Array.isArray(server.urls) ? server.urls : [server.urls];
     });
 
-    return new ndc.PeerConnection(`idleai-${remotePeerId.slice(0, 12)}`, {
+    return new ndc.PeerConnection(`antseed-${remotePeerId.slice(0, 12)}`, {
       iceServers,
       iceTransportPolicy: this._iceConfig.iceTransportPolicy ?? "all",
     });
@@ -906,7 +906,7 @@ export class ConnectionManager extends EventEmitter {
         this._detectedTransportMode = "tcp";
         return this._detectedTransportMode;
       }
-      const probe = new ndc.PeerConnection("idleai-transport-probe", { iceServers: [] });
+      const probe = new ndc.PeerConnection("antseed-transport-probe", { iceServers: [] });
       try {
         const channel = probe.createDataChannel("probe", { ordered: true });
         channel.close();

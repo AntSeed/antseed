@@ -1,8 +1,6 @@
 import type { ProviderType } from '../types/metering.js';
 
 export const ANTSEED_PROVIDER_HEADER = 'x-antseed-provider';
-/** @deprecated Use ANTSEED_PROVIDER_HEADER instead */
-export const IDLEAI_PROVIDER_HEADER = ANTSEED_PROVIDER_HEADER;
 
 const KNOWN_PROVIDERS = new Set<string>([
   'anthropic',
