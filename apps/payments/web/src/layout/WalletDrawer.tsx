@@ -5,6 +5,7 @@ import type { BalanceData, PaymentConfig } from '../types';
 import { useSetOperator } from '../hooks/useSetOperator';
 import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import { Button } from '../components/Button';
+import { InfoHint } from '../components/InfoHint';
 
 interface WalletDrawerProps {
   isOpen: boolean;
@@ -164,6 +165,14 @@ export function WalletDrawer({
                 <div className="wallet-drawer-role">
                   <span className="wallet-drawer-role-dot wallet-drawer-role-dot--signer" />
                   Signer
+                  <InfoHint>
+                    <p>
+                      Your signer authorizes spending from your AntSeed account — it
+                      never holds USDC itself. The balance lives in the
+                      AntseedDeposits contract, tracked under this address. Your
+                      signer never needs gas.
+                    </p>
+                  </InfoHint>
                 </div>
                 <button
                   type="button"
@@ -180,11 +189,6 @@ export function WalletDrawer({
                   </span>
                 </button>
               </div>
-              <p className="wallet-drawer-explainer">
-                Your signer authorizes spending from your AntSeed account — it never
-                holds USDC itself. The balance lives in the AntseedDeposits contract,
-                tracked under this address. Your signer never needs gas.
-              </p>
             </div>
 
             <div className="wallet-drawer-balances">
@@ -286,30 +290,33 @@ export function WalletDrawer({
                         Replace it with this wallet to withdraw, claim ANTS, and close channels from here.
                       </div>
                     </div>
-                  ) : (
-                    <div className="wallet-drawer-warn">
-                      <div className="wallet-drawer-warn-title">No authorized wallet yet</div>
-                      <div className="wallet-drawer-warn-desc">
-                        Without an authorized wallet you cannot withdraw USDC, claim ANTS,
-                        or close channels. If you lose access to this node, your funds
-                        become unrecoverable. Authorize this wallet to keep your funds safe.
-                      </div>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
 
-                {!operatorMatchesConnected && (
-                  <Button
-                    variant="primary"
-                    onClick={() => void setOperator.run()}
-                    disabled={setOperator.running || !config}
-                  >
-                    {setOperator.running
-                      ? 'Authorizing…'
-                      : hasOperator
-                        ? 'Replace authorized wallet'
-                        : 'Authorize this wallet'}
-                  </Button>
+                {!operatorMatchesConnected && !operatorLoading && (
+                  <div className="wallet-drawer-authorize-row">
+                    <button
+                      type="button"
+                      className="wallet-drawer-link wallet-drawer-link--accent"
+                      onClick={() => void setOperator.run()}
+                      disabled={setOperator.running || !config}
+                    >
+                      {setOperator.running
+                        ? 'Authorizing…'
+                        : hasOperator
+                          ? 'Replace authorized wallet'
+                          : 'Authorize this wallet'}
+                    </button>
+                    {!hasOperator && (
+                      <InfoHint variant="warn">
+                        <p>
+                          Without an authorized wallet you cannot withdraw USDC, claim ANTS,
+                          or close channels. If you lose access to this node, your funds
+                          become unrecoverable. Authorize this wallet to keep your funds safe.
+                        </p>
+                      </InfoHint>
+                    )}
+                  </div>
                 )}
 
                 {setOperator.error && (

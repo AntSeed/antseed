@@ -1122,6 +1122,21 @@ $dash-sidebar-width: 240px;
     text-underline-offset: 2px;
 
     &:hover { color: var(--text-primary); }
+
+    &--accent {
+      color: var(--accent-text);
+      font-size: 12px;
+      font-weight: 600;
+
+      &:hover:not(:disabled) { color: var(--accent); }
+      &:disabled { opacity: 0.5; cursor: default; }
+    }
+  }
+
+  &-authorize-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
 
   &-connect-wrap {
@@ -1617,6 +1632,102 @@ $dash-sidebar-width: 240px;
 }
 
 @keyframes authorize-wallet-why-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Generic hover-tooltip hint ──────────────────────────────── */
+
+.info-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: help;
+  outline: none;
+  user-select: none;
+  align-self: flex-start;
+
+  .info-hint-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid var(--input-border);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    line-height: 1;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: var(--text-primary);
+
+    .info-hint-icon {
+      background: var(--accent-dim);
+      border-color: var(--accent-border);
+      color: var(--accent-text);
+    }
+  }
+
+  &--warn {
+    color: var(--amber, #c08800);
+
+    .info-hint-icon {
+      border-color: var(--amber-border);
+      color: var(--amber, #c08800);
+    }
+
+    &:hover,
+    &:focus-visible {
+      color: var(--amber, #c08800);
+
+      .info-hint-icon {
+        background: var(--amber-dim);
+        border-color: var(--amber-border);
+        color: var(--amber, #c08800);
+      }
+    }
+  }
+}
+
+.info-hint-tooltip {
+  position: fixed;
+  z-index: 300;
+  width: min(340px, calc(100vw - 48px));
+  padding: 12px 14px;
+  background: var(--box-bg);
+  border: 1px solid var(--box-border);
+  border-radius: 10px;
+  box-shadow: var(--box-shadow);
+  pointer-events: none;
+  animation: info-hint-fade 0.15s ease both;
+
+  p {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+
+    &:last-child { margin-bottom: 0; }
+  }
+  code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    padding: 1px 5px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 4px;
+  }
+}
+
+@keyframes info-hint-fade {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
