@@ -307,7 +307,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           <div className="dashboard-section-eyebrow">Your position</div>
           <h2 className="dashboard-section-title">This epoch</h2>
           <p className="dashboard-section-sub">
-            Your share of this epoch's rewards. Updates as activity flows through the network.
+            Your share of this epoch's rewards. Updates after each on-chain settlement.
           </p>
         </header>
 
@@ -340,7 +340,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           <div className="dashboard-section-eyebrow">History</div>
           <h2 className="dashboard-section-title">Your emissions</h2>
           <p className="dashboard-section-sub">
-            Seller and buyer rewards combined. Current epoch is an estimate that updates as activity flows.
+            Current epoch is an estimate that updates after each on-chain settlement.
           </p>
         </header>
         <div className="dashboard-chart-card">
