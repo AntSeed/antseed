@@ -1562,7 +1562,9 @@ export function initChatModule({
               setChatSending(false);
               void handlePaymentRequired(paymentMatch[1]);
             } else {
-              reportChatError(result.error, 'Request failed');
+              if (!uiState.chatError) {
+                reportChatError(result.stopReason?.message ?? result.error, 'Request failed');
+              }
               setChatSending(false);
             }
           }
@@ -2155,6 +2157,15 @@ export function initChatModule({
     if (bridge.onChatAiStreamError) {
       bridge.onChatAiStreamError((data) => {
         const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
+        const stopReason = data.stopReason;
+        const stopReasonSummary = stopReason
+          ? [
+              stopReason.kind,
+              stopReason.statusCode ? `status=${String(stopReason.statusCode)}` : null,
+              stopReason.errorCode ? `code=${stopReason.errorCode}` : null,
+              stopReason.retryable ? 'retryable' : 'non-retryable',
+            ].filter(Boolean).join(', ')
+          : 'unknown';
         setConversationStreamingMessage(data.conversationId, null);
 
         if (data.conversationId === uiState.chatActiveConversation) {
@@ -2174,9 +2185,9 @@ export function initChatModule({
               void handlePaymentRequired(paymentMatch[1]);
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
-              showChatError(data.error);
+              showChatError(stopReason?.message ?? data.error);
             }
-            appendSystemLog(`AI Chat error: ${data.error}`);
+            appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
           }
         } else if (shouldClearSending) {
           setChatSending(false);
