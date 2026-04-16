@@ -17,6 +17,7 @@ export interface ChainConfig {
   usdcContractAddress: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  antsTokenAddress?: string;
   subPoolContractAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
@@ -48,6 +49,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
     stakingContractAddress: '0x3652E6B22919bd322A25723B94BB207602E5c8e6',
     emissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
+    antsTokenAddress: '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263',
     identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
     channelsDeployBlock: 44469557,
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
@@ -106,6 +108,7 @@ export function resolveChainConfig(overrides?: {
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  antsTokenAddress?: string;
   subPoolContractAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -125,6 +128,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
+    ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.subPoolContractAddress ? { subPoolContractAddress: overrides.subPoolContractAddress } : {}),
   };
 }

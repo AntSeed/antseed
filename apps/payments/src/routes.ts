@@ -88,7 +88,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   function getAntsTokenClient(): ANTSTokenClient | null {
     // ANTSToken address is typically fetched via the registry, but for v1 we
     // plumb it through the chain config. Fall back to null if unavailable.
-    const addr = (ctx.chainConfig as { antsTokenAddress?: string }).antsTokenAddress;
+    const addr = ctx.chainConfig.antsTokenAddress;
     if (!addr) return null;
     if (!antsTokenClient) {
       antsTokenClient = new ANTSTokenClient({
@@ -135,7 +135,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       emissionsContractAddress: ctx.chainConfig.emissionsContractAddress ?? null,
-      antsTokenAddress: (ctx.chainConfig as { antsTokenAddress?: string }).antsTokenAddress ?? null,
+      antsTokenAddress: ctx.chainConfig.antsTokenAddress ?? null,
       networkStatsUrl: ctx.chainConfig.networkStatsUrl ?? null,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
