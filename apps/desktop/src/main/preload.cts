@@ -177,8 +177,8 @@ const api = {
   chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
-  chatAiAbort(): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('chat:ai-abort');
+  chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },
   chatAiSelectPeer(peerId: string | null): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', peerId);

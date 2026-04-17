@@ -132,8 +132,6 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   let activeConversation: ChatConversation | null = null;
-  let activeStreamTurn: number | null = null;
-  let activeStreamStartedAt = 0;
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
@@ -143,6 +141,9 @@ export function initChatModule({
   let serviceRefreshToken = 0;
   let serviceRefreshInProgress = false;
   let serviceSelectFocused = false;
+  const sendingConversationIds = new Set<string>();
+  const streamTurnsByConversation = new Map<string, number>();
+  const streamStartedAtByConversation = new Map<string, number>();
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
 
@@ -486,21 +487,25 @@ export function initChatModule({
 
   function updateStreamingIndicator(): void {
     const genericStatus = formatGenericChatStatus();
+    const activeConvId = uiState.chatActiveConversation;
+    const activeSending = activeConvId ? sendingConversationIds.has(activeConvId) : uiState.chatSending;
+    const activeStreamTurn = activeConvId ? streamTurnsByConversation.get(activeConvId) ?? null : null;
+    const activeStreamStartedAt = activeConvId ? streamStartedAtByConversation.get(activeConvId) ?? 0 : 0;
     const elapsedMs =
       activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
     const elapsedText = elapsedMs > 0 ? ` · ${formatElapsedMs(elapsedMs)}` : '';
 
-    if (activeStreamTurn !== null && uiState.chatSending) {
+    if (activeStreamTurn !== null && activeSending) {
       const label = getMyrmecochoryLabel(activeStreamTurn);
       uiState.chatStreamingIndicatorText = `Turn ${activeStreamTurn} · ${label}${elapsedText} · ${genericStatus}`;
-    } else if (uiState.chatSending) {
+    } else if (activeSending) {
       uiState.chatStreamingIndicatorText = `Generating response...${elapsedText} · ${genericStatus}`;
     } else {
       uiState.chatStreamingIndicatorText = genericStatus;
     }
 
-    uiState.chatStreamingActive = uiState.chatSending;
-    uiState.chatThinkingElapsedMs = uiState.chatSending ? elapsedMs : 0;
+    uiState.chatStreamingActive = activeSending;
+    uiState.chatThinkingElapsedMs = activeSending ? elapsedMs : 0;
     notifyUiStateChanged();
   }
 
@@ -717,7 +722,7 @@ export function initChatModule({
   function ensureStreamingIndicatorTimer(): void {
     if (streamingIndicatorTimer !== null) return;
     streamingIndicatorTimer = window.setInterval(() => {
-      if (!uiState.chatSending) {
+      if (sendingConversationIds.size === 0 && !uiState.chatSending) {
         clearStreamingIndicatorTimer();
         return;
       }
@@ -725,9 +730,15 @@ export function initChatModule({
     }, 1000);
   }
 
-  function setChatSending(sending: boolean): void {
+  function isConversationSending(convId: string | null | undefined): boolean {
+    return Boolean(convId && sendingConversationIds.has(convId));
+  }
+
+  function syncActiveConversationSendingState(): void {
+    const activeConvId = uiState.chatActiveConversation;
+    const sending = isConversationSending(activeConvId);
     uiState.chatSending = sending;
-    uiState.chatSendingConversationId = sending ? (uiState.chatActiveConversation ?? null) : null;
+    uiState.chatSendingConversationId = sending ? activeConvId : null;
     uiState.chatInputDisabled = sending;
     uiState.chatSendDisabled = sending;
     uiState.chatAbortVisible = sending;
@@ -742,15 +753,45 @@ export function initChatModule({
       clearThinkingPhaseExpiry();
     }
 
-    if (sending) {
-      if (activeStreamStartedAt <= 0) activeStreamStartedAt = Date.now();
+    if (sendingConversationIds.size > 0 || sending) {
       ensureStreamingIndicatorTimer();
     } else {
       clearStreamingIndicatorTimer();
-      activeStreamTurn = null;
-      activeStreamStartedAt = 0;
     }
 
+    updateStreamingIndicator();
+  }
+
+  function setConversationSending(convId: string, sending: boolean): void {
+    if (sending) {
+      sendingConversationIds.add(convId);
+      if (!streamStartedAtByConversation.has(convId)) {
+        streamStartedAtByConversation.set(convId, Date.now());
+      }
+    } else {
+      sendingConversationIds.delete(convId);
+      streamTurnsByConversation.delete(convId);
+      streamStartedAtByConversation.delete(convId);
+    }
+    syncActiveConversationSendingState();
+  }
+
+  function setChatSending(sending: boolean): void {
+    const activeConvId = uiState.chatActiveConversation;
+    if (activeConvId) {
+      setConversationSending(activeConvId, sending);
+      return;
+    }
+    uiState.chatSending = sending;
+    uiState.chatSendingConversationId = null;
+    uiState.chatInputDisabled = sending;
+    uiState.chatSendDisabled = sending;
+    uiState.chatAbortVisible = sending;
+    uiState.chatWaitingForStream = sending;
+    if (!sending) {
+      uiState.chatThinkingPhase = null;
+      clearThinkingPhaseExpiry();
+    }
     updateStreamingIndicator();
   }
 
@@ -1270,7 +1311,7 @@ export function initChatModule({
         const conv = result.data as ChatConversation;
         const serverMessages = Array.isArray(conv.messages) ? conv.messages : [];
         const shouldPreferLocalMessages =
-          hasConversationStreamingMessage(convId) || uiState.chatSendingConversationId === convId;
+          hasConversationStreamingMessage(convId) || isConversationSending(convId);
         const nextMessages =
           shouldPreferLocalMessages
             ? (getLocalConversationMessages(convId) ?? serverMessages)
@@ -1283,8 +1324,7 @@ export function initChatModule({
         uiState.chatStreamingMessage = getConversationStreamingMessage(convId);
         uiState.chatConversationTitle = String(conv.title || 'Conversation');
         uiState.chatDeleteVisible = true;
-        uiState.chatInputDisabled = false;
-        uiState.chatSendDisabled = false;
+        syncActiveConversationSendingState();
 
         const optionCandidates = getAvailableChatServiceOptions();
         const convPeerIdForMatch = conv.peerId?.trim() ?? '';
@@ -1465,11 +1505,6 @@ export function initChatModule({
     // Payment is handled by the node's 402-based flow — no pre-blocking here.
     // If the seller requires payment, the node returns a 402 with payment info.
 
-    if (uiState.chatSending) {
-      showChatError('Another chat request is already in progress.');
-      return;
-    }
-
     const content = text.trim();
     if (content.length === 0 && !imageBase64) return;
 
@@ -1490,6 +1525,10 @@ export function initChatModule({
     }
 
     const convId = uiState.chatActiveConversation;
+    if (isConversationSending(convId)) {
+      showChatError('This conversation already has a request in progress.');
+      return;
+    }
 
     // Build message content — multipart if image attached, plain string otherwise
     const messageContent: unknown = imageBase64 && imageMimeType
@@ -1509,7 +1548,7 @@ export function initChatModule({
     notifyUiStateChanged();
 
     uiState.chatError = null;
-    setChatSending(true);
+    setConversationSending(convId, true);
     void refreshWorkspaceGitStatus();
     dispatchChatRequest(convId, content, imageBase64, imageMimeType);
   }
@@ -1551,7 +1590,7 @@ export function initChatModule({
             appendSystemLog(
               'Detected stuck in-flight chat request. Aborting and retrying once...',
             );
-            await bridge.chatAiAbort().catch(() => undefined);
+            await bridge.chatAiAbort(convId).catch(() => undefined);
             result = await sendStreamRequest();
           }
 
@@ -1559,16 +1598,16 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch) {
-              setChatSending(false);
+              setConversationSending(convId, false);
               void handlePaymentRequired(paymentMatch[1]);
             } else {
               reportChatError(result.error, 'Request failed');
-              setChatSending(false);
+              setConversationSending(convId, false);
             }
           }
         } catch (err) {
           reportChatError(err, 'Chat send failed');
-          setChatSending(false);
+          setConversationSending(convId, false);
         }
       })();
     } else if (bridge.chatAiSend) {
@@ -1593,17 +1632,17 @@ export function initChatModule({
             appendSystemLog(
               'Detected stuck in-flight chat request. Aborting and retrying once...',
             );
-            await bridge.chatAiAbort().catch(() => undefined);
+            await bridge.chatAiAbort(convId).catch(() => undefined);
             result = await sendRequest();
           }
 
           if (!result.ok) {
             reportChatError(result.error, 'Request failed');
           }
-          setChatSending(false);
+          setConversationSending(convId, false);
         } catch (err) {
           reportChatError(err, 'Chat send failed');
-          setChatSending(false);
+          setConversationSending(convId, false);
         }
       })();
     }
@@ -1650,15 +1689,20 @@ export function initChatModule({
     }
 
     const convId = uiState.chatActiveConversation;
-    setChatSending(true);
+    setConversationSending(convId, true);
     dispatchChatRequest(convId, content, imageBase64, imageMimeType);
   }
 
   async function abortChat(): Promise<void> {
+    const convId = uiState.chatActiveConversation;
     if (bridge && bridge.chatAiAbort) {
-      await bridge.chatAiAbort();
+      await bridge.chatAiAbort(convId ?? undefined);
     }
-    setChatSending(false);
+    if (convId) {
+      setConversationSending(convId, false);
+    } else {
+      setChatSending(false);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1732,7 +1776,7 @@ export function initChatModule({
         } else if (data.conversationId === uiState.chatActiveConversation) {
             commitAssistantMessage(incomingMessage);
             uiState.chatError = null;
-            setChatSending(false);
+            setConversationSending(data.conversationId, false);
             notifyUiStateChanged();
         }
         void refreshChatConversations();
@@ -1742,8 +1786,8 @@ export function initChatModule({
 
     if (bridge.onChatAiError) {
       bridge.onChatAiError((data) => {
+        setConversationSending(data.conversationId, false);
         if (data.conversationId === uiState.chatActiveConversation) {
-          setChatSending(false);
           if (data.error !== 'Request aborted') {
             showChatError(data.error);
             appendSystemLog(`AI Chat error: ${data.error}`);
@@ -1823,9 +1867,9 @@ export function initChatModule({
           notifyUiStateChanged();
         }
 
-        if (data.conversationId === uiState.chatSendingConversationId) {
-          activeStreamTurn = Number(data.turn) + 1;
-          activeStreamStartedAt = Date.now();
+        if (isConversationSending(data.conversationId)) {
+          streamTurnsByConversation.set(data.conversationId, Number(data.turn) + 1);
+          streamStartedAtByConversation.set(data.conversationId, Date.now());
           updateStreamingIndicator();
         }
         if (!hasConversationStreamingMessage(data.conversationId)) {
@@ -1865,9 +1909,8 @@ export function initChatModule({
             message.content = blocks;
           });
         } else if (data.blockType === 'thinking') {
-          const thinkingLabel = getMyrmecochoryLabel(
-            (activeStreamTurn || 0) + Number(data.index || 0),
-          );
+          const turn = streamTurnsByConversation.get(data.conversationId) ?? 0;
+          const thinkingLabel = getMyrmecochoryLabel(turn + Number(data.index || 0));
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
             const thinkingInstance = blocks.filter((block) => block?.type === 'thinking').length;
@@ -2088,10 +2131,11 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
-        const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
+        const shouldClearSending = isConversationSending(data.conversationId);
+        const startedAt = streamStartedAtByConversation.get(data.conversationId) ?? 0;
         const elapsedMs =
-          activeStreamStartedAt > 0 && shouldClearSending
-            ? Date.now() - activeStreamStartedAt
+          startedAt > 0 && shouldClearSending
+            ? Date.now() - startedAt
             : 0;
 
         const finalizedStreamingMessage = materializeStreamingMessage(
@@ -2104,7 +2148,7 @@ export function initChatModule({
           }
           setConversationStreamingMessage(data.conversationId, null);
           if (shouldClearSending) {
-            setChatSending(false);
+            setConversationSending(data.conversationId, false);
           }
           uiState.chatError = null;
           notifyUiStateChanged();
@@ -2117,7 +2161,7 @@ export function initChatModule({
           }
           setConversationStreamingMessage(data.conversationId, null);
           if (shouldClearSending) {
-            setChatSending(false);
+            setConversationSending(data.conversationId, false);
             notifyUiStateChanged();
           }
         }
@@ -2135,7 +2179,7 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamError) {
       bridge.onChatAiStreamError((data) => {
-        const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
+        const shouldClearSending = isConversationSending(data.conversationId);
         setConversationStreamingMessage(data.conversationId, null);
 
         if (data.conversationId === uiState.chatActiveConversation) {
@@ -2145,7 +2189,7 @@ export function initChatModule({
           uiState.chatWaitingForStream = false;
           notifyUiStateChanged();
           if (shouldClearSending) {
-            setChatSending(false);
+            setConversationSending(data.conversationId, false);
           }
 
           if (data.error !== 'Request aborted') {
@@ -2153,14 +2197,14 @@ export function initChatModule({
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
               void handlePaymentRequired(paymentMatch[1]);
-              if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
+              if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
             } else {
               showChatError(data.error);
             }
             appendSystemLog(`AI Chat error: ${data.error}`);
           }
         } else if (shouldClearSending) {
-          setChatSending(false);
+          setConversationSending(data.conversationId, false);
           notifyUiStateChanged();
         }
         void refreshWorkspaceGitStatus();
