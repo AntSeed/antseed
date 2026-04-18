@@ -484,6 +484,16 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const dhtPort = options.dhtPort as number | undefined
       const signalingPort = options.signalingPort as number | undefined
 
+      const delegationCfg = config.payments?.sellerDelegation
+      const announcerDelegation = delegationCfg
+        ? {
+            sellerContract: delegationCfg.sellerContract,
+            chainId: resolveChainConfig({ chainId: config.payments.crypto?.chainId }).evmChainId,
+            expiresInSeconds: delegationCfg.expiresInSeconds,
+            refreshBeforeExpirySeconds: delegationCfg.refreshBeforeExpirySeconds,
+          }
+        : undefined
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
@@ -514,6 +524,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },
+        ...(announcerDelegation ? { sellerDelegation: announcerDelegation } : {}),
       })
 
       let registeredProviders = providers

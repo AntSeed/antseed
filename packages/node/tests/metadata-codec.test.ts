@@ -172,6 +172,41 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.onChainGhostCount).toBe(2);
   });
 
+  it("round-trips a v8 metadata with sellerDelegation", () => {
+    const meta: PeerMetadata = {
+      peerId: "aa".repeat(20),
+      version: 8,
+      region: "us-east-1",
+      timestamp: 1_700_000_000_000,
+      providers: [],
+      sellerDelegation: {
+        peerAddress: "aa".repeat(20),
+        sellerContract: "bb".repeat(20),
+        chainId: 8453,
+        expiresAt: 1_700_003_600,
+        signature: "cc".repeat(65),
+      },
+      signature: "dd".repeat(65),
+    };
+    const bytes = encodeMetadata(meta);
+    const decoded = decodeMetadata(bytes);
+    expect(decoded.sellerDelegation).toEqual(meta.sellerDelegation);
+  });
+
+  it("round-trips v8 metadata with no sellerDelegation", () => {
+    const meta: PeerMetadata = {
+      peerId: "aa".repeat(20),
+      version: 8,
+      region: "us-east-1",
+      timestamp: 1_700_000_000_000,
+      providers: [],
+      signature: "dd".repeat(65),
+    };
+    const bytes = encodeMetadata(meta);
+    const decoded = decodeMetadata(bytes);
+    expect(decoded.sellerDelegation).toBeUndefined();
+  });
+
   // v2/v3/v4/v5 roundtrip tests removed — pre-v6 format is rejected by the decoder.
 });
 

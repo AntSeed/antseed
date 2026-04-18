@@ -32,6 +32,7 @@ import {
 import {
   PeerAnnouncer,
   type AnnouncerConfig,
+  type SellerDelegationConfig,
 } from "./discovery/announcer.js";
 import {
   PeerLookup,
@@ -66,6 +67,8 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
+import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
@@ -156,6 +159,8 @@ export interface NodeConfig {
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
+  /** Optional seller delegation config. When set, the announcer signs and publishes a SellerDelegation. */
+  sellerDelegation?: SellerDelegationConfig;
 }
 
 export interface BuyerUsageChannelPoint {
@@ -206,6 +211,7 @@ export class AntseedNode extends EventEmitter {
   private _depositsClient: DepositsClient | null = null;
   private _channelsClient: ChannelsClient | null = null;
   private _stakingClient: StakingClient | null = null;
+  private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   /** Seller-side request handler (provider matching, execution, load tracking). */
@@ -428,6 +434,7 @@ export class AntseedNode extends EventEmitter {
     this._channelsClient = null;
     this._stakingClient = null;
     this._identityClient = null;
+    this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
     this._buyerHandler = null;
@@ -469,17 +476,18 @@ export class AntseedNode extends EventEmitter {
 
     // Verify claimed on-chain stats against actual contract data
     if (this._channelsClient && this._stakingClient) {
-      for (const p of peers) {
-        try {
-          const evmAddress = peerIdToAddress(p.peerId);
-          const agentId = await this._stakingClient.getAgentId(evmAddress);
-          const stats = await this._channelsClient.getAgentStats(agentId);
-          p.onChainChannelCount = stats.channelCount;
-          p.onChainGhostCount = stats.ghostCount;
-        } catch {
-          // Contract lookup failed for this peer — keep claimed data
-        }
-      }
+      const channelsClient = this._channelsClient;
+      const stakingClient = this._stakingClient;
+      const resolver = this._sellerAddressResolver;
+      await Promise.allSettled(peers.map(async (p) => {
+        const evmAddress = resolver
+          ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
+          : peerIdToAddress(p.peerId);
+        const agentId = await stakingClient.getAgentId(evmAddress);
+        const stats = await channelsClient.getAgentStats(agentId);
+        p.onChainChannelCount = stats.channelCount;
+        p.onChainGhostCount = stats.ghostCount;
+      }));
     }
 
     for (const p of peers) {
@@ -945,6 +953,7 @@ export class AntseedNode extends EventEmitter {
         signalingPort: actualSignalingPort,
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
+        ...(this._config.sellerDelegation ? { sellerDelegation: this._config.sellerDelegation } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1031,7 +1040,7 @@ export class AntseedNode extends EventEmitter {
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default per session (matches FIRST_SIGN_CAP)
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore);
+        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
@@ -1043,6 +1052,7 @@ export class AntseedNode extends EventEmitter {
           this._channelStore,
           {},
           this,
+          this._sellerAddressResolver ?? undefined,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);
       }
@@ -1129,6 +1139,23 @@ export class AntseedNode extends EventEmitter {
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
+
+      const evmChainId = payments.chainId ?? 8453;
+      const channelsClientRef = this._channelsClient;
+      const operatorAbi = ["function operator() view returns (address)"];
+      const operatorContracts = new Map<string, EthersContract>();
+      this._sellerAddressResolver = new SellerAddressResolver({
+        loadOperator: async (proxyAddress: string) => {
+          let contract = operatorContracts.get(proxyAddress);
+          if (!contract) {
+            contract = new EthersContract(proxyAddress, operatorAbi, channelsClientRef!.provider);
+            operatorContracts.set(proxyAddress, contract);
+          }
+          return await contract.getFunction("operator")() as string;
+        },
+        chainId: evmChainId,
+      });
+      debugLog(`[Node] SellerAddressResolver initialized (chainId=${evmChainId})`);
     }
 
     // Initialize StakingClient

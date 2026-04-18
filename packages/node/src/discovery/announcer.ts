@@ -11,8 +11,9 @@ import {
   normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
-import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
+import type { PeerMetadata, ProviderAnnouncement, SellerDelegationPayload } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
+
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
@@ -21,6 +22,17 @@ import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
+
+export interface SellerDelegationConfig {
+  /** The DiemStakingProxy contract address (also the EIP-712 verifyingContract). */
+  sellerContract: string;
+  /** EVM chainId for the EIP-712 domain. */
+  chainId: number;
+  /** How long each signed delegation is valid. Default 3600s. */
+  expiresInSeconds?: number;
+  /** Refresh the signed delegation when remaining TTL drops below this. Default 600s. */
+  refreshBeforeExpirySeconds?: number;
+}
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -57,6 +69,7 @@ export interface AnnouncerConfig {
   signalingPort: number;
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
   healthMonitor?: DHTHealthMonitor;
+  sellerDelegation?: SellerDelegationConfig;
 }
 
 /**
@@ -75,6 +88,7 @@ export class PeerAnnouncer {
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
   private _latestMetadata: PeerMetadata | null = null;
+  private _delegationCache: SellerDelegationPayload | null = null;
 
   constructor(config: AnnouncerConfig) {
     this.config = config;
@@ -165,6 +179,47 @@ export class PeerAnnouncer {
     return this._latestMetadata;
   }
 
+  private async _getOrRefreshDelegation(): Promise<SellerDelegationPayload | undefined> {
+    const cfg = this.config.sellerDelegation;
+    if (!cfg) return undefined;
+    const expiresIn = cfg.expiresInSeconds ?? 3600;
+    const refreshBefore = cfg.refreshBeforeExpirySeconds ?? 600;
+
+    const now = Math.floor(Date.now() / 1000);
+    if (this._delegationCache && this._delegationCache.expiresAt - now > refreshBefore) {
+      return this._delegationCache;
+    }
+
+    const peerAddress = this.config.identity.wallet.address;
+    const expiresAt = now + expiresIn;
+    const domain = {
+      name: "DiemStakingProxy",
+      version: "1",
+      chainId: cfg.chainId,
+      verifyingContract: cfg.sellerContract,
+    };
+    const types = {
+      SellerDelegation: [
+        { name: "peerAddress", type: "address" },
+        { name: "sellerContract", type: "address" },
+        { name: "chainId", type: "uint256" },
+        { name: "expiresAt", type: "uint256" },
+      ],
+    };
+    const message = { peerAddress, sellerContract: cfg.sellerContract, chainId: cfg.chainId, expiresAt };
+    const signature = await this.config.identity.wallet.signTypedData(domain, types, message);
+
+    const payload: SellerDelegationPayload = {
+      peerAddress: peerAddress.toLowerCase().replace(/^0x/, ""),
+      sellerContract: cfg.sellerContract.toLowerCase().replace(/^0x/, ""),
+      chainId: cfg.chainId,
+      expiresAt,
+      signature: signature.replace(/^0x/, ""),
+    };
+    this._delegationCache = payload;
+    return payload;
+  }
+
   private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
     const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
@@ -229,6 +284,11 @@ export class PeerAnnouncer {
         metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
         metadata.onChainGhostCount = this._latestMetadata.onChainGhostCount;
       }
+    }
+
+    const delegation = await this._getOrRefreshDelegation();
+    if (delegation) {
+      metadata.sellerDelegation = delegation;
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);
