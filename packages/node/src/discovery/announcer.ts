@@ -30,6 +30,11 @@ export interface AnnouncerConfig {
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     maxConcurrency: number;
+    /** Per-instance pricing. Takes precedence over the shared pricing Map. */
+    pricing?: {
+      defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
+      services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+    };
   }>;
   displayName?: string;
   publicAddress?: string;
@@ -108,7 +113,7 @@ export class PeerAnnouncer {
 
   private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
     const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
-      const pricing = this.config.pricing.get(p.provider) ?? {
+      const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
         defaults: {
           inputUsdPerMillion: 0,
           outputUsdPerMillion: 0,

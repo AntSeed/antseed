@@ -918,6 +918,13 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           maxConcurrency: p.maxConcurrency,
+          pricing: {
+            defaults: {
+              inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
+              outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
+            },
+            ...(p.pricing.services ? { services: { ...p.pricing.services } } : {}),
+          },
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
