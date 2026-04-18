@@ -1932,7 +1932,26 @@ export function initChatModule({
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const textBlock = findLastStreamingBlockByType(blocks, 'text');
-            if (textBlock) textBlock.streaming = false;
+            if (textBlock) {
+              textBlock.streaming = false;
+              // Extract inline <think>...</think> tags (DeepSeek, Qwen, etc.)
+              // into proper thinking blocks so the UI renders them correctly.
+              const raw = String(textBlock.text || '');
+              const thinkMatch = raw.match(/^<think>([\s\S]*?)<\/think>\s*/);
+              if (thinkMatch) {
+                const thinkingText = thinkMatch[1]!.trim();
+                textBlock.text = raw.slice(thinkMatch[0].length);
+                if (thinkingText) {
+                  const idx = blocks.indexOf(textBlock);
+                  blocks.splice(idx, 0, {
+                    type: 'thinking',
+                    renderKey: createStreamingRenderKey('thinking', `inline-${idx}`),
+                    thinking: thinkingText,
+                    streaming: false,
+                  });
+                }
+              }
+            }
           });
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
