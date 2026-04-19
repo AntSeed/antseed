@@ -36,6 +36,10 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   };
 }
 
+function makeBaseV8Metadata(): PeerMetadata {
+  return validMetadata();
+}
+
 describe('validateMetadata', () => {
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
@@ -501,6 +505,32 @@ describe('validateMetadata', () => {
       ],
     }));
     expect(errors.some((e) => e.field.includes('serviceApiProtocols'))).toBe(true);
+  });
+
+  it("rejects malformed sellerDelegation.peerAddress", () => {
+    const meta = makeBaseV8Metadata();
+    meta.sellerDelegation = {
+      peerAddress: "not-hex",
+      sellerContract: "bb".repeat(20),
+      chainId: 8453,
+      expiresAt: 1_700_003_600,
+      signature: "cc".repeat(65),
+    };
+    const errors = validateMetadata(meta);
+    expect(errors.some(e => e.field === "sellerDelegation.peerAddress")).toBe(true);
+  });
+
+  it("accepts a well-formed sellerDelegation", () => {
+    const meta = makeBaseV8Metadata();
+    meta.sellerDelegation = {
+      peerAddress: "aa".repeat(20),
+      sellerContract: "bb".repeat(20),
+      chainId: 8453,
+      expiresAt: 1_700_003_600,
+      signature: "cc".repeat(65),
+    };
+    const errors = validateMetadata(meta);
+    expect(errors.filter(e => e.field.startsWith("sellerDelegation"))).toHaveLength(0);
   });
 });
 

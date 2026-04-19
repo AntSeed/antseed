@@ -1,4 +1,4 @@
-import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256 } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256, verifyTypedData } from 'ethers';
 
 // =========================================================================
 // EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
@@ -148,4 +148,47 @@ export async function signSetOperator(
   msg: SetOperatorMessage,
 ): Promise<string> {
   return signer.signTypedData(domain, SET_OPERATOR_TYPES, msg);
+}
+
+// =========================================================================
+// SellerDelegation verification (DiemStakingProxy EIP-712)
+// =========================================================================
+
+export interface SellerDelegationMessage {
+  peerAddress: string;
+  sellerContract: string;
+  chainId: number;
+  expiresAt: number;
+}
+
+/**
+ * Verify a SellerDelegation signature against a claimed operator address.
+ * Returns true iff ecrecover over the EIP-712 digest yields `expectedOperator`.
+ */
+export function verifySellerDelegation(
+  proxyAddress: string,
+  message: SellerDelegationMessage,
+  signature: string,
+  expectedOperator: string,
+): boolean {
+  const domain = {
+    name: "DiemStakingProxy",
+    version: "1",
+    chainId: message.chainId,
+    verifyingContract: proxyAddress,
+  };
+  const types = {
+    SellerDelegation: [
+      { name: "peerAddress", type: "address" },
+      { name: "sellerContract", type: "address" },
+      { name: "chainId", type: "uint256" },
+      { name: "expiresAt", type: "uint256" },
+    ],
+  };
+  try {
+    const recovered = verifyTypedData(domain, types, message, signature.startsWith("0x") ? signature : "0x" + signature);
+    return recovered.toLowerCase() === expectedOperator.toLowerCase();
+  } catch {
+    return false;
+  }
 }

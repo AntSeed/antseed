@@ -402,6 +402,7 @@ describe('BuyerPaymentNegotiator', () => {
         100000n,
         { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
         { defaults: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 }, services: {} },
+        undefined,
       );
     });
 

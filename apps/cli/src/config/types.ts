@@ -123,6 +123,19 @@ export interface PaymentsCLIConfig {
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
   maxReserveAmountUsdc?: string;
+  /**
+   * Optional seller delegation config for DiemStakingProxy peers.
+   * Signed by the peer identity wallet — the proxy's `operator` must be set
+   * to the peer identity's EVM address.
+   */
+  sellerDelegation?: {
+    /** 0x-prefixed contract address of DiemStakingProxy */
+    sellerContract: string;
+    /** How long each signed delegation is valid (seconds). Default 3600. */
+    expiresInSeconds?: number;
+    /** Refresh the delegation when remaining TTL drops below this (seconds). Default 600. */
+    refreshBeforeExpirySeconds?: number;
+  };
   /** Optional crypto settlement settings (Base network) */
   crypto?: {
     /** Chain identifier */
