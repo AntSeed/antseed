@@ -41,8 +41,18 @@ interface IAntseedEmissionsClaim {
  *         Per-user unlock times are tracked locally because Venice's on-chain
  *         cooldown is per-staker (= this proxy) — without per-user tracking,
  *         any late withdrawer would reset everyone's timer via Venice's
- *         `initiateUnstake`. Venice's shared cooldown can still delay the
- *         actual DIEM release; `withdraw` reverts if `diem.unstake()` reverts.
+ *         `initiateUnstake`.
+ *
+ *         KNOWN GRIEFING SURFACE: Venice's shared cooldown still applies to
+ *         the proxy as a whole. Any staker calling `initiateUnstake(1 wei)`
+ *         resets that shared cooldown, which causes `diem.unstake()` in every
+ *         other staker's `unstake()` call to revert until Venice's timer
+ *         elapses. A sustained griefer (repeating tiny `initiateUnstake`
+ *         calls before the cooldown expires) can indefinitely block all other
+ *         stakers from withdrawing their DIEM principal — rewards continue to
+ *         accrue during the delay, but the stake itself is stuck. Mitigation
+ *         is operational, not on-chain: operators should coordinate
+ *         withdrawal windows or rate-limit at the relayer layer.
  *
  *         ERC-1271 is keyed on `owner()` (not operators). Venice API-key
  *         onboarding is an admin action, separate from operator channel ops.
@@ -186,10 +196,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      * @notice Begin unstaking. Calls DIEM.initiateUnstake inline; stops reward
      *         accrual on the requested portion immediately. DIEM is claimable
      *         via `unstake()` after the per-user cooldown has elapsed.
-     * @dev Multiple calls accumulate and reset the caller's own `unlockAt`.
+     * @dev Multiple calls accumulate into a single pending bucket and reset
+     *      the caller's `unlockAt` for the ENTIRE accumulated balance. Example:
+     *      a caller with 50 DIEM pending for 23h who calls `initiateUnstake(1)`
+     *      now waits a fresh full cooldown to withdraw the whole 51 DIEM.
+     *
      *      Each call also resets Venice's shared cooldown for the whole proxy
-     *      (see `unstake` — `diem.unstake()` will revert until Venice's
-     *      cooldown elapses).
+     *      (see contract-level NatSpec on the griefing surface this creates).
      */
     function initiateUnstake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
