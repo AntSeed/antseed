@@ -29,8 +29,6 @@ contract DiemStakingProxyTest is Test {
 
     // ─── Durations / amounts ─────────────────────────────────────────
     uint256 constant DIEM_COOLDOWN    = 1 days;
-    uint256 constant USDC_DURATION    = 1 days;
-    uint256 constant ANTS_DURATION    = 1 days;
     uint256 constant PROXY_STAKE      = 10_000_000;     // MIN_SELLER_STAKE
     uint256 constant INITIAL_EMISSION = 1000 ether;
     uint256 constant EPOCH_DURATION   = 1 weeks;
@@ -114,13 +112,8 @@ contract DiemStakingProxyTest is Test {
         proxy = new DiemStakingProxy(
             address(diem),
             address(usdc),
-            address(ants),
             address(antseedRegistry),
-            address(emissions),
-            address(staking),
-            operator,
-            USDC_DURATION,
-            ANTS_DURATION
+            operator
         );
 
         // Register proxy as an ERC-8004 agent and fund its seller stake so
@@ -242,6 +235,7 @@ contract DiemStakingProxyTest is Test {
         proxy.close(channelId, finalAmount, metadata, sig);
     }
 
+
     // ═══════════════════════════════════════════════════════════════════
     //                        STAKING (DIEM)
     // ═══════════════════════════════════════════════════════════════════
@@ -261,15 +255,15 @@ contract DiemStakingProxyTest is Test {
         proxy.stake(0);
     }
 
-    function test_initiateUnstake_setsPerUserUnlockAndStopsAccrual() public {
+    function test_initiateUnstake_queuesAndStopsAccrual() public {
         _stakeAs(alice, 100e18);
 
-        // Drive a real inflow through the full channel path.
+        // Drive a real inflow through the full channel path. USDC is
+        // instant-credited at settle so Alice has rewards immediately.
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 100e6, 200e6);
         _settleViaProxy(channelId, 90e6);
 
-        vm.warp(block.timestamp + 12 hours);
-        (uint256 earnedBefore,) = proxy.earned(alice);
+        uint256 earnedBefore = proxy.earnedUsdc(alice);
         assertGt(earnedBefore, 0);
 
         vm.prank(alice);
@@ -278,88 +272,173 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.staked(alice), 0);
         assertEq(proxy.totalStaked(), 0);
 
-        (uint128 pendingAmt, uint64 unlockAt) = proxy.pendingUnstake(alice);
-        assertEq(pendingAmt, 100e18);
-        // Exact cooldown is verified by test_initiateUnstake_accumulatesAndResetsOwnUnlock;
-        // here we just assert the unlock is in the future.
-        assertGt(uint256(unlockAt), block.timestamp);
+        uint32 epochId = proxy.currentEpoch();
+        (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed) = proxy.epochs(epochId);
+        assertEq(total, 100e18);
+        assertEq(userCount, 1);
+        assertFalse(claimed);
+        assertEq(unlockAt, 0, "no unlockAt until flush");
+        assertEq(proxy.epochUserAmount(epochId, alice), 100e18);
 
         vm.warp(block.timestamp + 5 hours);
-        (uint256 earnedAfter,) = proxy.earned(alice);
-        assertEq(earnedAfter, earnedBefore);
+        uint256 earnedAfter = proxy.earnedUsdc(alice);
+        assertEq(earnedAfter, earnedBefore, "no further accrual on queued balance");
     }
 
-    function test_initiateUnstake_accumulatesAndResetsOwnUnlock() public {
+    /// @dev Same-user re-queues in the current (unflushed) epoch accumulate
+    ///      into one slot, not a duplicate user row.
+    function test_initiateUnstake_sameEpochAccumulates() public {
         _stakeAs(alice, 200e18);
 
         vm.prank(alice);
         proxy.initiateUnstake(50e18);
-        (uint128 amt1, uint64 unlock1) = proxy.pendingUnstake(alice);
-        assertEq(amt1, 50e18);
+        uint32 epochId = proxy.currentEpoch();
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(alice);
         proxy.initiateUnstake(30e18);
-        (uint128 amt2, uint64 unlock2) = proxy.pendingUnstake(alice);
-        assertEq(amt2, 80e18);
-        assertGt(unlock2, unlock1);
-        assertEq(unlock2, uint64(block.timestamp + DIEM_COOLDOWN));
+
+        (uint128 total,, uint32 userCount,) = proxy.epochs(epochId);
+        assertEq(total, 80e18);
+        assertEq(userCount, 1, "same user shouldn't add a second row");
+        assertEq(proxy.epochUserAmount(epochId, alice), 80e18);
     }
 
-    function test_unstake_revertBeforeUserCooldown() public {
-        _stakeAs(alice, 100e18);
-        vm.prank(alice);
-        proxy.initiateUnstake(100e18);
-
-        vm.prank(alice);
-        vm.expectRevert(DiemStakingProxy.StillCoolingDown.selector);
-        proxy.unstake();
-    }
-
-    function test_unstake_success() public {
-        _stakeAs(alice, 100e18);
-        vm.prank(alice);
-        proxy.initiateUnstake(100e18);
-
-        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-
-        uint256 balBefore = diem.balanceOf(alice);
-        vm.prank(alice);
-        proxy.unstake();
-        assertEq(diem.balanceOf(alice) - balBefore, 100e18);
-
-        (uint128 pendingAmt,) = proxy.pendingUnstake(alice);
-        assertEq(pendingAmt, 0);
-    }
-
-    /// @dev Bob's late initiateUnstake resets Venice's shared cooldown for the
-    ///      whole proxy. Alice's per-user unlock has passed, but diem.unstake()
-    ///      reverts until Venice's cooldown elapses.
-    function test_unstake_sharedVeniceCooldownBlocksUntilLatestRequest() public {
-        uint256 t0 = block.timestamp;
+    /// @dev Alice and Bob queue into the same epoch, operator flushes, then a
+    ///      single claim pays both in one tx.
+    function test_twoUsersSameEpoch_paidInOneClaim() public {
         _stakeAs(alice, 100e18);
         _stakeAs(bob, 50e18);
 
         vm.prank(alice);
-        proxy.initiateUnstake(100e18); // alice.unlockAt = t0 + 1 day; Venice unlock = t0 + 1 day
+        proxy.initiateUnstake(100e18);
+        uint32 epochId = proxy.currentEpoch();
 
-        vm.warp(t0 + 12 hours);
+        vm.warp(block.timestamp + 6 hours);
         vm.prank(bob);
-        proxy.initiateUnstake(50e18); // bob.unlockAt = t0 + 36h; Venice unlock reset to t0 + 36h
+        proxy.initiateUnstake(50e18);
 
-        // Past alice's per-user unlock, not Venice's shared cooldown.
-        skip(12 hours + 1);
-        (, uint64 aliceUnlock) = proxy.pendingUnstake(alice);
-        assertLe(aliceUnlock, block.timestamp);
+        (uint128 total,, uint32 userCount,) = proxy.epochs(epochId);
+        assertEq(total, 150e18);
+        assertEq(userCount, 2);
 
-        vm.prank(alice);
-        vm.expectRevert(bytes("COOLDOWN_NOT_OVER"));
-        proxy.unstake();
+        // Flush the epoch (permissionless).
+        proxy.flush();
+        assertEq(proxy.currentEpoch(), epochId + 1, "flush advances currentEpoch");
 
-        skip(12 hours);
-        vm.prank(alice);
-        proxy.unstake();
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(epochId);
+
         assertEq(diem.balanceOf(alice), 100e18);
+        assertEq(diem.balanceOf(bob), 50e18);
+        assertEq(diem.balanceOf(address(proxy)), 0, "proxy direct balance must return to 0");
+    }
+
+    function test_flush_revertsWhenNothingQueued() public {
+        vm.expectRevert(DiemStakingProxy.NothingToFlush.selector);
+        proxy.flush();
+    }
+
+    function test_flush_revertsWhilePriorEpochUnclaimed() public {
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 50e18);
+
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        proxy.flush();
+
+        vm.prank(bob);
+        proxy.initiateUnstake(50e18);
+
+        // Epoch 1 still in Venice cooldown, not yet claimed.
+        vm.expectRevert(DiemStakingProxy.PriorEpochUnclaimed.selector);
+        proxy.flush();
+    }
+
+    function test_claimEpoch_revertBeforeCooldown() public {
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 epochId = proxy.currentEpoch();
+        proxy.flush();
+
+        vm.expectRevert(DiemStakingProxy.EpochNotReady.selector);
+        proxy.claimEpoch(epochId);
+    }
+
+    function test_claimEpoch_revertOnUnflushedEpoch() public {
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 epochId = proxy.currentEpoch();
+
+        // Not yet flushed → unlockAt is 0 → EpochNotReady.
+        vm.expectRevert(DiemStakingProxy.EpochNotReady.selector);
+        proxy.claimEpoch(epochId);
+    }
+
+    function test_claimEpoch_revertOnDoubleClaim() public {
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 epochId = proxy.currentEpoch();
+        proxy.flush();
+
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(epochId);
+
+        vm.expectRevert(DiemStakingProxy.EpochAlreadyClaimed.selector);
+        proxy.claimEpoch(epochId);
+    }
+
+    /// @dev After an epoch is claimed, new queuers land in a fresh epoch and
+    ///      flush/claim cycles continue normally.
+    function test_multipleEpochsSerialize() public {
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 50e18);
+
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 firstEpoch = proxy.currentEpoch();
+        proxy.flush();
+
+        vm.prank(bob);
+        proxy.initiateUnstake(50e18);
+        uint32 secondEpoch = proxy.currentEpoch();
+        assertEq(secondEpoch, firstEpoch + 1);
+
+        skip(DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(firstEpoch);
+
+        // Second epoch can now flush.
+        proxy.flush();
+        skip(DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(secondEpoch);
+
+        assertEq(diem.balanceOf(alice), 100e18);
+        assertEq(diem.balanceOf(bob), 50e18);
+    }
+
+    /// @dev Direct DIEM donation to the proxy does not corrupt accounting —
+    ///      `claimEpoch` pays from explicit per-user amounts, not balanceOf.
+    function test_donationDoesNotStealOrStrand() public {
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 epochId = proxy.currentEpoch();
+        proxy.flush();
+
+        // Attacker drops DIEM directly on the proxy.
+        diem.mint(address(this), 100e18);
+        diem.transfer(address(proxy), 100e18);
+
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(epochId);
+
+        assertEq(diem.balanceOf(alice), 100e18, "alice got exactly her stake");
+        // Donation remains in the proxy as unaccounted dust; admin can
+        // recover separately. Critically it did not corrupt the payout.
+        assertEq(diem.balanceOf(address(proxy)), 100e18);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -392,14 +471,18 @@ contract DiemStakingProxyTest is Test {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
 
         uint256 usdcBefore = usdc.balanceOf(address(proxy));
+        uint256 storedBefore = proxy.usdcRewardPerTokenStored();
         _settleViaProxy(channelId, 500e6);
         uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
 
         // 2% platform fee goes to protocolReserve; proxy receives the rest.
         assertEq(inflow, 500e6 - (500e6 * 200) / 10000);
 
-        (uint256 rewardRate,,,,) = proxy.usdcStream();
-        assertGt(rewardRate, 0);
+        // Instant-credit: usdcRewardPerTokenStored bumps inline with the
+        // settle and Alice has claimable USDC immediately (no tick needed).
+        uint256 storedAfter = proxy.usdcRewardPerTokenStored();
+        assertGt(storedAfter, storedBefore);
+        assertEq(proxy.earnedUsdc(alice), inflow, "alice (sole staker) earns the full inflow");
     }
 
     function test_close_capturesUsdcDeltaAndNotifies() public {
@@ -412,16 +495,14 @@ contract DiemStakingProxyTest is Test {
         uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
 
         assertEq(inflow, 400e6 - (400e6 * 200) / 10000);
-
-        (uint256 rewardRate,,,,) = proxy.usdcStream();
-        assertGt(rewardRate, 0);
+        assertEq(proxy.earnedUsdc(alice), inflow);
 
         // Channel is fully closed → no active channels left.
         assertEq(channels.activeChannelCount(address(proxy)), 0);
     }
 
     /// @dev topUp with cumulativeAmount == channel.settled (no new delta) must
-    ///      not transfer USDC to the proxy, and must not notify the stream.
+    ///      not touch the USDC accumulator.
     function test_topUp_noInflow_noNotify() public {
         _stakeAs(alice, 100e18);
 
@@ -429,7 +510,7 @@ contract DiemStakingProxyTest is Test {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 100e6, 300e6);
         _settleViaProxy(channelId, 90e6);
 
-        (uint256 rateBefore, uint256 finishBefore,,,) = proxy.usdcStream();
+        uint256 storedBefore = proxy.usdcRewardPerTokenStored();
         uint256 usdcBefore = usdc.balanceOf(address(proxy));
 
         // topUp with no new delta: cumulativeAmount == settled.
@@ -443,16 +524,15 @@ contract DiemStakingProxyTest is Test {
         proxy.topUp(channelId, 90e6, metadata, spendingSig, newMax, newDeadline, newReserveSig);
 
         assertEq(usdc.balanceOf(address(proxy)), usdcBefore, "no USDC should flow on zero-delta topUp");
-        (uint256 rateAfter, uint256 finishAfter,,,) = proxy.usdcStream();
-        assertEq(rateAfter, rateBefore);
-        assertEq(finishAfter, finishBefore);
+        uint256 storedAfter = proxy.usdcRewardPerTokenStored();
+        assertEq(storedAfter, storedBefore, "rewardPerTokenStored must not change");
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        EMISSIONS (real Emissions)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_operatorClaimEmissions_notifiesAntsStream() public {
+    function test_operatorClaimEmissions_opensRewardEpoch() public {
         _stakeAs(alice, 100e18);
 
         // Real settle accrues seller points to the proxy in the current epoch.
@@ -462,47 +542,45 @@ contract DiemStakingProxyTest is Test {
         // Warp past epoch 0 so it's claimable.
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        uint256[] memory epochs = new uint256[](1);
-        epochs[0] = 0;
-
+        uint32 rewardEpochBefore = proxy.currentRewardEpoch();
         uint256 antsBefore = ants.balanceOf(address(proxy));
         vm.prank(operator);
-        proxy.operatorClaimEmissions(epochs);
+        proxy.operatorClaimEmissions(0);
         uint256 minted = ants.balanceOf(address(proxy)) - antsBefore;
 
         assertGt(minted, 0, "emissions should mint ANTS to the proxy");
-
-        (uint256 rewardRate,,,,) = proxy.antsStream();
-        assertGt(rewardRate, 0);
+        assertEq(proxy.currentRewardEpoch(), rewardEpochBefore + 1, "reward epoch advanced");
+        (, , uint256 antsPot) = proxy.rewardEpochs(rewardEpochBefore);
+        assertEq(antsPot, minted, "epoch pot captures the inflow");
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        REWARDS (real flows, both streams)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_getReward_paysBothStreams() public {
+    function test_claimUsdcAndClaimAnts_paysBothRewards() public {
         _stakeAs(alice, 100e18);
 
-        // Drive USDC inflow.
+        // USDC inflow is instant-credited at settle.
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
         _settleViaProxy(channelId, 500e6);
 
-        // Drive ANTS inflow via real emissions (cross an epoch boundary).
+        // Cross an emission-epoch boundary so ANTS becomes claimable, then
+        // operator ticks — closes reward epoch 0 with ANTS pot.
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
-        uint256[] memory epochs = new uint256[](1);
-        epochs[0] = 0;
         vm.prank(operator);
-        proxy.operatorClaimEmissions(epochs);
+        proxy.operatorClaimEmissions(0);
 
-        // Drain both reward durations so Alice has earned something from each.
-        vm.warp(block.timestamp + USDC_DURATION + ANTS_DURATION);
-
+        // Claim USDC (O(1)).
         uint256 usdcBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimUsdc();
+        assertGt(usdc.balanceOf(alice) - usdcBefore, 0);
+
+        // Claim ANTS for the first completed reward epoch.
         uint256 antsBefore = ants.balanceOf(alice);
         vm.prank(alice);
-        proxy.getReward();
-
-        assertGt(usdc.balanceOf(alice) - usdcBefore, 0);
+        proxy.claimAnts(1);
         assertGt(ants.balanceOf(alice) - antsBefore, 0);
     }
 
@@ -513,14 +591,97 @@ contract DiemStakingProxyTest is Test {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
         _settleViaProxy(channelId, 1000e6);
 
-        vm.warp(block.timestamp + USDC_DURATION);
-
-        (uint256 aliceUsdc,) = proxy.earned(alice);
-        (uint256 bobUsdc,) = proxy.earned(bob);
+        // USDC is instant-credited at settle — check earnings directly.
+        uint256 aliceUsdc = proxy.earnedUsdc(alice);
+        uint256 bobUsdc = proxy.earnedUsdc(bob);
         uint256 totalEarned = aliceUsdc + bobUsdc;
 
         assertApproxEqAbs(aliceUsdc, (totalEarned * 30) / 100, 1);
         assertApproxEqAbs(bobUsdc,   (totalEarned * 70) / 100, 1);
+    }
+
+    /// @dev The reviewer's P1 concern: USDC earned during one user's staked
+    ///      period must not be misattributed to a later staker. Alice stakes,
+    ///      settles fire, Bob joins only afterward → all USDC belongs to Alice.
+    function test_usdcAttribution_followsInflowTiming() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Bob joins AFTER Alice's settle.
+        _stakeAs(bob, 100e18);
+
+        // Alice must get everything from the pre-Bob settle.
+        assertGt(proxy.earnedUsdc(alice), 0);
+        assertEq(proxy.earnedUsdc(bob), 0, "late staker must not capture prior inflow");
+    }
+
+    /// @dev Companion to the above: if Alice unstakes before a settle, the
+    ///      inflow goes to whoever is staked at the moment of settlement.
+    function test_usdcAttribution_unstakeBeforeSettle() public {
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 100e18);
+
+        // Alice queues out of her stake before any settle.
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        assertEq(proxy.earnedUsdc(alice), 0, "already-unstaked alice earns nothing from later settle");
+        assertGt(proxy.earnedUsdc(bob), 0);
+    }
+
+    /// @dev Stake-time weighted ANTS: Alice staked twice as long as Bob
+    ///      gets more ANTS than Bob at claim time.
+    function test_antsAttribution_stakeTimeWeighted() public {
+        _stakeAs(alice, 100e18);
+
+        // Drive seller activity so emissions epoch 0 pays out.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Halfway into the emission epoch, Bob joins with the same amount.
+        vm.warp(block.timestamp + EPOCH_DURATION / 2);
+        _stakeAs(bob, 100e18);
+
+        // Finish the epoch and tick.
+        vm.warp(block.timestamp + EPOCH_DURATION / 2 + 1);
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(0);
+
+        uint256 aliceAnts = proxy.pendingAntsForEpoch(alice, 0);
+        uint256 bobAnts = proxy.pendingAntsForEpoch(bob, 0);
+        assertGt(aliceAnts, bobAnts, "longer staker earns more");
+    }
+
+    /// @dev Staker who unstakes BEFORE the operator tick still earns ANTS
+    ///      for their contribution during the completed epoch. Points
+    ///      persist past unstaking.
+    function test_antsAttribution_unstakePreservesPoints() public {
+        _stakeAs(alice, 100e18);
+
+        // Drive seller activity so emissions epoch 0 pays out.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Alice queues to unstake after some time.
+        vm.warp(block.timestamp + EPOCH_DURATION / 2);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        proxy.flush();
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(proxy.oldestUnclaimed());
+
+        // Alice is now fully unstaked. Operator ticks later.
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(0);
+
+        // Alice should still have ANTS claimable for her contribution.
+        assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "unstaked user retains points");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -591,35 +752,15 @@ contract DiemStakingProxyTest is Test {
         proxy.withdrawAntseedStake(address(0));
     }
 
-    function test_withdrawAntseedStake_doesNotNotifyUsdcStream() public {
+    function test_withdrawAntseedStake_doesNotCreditStakers() public {
         _stakeAs(alice, 100e18);
 
+        uint256 storedBefore = proxy.usdcRewardPerTokenStored();
         vm.prank(owner);
         proxy.withdrawAntseedStake(bob);
 
-        (uint256 rewardRate,,,,) = proxy.usdcStream();
-        assertEq(rewardRate, 0, "stake recovery must not be routed to stakers as a reward");
-    }
-
-    function test_setRewardsDuration_revertDuringActivePeriod() public {
-        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
-        _settleViaProxy(channelId, 100e6);
-
-        vm.prank(owner);
-        vm.expectRevert(DiemStakingProxy.RewardPeriodActive.selector);
-        proxy.setRewardsDuration(0, 2 days);
-    }
-
-    function test_setRewardsDuration_successAfterFinish() public {
-        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
-        _settleViaProxy(channelId, 100e6);
-
-        vm.warp(block.timestamp + USDC_DURATION + 1);
-        vm.prank(owner);
-        proxy.setRewardsDuration(0, 2 days);
-
-        (,,,, uint256 rewardsDuration) = proxy.usdcStream();
-        assertEq(rewardsDuration, 2 days);
+        uint256 storedAfter = proxy.usdcRewardPerTokenStored();
+        assertEq(storedAfter, storedBefore, "stake recovery must not be routed to stakers as a reward");
     }
 
     // ═══════════════════════════════════════════════════════════════════

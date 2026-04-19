@@ -8,6 +8,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 
 /// @dev Venice's DIEM ERC20 is also the staking contract (stake / initiateUnstake / unstake live on the token itself).
 interface IDiemStake {
@@ -30,29 +31,44 @@ interface IAntseedEmissionsClaim {
  * @notice Pooled DIEM staker / AntSeed seller façade.
  *         Holders stake DIEM; the proxy re-stakes into Venice (the DIEM token
  *         itself) for API entitlement and acts as the on-chain seller address
- *         for AntSeed. USDC and ANTS inflow is distributed pro-rata to stakers
- *         via two Uniswap-StakingRewards streams.
+ *         for AntSeed. USDC (revenue) and ANTS (emissions) accrue to stakers.
  *
  *         Channel lifecycle (reserve / topUp / settle / close) is provided by
  *         {AntseedSellerDelegation}. This contract overrides each to wrap the
- *         super call with USDC balance-delta capture; any inflow is forwarded
- *         to the USDC reward stream. Reward bookkeeping is purely local.
+ *         super call with USDC balance-delta capture and instant distribution.
  *
- *         Per-user unlock times are tracked locally because Venice's on-chain
- *         cooldown is per-staker (= this proxy) — without per-user tracking,
- *         any late withdrawer would reset everyone's timer via Venice's
- *         `initiateUnstake`.
+ *         UNSTAKE FLOW — epoch batching:
+ *           1. `initiateUnstake(amount)` queues into `currentEpoch`. No Venice
+ *              call yet. Reward accrual on the queued amount stops immediately.
+ *           2. `flush()` (permissionless) sends the epoch to Venice in one
+ *              shot, stamps `unlockAt = now + venice_cd`, opens a fresh epoch.
+ *           3. After Venice's cooldown, `claimEpoch(id)` (permissionless)
+ *              drains Venice and pays every user from the explicit per-user
+ *              map. Serialization invariant: Venice only holds one epoch at a
+ *              time.
  *
- *         KNOWN GRIEFING SURFACE: Venice's shared cooldown still applies to
- *         the proxy as a whole. Any staker calling `initiateUnstake(1 wei)`
- *         resets that shared cooldown, which causes `diem.unstake()` in every
- *         other staker's `unstake()` call to revert until Venice's timer
- *         elapses. A sustained griefer (repeating tiny `initiateUnstake`
- *         calls before the cooldown expires) can indefinitely block all other
- *         stakers from withdrawing their DIEM principal — rewards continue to
- *         accrue during the delay, but the stake itself is stuck. Mitigation
- *         is operational, not on-chain: operators should coordinate
- *         withdrawal windows or rate-limit at the relayer layer.
+ *         USDC DISTRIBUTION — instant credit:
+ *           Each settle bumps `usdcStream.rewardPerTokenStored` inline; stakers
+ *           at the moment of the inflow receive their pro-rata share and can
+ *           `claimUsdc()` at any time. Equivalent to a Synthetix drip with
+ *           `duration = 1` — settles are discrete events, not periods.
+ *
+ *         ANTS DISTRIBUTION — points + per-epoch pot:
+ *           Users accumulate internal "points" based on stake-time weighted by
+ *           1/totalStaked (a Compound-style integrator). At operator tick for
+ *           a finalized emission epoch, the ANTS arrives and is stored as a
+ *           per-epoch pot. Users call `claimAnts(n)` to convert their points
+ *           for the next `n` completed epochs into ANTS.
+ *
+ *           Properties:
+ *             - Points persist through unstakes — a user who fully unstakes
+ *               can still claim ANTS for epochs they contributed to.
+ *             - Attribution matches the emission accrual window: long-term
+ *               stakers are rewarded proportionally to their time-weighted
+ *               contribution, not their presence at tick time.
+ *             - Claim is sequential (N before N+1) and bounded per call so
+ *               backlogs never trap a stake/unstake transaction. Users with
+ *               large backlogs call `catchUpPoints(n)` to process incrementally.
  *
  *         ERC-1271 is keyed on `owner()` (not operators). Venice API-key
  *         onboarding is an admin action, separate from operator channel ops.
@@ -68,17 +84,17 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        Structs
     // ═══════════════════════════════════════════════════════════════════
 
-    struct RewardStream {
-        uint256 rewardRate;
-        uint256 periodFinish;
-        uint256 lastUpdateTime;
-        uint256 rewardPerTokenStored;
-        uint256 rewardsDuration;
+    struct Epoch {
+        uint128 total;      // sum of every user's queued amount in this epoch
+        uint64 unlockAt;    // 0 = not yet flushed; otherwise venice-release time
+        uint32 userCount;   // length of epochUsers[id], cached for MAX check
+        bool claimed;
     }
 
-    struct PendingUnstake {
-        uint128 amount;
-        uint64 unlockAt;
+    struct RewardEpoch {
+        uint256 stakeIntegratorAtEnd;  // global integrator value at epoch close
+        uint256 activeSecondsAtEnd;    // cumulative seconds with totalStaked > 0 at close
+        uint256 antsPot;               // ANTS received from AntseedEmissions at close
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -91,76 +107,135 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     address public immutable emissions;
     address public immutable antseedStaking;
 
-    uint8 internal constant STREAM_USDC = 0;
-    uint8 internal constant STREAM_ANTS = 1;
+    /// @dev Max distinct users per unstake epoch. Caps `claimEpoch`'s transfer
+    ///      loop at ~50 × 50k gas = 2.5M gas, well under the block limit while
+    ///      giving each epoch room for a realistic cohort of unstakers.
+    uint32 public constant MAX_PER_EPOCH = 50;
 
-    /// @dev Upper bound for `setRewardsDuration`. Prevents a compromised owner
-    ///      from setting an absurdly short duration (e.g. 1 second → extreme
-    ///      `rewardRate = amount / 1`) or an absurdly long one that traps
-    ///      inflows in slow-release streams.
-    uint256 public constant MAX_REWARDS_DURATION = 365 days;
+    /// @dev Max reward-epoch backlog that `_captureUserPoints` will traverse in
+    ///      a single tx. Beyond this, stake/unstake reverts with `BacklogTooLarge`
+    ///      and the user must call `catchUpPoints` first to process incrementally.
+    ///      16 epochs × an expected ~weekly tick = ~4 months of dormancy tolerated.
+    uint32 public constant MAX_EPOCHS_PER_CAPTURE = 16;
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        Storage
+    //                        Storage — Staking
     // ═══════════════════════════════════════════════════════════════════
 
     uint256 public totalStaked;
     mapping(address => uint256) public staked;
-    mapping(address => PendingUnstake) public pendingUnstake;
 
-    RewardStream public usdcStream;
-    RewardStream public antsStream;
+    /// @dev Unstake-epoch state. `currentEpoch` accepts new queuers;
+    ///      `oldestUnclaimed` is the lowest flushed-but-not-yet-claimed epoch
+    ///      id. A new epoch can only be flushed once the prior one has been
+    ///      claimed — Venice only ever holds one epoch at a time.
+    mapping(uint32 => Epoch) public epochs;
+    mapping(uint32 => address[]) public epochUsers;
+    mapping(uint32 => mapping(address => uint128)) public epochUserAmount;
+    uint32 public currentEpoch;
+    uint32 public oldestUnclaimed;
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        Storage — USDC rewards (instant credit)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @dev Synthetix-style reward-per-token accumulator. Each settle bumps
+    ///      this directly; users' accrued USDC = staked × Δ(accumulator).
+    uint256 public usdcRewardPerTokenStored;
 
     mapping(address => uint256) public userUsdcRewardPerTokenPaid;
-    mapping(address => uint256) public userAntsRewardPerTokenPaid;
     mapping(address => uint256) public usdcRewards;
-    mapping(address => uint256) public antsRewards;
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        Storage — ANTS rewards (points + epoch pots)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @dev Global stake-time integrator: A(t) = ∫ 1/totalStaked(τ) dτ × 1e18.
+    ///      A user staked with `S` over an interval with Δintegrator gains
+    ///      `S × Δintegrator / 1e18` points for that interval.
+    uint256 public stakeIntegrator;
+    uint256 public lastIntegratorUpdate;
+
+    /// @dev Cumulative wall-clock seconds where `totalStaked > 0`. Serves as
+    ///      the denominator when converting per-user points into an epoch
+    ///      fraction: sum over users of points in epoch = activeSeconds in epoch.
+    uint256 public activeSecondsAccumulator;
+
+    /// @dev Reward-epoch state. `currentRewardEpoch` is the one accumulating
+    ///      USDC inflows and stake-time; each `operatorClaimEmissions` call
+    ///      closes it and opens the next.
+    mapping(uint32 => RewardEpoch) public rewardEpochs;
+    uint32 public currentRewardEpoch;
+
+    /// @dev Per-user points per reward epoch (the "internal points system").
+    ///      Populated lazily on the user's next interaction; persists across
+    ///      stake/unstake so users can claim after fully unstaking.
+    mapping(address => mapping(uint32 => uint256)) public userPoints;
+
+    /// @dev Per-user bookkeeping for the integrator.
+    ///      `userIntegratorSnap` = integrator value at the user's last capture.
+    ///      `userCurrentEpoch` = reward epoch at the user's last capture.
+    ///      `userLastClaimedEpoch` = next unclaimed reward epoch (sequential).
+    mapping(address => uint256) public userIntegratorSnap;
+    mapping(address => uint32) public userCurrentEpoch;
+    mapping(address => uint32) public userLastClaimedEpoch;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Events
     // ═══════════════════════════════════════════════════════════════════
 
     event Staked(address indexed user, uint256 amount);
-    event UnstakeInitiated(address indexed user, uint256 amount, uint256 unlockAt);
+    event UnstakeQueued(address indexed user, uint32 indexed epochId, uint256 amount);
+    event EpochFlushed(uint32 indexed epochId, uint256 total, uint256 unlockAt);
+    event EpochClaimed(uint32 indexed epochId, uint256 total, uint32 userCount);
     event Unstaked(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, uint256 usdcAmount, uint256 antsAmount);
-    event RewardNotified(uint8 indexed stream, uint256 amount, uint256 newPeriodFinish);
+    event UsdcDistributed(uint256 amount);
+    event UsdcPaid(address indexed user, uint256 amount);
+    event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd);
+    event AntsClaimed(address indexed user, uint32 fromEpoch, uint32 toEpoch, uint256 antsAmount);
+    event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
-    event EmissionsClaimed(uint256 amount);
-    event RewardsDurationUpdated(uint8 indexed stream, uint256 newDuration);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
     // ═══════════════════════════════════════════════════════════════════
 
     error InvalidAmount();
-    error NoPendingUnstake();
-    error StillCoolingDown();
-    error RewardPeriodActive();
-    error InvalidDuration();
     error InsufficientStake();
+    error EpochFull();
+    error NothingToFlush();
+    error PriorEpochUnclaimed();
+    error EpochNotReady();
+    error EpochAlreadyClaimed();
+    error BacklogTooLarge();
+    error NothingToClaim();
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Constructor
     // ═══════════════════════════════════════════════════════════════════
 
+    /// @param _diem External Venice DIEM contract (not in AntseedRegistry).
+    /// @param _usdc USDC token used by channels/staking. Kept explicit.
+    /// @param _registry AntSeed address book. `ants`, `emissions`, and
+    ///                  `antseedStaking` are resolved from it at construction
+    ///                  and pinned as immutables for the proxy's lifetime.
+    /// @param _operator Initial authorized operator for channel lifecycle ops.
     constructor(
         address _diem,
         address _usdc,
-        address _ants,
         address _registry,
-        address _emissions,
-        address _antseedStaking,
-        address _operator,
-        uint256 _usdcRewardsDuration,
-        uint256 _antsRewardsDuration
+        address _operator
     )
         AntseedSellerDelegation(_registry, _operator)
     {
-        if (_diem == address(0) || _usdc == address(0) || _ants == address(0)) revert InvalidAddress();
-        if (_emissions == address(0) || _antseedStaking == address(0)) revert InvalidAddress();
-        if (_usdcRewardsDuration == 0 || _usdcRewardsDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
-        if (_antsRewardsDuration == 0 || _antsRewardsDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
+        if (_diem == address(0) || _usdc == address(0)) revert InvalidAddress();
+
+        address _ants = IAntseedRegistry(_registry).antsToken();
+        address _emissions = IAntseedRegistry(_registry).emissions();
+        address _antseedStaking = IAntseedRegistry(_registry).staking();
+        if (_ants == address(0) || _emissions == address(0) || _antseedStaking == address(0)) {
+            revert InvalidAddress();
+        }
 
         diem = IERC20(_diem);
         usdc = IERC20(_usdc);
@@ -168,17 +243,27 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emissions = _emissions;
         antseedStaking = _antseedStaking;
 
-        usdcStream.rewardsDuration = _usdcRewardsDuration;
-        antsStream.rewardsDuration = _antsRewardsDuration;
+        // Epoch 0 is unused so `unlockAt == 0` remains a reliable "not yet
+        // flushed" sentinel. Queuing starts at epoch 1.
+        currentEpoch = 1;
+        oldestUnclaimed = 1;
+
+        lastIntegratorUpdate = block.timestamp;
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Modifiers
     // ═══════════════════════════════════════════════════════════════════
 
+    /// @dev Settle both reward surfaces for `user` before the caller's action.
+    ///      USDC: Synthetix-style accrual via `usdcRewardPerTokenStored`.
+    ///      ANTS: integrator update + capture user points across any reward
+    ///      epochs since their last interaction (bounded by
+    ///      `MAX_EPOCHS_PER_CAPTURE`).
     modifier updateRewards(address account) {
-        _updateStream(usdcStream, userUsdcRewardPerTokenPaid, usdcRewards, account);
-        _updateStream(antsStream, userAntsRewardPerTokenPaid, antsRewards, account);
+        _updateUsdcForUser(account);
+        _updateStakeIntegrator();
+        _captureUserPoints(account);
         _;
     }
 
@@ -200,69 +285,167 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     /**
-     * @notice Begin unstaking. Calls DIEM.initiateUnstake inline; stops reward
-     *         accrual on the requested portion immediately. DIEM is claimable
-     *         via `unstake()` after the per-user cooldown has elapsed.
-     * @dev Multiple calls accumulate into a single pending bucket and reset
-     *      the caller's `unlockAt` for the ENTIRE accumulated balance. Example:
-     *      a caller with 50 DIEM pending for 23h who calls `initiateUnstake(1)`
-     *      now waits a fresh full cooldown to withdraw the whole 51 DIEM.
-     *
-     *      Each call also resets Venice's shared cooldown for the whole proxy
-     *      (see contract-level NatSpec on the griefing surface this creates).
+     * @notice Queue `amount` DIEM for unstaking. Joins the current open epoch.
+     *         Reward accrual on the queued amount stops immediately. The
+     *         epoch is sent to Venice in one shot via `flush()`.
      */
     function initiateUnstake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         if (amount > staked[msg.sender]) revert InsufficientStake();
 
+        uint32 epochId = currentEpoch;
+        Epoch storage e = epochs[epochId];
+
+        uint128 existing = epochUserAmount[epochId][msg.sender];
+        if (existing == 0) {
+            if (e.userCount >= MAX_PER_EPOCH) revert EpochFull();
+            epochUsers[epochId].push(msg.sender);
+            e.userCount += 1;
+        }
+
         staked[msg.sender] -= amount;
         totalStaked -= amount;
 
+        uint128 amt128 = amount.toUint128();
+        epochUserAmount[epochId][msg.sender] = existing + amt128;
+        e.total += amt128;
+
+        emit UnstakeQueued(msg.sender, epochId, amount);
+    }
+
+    /**
+     * @notice Send the current unstake epoch to Venice and open a fresh one.
+     *         Permissionless. Serialization: a new epoch can only be flushed
+     *         after the prior one is claimed.
+     */
+    function flush() external nonReentrant {
+        if (currentEpoch != oldestUnclaimed) revert PriorEpochUnclaimed();
+
+        uint32 epochId = currentEpoch;
+        Epoch storage e = epochs[epochId];
+        if (e.total == 0) revert NothingToFlush();
+
         uint256 cd = IDiemStake(address(diem)).cooldownDuration();
-        PendingUnstake storage pending = pendingUnstake[msg.sender];
-        pending.amount += amount.toUint128();
-        pending.unlockAt = (block.timestamp + cd).toUint64();
+        uint64 unlockAt = (block.timestamp + cd).toUint64();
+        e.unlockAt = unlockAt;
 
-        IDiemStake(address(diem)).initiateUnstake(amount);
+        currentEpoch = epochId + 1;
 
-        emit UnstakeInitiated(msg.sender, amount, pending.unlockAt);
+        IDiemStake(address(diem)).initiateUnstake(e.total);
+
+        emit EpochFlushed(epochId, e.total, unlockAt);
     }
 
-    /// @notice Complete unstake after cooldown elapses. Transfers DIEM to caller.
-    /// @dev Per-user `unlockAt` gates first. If proxy doesn't hold enough DIEM
-    ///      yet, pulls the pending batch from Venice via `diem.unstake()` —
-    ///      which itself reverts if Venice's shared cooldown hasn't elapsed
-    ///      (e.g., another user just reset it with a fresh `initiateUnstake`).
-    function unstake() external nonReentrant {
-        PendingUnstake memory pending = pendingUnstake[msg.sender];
-        if (pending.amount == 0) revert NoPendingUnstake();
-        if (block.timestamp < pending.unlockAt) revert StillCoolingDown();
+    /**
+     * @notice Drain `epochId` from Venice and pay out every user in it.
+     *         Permissionless. Proxy's direct DIEM balance is 0 before and
+     *         after this call.
+     */
+    function claimEpoch(uint32 epochId) external nonReentrant {
+        Epoch storage e = epochs[epochId];
+        if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert EpochNotReady();
+        if (e.claimed) revert EpochAlreadyClaimed();
 
-        if (diem.balanceOf(address(this)) < pending.amount) {
-            IDiemStake(address(diem)).unstake();
+        e.claimed = true;
+        if (epochId == oldestUnclaimed) oldestUnclaimed = epochId + 1;
+
+        IDiemStake(address(diem)).unstake();
+
+        address[] storage users = epochUsers[epochId];
+        uint256 count = users.length;
+        for (uint256 i = 0; i < count; i++) {
+            address user = users[i];
+            uint128 amount = epochUserAmount[epochId][user];
+            delete epochUserAmount[epochId][user];
+            diem.safeTransfer(user, amount);
+            emit Unstaked(user, amount);
         }
 
-        delete pendingUnstake[msg.sender];
-        diem.safeTransfer(msg.sender, pending.amount);
-
-        emit Unstaked(msg.sender, pending.amount);
+        emit EpochClaimed(epochId, e.total, uint32(count));
     }
 
-    /// @notice Claim accrued USDC and ANTS rewards.
-    function getReward() external nonReentrant updateRewards(msg.sender) {
-        uint256 usdcEarned = usdcRewards[msg.sender];
-        uint256 antsEarned = antsRewards[msg.sender];
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REWARD CLAIMS
+    // ═══════════════════════════════════════════════════════════════════
 
-        if (usdcEarned > 0) {
-            usdcRewards[msg.sender] = 0;
-            usdc.safeTransfer(msg.sender, usdcEarned);
+    /// @notice Claim accrued USDC (instant-credit). O(1).
+    function claimUsdc() external nonReentrant updateRewards(msg.sender) {
+        uint256 owed = usdcRewards[msg.sender];
+        if (owed == 0) revert NothingToClaim();
+        usdcRewards[msg.sender] = 0;
+        usdc.safeTransfer(msg.sender, owed);
+        emit UsdcPaid(msg.sender, owed);
+    }
+
+    /**
+     * @notice Convert points for the next `numEpochs` completed reward epochs
+     *         into ANTS. Sequential — must process epoch N before N+1.
+     * @dev If the caller has a large backlog that would exceed
+     *      `MAX_EPOCHS_PER_CAPTURE`, call `catchUpPoints` first.
+     */
+    function claimAnts(uint32 numEpochs) external nonReentrant updateRewards(msg.sender) {
+        if (numEpochs == 0) revert InvalidAmount();
+
+        uint32 from = userLastClaimedEpoch[msg.sender];
+        uint32 to = from + numEpochs;
+        if (to > currentRewardEpoch) to = currentRewardEpoch;
+        if (to == from) revert NothingToClaim();
+
+        uint256 totalAnts;
+        for (uint32 N = from; N < to; N++) {
+            RewardEpoch memory re = rewardEpochs[N];
+            if (re.antsPot == 0) continue;
+            uint256 totalPoints = N == 0
+                ? re.activeSecondsAtEnd
+                : re.activeSecondsAtEnd - rewardEpochs[N - 1].activeSecondsAtEnd;
+            if (totalPoints == 0) continue;
+            uint256 userPts = userPoints[msg.sender][N];
+            if (userPts == 0) continue;
+            totalAnts += (re.antsPot * userPts) / totalPoints;
+            delete userPoints[msg.sender][N];
         }
-        if (antsEarned > 0) {
-            antsRewards[msg.sender] = 0;
-            ants.safeTransfer(msg.sender, antsEarned);
+        userLastClaimedEpoch[msg.sender] = to;
+
+        if (totalAnts > 0) {
+            ants.safeTransfer(msg.sender, totalAnts);
+        }
+        emit AntsClaimed(msg.sender, from, to, totalAnts);
+    }
+
+    /**
+     * @notice Incrementally capture points for a user with a backlog that
+     *         exceeds `MAX_EPOCHS_PER_CAPTURE`. Processes up to `numEpochs`
+     *         of the user's per-epoch point contributions.
+     */
+    function catchUpPoints(uint32 numEpochs) external {
+        if (numEpochs == 0) revert InvalidAmount();
+        _updateStakeIntegrator();
+
+        uint32 userEp = userCurrentEpoch[msg.sender];
+        uint32 currentEp = currentRewardEpoch;
+        uint32 targetEp = userEp + numEpochs;
+        if (targetEp > currentEp) targetEp = currentEp;
+        if (targetEp == userEp) revert NothingToClaim();
+
+        uint256 S = staked[msg.sender];
+        uint256 userSnap = userIntegratorSnap[msg.sender];
+
+        // Accumulate points for fully completed epochs [userEp, targetEp).
+        // `targetEp` itself (and, if targetEp == currentEp, the open epoch)
+        // are left for a later capture, since their integratorAtEnd isn't
+        // finalized yet.
+        for (uint32 N = userEp; N < targetEp; N++) {
+            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].stakeIntegratorAtEnd;
+            uint256 segEnd = rewardEpochs[N].stakeIntegratorAtEnd;
+            if (S > 0 && segEnd > segStart) {
+                userPoints[msg.sender][N] += (S * (segEnd - segStart)) / 1e18;
+            }
         }
 
-        emit RewardPaid(msg.sender, usdcEarned, antsEarned);
+        userIntegratorSnap[msg.sender] = targetEp == 0 ? 0 : rewardEpochs[targetEp - 1].stakeIntegratorAtEnd;
+        userCurrentEpoch[msg.sender] = targetEp;
+
+        emit PointsCaughtUp(msg.sender, targetEp);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -283,8 +466,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
-        uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
-        if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
+        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
     /// @inheritdoc AntseedSellerDelegation
@@ -296,8 +478,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.settle(channelId, cumulativeAmount, metadata, buyerSig);
-        uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
-        if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
+        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
     /// @inheritdoc AntseedSellerDelegation
@@ -309,22 +490,37 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.close(channelId, finalAmount, metadata, buyerSig);
-        uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
-        if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
+        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        ANTS EMISSIONS
+    //                        OPERATOR TICK (ANTS emissions)
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Claim accumulated ANTS emissions from AntseedEmissions and notify the ANTS stream.
-    ///         Operator is responsible for supplying the list of finalized epochs.
-    function operatorClaimEmissions(uint256[] calldata epochs) external onlyOperator nonReentrant {
+    /**
+     * @notice Claim ANTS emissions for the given finalized `emissionEpochId`
+     *         and close the current reward epoch, making its points claimable.
+     *         Operator is expected to tick sequentially as AntseedEmissions
+     *         finalizes each epoch.
+     */
+    function operatorClaimEmissions(uint256 emissionEpochId) external onlyOperator nonReentrant {
+        _updateStakeIntegrator();
+
         uint256 beforeBal = ants.balanceOf(address(this));
-        IAntseedEmissionsClaim(emissions).claimSellerEmissions(epochs);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = emissionEpochId;
+        IAntseedEmissionsClaim(emissions).claimSellerEmissions(ids);
         uint256 inflow = ants.balanceOf(address(this)) - beforeBal;
-        if (inflow > 0) _notifyRewardAmount(antsStream, STREAM_ANTS, inflow);
-        emit EmissionsClaimed(inflow);
+
+        uint32 rewardEpoch = currentRewardEpoch;
+        rewardEpochs[rewardEpoch] = RewardEpoch({
+            stakeIntegratorAtEnd: stakeIntegrator,
+            activeSecondsAtEnd: activeSecondsAccumulator,
+            antsPot: inflow
+        });
+        currentRewardEpoch = rewardEpoch + 1;
+
+        emit RewardEpochClosed(rewardEpoch, inflow, stakeIntegrator, activeSecondsAccumulator);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -332,22 +528,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Recover the proxy's seller stake from AntseedStaking (the USDC
-     *         the owner pre-staked for the proxy to register as a seller).
-     *         Callable once no channels are active (enforced by AntseedStaking).
-     *         Any slashed amount stays with AntseedStaking's protocol reserve.
-     * @dev Reverts while either reward stream is still distributing. Calling
-     *      during an active stream would short-change stakers: the recovered
-     *      USDC would be paid out to the owner instead of flowing into the
-     *      active reward stream. Operators must let both streams finish before
-     *      decommissioning.
-     * @param recipient Address that receives the recovered USDC payout.
+     * @notice Recover the proxy's seller stake from AntseedStaking.
+     *         AntseedStaking itself enforces "no active channels". Users'
+     *         unclaimed points remain intact and claimable after this.
      */
     function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
-        if (block.timestamp < usdcStream.periodFinish || block.timestamp < antsStream.periodFinish) {
-            revert RewardPeriodActive();
-        }
         uint256 beforeBal = usdc.balanceOf(address(this));
         IAntseedStakingSeller(antseedStaking).unstake();
         uint256 payout = usdc.balanceOf(address(this)) - beforeBal;
@@ -355,42 +541,66 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit AntseedStakeWithdrawn(recipient, payout);
     }
 
-    /**
-     * @notice Change the rewards duration for a stream. Only while the stream's
-     *         current period has finished to avoid surprising dilution.
-     * @param stream STREAM_USDC (0) or STREAM_ANTS (1).
-     */
-    function setRewardsDuration(uint8 stream, uint256 newDuration) external onlyOwner {
-        if (newDuration == 0 || newDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
-        RewardStream storage s = stream == STREAM_USDC ? usdcStream : antsStream;
-        if (block.timestamp < s.periodFinish) revert RewardPeriodActive();
-        s.rewardsDuration = newDuration;
-        emit RewardsDurationUpdated(stream, newDuration);
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     //                        VIEWS
     // ═══════════════════════════════════════════════════════════════════
 
-    function earned(address account) external view returns (uint256 usdcEarned, uint256 antsEarned) {
-        usdcEarned = usdcRewards[account]
-            + (staked[account] * (_rewardPerToken(usdcStream) - userUsdcRewardPerTokenPaid[account])) / 1e18;
-        antsEarned = antsRewards[account]
-            + (staked[account] * (_rewardPerToken(antsStream) - userAntsRewardPerTokenPaid[account])) / 1e18;
+    /// @notice USDC earned and claimable by `account` right now.
+    function earnedUsdc(address account) external view returns (uint256) {
+        return usdcRewards[account]
+            + (staked[account] * (usdcRewardPerTokenStored - userUsdcRewardPerTokenPaid[account])) / 1e18;
     }
 
-    function rewardPerTokenUsdc() external view returns (uint256) { return _rewardPerToken(usdcStream); }
-    function rewardPerTokenAnts() external view returns (uint256) { return _rewardPerToken(antsStream); }
+    /// @notice Preview ANTS for a single completed reward epoch for `account`.
+    ///         Does not mutate state. Returns 0 for the currently-open epoch.
+    /// @dev Computes uncaptured points lazily if the user hasn't interacted
+    ///      since before/during the epoch, assuming their stake has been
+    ///      constant since their last interaction. (This invariant holds
+    ///      because any stake change would have triggered `updateRewards`.)
+    function pendingAntsForEpoch(address account, uint32 rewardEpoch)
+        external
+        view
+        returns (uint256)
+    {
+        if (rewardEpoch >= currentRewardEpoch) return 0;
+        RewardEpoch memory re = rewardEpochs[rewardEpoch];
+        if (re.antsPot == 0) return 0;
+        uint256 totalPoints = rewardEpoch == 0
+            ? re.activeSecondsAtEnd
+            : re.activeSecondsAtEnd - rewardEpochs[rewardEpoch - 1].activeSecondsAtEnd;
+        if (totalPoints == 0) return 0;
+
+        uint256 userPts = userPoints[account][rewardEpoch];
+
+        // Add uncaptured contribution if the user's last capture was at or
+        // before the start of this epoch and they're currently staked.
+        uint32 userEp = userCurrentEpoch[account];
+        uint256 S = staked[account];
+        if (S > 0 && userEp <= rewardEpoch) {
+            uint256 segStart;
+            if (userEp == rewardEpoch) {
+                segStart = userIntegratorSnap[account];
+            } else if (rewardEpoch > 0) {
+                segStart = rewardEpochs[rewardEpoch - 1].stakeIntegratorAtEnd;
+            }
+            uint256 segEnd = re.stakeIntegratorAtEnd;
+            if (segEnd > segStart) {
+                userPts += (S * (segEnd - segStart)) / 1e18;
+            }
+        }
+
+        if (userPts == 0) return 0;
+        return (re.antsPot * userPts) / totalPoints;
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        ERC-1271 (Venice API-key onboarding)
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice ERC-1271 signature validation. Returns the magic value when the
-    ///         signature recovers to the current `owner()`. Used by Venice to
-    ///         verify off-chain challenges when issuing the proxy's API key.
-    /// @dev Intentionally keyed on the owner, not operators. Venice onboarding
-    ///      is a rare admin action, not an ongoing operational one.
+    /// @notice ERC-1271 signature validation. Returns the magic value when
+    ///         the signature recovers to the current `owner()`. Used by
+    ///         Venice to verify off-chain challenges when issuing the proxy's
+    ///         API key.
     function isValidSignature(bytes32 hash, bytes calldata signature)
         external
         view
@@ -402,46 +612,85 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL REWARD MATH
+    //                        INTERNAL
     // ═══════════════════════════════════════════════════════════════════
 
-    function _lastTimeRewardApplicable(RewardStream storage s) internal view returns (uint256) {
-        return block.timestamp < s.periodFinish ? block.timestamp : s.periodFinish;
+    /// @dev Instant-credit USDC to stakers at the moment of inflow. Skipped
+    ///      if `totalStaked == 0` (no one to credit); the USDC sits in the
+    ///      proxy balance as operational dust and can be recovered by admin.
+    function _distributeUsdcInstant(uint256 amount) internal {
+        if (amount == 0 || totalStaked == 0) return;
+        usdcRewardPerTokenStored += (amount * 1e18) / totalStaked;
+        emit UsdcDistributed(amount);
     }
 
-    function _rewardPerToken(RewardStream storage s) internal view returns (uint256) {
-        if (totalStaked == 0) return s.rewardPerTokenStored;
-        uint256 timeDelta = _lastTimeRewardApplicable(s) - s.lastUpdateTime;
-        return s.rewardPerTokenStored + (timeDelta * s.rewardRate * 1e18) / totalStaked;
-    }
-
-    function _updateStream(
-        RewardStream storage s,
-        mapping(address => uint256) storage paid,
-        mapping(address => uint256) storage userRewards,
-        address account
-    ) internal {
-        s.rewardPerTokenStored = _rewardPerToken(s);
-        s.lastUpdateTime = _lastTimeRewardApplicable(s);
+    /// @dev Settle `account`'s USDC reward debt against the current
+    ///      accumulator. Must fire before any `staked[account]` change.
+    function _updateUsdcForUser(address account) internal {
         if (account != address(0)) {
-            userRewards[account] += (staked[account] * (s.rewardPerTokenStored - paid[account])) / 1e18;
-            paid[account] = s.rewardPerTokenStored;
+            uint256 delta = (staked[account] * (usdcRewardPerTokenStored - userUsdcRewardPerTokenPaid[account])) / 1e18;
+            if (delta > 0) usdcRewards[account] += delta;
+            userUsdcRewardPerTokenPaid[account] = usdcRewardPerTokenStored;
         }
     }
 
-    function _notifyRewardAmount(RewardStream storage s, uint8 streamId, uint256 amount) internal {
-        s.rewardPerTokenStored = _rewardPerToken(s);
-        s.lastUpdateTime = block.timestamp;
-
-        if (block.timestamp >= s.periodFinish) {
-            s.rewardRate = amount / s.rewardsDuration;
-        } else {
-            uint256 remaining = s.periodFinish - block.timestamp;
-            uint256 leftover = remaining * s.rewardRate;
-            s.rewardRate = (amount + leftover) / s.rewardsDuration;
+    /// @dev Advance `stakeIntegrator` and `activeSecondsAccumulator` to now.
+    function _updateStakeIntegrator() internal {
+        uint256 delta = block.timestamp - lastIntegratorUpdate;
+        if (delta > 0 && totalStaked > 0) {
+            stakeIntegrator += (delta * 1e18) / totalStaked;
+            activeSecondsAccumulator += delta;
         }
-        s.periodFinish = block.timestamp + s.rewardsDuration;
+        lastIntegratorUpdate = block.timestamp;
+    }
 
-        emit RewardNotified(streamId, amount, s.periodFinish);
+    /// @dev Capture `account`'s point contribution across every reward epoch
+    ///      they've spanned since their last interaction, up through the
+    ///      currently-open epoch. Reverts `BacklogTooLarge` if they need more
+    ///      than `MAX_EPOCHS_PER_CAPTURE` iterations — `catchUpPoints` lets
+    ///      them process incrementally.
+    function _captureUserPoints(address account) internal {
+        if (account == address(0)) return;
+
+        uint256 S = staked[account];
+        uint32 currentEp = currentRewardEpoch;
+
+        // Fast path: user has no stake (never interacted, or fully unstaked).
+        // Nothing to capture — just snap them to the current state.
+        if (S == 0) {
+            userIntegratorSnap[account] = stakeIntegrator;
+            userCurrentEpoch[account] = currentEp;
+            return;
+        }
+
+        uint32 userEp = userCurrentEpoch[account];
+        if (currentEp > userEp && currentEp - userEp > MAX_EPOCHS_PER_CAPTURE) {
+            revert BacklogTooLarge();
+        }
+
+        uint256 userSnap = userIntegratorSnap[account];
+
+        // For each completed epoch in [userEp, currentEp): add points for
+        // (segEnd - segStart) of the integrator within that epoch.
+        for (uint32 N = userEp; N < currentEp; N++) {
+            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].stakeIntegratorAtEnd;
+            uint256 segEnd = rewardEpochs[N].stakeIntegratorAtEnd;
+            if (segEnd > segStart) {
+                userPoints[account][N] += (S * (segEnd - segStart)) / 1e18;
+            }
+        }
+
+        // And the currently-open epoch: from (user's start boundary) to NOW.
+        {
+            uint256 segStart = userEp == currentEp
+                ? userSnap
+                : rewardEpochs[currentEp - 1].stakeIntegratorAtEnd;
+            if (stakeIntegrator > segStart) {
+                userPoints[account][currentEp] += (S * (stakeIntegrator - segStart)) / 1e18;
+            }
+        }
+
+        userIntegratorSnap[account] = stakeIntegrator;
+        userCurrentEpoch[account] = currentEp;
     }
 }
