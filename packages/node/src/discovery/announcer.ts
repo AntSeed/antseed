@@ -17,6 +17,7 @@ import { METADATA_VERSION } from "./peer-metadata.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
+import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
@@ -244,8 +245,11 @@ export class PeerAnnouncer {
           // When the peer is fronted by a seller contract (e.g. DiemStakingProxy),
           // the on-chain seller is the proxy — stake and channel stats live under
           // that address, not the peer's wallet.
-          const sellerAddress = this.config.sellerContract?.sellerContract
+          const rawSellerAddress = this.config.sellerContract?.sellerContract
             ?? this.config.identity.wallet.address;
+          const sellerAddress = getAddress(
+            rawSellerAddress.startsWith("0x") ? rawSellerAddress : "0x" + rawSellerAddress,
+          );
           const agentId = await this.config.stakingClient.getAgentId(sellerAddress);
           const stats = await this.config.channelsClient.getAgentStats(agentId);
           metadata.onChainChannelCount = stats.channelCount;
