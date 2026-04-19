@@ -1421,6 +1421,7 @@ export class AntseedNode extends EventEmitter {
       peerId: result.metadata.peerId,
       displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
+      metadata: result.metadata,
       providers,
       publicAddress: this._resolvePublicAddress(result),
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),

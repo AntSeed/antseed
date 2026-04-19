@@ -105,7 +105,8 @@ export async function assertSellerPrerequisites(input: {
       const identity = await loadOrCreateIdentity(dataDir)
       const identityClient = createIdentityClient(config)
       const stakingClient = createStakingClient(config)
-      const checks = await checkSellerReadiness(identity, identityClient, stakingClient)
+      const sellerContract = config.payments.sellerContract?.address
+      const checks = await checkSellerReadiness(identity, identityClient, stakingClient, sellerContract)
       for (const check of checks) {
         if (!check.passed) {
           failures.push({
