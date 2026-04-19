@@ -72,6 +72,7 @@ export class PeerAnnouncer {
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private retryHandle: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
+  private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
   private _latestMetadata: PeerMetadata | null = null;
 
@@ -86,7 +87,7 @@ export class PeerAnnouncer {
     const failures = await this._announceTopics(metadata.providers);
     if (failures > 0) {
       this._scheduleRetryAfterFailure(failures);
-    } else if (this.retryAttempt > 0 || this.retryHandle) {
+    } else {
       // Recovered — cancel any pending retry and reset backoff.
       this._cancelRetry();
     }
@@ -104,6 +105,7 @@ export class PeerAnnouncer {
     if (this.intervalHandle) {
       return;
     }
+    this.stopped = false;
     // Announce immediately, then on interval
     void this.announce().catch((err) => {
       debugWarn(`[Announcer] Initial announce failed: ${err instanceof Error ? err.message : err}`);
@@ -116,6 +118,7 @@ export class PeerAnnouncer {
   }
 
   stopPeriodicAnnounce(): void {
+    this.stopped = true;
     if (this.intervalHandle) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
@@ -132,8 +135,8 @@ export class PeerAnnouncer {
   }
 
   private _scheduleRetryAfterFailure(failures: number): void {
-    if (this.retryHandle) {
-      // A retry is already scheduled for this cycle; don't stack.
+    if (this.stopped || this.retryHandle) {
+      // Already stopped, or a retry is already scheduled — don't arm a new timer.
       return;
     }
     const idx = Math.min(this.retryAttempt, ANNOUNCE_RETRY_BACKOFFS_MS.length - 1);
