@@ -22,7 +22,7 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 
 // Channels client (reserve, settle, timeout)
 export { ChannelsClient } from './evm/channels-client.js';
-export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent } from './evm/channels-client.js';
+export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent, DecodedChannelSettled } from './evm/channels-client.js';
 
 // Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';

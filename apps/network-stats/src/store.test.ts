@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from './store.js';
-import type { DecodedMetadataRecorded } from '@antseed/node';
+import type { DecodedMetadataRecorded, DecodedChannelSettled } from '@antseed/node';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ describe('SqliteStore', () => {
       'seller_buyer_totals',
       'seller_channel_totals',
       'seller_metadata_totals',
+      'settlement_events',
+      'sqlite_sequence',
     ]);
     store.close();
   });
@@ -261,6 +263,237 @@ describe('SqliteStore', () => {
     assert.equal(after2.firstSettledBlock, 500);
     assert.equal(after2.lastSettledBlock, 750);
     assert.equal(after2.settlementCount, 2);
+    store.close();
+  });
+
+  // ── settlement_events / leaderboard tests ──────────────────────────────────
+
+  it('applySettlementBatch inserts events and advances checkpoint', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const event: DecodedChannelSettled = {
+      blockNumber: 100,
+      txHash: '0x' + 'a'.repeat(64),
+      logIndex: 0,
+      channelId: '0x' + '1'.repeat(64),
+      buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40),
+      cumulativeAmount: 5000n,
+      delta: 5000n,
+      totalSettled: 5000n,
+      platformFee: 50n,
+      metadata: '0x',
+    };
+
+    const metadataByTx = new Map([
+      [event.txHash, [makeEvent({
+        txHash: event.txHash,
+        channelId: event.channelId,
+        inputTokens: 100n,
+        outputTokens: 200n,
+        requestCount: 3n,
+      })]],
+    ]);
+
+    const agentIdBySeller = new Map([[event.seller, 42]]);
+    const blockTimestamps = new Map([[100, 1700000000]]);
+
+    store.applySettlementBatch(
+      'base', '0xchannels', [event], metadataByTx, agentIdBySeller,
+      100, blockTimestamps, 1700000000,
+    );
+
+    assert.equal(store.getCheckpoint('base', '0xchannels'), 100);
+
+    // Leaderboard should show this seller
+    const sellers = store.getLeaderboard('seller', 'all');
+    assert.equal(sellers.length, 1);
+    assert.equal(sellers[0]!.id, '42');
+    assert.equal(sellers[0]!.totalRevenue, '5000');
+    assert.equal(sellers[0]!.totalFees, '50');
+    assert.equal(sellers[0]!.totalInputTokens, '100');
+    assert.equal(sellers[0]!.totalOutputTokens, '200');
+    assert.equal(sellers[0]!.totalRequests, '3');
+    assert.equal(sellers[0]!.settlementCount, 1);
+
+    // Buyer leaderboard
+    const buyers = store.getLeaderboard('buyer', 'all');
+    assert.equal(buyers.length, 1);
+    assert.equal(buyers[0]!.id, event.buyer);
+    assert.equal(buyers[0]!.totalRevenue, '5000');
+
+    store.close();
+  });
+
+  it('getLeaderboard filters by day', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    // Two events on different days
+    const day1Ts = Math.floor(Date.UTC(2025, 0, 15) / 1000); // Jan 15 2025
+    const day2Ts = Math.floor(Date.UTC(2025, 0, 16) / 1000); // Jan 16 2025
+
+    const event1: DecodedChannelSettled = {
+      blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 0,
+      channelId: '0x' + '1'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40), cumulativeAmount: 1000n, delta: 1000n,
+      totalSettled: 1000n, platformFee: 10n, metadata: '0x',
+    };
+    const event2: DecodedChannelSettled = {
+      blockNumber: 200, txHash: '0x' + 'c'.repeat(64), logIndex: 0,
+      channelId: '0x' + '2'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40), cumulativeAmount: 3000n, delta: 2000n,
+      totalSettled: 3000n, platformFee: 20n, metadata: '0x',
+    };
+
+    const agentIdBySeller = new Map([[event1.seller, 1]]);
+
+    store.applySettlementBatch(
+      'base', '0xchannels', [event1], new Map(), agentIdBySeller,
+      100, new Map([[100, day1Ts]]), day1Ts,
+    );
+    store.applySettlementBatch(
+      'base', '0xchannels', [event2], new Map(), agentIdBySeller,
+      200, new Map([[200, day2Ts]]), day2Ts,
+    );
+
+    // Query for day 1 only
+    const day1 = store.getLeaderboard('seller', 'day', new Date(Date.UTC(2025, 0, 15)));
+    assert.equal(day1.length, 1);
+    assert.equal(day1[0]!.totalRevenue, '1000');
+
+    // Query for day 2 only
+    const day2 = store.getLeaderboard('seller', 'day', new Date(Date.UTC(2025, 0, 16)));
+    assert.equal(day2.length, 1);
+    assert.equal(day2[0]!.totalRevenue, '2000');
+
+    // All time should sum both
+    const all = store.getLeaderboard('seller', 'all');
+    assert.equal(all.length, 1);
+    assert.equal(all[0]!.totalRevenue, '3000');
+
+    store.close();
+  });
+
+  it('getLeaderboard filters by month', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const janTs = Math.floor(Date.UTC(2025, 0, 15) / 1000); // Jan 15
+    const febTs = Math.floor(Date.UTC(2025, 1, 10) / 1000); // Feb 10
+
+    const event1: DecodedChannelSettled = {
+      blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 0,
+      channelId: '0x' + '1'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40), cumulativeAmount: 500n, delta: 500n,
+      totalSettled: 500n, platformFee: 5n, metadata: '0x',
+    };
+    const event2: DecodedChannelSettled = {
+      blockNumber: 200, txHash: '0x' + 'c'.repeat(64), logIndex: 0,
+      channelId: '0x' + '2'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40), cumulativeAmount: 1500n, delta: 1000n,
+      totalSettled: 1500n, platformFee: 10n, metadata: '0x',
+    };
+
+    const agentIdBySeller = new Map([[event1.seller, 1]]);
+
+    store.applySettlementBatch(
+      'base', '0xchannels', [event1], new Map(), agentIdBySeller,
+      100, new Map([[100, janTs]]), janTs,
+    );
+    store.applySettlementBatch(
+      'base', '0xchannels', [event2], new Map(), agentIdBySeller,
+      200, new Map([[200, febTs]]), febTs,
+    );
+
+    const jan = store.getLeaderboard('seller', 'month', new Date(Date.UTC(2025, 0, 1)));
+    assert.equal(jan.length, 1);
+    assert.equal(jan[0]!.totalRevenue, '500');
+
+    const feb = store.getLeaderboard('seller', 'month', new Date(Date.UTC(2025, 1, 1)));
+    assert.equal(feb.length, 1);
+    assert.equal(feb[0]!.totalRevenue, '1000');
+
+    store.close();
+  });
+
+  it('getLeaderboard ranks multiple sellers correctly', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const ts = Math.floor(Date.UTC(2025, 0, 15) / 1000);
+
+    const events: DecodedChannelSettled[] = [
+      {
+        blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 0,
+        channelId: '0x' + '1'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+        seller: '0x' + '1'.repeat(40), cumulativeAmount: 3000n, delta: 3000n,
+        totalSettled: 3000n, platformFee: 30n, metadata: '0x',
+      },
+      {
+        blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 1,
+        channelId: '0x' + '2'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+        seller: '0x' + '2'.repeat(40), cumulativeAmount: 5000n, delta: 5000n,
+        totalSettled: 5000n, platformFee: 50n, metadata: '0x',
+      },
+      {
+        blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 2,
+        channelId: '0x' + '3'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+        seller: '0x' + '3'.repeat(40), cumulativeAmount: 1000n, delta: 1000n,
+        totalSettled: 1000n, platformFee: 10n, metadata: '0x',
+      },
+    ];
+
+    const agentIdBySeller = new Map([
+      [events[0]!.seller, 10],
+      [events[1]!.seller, 20],
+      [events[2]!.seller, 30],
+    ]);
+
+    store.applySettlementBatch(
+      'base', '0xchannels', events, new Map(), agentIdBySeller,
+      100, new Map([[100, ts]]), ts,
+    );
+
+    const sellers = store.getLeaderboard('seller', 'all');
+    assert.equal(sellers.length, 3);
+    // Should be ranked by revenue DESC
+    assert.equal(sellers[0]!.id, '20'); // 5000
+    assert.equal(sellers[1]!.id, '10'); // 3000
+    assert.equal(sellers[2]!.id, '30'); // 1000
+
+    store.close();
+  });
+
+  it('applySettlementBatch deduplicates on (tx_hash, log_index)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const event: DecodedChannelSettled = {
+      blockNumber: 100, txHash: '0x' + 'a'.repeat(64), logIndex: 0,
+      channelId: '0x' + '1'.repeat(64), buyer: '0x' + 'b'.repeat(40),
+      seller: '0x' + 's'.repeat(40), cumulativeAmount: 5000n, delta: 5000n,
+      totalSettled: 5000n, platformFee: 50n, metadata: '0x',
+    };
+
+    const agentIdBySeller = new Map([[event.seller, 1]]);
+    const blockTimestamps = new Map([[100, 1700000000]]);
+
+    // Insert same event twice
+    store.applySettlementBatch(
+      'base', '0xchannels', [event], new Map(), agentIdBySeller,
+      100, blockTimestamps, 1700000000,
+    );
+    store.applySettlementBatch(
+      'base', '0xchannels', [event], new Map(), agentIdBySeller,
+      100, blockTimestamps, 1700000000,
+    );
+
+    // Should only have one entry
+    const sellers = store.getLeaderboard('seller', 'all');
+    assert.equal(sellers.length, 1);
+    assert.equal(sellers[0]!.totalRevenue, '5000'); // not doubled
     store.close();
   });
 
