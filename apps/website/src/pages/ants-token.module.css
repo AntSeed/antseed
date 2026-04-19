@@ -209,29 +209,61 @@
   margin: 0 auto;
 }
 
-/* Halving chart */
+/* Halving timeline */
 .halvingChart {
   background: #fff;
   border: 1px solid #e8e8e3;
   border-radius: 16px;
-  padding: 32px;
+  padding: 20px 24px 12px;
   margin-bottom: 24px;
 }
 .halvingSvg {
   width: 100%;
-  height: 100px;
+  height: auto;
+  display: block;
 }
-.halvingLabels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
+.halvingAxis {
+  stroke: #e0e0da;
+  stroke-width: 1;
+}
+.halvingCliff {
+  stroke: #f0f0eb;
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.halvingTick {
+  stroke: #bbb;
+  stroke-width: 1.5;
+}
+.halvingNow {
+  stroke: #1FD87A;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+.halvingPulse {
+  fill: rgba(31, 216, 122, 0.3);
+  animation: halvingPulse 2s ease-in-out infinite;
+}
+@keyframes halvingPulse {
+  0%, 100% { r: 8; opacity: 0.55; }
+  50%      { r: 16; opacity: 0.1; }
+}
+.halvingPill {
+  fill: #1a1a1a;
+}
+.halvingPillText {
+  fill: #1FD87A;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.5px;
+}
+.halvingXLabel {
+  fill: #999;
   font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
-  color: #888;
-}
-.halvingLabels span:nth-child(2) {
-  color: #1FD87A;
-  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 /* Current epoch card */
@@ -396,6 +428,130 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 20px;
 }
+
+/* Flow diagram */
+.flowCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  padding: 32px 28px 24px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+.flowSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.flowBox {
+  fill: #f8f8f4;
+  stroke: #e8e8e3;
+  stroke-width: 1;
+}
+.flowBoxDark {
+  fill: #1a1a1a;
+  stroke: #1a1a1a;
+}
+.flowBoxMint {
+  fill: #1a1a1a;
+  stroke: #1FD87A;
+  stroke-width: 1.5;
+}
+.flowBoxTitleMint {
+  fill: #1FD87A;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.flowBoxSubMint {
+  fill: #999;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.flowBoxTitle {
+  fill: #1a1a1a;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.flowBoxSub {
+  fill: #888;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.flowBoxTitleLight {
+  fill: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+.flowBoxSubLight {
+  fill: #888;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.flowLine {
+  fill: none;
+  stroke: #ccc;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.flowLineGreen {
+  fill: none;
+  stroke: rgba(31, 216, 122, 0.4);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.flowLineLabel {
+  fill: #888;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.3px;
+}
+.flowLineLabelGreen {
+  fill: #1FD87A;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.3px;
+}
+.flowPellet {
+  fill: #1a1a1a;
+}
+.flowPelletGreen {
+  fill: #1FD87A;
+  filter: drop-shadow(0 0 6px rgba(31, 216, 122, 0.65));
+}
+.flowLegend {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin-top: 16px;
+  padding-top: 18px;
+  border-top: 1px solid #f0f0eb;
+}
+.flowLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+}
+.flowLegendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1a1a1a;
+}
+.flowLegendDotGreen {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1FD87A;
+  box-shadow: 0 0 6px rgba(31, 216, 122, 0.6);
+}
 .earnCard {
   background: #fff;
   border: 1px solid #e8e8e3;
@@ -540,6 +696,7 @@
   .earnGrid {
     grid-template-columns: 1fr;
   }
+  .flowCard { padding: 20px 16px 16px; }
   .contractsRow { flex-direction: column; gap: 4px; }
   .contractsLabel { min-width: unset; }
   .duneBanner { padding: 28px 24px; }
