@@ -336,10 +336,18 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      *         the owner pre-staked for the proxy to register as a seller).
      *         Callable once no channels are active (enforced by AntseedStaking).
      *         Any slashed amount stays with AntseedStaking's protocol reserve.
+     * @dev Reverts while either reward stream is still distributing. Calling
+     *      during an active stream would short-change stakers: the recovered
+     *      USDC would be paid out to the owner instead of flowing into the
+     *      active reward stream. Operators must let both streams finish before
+     *      decommissioning.
      * @param recipient Address that receives the recovered USDC payout.
      */
     function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
+        if (block.timestamp < usdcStream.periodFinish || block.timestamp < antsStream.periodFinish) {
+            revert RewardPeriodActive();
+        }
         uint256 beforeBal = usdc.balanceOf(address(this));
         IAntseedStakingSeller(antseedStaking).unstake();
         uint256 payout = usdc.balanceOf(address(this)) - beforeBal;
