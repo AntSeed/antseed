@@ -94,6 +94,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     uint8 internal constant STREAM_USDC = 0;
     uint8 internal constant STREAM_ANTS = 1;
 
+    /// @dev Upper bound for `setRewardsDuration`. Prevents a compromised owner
+    ///      from setting an absurdly short duration (e.g. 1 second → extreme
+    ///      `rewardRate = amount / 1`) or an absurdly long one that traps
+    ///      inflows in slow-release streams.
+    uint256 public constant MAX_REWARDS_DURATION = 365 days;
+
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage
     // ═══════════════════════════════════════════════════════════════════
@@ -153,7 +159,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     {
         if (_diem == address(0) || _usdc == address(0) || _ants == address(0)) revert InvalidAddress();
         if (_emissions == address(0) || _antseedStaking == address(0)) revert InvalidAddress();
-        if (_usdcRewardsDuration == 0 || _antsRewardsDuration == 0) revert InvalidDuration();
+        if (_usdcRewardsDuration == 0 || _usdcRewardsDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
+        if (_antsRewardsDuration == 0 || _antsRewardsDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
 
         diem = IERC20(_diem);
         usdc = IERC20(_usdc);
@@ -346,7 +353,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      * @param stream STREAM_USDC (0) or STREAM_ANTS (1).
      */
     function setRewardsDuration(uint8 stream, uint256 newDuration) external onlyOwner {
-        if (newDuration == 0) revert InvalidDuration();
+        if (newDuration == 0 || newDuration > MAX_REWARDS_DURATION) revert InvalidDuration();
         RewardStream storage s = stream == STREAM_USDC ? usdcStream : antsStream;
         if (block.timestamp < s.periodFinish) revert RewardPeriodActive();
         s.rewardsDuration = newDuration;
