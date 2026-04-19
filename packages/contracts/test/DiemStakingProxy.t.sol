@@ -2,60 +2,143 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+
 import {MockUSDC} from "../MockUSDC.sol";
+import {MockERC8004Registry} from "../MockERC8004Registry.sol";
+import {ANTSToken} from "../ANTSToken.sol";
+import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {AntseedDeposits} from "../AntseedDeposits.sol";
+import {AntseedStaking} from "../AntseedStaking.sol";
+import {AntseedChannels} from "../AntseedChannels.sol";
+import {AntseedEmissions} from "../AntseedEmissions.sol";
 import {DiemStakingProxy} from "../DiemStakingProxy.sol";
+
 import {MockDiem} from "./mocks/MockDiem.sol";
-import {MockAntseedChannels} from "./mocks/MockAntseedChannels.sol";
-import {MockAntseedEmissions} from "./mocks/MockAntseedEmissions.sol";
-import {MockAntseedStaking} from "./mocks/MockAntseedStaking.sol";
 
+/// @dev Integration tests for DiemStakingProxy against the real AntSeed stack
+///      (Channels, Deposits, Staking, Emissions, Registry, ANTSToken). The only
+///      mock is MockDiem — Venice's DIEM contract is external, we don't own it.
 contract DiemStakingProxyTest is Test {
-    uint256 constant OWNER_PK = 0x0A;
+    // ─── Deterministic private keys ──────────────────────────────────
+    uint256 constant OWNER_PK    = 0x0A;
     uint256 constant OPERATOR_PK = 0x0B;
-    uint256 constant ALICE_PK = 0x0C;
-    uint256 constant BOB_PK = 0x0D;
+    uint256 constant ALICE_PK    = 0x0C;
+    uint256 constant BOB_PK      = 0x0D;
+    uint256 constant BUYER_PK    = 0xA11CE;
 
-    uint256 constant DIEM_COOLDOWN = 1 days;
-    uint256 constant USDC_DURATION = 1 days;
-    uint256 constant ANTS_DURATION = 1 days;
+    // ─── Durations / amounts ─────────────────────────────────────────
+    uint256 constant DIEM_COOLDOWN    = 1 days;
+    uint256 constant USDC_DURATION    = 1 days;
+    uint256 constant ANTS_DURATION    = 1 days;
+    uint256 constant PROXY_STAKE      = 10_000_000;     // MIN_SELLER_STAKE
+    uint256 constant INITIAL_EMISSION = 1000 ether;
+    uint256 constant EPOCH_DURATION   = 1 weeks;
 
+    // ─── Actors ──────────────────────────────────────────────────────
     address owner;
     address operator;
     address alice;
     address bob;
+    address buyer;
+    address buyerOperator  = address(0xAA);
+    address protocolReserve = address(0xFEE);
+    address teamWallet     = address(0xBEEF);
 
+    // ─── Tokens ──────────────────────────────────────────────────────
     MockDiem diem;
     MockUSDC usdc;
-    MockUSDC ants;
-    MockAntseedChannels channelsMock;
-    MockAntseedEmissions emissionsMock;
-    MockAntseedStaking stakingMock;
+    ANTSToken ants;
+
+    // ─── Real AntSeed stack ──────────────────────────────────────────
+    MockERC8004Registry identityRegistry;
+    AntseedRegistry antseedRegistry;
+    AntseedDeposits deposits;
+    AntseedStaking staking;
+    AntseedChannels channels;
+    AntseedEmissions emissions;
+
+    // ─── Target ──────────────────────────────────────────────────────
     DiemStakingProxy proxy;
+    uint256 proxyAgentId;
+
+    // ─── AntSeed EIP-712 typehashes (mirror contracts) ───────────────
+    bytes32 constant SPENDING_AUTH_TYPEHASH = keccak256(
+        "SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    );
+    bytes32 constant RESERVE_AUTH_TYPEHASH = keccak256(
+        "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
+    );
+    uint256 constant METADATA_VERSION = 1;
 
     function setUp() public {
-        owner = vm.addr(OWNER_PK);
+        owner    = vm.addr(OWNER_PK);
         operator = vm.addr(OPERATOR_PK);
-        alice = vm.addr(ALICE_PK);
-        bob = vm.addr(BOB_PK);
+        alice    = vm.addr(ALICE_PK);
+        bob      = vm.addr(BOB_PK);
+        buyer    = vm.addr(BUYER_PK);
 
+        // Start at a non-zero timestamp so epoch 0 has a clean window.
+        vm.warp(1_700_000_000);
+
+        // ── Tokens ──
         diem = new MockDiem(DIEM_COOLDOWN);
         usdc = new MockUSDC();
-        ants = new MockUSDC();
-        channelsMock = new MockAntseedChannels(address(usdc));
-        emissionsMock = new MockAntseedEmissions(address(ants));
-        stakingMock = new MockAntseedStaking(address(usdc));
+        ants = new ANTSToken();
 
+        // ── Real stack ──
+        identityRegistry = new MockERC8004Registry();
+        antseedRegistry  = new AntseedRegistry();
+        deposits         = new AntseedDeposits(address(usdc));
+        staking          = new AntseedStaking(address(usdc), address(antseedRegistry));
+        channels         = new AntseedChannels(address(antseedRegistry));
+        emissions        = new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, EPOCH_DURATION);
+
+        antseedRegistry.setChannels(address(channels));
+        antseedRegistry.setDeposits(address(deposits));
+        antseedRegistry.setStaking(address(staking));
+        antseedRegistry.setEmissions(address(emissions));
+        antseedRegistry.setAntsToken(address(ants));
+        antseedRegistry.setIdentityRegistry(address(identityRegistry));
+        antseedRegistry.setProtocolReserve(protocolReserve);
+        antseedRegistry.setTeamWallet(teamWallet);
+
+        deposits.setRegistry(address(antseedRegistry));
+        ants.setRegistry(address(antseedRegistry));
+
+        // Allow larger reservations for tests.
+        channels.setFirstSignCap(10_000_000_000);
+
+        // ── Proxy ──
         vm.prank(owner);
         proxy = new DiemStakingProxy(
-            address(diem), address(usdc), address(ants),
-            address(channelsMock), address(emissionsMock), address(stakingMock),
+            address(diem),
+            address(usdc),
+            address(ants),
+            address(channels),
+            address(emissions),
+            address(staking),
             operator,
-            USDC_DURATION, ANTS_DURATION
+            USDC_DURATION,
+            ANTS_DURATION
         );
 
-        usdc.mint(address(channelsMock), 1_000_000e6);
-        ants.mint(address(emissionsMock), 1_000_000e18);
+        // Register proxy as an ERC-8004 agent and fund its seller stake so
+        // AntseedChannels.reserve accepts the proxy (isStakedAboveMin check).
+        vm.prank(address(proxy));
+        proxyAgentId = identityRegistry.register();
+
+        usdc.mint(address(this), PROXY_STAKE);
+        usdc.approve(address(staking), PROXY_STAKE);
+        staking.stakeFor(address(proxy), proxyAgentId, PROXY_STAKE);
+
+        // ANTS is Phase-1 non-transferable. Whitelist the proxy so it can pay
+        // rewards to DIEM stakers in getReward().
+        ants.setTransferWhitelist(address(proxy), true);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        STAKING HELPERS
+    // ═══════════════════════════════════════════════════════════════════
 
     function _stakeAs(address user, uint256 amount) internal {
         diem.mint(user, amount);
@@ -65,7 +148,102 @@ contract DiemStakingProxyTest is Test {
         vm.stopPrank();
     }
 
-    // ─── STAKING ───────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        BUYER / CHANNEL HELPERS
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @dev Register buyer, set EIP-712 operator, deposit USDC through the operator.
+    function _setupBuyer(uint256 depositAmount) internal {
+        vm.prank(buyer);
+        identityRegistry.register();
+
+        deposits.setCreditLimitOverride(buyer, type(uint256).max);
+
+        uint256 nonce = deposits.getOperatorNonce(buyer);
+        bytes32 structHash = keccak256(
+            abi.encode(deposits.SET_OPERATOR_TYPEHASH(), buyerOperator, nonce)
+        );
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, digest);
+        deposits.setOperator(buyer, buyerOperator, nonce, abi.encodePacked(r, s, v));
+
+        usdc.mint(buyerOperator, depositAmount);
+        vm.startPrank(buyerOperator);
+        usdc.approve(address(deposits), depositAmount);
+        deposits.deposit(buyer, depositAmount);
+        vm.stopPrank();
+    }
+
+    function _hashTypedDataChannels(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", channels.domainSeparator(), structHash));
+    }
+
+    function _signReserveAuth(
+        bytes32 channelId,
+        uint128 maxAmount,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(RESERVE_AUTH_TYPEHASH, channelId, maxAmount, deadline)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _signSpendingAuth(
+        bytes32 channelId,
+        uint256 cumulativeAmount,
+        bytes memory metadata
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(SPENDING_AUTH_TYPEHASH, channelId, cumulativeAmount, keccak256(metadata))
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _encodeMetadata(uint256 inputTokens, uint256 outputTokens)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(METADATA_VERSION, inputTokens, outputTokens, uint256(0));
+    }
+
+    /// @dev Full reserve helper via the proxy. Buyer is created if needed.
+    function _reserveViaProxy(
+        bytes32 salt,
+        uint128 maxAmount,
+        uint256 depositAmount
+    ) internal returns (bytes32 channelId) {
+        _setupBuyer(depositAmount);
+        channelId = channels.computeChannelId(buyer, address(proxy), salt);
+        bytes memory reserveSig = _signReserveAuth(channelId, maxAmount, block.timestamp + 1 days);
+        vm.prank(operator);
+        proxy.reserve(buyer, salt, maxAmount, block.timestamp + 1 days, reserveSig);
+    }
+
+    /// @dev Settle `cumulativeAmount` on a pre-existing channel via the proxy.
+    function _settleViaProxy(bytes32 channelId, uint128 cumulativeAmount) internal {
+        bytes memory metadata = _encodeMetadata(cumulativeAmount, 0);
+        bytes memory sig = _signSpendingAuth(channelId, cumulativeAmount, metadata);
+        vm.prank(operator);
+        proxy.settle(channelId, cumulativeAmount, metadata, sig);
+    }
+
+    /// @dev Close a channel via the proxy with a final settlement.
+    function _closeViaProxy(bytes32 channelId, uint128 finalAmount) internal {
+        bytes memory metadata = _encodeMetadata(finalAmount, 0);
+        bytes memory sig = _signSpendingAuth(channelId, finalAmount, metadata);
+        vm.prank(operator);
+        proxy.close(channelId, finalAmount, metadata, sig);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        STAKING (DIEM)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_stake_success() public {
         _stakeAs(alice, 100e18);
@@ -85,15 +263,14 @@ contract DiemStakingProxyTest is Test {
     function test_initiateUnstake_setsPerUserUnlockAndStopsAccrual() public {
         _stakeAs(alice, 100e18);
 
-        channelsMock.setPayout(100e6);
-        vm.prank(operator);
-        proxy.settle(bytes32(0), 0, "", "");
+        // Drive a real inflow through the full channel path.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 100e6, 200e6);
+        _settleViaProxy(channelId, 90e6);
 
         vm.warp(block.timestamp + 12 hours);
         (uint256 earnedBefore,) = proxy.earned(alice);
         assertGt(earnedBefore, 0);
 
-        uint256 expectedUnlockAt = block.timestamp + DIEM_COOLDOWN;
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
 
@@ -102,7 +279,9 @@ contract DiemStakingProxyTest is Test {
 
         (uint128 pendingAmt, uint64 unlockAt) = proxy.pendingUnstake(alice);
         assertEq(pendingAmt, 100e18);
-        assertEq(unlockAt, uint64(expectedUnlockAt));
+        // Exact cooldown is verified by test_initiateUnstake_accumulatesAndResetsOwnUnlock;
+        // here we just assert the unlock is in the future.
+        assertGt(uint256(unlockAt), block.timestamp);
 
         vm.warp(block.timestamp + 5 hours);
         (uint256 earnedAfter,) = proxy.earned(alice);
@@ -152,9 +331,9 @@ contract DiemStakingProxyTest is Test {
         assertEq(pendingAmt, 0);
     }
 
-    /// @dev Shared-bucket: bob's late initiateUnstake resets Venice's cooldown
-    ///      for the whole proxy. Alice's per-user unlock has passed, but
-    ///      diem.unstake() reverts until Venice's cooldown elapses.
+    /// @dev Bob's late initiateUnstake resets Venice's shared cooldown for the
+    ///      whole proxy. Alice's per-user unlock has passed, but diem.unstake()
+    ///      reverts until Venice's cooldown elapses.
     function test_unstake_sharedVeniceCooldownBlocksUntilLatestRequest() public {
         uint256 t0 = block.timestamp;
         _stakeAs(alice, 100e18);
@@ -167,7 +346,7 @@ contract DiemStakingProxyTest is Test {
         vm.prank(bob);
         proxy.initiateUnstake(50e18); // bob.unlockAt = t0 + 36h; Venice unlock reset to t0 + 36h
 
-        // Advance past alice's per-user unlock but not Venice's shared cooldown.
+        // Past alice's per-user unlock, not Venice's shared cooldown.
         skip(12 hours + 1);
         (, uint64 aliceUnlock) = proxy.pendingUnstake(alice);
         assertLe(aliceUnlock, block.timestamp);
@@ -176,88 +355,146 @@ contract DiemStakingProxyTest is Test {
         vm.expectRevert(bytes("COOLDOWN_NOT_OVER"));
         proxy.unstake();
 
-        // Advance past Venice's shared cooldown.
         skip(12 hours);
         vm.prank(alice);
         proxy.unstake();
         assertEq(diem.balanceOf(alice), 100e18);
     }
 
-    // ─── CHANNELS FAÇADE ───────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        CHANNELS FAÇADE (real Channels)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_reserve_forwardsToChannels() public {
+        _setupBuyer(200e6);
+
+        bytes32 salt = bytes32(uint256(1));
+        bytes32 expectedChannelId = channels.computeChannelId(buyer, address(proxy), salt);
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory reserveSig = _signReserveAuth(expectedChannelId, 100e6, deadline);
+
         vm.prank(alice);
         vm.expectRevert(DiemStakingProxy.NotOperator.selector);
-        proxy.reserve(alice, bytes32(0), 100e6, block.timestamp + 1 days, "");
+        proxy.reserve(buyer, salt, 100e6, deadline, reserveSig);
 
-        bytes32 expectedChannelId = channelsMock.computeChannelId(alice, address(proxy), bytes32(0));
         vm.prank(operator);
         vm.expectEmit(true, true, false, true);
-        emit DiemStakingProxy.ForwardedReserve(expectedChannelId, alice, 100e6);
-        proxy.reserve(alice, bytes32(0), 100e6, block.timestamp + 1 days, "");
+        emit DiemStakingProxy.ForwardedReserve(expectedChannelId, buyer, 100e6);
+        proxy.reserve(buyer, salt, 100e6, deadline, reserveSig);
+
+        assertEq(channels.activeChannelCount(address(proxy)), 1);
     }
 
     function test_settle_capturesUsdcDeltaAndNotifies() public {
-        channelsMock.setPayout(1000e6);
-        vm.prank(operator);
-        vm.expectEmit(true, false, false, true);
-        emit DiemStakingProxy.ForwardedSettle(bytes32(0), 0, 1000e6);
-        proxy.settle(bytes32(0), 0, "", "");
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+
+        uint256 usdcBefore = usdc.balanceOf(address(proxy));
+        _settleViaProxy(channelId, 500e6);
+        uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
+
+        // 2% platform fee goes to protocolReserve; proxy receives the rest.
+        assertEq(inflow, 500e6 - (500e6 * 200) / 10000);
 
         (uint256 rewardRate,,,,) = proxy.usdcStream();
         assertGt(rewardRate, 0);
     }
 
     function test_close_capturesUsdcDeltaAndNotifies() public {
-        channelsMock.setPayout(500e6);
-        vm.prank(operator);
-        vm.expectEmit(true, false, false, true);
-        emit DiemStakingProxy.ForwardedClose(bytes32(0), 0, 500e6);
-        proxy.close(bytes32(0), 0, "", "");
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 500e6, 500e6);
+
+        uint256 usdcBefore = usdc.balanceOf(address(proxy));
+        _closeViaProxy(channelId, 400e6);
+        uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
+
+        assertEq(inflow, 400e6 - (400e6 * 200) / 10000);
 
         (uint256 rewardRate,,,,) = proxy.usdcStream();
         assertGt(rewardRate, 0);
+
+        // Channel is fully closed → no active channels left.
+        assertEq(channels.activeChannelCount(address(proxy)), 0);
     }
 
+    /// @dev topUp with cumulativeAmount == channel.settled (no new delta) must
+    ///      not transfer USDC to the proxy, and must not notify the stream.
     function test_topUp_noInflow_noNotify() public {
-        channelsMock.setPayout(0);
-        vm.prank(operator);
-        proxy.topUp(bytes32(0), 0, "", "", 0, block.timestamp + 1 days, "");
+        _stakeAs(alice, 100e18);
 
-        (uint256 rewardRate,,,,) = proxy.usdcStream();
-        assertEq(rewardRate, 0);
+        // Reserve 100, settle 90 (>= 85% threshold for topUp).
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 100e6, 300e6);
+        _settleViaProxy(channelId, 90e6);
+
+        (uint256 rateBefore, uint256 finishBefore,,,) = proxy.usdcStream();
+        uint256 usdcBefore = usdc.balanceOf(address(proxy));
+
+        // topUp with no new delta: cumulativeAmount == settled.
+        uint128 newMax = 200e6;
+        uint256 newDeadline = block.timestamp + 2 days;
+        bytes memory newReserveSig = _signReserveAuth(channelId, newMax, newDeadline);
+        bytes memory metadata = _encodeMetadata(90e6, 0);
+        bytes memory spendingSig = _signSpendingAuth(channelId, 90e6, metadata);
+
+        vm.prank(operator);
+        proxy.topUp(channelId, 90e6, metadata, spendingSig, newMax, newDeadline, newReserveSig);
+
+        assertEq(usdc.balanceOf(address(proxy)), usdcBefore, "no USDC should flow on zero-delta topUp");
+        (uint256 rateAfter, uint256 finishAfter,,,) = proxy.usdcStream();
+        assertEq(rateAfter, rateBefore);
+        assertEq(finishAfter, finishBefore);
     }
 
-    // ─── EMISSIONS ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        EMISSIONS (real Emissions)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_operatorClaimEmissions_notifiesAntsStream() public {
-        emissionsMock.setPayout(500e18);
+        _stakeAs(alice, 100e18);
+
+        // Real settle accrues seller points to the proxy in the current epoch.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Warp past epoch 0 so it's claimable.
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
         uint256[] memory epochs = new uint256[](1);
         epochs[0] = 0;
 
+        uint256 antsBefore = ants.balanceOf(address(proxy));
         vm.prank(operator);
         proxy.operatorClaimEmissions(epochs);
+        uint256 minted = ants.balanceOf(address(proxy)) - antsBefore;
+
+        assertGt(minted, 0, "emissions should mint ANTS to the proxy");
 
         (uint256 rewardRate,,,,) = proxy.antsStream();
         assertGt(rewardRate, 0);
     }
 
-    // ─── REWARDS ───────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REWARDS (real flows, both streams)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_getReward_paysBothStreams() public {
         _stakeAs(alice, 100e18);
 
-        channelsMock.setPayout(1000e6);
-        vm.prank(operator);
-        proxy.settle(bytes32(0), 0, "", "");
+        // Drive USDC inflow.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
 
-        emissionsMock.setPayout(500e18);
+        // Drive ANTS inflow via real emissions (cross an epoch boundary).
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
         uint256[] memory epochs = new uint256[](1);
         epochs[0] = 0;
         vm.prank(operator);
         proxy.operatorClaimEmissions(epochs);
 
-        vm.warp(block.timestamp + USDC_DURATION);
+        // Drain both reward durations so Alice has earned something from each.
+        vm.warp(block.timestamp + USDC_DURATION + ANTS_DURATION);
 
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 antsBefore = ants.balanceOf(alice);
@@ -272,9 +509,8 @@ contract DiemStakingProxyTest is Test {
         _stakeAs(alice, 30e18);
         _stakeAs(bob, 70e18);
 
-        channelsMock.setPayout(1000e6);
-        vm.prank(operator);
-        proxy.settle(bytes32(0), 0, "", "");
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 1000e6);
 
         vm.warp(block.timestamp + USDC_DURATION);
 
@@ -282,11 +518,13 @@ contract DiemStakingProxyTest is Test {
         (uint256 bobUsdc,) = proxy.earned(bob);
         uint256 totalEarned = aliceUsdc + bobUsdc;
 
-        assertApproxEqAbs(aliceUsdc, totalEarned * 30 / 100, 1);
-        assertApproxEqAbs(bobUsdc, totalEarned * 70 / 100, 1);
+        assertApproxEqAbs(aliceUsdc, (totalEarned * 30) / 100, 1);
+        assertApproxEqAbs(bobUsdc,   (totalEarned * 70) / 100, 1);
     }
 
-    // ─── ADMIN ─────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        ADMIN (real Staking)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_setOperator_onlyOwner() public {
         address newOperator = vm.addr(0x99);
@@ -310,9 +548,7 @@ contract DiemStakingProxyTest is Test {
     }
 
     function test_withdrawAntseedStake_onlyOwner() public {
-        stakingMock.setPayout(10_000e6);
-        usdc.mint(address(stakingMock), 10_000e6);
-
+        // No active channels → real AntseedStaking.unstake returns the full stake.
         vm.prank(alice);
         vm.expectRevert();
         proxy.withdrawAntseedStake(alice);
@@ -320,9 +556,9 @@ contract DiemStakingProxyTest is Test {
         uint256 before = usdc.balanceOf(alice);
         vm.prank(owner);
         vm.expectEmit(true, false, false, true);
-        emit DiemStakingProxy.AntseedStakeWithdrawn(alice, 10_000e6);
+        emit DiemStakingProxy.AntseedStakeWithdrawn(alice, PROXY_STAKE);
         proxy.withdrawAntseedStake(alice);
-        assertEq(usdc.balanceOf(alice) - before, 10_000e6);
+        assertEq(usdc.balanceOf(alice) - before, PROXY_STAKE);
     }
 
     function test_withdrawAntseedStake_revertZero() public {
@@ -333,8 +569,6 @@ contract DiemStakingProxyTest is Test {
 
     function test_withdrawAntseedStake_doesNotNotifyUsdcStream() public {
         _stakeAs(alice, 100e18);
-        stakingMock.setPayout(10_000e6);
-        usdc.mint(address(stakingMock), 10_000e6);
 
         vm.prank(owner);
         proxy.withdrawAntseedStake(bob);
@@ -344,9 +578,8 @@ contract DiemStakingProxyTest is Test {
     }
 
     function test_setRewardsDuration_revertDuringActivePeriod() public {
-        channelsMock.setPayout(100e6);
-        vm.prank(operator);
-        proxy.settle(bytes32(0), 0, "", "");
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 100e6);
 
         vm.prank(owner);
         vm.expectRevert(DiemStakingProxy.RewardPeriodActive.selector);
@@ -354,9 +587,8 @@ contract DiemStakingProxyTest is Test {
     }
 
     function test_setRewardsDuration_successAfterFinish() public {
-        channelsMock.setPayout(100e6);
-        vm.prank(operator);
-        proxy.settle(bytes32(0), 0, "", "");
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 100e6);
 
         vm.warp(block.timestamp + USDC_DURATION + 1);
         vm.prank(owner);
@@ -366,7 +598,9 @@ contract DiemStakingProxyTest is Test {
         assertEq(rewardsDuration, 2 days);
     }
 
-    // ─── EIP-712 DELEGATION ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        EIP-712 DELEGATION (buyer-facing)
+    // ═══════════════════════════════════════════════════════════════════
 
     function _signDelegation(
         uint256 signerPk,
@@ -384,7 +618,9 @@ contract DiemStakingProxyTest is Test {
                 expiresAt
             )
         );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", proxy.domainSeparator(), structHash));
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", proxy.domainSeparator(), structHash)
+        );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -434,7 +670,9 @@ contract DiemStakingProxyTest is Test {
         assertTrue(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, newSig));
     }
 
-    // ─── EIP-1271 ──────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //                        EIP-1271 (Venice onboarding)
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_isValidSignature_validOperator() public view {
         bytes32 hash = keccak256("venice-api-key-challenge");
