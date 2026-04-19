@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
@@ -48,6 +49,7 @@ interface IAntseedEmissionsClaim {
  */
 contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
 
     /// @dev ERC-1271 magic value for a valid signature.
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
@@ -198,8 +200,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         uint256 cd = IDiemStake(address(diem)).cooldownDuration();
         PendingUnstake storage pending = pendingUnstake[msg.sender];
-        pending.amount += uint128(amount);
-        pending.unlockAt = uint64(block.timestamp + cd);
+        pending.amount += amount.toUint128();
+        pending.unlockAt = (block.timestamp + cd).toUint64();
 
         IDiemStake(address(diem)).initiateUnstake(amount);
 
