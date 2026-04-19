@@ -1144,21 +1144,28 @@ export class AntseedNode extends EventEmitter {
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
 
-      const evmChainId = payments.chainId ?? 8453;
       const channelsClientRef = this._channelsClient;
       const isOperatorAbi = ["function isOperator(address) view returns (bool)"];
+      const SELLER_CONTRACTS_MAX = 256;
       const sellerContracts = new Map<string, EthersContract>();
       this._sellerAddressResolver = new SellerAddressResolver({
         isOperator: async (sellerContract: string, peerAddress: string) => {
           let contract = sellerContracts.get(sellerContract);
-          if (!contract) {
+          if (contract) {
+            sellerContracts.delete(sellerContract);
+            sellerContracts.set(sellerContract, contract);
+          } else {
             contract = new EthersContract(sellerContract, isOperatorAbi, channelsClientRef!.provider);
+            if (sellerContracts.size >= SELLER_CONTRACTS_MAX) {
+              const oldest = sellerContracts.keys().next().value;
+              if (oldest !== undefined) sellerContracts.delete(oldest);
+            }
             sellerContracts.set(sellerContract, contract);
           }
           return await contract.getFunction("isOperator")(peerAddress) as boolean;
         },
       });
-      debugLog(`[Node] SellerAddressResolver initialized (chainId=${evmChainId})`);
+      debugLog(`[Node] SellerAddressResolver initialized`);
     }
 
     // Initialize StakingClient
