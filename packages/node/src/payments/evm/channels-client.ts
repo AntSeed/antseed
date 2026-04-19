@@ -78,8 +78,20 @@ export class ChannelsClient extends BaseEvmClient {
     if (!this._readAddressPromise) {
       this._readAddressPromise = (async () => {
         try {
-          const probe = new Contract(this._contractAddress, SELLER_FACADE_PROBE_ABI, this._provider);
-          const resolved = await probe.getFunction('channelsAddress')() as string;
+          const iface = new ethers.Interface(SELLER_FACADE_PROBE_ABI);
+          const callData = iface.encodeFunctionData('channelsAddress');
+          const raw = await this._provider.call({
+            to: this._contractAddress,
+            data: callData,
+          });
+          // Only treat the contract as a seller facade when the probe returns
+          // exactly one ABI word (a single address). Some mocks/stubs return
+          // generic tuple payloads for every eth_call, which ethers would
+          // otherwise partially decode as a bogus address.
+          if (typeof raw !== 'string' || raw.length !== 66) {
+            throw new Error('invalid channelsAddress() probe response');
+          }
+          const [resolved] = iface.decodeFunctionResult('channelsAddress', raw) as unknown as [string];
           return resolved.toLowerCase() === this._contractAddress.toLowerCase()
             ? this._contractAddress
             : resolved;
