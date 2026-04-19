@@ -517,7 +517,7 @@ describe('validateMetadata', () => {
 
 describe('constants', () => {
   it('should export reasonable constant values', () => {
-    expect(MAX_METADATA_SIZE).toBe(1000);
+    expect(MAX_METADATA_SIZE).toBe(1024);
     expect(MAX_PROVIDERS).toBe(10);
     expect(MAX_SERVICES_PER_PROVIDER).toBe(20);
     expect(MAX_SERVICE_NAME_LENGTH).toBe(64);

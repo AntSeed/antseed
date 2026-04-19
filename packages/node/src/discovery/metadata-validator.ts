@@ -3,7 +3,10 @@ import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metad
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 
-export const MAX_METADATA_SIZE = 1000;
+// v8 adds 21 bytes for the optional sellerContract field (1-byte flag + 20-byte
+// address). Bumped from 1000 so sellers already near the limit don't silently
+// fail validation when they enable a seller facade.
+export const MAX_METADATA_SIZE = 1024;
 export const MAX_PROVIDERS = 10;
 export const MAX_SERVICES_PER_PROVIDER = 20;
 export const MAX_SERVICE_NAME_LENGTH = 64;
