@@ -407,7 +407,7 @@ export default function Home(): JSX.Element {
         </div>
         <div className={styles.agentsVideo}>
           <video
-            src="/videos/desktop-app.mp4"
+            src="/videos/desktop-app-v2.mp4"
             autoPlay
             loop
             muted
