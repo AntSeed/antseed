@@ -1,4 +1,4 @@
-import type { PeerMetadata, SellerDelegationPayload } from "./peer-metadata.js";
+import type { PeerMetadata } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -8,7 +8,7 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
 const PUBLIC_ADDRESS_METADATA_VERSION = 5;
-const SELLER_DELEGATION_METADATA_VERSION = 8;
+const SELLER_CONTRACT_METADATA_VERSION = 8;
 
 /**
  * Encode metadata into binary format:
@@ -219,24 +219,13 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
-  // sellerDelegation (v8+) — flag + [peerAddress:20][sellerContract:20]
-  //                                [chainId:8 BigUint64][expiresAt:8 BigUint64][sig:65]
-  if (metadata.version >= SELLER_DELEGATION_METADATA_VERSION) {
-    const d = metadata.sellerDelegation;
-    if (d) {
+  // sellerContract (v8+) — flag + [sellerContract:20]
+  // Buyers verify the peer→contract binding via `sellerContract.isOperator(peerAddress)`.
+  if (metadata.version >= SELLER_CONTRACT_METADATA_VERSION) {
+    const sc = metadata.sellerContract;
+    if (sc) {
       parts.push(new Uint8Array([1]));
-      parts.push(hexToBytes(d.peerAddress));        // 20 bytes
-      parts.push(hexToBytes(d.sellerContract));     // 20 bytes
-
-      const chainBuf = new ArrayBuffer(8);
-      new DataView(chainBuf).setBigUint64(0, BigInt(d.chainId), false);
-      parts.push(new Uint8Array(chainBuf));
-
-      const expBuf = new ArrayBuffer(8);
-      new DataView(expBuf).setBigUint64(0, BigInt(d.expiresAt), false);
-      parts.push(new Uint8Array(expBuf));
-
-      parts.push(hexToBytes(d.signature));          // 65 bytes
+      parts.push(hexToBytes(sc)); // 20 bytes
     } else {
       parts.push(new Uint8Array([0]));
     }
@@ -556,36 +545,15 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  let sellerDelegation: SellerDelegationPayload | undefined;
-  if (version >= SELLER_DELEGATION_METADATA_VERSION) {
+  let sellerContract: string | undefined;
+  if (version >= SELLER_CONTRACT_METADATA_VERSION) {
     checkBounds(offset, 1, data.length - 65);
-    const delegationFlag = data[offset]!;
+    const sellerContractFlag = data[offset]!;
     offset += 1;
-    if (delegationFlag === 1) {
-      checkBounds(offset, 20 + 20 + 8 + 8 + 65, data.length - 65);
-      const peerAddressBytes = data.slice(offset, offset + 20);
+    if (sellerContractFlag === 1) {
+      checkBounds(offset, 20, data.length - 65);
+      sellerContract = bytesToHex(data.slice(offset, offset + 20));
       offset += 20;
-      const sellerContractBytes = data.slice(offset, offset + 20);
-      offset += 20;
-
-      const chainView = new DataView(data.buffer, data.byteOffset + offset, 8);
-      const chainId = Number(chainView.getBigUint64(0, false));
-      offset += 8;
-
-      const expView = new DataView(data.buffer, data.byteOffset + offset, 8);
-      const expiresAt = Number(expView.getBigUint64(0, false));
-      offset += 8;
-
-      const delegationSigBytes = data.slice(offset, offset + 65);
-      offset += 65;
-
-      sellerDelegation = {
-        peerAddress: bytesToHex(peerAddressBytes),
-        sellerContract: bytesToHex(sellerContractBytes),
-        chainId,
-        expiresAt,
-        signature: bytesToHex(delegationSigBytes),
-      };
     }
   }
 
@@ -673,7 +641,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
     ...(onChainChannelCount !== undefined ? { onChainChannelCount } : {}),
     ...(onChainGhostCount !== undefined ? { onChainGhostCount } : {}),
-    ...(sellerDelegation ? { sellerDelegation } : {}),
+    ...(sellerContract ? { sellerContract } : {}),
     region,
     timestamp,
     signature,

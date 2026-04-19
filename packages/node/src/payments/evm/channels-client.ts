@@ -42,14 +42,59 @@ const CHANNELS_ABI = [
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
 ] as const;
 
+/// @dev Probe ABI for the seller-facade passthrough. Present on
+///      AntseedSellerDelegation (and derivatives like DiemStakingProxy); absent
+///      on plain AntseedChannels. Used at init to discover the underlying
+///      channels contract when the configured address is a seller facade.
+const SELLER_FACADE_PROBE_ABI = [
+  'function channelsAddress() external view returns (address)',
+] as const;
+
 export interface CloseRequestedEvent {
   channelId: string;
   buyer: string;
 }
 
 export class ChannelsClient extends BaseEvmClient {
+  /**
+   * The underlying AntseedChannels address used for reads + event filters.
+   * When the configured `contractAddress` is a seller facade (e.g.
+   * DiemStakingProxy), this resolves to the real channels contract via the
+   * facade's `channelsAddress()` view. Otherwise it equals `_contractAddress`.
+   * Probed lazily on first read.
+   */
+  private _readAddressPromise: Promise<string> | null = null;
+
   constructor(config: ChannelsClientConfig) {
     super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
+  }
+
+  /**
+   * Resolve the read address (underlying AntseedChannels). If the configured
+   * contract exposes `channelsAddress()` (i.e. is a seller facade), use that.
+   * Otherwise fall back to the configured address. Cached after first call.
+   */
+  private _getReadAddress(): Promise<string> {
+    if (!this._readAddressPromise) {
+      this._readAddressPromise = (async () => {
+        try {
+          const probe = new Contract(this._contractAddress, SELLER_FACADE_PROBE_ABI, this._provider);
+          const resolved = await probe.getFunction('channelsAddress')() as string;
+          return resolved.toLowerCase() === this._contractAddress.toLowerCase()
+            ? this._contractAddress
+            : resolved;
+        } catch {
+          // Not a facade — configured address is the real channels contract.
+          return this._contractAddress;
+        }
+      })();
+    }
+    return this._readAddressPromise;
+  }
+
+  /** The resolved underlying channels address. Triggers the probe if not yet resolved. */
+  get readAddress(): Promise<string> {
+    return this._getReadAddress();
   }
 
   async reserve(
@@ -117,7 +162,7 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   async getSession(channelId: string): Promise<ChannelInfo> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     const result = await contract.getFunction('channels')(channelId);
     return {
       buyer: result[0],
@@ -133,22 +178,22 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   async domainSeparator(): Promise<string> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('domainSeparator')() as Promise<string>;
   }
 
   async getFirstSignCap(): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
   }
 
   async computeChannelId(buyer: string, seller: string, salt: string): Promise<string> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 
   async getAgentStats(agentId: number): Promise<AgentStats> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     const result = await contract.getFunction('getAgentStats')(agentId);
     return {
       channelCount: Number(result[0]),
@@ -159,7 +204,7 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   /**
-   * Query CloseRequested events from the Channels contract.
+   * Query CloseRequested events from the underlying AntseedChannels contract.
    * Returns matching events between fromBlock and toBlock (inclusive).
    */
   async getCloseRequestedEvents(fromBlock: number | 'latest', toBlock: number | 'latest' = 'latest'): Promise<CloseRequestedEvent[]> {
@@ -167,7 +212,7 @@ export class ChannelsClient extends BaseEvmClient {
     const eventTopic = iface.getEvent('CloseRequested')!.topicHash;
 
     const logs = await this._provider.getLogs({
-      address: this._contractAddress,
+      address: await this._getReadAddress(),
       topics: [eventTopic],
       fromBlock,
       toBlock,

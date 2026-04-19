@@ -32,7 +32,7 @@ import {
 import {
   PeerAnnouncer,
   type AnnouncerConfig,
-  type SellerDelegationConfig,
+  type SellerContractConfig,
 } from "./discovery/announcer.js";
 import {
   PeerLookup,
@@ -159,8 +159,12 @@ export interface NodeConfig {
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
-  /** Optional seller delegation config. When set, the announcer signs and publishes a SellerDelegation. */
-  sellerDelegation?: SellerDelegationConfig;
+  /**
+   * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
+   * announcer publishes it in metadata; buyers verify the binding by calling
+   * `sellerContract.isOperator(peerAddress)`.
+   */
+  sellerContract?: SellerContractConfig;
 }
 
 export interface BuyerUsageChannelPoint {
@@ -953,7 +957,7 @@ export class AntseedNode extends EventEmitter {
         signalingPort: actualSignalingPort,
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
-        ...(this._config.sellerDelegation ? { sellerDelegation: this._config.sellerDelegation } : {}),
+        ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1142,18 +1146,17 @@ export class AntseedNode extends EventEmitter {
 
       const evmChainId = payments.chainId ?? 8453;
       const channelsClientRef = this._channelsClient;
-      const operatorAbi = ["function operator() view returns (address)"];
-      const operatorContracts = new Map<string, EthersContract>();
+      const isOperatorAbi = ["function isOperator(address) view returns (bool)"];
+      const sellerContracts = new Map<string, EthersContract>();
       this._sellerAddressResolver = new SellerAddressResolver({
-        loadOperator: async (proxyAddress: string) => {
-          let contract = operatorContracts.get(proxyAddress);
+        isOperator: async (sellerContract: string, peerAddress: string) => {
+          let contract = sellerContracts.get(sellerContract);
           if (!contract) {
-            contract = new EthersContract(proxyAddress, operatorAbi, channelsClientRef!.provider);
-            operatorContracts.set(proxyAddress, contract);
+            contract = new EthersContract(sellerContract, isOperatorAbi, channelsClientRef!.provider);
+            sellerContracts.set(sellerContract, contract);
           }
-          return await contract.getFunction("operator")() as string;
+          return await contract.getFunction("isOperator")(peerAddress) as boolean;
         },
-        chainId: evmChainId,
       });
       debugLog(`[Node] SellerAddressResolver initialized (chainId=${evmChainId})`);
     }

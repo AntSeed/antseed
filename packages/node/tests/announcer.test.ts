@@ -4,7 +4,6 @@ import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { bytesToHex } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
-import { verifySellerDelegation } from '../src/payments/evm/signatures.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -32,53 +31,24 @@ function makeBaseConfig(): AnnouncerConfig {
   };
 }
 
-describe('PeerAnnouncer sellerDelegation', () => {
-  it('signs sellerDelegation with the peer identity wallet', async () => {
+describe('PeerAnnouncer sellerContract', () => {
+  it('publishes sellerContract in metadata as lowercase 40-hex', async () => {
     const base = makeBaseConfig();
     const proxy = '0x' + 'bb'.repeat(20);
     const announcer = new PeerAnnouncer({
       ...base,
-      sellerDelegation: {
-        sellerContract: proxy,
-        chainId: 8453,
-        expiresInSeconds: 3600,
-      },
+      sellerContract: { sellerContract: proxy },
     });
 
     await announcer.announce();
     const meta = announcer.getLatestMetadata();
-    expect(meta?.sellerDelegation).toBeDefined();
-    expect(meta?.sellerDelegation?.sellerContract).toBe('bb'.repeat(20));
-
-    const verified = verifySellerDelegation(
-      proxy,
-      {
-        peerAddress: base.identity.wallet.address,
-        sellerContract: proxy,
-        chainId: meta!.sellerDelegation!.chainId,
-        expiresAt: meta!.sellerDelegation!.expiresAt,
-      },
-      meta!.sellerDelegation!.signature,
-      base.identity.wallet.address,
-    );
-    expect(verified).toBe(true);
+    expect(meta?.sellerContract).toBe('bb'.repeat(20));
   });
 
-  it('caches the signed delegation and refreshes before expiry', async () => {
-    const base = makeBaseConfig();
-    const signSpy = vi.spyOn(base.identity.wallet, 'signTypedData');
-    const announcer = new PeerAnnouncer({
-      ...base,
-      sellerDelegation: {
-        sellerContract: '0x' + 'bb'.repeat(20),
-        chainId: 8453,
-        expiresInSeconds: 3600,
-        refreshBeforeExpirySeconds: 600,
-      },
-    });
-
+  it('omits sellerContract when not configured', async () => {
+    const announcer = new PeerAnnouncer(makeBaseConfig());
     await announcer.announce();
-    await announcer.announce();
-    expect(signSpy).toHaveBeenCalledTimes(1);
+    const meta = announcer.getLatestMetadata();
+    expect(meta?.sellerContract).toBeUndefined();
   });
 });

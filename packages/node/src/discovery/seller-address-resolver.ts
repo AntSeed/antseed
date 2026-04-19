@@ -1,94 +1,100 @@
 import type { PeerId } from "../types/peer.js";
 import { peerIdToAddress } from "../types/peer.js";
 import type { PeerMetadata } from "./peer-metadata.js";
-import { verifySellerDelegation } from "../payments/evm/signatures.js";
 import { debugWarn } from "../utils/debug.js";
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_CACHE_MAX_ENTRIES = 1024;
 
-export type OperatorLoader = (proxyAddress: string) => Promise<string>;
+/**
+ * Called by the resolver to ask the chain whether a peer is an authorized
+ * operator of a seller contract. Implementations typically wrap an
+ * `isOperator(address) view returns (bool)` call on the proxy.
+ */
+export type IsOperatorChecker = (
+  sellerContract: string,
+  peerAddress: string,
+) => Promise<boolean>;
 
-export class SellerDelegationVerificationError extends Error {
+export class SellerAuthorizationError extends Error {
   constructor(reason: string) {
-    super(`seller delegation verification failed: ${reason}`);
-    this.name = "SellerDelegationVerificationError";
+    super(`seller authorization failed: ${reason}`);
+    this.name = "SellerAuthorizationError";
   }
 }
 
 interface CacheEntry {
   sellerContract: string;
   verifiedAt: number;
-  signature: string;
 }
 
+/**
+ * Resolves the on-chain seller address for a peer.
+ *
+ * If the peer's metadata advertises a `sellerContract`, the resolver verifies
+ * via a single on-chain call (`proxy.isOperator(peerAddress)`) that the peer is
+ * an authorized operator for that contract. Result is cached per peer with a
+ * short TTL; cache misses go back to chain. Fail-closed on unknown peers.
+ */
 export class SellerAddressResolver {
   private readonly _cache = new Map<PeerId, CacheEntry>();
   private readonly _ttlMs: number;
   private readonly _maxEntries: number;
-  private readonly _loadOperator: OperatorLoader;
-  private readonly _chainId: number;
+  private readonly _isOperator: IsOperatorChecker;
 
   constructor(opts: {
-    loadOperator: OperatorLoader;
-    chainId: number;
+    isOperator: IsOperatorChecker;
     ttlMs?: number;
     maxEntries?: number;
   }) {
-    this._loadOperator = opts.loadOperator;
-    this._chainId = opts.chainId;
+    this._isOperator = opts.isOperator;
     this._ttlMs = opts.ttlMs ?? DEFAULT_CACHE_TTL_MS;
     this._maxEntries = opts.maxEntries ?? DEFAULT_CACHE_MAX_ENTRIES;
   }
 
   /**
-   * Resolve the on-chain seller address for a peer.
-   * - No delegation → return peerIdToAddress(peerId).
-   * - Delegation present and verifies → return sellerContract.
-   * - Delegation present but verification fails → throw SellerDelegationVerificationError.
+   * - No sellerContract in metadata → return peerIdToAddress(peerId) (default).
+   * - sellerContract present and chain says peer is an operator → return sellerContract.
+   * - sellerContract present but chain says peer is NOT an operator → throw.
    */
   async resolveSellerAddress(peerId: PeerId, metadata?: PeerMetadata): Promise<string> {
-    const delegation = metadata?.sellerDelegation;
-    if (!delegation) return peerIdToAddress(peerId);
+    const raw = metadata?.sellerContract;
+    if (!raw) return peerIdToAddress(peerId);
 
-    if (delegation.chainId !== this._chainId) {
-      throw new SellerDelegationVerificationError(
-        `chainId mismatch: delegation=${delegation.chainId} ours=${this._chainId}`,
-      );
-    }
-    if (delegation.expiresAt * 1000 <= Date.now()) {
-      throw new SellerDelegationVerificationError("expired");
-    }
-    if (delegation.peerAddress.toLowerCase() !== peerId) {
-      throw new SellerDelegationVerificationError("peerAddress does not match peerId");
-    }
+    const sellerContract = raw.startsWith("0x") ? raw : "0x" + raw;
 
     const cached = this._cache.get(peerId);
-    if (cached && cached.signature === delegation.signature && Date.now() - cached.verifiedAt < this._ttlMs) {
+    if (
+      cached &&
+      cached.sellerContract === sellerContract &&
+      Date.now() - cached.verifiedAt < this._ttlMs
+    ) {
       return cached.sellerContract;
     }
 
-    const proxyAddress = "0x" + delegation.sellerContract;
-    const operator = await this._loadOperator(proxyAddress);
-    const valid = verifySellerDelegation(
-      proxyAddress,
-      {
-        peerAddress: peerIdToAddress(peerId),
-        sellerContract: proxyAddress,
-        chainId: delegation.chainId,
-        expiresAt: delegation.expiresAt,
-      },
-      delegation.signature,
-      operator,
-    );
-    if (!valid) {
-      debugWarn(`[Resolver] delegation sig did not match operator=${operator} for peer ${peerId.slice(0, 12)}...`);
-      throw new SellerDelegationVerificationError("signature does not match current operator");
+    const peerAddress = peerIdToAddress(peerId);
+    let isAuthorized = false;
+    try {
+      isAuthorized = await this._isOperator(sellerContract, peerAddress);
+    } catch (err) {
+      debugWarn(
+        `[Resolver] isOperator(${sellerContract}, ${peerAddress}) RPC failed: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+      throw new SellerAuthorizationError("isOperator RPC failed");
+    }
+
+    if (!isAuthorized) {
+      debugWarn(
+        `[Resolver] peer ${peerId.slice(0, 12)}... is NOT an operator of ${sellerContract}`,
+      );
+      throw new SellerAuthorizationError("peer is not an authorized operator");
     }
 
     this._pruneCache();
-    this._cache.set(peerId, { sellerContract: proxyAddress, verifiedAt: Date.now(), signature: delegation.signature });
-    return proxyAddress;
+    this._cache.set(peerId, { sellerContract, verifiedAt: Date.now() });
+    return sellerContract;
   }
 
   invalidate(peerId: PeerId): void {

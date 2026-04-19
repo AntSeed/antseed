@@ -86,22 +86,9 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
   }
 
-  if (metadata.sellerDelegation !== undefined) {
-    const d = metadata.sellerDelegation;
-    if (!/^[0-9a-f]{40}$/.test(d.peerAddress)) {
-      errors.push({ field: "sellerDelegation.peerAddress", message: "Must be 40 lowercase hex chars" });
-    }
-    if (!/^[0-9a-f]{40}$/.test(d.sellerContract)) {
-      errors.push({ field: "sellerDelegation.sellerContract", message: "Must be 40 lowercase hex chars" });
-    }
-    if (!Number.isInteger(d.chainId) || d.chainId <= 0) {
-      errors.push({ field: "sellerDelegation.chainId", message: "Must be a positive integer" });
-    }
-    if (!Number.isInteger(d.expiresAt) || d.expiresAt <= 0) {
-      errors.push({ field: "sellerDelegation.expiresAt", message: "Must be a positive unix seconds integer" });
-    }
-    if (!/^[0-9a-f]{130}$/.test(d.signature)) {
-      errors.push({ field: "sellerDelegation.signature", message: "Must be 130 lowercase hex chars (65-byte secp256k1 sig)" });
+  if (metadata.sellerContract !== undefined) {
+    if (!/^[0-9a-f]{40}$/.test(metadata.sellerContract)) {
+      errors.push({ field: "sellerContract", message: "Must be 40 lowercase hex chars" });
     }
   }
 

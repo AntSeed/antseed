@@ -12,6 +12,7 @@ import {AntseedStaking} from "../AntseedStaking.sol";
 import {AntseedChannels} from "../AntseedChannels.sol";
 import {AntseedEmissions} from "../AntseedEmissions.sol";
 import {DiemStakingProxy} from "../DiemStakingProxy.sol";
+import {AntseedSellerDelegation} from "../AntseedSellerDelegation.sol";
 
 import {MockDiem} from "./mocks/MockDiem.sol";
 
@@ -114,7 +115,7 @@ contract DiemStakingProxyTest is Test {
             address(diem),
             address(usdc),
             address(ants),
-            address(channels),
+            address(antseedRegistry),
             address(emissions),
             address(staking),
             operator,
@@ -374,14 +375,14 @@ contract DiemStakingProxyTest is Test {
         bytes memory reserveSig = _signReserveAuth(expectedChannelId, 100e6, deadline);
 
         vm.prank(alice);
-        vm.expectRevert(DiemStakingProxy.NotOperator.selector);
+        vm.expectRevert(AntseedSellerDelegation.NotOperator.selector);
         proxy.reserve(buyer, salt, 100e6, deadline, reserveSig);
 
         vm.prank(operator);
-        vm.expectEmit(true, true, false, true);
-        emit DiemStakingProxy.ForwardedReserve(expectedChannelId, buyer, 100e6);
         proxy.reserve(buyer, salt, 100e6, deadline, reserveSig);
 
+        // AntseedChannels emits Reserved(channelId, buyer, seller, maxAmount) — we verify
+        // indirectly by checking activeChannelCount on the real Channels contract.
         assertEq(channels.activeChannelCount(address(proxy)), 1);
     }
 
@@ -526,25 +527,48 @@ contract DiemStakingProxyTest is Test {
     //                        ADMIN (real Staking)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setOperator_onlyOwner() public {
-        address newOperator = vm.addr(0x99);
-
+    function test_setOperator_onlyOwner_revertsForNonOwner() public {
         vm.prank(alice);
         vm.expectRevert();
-        proxy.setOperator(newOperator);
+        proxy.setOperator(vm.addr(0x99), true);
+    }
+
+    function test_setOperator_addSecondOperator_bothCanCall() public {
+        address secondOp = vm.addr(0x99);
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit DiemStakingProxy.OperatorRotated(operator, newOperator);
-        proxy.setOperator(newOperator);
+        proxy.setOperator(secondOp, true);
 
-        assertEq(proxy.operator(), newOperator);
+        assertTrue(proxy.isOperator(operator), "original operator still authorized");
+        assertTrue(proxy.isOperator(secondOp), "new operator authorized");
+
+        // Second operator can drive channel operations too.
+        _setupBuyer(200e6);
+        bytes32 salt = bytes32(uint256(42));
+        bytes32 channelId = channels.computeChannelId(buyer, address(proxy), salt);
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory reserveSig = _signReserveAuth(channelId, 100e6, deadline);
+
+        vm.prank(secondOp);
+        proxy.reserve(buyer, salt, 100e6, deadline, reserveSig);
+        assertEq(channels.activeChannelCount(address(proxy)), 1);
+    }
+
+    function test_setOperator_removeOperator_revertsAfterRemoval() public {
+        vm.prank(owner);
+        proxy.setOperator(operator, false);
+
+        assertFalse(proxy.isOperator(operator));
+
+        vm.prank(operator);
+        vm.expectRevert(AntseedSellerDelegation.NotOperator.selector);
+        proxy.reserve(buyer, bytes32(0), 100e6, block.timestamp + 1 days, "");
     }
 
     function test_setOperator_revertZero() public {
         vm.prank(owner);
-        vm.expectRevert(DiemStakingProxy.InvalidAddress.selector);
-        proxy.setOperator(address(0));
+        vm.expectRevert(AntseedSellerDelegation.InvalidAddress.selector);
+        proxy.setOperator(address(0), true);
     }
 
     function test_withdrawAntseedStake_onlyOwner() public {
@@ -563,7 +587,7 @@ contract DiemStakingProxyTest is Test {
 
     function test_withdrawAntseedStake_revertZero() public {
         vm.prank(owner);
-        vm.expectRevert(DiemStakingProxy.InvalidAddress.selector);
+        vm.expectRevert(AntseedSellerDelegation.InvalidAddress.selector);
         proxy.withdrawAntseedStake(address(0));
     }
 
@@ -599,103 +623,43 @@ contract DiemStakingProxyTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        EIP-712 DELEGATION (buyer-facing)
+    //                        EIP-1271 (Venice onboarding — owner only)
     // ═══════════════════════════════════════════════════════════════════
 
-    function _signDelegation(
-        uint256 signerPk,
-        address peerAddress,
-        address _sellerContract,
-        uint256 chainId,
-        uint256 expiresAt
-    ) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(
-            abi.encode(
-                proxy.SELLER_DELEGATION_TYPEHASH(),
-                peerAddress,
-                _sellerContract,
-                chainId,
-                expiresAt
-            )
-        );
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", proxy.domainSeparator(), structHash)
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        return abi.encodePacked(r, s, v);
-    }
-
-    function test_isValidDelegation_valid() public view {
-        uint256 expiresAt = block.timestamp + 1 hours;
-        bytes memory sig = _signDelegation(OPERATOR_PK, alice, address(proxy), block.chainid, expiresAt);
-        assertTrue(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, sig));
-    }
-
-    function test_isValidDelegation_expired() public view {
-        uint256 expiresAt = block.timestamp - 1;
-        bytes memory sig = _signDelegation(OPERATOR_PK, alice, address(proxy), block.chainid, expiresAt);
-        assertFalse(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, sig));
-    }
-
-    function test_isValidDelegation_wrongChainId() public view {
-        uint256 expiresAt = block.timestamp + 1 hours;
-        uint256 wrongChain = block.chainid + 1;
-        bytes memory sig = _signDelegation(OPERATOR_PK, alice, address(proxy), wrongChain, expiresAt);
-        assertFalse(proxy.isValidDelegation(alice, address(proxy), wrongChain, expiresAt, sig));
-    }
-
-    function test_isValidDelegation_wrongSellerContract() public view {
-        uint256 expiresAt = block.timestamp + 1 hours;
-        address wrongSeller = vm.addr(0x50);
-        bytes memory sig = _signDelegation(OPERATOR_PK, alice, wrongSeller, block.chainid, expiresAt);
-        assertFalse(proxy.isValidDelegation(alice, wrongSeller, block.chainid, expiresAt, sig));
-    }
-
-    function test_isValidDelegation_sigFromNonOperator() public view {
-        uint256 expiresAt = block.timestamp + 1 hours;
-        bytes memory sig = _signDelegation(ALICE_PK, alice, address(proxy), block.chainid, expiresAt);
-        assertFalse(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, sig));
-    }
-
-    function test_isValidDelegation_afterRotation() public {
-        uint256 expiresAt = block.timestamp + 1 hours;
-        bytes memory oldSig = _signDelegation(OPERATOR_PK, alice, address(proxy), block.chainid, expiresAt);
-
-        vm.prank(owner);
-        proxy.setOperator(bob);
-
-        assertFalse(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, oldSig));
-
-        bytes memory newSig = _signDelegation(BOB_PK, alice, address(proxy), block.chainid, expiresAt);
-        assertTrue(proxy.isValidDelegation(alice, address(proxy), block.chainid, expiresAt, newSig));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        EIP-1271 (Venice onboarding)
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_isValidSignature_validOperator() public view {
+    function test_isValidSignature_validOwner() public view {
         bytes32 hash = keccak256("venice-api-key-challenge");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OPERATOR_PK, hash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OWNER_PK, hash);
         bytes memory sig = abi.encodePacked(r, s, v);
         assertEq(proxy.isValidSignature(hash, sig), bytes4(0x1626ba7e));
     }
 
-    function test_isValidSignature_nonOperatorReturnsInvalid() public view {
+    /// @dev Operators drive channel ops but are NOT authorized for Venice.
+    function test_isValidSignature_operatorReturnsInvalid() public view {
+        bytes32 hash = keccak256("venice-api-key-challenge");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OPERATOR_PK, hash);
+        bytes memory sig = abi.encodePacked(r, s, v);
+        assertEq(proxy.isValidSignature(hash, sig), bytes4(0xffffffff));
+    }
+
+    function test_isValidSignature_nonOwnerReturnsInvalid() public view {
         bytes32 hash = keccak256("venice-api-key-challenge");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ALICE_PK, hash);
         bytes memory sig = abi.encodePacked(r, s, v);
         assertEq(proxy.isValidSignature(hash, sig), bytes4(0xffffffff));
     }
 
-    function test_isValidSignature_afterRotationOldSigInvalid() public {
+    function test_isValidSignature_afterOwnershipTransferOldSigInvalid() public {
         bytes32 hash = keccak256("venice-api-key-challenge");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OPERATOR_PK, hash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(OWNER_PK, hash);
         bytes memory oldSig = abi.encodePacked(r, s, v);
 
         vm.prank(owner);
-        proxy.setOperator(bob);
+        proxy.transferOwnership(bob);
 
         assertEq(proxy.isValidSignature(hash, oldSig), bytes4(0xffffffff));
+
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(BOB_PK, hash);
+        bytes memory newSig = abi.encodePacked(r2, s2, v2);
+        assertEq(proxy.isValidSignature(hash, newSig), bytes4(0x1626ba7e));
     }
 }

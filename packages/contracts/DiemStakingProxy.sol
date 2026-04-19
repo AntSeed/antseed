@@ -3,13 +3,10 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
-import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
+import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
 
 /// @dev Venice's DIEM ERC20 is also the staking contract (stake / initiateUnstake / unstake live on the token itself).
 interface IDiemStake {
@@ -33,25 +30,24 @@ interface IAntseedEmissionsClaim {
  *         Holders stake DIEM; the proxy re-stakes into Venice (the DIEM token
  *         itself) for API entitlement and acts as the on-chain seller address
  *         for AntSeed. USDC and ANTS inflow is distributed pro-rata to stakers
- *         via two Uniswap-StakingRewards streams, notified inline in the
- *         operator's inflow-bringing tx.
+ *         via two Uniswap-StakingRewards streams.
+ *
+ *         Channel lifecycle (reserve / topUp / settle / close) is provided by
+ *         {AntseedSellerDelegation}. This contract overrides each to wrap the
+ *         super call with USDC balance-delta capture; any inflow is forwarded
+ *         to the USDC reward stream. Reward bookkeeping is purely local.
  *
  *         Per-user unlock times are tracked locally because Venice's on-chain
  *         cooldown is per-staker (= this proxy) — without per-user tracking,
  *         any late withdrawer would reset everyone's timer via Venice's
  *         `initiateUnstake`. Venice's shared cooldown can still delay the
  *         actual DIEM release; `withdraw` reverts if `diem.unstake()` reverts.
+ *
+ *         ERC-1271 is keyed on `owner()` (not operators). Venice API-key
+ *         onboarding is an admin action, separate from operator channel ops.
  */
-contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
+contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     using SafeERC20 for IERC20;
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        EIP-712
-    // ═══════════════════════════════════════════════════════════════════
-
-    bytes32 public constant SELLER_DELEGATION_TYPEHASH = keccak256(
-        "SellerDelegation(address peerAddress,address sellerContract,uint256 chainId,uint256 expiresAt)"
-    );
 
     /// @dev ERC-1271 magic value for a valid signature.
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
@@ -80,7 +76,6 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     IERC20 public immutable diem;
     IERC20 public immutable usdc;
     IERC20 public immutable ants;
-    IAntseedChannels public immutable channels;
     address public immutable emissions;
     address public immutable antseedStaking;
 
@@ -90,8 +85,6 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage
     // ═══════════════════════════════════════════════════════════════════
-
-    address public operator;
 
     uint256 public totalStaked;
     mapping(address => uint256) public staked;
@@ -114,22 +107,15 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     event Unstaked(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 usdcAmount, uint256 antsAmount);
     event RewardNotified(uint8 indexed stream, uint256 amount, uint256 newPeriodFinish);
-    event OperatorRotated(address indexed oldOperator, address indexed newOperator);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event EmissionsClaimed(uint256 amount);
-    event ForwardedReserve(bytes32 indexed channelId, address indexed buyer, uint128 maxAmount);
-    event ForwardedSettle(bytes32 indexed channelId, uint128 cumulativeAmount, uint256 inflow);
-    event ForwardedClose(bytes32 indexed channelId, uint128 finalAmount, uint256 inflow);
-    event ForwardedTopUp(bytes32 indexed channelId, uint128 newMaxAmount);
     event RewardsDurationUpdated(uint8 indexed stream, uint256 newDuration);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
     // ═══════════════════════════════════════════════════════════════════
 
-    error InvalidAddress();
     error InvalidAmount();
-    error NotOperator();
     error NoPendingUnstake();
     error StillCoolingDown();
     error RewardPeriodActive();
@@ -144,28 +130,24 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
         address _diem,
         address _usdc,
         address _ants,
-        address _channels,
+        address _registry,
         address _emissions,
         address _antseedStaking,
         address _operator,
         uint256 _usdcRewardsDuration,
         uint256 _antsRewardsDuration
     )
-        Ownable(msg.sender)
-        EIP712("DiemStakingProxy", "1")
+        AntseedSellerDelegation(_registry, _operator)
     {
         if (_diem == address(0) || _usdc == address(0) || _ants == address(0)) revert InvalidAddress();
-        if (_channels == address(0) || _emissions == address(0) || _antseedStaking == address(0)) revert InvalidAddress();
-        if (_operator == address(0)) revert InvalidAddress();
+        if (_emissions == address(0) || _antseedStaking == address(0)) revert InvalidAddress();
         if (_usdcRewardsDuration == 0 || _antsRewardsDuration == 0) revert InvalidDuration();
 
         diem = IERC20(_diem);
         usdc = IERC20(_usdc);
         ants = IERC20(_ants);
-        channels = IAntseedChannels(_channels);
         emissions = _emissions;
         antseedStaking = _antseedStaking;
-        operator = _operator;
 
         usdcStream.rewardsDuration = _usdcRewardsDuration;
         antsStream.rewardsDuration = _antsRewardsDuration;
@@ -174,11 +156,6 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
     //                        Modifiers
     // ═══════════════════════════════════════════════════════════════════
-
-    modifier onlyOperator() {
-        if (msg.sender != operator) revert NotOperator();
-        _;
-    }
 
     modifier updateRewards(address account) {
         _updateStream(usdcStream, userUsdcRewardPerTokenPaid, usdcRewards, account);
@@ -267,23 +244,12 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        ANTSEED CHANNELS FAÇADE
+    //                        CHANNEL OVERRIDES (inflow capture)
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Forwarded `AntseedChannels.reserve`. No USDC inflow at this step.
-    function reserve(
-        address buyer,
-        bytes32 salt,
-        uint128 maxAmount,
-        uint256 deadline,
-        bytes calldata buyerSig
-    ) external onlyOperator nonReentrant {
-        channels.reserve(buyer, salt, maxAmount, deadline, buyerSig);
-        bytes32 channelId = channels.computeChannelId(buyer, address(this), salt);
-        emit ForwardedReserve(channelId, buyer, maxAmount);
-    }
+    /// @dev `reserve` has no USDC inflow — base implementation is sufficient.
 
-    /// @notice Forwarded `AntseedChannels.topUp`. topUp may settle delta — capture inflow.
+    /// @inheritdoc AntseedSellerDelegation
     function topUp(
         bytes32 channelId,
         uint128 cumulativeAmount,
@@ -292,40 +258,37 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
         uint128 newMaxAmount,
         uint256 deadline,
         bytes calldata reserveSig
-    ) external onlyOperator nonReentrant {
+    ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
-        channels.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
+        super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
         uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
         if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
-        emit ForwardedTopUp(channelId, newMaxAmount);
     }
 
-    /// @notice Forwarded `AntseedChannels.settle`. Captures USDC inflow and notifies the USDC stream.
+    /// @inheritdoc AntseedSellerDelegation
     function settle(
         bytes32 channelId,
         uint128 cumulativeAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) external onlyOperator nonReentrant {
+    ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
-        channels.settle(channelId, cumulativeAmount, metadata, buyerSig);
+        super.settle(channelId, cumulativeAmount, metadata, buyerSig);
         uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
         if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
-        emit ForwardedSettle(channelId, cumulativeAmount, inflow);
     }
 
-    /// @notice Forwarded `AntseedChannels.close`. Captures USDC inflow.
+    /// @inheritdoc AntseedSellerDelegation
     function close(
         bytes32 channelId,
         uint128 finalAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) external onlyOperator nonReentrant {
+    ) public override {
         uint256 beforeBal = usdc.balanceOf(address(this));
-        channels.close(channelId, finalAmount, metadata, buyerSig);
+        super.close(channelId, finalAmount, metadata, buyerSig);
         uint256 inflow = usdc.balanceOf(address(this)) - beforeBal;
         if (inflow > 0) _notifyRewardAmount(usdcStream, STREAM_USDC, inflow);
-        emit ForwardedClose(channelId, finalAmount, inflow);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -345,13 +308,6 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
-
-    function setOperator(address newOperator) external onlyOwner {
-        if (newOperator == address(0)) revert InvalidAddress();
-        address old = operator;
-        operator = newOperator;
-        emit OperatorRotated(old, newOperator);
-    }
 
     /**
      * @notice Recover the proxy's seller stake from AntseedStaking (the USDC
@@ -396,34 +352,15 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
     function rewardPerTokenUsdc() external view returns (uint256) { return _rewardPerToken(usdcStream); }
     function rewardPerTokenAnts() external view returns (uint256) { return _rewardPerToken(antsStream); }
 
-    function domainSeparator() external view returns (bytes32) { return _domainSeparatorV4(); }
-
-    function isValidDelegation(
-        address peerAddress,
-        address _sellerContract,
-        uint256 chainId,
-        uint256 expiresAt,
-        bytes calldata signature
-    ) external view returns (bool) {
-        if (block.timestamp > expiresAt) return false;
-        if (chainId != block.chainid) return false;
-        if (_sellerContract != address(this)) return false;
-
-        bytes32 structHash = keccak256(
-            abi.encode(SELLER_DELEGATION_TYPEHASH, peerAddress, _sellerContract, chainId, expiresAt)
-        );
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address recovered = ECDSA.recover(digest, signature);
-        return recovered == operator;
-    }
-
     // ═══════════════════════════════════════════════════════════════════
-    //                        EIP-1271
+    //                        ERC-1271 (Venice API-key onboarding)
     // ═══════════════════════════════════════════════════════════════════
 
     /// @notice ERC-1271 signature validation. Returns the magic value when the
-    ///         signature is valid for the current `operator`. Used by Venice to
+    ///         signature recovers to the current `owner()`. Used by Venice to
     ///         verify off-chain challenges when issuing the proxy's API key.
+    /// @dev Intentionally keyed on the owner, not operators. Venice onboarding
+    ///      is a rare admin action, not an ongoing operational one.
     function isValidSignature(bytes32 hash, bytes calldata signature)
         external
         view
@@ -431,7 +368,7 @@ contract DiemStakingProxy is Ownable, ReentrancyGuard, EIP712, IERC1271 {
         returns (bytes4)
     {
         address recovered = ECDSA.recover(hash, signature);
-        return recovered == operator ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
+        return recovered == owner() ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
     }
 
     // ═══════════════════════════════════════════════════════════════════

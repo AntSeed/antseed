@@ -59,11 +59,21 @@ interface LatestAuth {
  * The seller tracks spending locally and settles/closes via the contract at session end.
  */
 export class SellerPaymentManager {
-  private readonly _identity: Identity;
   private readonly _signer: AbstractSigner;
   private readonly _channelsClient: ChannelsClient;
   private readonly _config: SellerPaymentConfig;
   private readonly _channelStore: ChannelStore;
+  /** Lazily resolved: real AntseedChannels address (for EIP-712 domain +
+   *  on-chain seller address detection). If the configured
+   *  `channelsContractAddress` is a seller facade (e.g. DiemStakingProxy),
+   *  this resolves to the underlying channels contract via the facade's
+   *  `channelsAddress()` view. Otherwise equals the configured address. */
+  private _resolvedAddresses: Promise<{
+    /** Underlying AntseedChannels address — used for the EIP-712 domain. */
+    channels: string;
+    /** On-chain seller address: proxy when behind a facade, wallet otherwise. */
+    seller: string;
+  }> | null = null;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
   private readonly _activeBuyers = new Set<string>();
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
@@ -95,15 +105,27 @@ export class SellerPaymentManager {
   private static readonly MAX_CLOSE_RETRIES = 3;
 
   constructor(identity: Identity, config: SellerPaymentConfig, channelStore: ChannelStore) {
-    this._identity = identity;
     this._config = config;
     this._signer = identity.wallet;
-    this._channelsClient = new ChannelsClient({
+    const channelsClient = new ChannelsClient({
       rpcUrl: config.rpcUrl,
       ...(config.fallbackRpcUrls ? { fallbackRpcUrls: config.fallbackRpcUrls } : {}),
       contractAddress: config.channelsContractAddress,
       evmChainId: config.chainId,
     });
+    this._channelsClient = channelsClient;
+    // Kick off address resolution in the background; every async call site
+    // awaits `_resolvedAddresses` before using the EIP-712 domain or the
+    // on-chain seller address.
+    const identityAddress = identity.wallet.address;
+    this._resolvedAddresses = (async () => {
+      const channels = await channelsClient.readAddress;
+      const configured = channelsClient.contractAddress;
+      const seller = channels.toLowerCase() !== configured.toLowerCase()
+        ? configured      // facade mode: seller on-chain = proxy = configured addr
+        : identityAddress; // no facade: seller = peer wallet
+      return { channels, seller };
+    })();
     this._channelStore = channelStore;
     this._minSettleDelta = config.minSettleDelta !== undefined
       ? BigInt(config.minSettleDelta)
@@ -141,7 +163,7 @@ export class SellerPaymentManager {
     const activeChannels = this._channelStore.getActiveChannels('seller');
     if (activeChannels.length === 0) return;
 
-    const sellerEvmAddr = this._identity.wallet.address;
+    const { seller: sellerEvmAddr } = await this._resolvedAddresses!;
     let evicted = 0;
 
     for (const channel of activeChannels) {
@@ -251,7 +273,8 @@ export class SellerPaymentManager {
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
       const existingCumulative = this._acceptedCumulative.get(channelId);
 
-      const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
+      const { channels: channelsAddr } = await this._resolvedAddresses!;
+      const channelsDomain = makeChannelsDomain(this._config.chainId, channelsAddr);
 
       if (existingCumulative === undefined) {
         const hasReserveFields = payload.reserveSalt != null
@@ -300,7 +323,7 @@ export class SellerPaymentManager {
 
         // Store new session (sessionId field stores channelId for backward compat)
         const now = Date.now();
-        const sellerEvmAddr = this._identity.wallet.address;
+        const { seller: sellerEvmAddr } = await this._resolvedAddresses!;
         const session: StoredChannel = {
           sessionId: channelId,
           peerId: buyerPeerId,
@@ -485,7 +508,7 @@ export class SellerPaymentManager {
   ): Promise<boolean> {
     const channelId = payload.channelId;
     const onChainState = classifyOnChainChannel(await this._channelsClient.getSession(channelId));
-    const sellerEvmAddr = this._identity.wallet.address;
+    const { seller: sellerEvmAddr } = await this._resolvedAddresses!;
 
     if (!onChainState.exists || onChainState.status !== 'active') return false;
     if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
@@ -594,7 +617,8 @@ export class SellerPaymentManager {
     }
 
     // Verify AntSeed SpendingAuth signature
-    const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
+    const { channels: channelsAddr } = await this._resolvedAddresses!;
+    const channelsDomain = makeChannelsDomain(this._config.chainId, channelsAddr);
     const metadataMsg = {
       channelId: auth.channelId,
       cumulativeAmount: BigInt(auth.cumulativeAmount),

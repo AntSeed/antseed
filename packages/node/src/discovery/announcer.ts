@@ -11,7 +11,7 @@ import {
   normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
-import type { PeerMetadata, ProviderAnnouncement, SellerDelegationPayload } from "./peer-metadata.js";
+import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
 
 import type { ServiceApiProtocol } from "../types/service-api.js";
@@ -23,15 +23,14 @@ import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
 
-export interface SellerDelegationConfig {
-  /** The DiemStakingProxy contract address (also the EIP-712 verifyingContract). */
+export interface SellerContractConfig {
+  /**
+   * On-chain seller contract that fronts this peer (e.g. DiemStakingProxy).
+   * Buyers verify the peer→contract binding by calling
+   * `sellerContract.isOperator(peerAddress)`. The peer's identity wallet must
+   * be an authorized operator on the contract.
+   */
   sellerContract: string;
-  /** EVM chainId for the EIP-712 domain. */
-  chainId: number;
-  /** How long each signed delegation is valid. Default 3600s. */
-  expiresInSeconds?: number;
-  /** Refresh the signed delegation when remaining TTL drops below this. Default 600s. */
-  refreshBeforeExpirySeconds?: number;
 }
 
 export interface AnnouncerConfig {
@@ -69,7 +68,12 @@ export interface AnnouncerConfig {
   signalingPort: number;
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
   healthMonitor?: DHTHealthMonitor;
-  sellerDelegation?: SellerDelegationConfig;
+  /**
+   * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
+   * announcer publishes it in metadata; buyers verify the binding via
+   * `sellerContract.isOperator(peerAddress)`.
+   */
+  sellerContract?: SellerContractConfig;
 }
 
 /**
@@ -88,7 +92,6 @@ export class PeerAnnouncer {
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
   private _latestMetadata: PeerMetadata | null = null;
-  private _delegationCache: SellerDelegationPayload | null = null;
 
   constructor(config: AnnouncerConfig) {
     this.config = config;
@@ -179,45 +182,11 @@ export class PeerAnnouncer {
     return this._latestMetadata;
   }
 
-  private async _getOrRefreshDelegation(): Promise<SellerDelegationPayload | undefined> {
-    const cfg = this.config.sellerDelegation;
+  /** Return the configured seller contract as lowercase 40-hex (no 0x). */
+  private _normalizedSellerContract(): string | undefined {
+    const cfg = this.config.sellerContract;
     if (!cfg) return undefined;
-    const expiresIn = cfg.expiresInSeconds ?? 3600;
-    const refreshBefore = cfg.refreshBeforeExpirySeconds ?? 600;
-
-    const now = Math.floor(Date.now() / 1000);
-    if (this._delegationCache && this._delegationCache.expiresAt - now > refreshBefore) {
-      return this._delegationCache;
-    }
-
-    const peerAddress = this.config.identity.wallet.address;
-    const expiresAt = now + expiresIn;
-    const domain = {
-      name: "DiemStakingProxy",
-      version: "1",
-      chainId: cfg.chainId,
-      verifyingContract: cfg.sellerContract,
-    };
-    const types = {
-      SellerDelegation: [
-        { name: "peerAddress", type: "address" },
-        { name: "sellerContract", type: "address" },
-        { name: "chainId", type: "uint256" },
-        { name: "expiresAt", type: "uint256" },
-      ],
-    };
-    const message = { peerAddress, sellerContract: cfg.sellerContract, chainId: cfg.chainId, expiresAt };
-    const signature = await this.config.identity.wallet.signTypedData(domain, types, message);
-
-    const payload: SellerDelegationPayload = {
-      peerAddress: peerAddress.toLowerCase().replace(/^0x/, ""),
-      sellerContract: cfg.sellerContract.toLowerCase().replace(/^0x/, ""),
-      chainId: cfg.chainId,
-      expiresAt,
-      signature: signature.replace(/^0x/, ""),
-    };
-    this._delegationCache = payload;
-    return payload;
+    return cfg.sellerContract.toLowerCase().replace(/^0x/, "");
   }
 
   private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
@@ -272,8 +241,12 @@ export class PeerAnnouncer {
     if (this.config.paymentsEnabled) {
       if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
         try {
-          const evmAddress = this.config.identity.wallet.address;
-          const agentId = await this.config.stakingClient.getAgentId(evmAddress);
+          // When the peer is fronted by a seller contract (e.g. DiemStakingProxy),
+          // the on-chain seller is the proxy — stake and channel stats live under
+          // that address, not the peer's wallet.
+          const sellerAddress = this.config.sellerContract?.sellerContract
+            ?? this.config.identity.wallet.address;
+          const agentId = await this.config.stakingClient.getAgentId(sellerAddress);
           const stats = await this.config.channelsClient.getAgentStats(agentId);
           metadata.onChainChannelCount = stats.channelCount;
           metadata.onChainGhostCount = stats.ghostCount;
@@ -286,9 +259,9 @@ export class PeerAnnouncer {
       }
     }
 
-    const delegation = await this._getOrRefreshDelegation();
-    if (delegation) {
-      metadata.sellerDelegation = delegation;
+    const sellerContract = this._normalizedSellerContract();
+    if (sellerContract) {
+      metadata.sellerContract = sellerContract;
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);

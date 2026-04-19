@@ -12,7 +12,7 @@ import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
-import { SellerDelegationVerificationError } from '../discovery/seller-address-resolver.js';
+import { SellerAuthorizationError } from '../discovery/seller-address-resolver.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 
@@ -115,7 +115,7 @@ export class BuyerPaymentNegotiator {
     try {
       return await this._sellerAddressResolver.resolveSellerAddress(peer.peerId, peer.metadata);
     } catch (err) {
-      if (err instanceof SellerDelegationVerificationError) {
+      if (err instanceof SellerAuthorizationError) {
         debugWarn(`[BuyerNegotiator] Dropping peer ${peer.peerId.slice(0, 12)}...: ${err.message}`);
       }
       throw err;
