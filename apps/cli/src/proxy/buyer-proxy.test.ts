@@ -96,7 +96,7 @@ test('selectCandidatePeersForRouting can still include peers without service pro
 // blocking on DHT discovery.
 
 const validPeerId = 'a'.repeat(40)
-const MAX_AGE_MS = 30 * 60_000
+const MAX_AGE_MS = 2 * 60 * 60_000
 const NOW = 1_700_000_000_000
 
 test('parsePersistedPeers returns [] for null/undefined/junk input', () => {

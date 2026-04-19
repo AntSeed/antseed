@@ -20,6 +20,7 @@ import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
+import type { DHTHealthMonitor } from "./dht-health.js";
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -54,11 +55,23 @@ export interface AnnouncerConfig {
   stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
+  /** Optional health monitor — if supplied, announce outcomes are recorded. */
+  healthMonitor?: DHTHealthMonitor;
 }
+
+/**
+ * Retry schedule when one or more canonical service topics fail to announce.
+ * Silent 15-min waits used to be the failure mode; these short backoffs let
+ * a seller recover from transient DHT hiccups before buyers decide the peer
+ * has disappeared (buyer staleness cutoff is 30 min).
+ */
+const ANNOUNCE_RETRY_BACKOFFS_MS = [60_000, 120_000, 300_000, 600_000];
 
 export class PeerAnnouncer {
   private readonly config: AnnouncerConfig;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private retryHandle: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
   private readonly loadMap: Map<string, number> = new Map();
   private _latestMetadata: PeerMetadata | null = null;
 
@@ -70,7 +83,13 @@ export class PeerAnnouncer {
     const metadata = await this._buildSignedMetadata(true);
     this._latestMetadata = metadata;
 
-    await this._announceTopics(metadata.providers);
+    const failures = await this._announceTopics(metadata.providers);
+    if (failures > 0) {
+      this._scheduleRetryAfterFailure(failures);
+    } else if (this.retryAttempt > 0 || this.retryHandle) {
+      // Recovered — cancel any pending retry and reset backoff.
+      this._cancelRetry();
+    }
   }
 
   /**
@@ -101,6 +120,38 @@ export class PeerAnnouncer {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
     }
+    this._cancelRetry();
+  }
+
+  private _cancelRetry(): void {
+    if (this.retryHandle) {
+      clearTimeout(this.retryHandle);
+      this.retryHandle = null;
+    }
+    this.retryAttempt = 0;
+  }
+
+  private _scheduleRetryAfterFailure(failures: number): void {
+    if (this.retryHandle) {
+      // A retry is already scheduled for this cycle; don't stack.
+      return;
+    }
+    const idx = Math.min(this.retryAttempt, ANNOUNCE_RETRY_BACKOFFS_MS.length - 1);
+    const delayMs = Math.min(
+      ANNOUNCE_RETRY_BACKOFFS_MS[idx] ?? ANNOUNCE_RETRY_BACKOFFS_MS[ANNOUNCE_RETRY_BACKOFFS_MS.length - 1]!,
+      // Never wait longer than the next periodic cycle — the interval will retry anyway.
+      this.config.reannounceIntervalMs,
+    );
+    this.retryAttempt += 1;
+    debugWarn(
+      `[Announcer] ${failures} topic announce(s) failed; retry #${this.retryAttempt} in ${Math.round(delayMs / 1000)}s`,
+    );
+    this.retryHandle = setTimeout(() => {
+      this.retryHandle = null;
+      void this.announce().catch((err) => {
+        debugWarn(`[Announcer] Retry announce failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }, delayMs);
   }
 
   updateLoad(providerName: string, currentLoad: number): void {
@@ -183,8 +234,9 @@ export class PeerAnnouncer {
     return metadata;
   }
 
-  private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
+  private async _announceTopics(providers: ProviderAnnouncement[]): Promise<number> {
     const announcedServiceTopics = new Set<string>();
+    let failures = 0;
 
     for (const p of providers) {
       for (const service of p.services) {
@@ -195,7 +247,7 @@ export class PeerAnnouncer {
         const canonicalTopic = serviceTopic(canonicalServiceKey);
         if (!announcedServiceTopics.has(canonicalTopic)) {
           announcedServiceTopics.add(canonicalTopic);
-          await this._tryAnnounceTopic(canonicalTopic);
+          if (!(await this._tryAnnounceTopic(canonicalTopic))) failures += 1;
         }
 
         const compactServiceKey = normalizeServiceSearchTopicKey(service);
@@ -203,36 +255,46 @@ export class PeerAnnouncer {
           const compactTopic = serviceSearchTopic(compactServiceKey);
           if (!announcedServiceTopics.has(compactTopic)) {
             announcedServiceTopics.add(compactTopic);
-            await this._tryAnnounceTopic(compactTopic);
+            if (!(await this._tryAnnounceTopic(compactTopic))) failures += 1;
           }
         }
       }
     }
 
-    await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC);
+    if (!(await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC))) failures += 1;
 
     if (this.config.offerings) {
       const announcedCapabilities = new Set<string>();
       for (const offering of this.config.offerings) {
-        await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name));
+        if (!(await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name)))) {
+          failures += 1;
+        }
         const normalizedCapability = offering.capability.trim().toLowerCase();
         if (!normalizedCapability) {
           continue;
         }
         if (!announcedCapabilities.has(normalizedCapability)) {
           announcedCapabilities.add(normalizedCapability);
-          await this._tryAnnounceTopic(capabilityTopic(normalizedCapability));
+          if (!(await this._tryAnnounceTopic(capabilityTopic(normalizedCapability)))) {
+            failures += 1;
+          }
         }
       }
     }
+
+    return failures;
   }
 
-  private async _tryAnnounceTopic(topic: string): Promise<void> {
+  private async _tryAnnounceTopic(topic: string): Promise<boolean> {
     try {
       const infoHash = topicToInfoHash(topic);
       await this.config.dht.announce(infoHash, this.config.signalingPort);
-    } catch {
-      // DHT may not have peers yet — will retry on next cycle
+      this.config.healthMonitor?.recordAnnounce(true);
+      return true;
+    } catch (err) {
+      this.config.healthMonitor?.recordAnnounce(false);
+      debugWarn(`[Announcer] Announce failed for ${topic}: ${err instanceof Error ? err.message : err}`);
+      return false;
     }
   }
 
