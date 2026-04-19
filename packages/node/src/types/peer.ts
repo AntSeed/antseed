@@ -52,6 +52,13 @@ export interface PeerInfo {
   publicAddress?: string;
   /** Last seen timestamp (Unix ms). */
   lastSeen: number;
+  /**
+   * Last timestamp (Unix ms) at which the buyer successfully reached this peer
+   * over the transport (e.g. a completed request). Decoupled from `lastSeen`,
+   * which reflects DHT announcements, so a peer known to be alive survives
+   * transient DHT staleness.
+   */
+  lastReachedAt?: number;
   /** LLM providers this peer is offering (empty if buyer-only). */
   providers: string[];
   /** Reputation score (0-100). */

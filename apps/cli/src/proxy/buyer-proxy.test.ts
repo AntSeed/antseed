@@ -96,7 +96,7 @@ test('selectCandidatePeersForRouting can still include peers without service pro
 // blocking on DHT discovery.
 
 const validPeerId = 'a'.repeat(40)
-const MAX_AGE_MS = 30 * 60_000
+const MAX_AGE_MS = 2 * 60 * 60_000
 const NOW = 1_700_000_000_000
 
 test('parsePersistedPeers returns [] for null/undefined/junk input', () => {
@@ -139,13 +139,68 @@ test('parsePersistedPeers drops entries with non-array providers', () => {
   assert.equal(result.length, 0)
 })
 
-test('parsePersistedPeers drops entries with stale or missing lastSeen', () => {
+test('parsePersistedPeers drops entries with stale or missing freshness anchors', () => {
   const result = parsePersistedPeers(
     {
       discoveredPeers: [
         { peerId: validPeerId, providers: ['openai'], lastSeen: NOW - MAX_AGE_MS },
         { peerId: 'b'.repeat(40), providers: ['openai'] },
         { peerId: 'c'.repeat(40), providers: ['openai'], lastSeen: 'nope' },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 0)
+})
+
+test('parsePersistedPeers keeps peer with stale lastSeen but recent lastReachedAt', () => {
+  // A peer whose DHT announcement record aged out but the buyer recently
+  // transported a request through is known-alive locally — survive.
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - MAX_AGE_MS - 60_000,
+          lastReachedAt: NOW - 60_000,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 1)
+  assert.equal(result[0]?.lastReachedAt, NOW - 60_000)
+})
+
+test('parsePersistedPeers keeps peer with missing lastSeen but valid lastReachedAt', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          // lastSeen omitted entirely — freshness anchor comes solely from lastReachedAt.
+          lastReachedAt: NOW - 10_000,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 1)
+  assert.equal(result[0]?.lastReachedAt, NOW - 10_000)
+})
+
+test('parsePersistedPeers drops peer when both lastSeen and lastReachedAt are stale', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - MAX_AGE_MS - 1,
+          lastReachedAt: NOW - MAX_AGE_MS - 1,
+        },
       ],
     },
     NOW,

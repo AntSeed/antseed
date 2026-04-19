@@ -86,8 +86,14 @@ export interface BuyerProxyConfig {
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
-/** Max age for carrying forward peers not seen in the latest DHT scan. */
-const CARRY_FORWARD_TTL_MS = 30 * 60_000
+/**
+ * Max age for carrying forward peers not seen in the latest DHT scan.
+ * Intentionally longer than `peer-lookup.ts` `maxAnnouncementAgeMs` (30 min) so
+ * a peer that misses one reannounce cycle doesn't hit both cliffs at once.
+ * For peers we have recently reached over the transport, we trust local
+ * liveness (`lastReachedAt`) even if the DHT record is older.
+ */
+const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
 type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
@@ -222,13 +228,19 @@ export function parsePersistedPeers(
     const lastSeen = typeof entry.lastSeen === 'number' && Number.isFinite(entry.lastSeen)
       ? entry.lastSeen
       : 0
-    if (lastSeen <= 0 || nowMs - lastSeen >= maxAgeMs) continue
+    const lastReachedAt = typeof entry.lastReachedAt === 'number' && Number.isFinite(entry.lastReachedAt)
+      ? entry.lastReachedAt
+      : 0
+    // Keep if either DHT observation or successful transport contact is within window.
+    const freshnessAnchor = Math.max(lastSeen, lastReachedAt)
+    if (freshnessAnchor <= 0 || nowMs - freshnessAnchor >= maxAgeMs) continue
 
     const peer: PeerInfo = {
       peerId: peerId as PeerInfo['peerId'],
       lastSeen,
       providers,
     }
+    if (lastReachedAt > 0) peer.lastReachedAt = lastReachedAt
     if (typeof entry.displayName === 'string') peer.displayName = entry.displayName
     if (typeof entry.publicAddress === 'string') peer.publicAddress = entry.publicAddress
     if (entry.providerPricing && typeof entry.providerPricing === 'object') {
@@ -451,14 +463,29 @@ export class BuyerProxy {
 
   private _replacePeers(incoming: PeerInfo[]): void {
     const incomingById = new Map(incoming.map((p) => [p.peerId, p]))
+    const prevById = new Map(this._cachedPeers.map((p) => [p.peerId, p]))
     const now = Date.now()
 
-    // Carry forward previously known peers that are missing from this scan,
-    // preserving their lastSeen timestamp. A missed DHT scan doesn't mean
-    // the peer is unavailable — it just wasn't discovered this time.
-    const merged = [...incoming]
+    // For peers re-observed in this scan, preserve `lastReachedAt` from the
+    // previous cache entry — the DHT announcement doesn't carry that field,
+    // and losing it on each refresh would defeat the carry-forward tracking.
+    const merged: PeerInfo[] = incoming.map((peer) => {
+      const prev = prevById.get(peer.peerId)
+      if (prev?.lastReachedAt && (!peer.lastReachedAt || prev.lastReachedAt > peer.lastReachedAt)) {
+        return { ...peer, lastReachedAt: prev.lastReachedAt }
+      }
+      return peer
+    })
+
+    // Carry forward previously known peers that are missing from this scan.
+    // A missed DHT scan doesn't mean the peer is unavailable — it just wasn't
+    // discovered this time. Use the fresher of `lastSeen` and `lastReachedAt`
+    // as the liveness anchor: a recently-contacted peer survives even if its
+    // DHT record has aged out.
     for (const prev of this._cachedPeers) {
-      if (!incomingById.has(prev.peerId) && now - prev.lastSeen < CARRY_FORWARD_TTL_MS) {
+      if (incomingById.has(prev.peerId)) continue
+      const freshnessAnchor = Math.max(prev.lastSeen, prev.lastReachedAt ?? 0)
+      if (freshnessAnchor > 0 && now - freshnessAnchor < CARRY_FORWARD_TTL_MS) {
         merged.push({ ...prev })
       }
     }
@@ -495,6 +522,7 @@ export class BuyerProxy {
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         maxConcurrency: p.maxConcurrency ?? 0,
         lastSeen: p.lastSeen,
+        lastReachedAt: p.lastReachedAt ?? null,
       }
     })
     this._mergeStateFile({ discoveredPeers: peers, peersUpdatedAt: Date.now() })
@@ -521,6 +549,15 @@ export class BuyerProxy {
       if (typeof oldestKey === 'string') {
         this._lastSuccessfulPeerByRouteKey.delete(oldestKey)
       }
+    }
+
+    // Stamp the cached peer's `lastReachedAt` so carry-forward can trust local
+    // transport liveness even when the DHT record grows stale. Persist so the
+    // signal survives restarts.
+    const cached = this._cachedPeers.find((p) => p.peerId === peerId)
+    if (cached) {
+      cached.lastReachedAt = Date.now()
+      this._persistPeersToState()
     }
   }
 
