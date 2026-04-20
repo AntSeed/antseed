@@ -19,6 +19,8 @@ import { parseAbi } from 'viem';
  *     — per-epoch ANTS preview, summed across the user's claimable range
  *   - currentEpoch / oldestUnclaimed / epochs(id) / epochUsers(id, i) /
  *     epochUserAmount(id, user) — unstake queue state machine
+ *   - minEpochOpenSecs / currentEpochOpenedAt / flushableAt — minimum
+ *     cohort-open window gate (so a first queuer can't immediately flush)
  *
  * Writes:
  *   - stake, initiateUnstake, flush, claimEpoch, claimUsdc, claimAnts
@@ -44,6 +46,11 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function oldestUnclaimed() view returns (uint32)',
   'function epochs(uint32 id) view returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)',
   'function epochUserAmount(uint32 id, address user) view returns (uint128)',
+
+  // Reads — minimum cohort-open window
+  'function minEpochOpenSecs() view returns (uint64)',
+  'function currentEpochOpenedAt() view returns (uint64)',
+  'function flushableAt() view returns (uint64)',
 
   // Writes — staker actions
   'function stake(uint256 amount)',

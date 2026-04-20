@@ -133,6 +133,13 @@ contract DiemStakingProxyTest is Test {
         // specifically exercise the cap set their own value via setMaxTotalStake.
         vm.prank(owner);
         proxy.setMaxTotalStake(0);
+
+        // Disable the minimum cohort-open window for the default fixture so
+        // legacy tests that `flush()` immediately after `initiateUnstake`
+        // still pass. Tests that specifically exercise the gate set their
+        // own value via setMinEpochOpenSecs.
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -358,6 +365,149 @@ contract DiemStakingProxyTest is Test {
         // Epoch 1 still in Venice cooldown, not yet claimed.
         vm.expectRevert(DiemStakingProxy.PriorEpochUnclaimed.selector);
         proxy.flush();
+    }
+
+    // ── Minimum cohort-open window ─────────────────────────────────────
+
+    /// @dev Alice queues and tries to flush immediately — gate must reject.
+    ///      Without the gate, a first queuer could push every later unstaker
+    ///      into the next cohort and force them to wait an extra full
+    ///      Venice cooldown.
+    function test_flush_revertsBeforeMinEpochOpenSecs() public {
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(6 hours);
+
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+
+        // Same block as queue — gate closed.
+        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        proxy.flush();
+
+        // Just short of the window.
+        vm.warp(block.timestamp + 6 hours - 1);
+        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        proxy.flush();
+
+        // Exactly at the boundary — accepted (uses `<`, not `<=`).
+        vm.warp(block.timestamp + 1);
+        proxy.flush();
+    }
+
+    /// @dev Window measures from the first queuer into the cohort, not from
+    ///      `flush` of the previous cohort. A dry spell doesn't fast-track a
+    ///      late queuer — they still need to wait `minEpochOpenSecs` after
+    ///      joining an empty cohort.
+    function test_flush_windowMeasuredFromFirstQueuer() public {
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(6 hours);
+
+        // Seed and fully cycle a first cohort so the cohort slot for epoch 2
+        // has existed for a while before anyone queues into it.
+        _stakeAs(alice, 50e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(50e18);
+        uint32 firstEpoch = proxy.currentEpoch();
+        vm.warp(block.timestamp + 6 hours);
+        proxy.flush();
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(firstEpoch);
+
+        // Dry spell: no queuers for a week. `currentEpochOpenedAt` stays 0.
+        vm.warp(block.timestamp + 7 days);
+        assertEq(proxy.currentEpochOpenedAt(), 0, "no queuer: clock not started");
+
+        // Bob queues — clock starts now.
+        _stakeAs(bob, 50e18);
+        vm.prank(bob);
+        proxy.initiateUnstake(50e18);
+
+        // Immediate flush still blocked despite the long dry spell.
+        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        proxy.flush();
+
+        // Wait the window → flush accepted.
+        vm.warp(block.timestamp + 6 hours);
+        proxy.flush();
+    }
+
+    /// @dev Subsequent queuers into the same cohort do not extend the
+    ///      window — the clock is anchored to the first queuer, so the
+    ///      cohort's earliest-flush time is predictable from the moment it
+    ///      opens.
+    function test_flush_windowNotExtendedByLaterQueuers() public {
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(6 hours);
+
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 50e18);
+
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint64 openedAt = proxy.currentEpochOpenedAt();
+
+        // Bob piles in 3h later — the clock should not move.
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(bob);
+        proxy.initiateUnstake(50e18);
+        assertEq(proxy.currentEpochOpenedAt(), openedAt, "later queuer must not bump clock");
+
+        // 6h after Alice's queue → flush accepted.
+        vm.warp(openedAt + 6 hours);
+        proxy.flush();
+    }
+
+    /// @dev `flushableAt()` returns the predicted earliest-flush timestamp
+    ///      while the cohort is non-empty, and `0` while empty.
+    function test_flushableAt_reflectsWindow() public {
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(6 hours);
+
+        assertEq(proxy.flushableAt(), 0, "empty cohort: zero");
+
+        _stakeAs(alice, 100e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+
+        uint64 openedAt = proxy.currentEpochOpenedAt();
+        assertEq(proxy.flushableAt(), openedAt + 6 hours);
+
+        // After flush, the next cohort is empty again → flushableAt resets.
+        vm.warp(block.timestamp + 6 hours);
+        proxy.flush();
+        assertEq(proxy.flushableAt(), 0, "post-flush empty: zero");
+    }
+
+    function test_setMinEpochOpenSecs_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.setMinEpochOpenSecs(1 hours);
+    }
+
+    function test_setMinEpochOpenSecs_enforcesUpperBound() public {
+        vm.prank(owner);
+        vm.expectRevert(DiemStakingProxy.MinEpochOpenSecsTooLarge.selector);
+        proxy.setMinEpochOpenSecs(7 days + 1);
+
+        // Exactly the bound is allowed.
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(7 days);
+        assertEq(proxy.minEpochOpenSecs(), 7 days);
+    }
+
+    function test_constructor_defaultMinEpochOpenSecs() public {
+        // Default fixture sets it to 0 explicitly; deploy a fresh proxy to
+        // verify the constructor ships with the alpha default.
+        vm.prank(owner);
+        DiemStakingProxy fresh = new DiemStakingProxy(
+            address(diem),
+            address(usdc),
+            address(antseedRegistry),
+            operator
+        );
+        assertEq(fresh.minEpochOpenSecs(), fresh.ALPHA_MIN_EPOCH_OPEN_SECS());
+        assertEq(fresh.ALPHA_MIN_EPOCH_OPEN_SECS(), 1 days);
     }
 
     function test_claimEpoch_revertBeforeCooldown() public {

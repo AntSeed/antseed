@@ -123,6 +123,23 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      set to `0` (unlimited) at any time. Assumes 18-decimal DIEM.
     uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
 
+    /// @dev Default minimum time an unstake cohort must remain open before
+    ///      `flush()` is allowed. Prevents a first queuer from immediately
+    ///      flushing and pushing every other would-be unstaker into the next
+    ///      cohort (which would then have to wait a full extra Venice cooldown).
+    ///      The window is measured from the first `initiateUnstake` into the
+    ///      cohort, so dry-spell cohorts still enforce it. 24h gives stakers a
+    ///      predictable joining window without adding noticeable friction on
+    ///      top of Venice's own cooldown.
+    uint64 public constant ALPHA_MIN_EPOCH_OPEN_SECS = 1 days;
+
+    /// @dev Upper bound on `setMinEpochOpenSecs`. Caps how long the owner can
+    ///      make stakers wait before a cohort can leave. 7 days is long
+    ///      enough to absorb any reasonable operational need (e.g. a one-week
+    ///      cohort cadence) but short enough that owner misconfiguration
+    ///      can't effectively freeze withdrawals.
+    uint64 public constant MAX_MIN_EPOCH_OPEN_SECS = 7 days;
+
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — Staking
     // ═══════════════════════════════════════════════════════════════════
@@ -153,6 +170,17 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     mapping(uint32 => mapping(address => uint128)) public epochUserAmount;
     uint32 public currentEpoch;
     uint32 public oldestUnclaimed;
+
+    /// @dev Timestamp (as uint64) at which the currently-open cohort received
+    ///      its first queuer. Zero means the cohort is empty. Reset to zero
+    ///      on flush so the next cohort's clock restarts fresh on its first
+    ///      `initiateUnstake`.
+    uint64 public currentEpochOpenedAt;
+
+    /// @dev Minimum wall-clock seconds a cohort must stay open before
+    ///      `flush()` will accept it. Owner-settable, bounded by
+    ///      `MAX_MIN_EPOCH_OPEN_SECS`. `0` disables the gate entirely.
+    uint64 public minEpochOpenSecs;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — USDC rewards (instant credit)
@@ -232,6 +260,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event OrphanUsdcSwept(address indexed recipient, uint256 amount);
     event MaxTotalStakeSet(uint256 newMaxTotalStake);
+    event MinEpochOpenSecsSet(uint64 newMinEpochOpenSecs);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
@@ -244,9 +273,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error PriorEpochUnclaimed();
     error EpochNotReady();
     error EpochAlreadyClaimed();
+    error EpochTooYoung();
     error BacklogTooLarge();
     error NothingToClaim();
     error MaxStakeExceeded();
+    error MinEpochOpenSecsTooLarge();
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Constructor
@@ -294,6 +325,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         // consistently with later owner changes.
         maxTotalStake = ALPHA_MAX_TOTAL_STAKE;
         emit MaxTotalStakeSet(ALPHA_MAX_TOTAL_STAKE);
+
+        // Ship with a 24h minimum cohort-open window so a first queuer can't
+        // immediately flush and push later unstakers into a fresh Venice
+        // cooldown. Owner can retune via `setMinEpochOpenSecs` (capped at
+        // `MAX_MIN_EPOCH_OPEN_SECS`) or disable by setting `0`.
+        minEpochOpenSecs = ALPHA_MIN_EPOCH_OPEN_SECS;
+        emit MinEpochOpenSecsSet(ALPHA_MIN_EPOCH_OPEN_SECS);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -348,6 +386,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint32 epochId = currentEpoch;
         Epoch storage e = epochs[epochId];
 
+        // First queuer into this cohort starts the minimum-open-window
+        // clock. Measuring from the first queue (not from when the cohort
+        // slot was created) means a dry-spell cohort still enforces the
+        // window on whoever eventually queues first, matching user intent:
+        // "give other stakers a chance to join before the cohort leaves".
+        if (e.total == 0) currentEpochOpenedAt = uint64(block.timestamp);
+
         uint128 existing = epochUserAmount[epochId][msg.sender];
         if (existing == 0) {
             if (e.userCount >= MAX_PER_EPOCH) revert EpochFull();
@@ -382,11 +427,23 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         Epoch storage e = epochs[epochId];
         if (e.total == 0) revert NothingToFlush();
 
+        // Enforce the minimum open window. `currentEpochOpenedAt == 0`
+        // when the cohort is empty, which is caught by the NothingToFlush
+        // check above — so by this point `openedAt` is always a real
+        // timestamp. Using `>` (not `>=`) is deliberate: exactly-at-boundary
+        // plays nicely with test warps that land on the exact second.
+        uint64 openedAt = currentEpochOpenedAt;
+        if (block.timestamp < uint256(openedAt) + uint256(minEpochOpenSecs)) {
+            revert EpochTooYoung();
+        }
+
         uint256 cd = IDiemStake(address(diem)).cooldownDuration();
         uint64 unlockAt = (block.timestamp + cd).toUint64();
         e.unlockAt = unlockAt;
 
         currentEpoch = epochId + 1;
+        // Next cohort starts empty — its clock will set on its first queuer.
+        currentEpochOpenedAt = 0;
 
         IDiemStake(address(diem)).initiateUnstake(e.total);
 
@@ -643,9 +700,32 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit MaxTotalStakeSet(newMaxTotalStake);
     }
 
+    /**
+     * @notice Set the minimum cohort-open window (seconds). `0` disables the
+     *         gate. Capped at `MAX_MIN_EPOCH_OPEN_SECS` so owner cannot grief
+     *         stakers with an unreasonably long window.
+     *         Takes effect on the next `flush` check; does not retroactively
+     *         shorten an already-elapsed window.
+     */
+    function setMinEpochOpenSecs(uint64 newMinEpochOpenSecs) external onlyOwner {
+        if (newMinEpochOpenSecs > MAX_MIN_EPOCH_OPEN_SECS) revert MinEpochOpenSecsTooLarge();
+        minEpochOpenSecs = newMinEpochOpenSecs;
+        emit MinEpochOpenSecsSet(newMinEpochOpenSecs);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        VIEWS
     // ═══════════════════════════════════════════════════════════════════
+
+    /// @notice Unix timestamp at which `flush()` will first be callable for
+    ///         the currently-open cohort. Returns `0` if the cohort is still
+    ///         empty (no first queuer yet) — in that case `flush` is blocked
+    ///         by `NothingToFlush` regardless of this timestamp.
+    function flushableAt() external view returns (uint64) {
+        uint64 openedAt = currentEpochOpenedAt;
+        if (openedAt == 0) return 0;
+        return openedAt + minEpochOpenSecs;
+    }
 
     /// @notice USDC earned and claimable by `account` right now.
     function earnedUsdc(address account) external view returns (uint256) {

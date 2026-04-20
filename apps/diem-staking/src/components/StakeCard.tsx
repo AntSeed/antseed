@@ -136,6 +136,8 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             stakedDiem={user.stakedDiem}
             amtUsd={amtUsd}
             diemCooldownSecs={pool.diemCooldownSecs}
+            minEpochOpenSecs={pool.minEpochOpenSecs}
+            flushableAt={pool.flushableAt}
           />
         )}
 
@@ -311,6 +313,10 @@ interface UnstakePanelProps {
   stakedDiem: bigint | null;
   amtUsd: number | null;
   diemCooldownSecs: number | null;
+  /** Minimum cohort-open window (seconds). Owner-settable; 0 = disabled. */
+  minEpochOpenSecs: number | null;
+  /** Unix timestamp at which the currently-open cohort can first be flushed. */
+  flushableAt: number | null;
 }
 
 function UnstakePanel(props: UnstakePanelProps) {
@@ -338,9 +344,11 @@ function UnstakePanel(props: UnstakePanelProps) {
         <strong>Three-step unstake.</strong> Unstakes are batched into cohorts on-chain.
         You'll see <code>queued</code> → <code>cooling down</code> → <code>claimable</code>.
         Each state advances with a tx that <em>any</em> user in your cohort can trigger,
-        so you'll often find yours has moved when you check back. Total wait ≈
-        Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'})
-        + up to one cohort window.
+        so you'll often find yours has moved when you check back. After the first
+        queuer opens a cohort, it stays open for at least the minimum cohort window
+        (currently {props.minEpochOpenSecs != null ? fmtDuration(props.minEpochOpenSecs) : '—'})
+        so other stakers get a predictable chance to join before it leaves. Total wait ≈
+        cohort window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
       </div>
 
       {/* Input only makes sense while the user has no active unstake in flight. */}
@@ -386,19 +394,29 @@ function UnstakePanel(props: UnstakePanelProps) {
       )}
 
       {/* Active state machine */}
-      {state.status !== 'none' && <UnstakeStateView state={state} />}
+      {state.status !== 'none' && (
+        <UnstakeStateView state={state} flushableAt={props.flushableAt} />
+      )}
     </>
   );
 }
 
-function UnstakeStateView({ state }: { state: UnstakeState }) {
+function UnstakeStateView({
+  state,
+  flushableAt,
+}: {
+  state: UnstakeState;
+  flushableAt: number | null;
+}) {
   const flush = useFlush();
   const claim = useClaimEpoch();
 
-  // Keep countdown ticking for the cooling state.
+  // Keep countdown ticking for both `cooling` (Venice cooldown) and `queued`
+  // (cohort-open window before flush is allowed). The queued tick is cheap:
+  // it only runs while the user actually has an active unstake.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
-    if (state.status !== 'cooling') return;
+    if (state.status !== 'cooling' && state.status !== 'queued') return;
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(id);
   }, [state.status]);
@@ -408,6 +426,26 @@ function UnstakeStateView({ state }: { state: UnstakeState }) {
   const amountDiem = fmtDiem(toDiemNumber(state.amount));
 
   if (state.status === 'queued') {
+    // Three sub-states, in priority order:
+    //   1. Waiting for prior cohort to be claimed (protocol serialization).
+    //   2. Waiting for the minimum cohort-open window to elapse.
+    //   3. Ready to flush.
+    const waitingForWindow = flushableAt != null && now < flushableAt;
+    const windowRemaining = waitingForWindow ? flushableAt! - now : 0;
+    const canFlush = !state.waitingForPriorEpoch && !waitingForWindow;
+
+    let message: string;
+    if (state.waitingForPriorEpoch) {
+      message =
+        'Waiting for the previous cohort to finish claiming before your cohort can start the cooldown. Anyone in that cohort can click their Claim button to advance it.';
+    } else if (waitingForWindow) {
+      message =
+        'Cohort is still in its open window so other stakers can join before it leaves for Venice. The counter below is the earliest time anyone can flush it — including you.';
+    } else {
+      message =
+        'Your cohort is ready to be sent to Venice. Click below to start the cooldown. Anyone in your cohort can do this — pay once for the whole group.';
+    }
+
     return (
       <div className="yield-box" style={{ marginTop: 8 }}>
         <div className="yield-row hero-row">
@@ -418,17 +456,25 @@ function UnstakeStateView({ state }: { state: UnstakeState }) {
           <span className="lbl">Accrual</span>
           <span className="val">Stopped</span>
         </div>
+        {waitingForWindow && (
+          <div className="yield-row">
+            <span className="lbl">Flushable in</span>
+            <span className="val">{fmtDuration(windowRemaining)}</span>
+          </div>
+        )}
         <p style={{ margin: '12px 0 14px', fontSize: 13, color: 'var(--muted)' }}>
-          {state.waitingForPriorEpoch
-            ? 'Waiting for the previous cohort to finish claiming before your cohort can start the cooldown. Anyone in that cohort can click their Claim button to advance it.'
-            : 'Your cohort is ready to be sent to Venice. Click below to start the cooldown. Anyone in your cohort can do this — pay once for the whole group.'}
+          {message}
         </p>
         <button
           className="stake-cta"
-          disabled={state.waitingForPriorEpoch || flush.isPending}
+          disabled={!canFlush || flush.isPending}
           onClick={() => flush.run()}
         >
-          {flush.isPending ? 'Starting cooldown…' : 'Start cooldown →'}
+          {flush.isPending
+            ? 'Starting cooldown…'
+            : waitingForWindow
+              ? `Flushable in ${fmtDuration(windowRemaining)}`
+              : 'Start cooldown →'}
         </button>
         {flush.error && (
           <div className="claim-note" style={{ color: '#c62828' }}>{flush.error.message}</div>

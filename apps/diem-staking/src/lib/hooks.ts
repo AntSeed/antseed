@@ -82,6 +82,12 @@ export interface PoolStats {
   currentRewardEpoch: number | null;
   /** Venice DIEM unstake cooldown in seconds (read live from the token). */
   diemCooldownSecs: number | null;
+  /** Minimum seconds a cohort must stay open before `flush()` is allowed. */
+  minEpochOpenSecs: number | null;
+  /** Unix timestamp at which the currently-open cohort can first be
+   *  flushed. `0` means the cohort is empty (no first queuer yet) — in
+   *  that case `flush` is blocked by `NothingToFlush` regardless. */
+  flushableAt: number | null;
   /** True while any of the reads above are in-flight. */
   isLoading: boolean;
 }
@@ -97,6 +103,8 @@ export function usePoolStats(): PoolStats {
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'maxTotalStake' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentRewardEpoch' },
       { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minEpochOpenSecs' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'flushableAt' },
     ],
     query: { enabled: deployed, refetchInterval: POLL_MS },
   });
@@ -109,9 +117,15 @@ export function usePoolStats(): PoolStats {
       maxTotalStake: null,
       currentRewardEpoch: null,
       diemCooldownSecs: null,
+      minEpochOpenSecs: null,
+      flushableAt: null,
       isLoading,
     };
   }
+  // `flushableAt()` returns `0` while the cohort is empty (no first queuer
+  // yet). We preserve the distinction by mapping `0` → `null` so the UI can
+  // tell "no clock running" apart from "clock running, starting now".
+  const flushableAtRaw = data[7]?.result != null ? Number(data[7].result) : null;
   return {
     totalStaked: data[0]?.result ?? null,
     stakerCount: data[1]?.result != null ? Number(data[1].result) : null,
@@ -119,6 +133,8 @@ export function usePoolStats(): PoolStats {
     maxTotalStake: data[3]?.result ?? null,
     currentRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
     diemCooldownSecs: data[5]?.result != null ? Number(data[5].result) : null,
+    minEpochOpenSecs: data[6]?.result != null ? Number(data[6].result) : null,
+    flushableAt: flushableAtRaw && flushableAtRaw > 0 ? flushableAtRaw : null,
     isLoading,
   };
 }
