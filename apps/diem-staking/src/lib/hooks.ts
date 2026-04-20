@@ -201,9 +201,15 @@ export function useUserStats(): UserStats {
   };
 }
 
-/** Maximum number of epochs to preview-sum in one call. Matches the
- *  proxy's `MAX_EPOCHS_PER_CAPTURE` so claimAnts will succeed without
- *  requiring a prior catchUpPoints. */
+/** Maximum number of epochs to preview-sum in one call.
+ *
+ *  MUST stay in lockstep with `DiemStakingProxy.MAX_EPOCHS_PER_CAPTURE`
+ *  (see packages/contracts/DiemStakingProxy.sol). If the contract raises
+ *  or lowers its bound, update this constant too — otherwise `claimAnts`
+ *  calls sized from this preview can revert `BacklogTooLarge` on-chain.
+ *  The UI's `ClaimPanel` also reuses the same cap (inline literal) when
+ *  sizing `claimAnts(n)`; grep for `MAX_EPOCHS_PREVIEW` / `16` together
+ *  when changing this. */
 const MAX_EPOCHS_PREVIEW = 16;
 
 /**
