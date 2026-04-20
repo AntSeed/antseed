@@ -25,6 +25,7 @@ import { StakeCard } from './components/StakeCard';
 import { fmtNum, toDiemNumber, toUsdcNumber } from './lib/format';
 import { EPOCHS_PER_YEAR } from './lib/epoch';
 import { DIEM_STAKING_PROXY, isAddressSet } from './lib/addresses';
+import { ALPHA_MAX_TOTAL_STAKE_DIEM_BASE } from './lib/protocol';
 
 export function App() {
   const diemPrice = useDiemPrice();
@@ -42,9 +43,14 @@ export function App() {
     return (usdcPerDiemPerEpoch * EPOCHS_PER_YEAR) / diemPrice * 100;
   }, [diemPrice, lastEpochUsdc, pool.totalStaked]);
 
+  // Prefer the live on-chain value. Fall back to the constructor-set default
+  // (50 DIEM) when the read hasn't returned yet or the proxy isn't deployed,
+  // so the AlphaStrip renders the correct cap from the first paint. Only
+  // treat an explicit on-chain `0` as "uncapped" (owner raised / removed).
   const maxStakeDisplay = useMemo(() => {
-    if (pool.maxTotalStake == null || pool.maxTotalStake === 0n) return null;
-    return fmtNum(toDiemNumber(pool.maxTotalStake));
+    const cap = pool.maxTotalStake ?? ALPHA_MAX_TOTAL_STAKE_DIEM_BASE;
+    if (cap === 0n) return null;
+    return fmtNum(toDiemNumber(cap));
   }, [pool.maxTotalStake]);
 
   const proxyAddress = isAddressSet(DIEM_STAKING_PROXY) ? DIEM_STAKING_PROXY : null;
