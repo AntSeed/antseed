@@ -3,7 +3,10 @@ import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metad
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 
-export const MAX_METADATA_SIZE = 1000;
+// v8 adds 21 bytes for the optional sellerContract field (1-byte flag + 20-byte
+// address). Bumped from 1000 so sellers already near the limit don't silently
+// fail validation when they enable a seller facade.
+export const MAX_METADATA_SIZE = 1024;
 export const MAX_PROVIDERS = 10;
 export const MAX_SERVICES_PER_PROVIDER = 20;
 export const MAX_SERVICE_NAME_LENGTH = 64;
@@ -83,6 +86,12 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         field: "publicAddress",
         message: 'Public address must be in the form "host:port" with a valid port',
       });
+    }
+  }
+
+  if (metadata.sellerContract !== undefined) {
+    if (!/^[0-9a-f]{40}$/.test(metadata.sellerContract)) {
+      errors.push({ field: "sellerContract", message: "Must be 40 lowercase hex chars" });
     }
   }
 
@@ -316,20 +325,24 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // encoded size
-  try {
-    const encoded = encodeMetadata(metadata);
-    if (encoded.length > MAX_METADATA_SIZE) {
+  // encoded size. Skip when an earlier format error would cause encode to
+  // throw for reasons already reported (e.g. malformed sellerContract hex) —
+  // otherwise the generic "failed to encode" masks the real cause.
+  if (errors.length === 0) {
+    try {
+      const encoded = encodeMetadata(metadata);
+      if (encoded.length > MAX_METADATA_SIZE) {
+        errors.push({
+          field: "encoded",
+          message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
+        });
+      }
+    } catch (err) {
       errors.push({
         field: "encoded",
-        message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
+        message: `Failed to encode metadata for size check: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
-  } catch {
-    errors.push({
-      field: "encoded",
-      message: "Failed to encode metadata for size check",
-    });
   }
 
   return errors;

@@ -65,14 +65,38 @@ export class SellerRequestHandler {
         return;
       }
 
+      // Match the requested model to one of our published services BEFORE any
+      // payment handshake or upstream forwarding. Rejecting unknown/missing
+      // models locally avoids reserving payment for something we won't serve
+      // and surfaces a clear error instead of an opaque upstream 4xx.
+      const provider = this.matchProvider(request);
+      if (!provider) {
+        const requestedService = this._extractRequestedService(request);
+        const allServices = this._deps.providers.flatMap((p) => p.services);
+        const errorMessage = requestedService === null
+          ? 'Request must include a "service" or "model" field matching a published service.'
+          : `Service "${requestedService}" is not served by this peer.`;
+        debugWarn(`[SellerHandler] Rejecting: ${errorMessage} available=[${allServices.join(', ')}]`);
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 400,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({
+            error: {
+              message: errorMessage,
+              type: 'invalid_request_error',
+              code: requestedService === null ? 'model_required' : 'model_not_found',
+            },
+          })),
+        });
+        return;
+      }
+
       // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
       const spmAuthorized = spm?.hasSession(buyerPeerId) ?? false;
       if (this._deps.channelsClient && !spmAuthorized) {
-        const matchedProvider = this.matchProvider(request);
-        const providerPricing = matchedProvider
-          ? this.resolveProviderPricing(matchedProvider, request)
-          : undefined;
+        const providerPricing = this.resolveProviderPricing(provider, request);
         // Free services (both input and output priced at 0) skip the payment
         // channel handshake entirely — no 402, no ReserveAuth, no on-chain reserve.
         const isFree = providerPricing
@@ -145,10 +169,7 @@ export class SellerRequestHandler {
           const spent = spm.getCumulativeSpend(session.sessionId);
           if (spent > 0n && spent >= accepted) {
             const reserveMax = spm.getReserveMax(session.sessionId);
-            const matchedProvider = this.matchProvider(request);
-            const providerPricing = matchedProvider
-              ? this.resolveProviderPricing(matchedProvider, request)
-              : undefined;
+            const providerPricing = this.resolveProviderPricing(provider, request);
             const requirements = spm.getPaymentRequirements(
               request.requestId, buyerPeerId, providerPricing,
             );
@@ -177,19 +198,6 @@ export class SellerRequestHandler {
             return;
           }
         }
-      }
-
-      const provider = this.matchProvider(request);
-
-      if (!provider) {
-        debugWarn(`[SellerHandler] No matching provider for ${request.path}`);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 502,
-          headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("No matching provider"),
-        });
-        return;
       }
 
       // Track active seller session at request start
@@ -371,12 +379,13 @@ export class SellerRequestHandler {
 
   matchProvider(request: SerializedHttpRequest): Provider | undefined {
     const requestedService = this._extractRequestedService(request);
+    if (requestedService === null) {
+      return undefined;
+    }
     const requestedProvider = this._extractRequestedProvider(request);
     const providers = this._deps.providers;
     const matchesService = (provider: Provider): boolean =>
-      provider.services.length === 0
-      || (requestedService !== null && provider.services.includes(requestedService))
-      || providers.length === 1;
+      provider.services.includes(requestedService);
 
     let provider: Provider | undefined;
     if (requestedProvider) {
@@ -445,7 +454,8 @@ export class SellerRequestHandler {
     if (!parsed || typeof parsed !== "object") {
       return null;
     }
-    const service = (parsed as Record<string, unknown>)["model"];
+    const record = parsed as Record<string, unknown>;
+    const service = record["service"] ?? record["model"];
     if (typeof service !== "string" || service.trim().length === 0) {
       return null;
     }

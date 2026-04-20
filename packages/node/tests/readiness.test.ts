@@ -98,6 +98,18 @@ describe('checkSellerReadiness', () => {
     expect(stakeCheck.command).toBe('antseed seller stake 10');
   });
 
+  it('checks registration and stake against the configured seller contract', async () => {
+    const staking = mockStakingClient();
+    const identityClient = mockIdentityClient();
+    const sellerContract = '0x1234567890abcdef1234567890abcdef12345678';
+
+    await checkSellerReadiness(fakeIdentity, identityClient, staking, sellerContract);
+
+    expect(staking.provider.getBalance).toHaveBeenCalledWith(fakeIdentity.wallet.address);
+    expect(identityClient.isRegistered).toHaveBeenCalledWith(sellerContract);
+    expect(staking.getStake).toHaveBeenCalledWith(sellerContract);
+  });
+
 });
 
 describe('checkBuyerReadiness', () => {

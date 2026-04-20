@@ -268,7 +268,7 @@ export default function PricingPage() {
 
   const allPeerNames = useMemo(() => [...new Set(peers.map(p => p.displayName ?? p.peerId.slice(0, 12)))].sort(), [peers]);
   const allTags = useMemo(() => [...new Set(models.flatMap(m => m.tags))].sort(), [models]);
-  const uniqueServiceCount = useMemo(() => new Set(models.map(m => m.serviceId)).size, [models]);
+  const uniqueServiceCount = useMemo(() => models.map(m => m.serviceId).length, [models]);
 
   // Totals and bounds for stats bar + sliders
   const totalTokens = useMemo(() => peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalInputTokens ?? '0', 10) + parseInt(p.onChainStats?.totalOutputTokens ?? '0', 10), 0), [peers]);

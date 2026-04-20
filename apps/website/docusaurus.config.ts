@@ -159,6 +159,7 @@ const config: Config = {
       },
       items: [
         {to: '/network', label: 'Pricing', position: 'right'},
+        {to: '/providers', label: 'Providers', position: 'right'},
         {
           type: 'docSidebar',
           sidebarId: 'docs',

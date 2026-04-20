@@ -86,6 +86,20 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// (`ChatStreamStopReason`). This preload runs in a sandboxed context and
+// cannot import from main, so the shape is mirrored here for IPC. Keep the
+// `kind`, `source`, and field set in sync with the source-of-truth type —
+// and with the renderer copy in apps/desktop/src/renderer/types/bridge.ts.
+type ChatAiStreamStopReason = {
+  kind: 'payment_required' | 'aborted' | 'timeout' | 'http_error' | 'network_error' | 'stream_error' | 'unknown';
+  source: 'billing' | 'user' | 'transport' | 'upstream' | 'unknown';
+  retryable: boolean;
+  message: string;
+  statusCode?: number;
+  errorCode?: string;
+};
+
 const api = {
   getState(): Promise<RuntimeSnapshot> {
     return ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeSnapshot>;
@@ -174,7 +188,7 @@ const api = {
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
     return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
@@ -263,8 +277,8 @@ const api = {
     ipcRenderer.on('chat:ai-stream-done', listener);
     return () => ipcRenderer.off('chat:ai-stream-done', listener);
   },
-  onChatAiStreamError(handler: (data: { conversationId: string; error: string }) => void): () => void {
-    const listener = (_: unknown, data: { conversationId: string; error: string }) => handler(data);
+  onChatAiStreamError(handler: (data: { conversationId: string; error: string; stopReason?: ChatAiStreamStopReason }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; error: string; stopReason?: ChatAiStreamStopReason }) => handler(data);
     ipcRenderer.on('chat:ai-stream-error', listener);
     return () => ipcRenderer.off('chat:ai-stream-error', listener);
   },

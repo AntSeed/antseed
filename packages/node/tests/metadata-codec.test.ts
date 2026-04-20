@@ -172,6 +172,35 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.onChainGhostCount).toBe(2);
   });
 
+  it("round-trips a v8 metadata with sellerContract", () => {
+    const meta: PeerMetadata = {
+      peerId: "aa".repeat(20),
+      version: 8,
+      region: "us-east-1",
+      timestamp: 1_700_000_000_000,
+      providers: [],
+      sellerContract: "bb".repeat(20),
+      signature: "dd".repeat(65),
+    };
+    const bytes = encodeMetadata(meta);
+    const decoded = decodeMetadata(bytes);
+    expect(decoded.sellerContract).toEqual(meta.sellerContract);
+  });
+
+  it("round-trips v8 metadata with no sellerContract", () => {
+    const meta: PeerMetadata = {
+      peerId: "aa".repeat(20),
+      version: 8,
+      region: "us-east-1",
+      timestamp: 1_700_000_000_000,
+      providers: [],
+      signature: "dd".repeat(65),
+    };
+    const bytes = encodeMetadata(meta);
+    const decoded = decodeMetadata(bytes);
+    expect(decoded.sellerContract).toBeUndefined();
+  });
+
   // v2/v3/v4/v5 roundtrip tests removed — pre-v6 format is rejected by the decoder.
 });
 

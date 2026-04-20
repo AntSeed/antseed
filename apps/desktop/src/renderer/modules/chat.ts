@@ -744,14 +744,11 @@ export function initChatModule({
     uiState.chatAbortVisible = sending;
     if (sending) {
       uiState.chatWaitingForStream = true;
-      uiState.chatThinkingPhase = null;
-      clearThinkingPhaseExpiry();
-    }
-    if (!sending) {
+    } else {
       uiState.chatWaitingForStream = false;
-      uiState.chatThinkingPhase = null;
-      clearThinkingPhaseExpiry();
     }
+    uiState.chatThinkingPhase = null;
+    clearThinkingPhaseExpiry();
 
     if (sendingConversationIds.size > 0 || sending) {
       ensureStreamingIndicatorTimer();
@@ -791,6 +788,11 @@ export function initChatModule({
     if (!sending) {
       uiState.chatThinkingPhase = null;
       clearThinkingPhaseExpiry();
+    }
+    if (sending) {
+      ensureStreamingIndicatorTimer();
+    } else if (sendingConversationIds.size === 0) {
+      clearStreamingIndicatorTimer();
     }
     updateStreamingIndicator();
   }
@@ -1459,10 +1461,15 @@ export function initChatModule({
       await bridge.chatAiDeleteConversation(convId);
       localConversationMessages.delete(convId);
       streamingMessagesByConversation.delete(convId);
+      sendingConversationIds.delete(convId);
+      streamTurnsByConversation.delete(convId);
+      streamStartedAtByConversation.delete(convId);
 
       // If we deleted the active conversation, reset to new-chat state
       if (convId === uiState.chatActiveConversation) {
         startNewChat();
+      } else {
+        syncActiveConversationSendingState();
       }
 
       notifyUiStateChanged();
@@ -1601,7 +1608,9 @@ export function initChatModule({
               setConversationSending(convId, false);
               void handlePaymentRequired(paymentMatch[1]);
             } else {
-              reportChatError(result.error, 'Request failed');
+              if (!uiState.chatError) {
+                reportChatError(result.stopReason?.message ?? result.error, 'Request failed');
+              }
               setConversationSending(convId, false);
             }
           }
@@ -1975,7 +1984,26 @@ export function initChatModule({
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const textBlock = findLastStreamingBlockByType(blocks, 'text');
-            if (textBlock) textBlock.streaming = false;
+            if (textBlock) {
+              textBlock.streaming = false;
+              // Extract inline <think>...</think> tags (DeepSeek, Qwen, etc.)
+              // into proper thinking blocks so the UI renders them correctly.
+              const raw = String(textBlock.text || '');
+              const thinkMatch = raw.match(/^<think>([\s\S]*?)<\/think>\s*/);
+              if (thinkMatch) {
+                const thinkingText = thinkMatch[1]!.trim();
+                textBlock.text = raw.slice(thinkMatch[0].length);
+                if (thinkingText) {
+                  const idx = blocks.indexOf(textBlock);
+                  blocks.splice(idx, 0, {
+                    type: 'thinking',
+                    renderKey: createStreamingRenderKey('thinking', `inline-${idx}`),
+                    thinking: thinkingText,
+                    streaming: false,
+                  });
+                }
+              }
+            }
           });
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
@@ -2180,6 +2208,15 @@ export function initChatModule({
     if (bridge.onChatAiStreamError) {
       bridge.onChatAiStreamError((data) => {
         const shouldClearSending = isConversationSending(data.conversationId);
+        const stopReason = data.stopReason;
+        const stopReasonSummary = stopReason
+          ? [
+              stopReason.kind,
+              stopReason.statusCode ? `status=${String(stopReason.statusCode)}` : null,
+              stopReason.errorCode ? `code=${stopReason.errorCode}` : null,
+              stopReason.retryable ? 'retryable' : 'non-retryable',
+            ].filter(Boolean).join(', ')
+          : 'unknown';
         setConversationStreamingMessage(data.conversationId, null);
 
         if (data.conversationId === uiState.chatActiveConversation) {
@@ -2199,9 +2236,9 @@ export function initChatModule({
               void handlePaymentRequired(paymentMatch[1]);
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
             } else {
-              showChatError(data.error);
+              showChatError(stopReason?.message ?? data.error);
             }
-            appendSystemLog(`AI Chat error: ${data.error}`);
+            appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
           }
         } else if (shouldClearSending) {
           setConversationSending(data.conversationId, false);

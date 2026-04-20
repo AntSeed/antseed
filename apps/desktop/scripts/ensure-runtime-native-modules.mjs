@@ -138,17 +138,24 @@ function resolveNpmCli() {
 
 function rebuildModule(check) {
   // Try prebuild-install first — downloads a prebuilt binary matching the
-  // current Node version and arch.  Falls back to npm rebuild if no prebuild
-  // is available (e.g. for keytar which doesn't publish prebuilds).
+  // current runtime. Both better-sqlite3 and keytar publish prebuilds via
+  // prebuild-install; source compile is only needed when a prebuild isn't
+  // available for this combo.
+  //
+  // Version-keyed prebuilds (better-sqlite3) match against the Node version,
+  // so we pass --target explicitly. N-API prebuilds (keytar) match against
+  // the napi abi version, not the Node version — passing --target would
+  // cause prebuild-install to look for a non-existent Node-version-specific
+  // asset and miss the napi prebuild entirely. Let prebuild-install
+  // auto-detect in that case.
   const moduleDir = path.resolve(repoRoot, 'node_modules', check.moduleName);
-  if (check.moduleName === 'better-sqlite3' && existsSync(moduleDir)) {
+  if (existsSync(moduleDir)) {
+    const args = ['prebuild-install'];
+    if (check.moduleName === 'better-sqlite3') {
+      args.push('--runtime', 'node', '--target', process.version, '--arch', process.arch);
+    }
     try {
-      execFileSync('npx', [
-        'prebuild-install',
-        '--runtime', 'node',
-        '--target', process.version,
-        '--arch', process.arch,
-      ], { cwd: moduleDir, stdio: 'inherit' });
+      execFileSync('npx', args, { cwd: moduleDir, stdio: 'inherit' });
       return;
     } catch {
       // prebuild-install failed — fall through to npm rebuild

@@ -1,4 +1,5 @@
 import type { ServiceApiProtocol } from "./service-api.js";
+import type { PeerMetadata } from "../discovery/peer-metadata.js";
 
 /**
  * A PeerId is the EVM address hex (40 lowercase chars = 20 bytes, no 0x prefix).
@@ -52,6 +53,13 @@ export interface PeerInfo {
   publicAddress?: string;
   /** Last seen timestamp (Unix ms). */
   lastSeen: number;
+  /**
+   * Last timestamp (Unix ms) at which the buyer successfully reached this peer
+   * over the transport (e.g. a completed request). Decoupled from `lastSeen`,
+   * which reflects DHT announcements, so a peer known to be alive survives
+   * transient DHT staleness.
+   */
+  lastReachedAt?: number;
   /** LLM providers this peer is offering (empty if buyer-only). */
   providers: string[];
   /** Reputation score (0-100). */
@@ -78,4 +86,6 @@ export interface PeerInfo {
   onChainChannelCount?: number;
   /** On-chain ghost count (provider went silent) from AntseedChannels. */
   onChainGhostCount?: number;
+  /** Full peer metadata, if available (set after metadata resolution). */
+  metadata?: PeerMetadata;
 }

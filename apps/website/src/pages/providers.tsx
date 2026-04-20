@@ -19,7 +19,7 @@ const FAQ_DATA = [
   },
   {
     q: 'How do payments actually reach me?',
-    a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 30 seconds), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
+    a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 10 minutes), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
   },
   {
     q: 'Can I use any model underneath?',
@@ -73,7 +73,7 @@ export default function Providers(): JSX.Element {
           Set your price. Announce to the network. Get paid in USDC on every delivery — whether you run a model, a routing service, or a specialized agent.
         </p>
         <div className={styles.heroCtas}>
-          <Link to="/docs/provider-api" className={styles.ctaPrimary}>Read provider docs →</Link>
+          <Link to="/docs/guides/become-a-provider" className={styles.ctaPrimary}>Become a provider →</Link>
           <Link to="/docs/install" className={styles.ctaSecondary}>Install AntSeed</Link>
         </div>
       </section>
@@ -95,13 +95,13 @@ export default function Providers(): JSX.Element {
               </svg>
             </div>
             <h3>Raw Inference</h3>
-            <p>You run a model. Ollama, a fine-tune, a local GPU. Wrap it with the provider SDK, announce it to the network, and start earning. Buyers choose you based on price, latency, and on-chain reputation.</p>
+            <p>You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry, announce it to the network, and start earning. Buyers choose you based on price, latency, and on-chain reputation.</p>
             <ul className={styles.pathList}>
               <li>→ Any model or backend</li>
               <li>→ Set your own price per token</li>
               <li>→ Reputation built per delivery</li>
             </ul>
-            <Link to="/docs/provider-api" className={styles.pathLink}>Provider API docs →</Link>
+            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
           </div>
 
           <div className={styles.pathCard}>
@@ -119,7 +119,7 @@ export default function Providers(): JSX.Element {
               <li>→ Announced as a named service on the network</li>
               <li>→ Premium pricing for specialized delivery</li>
             </ul>
-            <Link to="/docs/provider-api#ant-agent" className={styles.pathLink}>AI Agent docs →</Link>
+            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
           </div>
 
           <div className={styles.pathCard}>
@@ -137,9 +137,30 @@ export default function Providers(): JSX.Element {
               <li>→ Latency, cost, TEE, or domain-aware routing</li>
               <li>→ Earn per request routed</li>
             </ul>
-            <Link to="/docs/provider-api" className={styles.pathLink}>Provider API docs →</Link>
+            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
           </div>
 
+        </div>
+      </section>
+
+      {/* ── COMPLIANCE ── */}
+      <section className={styles.compliance}>
+        <div className={styles.complianceCard}>
+          <div className={styles.complianceIcon} aria-hidden="true">⚠️</div>
+          <div className={styles.complianceBody}>
+            <p className={styles.complianceTitle}>Provider Compliance</p>
+            <p>
+              AntSeed is designed for providers who build differentiated services —
+              such as TEE-secured inference, domain-specific skills or agents,
+              fine-tuned models, or managed product experiences. Simply reselling
+              raw API access or subscription credentials is <strong>not</strong> the
+              intended use and may violate your upstream provider's terms of service.
+            </p>
+            <p>
+              Providers are solely responsible for complying with their upstream
+              API provider's terms.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -179,102 +200,85 @@ export default function Providers(): JSX.Element {
       {/* ── THE INTEGRATION ── */}
       <section className={styles.code}>
         <div className={styles.codeHeader}>
-          <h2>Thin wrapper. Full control.</h2>
+          <h2>One JSON file. Full control.</h2>
           <p>
-            Your model or agent doesn't change. You add a provider interface around its intake and output.{' '}
-            <Link to="/docs/provider-api">Full provider API reference →</Link>
+            No code to write. Point AntSeed at an OpenAI-compatible endpoint,
+            set your prices and categories, and start earning.{' '}
+            <Link to="/docs/guides/become-a-provider">Become a provider →</Link>
           </p>
         </div>
 
         <div className={styles.codeGrid}>
-          {/* Inference provider example */}
+          {/* CLI setup example */}
           <div className={styles.codeCard}>
-            <div className={styles.codeCardLabel}>Inference provider</div>
+            <div className={styles.codeCardLabel}>1. Configure with the CLI</div>
             <div className={styles.codeTerm}>
               <div className={styles.codeTermBar}>
                 <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
                 <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
                 <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
-                <span className={styles.codeTermTitle}>my-provider.ts</span>
+                <span className={styles.codeTermTitle}>terminal</span>
               </div>
-              <pre className={styles.codePre}>{`import type { Provider } from '@antseed/node'
-import Anthropic from '@anthropic-ai/sdk'
+              <pre className={styles.codePre}>{`# Point at any OpenAI-compatible endpoint
+antseed config seller add-provider together \\
+  --plugin openai \\
+  --base-url https://api.together.ai
 
-export default {
-  name: 'my-legal-inference',
-  services: ['claude-sonnet-4-6'],
+# Announce a service with your price + categories
+# (--cached is optional — set it to charge less for
+# cached-input tokens when your upstream supports them)
+antseed config seller add-service together deepseek-v3.1 \\
+  --upstream "deepseek-ai/DeepSeek-V3.1" \\
+  --input 0.6 --cached 0.06 --output 1.7 \\
+  --categories chat,math,coding
 
-  pricing: {
-    defaults: {
-      inputUsdPerMillion: 3,
-      outputUsdPerMillion: 15,
-    },
-  },
-
-  serviceCategories: {
-    'claude-sonnet-4-6': ['legal', 'privacy'],
-  },
-
-  maxConcurrency: 5,
-  getCapacity: () => ({ current: 0, max: 10 }),
-
-  async handleRequest(req) {
-    const client = new Anthropic()
-    const msg = await client.messages.create({
-      model: req.model,
-      max_tokens: req.max_tokens,
-      messages: req.messages,
-    })
-    return {
-      text: msg.content[0].text,
-      usage: {
-        input: msg.usage.input_tokens,
-        output: msg.usage.output_tokens,
-      },
-    }
-  },
-} satisfies Provider`}</pre>
-            </div>
-          </div>
-
-          {/* Routing Service example */}
-          <div className={styles.codeCard}>
-            <div className={styles.codeCardLabel}>Routing Service provider</div>
-            <div className={styles.codeTerm}>
-              <div className={styles.codeTermBar}>
-                <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
-                <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
-                <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
-                <span className={styles.codeTermTitle}>my-router.ts</span>
-              </div>
-              <pre className={styles.codePre}>{`import type { Router } from '@antseed/node'
-
-export default {
-  name: 'tee-only-router',
-  services: ['*'],
-
-  pricing: {
-    defaults: {
-      inputUsdPerMillion: 0.5,
-      outputUsdPerMillion: 0.5,
-    },
-  },
-
-  async selectProvider(req, peers) {
-    // only route to TEE-verified peers
-    const tee = peers.filter(p =>
-      p.capabilities.includes('tee')
-    )
-    return tee.sort(
-      (a, b) => a.latencyP50 - b.latencyP50
-    )[0]
-  },
-} satisfies Router`}</pre>
+# Start serving
+export OPENAI_API_KEY=<your-key>
+antseed seller start`}</pre>
             </div>
             <p className={styles.codeNote}>
-              Your selection logic stays private. Buyers see a named routing service
-              with its own price and reputation.{' '}
-              <Link to="/docs/provider-api#router">Full Router reference →</Link>
+              Compatible with any OpenAI-API endpoint — your own Ollama, vLLM, a
+              fine-tune, or an upstream you have the right to resell. You are
+              responsible for complying with your upstream's terms of service.
+            </p>
+          </div>
+
+          {/* config.json example */}
+          <div className={styles.codeCard}>
+            <div className={styles.codeCardLabel}>2. Or edit config.json directly</div>
+            <div className={styles.codeTerm}>
+              <div className={styles.codeTermBar}>
+                <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
+                <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
+                <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
+                <span className={styles.codeTermTitle}>~/.antseed/config.json</span>
+              </div>
+              <pre className={styles.codePre}>{`{
+  "seller": {
+    "providers": {
+      "together": {
+        "plugin": "openai",
+        "baseUrl": "https://api.together.ai",
+        "services": {
+          "deepseek-v3.1": {
+            "upstreamModel": "deepseek-ai/DeepSeek-V3.1",
+            "pricing": {
+              "inputUsdPerMillion": 0.6,
+              "cachedInputUsdPerMillion": 0.06,
+              "outputUsdPerMillion": 1.7
+            },
+            "categories": ["chat", "coding", "math"]
+          }
+        }
+      }
+    }
+  }
+}`}</pre>
+            </div>
+            <p className={styles.codeNote}>
+              Your backend URL, API key, and routing logic never leave your node.
+              The network only sees the service name, price, and categories.{' '}
+              <Link to="/docs/config">Full config reference →</Link>
             </p>
           </div>
         </div>
@@ -305,7 +309,7 @@ export default {
             {
               step: '03',
               title: 'Settlement executes on-chain',
-              body: 'On session end (or 30s idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
+              body: 'On session end (or 10 min idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
             },
           ].map(s => (
             <div key={s.step} className={styles.payStep}>
@@ -349,13 +353,13 @@ export default {
               <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
               <span className={styles.codeTermTitle}>wallet management</span>
             </div>
-            <pre className={styles.codePre}>{`antseed balance     # view USDC balance
-antseed deposit     # add funds
-antseed withdraw    # claim payouts`}</pre>
+            <pre className={styles.codePre}>{`antseed seller status         # earnings, peers, wallet address
+antseed seller stake <amt>    # stake USDC to become discoverable
+antseed seller unstake        # withdraw your stake`}</pre>
           </div>
           <p className={styles.walletNote}>
-            EVM wallets are derived automatically from your node's Ed25519 identity key.
-            No separate wallet setup required.{' '}
+            Your EVM wallet is derived automatically from your node's secp256k1 identity key.
+            Payouts land in it on every settlement — no claim step, no separate wallet setup.{' '}
             <Link to="/docs/payments">Full payment docs →</Link>
           </p>
         </div>
@@ -398,7 +402,7 @@ antseed withdraw    # claim payouts`}</pre>
         <p>Install AntSeed, configure your provider, and start earning.</p>
         <div className={styles.bottomCtaBtns}>
           <Link to="/docs/install" className={styles.ctaPrimary}>Get started →</Link>
-          <Link to="/docs/provider-api" className={styles.ctaSecondary}>Provider API reference</Link>
+          <Link to="/docs/guides/become-a-provider" className={styles.ctaSecondary}>Become a provider</Link>
         </div>
         <div className={styles.bottomLinks}>
           <Link to="/docs/lightpaper">Read the lightpaper</Link>

@@ -3,7 +3,7 @@ import type { PeerOffering } from "../types/capability.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
-export const METADATA_VERSION = 7;
+export const METADATA_VERSION = 8;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -45,5 +45,12 @@ export interface PeerMetadata {
   trustScore?: number;
   onChainChannelCount?: number;
   onChainGhostCount?: number;
+  /**
+   * On-chain seller contract that fronts this peer (e.g. a DiemStakingProxy).
+   * Buyers resolve `seller = sellerContract` for channel flows and verify the
+   * binding by calling `sellerContract.isOperator(peerAddress)` on-chain.
+   * Stored as 40 lowercase hex chars (no `0x` prefix) matching `peerId` format.
+   */
+  sellerContract?: string;
   signature: string;
 }

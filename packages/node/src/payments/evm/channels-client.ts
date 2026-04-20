@@ -42,14 +42,111 @@ const CHANNELS_ABI = [
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
 ] as const;
 
+/// @dev Probe ABI for the seller-facade passthrough. Present on
+///      AntseedSellerDelegation (and derivatives like DiemStakingProxy); absent
+///      on plain AntseedChannels. Used at init to discover the underlying
+///      channels contract when the configured address is a seller facade.
+const SELLER_FACADE_PROBE_ABI = [
+  'function channelsAddress() external view returns (address)',
+] as const;
+
 export interface CloseRequestedEvent {
   channelId: string;
   buyer: string;
 }
 
 export class ChannelsClient extends BaseEvmClient {
+  /**
+   * The underlying AntseedChannels address used for reads + event filters.
+   * When the configured `contractAddress` is a seller facade (e.g.
+   * DiemStakingProxy), this resolves to the real channels contract via the
+   * facade's `channelsAddress()` view. Otherwise it equals `_contractAddress`.
+   * Probed lazily on first read.
+   */
+  private _readAddressPromise: Promise<string> | null = null;
+
   constructor(config: ChannelsClientConfig) {
     super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
+  }
+
+  /**
+   * Resolve the read address (underlying AntseedChannels). If the configured
+   * contract exposes `channelsAddress()` (i.e. is a seller facade), use that.
+   * Otherwise fall back to the configured address.
+   *
+   * Three outcomes:
+   *   1. Probe returns a single ABI-encoded address word → cache that
+   *      (facade if it differs from the configured address, non-facade
+   *      otherwise).
+   *   2. Probe returns `0x`, a CALL_EXCEPTION revert, or an obviously
+   *      non-address payload (wrong length, non-string) → cache as
+   *      non-facade. These are all "selector isn't implemented" signals.
+   *   3. Probe throws a non-CALL_EXCEPTION error (network timeout, RPC
+   *      5xx, rate limit) → *transient*. Return the configured address for
+   *      this call only and do **not** memoize. Subsequent calls retry.
+   *
+   * Prior implementation memoized the fallback on any throw, which
+   * permanently wedged facade mode after a single transient RPC blip —
+   * signing every subsequent SpendingAuth against the wrong EIP-712 domain.
+   * At worst a facade seller now mis-signs *one* auth during an RPC outage
+   * (buyer verification fails, buyer retries, probe recovers, all good).
+   */
+  private _getReadAddress(): Promise<string> {
+    if (this._readAddressPromise) return this._readAddressPromise;
+
+    const attempt = (async (): Promise<{ value: string; cache: boolean }> => {
+      const iface = new ethers.Interface(SELLER_FACADE_PROBE_ABI);
+      const callData = iface.encodeFunctionData('channelsAddress');
+      let raw: string;
+      try {
+        raw = await this._provider.call({
+          to: this._contractAddress,
+          data: callData,
+        });
+      } catch (err) {
+        const code = (err as { code?: string } | null)?.code;
+        if (code === 'CALL_EXCEPTION') {
+          // Contract didn't implement the selector — cache non-facade.
+          return { value: this._contractAddress, cache: true };
+        }
+        // Transient network/RPC error — don't cache.
+        return { value: this._contractAddress, cache: false };
+      }
+      // Treat any non-66-char response (including `0x`, tuples, malformed
+      // payloads) as "selector not implemented" — safe to cache as non-facade.
+      if (typeof raw !== 'string' || raw.length !== 66) {
+        return { value: this._contractAddress, cache: true };
+      }
+      const [resolved] = iface.decodeFunctionResult('channelsAddress', raw) as unknown as [string];
+      const value = resolved.toLowerCase() === this._contractAddress.toLowerCase()
+        ? this._contractAddress
+        : resolved;
+      return { value, cache: true };
+    })();
+
+    // Memoize the promise that resolves to the *value* only when the probe
+    // reports a cacheable outcome. Otherwise clear the memo post-resolution
+    // so the next caller re-probes.
+    const valuePromise = attempt.then(({ value, cache }) => {
+      if (!cache && this._readAddressPromise === valuePromise) {
+        this._readAddressPromise = null;
+      }
+      return value;
+    });
+    // If `attempt` itself rejects (shouldn't, since we catch above, but
+    // defence in depth), clear the memo.
+    valuePromise.catch(() => {
+      if (this._readAddressPromise === valuePromise) {
+        this._readAddressPromise = null;
+      }
+    });
+    this._readAddressPromise = valuePromise;
+    return valuePromise;
+  }
+
+  /** The resolved underlying channels address. Triggers the probe if not yet resolved. */
+  get readAddress(): Promise<string> {
+    return this._getReadAddress();
   }
 
   async reserve(
@@ -117,7 +214,7 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   async getSession(channelId: string): Promise<ChannelInfo> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     const result = await contract.getFunction('channels')(channelId);
     return {
       buyer: result[0],
@@ -133,22 +230,22 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   async domainSeparator(): Promise<string> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('domainSeparator')() as Promise<string>;
   }
 
   async getFirstSignCap(): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
   }
 
   async computeChannelId(buyer: string, seller: string, salt: string): Promise<string> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 
   async getAgentStats(agentId: number): Promise<AgentStats> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
+    const contract = new Contract(await this._getReadAddress(), CHANNELS_ABI, this._provider);
     const result = await contract.getFunction('getAgentStats')(agentId);
     return {
       channelCount: Number(result[0]),
@@ -159,7 +256,7 @@ export class ChannelsClient extends BaseEvmClient {
   }
 
   /**
-   * Query CloseRequested events from the Channels contract.
+   * Query CloseRequested events from the underlying AntseedChannels contract.
    * Returns matching events between fromBlock and toBlock (inclusive).
    */
   async getCloseRequestedEvents(fromBlock: number | 'latest', toBlock: number | 'latest' = 'latest'): Promise<CloseRequestedEvent[]> {
@@ -167,7 +264,7 @@ export class ChannelsClient extends BaseEvmClient {
     const eventTopic = iface.getEvent('CloseRequested')!.topicHash;
 
     const logs = await this._provider.getLogs({
-      address: this._contractAddress,
+      address: await this._getReadAddress(),
       topics: [eventTopic],
       fromBlock,
       toBlock,

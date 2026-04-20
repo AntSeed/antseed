@@ -9,6 +9,10 @@ hide_title: true
 
 Providers earn USDC by serving AI requests on the AntSeed network. This guide covers everything from setup to your first request.
 
+:::warning Provider Compliance
+AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
+:::
+
 ## Prerequisites
 
 - Node.js 20+
@@ -39,17 +43,56 @@ Or configure it manually:
 antseed config seller add-provider together \
   --plugin openai \
   --base-url https://api.together.ai \
-  --input 1 --output 2
+  --input 1 --cached 0.1 --output 2
 ```
+
+`--cached` is optional and sets the default cached-input price in USD per 1M tokens. Use it when your upstream charges a reduced rate for cache hits (Anthropic, OpenAI, some Together models).
 
 Then add one or more services:
 
 ```bash
 antseed config seller add-service together deepseek-v3.1 \
   --upstream "deepseek-ai/DeepSeek-V3.1" \
-  --input 0.6 --output 1.7 \
+  --input 0.6 --cached 0.06 --output 1.7 \
   --categories chat,math,coding
 ```
+
+:::tip You're editing `~/.antseed/config.json`
+Every `antseed seller setup` / `antseed config seller ...` command is just a safe way to edit a single file: `~/.antseed/config.json`. You can open it in any editor at any time and change providers, services, pricing, categories, or `baseUrl` by hand — the CLI and the JSON file are interchangeable.
+
+After running the commands above, your file will look something like this:
+
+```json
+{
+  "seller": {
+    "providers": {
+      "together": {
+        "plugin": "openai",
+        "baseUrl": "https://api.together.ai",
+        "defaults": {
+          "inputUsdPerMillion": 1,
+          "cachedInputUsdPerMillion": 0.1,
+          "outputUsdPerMillion": 2
+        },
+        "services": {
+          "deepseek-v3.1": {
+            "upstreamModel": "deepseek-ai/DeepSeek-V3.1",
+            "pricing": {
+              "inputUsdPerMillion": 0.6,
+              "cachedInputUsdPerMillion": 0.06,
+              "outputUsdPerMillion": 1.7
+            },
+            "categories": ["chat", "math", "coding"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+See [Configuration](/docs/config) for the full schema, or run `antseed config seller show` to print your current file.
+:::
 
 ## 3. Set Your Identity
 
@@ -107,9 +150,11 @@ antseed config seller add-service together kimi-k2.5 \
   --categories math,coding \
   --base-url https://api.together.ai
 
+# --cached is optional — set it when your upstream offers
+# a discounted price for cached-input tokens
 antseed config seller add-service together deepseek-v3.1 \
   --upstream "deepseek-ai/DeepSeek-V3.1" \
-  --input 0.6 --output 1.7 \
+  --input 0.6 --cached 0.06 --output 1.7 \
   --categories chat,math,coding
 ```
 

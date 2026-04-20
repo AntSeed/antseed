@@ -67,10 +67,10 @@ function useNetworkStats() {
           if (!res.ok) continue;
           const data = await res.json();
           const peers = data.peers ?? [];
-          const services = new Set<string>();
-          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.add(m);
+          const services: string[] = [];
+          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.push(m);
           setPeerCount(peers.length);
-          setServiceCount(services.size);
+          setServiceCount(services.length);
           return;
         } catch { /* try next */ }
       }
@@ -407,7 +407,7 @@ export default function Home(): JSX.Element {
         </div>
         <div className={styles.agentsVideo}>
           <video
-            src="/videos/desktop-app.mp4"
+            src="/videos/desktop-app-v2.mp4"
             autoPlay
             loop
             muted

@@ -20,7 +20,9 @@ import {
 } from './evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
-import { peerIdToAddress } from '../types/peer.js';
+import { peerIdToAddress, type PeerId } from '../types/peer.js';
+import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
+import type { PeerMetadata } from '../discovery/peer-metadata.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
 
@@ -73,6 +75,8 @@ export class BuyerPaymentManager {
   /** Peers that explicitly rejected our spending auth. */
   private readonly _rejectedPeers = new Set<string>();
 
+  private readonly _sellerAddressResolver?: SellerAddressResolver;
+
   /** sellerPeerId -> cumulative USDC amount in the latest SpendingAuth */
   private readonly _cumulativeAmount = new Map<string, bigint>();
 
@@ -102,9 +106,10 @@ export class BuyerPaymentManager {
   /** Cached EIP-712 domain — static for the lifetime of this manager. */
   private readonly _channelsDomain: ReturnType<typeof makeChannelsDomain>;
 
-  constructor(identity: Identity, config: BuyerPaymentConfig, channelStore: ChannelStore) {
+  constructor(identity: Identity, config: BuyerPaymentConfig, channelStore: ChannelStore, sellerAddressResolver?: SellerAddressResolver) {
     this._identity = identity;
     this._config = config;
+    this._sellerAddressResolver = sellerAddressResolver;
     this._signer = identity.wallet;
     this._depositsClient = new DepositsClient({
       rpcUrl: config.rpcUrl,
@@ -364,8 +369,11 @@ export class BuyerPaymentManager {
     reserveAmountOrPricing?: bigint | ServicePricing,
     pricingArg?: ServicePricing,
     pricingMap?: { defaults: ServicePricing; services: Record<string, ServicePricing> },
+    metadataArg?: PeerMetadata,
   ): Promise<string> {
-    const sellerEvmAddr = peerIdToAddress(sellerPeerId);
+    const sellerEvmAddr = this._sellerAddressResolver
+      ? await this._sellerAddressResolver.resolveSellerAddress(sellerPeerId as PeerId, metadataArg)
+      : peerIdToAddress(sellerPeerId);
     const reserveAmount = typeof reserveAmountOrPricing === 'bigint'
       ? reserveAmountOrPricing
       : this._config.maxReserveAmountUsdc;
@@ -435,7 +443,7 @@ export class BuyerPaymentManager {
       sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
-      sellerEvmAddr: peerIdToAddress(sellerPeerId),
+      sellerEvmAddr,
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
       authMax: '0',

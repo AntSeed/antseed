@@ -1,5 +1,23 @@
 # CLAUDE.md -- Agent Context for AntSeed Monorepo
 
+## Commit & push policy (IMPORTANT)
+
+**Never commit or push unless explicitly asked.** Default workflow:
+
+1. Make the requested edits.
+2. Run typecheck / build / tests to verify the change is sound.
+3. **Stop.** Leave changes in the working tree (staged or unstaged). Report
+   what you did and wait.
+
+Only commit/push when the user explicitly says so — e.g. "commit", "push",
+"/commit", "ship it", "open a PR", or invokes the `commit`, `commit-amos`,
+`pr-create`, or `pr-merge` skills.
+
+Rationale: the user batches related edits into a single reviewed commit with
+their own message. Auto-committing every tweak produces a noisy history of
+one-line commits that has to be squashed later. Do not chain `edit → build
+→ commit → push` as a reflex — even if prior turns in the same session did.
+
 ## Project Overview
 AntSeed is a peer-to-peer AI services network. Providers offer differentiated
 AI services and buyers route requests to the best available peer. This monorepo

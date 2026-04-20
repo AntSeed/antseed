@@ -105,7 +105,8 @@ export async function assertSellerPrerequisites(input: {
       const identity = await loadOrCreateIdentity(dataDir)
       const identityClient = createIdentityClient(config)
       const stakingClient = createStakingClient(config)
-      const checks = await checkSellerReadiness(identity, identityClient, stakingClient)
+      const sellerContract = config.payments.sellerContract?.address
+      const checks = await checkSellerReadiness(identity, identityClient, stakingClient, sellerContract)
       for (const check of checks) {
         if (!check.passed) {
           failures.push({
@@ -484,6 +485,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const dhtPort = options.dhtPort as number | undefined
       const signalingPort = options.signalingPort as number | undefined
 
+      const sellerContractCfg = config.payments?.sellerContract
+      const announcerSellerContract = sellerContractCfg
+        ? { sellerContract: sellerContractCfg.address }
+        : undefined
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
@@ -514,6 +520,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },
+        ...(announcerSellerContract ? { sellerContract: announcerSellerContract } : {}),
       })
 
       let registeredProviders = providers

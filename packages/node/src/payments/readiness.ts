@@ -15,11 +15,16 @@ export async function checkSellerReadiness(
   identity: Identity,
   identityClient: IdentityClient,
   stakingClient: StakingClient,
+  sellerContract?: string,
 ): Promise<ReadinessCheck[]> {
   const checks: ReadinessCheck[] = [];
   const evmAddr = identity.wallet.address;
+  // When the peer is fronted by a seller contract, stake and agent registration
+  // live under the proxy address — not the peer's wallet. ETH gas still comes
+  // from the peer's wallet regardless.
+  const sellerAddr = sellerContract ?? evmAddr;
 
-  // 1. ETH for gas
+  // 1. ETH for gas (always the peer wallet)
   const ethBalance = await stakingClient.provider.getBalance(evmAddr);
   checks.push({
     name: 'Gas balance',
@@ -29,8 +34,8 @@ export async function checkSellerReadiness(
       : `No ETH for gas fees. Send ETH to ${evmAddr}`,
   });
 
-  // 2. Registered
-  const isReg = await identityClient.isRegistered(evmAddr);
+  // 2. Registered (seller on-chain address = proxy when configured)
+  const isReg = await identityClient.isRegistered(sellerAddr);
   checks.push({
     name: 'Peer registration',
     passed: isReg,
@@ -38,8 +43,8 @@ export async function checkSellerReadiness(
     command: isReg ? undefined : 'antseed seller register',
   });
 
-  // 3. Staked
-  const stake = await stakingClient.getStake(evmAddr);
+  // 3. Staked (seller on-chain address = proxy when configured)
+  const stake = await stakingClient.getStake(sellerAddr);
   const hasStake = stake > 0n;
   checks.push({
     name: 'Stake',
