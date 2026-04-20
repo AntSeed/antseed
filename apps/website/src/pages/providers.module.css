@@ -167,6 +167,50 @@
 }
 .pathLink:hover { color: #1FD87A !important; border-color: #1FD87A; }
 
+/* ── COMPLIANCE ── */
+.compliance {
+  padding: 0 60px 40px;
+  max-width: 900px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+.complianceCard {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  background: #fffaea;
+  border: 1px solid #f0dd9a;
+  border-left: 3px solid #c99400;
+  border-radius: 12px;
+  padding: 22px 26px;
+}
+.complianceIcon {
+  font-size: 20px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.complianceBody {
+  min-width: 0;
+}
+.complianceTitle {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  color: #8a6600;
+  margin: 0 0 10px;
+}
+.complianceBody p {
+  font-size: 14px;
+  color: #5b4600;
+  line-height: 1.65;
+  margin: 0 0 10px;
+}
+.complianceBody p:last-child { margin: 0; }
+.complianceBody strong { color: #4a3900; }
+
 /* ── PRIVACY ── */
 .privacy {
   padding: 60px 60px 80px;
@@ -627,6 +671,13 @@
   .reputation,
   .faq {
     padding: 40px 20px 60px;
+  }
+  .compliance {
+    padding: 0 20px 32px;
+  }
+  .complianceCard {
+    padding: 18px 20px;
+    gap: 14px;
   }
   .pathsGrid,
   .codeGrid,

@@ -9,6 +9,10 @@ hide_title: true
 
 Providers earn USDC by serving AI requests on the AntSeed network. This guide covers everything from setup to your first request.
 
+:::warning Provider Compliance
+AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
+:::
+
 ## Prerequisites
 
 - Node.js 20+

@@ -143,6 +143,27 @@ export default function Providers(): JSX.Element {
         </div>
       </section>
 
+      {/* ── COMPLIANCE ── */}
+      <section className={styles.compliance}>
+        <div className={styles.complianceCard}>
+          <div className={styles.complianceIcon} aria-hidden="true">⚠️</div>
+          <div className={styles.complianceBody}>
+            <p className={styles.complianceTitle}>Provider Compliance</p>
+            <p>
+              AntSeed is designed for providers who build differentiated services —
+              such as TEE-secured inference, domain-specific skills or agents,
+              fine-tuned models, or managed product experiences. Simply reselling
+              raw API access or subscription credentials is <strong>not</strong> the
+              intended use and may violate your upstream provider's terms of service.
+            </p>
+            <p>
+              Providers are solely responsible for complying with their upstream
+              API provider's terms.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* ── PRIVACY DIAGRAM ── */}
       <section className={styles.privacy}>
         <div className={styles.privacyHeader}>
