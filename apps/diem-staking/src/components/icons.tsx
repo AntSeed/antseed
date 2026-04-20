@@ -3,30 +3,22 @@
 // (ant silhouette, DIEM/USDC/ANTS coins) — changing them would drift from
 // the brand guide.
 
+/** Official DIEM token icon (Venice). Source:
+ *  https://s2.coinmarketcap.com/static/img/coins/200x200/38186.png
+ *  Pulled into `public/diem-logo.png` at 200×200 so it scales cleanly on
+ *  HiDPI displays up to ~100px rendered. Decorative — always paired with a
+ *  "$DIEM" text label, so `alt=""` + `aria-hidden` is correct. */
 export function DiemLogo({ size = 24 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <defs>
-        <linearGradient id="diem-grad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#3b82f6" />
-          <stop offset="50%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#8b5cf6" />
-        </linearGradient>
-      </defs>
-      <circle cx="16" cy="16" r="15" fill="url(#diem-grad)" />
-      <circle cx="16" cy="16" r="15" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.75" />
-      <text
-        x="16"
-        y="22"
-        textAnchor="middle"
-        fontFamily="'JetBrains Mono', monospace"
-        fontSize="16"
-        fontWeight={700}
-        fill="#fff"
-      >
-        Đ
-      </text>
-    </svg>
+    <img
+      src="/diem-logo.png"
+      width={size}
+      height={size}
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+      style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    />
   );
 }
 

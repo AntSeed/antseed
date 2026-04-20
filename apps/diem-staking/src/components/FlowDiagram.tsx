@@ -41,11 +41,6 @@ export function FlowDiagram() {
     <div className="flow-diagram">
       <svg viewBox="0 0 1100 420" className="flow-svg" preserveAspectRatio="xMidYMid meet">
         <defs>
-          <linearGradient id="diem-grad-svg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#3b82f6" />
-            <stop offset="50%" stopColor="#6366f1" />
-            <stop offset="100%" stopColor="#8b5cf6" />
-          </linearGradient>
           <radialGradient id="ants-coin-face" cx="38%" cy="30%" r="75%">
             <stop offset="0%" stopColor="#1b2230" />
             <stop offset="55%" stopColor="#0f1622" />
@@ -90,20 +85,11 @@ export function FlowDiagram() {
               $
             </text>
           </g>
+          {/* Official DIEM token icon (see src/components/icons.tsx).
+              36×36 bounding box centred on (0,0) so the symbol drops in
+              where the prior gradient-circle version did without relayout. */}
           <g id="diem-coin-svg">
-            <circle r="18" fill="url(#diem-grad-svg)" />
-            <circle r="18" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="0.8" />
-            <text
-              x="0"
-              y="6"
-              textAnchor="middle"
-              fontFamily="'JetBrains Mono', monospace"
-              fontSize="18"
-              fontWeight={700}
-              fill="#fff"
-            >
-              Đ
-            </text>
+            <image href="/diem-logo.png" x="-18" y="-18" width="36" height="36" />
           </g>
         </defs>
 
