@@ -256,7 +256,7 @@ antseed seller start`}</pre>
             <p className={styles.codeNote}>
               Your backend URL, API key, and routing logic never leave your node.
               The network only sees the service name, price, and categories.{' '}
-              <Link to="/docs/getting-started/configuration">Full config reference →</Link>
+              <Link to="/docs/config">Full config reference →</Link>
             </p>
           </div>
         </div>
