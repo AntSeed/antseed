@@ -8,7 +8,7 @@ import { parseEther } from 'viem';
 
 import { DiemLogo } from './icons';
 import { FlowDiagram } from './FlowDiagram';
-import { ANTSTATION_DOWNLOAD_URL } from './Layout';
+import { useAntstationDownload } from '../lib/antstation';
 
 import {
   useDiemAllowance,
@@ -493,6 +493,7 @@ interface ClaimPanelProps {
 function ClaimPanel(props: ClaimPanelProps) {
   const claimUsdc = useClaimUsdc();
   const claimAnts = useClaimAnts();
+  const { href: antstationHref, isMac } = useAntstationDownload();
 
   const pendingUsdcNum = toUsdcNumber(props.pendingUsdc);
   const pendingAntsNum = toAntsNumber(props.pendingAnts);
@@ -550,13 +551,13 @@ function ClaimPanel(props: ClaimPanelProps) {
                 : 'Claim $ANTS →'}
           </button>
           <a
-            href={ANTSTATION_DOWNLOAD_URL}
+            href={antstationHref}
             target="_blank"
             rel="noopener noreferrer"
             className="stake-cta ghost"
             style={{ display: 'block', textAlign: 'center', textDecoration: 'none' }}
           >
-            Open AntStation to spend $ANTS →
+            {isMac ? 'Download AntStation for Mac →' : 'Download AntStation to spend $ANTS →'}
           </a>
           {(claimUsdc.error || claimAnts.error) && (
             <div className="claim-note" style={{ color: '#c62828' }}>

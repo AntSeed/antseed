@@ -1,16 +1,27 @@
 // Static layout sections: Nav, Hero, AlphaStrip, ClaimBanner, HowItWorks, FAQ,
 // DualCards, Footer. These don't depend on on-chain state (ClaimBanner and
 // Hero take a couple of computed values as props so they can show live APR /
-// pool TVL).
+// pool TVL). Every AntStation download link flows through `useAntstationDownload`
+// so Mac visitors get a direct DMG href — same behaviour as antseed.com.
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import type { MouseEvent } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 
 import { fmtPct, fmtPrice } from '../lib/format';
+import { useAntstationDownload, ANTSTATION_RELEASES_URL } from '../lib/antstation';
 
-const ANTSTATION_DOWNLOAD_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 const ANTSEED_URL = 'https://antseed.com';
 const CONTRACT_URL_BASE = 'https://basescan.org/address';
+
+// Apple logo glyph used on the "Download for Mac" button. Matches the mark
+// used in apps/website/src/pages/index.tsx so the two pages feel identical.
+function AppleIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+    </svg>
+  );
+}
 
 export function AlphaStrip({ maxStakeDisplay }: { maxStakeDisplay: string | null }) {
   if (!maxStakeDisplay) {
@@ -87,6 +98,7 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
 }
 
 export function ClaimBanner() {
+  const { href, isMac } = useAntstationDownload();
   return (
     <div className="claim-banner">
       <div className="claim-banner-inner">
@@ -103,11 +115,32 @@ export function ClaimBanner() {
             . Pass-through pricing, more inference per dollar than any subscription.
           </p>
           <div className="claim-banner-actions">
-            <a href={ANTSTATION_DOWNLOAD_URL} className="btn-primary" target="_blank" rel="noopener noreferrer">
-              Download AntStation →
+            {/* Match antseed.com's primary download button: Apple icon +
+                "Download for Mac" when we have a direct DMG, graceful
+                fallback otherwise. */}
+            <a
+              href={href}
+              className="btn-primary"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+            >
+              {isMac ? (
+                <>
+                  <AppleIcon />
+                  Download for Mac
+                </>
+              ) : (
+                <>Download AntStation →</>
+              )}
             </a>
-            <a href="https://antseed.com/network" className="btn-ghost" target="_blank" rel="noopener noreferrer">
-              See pricing →
+            <a
+              href={ANTSTATION_RELEASES_URL}
+              className="btn-ghost"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              All releases →
             </a>
             <a href={ANTSEED_URL} className="btn-ghost" target="_blank" rel="noopener noreferrer">
               What is AntSeed?
@@ -131,6 +164,7 @@ export function ClaimBanner() {
 }
 
 export function HowItWorks() {
+  const { href } = useAntstationDownload();
   return (
     <section id="how">
       <span className="sec-label">How it works</span>
@@ -155,7 +189,7 @@ export function HowItWorks() {
         </Step>
         <Step num="04" label="$ANTS" title="Claim $ANTS on-chain, spend in AntStation">
           $ANTS emissions accrue every epoch. Claim them on-chain here, then{' '}
-          <a href={ANTSTATION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">download AntStation</a>{' '}
+          <a href={href} target="_blank" rel="noopener noreferrer">download AntStation</a>{' '}
           to spend them on any model on the network.
         </Step>
       </div>
@@ -165,7 +199,7 @@ export function HowItWorks() {
   );
 }
 
-function Step(props: { num: string; label: string; title: string; children: React.ReactNode }) {
+function Step(props: { num: string; label: string; title: string; children: ReactNode }) {
   return (
     <div className="step">
       <span className="step-num">{props.num} ·  {props.label}</span>
@@ -205,14 +239,15 @@ function Why() {
 }
 
 export function DualCards() {
+  const { href, isMac } = useAntstationDownload();
   return (
     <section>
       <div className="dual">
-        <a href={ANTSTATION_DOWNLOAD_URL} className="dual-card" target="_blank" rel="noopener noreferrer">
+        <a href={href} className="dual-card" target="_blank" rel="noopener noreferrer">
           <span className="tag">◆  AntStation</span>
           <h4>The AntSeed desktop app</h4>
           <p>Chat with Claude, GPT, and every open model. Generate images and video. All at provider cost. No subscription markup. Free to download.</p>
-          <span className="arrow">Download AntStation →</span>
+          <span className="arrow">{isMac ? 'Download for Mac →' : 'Download AntStation →'}</span>
         </a>
         <a href={ANTSEED_URL} className="dual-card" target="_blank" rel="noopener noreferrer">
           <span className="tag">◆  AntSeed</span>
@@ -226,6 +261,7 @@ export function DualCards() {
 }
 
 export function FAQ() {
+  const { href } = useAntstationDownload();
   return (
     <section id="faq">
       <span className="sec-label">FAQ</span>
@@ -268,7 +304,7 @@ export function FAQ() {
           <div className="body">
             $ANTS are distributed every epoch to the same wallet you staked with. You can
             claim them on-chain from the Claim tab here. $ANTS are best spent inside{' '}
-            <a href={ANTSTATION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">AntStation</a>,
+            <a href={href} target="_blank" rel="noopener noreferrer">AntStation</a>,
             the AntSeed desktop app — any model on the network accepts them.
           </div>
         </details>
@@ -297,6 +333,7 @@ export function FAQ() {
 }
 
 export function Footer({ proxyAddress }: { proxyAddress: string | null }) {
+  const { href: antstationHref } = useAntstationDownload();
   const contractHref = proxyAddress ? `${CONTRACT_URL_BASE}/${proxyAddress}` : `${CONTRACT_URL_BASE}/`;
   return (
     <footer>
@@ -312,7 +349,7 @@ export function Footer({ proxyAddress }: { proxyAddress: string | null }) {
       </div>
       <div className="links">
         <a href={ANTSEED_URL}>antseed.com</a>
-        <a href={ANTSTATION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">AntStation</a>
+        <a href={antstationHref} target="_blank" rel="noopener noreferrer">AntStation</a>
         <a href={contractHref} target="_blank" rel="noopener noreferrer">Contract</a>
         <a href="#stake">Stake</a>
       </div>
@@ -321,4 +358,4 @@ export function Footer({ proxyAddress }: { proxyAddress: string | null }) {
   );
 }
 
-export { ANTSTATION_DOWNLOAD_URL, ANTSEED_URL };
+export { ANTSEED_URL };

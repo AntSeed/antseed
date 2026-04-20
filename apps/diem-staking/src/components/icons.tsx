@@ -1,7 +1,8 @@
-// Pure SVG brand marks. No state, no props of significance beyond `size`.
-// Kept verbatim from the design mock because they're AntSeed brand assets
-// (ant silhouette, DIEM/USDC/ANTS coins) — changing them would drift from
-// the brand guide.
+// Brand marks used across the portal. No state, no props of significance
+// beyond `size`. Most are inline SVG (USDC + $ANTS coin + ant silhouette),
+// kept verbatim from the design mock so they stay on-brand. DIEM is the
+// exception — it renders the real Venice token PNG served from /public.
+// See each component's doc-comment for provenance.
 
 /** Official DIEM token icon (Venice). Source:
  *  https://s2.coinmarketcap.com/static/img/coins/200x200/38186.png
