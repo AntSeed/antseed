@@ -511,7 +511,7 @@ function ClaimPanel(props: ClaimPanelProps) {
         <div className="claim-stat">
           <span className="lbl">Claimable USDC</span>
           <span className="big">${pendingUsdcNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <span className="sub">streams to your wallet</span>
+          <span className="sub">accrues in real time · claim anytime</span>
         </div>
         <div className="claim-stat">
           <span className="lbl">Pending $ANTS</span>
