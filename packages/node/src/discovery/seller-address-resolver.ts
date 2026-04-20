@@ -143,6 +143,12 @@ export class SellerAddressResolver {
       if (now - entry.verifiedAt >= this._ttlMs) this._cache.delete(peerId);
     }
     if (this._cache.size < this._maxEntries) return;
+    // LRU eviction: `Map` iteration follows insertion order. The cache-hit
+    // path above `delete`s and re-`set`s the entry on every lookup, which
+    // moves it to the end of the iteration order. That makes
+    // `keys().next().value` the least-recently-used key here, not merely
+    // the first-inserted one — don't break that invariant without also
+    // updating the hit path.
     const oldestKey = this._cache.keys().next().value;
     if (oldestKey !== undefined) this._cache.delete(oldestKey);
   }
