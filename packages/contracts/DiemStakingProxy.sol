@@ -77,7 +77,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
-    /// @dev ERC-1271 magic value for a valid signature.
+    /// @dev ERC-1271 magic value for a valid signature. OpenZeppelin's
+    ///      `IERC1271` interface (imported above) intentionally does not
+    ///      export this constant — the spec names it `MAGIC_VALUE` and every
+    ///      implementation hardcodes it. It's `bytes4(keccak256("isValidSignature(bytes32,bytes)"))`
+    ///      per EIP-1271; we duplicate it here rather than shipping an
+    ///      internal helper because both readers of the contract and
+    ///      auditors expect to see the literal at the call-site.
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
     // ═══════════════════════════════════════════════════════════════════
