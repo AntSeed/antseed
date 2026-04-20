@@ -8,6 +8,7 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
 const PUBLIC_ADDRESS_METADATA_VERSION = 5;
+const SELLER_CONTRACT_METADATA_VERSION = 8;
 
 /**
  * Encode metadata into binary format:
@@ -213,6 +214,18 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       parts.push(new Uint8Array([1]));
       parts.push(new Uint8Array([publicAddressBytes.length]));
       parts.push(publicAddressBytes);
+    } else {
+      parts.push(new Uint8Array([0]));
+    }
+  }
+
+  // sellerContract (v8+) — flag + [sellerContract:20]
+  // Buyers verify the peer→contract binding via `sellerContract.isOperator(peerAddress)`.
+  if (metadata.version >= SELLER_CONTRACT_METADATA_VERSION) {
+    const sc = metadata.sellerContract;
+    if (sc) {
+      parts.push(new Uint8Array([1]));
+      parts.push(hexToBytes(sc)); // 20 bytes
     } else {
       parts.push(new Uint8Array([0]));
     }
@@ -532,6 +545,18 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
+  let sellerContract: string | undefined;
+  if (version >= SELLER_CONTRACT_METADATA_VERSION) {
+    checkBounds(offset, 1, data.length - 65);
+    const sellerContractFlag = data[offset]!;
+    offset += 1;
+    if (sellerContractFlag === 1) {
+      checkBounds(offset, 20, data.length - 65);
+      sellerContract = bytesToHex(data.slice(offset, offset + 20));
+      offset += 20;
+    }
+  }
+
   // offerings
   const PRICING_UNIT_REVERSE: Array<'token' | 'request' | 'minute' | 'task'> = ['token', 'request', 'minute', 'task'];
   let offerings: PeerOffering[] | undefined;
@@ -616,6 +641,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
     ...(onChainChannelCount !== undefined ? { onChainChannelCount } : {}),
     ...(onChainGhostCount !== undefined ? { onChainGhostCount } : {}),
+    ...(sellerContract ? { sellerContract } : {}),
     region,
     timestamp,
     signature,

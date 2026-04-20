@@ -11,6 +11,8 @@ import type { ChannelStore } from './channel-store.js';
 import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
+import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
+import { SellerAuthorizationError } from '../discovery/seller-address-resolver.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 
@@ -62,6 +64,7 @@ export class BuyerPaymentNegotiator {
   private readonly _channelStore: ChannelStore | null;
   private readonly _identity: Identity;
   private readonly _emit: NegotiationEmitter;
+  private readonly _sellerAddressResolver?: SellerAddressResolver;
 
   /** Tracks which seller peers the buyer has already negotiated payment for. */
   private readonly _lockedPeers = new Set<string>();
@@ -92,6 +95,7 @@ export class BuyerPaymentNegotiator {
     channelStore: ChannelStore | null,
     _config: BuyerNegotiatorConfig,
     emitter: NegotiationEmitter,
+    sellerAddressResolver?: SellerAddressResolver,
   ) {
     this._identity = identity;
     this._bpm = bpm;
@@ -99,10 +103,23 @@ export class BuyerPaymentNegotiator {
     this._channelsClient = channelsClient;
     this._channelStore = channelStore;
     this._emit = emitter;
+    this._sellerAddressResolver = sellerAddressResolver;
   }
 
   get bpm(): BuyerPaymentManager {
     return this._bpm;
+  }
+
+  private async _resolveSellerAddr(peer: PeerInfo): Promise<string> {
+    if (!this._sellerAddressResolver) return peerIdToAddress(peer.peerId);
+    try {
+      return await this._sellerAddressResolver.resolveSellerAddress(peer.peerId, peer.metadata);
+    } catch (err) {
+      if (err instanceof SellerAuthorizationError) {
+        debugWarn(`[BuyerNegotiator] Dropping peer ${peer.peerId.slice(0, 12)}...: ${err.message}`);
+      }
+      throw err;
+    }
   }
 
   getOrCreatePaymentMux(peerId: PeerId, conn: PeerConnection): PaymentMux {
@@ -421,6 +438,8 @@ export class BuyerPaymentNegotiator {
 
     debugLog(`[BuyerNegotiator] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
 
+    const sellerEvmAddrExternal = await this._resolveSellerAddr(peer);
+
     // Store session so handleAuthAck can find it
     if (this._channelStore) {
       const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
@@ -428,7 +447,7 @@ export class BuyerPaymentNegotiator {
         sessionId: payload.channelId,
         peerId: peer.peerId,
         role: 'buyer',
-        sellerEvmAddr: peerIdToAddress(peer.peerId),
+        sellerEvmAddr: sellerEvmAddrExternal,
         buyerEvmAddr: this._identity.wallet.address,
         nonce: 0,
         authMax: payload.cumulativeAmount,
@@ -458,7 +477,7 @@ export class BuyerPaymentNegotiator {
 
     this._emit.emit('payment:signed', {
       peerId: peer.peerId,
-      sellerEvmAddr: peerIdToAddress(peer.peerId),
+      sellerEvmAddr: sellerEvmAddrExternal,
       amount: payload.cumulativeAmount,
     });
   }
@@ -598,9 +617,11 @@ export class BuyerPaymentNegotiator {
       throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
     }
 
+    const sellerEvmAddr = await this._resolveSellerAddr(peer);
+
     this._emit.emit('payment:required', {
       peerId: peer.peerId,
-      sellerEvmAddr: peerIdToAddress(peer.peerId),
+      sellerEvmAddr,
       minBudgetPerRequest: requirements.minBudgetPerRequest,
       suggestedAmount: amount.toString(),
     });
@@ -624,7 +645,7 @@ export class BuyerPaymentNegotiator {
     const pricingMap = this._buildPricingMap(peer);
 
     try {
-      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing, pricingMap);
+      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing, pricingMap, peer.metadata);
       debugLog(`[BuyerNegotiator] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);
@@ -633,7 +654,7 @@ export class BuyerPaymentNegotiator {
 
       this._emit.emit('payment:signed', {
         peerId: peer.peerId,
-        sellerEvmAddr: peerIdToAddress(peer.peerId),
+        sellerEvmAddr,
         amount: amount.toString(),
       });
     } catch (err) {

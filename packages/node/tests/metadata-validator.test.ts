@@ -36,6 +36,7 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   };
 }
 
+
 describe('validateMetadata', () => {
   it('should return no errors for valid metadata', () => {
     const errors = validateMetadata(validMetadata());
@@ -502,11 +503,21 @@ describe('validateMetadata', () => {
     }));
     expect(errors.some((e) => e.field.includes('serviceApiProtocols'))).toBe(true);
   });
+
+  it("rejects malformed sellerContract", () => {
+    const errors = validateMetadata(validMetadata({ sellerContract: "not-hex" }));
+    expect(errors.some(e => e.field === "sellerContract")).toBe(true);
+  });
+
+  it("accepts a well-formed sellerContract", () => {
+    const errors = validateMetadata(validMetadata({ sellerContract: "bb".repeat(20) }));
+    expect(errors.filter(e => e.field === "sellerContract")).toHaveLength(0);
+  });
 });
 
 describe('constants', () => {
   it('should export reasonable constant values', () => {
-    expect(MAX_METADATA_SIZE).toBe(1000);
+    expect(MAX_METADATA_SIZE).toBe(1024);
     expect(MAX_PROVIDERS).toBe(10);
     expect(MAX_SERVICES_PER_PROVIDER).toBe(20);
     expect(MAX_SERVICE_NAME_LENGTH).toBe(64);

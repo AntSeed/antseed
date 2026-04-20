@@ -32,6 +32,7 @@ import {
 import {
   PeerAnnouncer,
   type AnnouncerConfig,
+  type SellerContractConfig,
 } from "./discovery/announcer.js";
 import {
   PeerLookup,
@@ -66,6 +67,8 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
+import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
@@ -156,6 +159,12 @@ export interface NodeConfig {
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
+  /**
+   * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
+   * announcer publishes it in metadata; buyers verify the binding by calling
+   * `sellerContract.isOperator(peerAddress)`.
+   */
+  sellerContract?: SellerContractConfig;
 }
 
 export interface BuyerUsageChannelPoint {
@@ -206,6 +215,7 @@ export class AntseedNode extends EventEmitter {
   private _depositsClient: DepositsClient | null = null;
   private _channelsClient: ChannelsClient | null = null;
   private _stakingClient: StakingClient | null = null;
+  private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   /** Seller-side request handler (provider matching, execution, load tracking). */
@@ -428,6 +438,7 @@ export class AntseedNode extends EventEmitter {
     this._channelsClient = null;
     this._stakingClient = null;
     this._identityClient = null;
+    this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
     this._buyerHandler = null;
@@ -467,19 +478,42 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Verify claimed on-chain stats against actual contract data
+    // Verify claimed on-chain stats against actual contract data.
+    //
+    // Concurrency is capped so a wildcard DHT lookup returning hundreds of
+    // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
+    // isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
+    // will rate-limit past ~10-20 concurrent calls; we stay well under that.
     if (this._channelsClient && this._stakingClient) {
-      for (const p of peers) {
+      const channelsClient = this._channelsClient;
+      const stakingClient = this._stakingClient;
+      const resolver = this._sellerAddressResolver;
+      const DISCOVERY_RPC_CONCURRENCY = 8;
+      const queue = peers.slice();
+      const workers: Array<Promise<void>> = [];
+      const verifyOne = async (p: PeerInfo): Promise<void> => {
         try {
-          const evmAddress = peerIdToAddress(p.peerId);
-          const agentId = await this._stakingClient.getAgentId(evmAddress);
-          const stats = await this._channelsClient.getAgentStats(agentId);
+          const evmAddress = resolver
+            ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
+            : peerIdToAddress(p.peerId);
+          const agentId = await stakingClient.getAgentId(evmAddress);
+          const stats = await channelsClient.getAgentStats(agentId);
           p.onChainChannelCount = stats.channelCount;
           p.onChainGhostCount = stats.ghostCount;
         } catch {
-          // Contract lookup failed for this peer — keep claimed data
+          // Per-peer verification failure — keep claimed metadata.
         }
+      };
+      for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
+        workers.push((async () => {
+          for (;;) {
+            const next = queue.shift();
+            if (!next) return;
+            await verifyOne(next);
+          }
+        })());
       }
+      await Promise.all(workers);
     }
 
     for (const p of peers) {
@@ -945,6 +979,7 @@ export class AntseedNode extends EventEmitter {
         signalingPort: actualSignalingPort,
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
+        ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1031,7 +1066,7 @@ export class AntseedNode extends EventEmitter {
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default per session (matches FIRST_SIGN_CAP)
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore);
+        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
@@ -1043,6 +1078,7 @@ export class AntseedNode extends EventEmitter {
           this._channelStore,
           {},
           this,
+          this._sellerAddressResolver ?? undefined,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);
       }
@@ -1129,6 +1165,29 @@ export class AntseedNode extends EventEmitter {
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
+
+      const channelsClientRef = this._channelsClient;
+      const isOperatorAbi = ["function isOperator(address) view returns (bool)"];
+      const SELLER_CONTRACTS_MAX = 256;
+      const sellerContracts = new Map<string, EthersContract>();
+      this._sellerAddressResolver = new SellerAddressResolver({
+        isOperator: async (sellerContract: string, peerAddress: string) => {
+          let contract = sellerContracts.get(sellerContract);
+          if (contract) {
+            sellerContracts.delete(sellerContract);
+            sellerContracts.set(sellerContract, contract);
+          } else {
+            contract = new EthersContract(sellerContract, isOperatorAbi, channelsClientRef!.provider);
+            if (sellerContracts.size >= SELLER_CONTRACTS_MAX) {
+              const oldest = sellerContracts.keys().next().value;
+              if (oldest !== undefined) sellerContracts.delete(oldest);
+            }
+            sellerContracts.set(sellerContract, contract);
+          }
+          return await contract.getFunction("isOperator")(peerAddress) as boolean;
+        },
+      });
+      debugLog(`[Node] SellerAddressResolver initialized`);
     }
 
     // Initialize StakingClient
@@ -1391,6 +1450,7 @@ export class AntseedNode extends EventEmitter {
       peerId: result.metadata.peerId,
       displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
+      metadata: result.metadata,
       providers,
       publicAddress: this._resolvePublicAddress(result),
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),

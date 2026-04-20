@@ -42,7 +42,8 @@ async function printReadinessCheck(dataDir: string, configPath: string): Promise
     const identity = await loadOrCreateIdentity(dataDir);
     const identityClient = createIdentityClient(config);
     const stakingClient = createStakingClient(config);
-    const checks = await checkSellerReadiness(identity, identityClient, stakingClient);
+    const sellerContract = config.payments.sellerContract?.address;
+    const checks = await checkSellerReadiness(identity, identityClient, stakingClient, sellerContract);
 
     for (const check of checks) {
       const icon = check.passed ? chalk.green('✓') : chalk.red('✗');

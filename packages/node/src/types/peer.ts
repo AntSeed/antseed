@@ -1,4 +1,5 @@
 import type { ServiceApiProtocol } from "./service-api.js";
+import type { PeerMetadata } from "../discovery/peer-metadata.js";
 
 /**
  * A PeerId is the EVM address hex (40 lowercase chars = 20 bytes, no 0x prefix).
@@ -85,4 +86,6 @@ export interface PeerInfo {
   onChainChannelCount?: number;
   /** On-chain ghost count (provider went silent) from AntseedChannels. */
   onChainGhostCount?: number;
+  /** Full peer metadata, if available (set after metadata resolution). */
+  metadata?: PeerMetadata;
 }

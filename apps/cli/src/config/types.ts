@@ -123,6 +123,16 @@ export interface PaymentsCLIConfig {
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
   maxReserveAmountUsdc?: string;
+  /**
+   * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
+   * peer publishes it in metadata; buyers verify the binding via
+   * `sellerContract.isOperator(peerAddress)` on-chain. The peer identity wallet
+   * must be an authorized operator on the contract.
+   */
+  sellerContract?: {
+    /** 0x-prefixed contract address. */
+    address: string;
+  };
   /** Optional crypto settlement settings (Base network) */
   crypto?: {
     /** Chain identifier */

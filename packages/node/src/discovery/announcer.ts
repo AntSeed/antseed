@@ -13,14 +13,26 @@ import {
 import type { PeerOffering } from "../types/capability.js";
 import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
+
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
+import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
+
+export interface SellerContractConfig {
+  /**
+   * On-chain seller contract that fronts this peer (e.g. DiemStakingProxy).
+   * Buyers verify the peer→contract binding by calling
+   * `sellerContract.isOperator(peerAddress)`. The peer's identity wallet must
+   * be an authorized operator on the contract.
+   */
+  sellerContract: string;
+}
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -57,6 +69,12 @@ export interface AnnouncerConfig {
   signalingPort: number;
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
   healthMonitor?: DHTHealthMonitor;
+  /**
+   * Optional on-chain seller contract (e.g. DiemStakingProxy). When set, the
+   * announcer publishes it in metadata; buyers verify the binding via
+   * `sellerContract.isOperator(peerAddress)`.
+   */
+  sellerContract?: SellerContractConfig;
 }
 
 /**
@@ -165,6 +183,13 @@ export class PeerAnnouncer {
     return this._latestMetadata;
   }
 
+  /** Return the configured seller contract as lowercase 40-hex (no 0x). */
+  private _normalizedSellerContract(): string | undefined {
+    const cfg = this.config.sellerContract;
+    if (!cfg) return undefined;
+    return cfg.sellerContract.toLowerCase().replace(/^0x/, "");
+  }
+
   private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
     const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
@@ -217,8 +242,15 @@ export class PeerAnnouncer {
     if (this.config.paymentsEnabled) {
       if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
         try {
-          const evmAddress = this.config.identity.wallet.address;
-          const agentId = await this.config.stakingClient.getAgentId(evmAddress);
+          // When the peer is fronted by a seller contract (e.g. DiemStakingProxy),
+          // the on-chain seller is the proxy — stake and channel stats live under
+          // that address, not the peer's wallet.
+          const rawSellerAddress = this.config.sellerContract?.sellerContract
+            ?? this.config.identity.wallet.address;
+          const sellerAddress = getAddress(
+            rawSellerAddress.startsWith("0x") ? rawSellerAddress : "0x" + rawSellerAddress,
+          );
+          const agentId = await this.config.stakingClient.getAgentId(sellerAddress);
           const stats = await this.config.channelsClient.getAgentStats(agentId);
           metadata.onChainChannelCount = stats.channelCount;
           metadata.onChainGhostCount = stats.ghostCount;
@@ -229,6 +261,11 @@ export class PeerAnnouncer {
         metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
         metadata.onChainGhostCount = this._latestMetadata.onChainGhostCount;
       }
+    }
+
+    const sellerContract = this._normalizedSellerContract();
+    if (sellerContract) {
+      metadata.sellerContract = sellerContract;
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);
