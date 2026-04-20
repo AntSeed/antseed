@@ -496,6 +496,107 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.minEpochOpenSecs(), 7 days);
     }
 
+    // ── catchUpPoints ────────────────────────────────────────────────────────────────
+    //
+    // BacklogTooLarge is the escape-valve failure mode: when a staker's
+    // userCurrentEpoch lags currentRewardEpoch by more than
+    // MAX_EPOCHS_PER_CAPTURE, any call that hits `updateRewards` (stake,
+    // initiateUnstake, claimUsdc, claimAnts) reverts. `catchUpPoints`
+    // lets the staker drain the backlog incrementally so those calls
+    // can proceed again. These tests cover that round-trip + the new
+    // "catchUpPoints also settles USDC" guarantee.
+
+    /// @dev Advance the proxy's reward epoch by driving emissions ticks.
+    ///      Each iteration warps past EPOCH_DURATION so the emission
+    ///      contract finalises the next epoch, then calls
+    ///      `operatorClaimEmissions`. No seller activity is required for
+    ///      the reward epoch to advance — emissions just distribute 0.
+    function _advanceRewardEpochs(uint256 fromEpochId, uint256 count) internal {
+        for (uint256 i = 0; i < count; i++) {
+            skip(EPOCH_DURATION + 1);
+            vm.prank(operator);
+            proxy.operatorClaimEmissions(fromEpochId + i);
+        }
+    }
+
+    /// @dev Alice stakes, then the reward epoch is advanced past the
+    ///      MAX_EPOCHS_PER_CAPTURE threshold. `initiateUnstake` must revert
+    ///      until she calls `catchUpPoints` to drain the backlog. A second
+    ///      `catchUpPoints` call drains the remainder.
+    function test_catchUpPoints_clearsBacklog() public {
+        _stakeAs(alice, 100e18);
+
+        // Alice's userCurrentEpoch is 0 here (set on her stake via
+        // _captureUserPoints). Advance 17 reward epochs so the gap is 17,
+        // which is > MAX_EPOCHS_PER_CAPTURE (16).
+        _advanceRewardEpochs(0, 17);
+        assertEq(proxy.currentRewardEpoch(), 17);
+        assertEq(proxy.userCurrentEpoch(alice), 0);
+
+        // stake, initiateUnstake and claimUsdc all revert: updateRewards →
+        // _captureUserPoints sees a 17-epoch gap and bails.
+        diem.mint(alice, 10e18);
+        vm.startPrank(alice);
+        diem.approve(address(proxy), 10e18);
+        vm.expectRevert(DiemStakingProxy.BacklogTooLarge.selector);
+        proxy.stake(10e18);
+        vm.expectRevert(DiemStakingProxy.BacklogTooLarge.selector);
+        proxy.initiateUnstake(10e18);
+        vm.expectRevert(DiemStakingProxy.BacklogTooLarge.selector);
+        proxy.claimUsdc();
+        vm.stopPrank();
+
+        // Drain 16 epochs — leaves a 1-epoch gap, which is within the limit.
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+        assertEq(proxy.userCurrentEpoch(alice), 16);
+
+        // Second drain: targetEp is clamped to currentEp (17), so only one
+        // epoch is processed and userCurrentEpoch catches up exactly.
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+        assertEq(proxy.userCurrentEpoch(alice), 17);
+
+        // With the backlog fully cleared, the normal update-rewards path
+        // no longer reverts.
+        vm.prank(alice);
+        proxy.initiateUnstake(10e18);
+    }
+
+    /// @dev `catchUpPoints` also settles USDC reward debt so the caller is
+    ///      left in a consistent state across both reward surfaces. This
+    ///      test isolates the USDC-settlement effect from the points loop.
+    function test_catchUpPoints_settlesUsdc() public {
+        _stakeAs(alice, 100e18);
+
+        // Real USDC inflow: instant-credits Alice via usdcRewardPerTokenStored,
+        // but her usdcRewards ledger entry isn't materialised until a call
+        // fires `_updateUsdcForUser(alice)`.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        uint256 paidBefore = proxy.userUsdcRewardPerTokenPaid(alice);
+        uint256 storedAfterSettle = proxy.usdcRewardPerTokenStored();
+        assertGt(storedAfterSettle, paidBefore, "settle must bump the global accumulator");
+
+        // Build a backlog so the only reasonable way to "clear" it is via
+        // catchUpPoints (a stake/unstake would revert BacklogTooLarge).
+        _advanceRewardEpochs(0, 17);
+
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+
+        // catchUpPoints called _updateUsdcForUser(alice), so her
+        // per-token-paid snapshot now matches the global accumulator and
+        // her pending USDC is materialised in usdcRewards.
+        assertEq(
+            proxy.userUsdcRewardPerTokenPaid(alice),
+            proxy.usdcRewardPerTokenStored(),
+            "per-token-paid should be caught up"
+        );
+        assertGt(proxy.usdcRewards(alice), 0, "pending USDC materialised");
+    }
+
     function test_constructor_defaultMinEpochOpenSecs() public {
         // Default fixture sets it to 0 explicitly; deploy a fresh proxy to
         // verify the constructor ships with the alpha default.
