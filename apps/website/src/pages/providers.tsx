@@ -216,8 +216,9 @@ export OPENAI_API_KEY=<your-key>
 antseed seller start`}</pre>
             </div>
             <p className={styles.codeNote}>
-              Works with OpenAI, Together, OpenRouter, Groq, Ollama, vLLM — anything
-              that speaks the OpenAI API.
+              Compatible with any OpenAI-API endpoint — your own Ollama, vLLM, a
+              fine-tune, or an upstream you have the right to resell. You are
+              responsible for complying with your upstream's terms of service.
             </p>
           </div>
 
