@@ -1,0 +1,18 @@
+<!-- Diem Staking favicon. Matches the in-app DiemLogo (src/components/icons.tsx) so
+     the browser-tab mark reads "DIEM" at a glance and is visually distinct from
+     the antseed.com ant favicon — users with both sites open can tell tabs
+     apart without reading the title. Vector so it renders crisp at any DPI. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="diem-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="16" cy="16" r="15" fill="url(#diem-grad)"/>
+  <circle cx="16" cy="16" r="15" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="0.75"/>
+  <text x="16" y="22" text-anchor="middle"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="16" font-weight="700" fill="#fff">Đ</text>
+</svg>

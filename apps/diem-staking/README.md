@@ -64,6 +64,24 @@ The proxy's unstake flow is three on-chain steps (`initiateUnstake` → `flush`
 This is honest — any user in the cohort can advance each step, so users
 often find theirs already moved. No keeper service required.
 
+## Site metadata
+
+`index.html` carries the full Open Graph + Twitter-card set, mirroring the
+pattern in `apps/website/docusaurus.config.ts` so unfurls feel cohesive across
+antseed.com, payments.antseed.com and diem-staking.antseed.com.
+
+- **Canonical URL**: `https://diem-staking.antseed.com/`
+- **Theme colour**: `#1FD87A` (brand mint)
+- **Favicon**: `public/favicon.svg` — the DIEM coin (gradient circle + `Đ`),
+  matching the in-page `DiemLogo`. SVG-only for now; a rasterized
+  `apple-touch-icon.png` would improve pre-Safari-16.4 homescreen fidelity.
+- **og:image / twitter:image**: currently points at `antseed.com/og-image.jpg`
+  (the parent site's card) so there's always an unfurl image. **TODO** design
+  a dedicated `og-image.jpg` for diem-staking (1200×630, "Your $DIEM, now
+  earning USDC." hero) and drop it in `public/og-image.jpg`, then update the
+  two `og:image` / `twitter:image` URLs in `index.html`.
+- `robots.txt` is permissive (`Allow: /`).
+
 ## Contract reference
 
 Source of truth for all ABIs:

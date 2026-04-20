@@ -6,7 +6,7 @@
 
 import { AntsTokenCoinInline, AntsTokenLogo, AntIcon, AntInline, DiemLogo, UsdcLogo } from './icons';
 
-const CGK_PRICING_URL = 'https://antseed.com/network';
+const ANTSEED_PRICING_URL = 'https://antseed.com/network';
 
 export function FlowDiagram() {
   const models = ['llama-3.3', 'qwen-3', 'mistral', 'gemma-3', 'deepseek'];
@@ -167,7 +167,7 @@ export function FlowDiagram() {
         </g>
 
         {/* Node 2: Providing Inference (clickable) */}
-        <a href={CGK_PRICING_URL} target="_blank" rel="noopener noreferrer">
+        <a href={ANTSEED_PRICING_URL} target="_blank" rel="noopener noreferrer">
           <g className="flow-node-inference-g">
             <rect x="420" y="90" width="260" height="110" rx="16" fill="#0a0e14" stroke="#1FD87A" strokeWidth="2" />
             <text x="550" y="128" textAnchor="middle" fontFamily="'Space Grotesk', system-ui, sans-serif" fontSize="17" fontWeight={700} fill="#fff">Providing Inference</text>
@@ -272,7 +272,7 @@ function FlowMobile() {
       </div>
 
       <a
-        href={CGK_PRICING_URL}
+        href={ANTSEED_PRICING_URL}
         target="_blank"
         rel="noopener noreferrer"
         className="flow-mobile-source flow-mobile-source-usdc"
