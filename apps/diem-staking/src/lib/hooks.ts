@@ -4,7 +4,8 @@
 // renders clean "—" placeholders without throwing.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useAccount, useReadContract, useReadContracts } from 'wagmi';
+import { useAccount, usePublicClient, useReadContract, useReadContracts } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
 import type { Address } from 'viem';
 
 import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
@@ -358,9 +359,6 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
  * dedicated indexer, but while demand is light the in-browser getLogs call
  * is sufficient and keeps the app self-contained.
  */
-import { usePublicClient } from 'wagmi';
-import { useQuery } from '@tanstack/react-query';
-
 export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
   const client = usePublicClient();
   const deployed = useProxyDeployed();

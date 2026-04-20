@@ -16,6 +16,7 @@ import {
   useUserStats,
   useEpochClock,
   useUnstakeState,
+  type UnstakeState,
 } from '../lib/hooks';
 import {
   useApproveDiem,
@@ -314,6 +315,9 @@ interface UnstakePanelProps {
 
 function UnstakePanel(props: UnstakePanelProps) {
   const initiate = useInitiateUnstake();
+  // Single source of truth for the unstake state machine — read here, passed
+  // down into UnstakeStateView so we don't set up two identical wagmi
+  // subscriptions on the same keys.
   const { state } = useUnstakeState();
 
   const stakedNum = toDiemNumber(props.stakedDiem);
@@ -382,13 +386,12 @@ function UnstakePanel(props: UnstakePanelProps) {
       )}
 
       {/* Active state machine */}
-      {state.status !== 'none' && <UnstakeStateView />}
+      {state.status !== 'none' && <UnstakeStateView state={state} />}
     </>
   );
 }
 
-function UnstakeStateView() {
-  const { state } = useUnstakeState();
+function UnstakeStateView({ state }: { state: UnstakeState }) {
   const flush = useFlush();
   const claim = useClaimEpoch();
 

@@ -4,7 +4,7 @@
 //   - Mobile: vertical stream layout (FlowMobile) because the wide SVG
 //             compresses illegibly on narrow screens
 
-import { AntsTokenCoinInline, AntIcon, AntInline, DiemLogo, UsdcLogo } from './icons';
+import { AntsTokenCoinInline, AntsTokenLogo, AntIcon, AntInline, DiemLogo, UsdcLogo } from './icons';
 
 const CGK_PRICING_URL = 'https://antseed.com/network';
 
@@ -298,7 +298,7 @@ function FlowMobile() {
 
       <div className="flow-mobile-source flow-mobile-source-ants">
         <div className="flow-mobile-source-ic flow-mobile-source-ic-ants">
-          <AntIcon size={28} />
+          <AntsTokenLogo size={38} />
         </div>
         <div className="flow-mobile-source-txt">
           <h4>$ANTS · every epoch</h4>

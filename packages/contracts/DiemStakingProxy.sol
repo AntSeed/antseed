@@ -118,6 +118,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      16 epochs × an expected ~weekly tick = ~4 months of dormancy tolerated.
     uint32 public constant MAX_EPOCHS_PER_CAPTURE = 16;
 
+    /// @dev Alpha-launch cap applied at construction. Caps `totalStaked` at 50
+    ///      DIEM until the owner raises it via `setMaxTotalStake`. Owner may
+    ///      set to `0` (unlimited) at any time. Assumes 18-decimal DIEM.
+    uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
+
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — Staking
     // ═══════════════════════════════════════════════════════════════════
@@ -282,6 +287,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         oldestUnclaimed = 1;
 
         lastIntegratorUpdate = block.timestamp;
+
+        // Ship with an alpha-launch stake cap. Owner can raise it or remove
+        // entirely (set to 0) via `setMaxTotalStake`. Emitted so indexers and
+        // the frontend's `maxTotalStake()` read pick up the initial value
+        // consistently with later owner changes.
+        maxTotalStake = ALPHA_MAX_TOTAL_STAKE;
+        emit MaxTotalStakeSet(ALPHA_MAX_TOTAL_STAKE);
     }
 
     // ═══════════════════════════════════════════════════════════════════

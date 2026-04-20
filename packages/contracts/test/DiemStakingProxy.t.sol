@@ -128,6 +128,11 @@ contract DiemStakingProxyTest is Test {
         // ANTS is Phase-1 non-transferable. Whitelist the proxy so it can pay
         // rewards to DIEM stakers in getReward().
         ants.setTransferWhitelist(address(proxy), true);
+
+        // Lift the 50-DIEM alpha cap for the default test fixture. Tests that
+        // specifically exercise the cap set their own value via setMaxTotalStake.
+        vm.prank(owner);
+        proxy.setMaxTotalStake(0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -909,8 +914,40 @@ contract DiemStakingProxyTest is Test {
     //                        maxTotalStake (owner-settable cap)
     // ════════════════════════════════════════════════════════════════════
 
-    function test_maxTotalStake_defaultsToUnlimited() public view {
-        assertEq(proxy.maxTotalStake(), 0, "0 sentinel = unlimited");
+    function test_maxTotalStake_defaultsToAlphaCap_onFreshDeploy() public {
+        // Deploy a fresh proxy so the constructor-set alpha cap is observable
+        // (the shared fixture lifts it in setUp so other tests aren't blocked).
+        vm.prank(owner);
+        DiemStakingProxy fresh = new DiemStakingProxy(
+            address(diem),
+            address(usdc),
+            address(antseedRegistry),
+            operator
+        );
+        assertEq(fresh.maxTotalStake(), fresh.ALPHA_MAX_TOTAL_STAKE());
+        assertEq(fresh.maxTotalStake(), 50e18);
+    }
+
+    /// @dev The alpha cap must be enforced on the very first stake — it's the
+    ///      whole point of shipping with it on.
+    function test_alphaCap_enforcedOnFreshDeploy() public {
+        vm.prank(owner);
+        DiemStakingProxy fresh = new DiemStakingProxy(
+            address(diem),
+            address(usdc),
+            address(antseedRegistry),
+            operator
+        );
+
+        diem.mint(alice, 60e18);
+        vm.startPrank(alice);
+        diem.approve(address(fresh), 60e18);
+        vm.expectRevert(DiemStakingProxy.MaxStakeExceeded.selector);
+        fresh.stake(60e18); // over the 50 DIEM alpha cap
+        // Exactly the cap works.
+        fresh.stake(50e18);
+        vm.stopPrank();
+        assertEq(fresh.totalStaked(), 50e18);
     }
 
     function test_setMaxTotalStake_onlyOwner() public {
