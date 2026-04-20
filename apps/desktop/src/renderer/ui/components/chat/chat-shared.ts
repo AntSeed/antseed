@@ -202,8 +202,14 @@ export type ContentBlock = {
   content?: string;
   is_error?: boolean;
   source?: { type: string; media_type?: string; data?: string };
+  fileName?: string;
+  mimeType?: string;
+  size?: number;
+  error?: string;
+  truncated?: boolean;
+  attachment?: unknown;
   details?: Record<string, unknown>;
-  status?: 'running' | 'success' | 'error';
+  status?: 'ready' | 'running' | 'success' | 'error';
   streaming?: boolean;
 };
 

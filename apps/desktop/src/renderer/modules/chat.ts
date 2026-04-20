@@ -5,6 +5,8 @@ import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discove
 import type {
   ChatWorkspaceGitStatus,
   DesktopBridge,
+  PreparedChatAttachment,
+  RawChatAttachment,
 } from '../types/bridge';
 import type {
   ChatMessage,
@@ -73,7 +75,7 @@ export type ChatModuleApi = {
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
-  sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
+  sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
@@ -1642,7 +1644,46 @@ export function initChatModule({
       .includes('already in progress');
   }
 
-  function sendMessage(text: string, imageBase64?: string, imageMimeType?: string): void {
+  function buildUserMessageContent(text: string, attachments: PreparedChatAttachment[]): unknown {
+    const blocks: ContentBlock[] = [];
+    if (text.length > 0) {
+      blocks.push({ type: 'text', text });
+    }
+    for (const attachment of attachments) {
+      blocks.push({
+        type: 'file',
+        fileName: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        status: attachment.status,
+        error: attachment.error,
+        truncated: attachment.truncated,
+        attachment,
+      });
+      if (attachment.kind === 'image' && attachment.image?.data && attachment.image.mimeType) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: attachment.image.mimeType, data: attachment.image.data },
+        });
+      }
+    }
+    return blocks.length > 0 ? blocks : text;
+  }
+
+  async function prepareAttachmentsForSend(rawAttachments: RawChatAttachment[] | undefined): Promise<PreparedChatAttachment[]> {
+    if (!rawAttachments?.length) return [];
+    const activeBridge = bridge;
+    if (!activeBridge?.chatPrepareAttachments) {
+      throw new Error('Attachment preparation is not available in this desktop build.');
+    }
+    const result = await activeBridge.chatPrepareAttachments(rawAttachments);
+    if (!result.ok) {
+      throw new Error(result.error || 'Attachment preparation failed');
+    }
+    return result.data ?? [];
+  }
+
+  function sendMessage(text: string, rawAttachments?: RawChatAttachment[]): void {
     if (!bridge) return;
 
     // Payment gate for paid services
@@ -1650,7 +1691,7 @@ export function initChatModule({
     // If the seller requires payment, the node returns a 402 with payment info.
 
     const content = text.trim();
-    if (content.length === 0 && !imageBase64) return;
+    if (content.length === 0 && !rawAttachments?.length) return;
 
     // If no active conversation, create one first then send
     if (!uiState.chatActiveConversation) {
@@ -1659,7 +1700,7 @@ export function initChatModule({
         await createNewConversation();
         if (uiState.chatActiveConversation) {
           setChatSending(false);
-          sendMessage(text, imageBase64, imageMimeType);
+          sendMessage(text, rawAttachments);
         } else {
           setChatSending(false);
           showChatError('Failed to create a conversation. Please try again.');
@@ -1674,27 +1715,40 @@ export function initChatModule({
       return;
     }
 
-    // Build message content — multipart if image attached, plain string otherwise
-    const messageContent: unknown = imageBase64 && imageMimeType
-      ? [
-          { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
-          { type: 'text', text: content || 'What is in this image?' },
-        ]
-      : content;
-
-    uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
-    setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
-    if (activeConversation) {
-      activeConversation.messages = uiState.chatMessages as ChatMessage[];
-      activeConversation.updatedAt = Date.now();
-      updateThreadMeta(activeConversation);
-    }
-    notifyUiStateChanged();
-
+    // Build message content — multipart with prepared attachments, or plain string
     uiState.chatError = null;
     setConversationSending(convId, true);
-    void refreshWorkspaceGitStatus();
-    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
+    void (async () => {
+      let preparedAttachments: PreparedChatAttachment[];
+      try {
+        preparedAttachments = await prepareAttachmentsForSend(rawAttachments);
+      } catch (err) {
+        reportChatError(err, 'Attachment preparation failed');
+        setConversationSending(convId, false);
+        return;
+      }
+
+      const readyAttachmentCount = preparedAttachments.filter((attachment) => attachment.status === 'ready').length;
+      if (content.length === 0 && readyAttachmentCount === 0) {
+        const firstError = preparedAttachments.find((attachment) => attachment.status === 'error')?.error;
+        showChatError(firstError || 'No supported attachment content to send.');
+        setConversationSending(convId, false);
+        return;
+      }
+
+      const messageContent = buildUserMessageContent(content, preparedAttachments);
+      uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
+      setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
+      if (activeConversation) {
+        activeConversation.messages = uiState.chatMessages as ChatMessage[];
+        activeConversation.updatedAt = Date.now();
+        updateThreadMeta(activeConversation);
+      }
+      notifyUiStateChanged();
+
+      void refreshWorkspaceGitStatus();
+      dispatchChatRequest(convId, content, preparedAttachments);
+    })();
   }
 
   /**
@@ -1705,8 +1759,7 @@ export function initChatModule({
   function dispatchChatRequest(
     convId: string,
     content: string,
-    imageBase64?: string,
-    imageMimeType?: string,
+    attachments?: PreparedChatAttachment[],
   ): void {
     if (!bridge) return;
 
@@ -1719,8 +1772,7 @@ export function initChatModule({
           content || ' ',
           selection.id || undefined,
           undefined,
-          imageBase64,
-          imageMimeType,
+          attachments,
         );
 
       void (async () => {
@@ -1769,8 +1821,7 @@ export function initChatModule({
               content || ' ',
               selection.id || undefined,
               undefined,
-              imageBase64,
-              imageMimeType,
+              attachments,
             );
 
           let result = await sendRequest();
@@ -1824,23 +1875,26 @@ export function initChatModule({
 
     const content = typeof lastUserMsg.content === 'string'
       ? lastUserMsg.content
-      : '';
+      : Array.isArray(lastUserMsg.content)
+        ? (lastUserMsg.content as ContentBlock[])
+            .filter((block) => block.type === 'text')
+            .map((block) => String(block.text ?? ''))
+            .filter(Boolean)
+            .join('\n\n')
+        : '';
 
-    // Extract image from multipart content if present
-    let imageBase64: string | undefined;
-    let imageMimeType: string | undefined;
+    const attachments: PreparedChatAttachment[] = [];
     if (Array.isArray(lastUserMsg.content)) {
-      const imgBlock = (lastUserMsg.content as Array<{ type: string; source?: { data?: string; media_type?: string } }>)
-        .find(b => b.type === 'image');
-      if (imgBlock?.source?.data) {
-        imageBase64 = imgBlock.source.data;
-        imageMimeType = imgBlock.source.media_type;
+      for (const block of lastUserMsg.content as ContentBlock[]) {
+        if (block.type === 'file' && block.attachment && typeof block.attachment === 'object') {
+          attachments.push(block.attachment as PreparedChatAttachment);
+        }
       }
     }
 
     const convId = uiState.chatActiveConversation;
     setConversationSending(convId, true);
-    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
+    dispatchChatRequest(convId, content, attachments.length > 0 ? attachments : undefined);
   }
 
   async function abortChat(): Promise<void> {

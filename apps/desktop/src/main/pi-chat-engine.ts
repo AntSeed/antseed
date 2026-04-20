@@ -10,6 +10,13 @@ import {
   formatChatStreamStopForLog,
   type ChatStreamStopReason,
 } from './chat-stream-stop.js';
+import {
+  buildAttachmentPromptText,
+  extractAttachmentImages,
+  prepareChatAttachments,
+  type PreparedChatAttachment,
+  type RawChatAttachment,
+} from './chat-attachments.js';
 import { webFetchTool } from './chat-web-fetch.js';
 import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
@@ -44,6 +51,15 @@ import type {
 } from '@mariozechner/pi-ai';
 
 type TextBlock = { type: 'text'; text: string };
+type FileBlock = {
+  type: 'file';
+  fileName: string;
+  mimeType: string;
+  size?: number;
+  status?: 'ready' | 'error';
+  truncated?: boolean;
+};
+type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type?: string; data?: string } };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
 type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
 type ToolResultBlock = {
@@ -53,7 +69,7 @@ type ToolResultBlock = {
   is_error?: boolean;
   details?: Record<string, unknown>;
 };
-type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+type ContentBlock = TextBlock | FileBlock | ImageBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
 type AiMessageMeta = {
   peerId?: string;
@@ -887,6 +903,59 @@ function isToolArgumentsObject(value: unknown): value is Record<string, unknown>
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function decodeAttachmentAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function parseAttachmentAttributes(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const match of raw.matchAll(/\s([a-zA-Z][\w:-]*)="([^"]*)"/g)) {
+    attrs[match[1]!] = decodeAttachmentAttribute(match[2] ?? '');
+  }
+  return attrs;
+}
+
+function convertPersistedAttachmentPromptToBlocks(text: string): string | ContentBlock[] {
+  const filePattern = /<file\b([^>]*)>\n?([\s\S]*?)\n?<\/file>/gi;
+  const blocks: ContentBlock[] = [];
+  let lastIndex = 0;
+  let found = false;
+
+  for (const match of text.matchAll(filePattern)) {
+    found = true;
+    const index = match.index ?? 0;
+    const before = text.slice(lastIndex, index).trim();
+    if (before.length > 0) {
+      blocks.push({ type: 'text', text: before });
+    }
+
+    const attrs = parseAttachmentAttributes(match[1] ?? '');
+    const size = Number(attrs.size);
+    const body = match[2] ?? '';
+    blocks.push({
+      type: 'file',
+      fileName: attrs.name || 'attachment',
+      mimeType: attrs.mime || 'application/octet-stream',
+      ...(Number.isFinite(size) && size >= 0 ? { size } : {}),
+      status: 'ready',
+      truncated: body.includes('[Attachment truncated:'),
+    });
+    lastIndex = index + match[0].length;
+  }
+
+  if (!found) return text;
+
+  const after = text.slice(lastIndex).trim();
+  if (after.length > 0) {
+    blocks.push({ type: 'text', text: after });
+  }
+  return blocks;
+}
+
 function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
   if (message.role === 'assistant') {
     const blocks: ContentBlock[] = [];
@@ -914,31 +983,27 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
 
   if (message.role === 'user') {
     if (typeof message.content === 'string') {
-      return message.content;
+      return convertPersistedAttachmentPromptToBlocks(message.content);
     }
-    // Preserve image blocks so the UI can render them
-    const hasImage = message.content.some((block) => block.type === 'image');
-    if (hasImage) {
-      const blocks: ContentBlock[] = [];
-      for (const block of message.content) {
-        if (block.type === 'image') {
-          blocks.push({
-            type: 'image',
-            source: { type: 'base64', media_type: (block as ImageContent).mimeType, data: (block as ImageContent).data },
-          } as unknown as ContentBlock);
-        } else if (block.type === 'text') {
-          blocks.push({ type: 'text', text: block.text });
+    const blocks: ContentBlock[] = [];
+    for (const block of message.content) {
+      if (block.type === 'image') {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: (block as ImageContent).mimeType, data: (block as ImageContent).data },
+        });
+        continue;
+      }
+      if (block.type === 'text') {
+        const converted = convertPersistedAttachmentPromptToBlocks(block.text);
+        if (Array.isArray(converted)) {
+          blocks.push(...converted);
+        } else if (converted.trim().length > 0) {
+          blocks.push({ type: 'text', text: converted });
         }
       }
-      return blocks;
     }
-    const textParts: string[] = [];
-    for (const block of message.content) {
-      if (block.type === 'text') {
-        textParts.push(block.text);
-      }
-    }
-    return textParts.join('\n').trim();
+    return blocks.length > 0 ? blocks : '';
   }
 
   const toolResult = message as ToolResultMessage;
@@ -1686,11 +1751,12 @@ export function registerPiChatHandlers({
     userMessage: string,
     serviceOverride?: string,
     providerOverride?: string,
-    imageBase64?: string,
-    imageMimeType?: string,
+    attachments?: PreparedChatAttachment[],
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
-    if (trimmedMessage.length === 0 && !imageBase64) {
+    const attachmentPromptText = buildAttachmentPromptText(attachments);
+    const attachmentImages = extractAttachmentImages(attachments);
+    if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
       return { ok: false, error: 'Empty message' };
     }
 
@@ -2099,10 +2165,8 @@ export function registerPiChatHandlers({
     activeRunsByConversation.set(conversationId, run);
 
     try {
-      const images: ImageContent[] = imageBase64 && imageMimeType
-        ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
-        : [];
-      await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+      const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
+      await session.prompt(promptText || ' ', { images: attachmentImages.length > 0 ? attachmentImages : undefined });
 
       if (terminalStreamFailure !== null) {
         // `terminalStreamFailure` is mutated inside the subscribe callback,
@@ -2524,17 +2588,25 @@ export function registerPiChatHandlers({
     return { ok: true };
   });
 
+  ipcMain.handle('chat:prepare-attachments', async (_event, attachments: RawChatAttachment[]) => {
+    try {
+      return { ok: true, data: await prepareChatAttachments(attachments) };
+    } catch (error) {
+      return { ok: false, error: asErrorMessage(error) };
+    }
+  });
+
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments);
     },
   );
 
