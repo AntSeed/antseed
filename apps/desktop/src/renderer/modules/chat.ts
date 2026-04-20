@@ -734,19 +734,23 @@ export function initChatModule({
     return Boolean(convId && sendingConversationIds.has(convId));
   }
 
+  function publishSendingConversationIds(): void {
+    // Snapshot the set into the uiState so the Sidebar can show a running
+    // indicator for every in-flight conversation (not just the active one).
+    uiState.chatSendingConversationIds =
+      sendingConversationIds.size === 0 ? [] : Array.from(sendingConversationIds);
+  }
+
   function syncActiveConversationSendingState(): void {
     const activeConvId = uiState.chatActiveConversation;
     const sending = isConversationSending(activeConvId);
+    publishSendingConversationIds();
     uiState.chatSending = sending;
     uiState.chatSendingConversationId = sending ? activeConvId : null;
     uiState.chatInputDisabled = sending;
     uiState.chatSendDisabled = sending;
     uiState.chatAbortVisible = sending;
-    if (sending) {
-      uiState.chatWaitingForStream = true;
-    } else {
-      uiState.chatWaitingForStream = false;
-    }
+    uiState.chatWaitingForStream = sending;
     uiState.chatThinkingPhase = null;
     clearThinkingPhaseExpiry();
 
@@ -1464,12 +1468,14 @@ export function initChatModule({
       sendingConversationIds.delete(convId);
       streamTurnsByConversation.delete(convId);
       streamStartedAtByConversation.delete(convId);
+      // Publish the updated sending set (and resync active-conv UI) before we
+      // potentially reset to new-chat state. This covers both the active and
+      // non-active delete paths.
+      syncActiveConversationSendingState();
 
       // If we deleted the active conversation, reset to new-chat state
       if (convId === uiState.chatActiveConversation) {
         startNewChat();
-      } else {
-        syncActiveConversationSendingState();
       }
 
       notifyUiStateChanged();

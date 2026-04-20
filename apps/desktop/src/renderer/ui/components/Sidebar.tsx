@@ -221,6 +221,7 @@ function PeerGroupSection({
   expanded,
   onToggle,
   activeConvId,
+  sendingConvIds,
   chatActiveChannels,
   onSelectConv,
   onNewChat,
@@ -233,6 +234,7 @@ function PeerGroupSection({
   expanded: boolean;
   onToggle: () => void;
   activeConvId: string | null;
+  sendingConvIds: Set<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   onSelectConv: (id: string) => void;
   onNewChat: (peerId: string) => void;
@@ -293,6 +295,7 @@ function PeerGroupSection({
         {group.conversations.map((conv) => {
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
+            const isRunning = sendingConvIds.has(id);
             const title = String(conv.title || '');
             const serviceLabel = shortServiceName(conv.service);
             const totalCost = Number(conv.totalEstimatedCostUsd) || 0;
@@ -311,6 +314,14 @@ function PeerGroupSection({
                 onClick={() => onSelectConv(id)}
               >
                 <div className={styles.chatConvTop}>
+                  {isRunning && (
+                    <span
+                      className={styles.chatConvRunningDot}
+                      role="status"
+                      aria-label="Request in progress"
+                      title="Request in progress"
+                    />
+                  )}
                   <div className={styles.chatConvPeer}>{title}</div>
                   <div className={styles.chatConvRight}>
                     <button
@@ -367,9 +378,19 @@ function PeerGroupSection({
 const EMPTY_CONVERSATIONS: unknown[] = [];
 
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation, chatActiveChannels, chatServiceOptions } = useUiSnapshot();
+  const {
+    chatConversations,
+    chatActiveConversation,
+    chatSendingConversationIds,
+    chatActiveChannels,
+    chatServiceOptions,
+  } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
+  const sendingConvIds = useMemo(
+    () => new Set(Array.isArray(chatSendingConversationIds) ? chatSendingConversationIds : []),
+    [chatSendingConversationIds],
+  );
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [expandedPeerId, setExpandedPeerId] = useState<string | null>(null);
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
@@ -445,6 +466,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                 expanded={expandedPeerId === key}
                 onToggle={() => handleTogglePeer(key)}
                 activeConvId={chatActiveConversation}
+                sendingConvIds={sendingConvIds}
                 chatActiveChannels={chatActiveChannels}
                 onSelectConv={handleSelectConv}
                 onNewChat={handleNewChat}
