@@ -103,32 +103,226 @@ function SupplyBar({totalSupply}: {totalSupply: number}) {
   );
 }
 
-/* ── HALVING CHART ─────────────────────────────────────────────── */
-function HalvingCurve({currentEpoch}: {currentEpoch: number}) {
-  const points: {epoch: number; emission: number}[] = [];
+/* ── HALVING TIMELINE ──────────────────────────────────────────── */
+const TOTAL_EPOCHS = 624;
+const YEARS_TOTAL = 12;
+
+function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; currentBudget: number}) {
+  const W = 800;
+  const H = 210;
+  const padL = 16;
+  const padR = 16;
+  const padT = 56;
+  const padB = 44;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const xFor = (e: number) => padL + (e / TOTAL_EPOCHS) * plotW;
+  const yFor = (em: number) => padT + plotH - (em / INITIAL_EMISSION) * plotH;
+
+  // Build step-style curve (sharp halving drops)
+  const segs: string[] = [];
   let em = INITIAL_EMISSION;
-  for (let e = 0; e <= 624; e++) {
-    if (e > 0 && e % HALVING_INTERVAL === 0) em = em / 2;
-    if (e % 8 === 0) points.push({epoch: e, emission: em});
+  segs.push(`M${xFor(0)},${yFor(em)}`);
+  for (let i = 1; i <= 6; i++) {
+    const epochAtHalving = i * HALVING_INTERVAL;
+    segs.push(`L${xFor(epochAtHalving)},${yFor(em)}`);
+    em = em / 2;
+    segs.push(`L${xFor(epochAtHalving)},${yFor(em)}`);
   }
-  const w = 100;
-  const h = 40;
-  const pathD = points.map((p, i) => {
-    const x = (p.epoch / 624) * w;
-    const y = h - (p.emission / INITIAL_EMISSION) * h;
-    return `${i === 0 ? 'M' : 'L'}${x},${y}`;
-  }).join(' ');
+  segs.push(`L${xFor(TOTAL_EPOCHS)},${yFor(em)}`);
+  const pathD = segs.join(' ');
+  const areaD = `${pathD} L${xFor(TOTAL_EPOCHS)},${padT + plotH} L${xFor(0)},${padT + plotH} Z`;
+
+  // Clamp current position visually so the marker is always visible
+  const visibleEpoch = Math.max(currentEpoch, 1);
+  const curX = xFor(visibleEpoch);
+  const curY = yFor(Math.max(currentBudget, INITIAL_EMISSION * 0.03));
+
+  const cliffs = [1, 2, 3, 4, 5].map(i => i * HALVING_INTERVAL);
+  const yearTicks = [0, 2, 4, 6, 8, 10, 12];
+
+  // Label pill position (keep within chart horizontally)
+  const pillW = 96;
+  const pillX = Math.min(Math.max(curX - pillW / 2, padL), W - padR - pillW);
+  const pillY = curY - 38;
 
   return (
     <div className={styles.halvingChart}>
-      <svg viewBox={`0 0 ${w} ${h + 4}`} preserveAspectRatio="none" className={styles.halvingSvg}>
-        <path d={pathD} fill="none" stroke="#1FD87A" strokeWidth="1.5" />
-        <circle cx={Math.max((currentEpoch / 624) * w, 1)} cy={0} r="2.5" fill="#1FD87A" />
+      <svg viewBox={`0 0 ${W} ${H}`} className={styles.halvingSvg}>
+        <defs>
+          <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#1FD87A" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#1FD87A" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Baseline axis */}
+        <line
+          x1={padL}
+          y1={padT + plotH}
+          x2={padL + plotW}
+          y2={padT + plotH}
+          className={styles.halvingAxis}
+        />
+
+        {/* Halving cliff markers */}
+        {cliffs.map(e => (
+          <g key={e}>
+            <line
+              x1={xFor(e)}
+              y1={padT}
+              x2={xFor(e)}
+              y2={padT + plotH}
+              className={styles.halvingCliff}
+            />
+            <line
+              x1={xFor(e)}
+              y1={padT + plotH}
+              x2={xFor(e)}
+              y2={padT + plotH + 5}
+              className={styles.halvingTick}
+            />
+          </g>
+        ))}
+
+        {/* Area under curve */}
+        <path d={areaD} fill="url(#curveFill)" />
+
+        {/* Main curve */}
+        <path d={pathD} fill="none" stroke="#1FD87A" strokeWidth="2" strokeLinejoin="round" />
+
+        {/* Vertical "now" line */}
+        <line
+          x1={curX}
+          y1={curY}
+          x2={curX}
+          y2={padT + plotH}
+          className={styles.halvingNow}
+        />
+
+        {/* Pulse + core dot */}
+        <circle cx={curX} cy={curY} r="10" className={styles.halvingPulse} />
+        <circle cx={curX} cy={curY} r="5" fill="#1FD87A" stroke="#fff" strokeWidth="2" />
+
+        {/* "You are here" pill */}
+        <g>
+          <rect x={pillX} y={pillY} width={pillW} height="26" rx="13" className={styles.halvingPill} />
+          <text
+            x={pillX + pillW / 2}
+            y={pillY + 17}
+            textAnchor="middle"
+            className={styles.halvingPillText}
+          >
+            You · Epoch {currentEpoch}
+          </text>
+          <path
+            d={`M${curX - 4},${pillY + 26} L${curX + 4},${pillY + 26} L${curX},${pillY + 32} Z`}
+            fill="#1a1a1a"
+          />
+        </g>
+
+        {/* X-axis year labels */}
+        {yearTicks.map(yr => {
+          const epoch = (yr / YEARS_TOTAL) * TOTAL_EPOCHS;
+          return (
+            <text
+              key={yr}
+              x={xFor(epoch)}
+              y={padT + plotH + 22}
+              textAnchor={yr === 0 ? 'start' : yr === YEARS_TOTAL ? 'end' : 'middle'}
+              className={styles.halvingXLabel}
+            >
+              {yr === 0 ? 'Genesis' : `Yr ${yr}`}
+            </text>
+          );
+        })}
       </svg>
-      <div className={styles.halvingLabels}>
-        <span>Epoch 0</span>
-        <span>You are here - Epoch {currentEpoch}</span>
-        <span>Epoch 624</span>
+    </div>
+  );
+}
+
+/* ── EARN FLOW (animated) ──────────────────────────────────────── */
+function EarnFlow(): JSX.Element {
+  return (
+    <div className={styles.flowCard}>
+      <svg
+        viewBox="0 0 800 220"
+        preserveAspectRatio="xMidYMid meet"
+        className={styles.flowSvg}
+        aria-hidden="true"
+      >
+        <defs>
+          <path id="pBuyerSeller" d="M200,70 L320,70" />
+          <path id="pSellerMint"  d="M480,70 L600,70" />
+          <path id="pMintSeller"  d="M680,110 Q680,170 540,170 Q400,170 400,110" />
+          <path id="pMintBuyer"   d="M680,110 Q680,200 400,200 Q120,200 120,110" />
+        </defs>
+
+        {/* Paths (dashed guides) */}
+        <use href="#pBuyerSeller" className={styles.flowLine} />
+        <use href="#pSellerMint"  className={styles.flowLine} />
+        <use href="#pMintSeller"  className={styles.flowLineGreen} fill="none" />
+        <use href="#pMintBuyer"   className={styles.flowLineGreen} fill="none" />
+
+        {/* Buyer */}
+        <g>
+          <rect x="40" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
+          <text x="120" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Buyer</text>
+          <text x="120" y="88" textAnchor="middle" className={styles.flowBoxSub}>deposits USDC</text>
+        </g>
+
+        {/* Seller */}
+        <g>
+          <rect x="320" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
+          <text x="400" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Seller</text>
+          <text x="400" y="88" textAnchor="middle" className={styles.flowBoxSub}>stakes · serves</text>
+        </g>
+
+        {/* $ANTS Mint */}
+        <g>
+          <rect x="600" y="30" width="160" height="80" rx="14" className={styles.flowBoxMint} />
+          <text x="680" y="63" textAnchor="middle" className={styles.flowBoxTitleMint}>$ANTS Mint</text>
+          <text x="680" y="88" textAnchor="middle" className={styles.flowBoxSubMint}>epoch settle</text>
+        </g>
+
+        {/* Forward labels */}
+        <text x="260" y="58" textAnchor="middle" className={styles.flowLineLabel}>USDC</text>
+        <text x="540" y="58" textAnchor="middle" className={styles.flowLineLabel}>volume reported</text>
+        <text x="400" y="216" textAnchor="middle" className={styles.flowLineLabelGreen}>ANTS minted at epoch end</text>
+
+        {/* USDC pellets: Buyer → Seller */}
+        <circle r="5" className={styles.flowPellet}>
+          <animateMotion dur="2.4s" repeatCount="indefinite">
+            <mpath href="#pBuyerSeller" />
+          </animateMotion>
+        </circle>
+        <circle r="5" className={styles.flowPellet}>
+          <animateMotion dur="2.4s" repeatCount="indefinite" begin="1.2s">
+            <mpath href="#pBuyerSeller" />
+          </animateMotion>
+        </circle>
+
+        {/* ANTS return: Mint → Seller and Mint → Buyer */}
+        <circle r="6" className={styles.flowPelletGreen}>
+          <animateMotion dur="4.8s" repeatCount="indefinite" begin="1.5s">
+            <mpath href="#pMintSeller" />
+          </animateMotion>
+        </circle>
+        <circle r="6" className={styles.flowPelletGreen}>
+          <animateMotion dur="4.8s" repeatCount="indefinite" begin="2s">
+            <mpath href="#pMintBuyer" />
+          </animateMotion>
+        </circle>
+      </svg>
+
+      <div className={styles.flowLegend}>
+        <span className={styles.flowLegendItem}>
+          <span className={styles.flowLegendDot} /> USDC payment
+        </span>
+        <span className={styles.flowLegendItem}>
+          <span className={styles.flowLegendDotGreen} /> ANTS emission
+        </span>
       </div>
     </div>
   );
@@ -207,6 +401,37 @@ export default function AntsToken(): JSX.Element {
         </div>
       </section>
 
+      {/* ── HOW TO EARN ── */}
+      <section className={styles.earn}>
+        <div className={styles.earnHeader}>
+          <h2>How you earn ANTS</h2>
+          <p>
+            Every USDC dollar settled on-chain mints ANTS at epoch end.
+            No pre mining, no ANTS staking — your share tracks real activity.
+          </p>
+        </div>
+
+        <EarnFlow />
+
+        <div className={styles.earnGrid}>
+          <div className={styles.earnCard}>
+            <div className={styles.earnStep}>01</div>
+            <h3>As a seller</h3>
+            <p>Stake USDC, serve requests, settle on-chain. Your share of the 50% seller pool is proportional to your USDC volume that epoch. Capped at 50% of seller pool per seller.</p>
+          </div>
+          <div className={styles.earnCard}>
+            <div className={styles.earnStep}>02</div>
+            <h3>As a buyer</h3>
+            <p>Deposit USDC, use the network, pay for AI services. Your share of the 20% buyer pool is proportional to your USDC spend that epoch. Diversity bonus for using multiple sellers.</p>
+          </div>
+          <div className={styles.earnCard}>
+            <div className={styles.earnStep}>03</div>
+            <h3>Claim each epoch</h3>
+            <p>At epoch end, call claim with the epoch numbers you participated in. ANTS are minted directly to your wallet. Unclaimed emissions flow to the protocol reserve.</p>
+          </div>
+        </div>
+      </section>
+
       {/* ── EMISSIONS ── */}
       <section className={styles.emissions}>
         <div className={styles.emissionsHeader}>
@@ -217,7 +442,7 @@ export default function AntsToken(): JSX.Element {
           </p>
         </div>
 
-        <HalvingCurve currentEpoch={epoch} />
+        <HalvingCurve currentEpoch={epoch} currentBudget={epochBudget} />
 
         <div className={styles.emissionsCurrentCard}>
           <div className={styles.emissionsCurrentTitle}>
@@ -274,32 +499,6 @@ export default function AntsToken(): JSX.Element {
             </div>
           </div>
         </a>
-      </section>
-
-      {/* ── HOW TO EARN ── */}
-      <section className={styles.earn}>
-        <div className={styles.earnHeader}>
-          <h2>How to earn ANTS</h2>
-          <p>No mining. No staking ANTS. Just use the network.</p>
-        </div>
-
-        <div className={styles.earnGrid}>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>01</div>
-            <h3>As a seller</h3>
-            <p>Stake USDC, serve requests, settle on-chain. Your share of the 50% seller pool is proportional to your USDC volume that epoch. Capped at 50% of seller pool per seller.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>02</div>
-            <h3>As a buyer</h3>
-            <p>Deposit USDC, use the network, pay for AI services. Your share of the 20% buyer pool is proportional to your USDC spend that epoch. Diversity bonus for using multiple sellers.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>03</div>
-            <h3>Claim each epoch</h3>
-            <p>At epoch end, call claim with the epoch numbers you participated in. ANTS are minted directly to your wallet. Unclaimed emissions flow to the protocol reserve.</p>
-          </div>
-        </div>
       </section>
 
       {/* ── CONTRACT DETAILS ── */}

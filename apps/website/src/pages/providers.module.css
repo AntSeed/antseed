@@ -167,6 +167,50 @@
 }
 .pathLink:hover { color: #1FD87A !important; border-color: #1FD87A; }
 
+/* ── COMPLIANCE ── */
+.compliance {
+  padding: 0 60px 40px;
+  max-width: 900px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+.complianceCard {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  background: #fffaea;
+  border: 1px solid #f0dd9a;
+  border-left: 3px solid #c99400;
+  border-radius: 12px;
+  padding: 22px 26px;
+}
+.complianceIcon {
+  font-size: 20px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.complianceBody {
+  min-width: 0;
+}
+.complianceTitle {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  color: #8a6600;
+  margin: 0 0 10px;
+}
+.complianceBody p {
+  font-size: 14px;
+  color: #5b4600;
+  line-height: 1.65;
+  margin: 0 0 10px;
+}
+.complianceBody p:last-child { margin: 0; }
+.complianceBody strong { color: #4a3900; }
+
 /* ── PRIVACY ── */
 .privacy {
   padding: 60px 60px 80px;
@@ -275,6 +319,11 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+  /* Grid items default to min-width: auto, which lets the inner <pre>
+     (white-space: pre) blow out the track on mobile. Force the card to
+     shrink so the inner terminal gets its own horizontal scrollbar instead
+     of widening the page. */
+  min-width: 0;
 }
 .codeCardLabel {
   font-size: 11px;
@@ -290,6 +339,8 @@
   border-radius: 10px;
   overflow: hidden;
   font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  max-width: 100%;
 }
 .codeTermBar {
   display: flex;
@@ -324,6 +375,13 @@
   border-radius: 0 !important;
   text-shadow: none !important;
   font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  /* Without min-width:0 the <pre>'s min-content (the widest source line)
+     propagates up through flex/grid ancestors and widens the page on
+     mobile. Combined with width:100% + box-sizing:border-box this pins the
+     pre to its container and forces overflow to scroll inside. */
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 .codeNote {
   font-size: 13px;
@@ -341,7 +399,14 @@
 .payments {
   padding: 60px 60px 80px;
   max-width: 900px;
+  width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
+  /* Final guard: the wallet terminal's <pre> uses white-space:pre, so its
+     min-content can escape every inner overflow:hidden on certain browsers
+     (iOS Safari in particular). Clipping at the section boundary guarantees
+     the document never scrolls horizontally because of this block. */
+  overflow-x: hidden;
 }
 .paymentsHeader {
   text-align: center;
@@ -431,12 +496,23 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  width: 100%;
+  /* Belt-and-suspenders: the payments section's direct children are in
+     normal block flow, but the wallet terminal's <pre> has white-space:pre.
+     Clipping any leftover overflow here guarantees we never widen the
+     document past 100vw on mobile. */
+  overflow-x: hidden;
 }
 .walletTerm {
   background: #1a1a1a;
   border-radius: 10px;
   overflow: hidden;
   font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 .walletNote {
   font-size: 13px;
@@ -595,6 +671,13 @@
   .reputation,
   .faq {
     padding: 40px 20px 60px;
+  }
+  .compliance {
+    padding: 0 20px 32px;
+  }
+  .complianceCard {
+    padding: 18px 20px;
+    gap: 14px;
   }
   .pathsGrid,
   .codeGrid,
