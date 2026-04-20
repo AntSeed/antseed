@@ -1,3 +1,8 @@
+---
+name: publish
+description: Publish AntSeed packages to npm, including version bumping, dry-run validation, and verification.
+---
+
 # Publish AntSeed Packages to npm
 
 Publish all public `@antseed/*` packages to the npm registry. This skill handles version bumping, building, publishing, and verification.
