@@ -8,6 +8,10 @@ interface IDiemStakingProxy {
     ///         `account` is an authorized operator for this seller facade.
     function isOperator(address account) external view returns (bool);
 
-    /// @notice Accrued (unclaimed) USDC and ANTS rewards for `account`.
-    function earned(address account) external view returns (uint256 usdcEarned, uint256 antsEarned);
+    /// @notice Accrued (unclaimed) USDC rewards for `account`, callable by
+    ///         external tools without needing to loop over reward epochs.
+    ///         ANTS is intentionally excluded here: the proxy tracks it
+    ///         per-reward-epoch via `pendingAntsForEpoch(address, uint32)`,
+    ///         which doesn't fit a single scalar return.
+    function earnedUsdc(address account) external view returns (uint256);
 }
