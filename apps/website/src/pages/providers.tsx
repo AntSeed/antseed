@@ -19,7 +19,7 @@ const FAQ_DATA = [
   },
   {
     q: 'How do payments actually reach me?',
-    a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 30 seconds), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
+    a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 10 minutes), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
   },
   {
     q: 'Can I use any model underneath?',
@@ -287,7 +287,7 @@ antseed seller start`}</pre>
             {
               step: '03',
               title: 'Settlement executes on-chain',
-              body: 'On session end (or 30s idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
+              body: 'On session end (or 10 min idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
             },
           ].map(s => (
             <div key={s.step} className={styles.payStep}>

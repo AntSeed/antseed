@@ -275,6 +275,11 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+  /* Grid items default to min-width: auto, which lets the inner <pre>
+     (white-space: pre) blow out the track on mobile. Force the card to
+     shrink so the inner terminal gets its own horizontal scrollbar instead
+     of widening the page. */
+  min-width: 0;
 }
 .codeCardLabel {
   font-size: 11px;
@@ -290,6 +295,8 @@
   border-radius: 10px;
   overflow: hidden;
   font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  max-width: 100%;
 }
 .codeTermBar {
   display: flex;
@@ -324,6 +331,13 @@
   border-radius: 0 !important;
   text-shadow: none !important;
   font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  /* Without min-width:0 the <pre>'s min-content (the widest source line)
+     propagates up through flex/grid ancestors and widens the page on
+     mobile. Combined with width:100% + box-sizing:border-box this pins the
+     pre to its container and forces overflow to scroll inside. */
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 .codeNote {
   font-size: 13px;
@@ -341,7 +355,14 @@
 .payments {
   padding: 60px 60px 80px;
   max-width: 900px;
+  width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
+  /* Final guard: the wallet terminal's <pre> uses white-space:pre, so its
+     min-content can escape every inner overflow:hidden on certain browsers
+     (iOS Safari in particular). Clipping at the section boundary guarantees
+     the document never scrolls horizontally because of this block. */
+  overflow-x: hidden;
 }
 .paymentsHeader {
   text-align: center;
@@ -431,12 +452,23 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  width: 100%;
+  /* Belt-and-suspenders: the payments section's direct children are in
+     normal block flow, but the wallet terminal's <pre> has white-space:pre.
+     Clipping any leftover overflow here guarantees we never widen the
+     document past 100vw on mobile. */
+  overflow-x: hidden;
 }
 .walletTerm {
   background: #1a1a1a;
   border-radius: 10px;
   overflow: hidden;
   font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 .walletNote {
   font-size: 13px;
