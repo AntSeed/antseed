@@ -2,7 +2,7 @@
   "name": "@antseed/diem-staking",
   "private": true,
   "version": "0.1.0",
-  "description": "DIEM Staking portal (diem-staking.antseed.com)",
+  "description": "DIEM Staking portal (diem.antseed.com)",
   "type": "module",
   "scripts": {
     "dev": "vite",

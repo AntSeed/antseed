@@ -3,48 +3,50 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
 
-    <!-- Primary tab identity -->
+    <!-- Mirrors apps/website/docusaurus.config.ts so the subdomain feels like
+         the same brand. Only DIEM-focused fields differ: <title>, description,
+         og:title, og:description, twitter:title, twitter:description, and the
+         canonical URL. Everything else — keywords, og:type, images, favicon,
+         fonts — is identical to antseed.com. -->
+
     <title>DIEM Staking — earn USDC yield on AntSeed</title>
     <meta
       name="description"
       content="Stake your DIEM into the AntSeed pool on Base. Earn real USDC yield from AI inference demand, plus $ANTS token rewards. Fully on-chain, zero pool fees."
     />
-    <meta name="theme-color" content="#1FD87A" />
-    <meta name="robots" content="index,follow" />
-    <link rel="canonical" href="https://diem-staking.antseed.com/" />
+    <link rel="canonical" href="https://diem.antseed.com/" />
 
-    <!-- Favicon + iOS homescreen. SVG is the primary; modern browsers honour it.
-         No raster fallback shipped — that's a future improvement (see README). -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
-    <meta name="apple-mobile-web-app-title" content="DIEM Staking" />
-    <meta name="application-name" content="DIEM Staking" />
+    <!-- Same favicon as antseed.com (the AntSeed ant) so users see one brand. -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
 
-    <!-- Open Graph — mirrors the pattern in apps/website/docusaurus.config.ts
-         so link unfurls across the three AntSeed apps feel like one brand.
-         og:image points at the parent site until a dedicated DIEM staking
-         image is produced (see README). -->
+    <!-- Fonts — identical to the website stylesheet block. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700;800&display=swap"
+    />
+
+    <!-- Keywords + social — identical to the website's metadata array. -->
+    <meta
+      name="keywords"
+      content="AI marketplace, OpenRouter alternative, serving AI inference, consuming AI inference, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy"
+    />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="AntSeed" />
-    <meta property="og:url" content="https://diem-staking.antseed.com/" />
+    <meta property="og:image" content="https://antseed.com/og-image.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://antseed.com/og-image.jpg" />
+
+    <!-- DIEM-focused title/description pair for og + twitter. -->
     <meta property="og:title" content="DIEM Staking — earn USDC yield on AntSeed" />
     <meta
       property="og:description"
       content="Stake your DIEM. Earn real USDC yield from AI inference demand on the AntSeed network. Plus $ANTS token rewards, claimable on-chain."
     />
-    <meta property="og:image" content="https://antseed.com/og-image.jpg" />
-    <meta property="og:image:alt" content="AntSeed — the open market for AI inference" />
-
-    <!-- Twitter cards -->
-    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="DIEM Staking — earn USDC yield on AntSeed" />
     <meta
       name="twitter:description"
       content="Stake your DIEM. Earn real USDC yield from AI inference demand on the AntSeed network. Plus $ANTS token rewards, claimable on-chain."
     />
-    <meta name="twitter:image" content="https://antseed.com/og-image.jpg" />
   </head>
   <body>
     <div id="root"></div>

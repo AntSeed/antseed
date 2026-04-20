@@ -1,7 +1,7 @@
 # @antseed/diem-staking
 
 Static web app for the DIEM staking portal at
-[`diem-staking.antseed.com`](https://diem-staking.antseed.com).
+[`diem.antseed.com`](https://diem.antseed.com).
 
 Users stake Venice's DIEM token (on Base) into the `DiemStakingProxy` contract
 and earn real USDC yield from AI inference demand on the AntSeed network, plus
@@ -25,6 +25,9 @@ pnpm --filter=@antseed/diem-staking run typecheck  # strict tsc
 pnpm --filter=@antseed/diem-staking run build      # typecheck + vite build → dist/
 pnpm --filter=@antseed/diem-staking run preview    # serve built output
 ```
+
+`dist/` and `node_modules/` are ignored by the repo-root `.gitignore`; this
+app ships no per-app `.gitignore`, matching `apps/payments`.
 
 ## Configuration
 
@@ -66,21 +69,35 @@ often find theirs already moved. No keeper service required.
 
 ## Site metadata
 
-`index.html` carries the full Open Graph + Twitter-card set, mirroring the
-pattern in `apps/website/docusaurus.config.ts` so unfurls feel cohesive across
-antseed.com, payments.antseed.com and diem-staking.antseed.com.
+`index.html` mirrors the metadata block in `apps/website/docusaurus.config.ts`
+so this subdomain reads as the same brand as antseed.com. Only DIEM-focused
+fields differ: `<title>`, `description`, `og:title`, `og:description`,
+`twitter:title`, `twitter:description`, and the canonical URL
+(`https://diem.antseed.com/`).
 
-- **Canonical URL**: `https://diem-staking.antseed.com/`
-- **Theme colour**: `#1FD87A` (brand mint)
-- **Favicon**: `public/favicon.svg` — the DIEM coin (gradient circle + `Đ`),
-  matching the in-page `DiemLogo`. SVG-only for now; a rasterized
-  `apple-touch-icon.png` would improve pre-Safari-16.4 homescreen fidelity.
-- **og:image / twitter:image**: currently points at `antseed.com/og-image.jpg`
-  (the parent site's card) so there's always an unfurl image. **TODO** design
-  a dedicated `og-image.jpg` for diem-staking (1200×630, "Your $DIEM, now
-  earning USDC." hero) and drop it in `public/og-image.jpg`, then update the
-  two `og:image` / `twitter:image` URLs in `index.html`.
-- `robots.txt` is permissive (`Allow: /`).
+Everything else is identical to the website:
+
+- **Favicon**: `public/logo.svg` — same AntSeed ant as antseed.com. Copied
+  verbatim from `apps/website/static/logo.svg`; keep the two in sync.
+- **Fonts**: same Google Fonts stylesheet (Space Grotesk + JetBrains Mono).
+- **Keywords**: same AI-marketplace / P2P-inference keyword list.
+- **`og:image` / `twitter:image`**: `https://antseed.com/og-image.jpg` — the
+  parent site's card. If a dedicated DIEM staking hero card is ever designed,
+  drop it at `public/og-image.jpg` and update the two URLs here.
+- **`robots.txt`**: copied from `apps/website/static/robots.txt` — same AI
+  crawler allowlist + sitemap hint.
+
+### Not mirrored
+
+The website also ships `google-site-verification` and a JSON-LD
+`SoftwareApplication` schema. Neither is copied:
+
+- `google-site-verification` is per-host; Search Console wants a separate
+  token for the `diem.antseed.com` subdomain. Add one to `index.html` when
+  the subdomain is verified.
+- The `SoftwareApplication` JSON-LD describes the AntStation desktop app —
+  wrong schema for a staking page. If structured data is wanted here, the
+  right shape is `FinancialProduct` or `InvestmentFund`.
 
 ## Contract reference
 
