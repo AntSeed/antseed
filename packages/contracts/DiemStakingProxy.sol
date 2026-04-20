@@ -541,9 +541,16 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      * @notice Incrementally capture points for a user with a backlog that
      *         exceeds `MAX_EPOCHS_PER_CAPTURE`. Processes up to `numEpochs`
      *         of the user's per-epoch point contributions.
+     * @dev    Also settles the caller's USDC reward debt against the current
+     *         accumulator. Without this, a user calling `catchUpPoints` to
+     *         unblock a later `stake`/`unstake`/`claimUsdc` would leave
+     *         their pending USDC at the pre-catch-up integrator — correct,
+     *         but surprising. Settling here means `catchUpPoints` leaves
+     *         both reward surfaces in a consistent state for the caller.
      */
     function catchUpPoints(uint32 numEpochs) external {
         if (numEpochs == 0) revert InvalidAmount();
+        _updateUsdcForUser(msg.sender);
         _updateStakeIntegrator();
 
         uint32 userEp = userCurrentEpoch[msg.sender];
