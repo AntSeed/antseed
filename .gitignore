@@ -38,3 +38,7 @@ cli-dist/
 # Deployments
 .deployments/
 prds/
+
+# Napkin
+.napkin/
+NAPKIN.md
