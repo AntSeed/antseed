@@ -4,16 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <!-- Mirrors apps/website/docusaurus.config.ts so the subdomain feels like
-         the same brand. Only DIEM-focused fields differ: <title>, description,
-         og:title, og:description, twitter:title, twitter:description, and the
-         canonical URL. Everything else — keywords, og:type, images, favicon,
-         fonts — is identical to antseed.com. -->
+    <!-- Mirrors antseed.com's final rendered metadata. Docusaurus composes
+         title as "{tagline} | {title}", twitter:title as just the tagline,
+         and description as "{tagline} {description}". We follow the same
+         shape here, swapping `| AntSeed` for `| AntSeed DIEM Staking` on the
+         full title and prepending the DIEM-specific purpose to descriptions.
+         Only DIEM-focused fields differ from antseed.com — everything else
+         (keywords, og:type, images, favicon, fonts) is identical. -->
 
-    <title>DIEM Staking — earn USDC yield on AntSeed</title>
+    <title>The open market for AI inference. No gatekeepers. | AntSeed DIEM Staking</title>
     <meta
       name="description"
-      content="Stake your DIEM into the AntSeed pool on Base. Earn real USDC yield from AI inference demand, plus $ANTS token rewards. Fully on-chain, zero pool fees."
+      content="Stake your DIEM and earn real USDC yield from AI inference demand on the AntSeed network, plus $ANTS token rewards."
     />
     <link rel="canonical" href="https://diem.antseed.com/" />
 
@@ -36,13 +38,16 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:image" content="https://antseed.com/og-image.jpg" />
 
-    <!-- DIEM-focused title/description pair for og + twitter. -->
-    <meta property="og:title" content="DIEM Staking — earn USDC yield on AntSeed" />
+    <!-- DIEM-focused title/description pair for og + twitter. og:title
+         mirrors <title> (Docusaurus uses the same suffix on both);
+         twitter:title drops the brand suffix (Docusaurus's convention) but
+         keeps a page-identifier so social unfurls still convey context. -->
+    <meta property="og:title" content="The open market for AI inference. No gatekeepers. | AntSeed DIEM Staking" />
     <meta
       property="og:description"
-      content="Stake your DIEM. Earn real USDC yield from AI inference demand on the AntSeed network. Plus $ANTS token rewards, claimable on-chain."
+      content="Stake your DIEM and earn real USDC yield from AI inference demand on the AntSeed network, plus $ANTS token rewards."
     />
-    <meta name="twitter:title" content="DIEM Staking — earn USDC yield on AntSeed" />
+    <meta name="twitter:title" content="The open market for AI inference. No gatekeepers. | DIEM Staking" />
     <meta
       name="twitter:description"
       content="Stake your DIEM. Earn real USDC yield from AI inference demand on the AntSeed network. Plus $ANTS token rewards, claimable on-chain."

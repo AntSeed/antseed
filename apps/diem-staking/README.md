@@ -69,23 +69,33 @@ often find theirs already moved. No keeper service required.
 
 ## Site metadata
 
-`index.html` mirrors the metadata block in `apps/website/docusaurus.config.ts`
-so this subdomain reads as the same brand as antseed.com. Only DIEM-focused
-fields differ: `<title>`, `description`, `og:title`, `og:description`,
-`twitter:title`, `twitter:description`, and the canonical URL
-(`https://diem.antseed.com/`).
+`index.html` mirrors antseed.com's final rendered metadata (which Docusaurus
+composes from its `title` + `tagline` + `metadata` config). Same shape as the
+parent site:
 
-Everything else is identical to the website:
+- `<title>` and `og:title` follow the `{tagline} | {brand variant}` pattern.
+  On antseed.com that's `The open market for AI inference. No gatekeepers. |
+  AntSeed`; here the brand variant is extended to `AntSeed DIEM Staking`.
+- `twitter:title` drops the brand suffix but keeps a short page identifier
+  (`... | DIEM Staking`), matching Docusaurus's convention of shorter twitter
+  titles while still giving unfurls page context.
+- `description` / `og:description` prepend the same brand tagline, then
+  suffix the DIEM-specific staking purpose.
+- `canonical` is `https://diem.antseed.com/`.
+
+Everything else — keywords, `og:type`, `og:image` / `twitter:image`,
+`twitter:card`, favicon, fonts — is byte-for-byte what antseed.com emits.
+
+Static assets copied from the website:
 
 - **Favicon**: `public/logo.svg` — same AntSeed ant as antseed.com. Copied
   verbatim from `apps/website/static/logo.svg`; keep the two in sync.
 - **Fonts**: same Google Fonts stylesheet (Space Grotesk + JetBrains Mono).
-- **Keywords**: same AI-marketplace / P2P-inference keyword list.
 - **`og:image` / `twitter:image`**: `https://antseed.com/og-image.jpg` — the
   parent site's card. If a dedicated DIEM staking hero card is ever designed,
   drop it at `public/og-image.jpg` and update the two URLs here.
 - **`robots.txt`**: copied from `apps/website/static/robots.txt` — same AI
-  crawler allowlist + sitemap hint.
+  crawler allowlist, minus the parent-site sitemap directive.
 
 ### Not mirrored
 
