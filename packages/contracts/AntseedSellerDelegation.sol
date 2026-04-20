@@ -64,6 +64,15 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     //                        CHANNEL LIFECYCLE FAÇADE
     // ═══════════════════════════════════════════════════════════════════
 
+    // The four forwarders below intentionally carry `onlyOperator` but *not*
+    // `nonReentrant`. AntseedChannels applies its own reentrancy guard on
+    // every lifecycle entry point, so the delegation layer would only add a
+    // redundant lock here. Derived contracts (e.g. DiemStakingProxy) that
+    // need to wrap the super call with additional state updates — like
+    // USDC-delta capture after `settle` — should apply a single
+    // `nonReentrant` on the override so the override's extra work runs under
+    // the same lock as the super forward, with no gap in between.
+
     /// @notice Forwarded `AntseedChannels.reserve`.
     function reserve(
         address buyer,
@@ -71,7 +80,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         uint128 maxAmount,
         uint256 deadline,
         bytes calldata buyerSig
-    ) public virtual onlyOperator nonReentrant {
+    ) public virtual onlyOperator {
         _channels().reserve(buyer, salt, maxAmount, deadline, buyerSig);
     }
 
@@ -84,7 +93,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         uint128 newMaxAmount,
         uint256 deadline,
         bytes calldata reserveSig
-    ) public virtual onlyOperator nonReentrant {
+    ) public virtual onlyOperator {
         _channels().topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
     }
 
@@ -94,7 +103,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         uint128 cumulativeAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) public virtual onlyOperator nonReentrant {
+    ) public virtual onlyOperator {
         _channels().settle(channelId, cumulativeAmount, metadata, buyerSig);
     }
 
@@ -104,7 +113,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         uint128 finalAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) public virtual onlyOperator nonReentrant {
+    ) public virtual onlyOperator {
         _channels().close(channelId, finalAmount, metadata, buyerSig);
     }
 

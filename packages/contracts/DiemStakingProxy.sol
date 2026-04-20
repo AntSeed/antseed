@@ -579,6 +579,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     /// @dev `reserve` has no USDC inflow — base implementation is sufficient.
 
+    // `onlyOperator` lives on the base forwarders (AntseedSellerDelegation)
+    // and still fires here via `super`. `nonReentrant` is applied on each
+    // override so the balance-delta capture + `_distributeUsdcInstant` run
+    // inside the same lock as the super forward — no window between
+    // external call and accumulator update.
+
     /// @inheritdoc AntseedSellerDelegation
     function topUp(
         bytes32 channelId,
@@ -588,7 +594,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint128 newMaxAmount,
         uint256 deadline,
         bytes calldata reserveSig
-    ) public override {
+    ) public override nonReentrant {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
@@ -600,7 +606,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint128 cumulativeAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) public override {
+    ) public override nonReentrant {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.settle(channelId, cumulativeAmount, metadata, buyerSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
@@ -612,7 +618,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint128 finalAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) public override {
+    ) public override nonReentrant {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.close(channelId, finalAmount, metadata, buyerSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
