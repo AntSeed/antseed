@@ -42,9 +42,13 @@ antseed seller setup
 
 # Add or update config entries directly
 antseed config seller add-provider together --plugin openai --base-url https://api.together.ai
-antseed config seller add-service together deepseek-v3.1 --upstream "deepseek-ai/DeepSeek-V3.1" --input 0.6 --output 1.7
+antseed config seller add-service together deepseek-v3.1 \
+  --upstream "deepseek-ai/DeepSeek-V3.1" \
+  --input 0.6 --cached 0.06 --output 1.7
 antseed config set identity.displayName "Acme Inference"
 ```
+
+`--cached` is optional. Set it (on either `add-provider --cached ...` for defaults or `add-service --cached ...` per service) when your upstream charges a reduced rate for cached-input tokens (e.g. Anthropic prompt caching, OpenAI prompt caching).
 
 You can also edit the JSON file directly if that is easier for automation or deployment.
 
@@ -75,6 +79,7 @@ For example, this is a normal production pattern:
             "upstreamModel": "deepseek-ai/DeepSeek-V3.1",
             "pricing": {
               "inputUsdPerMillion": 0.6,
+              "cachedInputUsdPerMillion": 0.06,
               "outputUsdPerMillion": 1.7
             },
             "categories": ["chat", "coding", "math"]
@@ -177,10 +182,13 @@ Use `antseed config seller add-provider` to create a provider entry and install 
 
 ```bash
 # Add a provider backed by the openai plugin, pointed at Together AI
+# --cached sets the default cached-input price for every service under
+# this provider (overridable per service). Omit it if your upstream does
+# not offer a cached-input discount.
 antseed config seller add-provider together \
   --plugin openai \
   --base-url https://api.together.ai \
-  --input 1 --output 2
+  --input 1 --cached 0.1 --output 2
 
 # Add another using the same plugin for OpenRouter
 antseed config seller add-provider openrouter \
