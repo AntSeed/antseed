@@ -293,13 +293,15 @@ export function FAQ() {
         <details className="faq">
           <summary>How does unstaking work?</summary>
           <div className="body">
-            Unstakes are batched into weekly cohorts on-chain. You'll see three states in
-            the app: <strong>queued</strong> (your amount is in the current cohort, accrual
-            stopped instantly) → <strong>cooling down</strong> (cohort sent to Venice, waiting
-            for Venice's native unstake cooldown) → <strong>claimable</strong> (your DIEM is
-            ready to withdraw). Each state advances with an on-chain transaction that anyone
-            in your cohort can trigger — so you'll often find yours has moved already by the
-            time you check back.
+            From Venice's side the proxy is a single staker, so every unstake would reset
+            the cooldown for the whole pool. To avoid that we batch: unstakes queue into
+            the currently-open cohort on-chain. You'll see three states in the app:
+            <strong>queued</strong> (your amount is in the open cohort, accrual stopped
+            instantly) → <strong>cooling down</strong> (cohort flushed to Venice in one call,
+            waiting for Venice's native cooldown) → <strong>claimable</strong> (your DIEM is
+            ready to withdraw). Once the current cohort finishes claiming, a new cohort
+            opens. Each state advances with a tx anyone in the cohort can trigger — so you'll
+            often find yours has moved already by the time you check back.
           </div>
         </details>
         <details className="faq">
