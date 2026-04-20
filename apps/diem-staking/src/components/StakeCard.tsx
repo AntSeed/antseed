@@ -98,7 +98,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
         <div className="epoch-ribbon">
           <div className="er-dot" />
           <div className="er-text">
-            <span className="er-lbl">Next USDC + $ANTS distribution</span>
+            <span className="er-lbl">Next $ANTS distribution · USDC streams live</span>
             <span className="er-val">{countdown}</span>
           </div>
           <div className="er-epoch">Epoch <strong>#{epoch}</strong></div>
@@ -241,8 +241,8 @@ function StakePanel(props: StakePanelProps) {
 
       <div className="yield-box">
         <div className="yield-row hero-row">
-          <span className="lbl">Projected USDC<span className="sub">based on last epoch</span></span>
-          <span className="val">{props.usdcPerEpoch != null ? `${fmtUSD(props.usdcPerEpoch)} / epoch` : '—'}</span>
+          <span className="lbl">Projected USDC<span className="sub">extrapolated from last 7 days</span></span>
+          <span className="val">{props.usdcPerEpoch != null ? `${fmtUSD(props.usdcPerEpoch)} / week` : '—'}</span>
         </div>
         <div className="yield-row">
           <span className="lbl">Per month</span>
@@ -253,7 +253,7 @@ function StakePanel(props: StakePanelProps) {
           <span className="val">{props.usdcPerYear != null ? fmtUSD(props.usdcPerYear) : '—'} <span className="unit">USDC</span></span>
         </div>
         <div className="yield-row">
-          <span className="lbl">USDC APR<span className="sub">last epoch · annualized</span></span>
+          <span className="lbl">USDC APR<span className="sub">rolling 7d · annualized</span></span>
           <span className="val" style={{ color: 'var(--brand-dark)' }}>{fmtPct(props.apr)}</span>
         </div>
       </div>
@@ -661,7 +661,7 @@ function Metrics(props: {
         <div className="lbl">USDC APR</div>
         <div className="val" style={{ color: 'var(--brand-dark)' }}>{fmtPct(props.apr)}</div>
         <div className="delta">
-          {props.lastEpochUsdc != null ? `Last epoch · annualized` : 'No completed epoch yet'}
+          {props.lastEpochUsdc != null ? `Rolling 7d · annualized` : 'Warming up'}
         </div>
       </div>
       <div className="metric">

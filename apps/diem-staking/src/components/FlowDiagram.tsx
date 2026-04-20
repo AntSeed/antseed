@@ -241,7 +241,7 @@ function FlowMobile() {
         <div className="flow-mobile-pool-logo"><DiemLogo size={44} /></div>
         <div className="flow-mobile-pool-text">
           <h3>$DIEM Pool</h3>
-          <span>rewards land here every epoch</span>
+          <span>USDC streams in live · $ANTS every epoch</span>
         </div>
       </div>
 

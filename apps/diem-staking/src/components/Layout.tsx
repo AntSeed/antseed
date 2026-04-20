@@ -81,13 +81,14 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
       <span className="eyebrow"><span className="pulse" /> Live on Base mainnet</span>
       <h1 className="hero-title">Your $DIEM, now <em>earning</em> USDC.</h1>
       <p className="hero-sub">
-        Stake $DIEM into the AntSeed pool on Base. Every epoch, we distribute USDC and $ANTS
-        to stakers. No fees on the pool, no lockups, fully on-chain.
+        Stake $DIEM into the AntSeed pool on Base. USDC from every AI inference request
+        streams directly into the contract in real time; $ANTS emissions land every epoch.
+        No fees on the pool, no lockups, fully on-chain.
       </p>
       <div className="hero-meta">
         <span className="live-badge">$DIEM ${fmtPrice(diemPrice)}</span>
         <span className="dot" />
-        <span><strong>{fmtPct(apr)}</strong> <span className="apr-sub">USDC APR · LAST EPOCH</span></span>
+        <span><strong>{fmtPct(apr)}</strong> <span className="apr-sub">USDC APR · ROLLING 7D</span></span>
         <span className="dot" />
         <span>+ <strong>$ANTS</strong> every epoch</span>
         <span className="dot" />
@@ -151,7 +152,7 @@ export function ClaimBanner() {
           <div className="line"><span className="comment"># antstation › staking portal</span></div>
           <div className="line"><span className="key">connected wallet</span><span className="num">same as here</span></div>
           <div className="line"><span className="key">$ANTS pending</span><span className="num">auto-synced</span></div>
-          <div className="line"><span className="key">USDC earned</span><span className="num">visible</span></div>
+          <div className="line"><span className="key">USDC earned</span><span className="num">live stream</span></div>
           <hr />
           <div className="line"><span className="comment"># spend on any model →</span></div>
           <div className="line"><span className="key">claude-sonnet-4.6</span><span className="num">ready</span></div>
@@ -170,8 +171,8 @@ export function HowItWorks() {
       <span className="sec-label">How it works</span>
       <h2 className="sec-title">Four steps. <em>Fully on-chain.</em></h2>
       <p className="sec-sub">
-        Your $DIEM stays in an audited smart contract on Base. Every epoch we distribute the
-        USDC the network earned back to stakers, plus $ANTS token rewards.
+        Your $DIEM stays in an audited smart contract on Base. USDC from inference streams
+        straight into the pool as it happens; $ANTS emissions land every epoch.
       </p>
 
       <div className="steps">
@@ -181,11 +182,12 @@ export function HowItWorks() {
         </Step>
         <Step num="02" label="Flow" title="AI demand earns fees">
           Your pooled $DIEM powers AI inference across the AntSeed network. Every request
-          developers and agents make generates USDC, streamed back to the pool.
+          settles a USDC micropayment on-chain, paid directly from the AntSeed payment
+          channel into the staking contract — no middleman, no operator skimming.
         </Step>
-        <Step num="03" label="USDC" title="USDC every epoch">
-          At the end of each epoch, the USDC the network earned is distributed to stakers
-          pro-rata to your share of the pool. Claim to your wallet whenever.
+        <Step num="03" label="USDC" title="USDC streams in real time">
+          Your share of every inflow credits to your position the moment it lands. No epoch
+          wait, no distribution cycle — just a pro-rata stream. Claim to your wallet whenever.
         </Step>
         <Step num="04" label="$ANTS" title="Claim $ANTS on-chain, spend in AntStation">
           $ANTS emissions accrue every epoch. Claim them on-chain here, then{' '}
@@ -271,20 +273,21 @@ export function FAQ() {
           <summary>Where does the USDC yield actually come from?</summary>
           <div className="body">
             AntSeed is a peer-to-peer network where developers and AI agents buy inference,
-            skills, and other services. Every request is a USDC micropayment on Base. The
-            staking pool earns a share of that flow and distributes it to stakers pro-rata,
-            100% pass-through with zero fees taken by the pool.
+            skills, and other services. Every request settles a USDC micropayment on Base,
+            and the AntSeed payment channel pays the staking contract directly — the
+            contract is the seller. No operator holds the funds in between. Your share
+            credits to your position the moment the micropayment lands, 100% pass-through
+            with zero fees taken by the pool.
           </div>
         </details>
         <details className="faq">
           <summary>How is the current APR calculated?</summary>
           <div className="body">
-            The APR shown is realized. We take the USDC distributed to the pool in the most
-            recent epoch, divide by the pool TVL, and annualize (× 52 epochs per year). It's
-            backward-looking, not a projection. Real yield depends on actual AI demand on
-            the network, which varies epoch to epoch. The contract always distributes what's
-            actually earned, nothing more, nothing less. Effective APR is denominated in
-            USDC. $ANTS are extra on top.
+            The APR shown is realized, not projected. We sum the USDC that streamed into
+            the pool over the last 7 days, divide by the pool TVL, and annualize (× 52).
+            It's backward-looking. Real yield tracks actual AI demand on the network, which
+            varies week to week. The contract only ever pays out what it actually received.
+            Effective APR is denominated in USDC. $ANTS are extra on top.
           </div>
         </details>
         <details className="faq">
@@ -311,10 +314,14 @@ export function FAQ() {
         <details className="faq">
           <summary>What's an epoch and how often is USDC paid out?</summary>
           <div className="body">
-            An epoch is one week. At the end of each epoch, the USDC the pool earned is
-            distributed to stakers pro-rata to your share, and $ANTS emissions are
-            allocated for that week. USDC flows to your wallet on claim. Effective APR is
-            always denominated in USDC. $ANTS are extra on top.
+            <strong>USDC streams in real time</strong> — every inference request pays the
+            staking contract directly and credits your share in the same transaction.
+            There's no epoch wait for USDC; claim to your wallet whenever. <strong>$ANTS</strong>
+            are different: they're distributed per weekly epoch via a time-weighted points
+            system that rewards how long you were staked during the epoch, not just whether
+            you're staked at the moment of distribution. Long-term stakers get a bigger
+            share — and you can still claim $ANTS for epochs you contributed to even after
+            fully unstaking.
           </div>
         </details>
         <details className="faq">
