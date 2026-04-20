@@ -904,4 +904,171 @@ contract DiemStakingProxyTest is Test {
         vm.expectRevert(AntseedSellerDelegation.InvalidAddress.selector);
         proxy.sweepOrphanUsdc(address(0));
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        maxTotalStake (owner-settable cap)
+    // ════════════════════════════════════════════════════════════════════
+
+    function test_maxTotalStake_defaultsToUnlimited() public view {
+        assertEq(proxy.maxTotalStake(), 0, "0 sentinel = unlimited");
+    }
+
+    function test_setMaxTotalStake_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.setMaxTotalStake(50e18);
+    }
+
+    function test_setMaxTotalStake_emitsEvent() public {
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, true);
+        emit DiemStakingProxy.MaxTotalStakeSet(50e18);
+        proxy.setMaxTotalStake(50e18);
+        assertEq(proxy.maxTotalStake(), 50e18);
+    }
+
+    function test_stake_revertsWhenCapExceeded() public {
+        vm.prank(owner);
+        proxy.setMaxTotalStake(100e18);
+
+        _stakeAs(alice, 80e18);
+
+        // A further 30 would push totalStaked to 110, over the 100 cap.
+        diem.mint(bob, 30e18);
+        vm.startPrank(bob);
+        diem.approve(address(proxy), 30e18);
+        vm.expectRevert(DiemStakingProxy.MaxStakeExceeded.selector);
+        proxy.stake(30e18);
+        vm.stopPrank();
+
+        // Exactly hitting the cap is allowed.
+        diem.mint(bob, 20e18);
+        vm.startPrank(bob);
+        diem.approve(address(proxy), 20e18);
+        proxy.stake(20e18);
+        vm.stopPrank();
+        assertEq(proxy.totalStaked(), 100e18);
+    }
+
+    /// @dev Lowering the cap must never trap existing stakers. Unstakes still
+    ///      work even when totalStaked is above the new cap.
+    function test_setMaxTotalStake_belowCurrentTotal_doesNotTrapStakers() public {
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 100e18);
+        assertEq(proxy.totalStaked(), 200e18);
+
+        vm.prank(owner);
+        proxy.setMaxTotalStake(50e18); // below current totalStaked
+
+        // Alice can still unstake freely.
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        assertEq(proxy.staked(alice), 0);
+
+        // New stakes are blocked until totalStaked drops below cap.
+        diem.mint(bob, 10e18);
+        vm.startPrank(bob);
+        diem.approve(address(proxy), 10e18);
+        vm.expectRevert(DiemStakingProxy.MaxStakeExceeded.selector);
+        proxy.stake(10e18);
+        vm.stopPrank();
+    }
+
+    function test_maxTotalStake_zeroMeansUnlimited() public {
+        vm.prank(owner);
+        proxy.setMaxTotalStake(0);
+        // Arbitrary large stake works.
+        _stakeAs(alice, 1_000_000e18);
+        assertEq(proxy.totalStaked(), 1_000_000e18);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        stakerCount (distinct-staker tracker)
+    // ════════════════════════════════════════════════════════════════════
+
+    function test_stakerCount_startsAtZero() public view {
+        assertEq(proxy.stakerCount(), 0);
+    }
+
+    function test_stakerCount_incrementsOnFirstStake() public {
+        _stakeAs(alice, 10e18);
+        assertEq(proxy.stakerCount(), 1);
+        _stakeAs(bob, 5e18);
+        assertEq(proxy.stakerCount(), 2);
+    }
+
+    function test_stakerCount_partialStakeDoesNotDoubleCount() public {
+        _stakeAs(alice, 10e18);
+        _stakeAs(alice, 20e18); // top-up, still one distinct staker
+        assertEq(proxy.stakerCount(), 1);
+    }
+
+    function test_stakerCount_decrementsOnFullExitOnly() public {
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 50e18);
+        assertEq(proxy.stakerCount(), 2);
+
+        // Partial unstake — alice still counted.
+        vm.prank(alice);
+        proxy.initiateUnstake(40e18);
+        assertEq(proxy.stakerCount(), 2, "partial unstake doesn't change count");
+
+        // Alice's full remaining exit.
+        vm.prank(alice);
+        proxy.initiateUnstake(60e18);
+        assertEq(proxy.stakerCount(), 1);
+
+        // Bob's full exit.
+        vm.prank(bob);
+        proxy.initiateUnstake(50e18);
+        assertEq(proxy.stakerCount(), 0);
+    }
+
+    function test_stakerCount_restakeAfterFullExitIncrements() public {
+        _stakeAs(alice, 10e18);
+        vm.prank(alice);
+        proxy.initiateUnstake(10e18);
+        assertEq(proxy.stakerCount(), 0);
+
+        _stakeAs(alice, 5e18);
+        assertEq(proxy.stakerCount(), 1, "re-entry counts again");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        totalUsdcDistributedEver (lifetime counter)
+    // ════════════════════════════════════════════════════════════════════
+
+    function test_totalUsdcDistributedEver_accumulatesAcrossSettles() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 ch1 = _reserveViaProxy(bytes32(uint256(1)), 500e6, 500e6);
+        _settleViaProxy(ch1, 300e6);
+        uint256 after1 = proxy.totalUsdcDistributedEver();
+        assertGt(after1, 0);
+
+        _closeViaProxy(ch1, 400e6); // +100 delta
+        uint256 after2 = proxy.totalUsdcDistributedEver();
+        assertGt(after2, after1, "increments on every inflow");
+    }
+
+    /// @dev Claims don't decrement the lifetime counter (only the reservation ledger).
+    function test_totalUsdcDistributedEver_neverDecrementsOnClaim() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+        uint256 distributed = proxy.totalUsdcDistributedEver();
+
+        vm.prank(alice);
+        proxy.claimUsdc();
+        assertEq(proxy.totalUsdcDistributedEver(), distributed, "lifetime counter must not decrement");
+    }
+
+    /// @dev Inflows with no stakers skip distribution entirely and don't bump
+    ///      the lifetime counter. They're sweepable orphans instead.
+    function test_totalUsdcDistributedEver_skipsInflowWithNoStakers() public {
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 500e6, 500e6);
+        _settleViaProxy(channelId, 400e6);
+        assertEq(proxy.totalUsdcDistributedEver(), 0, "no-staker inflow doesn't count as distributed");
+    }
 }

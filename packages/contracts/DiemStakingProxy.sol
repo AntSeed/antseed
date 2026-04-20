@@ -125,6 +125,20 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     uint256 public totalStaked;
     mapping(address => uint256) public staked;
 
+    /// @dev Cap on `totalStaked` in DIEM (token-native units). `0` = unlimited.
+    ///      Owner-settable. Enforced in `stake()`; never in unstake paths
+    ///      (lowering the cap must never trap existing stakers). Existing
+    ///      positions above a newly-lowered cap simply can't be topped up
+    ///      until someone else unstakes enough to bring totalStaked back under.
+    uint256 public maxTotalStake;
+
+    /// @dev Live count of distinct addresses with `staked[addr] > 0`.
+    ///      Incremented on the 0→N transition in `stake`, decremented on the
+    ///      N→0 transition in `initiateUnstake` (full exit). Partial stakes /
+    ///      partial unstakes don't touch it. Powers the frontend "Active
+    ///      stakers" tile with a single SLOAD — no event indexer required.
+    uint32 public stakerCount;
+
     /// @dev Unstake-epoch state. `currentEpoch` accepts new queuers;
     ///      `oldestUnclaimed` is the lowest flushed-but-not-yet-claimed epoch
     ///      id. A new epoch can only be flushed once the prior one has been
@@ -154,6 +168,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      is included here as a safety margin — so sweep always leaves at
     ///      least the real liability in the contract.
     uint256 public totalUsdcReservedForStakers;
+
+    /// @dev Monotonic counter of every USDC unit distributed to stakers over
+    ///      the proxy's lifetime. Unlike `totalUsdcReservedForStakers`, this
+    ///      is never decremented on claim — it's a lifetime "USDC distributed
+    ///      · all time" display value. Skips inflows with no stakers (those
+    ///      go to `sweepOrphanUsdc`).
+    uint256 public totalUsdcDistributedEver;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — ANTS rewards (points + epoch pots)
@@ -205,6 +226,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event OrphanUsdcSwept(address indexed recipient, uint256 amount);
+    event MaxTotalStakeSet(uint256 newMaxTotalStake);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
@@ -219,6 +241,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error EpochAlreadyClaimed();
     error BacklogTooLarge();
     error NothingToClaim();
+    error MaxStakeExceeded();
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Constructor
@@ -284,6 +307,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     /// @notice Stake DIEM into the proxy. Proxy re-stakes into Venice in the same tx.
     function stake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
+        uint256 cap = maxTotalStake;
+        if (cap != 0 && totalStaked + amount > cap) revert MaxStakeExceeded();
+
+        // Track distinct-staker count on the 0→N transition. `_updateUsdcForUser`
+        // has already fired (via the modifier), so `staked[msg.sender]` here
+        // is the pre-stake value we need.
+        if (staked[msg.sender] == 0) stakerCount += 1;
 
         staked[msg.sender] += amount;
         totalStaked += amount;
@@ -315,6 +345,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         staked[msg.sender] -= amount;
         totalStaked -= amount;
+
+        // Track distinct-staker count on the N→0 (full exit) transition.
+        // Only decrement when the user has no remaining active stake — partial
+        // unstakes leave them counted. Note: `staked` here reflects post-subtract.
+        if (staked[msg.sender] == 0) stakerCount -= 1;
 
         uint128 amt128 = amount.toUint128();
         epochUserAmount[epochId][msg.sender] = existing + amt128;
@@ -584,6 +619,18 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit OrphanUsdcSwept(recipient, amount);
     }
 
+    /**
+     * @notice Set the pool's total-stake cap. `0` = unlimited.
+     *         Enforced only on new stakes; never restricts existing stake or
+     *         unstake paths. Lowering the cap below `totalStaked` is allowed
+     *         and simply freezes incoming stake until unstakes bring
+     *         `totalStaked` back under the new cap.
+     */
+    function setMaxTotalStake(uint256 newMaxTotalStake) external onlyOwner {
+        maxTotalStake = newMaxTotalStake;
+        emit MaxTotalStakeSet(newMaxTotalStake);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        VIEWS
     // ═══════════════════════════════════════════════════════════════════
@@ -667,6 +714,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         // Track total owed for the sweep-safety ledger. Includes rounding dust
         // (which is never actually owed to a user) as a conservative margin.
         totalUsdcReservedForStakers += amount;
+        // Lifetime counter — never decremented, powers the "USDC distributed
+        // · all time" frontend tile with a single SLOAD.
+        totalUsdcDistributedEver += amount;
         emit UsdcDistributed(amount);
     }
 
