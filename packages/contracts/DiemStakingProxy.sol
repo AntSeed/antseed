@@ -146,6 +146,15 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     mapping(address => uint256) public userUsdcRewardPerTokenPaid;
     mapping(address => uint256) public usdcRewards;
 
+    /// @dev Conservative upper bound on outstanding USDC owed to stakers.
+    ///      Incremented by every successfully-distributed inflow (skipping
+    ///      inflows that arrive when `totalStaked == 0` — those are orphan
+    ///      dust, sweepable). Decremented by every `claimUsdc`. Distribution
+    ///      rounding dust (from the integer division in _distributeUsdcInstant)
+    ///      is included here as a safety margin — so sweep always leaves at
+    ///      least the real liability in the contract.
+    uint256 public totalUsdcReservedForStakers;
+
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — ANTS rewards (points + epoch pots)
     // ═══════════════════════════════════════════════════════════════════
@@ -195,6 +204,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event AntsClaimed(address indexed user, uint32 fromEpoch, uint32 toEpoch, uint256 antsAmount);
     event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
+    event OrphanUsdcSwept(address indexed recipient, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
@@ -373,6 +383,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint256 owed = usdcRewards[msg.sender];
         if (owed == 0) revert NothingToClaim();
         usdcRewards[msg.sender] = 0;
+        // Safe subtract: every unit of `owed` was credited via
+        // _updateUsdcForUser, which sources from distributions that bumped
+        // `totalUsdcReservedForStakers`. Rounding dust only inflates the
+        // reservation (safer), never deflates.
+        totalUsdcReservedForStakers -= owed;
         usdc.safeTransfer(msg.sender, owed);
         emit UsdcPaid(msg.sender, owed);
     }
@@ -394,6 +409,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint256 totalAnts;
         for (uint32 N = from; N < to; N++) {
             RewardEpoch memory re = rewardEpochs[N];
+            // Intentional: epochs with antsPot == 0 or totalPoints == 0 have
+            // nothing to pay out. We still advance `userLastClaimedEpoch`
+            // below, which permanently abandons any userPoints entry for
+            // these epochs. Since no pot ever exists to convert those points
+            // into ANTS, there is nothing to claim — the points are logically
+            // worthless. The storage slot remains non-zero but is unreachable.
             if (re.antsPot == 0) continue;
             uint256 totalPoints = N == 0
                 ? re.activeSecondsAtEnd
@@ -541,6 +562,28 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit AntseedStakeWithdrawn(recipient, payout);
     }
 
+    /**
+     * @notice Sweep USDC that is provably not owed to any staker.
+     *         Includes:
+     *           - Inflows that arrived while `totalStaked == 0` (skipped by
+     *             `_distributeUsdcInstant`, otherwise trapped).
+     *           - Any accidental direct USDC transfer to the contract.
+     *         Excludes the full `totalUsdcReservedForStakers` ledger — that
+     *         represents outstanding per-user `usdcRewards` (plus distribution
+     *         rounding dust, which we intentionally keep as a safety margin).
+     *         `withdrawAntseedStake` has already transferred the returned seller
+     *         stake to the recipient, so there's no double-count risk.
+     */
+    function sweepOrphanUsdc(address recipient) external onlyOwner nonReentrant {
+        if (recipient == address(0)) revert InvalidAddress();
+        uint256 balance = usdc.balanceOf(address(this));
+        uint256 reserved = totalUsdcReservedForStakers;
+        if (balance <= reserved) return;
+        uint256 amount = balance - reserved;
+        usdc.safeTransfer(recipient, amount);
+        emit OrphanUsdcSwept(recipient, amount);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        VIEWS
     // ═══════════════════════════════════════════════════════════════════
@@ -621,6 +664,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     function _distributeUsdcInstant(uint256 amount) internal {
         if (amount == 0 || totalStaked == 0) return;
         usdcRewardPerTokenStored += (amount * 1e18) / totalStaked;
+        // Track total owed for the sweep-safety ledger. Includes rounding dust
+        // (which is never actually owed to a user) as a conservative margin.
+        totalUsdcReservedForStakers += amount;
         emit UsdcDistributed(amount);
     }
 

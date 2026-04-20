@@ -803,4 +803,105 @@ contract DiemStakingProxyTest is Test {
         bytes memory newSig = abi.encodePacked(r2, s2, v2);
         assertEq(proxy.isValidSignature(hash, newSig), bytes4(0x1626ba7e));
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        sweepOrphanUsdc
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev Inflows that arrive while totalStaked == 0 are not distributed;
+    ///      sweep recovers them without touching staker liabilities.
+    function test_sweepOrphanUsdc_recoversInflowWithNoStakers() public {
+        // No one has staked — drive a settle anyway.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 500e6, 500e6);
+        _settleViaProxy(channelId, 400e6);
+
+        uint256 trapped = usdc.balanceOf(address(proxy));
+        assertGt(trapped, 0, "USDC sits in proxy since no stakers");
+        assertEq(proxy.totalUsdcReservedForStakers(), 0, "no liability accrued");
+
+        uint256 recipientBefore = usdc.balanceOf(bob);
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit DiemStakingProxy.OrphanUsdcSwept(bob, trapped);
+        proxy.sweepOrphanUsdc(bob);
+
+        assertEq(usdc.balanceOf(bob) - recipientBefore, trapped);
+        assertEq(usdc.balanceOf(address(proxy)), 0);
+    }
+
+    /// @dev Random USDC donated to the proxy is sweepable.
+    function test_sweepOrphanUsdc_recoversDirectDonation() public {
+        _stakeAs(alice, 100e18);
+
+        // No settle happened — stakers have nothing reserved. Attacker drops
+        // USDC directly on the proxy.
+        uint256 donation = 123e6;
+        usdc.mint(address(this), donation);
+        usdc.transfer(address(proxy), donation);
+
+        assertEq(proxy.totalUsdcReservedForStakers(), 0);
+
+        vm.prank(owner);
+        proxy.sweepOrphanUsdc(bob);
+        assertEq(usdc.balanceOf(bob), donation);
+    }
+
+    /// @dev Sweep must NEVER touch USDC that stakers have actually earned.
+    function test_sweepOrphanUsdc_doesNotInvadeStakerLiabilities() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Full inflow is reserved for alice. Balance before sweep ==
+        // reserved (modulo rounding dust kept as safety margin).
+        uint256 reserved = proxy.totalUsdcReservedForStakers();
+        uint256 balance = usdc.balanceOf(address(proxy));
+        assertEq(reserved, balance);
+
+        uint256 recipientBefore = usdc.balanceOf(bob);
+        vm.prank(owner);
+        proxy.sweepOrphanUsdc(bob);
+        assertEq(usdc.balanceOf(bob), recipientBefore, "nothing to sweep");
+        assertEq(usdc.balanceOf(address(proxy)), balance, "balance untouched");
+
+        // Alice can still claim her full earnings.
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimUsdc();
+        assertEq(usdc.balanceOf(alice) - aliceBefore, reserved);
+    }
+
+    /// @dev After alice claims, her portion of the reserved liability is
+    ///      retired. Any subsequent direct donation is cleanly sweepable.
+    function test_sweepOrphanUsdc_afterPartialClaim() public {
+        _stakeAs(alice, 100e18);
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.prank(alice);
+        proxy.claimUsdc();
+        assertEq(proxy.totalUsdcReservedForStakers(), 0);
+
+        // Direct donation post-claim is fully sweepable.
+        uint256 donation = 7e6;
+        usdc.mint(address(this), donation);
+        usdc.transfer(address(proxy), donation);
+
+        vm.prank(owner);
+        proxy.sweepOrphanUsdc(bob);
+        assertEq(usdc.balanceOf(bob), donation);
+    }
+
+    function test_sweepOrphanUsdc_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.sweepOrphanUsdc(alice);
+    }
+
+    function test_sweepOrphanUsdc_revertZeroRecipient() public {
+        vm.prank(owner);
+        vm.expectRevert(AntseedSellerDelegation.InvalidAddress.selector);
+        proxy.sweepOrphanUsdc(address(0));
+    }
 }

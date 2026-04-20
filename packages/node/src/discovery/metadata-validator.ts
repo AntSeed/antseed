@@ -325,20 +325,24 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // encoded size
-  try {
-    const encoded = encodeMetadata(metadata);
-    if (encoded.length > MAX_METADATA_SIZE) {
+  // encoded size. Skip when an earlier format error would cause encode to
+  // throw for reasons already reported (e.g. malformed sellerContract hex) —
+  // otherwise the generic "failed to encode" masks the real cause.
+  if (errors.length === 0) {
+    try {
+      const encoded = encodeMetadata(metadata);
+      if (encoded.length > MAX_METADATA_SIZE) {
+        errors.push({
+          field: "encoded",
+          message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
+        });
+      }
+    } catch (err) {
       errors.push({
         field: "encoded",
-        message: `Encoded size ${encoded.length} exceeds max ${MAX_METADATA_SIZE}`,
+        message: `Failed to encode metadata for size check: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
-  } catch {
-    errors.push({
-      field: "encoded",
-      message: "Failed to encode metadata for size check",
-    });
   }
 
   return errors;

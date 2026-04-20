@@ -149,4 +149,3 @@ export async function signSetOperator(
 ): Promise<string> {
   return signer.signTypedData(domain, SET_OPERATOR_TYPES, msg);
 }
-

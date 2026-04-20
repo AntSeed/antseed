@@ -5,6 +5,8 @@ import { debugWarn } from "../utils/debug.js";
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_CACHE_MAX_ENTRIES = 1024;
+const DEFAULT_RPC_RETRIES = 2;
+const DEFAULT_RPC_RETRY_BACKOFF_MS = 150;
 
 /**
  * Called by the resolver to ask the chain whether a peer is an authorized
@@ -41,15 +43,21 @@ export class SellerAddressResolver {
   private readonly _ttlMs: number;
   private readonly _maxEntries: number;
   private readonly _isOperator: IsOperatorChecker;
+  private readonly _rpcRetries: number;
+  private readonly _rpcRetryBackoffMs: number;
 
   constructor(opts: {
     isOperator: IsOperatorChecker;
     ttlMs?: number;
     maxEntries?: number;
+    rpcRetries?: number;
+    rpcRetryBackoffMs?: number;
   }) {
     this._isOperator = opts.isOperator;
     this._ttlMs = opts.ttlMs ?? DEFAULT_CACHE_TTL_MS;
     this._maxEntries = opts.maxEntries ?? DEFAULT_CACHE_MAX_ENTRIES;
+    this._rpcRetries = opts.rpcRetries ?? DEFAULT_RPC_RETRIES;
+    this._rpcRetryBackoffMs = opts.rpcRetryBackoffMs ?? DEFAULT_RPC_RETRY_BACKOFF_MS;
   }
 
   /**
@@ -61,7 +69,10 @@ export class SellerAddressResolver {
     const raw = metadata?.sellerContract;
     if (!raw) return peerIdToAddress(peerId);
 
-    const sellerContract = raw.startsWith("0x") ? raw : "0x" + raw;
+    // Normalize to lowercase `0x`-prefixed form so cache hits are stable
+    // regardless of casing upstream (defence in depth; the decoder already
+    // emits lowercase hex without the prefix).
+    const sellerContract = (raw.startsWith("0x") ? raw : "0x" + raw).toLowerCase();
 
     const cached = this._cache.get(peerId);
     if (
@@ -69,21 +80,14 @@ export class SellerAddressResolver {
       cached.sellerContract === sellerContract &&
       Date.now() - cached.verifiedAt < this._ttlMs
     ) {
+      // Refresh insertion order so eviction is true LRU, not FIFO.
+      this._cache.delete(peerId);
+      this._cache.set(peerId, cached);
       return cached.sellerContract;
     }
 
     const peerAddress = peerIdToAddress(peerId);
-    let isAuthorized = false;
-    try {
-      isAuthorized = await this._isOperator(sellerContract, peerAddress);
-    } catch (err) {
-      debugWarn(
-        `[Resolver] isOperator(${sellerContract}, ${peerAddress}) RPC failed: ${
-          err instanceof Error ? err.message : err
-        }`,
-      );
-      throw new SellerAuthorizationError("isOperator RPC failed");
-    }
+    const isAuthorized = await this._callIsOperatorWithRetry(sellerContract, peerAddress);
 
     if (!isAuthorized) {
       debugWarn(
@@ -99,6 +103,37 @@ export class SellerAddressResolver {
 
   invalidate(peerId: PeerId): void {
     this._cache.delete(peerId);
+  }
+
+  /**
+   * Retry `isOperator` a small number of times with linear backoff before
+   * failing closed. Transient RPC blips (timeout, rate limit, fallback
+   * provider churn) would otherwise drop peers from discovery for the full
+   * negotiation attempt; a couple of cheap retries absorb the common case.
+   */
+  private async _callIsOperatorWithRetry(
+    sellerContract: string,
+    peerAddress: string,
+  ): Promise<boolean> {
+    const maxAttempts = Math.max(1, this._rpcRetries + 1);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this._isOperator(sellerContract, peerAddress);
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, this._rpcRetryBackoffMs * attempt));
+          continue;
+        }
+      }
+    }
+    debugWarn(
+      `[Resolver] isOperator(${sellerContract}, ${peerAddress}) RPC failed after ${maxAttempts} attempt(s): ${
+        lastErr instanceof Error ? lastErr.message : lastErr
+      }`,
+    );
+    throw new SellerAuthorizationError("isOperator RPC failed");
   }
 
   private _pruneCache(): void {

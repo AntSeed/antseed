@@ -478,20 +478,42 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Verify claimed on-chain stats against actual contract data
+    // Verify claimed on-chain stats against actual contract data.
+    //
+    // Concurrency is capped so a wildcard DHT lookup returning hundreds of
+    // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
+    // isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
+    // will rate-limit past ~10-20 concurrent calls; we stay well under that.
     if (this._channelsClient && this._stakingClient) {
       const channelsClient = this._channelsClient;
       const stakingClient = this._stakingClient;
       const resolver = this._sellerAddressResolver;
-      await Promise.allSettled(peers.map(async (p) => {
-        const evmAddress = resolver
-          ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
-          : peerIdToAddress(p.peerId);
-        const agentId = await stakingClient.getAgentId(evmAddress);
-        const stats = await channelsClient.getAgentStats(agentId);
-        p.onChainChannelCount = stats.channelCount;
-        p.onChainGhostCount = stats.ghostCount;
-      }));
+      const DISCOVERY_RPC_CONCURRENCY = 8;
+      const queue = peers.slice();
+      const workers: Array<Promise<void>> = [];
+      const verifyOne = async (p: PeerInfo): Promise<void> => {
+        try {
+          const evmAddress = resolver
+            ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
+            : peerIdToAddress(p.peerId);
+          const agentId = await stakingClient.getAgentId(evmAddress);
+          const stats = await channelsClient.getAgentStats(agentId);
+          p.onChainChannelCount = stats.channelCount;
+          p.onChainGhostCount = stats.ghostCount;
+        } catch {
+          // Per-peer verification failure — keep claimed metadata.
+        }
+      };
+      for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
+        workers.push((async () => {
+          for (;;) {
+            const next = queue.shift();
+            if (!next) return;
+            await verifyOne(next);
+          }
+        })());
+      }
+      await Promise.all(workers);
     }
 
     for (const p of peers) {
