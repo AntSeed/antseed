@@ -86,6 +86,10 @@ export type ChatWorkspaceGitStatus = {
   error: string | null;
 };
 
+// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// (`ChatStreamStopReason`). The renderer cannot import from main, so the
+// shape is mirrored here for IPC. Keep in sync with that file and with
+// apps/desktop/src/main/preload.cts when fields change.
 export type ChatAiStreamStopReason = {
   kind: 'payment_required' | 'aborted' | 'timeout' | 'http_error' | 'network_error' | 'stream_error' | 'unknown';
   source: 'billing' | 'user' | 'transport' | 'upstream' | 'unknown';

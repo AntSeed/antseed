@@ -86,6 +86,11 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// (`ChatStreamStopReason`). This preload runs in a sandboxed context and
+// cannot import from main, so the shape is mirrored here for IPC. Keep the
+// `kind`, `source`, and field set in sync with the source-of-truth type —
+// and with the renderer copy in apps/desktop/src/renderer/types/bridge.ts.
 type ChatAiStreamStopReason = {
   kind: 'payment_required' | 'aborted' | 'timeout' | 'http_error' | 'network_error' | 'stream_error' | 'unknown';
   source: 'billing' | 'user' | 'transport' | 'upstream' | 'unknown';

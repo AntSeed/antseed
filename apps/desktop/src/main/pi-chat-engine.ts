@@ -1559,27 +1559,26 @@ export function registerPiChatHandlers({
     });
   };
 
-  const emitChatStreamError = (
-    payload: ChatStreamErrorPayload,
-  ): ChatStreamStopReason => {
+  const emitChatStreamError = (payload: ChatStreamErrorPayload): void => {
     sendToRenderer('chat:ai-stream-error', payload);
-    return payload.stopReason;
   };
 
   const emitPaymentRequiredStreamError = (
     conversationId: string,
     suggestedAmount: string,
   ): ChatStreamStopReason => {
-    return emitChatStreamError({
+    const stopReason: ChatStreamStopReason = {
+      kind: 'payment_required',
+      source: 'billing',
+      retryable: false,
+      message: 'Payment is required before the stream can continue.',
+    };
+    emitChatStreamError({
       conversationId,
       error: `payment_required:${suggestedAmount}`,
-      stopReason: {
-        kind: 'payment_required',
-        source: 'billing',
-        retryable: false,
-        message: 'Payment is required before the stream can continue.',
-      },
+      stopReason,
     });
+    return stopReason;
   };
 
   const clearActiveRun = (run: ActiveRun | null): void => {
@@ -2061,17 +2060,21 @@ export function registerPiChatHandlers({
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
 
       if (terminalStreamFailure !== null) {
+        // `terminalStreamFailure` is mutated inside the subscribe callback,
+        // which TypeScript can't see — control-flow analysis narrows it to
+        // `never` here. Cast back to the real type (we already guarded on
+        // `!== null` above).
         const streamFailure = terminalStreamFailure as ChatStreamStopReason;
-        const reason = emitChatStreamError({
+        emitChatStreamError({
           conversationId,
           error: terminalStreamError ?? streamFailure.message,
           stopReason: streamFailure,
         });
-        appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
+        appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(streamFailure)}`);
         return {
           ok: false,
           error: terminalStreamError ?? streamFailure.message,
-          stopReason: reason,
+          stopReason: streamFailure,
         };
       }
 
@@ -2116,14 +2119,15 @@ export function registerPiChatHandlers({
       // Always discard any buffered assistant message on error — it will not be committed.
       pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
-        const reason = emitChatStreamError({
+        const reason = classifyChatStreamFailure({
+          error,
+          message: 'Request aborted',
+          stopReason: 'aborted',
+        });
+        emitChatStreamError({
           conversationId,
           error: 'Request aborted',
-          stopReason: classifyChatStreamFailure({
-            error,
-            message: 'Request aborted',
-            stopReason: 'aborted',
-          }),
+          stopReason: reason,
         });
         return { ok: false, error: 'Aborted', stopReason: reason };
       }
@@ -2153,14 +2157,15 @@ export function registerPiChatHandlers({
         const reason = emitPaymentRequiredStreamError(conversationId, amt);
         return { ok: false, error: message, stopReason: reason };
       } else {
-        const reason = emitChatStreamError({
+        const reason = classifyChatStreamFailure({
+          error,
+          message,
+          stopReason: 'error',
+        });
+        emitChatStreamError({
           conversationId,
           error: message,
-          stopReason: classifyChatStreamFailure({
-            error,
-            message,
-            stopReason: 'error',
-          }),
+          stopReason: reason,
         });
         appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
         return { ok: false, error: message, stopReason: reason };

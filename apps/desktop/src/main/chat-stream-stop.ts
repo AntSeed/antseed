@@ -1,3 +1,10 @@
+// Note: `payment_required` is part of this union but is intentionally never
+// produced by `classifyChatStreamFailure`. Payment-required stops are emitted
+// via the dedicated `emitPaymentRequiredStreamError` path in pi-chat-engine.
+// This type is also mirrored (for IPC) in:
+//   - apps/desktop/src/main/preload.cts (ChatAiStreamStopReason)
+//   - apps/desktop/src/renderer/types/bridge.ts (ChatAiStreamStopReason)
+// Keep those in sync when fields change.
 export type ChatStreamStopKind =
   | 'payment_required'
   | 'aborted'
@@ -77,7 +84,11 @@ function collectErrorSignals(
 
   const record = value as Record<string, unknown>;
 
-  for (const key of ['message', 'errorMessage', 'finalError', 'statusText', 'body']) {
+  // Note: HTTP response `body` is intentionally excluded from user-facing
+  // message collection — it can contain tokens, API internals, or other
+  // sensitive content. Status codes are still extracted from dedicated
+  // fields (`status`/`statusCode`/`httpStatus`) and via `parseStatusCodeFromText`.
+  for (const key of ['message', 'errorMessage', 'finalError', 'statusText']) {
     const field = record[key];
     if (typeof field === 'string' && field.trim().length > 0) {
       state.messages.push(field.trim());
@@ -123,12 +134,14 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function parseStatusCodeFromText(text: string): number | undefined {
+  // Only match status codes that appear in an HTTP-shaped context. A bare
+  // leading-digit heuristic (e.g. `/^\s*(\d{3})\b/`) produced false positives
+  // on messages like "128 tokens remaining" — which would be read as HTTP 128.
   const patterns = [
     /\bstatus(?:\s+code)?\s*(?:=|:)?\s*(\d{3})\b/i,
     /\bhttp\s*(\d{3})\b/i,
     /\bresponse failed:\s*(\d{3})\b/i,
     /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error)\b/i,
-    /^\s*(\d{3})\b/,
   ];
 
   for (const pattern of patterns) {
@@ -176,7 +189,13 @@ export function classifyChatStreamFailure({
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
 
-  if (stopReason === 'aborted' || errorCode === 'AbortError' || /\brequest aborted\b|\baborted\b/.test(normalized)) {
+  // Keep the text-based abort match narrow so transport-side aborts (e.g.
+  // "connection aborted by remote") aren't misclassified as user-initiated.
+  if (
+    stopReason === 'aborted'
+    || errorCode === 'AbortError'
+    || /\brequest aborted\b|\baborted by user\b|\bthe operation was aborted\b|\boperation was aborted\b/.test(normalized)
+  ) {
     return {
       kind: 'aborted',
       source: 'user',
