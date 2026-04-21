@@ -2,25 +2,43 @@
 // DualCards, Footer. These don't depend on on-chain state (ClaimBanner and
 // Hero take a couple of computed values as props so they can show live APR /
 // pool TVL). Every AntStation download link flows through `useAntstationDownload`
-// so Mac visitors get a direct DMG href — same behaviour as antseed.com.
+// so Mac + Windows visitors get a direct installer href — same behaviour as
+// antseed.com.
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { fmtPct, fmtPrice } from '../lib/format';
-import { useAntstationDownload, ANTSTATION_RELEASES_URL } from '../lib/antstation';
+import { useAntstationDownload, ANTSTATION_RELEASES_URL, type Platform } from '../lib/antstation';
 
 const ANTSEED_URL = 'https://antseed.com';
 const CONTRACT_URL_BASE = 'https://basescan.org/address';
 
-// Apple logo glyph used on the "Download for Mac" button. Matches the mark
-// used in apps/website/src/pages/index.tsx so the two pages feel identical.
-function AppleIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
-    </svg>
-  );
+// OS glyph for the primary download button. Matches the mark used in
+// apps/website/src/lib/DesktopDownloadIcon.tsx so the two properties feel
+// identical across hosts.
+function PlatformIcon({ platform, size = 16 }: { platform: Platform; size?: number }) {
+  if (platform === 'win') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M3 5.5L11 4.3v7.2H3zM12 4.2L21 3v8.5h-9zM3 12.5h8v7.2L3 18.5zM12 12.5h9V21l-9-1.3z" />
+      </svg>
+    );
+  }
+  if (platform === 'mac') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+      </svg>
+    );
+  }
+  return null;
+}
+
+// Platforms where we show the OS-specific label + icon. Other platforms
+// (Linux / mobile / unknown) keep the brand-generic "Download AntStation →".
+function hasDirectInstaller(platform: Platform): platform is 'mac' | 'win' {
+  return platform === 'mac' || platform === 'win';
 }
 
 export function AlphaStrip({ maxStakeDisplay }: { maxStakeDisplay: string | null }) {
@@ -99,7 +117,7 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
 }
 
 export function ClaimBanner() {
-  const { href, isMac } = useAntstationDownload();
+  const { href, platform, label } = useAntstationDownload();
   return (
     <div className="claim-banner">
       <div className="claim-banner-inner">
@@ -116,9 +134,9 @@ export function ClaimBanner() {
             . Pass-through pricing, more inference per dollar than any subscription.
           </p>
           <div className="claim-banner-actions">
-            {/* Match antseed.com's primary download button: Apple icon +
-                "Download for Mac" when we have a direct DMG, graceful
-                fallback otherwise. */}
+            {/* Match antseed.com's primary download button: OS icon +
+                "Download for <OS>" when we have a direct installer,
+                brand-generic fallback otherwise. */}
             <a
               href={href}
               className="btn-primary"
@@ -126,10 +144,10 @@ export function ClaimBanner() {
               rel="noopener noreferrer"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
             >
-              {isMac ? (
+              {hasDirectInstaller(platform) ? (
                 <>
-                  <AppleIcon />
-                  Download for Mac
+                  <PlatformIcon platform={platform} />
+                  {label}
                 </>
               ) : (
                 <>Download AntStation →</>
@@ -241,7 +259,7 @@ function Why() {
 }
 
 export function DualCards() {
-  const { href, isMac } = useAntstationDownload();
+  const { href, platform, label } = useAntstationDownload();
   return (
     <section>
       <div className="dual">
@@ -249,7 +267,7 @@ export function DualCards() {
           <span className="tag">◆  AntStation</span>
           <h4>The AntSeed desktop app</h4>
           <p>Chat with Claude, GPT, and every open model. Generate images and video. All at provider cost. No subscription markup. Free to download.</p>
-          <span className="arrow">{isMac ? 'Download for Mac →' : 'Download AntStation →'}</span>
+          <span className="arrow">{hasDirectInstaller(platform) ? `${label} →` : 'Download AntStation →'}</span>
         </a>
         <a href={ANTSEED_URL} className="dual-card" target="_blank" rel="noopener noreferrer">
           <span className="tag">◆  AntSeed</span>

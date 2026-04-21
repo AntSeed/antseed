@@ -539,7 +539,7 @@ interface ClaimPanelProps {
 function ClaimPanel(props: ClaimPanelProps) {
   const claimUsdc = useClaimUsdc();
   const claimAnts = useClaimAnts();
-  const { href: antstationHref, isMac } = useAntstationDownload();
+  const { href: antstationHref, platform: antstationPlatform } = useAntstationDownload();
 
   const pendingUsdcNum = toUsdcNumber(props.pendingUsdc);
   const pendingAntsNum = toAntsNumber(props.pendingAnts);
@@ -603,7 +603,11 @@ function ClaimPanel(props: ClaimPanelProps) {
             className="stake-cta ghost"
             style={{ display: 'block', textAlign: 'center', textDecoration: 'none' }}
           >
-            {isMac ? 'Download AntStation for Mac →' : 'Download AntStation to spend $ANTS →'}
+            {antstationPlatform === 'mac'
+              ? 'Download AntStation for Mac →'
+              : antstationPlatform === 'win'
+                ? 'Download AntStation for Windows →'
+                : 'Download AntStation to spend $ANTS →'}
           </a>
           {(claimUsdc.error || claimAnts.error) && (
             <div className="claim-note" style={{ color: '#c62828' }}>

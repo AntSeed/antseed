@@ -1,48 +1,12 @@
-import {useState, useEffect, useMemo} from 'react';
+import {useState, useEffect} from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
+import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
 
-const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
-const GH_API_LATEST = 'https://api.github.com/repos/AntSeed/antseed/releases/latest';
 const DUNE_URL = 'https://dune.com/antseed_com/antseed';
 const ANTS_TOKEN_ADDRESS = '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263';
 const ANTS_BASESCAN_URL = `https://basescan.org/token/${ANTS_TOKEN_ADDRESS}`;
-
-/* ── Download helpers (same as homepage) ───────────────────────── */
-function buildDmgUrl(tag: string, arch: 'arm64' | 'x64'): string {
-  const version = tag.replace(/^v/, '');
-  const suffix = arch === 'arm64' ? '-arm64' : '';
-  return `https://github.com/AntSeed/antseed/releases/download/${tag}/AntSeed-Desktop-${version}${suffix}.dmg`;
-}
-
-function isMac(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Macintosh|Mac OS X/.test(navigator.userAgent);
-}
-
-function useLatestRelease() {
-  const [tag, setTag] = useState<string | null>(null);
-  const [arch, setArch] = useState<'arm64' | 'x64'>('arm64');
-  const mac = useMemo(isMac, []);
-
-  useEffect(() => {
-    if (!mac) return;
-    const nav = navigator as Navigator & { userAgentData?: { getHighEntropyValues(hints: string[]): Promise<{ architecture?: string }> } };
-    if (nav.userAgentData?.getHighEntropyValues) {
-      nav.userAgentData.getHighEntropyValues(['architecture'])
-        .then(data => { if (data.architecture === 'x86') setArch('x64'); })
-        .catch(() => {});
-    }
-    fetch(GH_API_LATEST)
-      .then(r => r.json())
-      .then(data => { if (data?.tag_name) setTag(data.tag_name as string); })
-      .catch(() => {});
-  }, [mac]);
-
-  const dmgUrl = mac && tag ? buildDmgUrl(tag, arch) : null;
-  return { dmgUrl };
-}
 
 /* ── Epoch countdown ───────────────────────────────────────────── */
 const EPOCH_DURATION = 604_800; // 1 week in seconds
@@ -330,7 +294,7 @@ function EarnFlow(): JSX.Element {
 
 /* ── MAIN PAGE ─────────────────────────────────────────────────── */
 export default function AntsToken(): JSX.Element {
-  const {dmgUrl} = useLatestRelease();
+  const download = useLatestDesktopDownload();
   const {epoch, timeLeft, started} = useEpochCountdown();
 
   const totalSupply = epoch * INITIAL_EMISSION;
@@ -365,7 +329,7 @@ export default function AntsToken(): JSX.Element {
           contribution. Hard-capped at 1.04B with automatic halvings.
         </p>
         <div className={styles.heroCtas}>
-          <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
+          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
             Download AntStation →
           </a>
           <Link to="/docs/lightpaper" className={styles.ctaSecondary}>Lightpaper</Link>
@@ -536,7 +500,7 @@ export default function AntsToken(): JSX.Element {
         <h2>Start earning ANTS</h2>
         <p>Download AntStation, join the network as a provider or buyer, and start accumulating.</p>
         <div className={styles.bottomCtaBtns}>
-          <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
+          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
             Download AntStation →
           </a>
           <Link to="/providers" className={styles.ctaSecondary}>Become a provider</Link>

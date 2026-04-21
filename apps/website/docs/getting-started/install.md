@@ -29,9 +29,20 @@ antseed --version
 
 ## Desktop App
 
-AntSeed Desktop is a standalone app for macOS that bundles the CLI, a chat interface, and encrypted identity storage via the OS keychain.
+AntSeed Desktop (AntStation) is a standalone app that bundles the CLI, a
+chat interface, and encrypted identity storage via the OS keychain.
 
-Download from [GitHub Releases](https://github.com/AntSeed/antseed/releases).
+**Downloads:**
+
+- **macOS** — `.dmg` for Apple Silicon (arm64) and Intel (x64). Signed and
+  notarized; no Gatekeeper warning.
+- **Windows** — `.exe` NSIS installer for x64 and arm64. Currently
+  unsigned; Windows SmartScreen will ask you to confirm on first run
+  (click *More info* → *Run anyway*).
+- **Linux** — not yet packaged. Run the CLI directly for now.
+
+Pick your installer on the [latest release page](https://github.com/AntSeed/antseed/releases/latest),
+or use the OS-aware download buttons on [antseed.com](https://antseed.com).
 
 ## Identity
 
