@@ -27,7 +27,10 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('Reputation Integration', () => {
-  it('should round-trip metadata with reputation', () => {
+  it('strips seller-claimed on-chain stats from encoded metadata', () => {
+    // On-chain stats are untrusted input if announced by the seller. The
+    // encoder drops them; buyers get authoritative values from
+    // AntseedChannels.getAgentStats in node.ts discoverPeers().
     const original = makeMetadata({
       onChainChannelCount: 42,
       onChainGhostCount: 2,
@@ -35,9 +38,9 @@ describe('Reputation Integration', () => {
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.onChainChannelCount).toBe(42);
-    expect(decoded.onChainGhostCount).toBe(2);
-    // Verify other fields are still correct
+    expect(decoded.onChainChannelCount).toBeUndefined();
+    expect(decoded.onChainGhostCount).toBeUndefined();
+    // Core fields still round-trip.
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
     expect(decoded.timestamp).toBe(original.timestamp);
@@ -45,8 +48,7 @@ describe('Reputation Integration', () => {
     expect(decoded.providers[0]!.provider).toBe('anthropic');
   });
 
-  it('should decode metadata without reputation fields (backward compat)', () => {
-    // Encode without reputation fields
+  it('decodes metadata that never carried reputation fields', () => {
     const original = makeMetadata();
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
@@ -59,25 +61,26 @@ describe('Reputation Integration', () => {
     expect(decoded.timestamp).toBe(original.timestamp);
   });
 
-  it('should populate PeerInfo from metadata reputation', () => {
-    const metadata: PeerMetadata = makeMetadata({
+  it('buyer populates PeerInfo on-chain fields from contract reads, not metadata', () => {
+    // Sanity-check the shape: `PeerInfo` still exposes on-chain fields, but
+    // the buyer sets them from AntseedChannels.getAgentStats in node.ts
+    // rather than copying them from signed peer metadata.
+    const peerInfo: PeerInfo = {
+      peerId: 'a'.repeat(40) as any,
+      lastSeen: Date.now(),
+      providers: ['anthropic'],
+      publicAddress: '1.2.3.4:6882',
       onChainChannelCount: 100,
       onChainGhostCount: 1,
-    });
-
-    // Simulate what _lookupResultToPeerInfo does
-    const peerInfo: PeerInfo = {
-      peerId: metadata.peerId,
-      lastSeen: metadata.timestamp,
-      providers: metadata.providers.map((p) => p.provider),
-      publicAddress: '1.2.3.4:6882',
-      onChainChannelCount: metadata.onChainChannelCount,
-      onChainGhostCount: metadata.onChainGhostCount,
-      trustScore: metadata.onChainChannelCount,
+      onChainTotalVolumeUsdcMicros: 5_000_000,
+      onChainLastSettledAtSec: 1_700_000_000,
+      trustScore: 100,
     };
 
     expect(peerInfo.onChainChannelCount).toBe(100);
     expect(peerInfo.onChainGhostCount).toBe(1);
+    expect(peerInfo.onChainTotalVolumeUsdcMicros).toBe(5_000_000);
+    expect(peerInfo.onChainLastSettledAtSec).toBe(1_700_000_000);
     expect(peerInfo.trustScore).toBe(100);
   });
 
