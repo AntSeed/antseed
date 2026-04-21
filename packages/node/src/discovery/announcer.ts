@@ -17,11 +17,8 @@ import { METADATA_VERSION } from "./peer-metadata.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
-import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
-import type { StakingClient } from "../payments/evm/staking-client.js";
-import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
 
 export interface SellerContractConfig {
@@ -62,9 +59,6 @@ export interface AnnouncerConfig {
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   trustScore?: number;
-  paymentsEnabled?: boolean;
-  channelsClient?: ChannelsClient;
-  stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
@@ -99,7 +93,7 @@ export class PeerAnnouncer {
   }
 
   async announce(): Promise<void> {
-    const metadata = await this._buildSignedMetadata(true);
+    const metadata = await this._buildSignedMetadata();
     this._latestMetadata = metadata;
 
     const failures = await this._announceTopics(metadata.providers);
@@ -116,7 +110,7 @@ export class PeerAnnouncer {
    * Useful for high-frequency fields like current provider load.
    */
   async refreshMetadata(): Promise<void> {
-    this._latestMetadata = await this._buildSignedMetadata(false);
+    this._latestMetadata = await this._buildSignedMetadata();
   }
 
   startPeriodicAnnounce(): void {
@@ -190,7 +184,7 @@ export class PeerAnnouncer {
     return cfg.sellerContract.toLowerCase().replace(/^0x/, "");
   }
 
-  private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
+  private async _buildSignedMetadata(): Promise<PeerMetadata> {
     const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
         defaults: {
@@ -239,29 +233,9 @@ export class PeerAnnouncer {
       metadata.trustScore = this.config.trustScore;
     }
 
-    if (this.config.paymentsEnabled) {
-      if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
-        try {
-          // When the peer is fronted by a seller contract (e.g. DiemStakingProxy),
-          // the on-chain seller is the proxy — stake and channel stats live under
-          // that address, not the peer's wallet.
-          const rawSellerAddress = this.config.sellerContract?.sellerContract
-            ?? this.config.identity.wallet.address;
-          const sellerAddress = getAddress(
-            rawSellerAddress.startsWith("0x") ? rawSellerAddress : "0x" + rawSellerAddress,
-          );
-          const agentId = await this.config.stakingClient.getAgentId(sellerAddress);
-          const stats = await this.config.channelsClient.getAgentStats(agentId);
-          metadata.onChainChannelCount = stats.channelCount;
-          metadata.onChainGhostCount = stats.ghostCount;
-        } catch {
-          // Channels/staking contract lookup failed — skip on-chain stats for this cycle
-        }
-      } else if (this._latestMetadata) {
-        metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
-        metadata.onChainGhostCount = this._latestMetadata.onChainGhostCount;
-      }
-    }
+    // On-chain stats (channel/ghost count, volume, last settled) are intentionally
+    // NOT announced here — a seller could lie about them. Buyers read them directly
+    // from `AntseedChannels.getAgentStats` during peer discovery (see node.ts).
 
     const sellerContract = this._normalizedSellerContract();
     if (sellerContract) {

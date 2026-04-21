@@ -36,12 +36,10 @@ import {
   rewriteServiceInBody,
   isConnectionChurnError,
   isConnectionHealthy,
-  isLoopbackPeer,
 } from './request-utils.js'
 import {
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
-  getPreferredPeerIdHint,
   resolvePeerRoutePlan,
   selectCandidatePeersForRouting,
   type CandidatePeerRouteSelection,
@@ -261,6 +259,21 @@ export function parsePersistedPeers(
     if (typeof entry.maxConcurrency === 'number') {
       peer.maxConcurrency = entry.maxConcurrency
     }
+    if (typeof entry.onChainChannelCount === 'number' && Number.isFinite(entry.onChainChannelCount)) {
+      peer.onChainChannelCount = entry.onChainChannelCount
+    }
+    if (typeof entry.onChainGhostCount === 'number' && Number.isFinite(entry.onChainGhostCount)) {
+      peer.onChainGhostCount = entry.onChainGhostCount
+    }
+    if (typeof entry.onChainTotalVolumeUsdcMicros === 'number' && Number.isFinite(entry.onChainTotalVolumeUsdcMicros)) {
+      peer.onChainTotalVolumeUsdcMicros = entry.onChainTotalVolumeUsdcMicros
+    }
+    if (typeof entry.onChainLastSettledAtSec === 'number' && Number.isFinite(entry.onChainLastSettledAtSec)) {
+      peer.onChainLastSettledAtSec = entry.onChainLastSettledAtSec
+    }
+    if (typeof entry.onChainStatsFetchedAt === 'number' && Number.isFinite(entry.onChainStatsFetchedAt)) {
+      peer.onChainStatsFetchedAt = entry.onChainStatsFetchedAt
+    }
     peers.push(peer)
   }
   return peers
@@ -294,8 +307,6 @@ export class BuyerProxy {
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
-  private _lastSuccessfulPeerId: string | null = null
-  private _lastSuccessfulPeerByRouteKey = new Map<string, string>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -521,11 +532,27 @@ export class BuyerProxy {
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         maxConcurrency: p.maxConcurrency ?? 0,
+        currentLoad: p.currentLoad ?? null,
+        // On-chain stats read authoritatively by the buyer from AntseedChannels.
+        // Persisted so `antseed network browse` can render richer UI without a
+        // fresh DHT + RPC round-trip.
+        onChainChannelCount: p.onChainChannelCount ?? null,
+        onChainGhostCount: p.onChainGhostCount ?? null,
+        onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
+        onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
+        onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
     })
-    this._mergeStateFile({ discoveredPeers: peers, peersUpdatedAt: Date.now() })
+    const onChainRefreshedAt = this._cachedPeers
+      .map((p) => p.onChainStatsFetchedAt ?? 0)
+      .reduce((max, v) => (v > max ? v : max), 0)
+    this._mergeStateFile({
+      discoveredPeers: peers,
+      peersUpdatedAt: Date.now(),
+      ...(onChainRefreshedAt > 0 ? { onChainStatsRefreshedAt: onChainRefreshedAt } : {}),
+    })
   }
 
   private _evictPeer(peerId: string): void {
@@ -539,66 +566,17 @@ export class BuyerProxy {
     }
   }
 
-  private _rememberSuccessfulPeer(routeKey: string, peerId: string): void {
-    this._lastSuccessfulPeerId = peerId
-    this._lastSuccessfulPeerByRouteKey.set(routeKey, peerId)
-    // Keep map bounded to prevent unbounded growth from long-running channels.
-    const MAX_ROUTE_HISTORY = 200
-    if (this._lastSuccessfulPeerByRouteKey.size > MAX_ROUTE_HISTORY) {
-      const oldestKey = this._lastSuccessfulPeerByRouteKey.keys().next().value
-      if (typeof oldestKey === 'string') {
-        this._lastSuccessfulPeerByRouteKey.delete(oldestKey)
-      }
-    }
-
-    // Stamp the cached peer's `lastReachedAt` so carry-forward can trust local
-    // transport liveness even when the DHT record grows stale. Persist so the
-    // signal survives restarts.
+  /**
+   * Stamp `lastReachedAt` on a peer after a successful request so the
+   * carry-forward heuristic can trust local transport liveness even when the
+   * DHT record grows stale. Persisted so the signal survives restarts.
+   */
+  private _rememberSuccessfulPeer(peerId: string): void {
     const cached = this._cachedPeers.find((p) => p.peerId === peerId)
     if (cached) {
       cached.lastReachedAt = Date.now()
       this._persistPeersToState()
     }
-  }
-
-  private _forgetSuccessfulPeer(routeKey: string, peerId: string): void {
-    const rememberedForRoute = this._lastSuccessfulPeerByRouteKey.get(routeKey)
-    if (rememberedForRoute === peerId) {
-      this._lastSuccessfulPeerByRouteKey.delete(routeKey)
-    }
-    if (this._lastSuccessfulPeerId === peerId) {
-      const stillUsedByOtherRoute = Array.from(this._lastSuccessfulPeerByRouteKey.values())
-        .some((rememberedPeerId) => rememberedPeerId === peerId)
-      if (!stillUsedByOtherRoute) {
-        this._lastSuccessfulPeerId = null
-      }
-    }
-  }
-
-  private _buildRouteKey(
-    path: string,
-    requestProtocol: ServiceApiProtocol | null,
-    requestedService: string | null,
-    explicitProvider: string | null,
-  ): string {
-    const normalizedPath = path.split('?')[0]?.trim().toLowerCase() ?? '/'
-    const pathGroup = (
-      normalizedPath.startsWith('/v1/messages')
-        ? '/v1/messages'
-        : normalizedPath.startsWith('/v1/chat/completions')
-          ? '/v1/chat/completions'
-          : normalizedPath.startsWith('/v1/responses')
-            ? '/v1/responses'
-            : normalizedPath.startsWith('/v1/models')
-              ? '/v1/models'
-              : normalizedPath
-    )
-    return [
-      pathGroup,
-      requestProtocol ?? 'unknown-protocol',
-      requestedService ?? 'unknown-service',
-      explicitProvider ?? 'auto-provider',
-    ].join('|')
   }
 
   private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
@@ -889,6 +867,29 @@ export class BuyerProxy {
       }
     })
 
+    const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
+    const requestedService = extractRequestedService(serializedReq)
+    log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
+    const explicitProvider = getExplicitProviderOverride(serializedReq)
+    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)
+    log(`Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'}`)
+
+    // Auto peer selection is disabled. Every request MUST target a specific
+    // peer, either via the per-request `x-antseed-pin-peer` header or via a
+    // session-wide pin set by `antseed buyer connection set --peer <peerId>`.
+    if (!explicitPeerId) {
+      log('Request rejected: no peer pinned')
+      res.writeHead(409, { 'content-type': 'text/plain' })
+      res.end(
+        'No peer pinned. Auto-selection is disabled.\n'
+        + 'Pin a peer one of two ways:\n'
+        + '  • Per-request header:   x-antseed-pin-peer: <peerId>    (40-char hex EVM address)\n'
+        + '  • Session pin:          antseed buyer connection set --peer <peerId>\n'
+        + 'Discover peers with:       antseed network browse\n',
+      )
+      return
+    }
+
     // Discover peers
     const peers = await this._getPeers()
     if (peers.length === 0) {
@@ -898,16 +899,6 @@ export class BuyerProxy {
       return
     }
 
-    const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
-    const requestedService = extractRequestedService(serializedReq)
-    log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
-    const explicitProvider = getExplicitProviderOverride(serializedReq)
-    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)
-    const preferredPeerId = getPreferredPeerIdHint(serializedReq)
-    log(
-      `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,
-    )
-    const routeKey = this._buildRouteKey(serializedReq.path, requestProtocol, requestedService, explicitProvider)
     const selectPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection => selectCandidatePeersForRouting(
       candidateSources,
       requestProtocol,
@@ -954,188 +945,58 @@ export class BuyerProxy {
 
     const router = this._node.router
 
-    if (explicitPeerId) {
-      // Pinned peers must use fresh discovery data so IP changes are picked up.
-      // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
-      // this request, the cache is already fresh and cacheAgeMs will be < TTL.
-      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
-      if (cacheAgeMs > this._peerCacheTtlMs) {
-        await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
-      }
+    // Pinned-peer dispatch (the only path — auto-selection is disabled).
+    // Pinned peers must use fresh discovery data so IP changes are picked up.
+    // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
+    // this request, the cache is already fresh and cacheAgeMs will be < TTL.
+    const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+    if (cacheAgeMs > this._peerCacheTtlMs) {
+      await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
+    }
 
-      let pinnedRoutingPeers = routingPeers
-      let pinnedRoutePlans = routingPlans
-      let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+    let pinnedRoutingPeers = routingPeers
+    let pinnedRoutePlans = routingPlans
+    let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
 
-      if (!selectedPeer) {
-        await refreshPeerSelection(`pinned peer ${explicitPeerId.slice(0, 12)}... not in candidate set`)
-        pinnedRoutingPeers = routingPeers
-        pinnedRoutePlans = routingPlans
-        selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
-      }
+    if (!selectedPeer) {
+      await refreshPeerSelection(`pinned peer ${explicitPeerId.slice(0, 12)}... not in candidate set`)
+      pinnedRoutingPeers = routingPeers
+      pinnedRoutePlans = routingPlans
+      selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+    }
 
-      if (!selectedPeer) {
-        const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag'
-        const peerDiscovered = discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
-        const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
-        const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
-        const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
-        const mismatchHint = peerDiscovered
-          ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${serviceLabel}).`
-          : 'Peer is not discoverable right now.'
-        log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
-        res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request. ${mismatchHint}`)
-        return
-      }
-      log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
-      const result = await this._dispatchToPeer(
-        res,
-        serializedReq,
-        selectedPeer,
-        routeKey,
-        pinnedRoutePlans,
-        requestProtocol,
-        requestedService,
-        explicitProvider,
-        router,
-        RETRYABLE_STATUS_CODES,
-        clientAbortController.signal,
-      )
-      if (!result.done) {
-        this._forgetSuccessfulPeer(routeKey, selectedPeer.peerId)
-        // Pinned peer returned a retryable error, but we don't retry — send error to client
-        res.writeHead(result.statusCode, result.responseHeaders)
-        res.end(result.responseBody)
-      }
+    if (!selectedPeer) {
+      const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
+      const peerDiscovered = discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+      const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
+      const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
+      const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
+      const mismatchHint = peerDiscovered
+        ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${serviceLabel}).`
+        : 'Peer is not discoverable right now.'
+      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request. ${mismatchHint}`)
       return
     }
-
-    // Non-pinned: retry with failover on provider errors
-    const MAX_ATTEMPTS = 3
-    const triedPeerIds = new Set<string>()
-    let lastStatusCode = 502
-    let lastResponseBody: Buffer | null = null
-    let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const availableCandidates = routingPeers.filter((peer) => !triedPeerIds.has(peer.peerId))
-      if (availableCandidates.length === 0) break
-
-      let selectedPeer: PeerInfo | null = null
-
-      // Prefer a recently successful peer for the same request route.
-      if (attempt === 0) {
-        const routePreferredPeerId = this._lastSuccessfulPeerByRouteKey.get(routeKey)
-        if (routePreferredPeerId) {
-          const remembered = availableCandidates.find((peer) => peer.peerId === routePreferredPeerId) ?? null
-          if (remembered) {
-            selectedPeer = remembered
-            log(`Reusing last successful route peer ${selectedPeer.peerId.slice(0, 12)}...`)
-          }
-        }
-      }
-
-      // Fallback to the latest globally successful peer.
-      if (!selectedPeer && attempt === 0 && this._lastSuccessfulPeerId && !requestedService) {
-        const remembered = availableCandidates.find((peer) => peer.peerId === this._lastSuccessfulPeerId) ?? null
-        if (remembered) {
-          selectedPeer = remembered
-          log(`Reusing last successful peer ${selectedPeer.peerId.slice(0, 12)}...`)
-        }
-      }
-
-      // Soft peer affinity: try caller-preferred peer first, but allow normal fallback.
-      if (!selectedPeer && attempt === 0 && preferredPeerId) {
-        const preferred = availableCandidates.find((peer) => peer.peerId.toLowerCase() === preferredPeerId) ?? null
-        if (preferred) {
-          selectedPeer = preferred
-          log(`Preferring requested peer ${selectedPeer.peerId.slice(0, 12)}...`)
-        }
-      }
-
-      // Prefer local peers on first attempt
-      if (!selectedPeer && attempt === 0) {
-        const localPeers = availableCandidates.filter((peer) => isLoopbackPeer(peer))
-        if (localPeers.length > 0) {
-          selectedPeer = router
-            ? router.selectPeer(serializedReq, localPeers)
-            : localPeers[0] ?? null
-          if (selectedPeer) {
-            log(`Preferring local peer ${selectedPeer.peerId.slice(0, 12)}... @ ${selectedPeer.publicAddress ?? 'unknown'}`)
-          }
-        }
-      }
-
-      // Prefer peers that can serve the request protocol directly without adapter transform.
-      if (!selectedPeer && requestProtocol === 'anthropic-messages') {
-        const shouldPreferDirect = !requestedService || /claude|anthropic/i.test(requestedService)
-        if (shouldPreferDirect) {
-          const directPeers = availableCandidates.filter((peer) => {
-            const plan = routingPlans.get(peer.peerId)
-            if (!plan) return false
-            return !plan.selection || !plan.selection.requiresTransform
-          })
-          if (directPeers.length > 0) {
-            selectedPeer = router
-              ? router.selectPeer(serializedReq, directPeers)
-              : directPeers[0] ?? null
-            if (selectedPeer) {
-              log(`Preferring direct protocol peer ${selectedPeer.peerId.slice(0, 12)}...`)
-            }
-          }
-        }
-      }
-
-      if (!selectedPeer) {
-        selectedPeer = router
-          ? (router.selectPeer(serializedReq, availableCandidates) ?? availableCandidates[0] ?? null)
-          : availableCandidates[0] ?? null
-      }
-
-      if (!selectedPeer) break
-
-      triedPeerIds.add(selectedPeer.peerId)
-
-      const result = await this._dispatchToPeer(
-        res,
-        serializedReq,
-        selectedPeer,
-        routeKey,
-        routingPlans,
-        requestProtocol,
-        requestedService,
-        explicitProvider,
-        router,
-        RETRYABLE_STATUS_CODES,
-        clientAbortController.signal,
-      )
-
-      if (result.done) return
-
-      this._forgetSuccessfulPeer(routeKey, selectedPeer.peerId)
-      // Request failed with a retryable error — try another peer
-      lastStatusCode = result.statusCode
-      lastResponseBody = result.responseBody
-      lastResponseHeaders = result.responseHeaders
-
-      if (attempt < MAX_ATTEMPTS - 1) {
-        log(`Peer ${selectedPeer.peerId.slice(0, 12)}... returned ${result.statusCode}, retrying with another peer (attempt ${attempt + 2}/${MAX_ATTEMPTS})`)
-      }
-    }
-
-    // All retries exhausted or no peers available
-    if (!res.headersSent) {
-      if (lastResponseBody) {
-        log(`All ${triedPeerIds.size} peer(s) failed, returning last error (${lastStatusCode})`)
-        res.writeHead(lastStatusCode, lastResponseHeaders)
-        res.end(lastResponseBody)
-      } else {
-        const diagnostics = this._formatPeerSelectionDiagnostics(routingPeers)
-        log('No peers available for request')
-        res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`Router could not select a suitable peer. ${diagnostics}`)
-      }
+    log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
+    const result = await this._dispatchToPeer(
+      res,
+      serializedReq,
+      selectedPeer,
+      pinnedRoutePlans,
+      requestProtocol,
+      requestedService,
+      explicitProvider,
+      router,
+      RETRYABLE_STATUS_CODES,
+      clientAbortController.signal,
+    )
+    if (!result.done) {
+      // Pinned peer returned a retryable error. We never retry against another
+      // peer — auto-selection is disabled — so surface the error to the client.
+      res.writeHead(result.statusCode, result.responseHeaders)
+      res.end(result.responseBody)
     }
   }
 
@@ -1148,7 +1009,6 @@ export class BuyerProxy {
     res: ServerResponse,
     serializedReq: SerializedHttpRequest,
     selectedPeer: PeerInfo,
-    routeKey: string,
     routePlanByPeerId: Map<string, PeerProtocolRoutePlan>,
     requestProtocol: ServiceApiProtocol | null,
     requestedService: string | null,
@@ -1297,7 +1157,7 @@ export class BuyerProxy {
         if (streamed) {
           // Headers already sent to client, can't retry
           if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-            this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
+            this._rememberSuccessfulPeer(selectedPeer.peerId)
           }
           if (!res.writableEnded) {
             res.end()
@@ -1324,7 +1184,7 @@ export class BuyerProxy {
         }
 
         if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-          this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
+          this._rememberSuccessfulPeer(selectedPeer.peerId)
         }
         res.writeHead(responseForClient.statusCode, responseHeaders)
         res.end(Buffer.from(responseForClient.body))
@@ -1375,7 +1235,7 @@ export class BuyerProxy {
         }
 
         if (response.statusCode >= 200 && response.statusCode < 400) {
-          this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
+          this._rememberSuccessfulPeer(selectedPeer.peerId)
         }
         // Forward response headers and body to the HTTP client
         res.writeHead(response.statusCode, responseHeaders)
@@ -1447,7 +1307,6 @@ export class BuyerProxy {
         // Evict only the failing peer — others remain usable.
         this._evictPeer(selectedPeer.peerId)
       }
-      this._forgetSuccessfulPeer(routeKey, selectedPeer.peerId)
 
       if (res.headersSent) {
         // Headers already sent (streaming), can't retry

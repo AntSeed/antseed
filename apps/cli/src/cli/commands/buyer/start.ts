@@ -305,7 +305,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
-      if (pinnedPeerId) console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
+      if (pinnedPeerId) {
+        console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
+      } else {
+        console.log(chalk.yellow('  pinned peer: none — auto-selection is disabled, requests will 409 until a peer is pinned'))
+        console.log(chalk.dim('    Pin a peer with:  antseed network browse → antseed buyer connection set --peer <peerId>'))
+        console.log(chalk.dim('    Or per-request:   x-antseed-pin-peer: <peerId> header'))
+      }
       console.log('')
 
       const node = new AntseedNode({

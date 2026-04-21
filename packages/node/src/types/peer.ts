@@ -82,10 +82,32 @@ export interface PeerInfo {
   currentLoad?: number;
   /** Computed trust score (0-100) from the trust engine. */
   trustScore?: number;
-  /** On-chain settled channel count from AntseedChannels. */
+  /**
+   * On-chain settled channel count from `AntseedChannels.getAgentStats`.
+   * Read by the buyer directly from the chain — never trusted from peer metadata.
+   */
   onChainChannelCount?: number;
-  /** On-chain ghost count (provider went silent) from AntseedChannels. */
+  /**
+   * On-chain ghost count (provider went silent) from `AntseedChannels.getAgentStats`.
+   * Read by the buyer directly from the chain — never trusted from peer metadata.
+   */
   onChainGhostCount?: number;
+  /**
+   * On-chain cumulative USDC volume (in micro-USDC, i.e. base units with 6 decimals)
+   * from `AntseedChannels.getAgentStats.totalVolumeUsdc`. Number-safe up to ~9 trillion µUSDC
+   * (~9M USDC), which fits JS Number precision. Read by the buyer from chain.
+   */
+  onChainTotalVolumeUsdcMicros?: number;
+  /**
+   * Unix seconds of the most recent on-chain settlement for this peer,
+   * from `AntseedChannels.getAgentStats.lastSettledAt`. Read by the buyer from chain.
+   */
+  onChainLastSettledAtSec?: number;
+  /**
+   * Unix ms when the buyer last refreshed on-chain stats for this peer.
+   * Used to throttle repeat `getAgentStats` calls across discovery cycles.
+   */
+  onChainStatsFetchedAt?: number;
   /** Full peer metadata, if available (set after metadata resolution). */
   metadata?: PeerMetadata;
 }

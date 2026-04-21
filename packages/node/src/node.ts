@@ -478,12 +478,13 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Verify claimed on-chain stats against actual contract data.
-    //
-    // Concurrency is capped so a wildcard DHT lookup returning hundreds of
-    // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
-    // isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
-    // will rate-limit past ~10-20 concurrent calls; we stay well under that.
+    // Populate on-chain stats by reading AntseedChannels directly. Seller
+    // metadata is untrusted for these fields — a malicious peer could
+    // announce inflated channel/ghost/volume numbers — so the contract is the
+    // only source of truth. Each peer costs one resolver + getAgentId +
+    // getAgentStats round-trip; concurrency is capped so wildcard DHT lookups
+    // returning hundreds of peers don't blow through RPC rate limits
+    // (~10-20 concurrent calls is the typical public-endpoint ceiling).
     if (this._channelsClient && this._stakingClient) {
       const channelsClient = this._channelsClient;
       const stakingClient = this._stakingClient;
@@ -491,7 +492,18 @@ export class AntseedNode extends EventEmitter {
       const DISCOVERY_RPC_CONCURRENCY = 8;
       const queue = peers.slice();
       const workers: Array<Promise<void>> = [];
+      // Throttle on-chain reads across rapid discovery cycles. 60s is short
+      // enough that freshness feels real-time in the UI, and long enough that
+      // back-to-back `discoverPeers()` calls don't hammer the RPC endpoint.
+      const ON_CHAIN_STATS_TTL_MS = 60_000;
+      const nowMs = Date.now();
       const verifyOne = async (p: PeerInfo): Promise<void> => {
+        if (
+          typeof p.onChainStatsFetchedAt === 'number'
+          && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
+        ) {
+          return;
+        }
         try {
           const evmAddress = resolver
             ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
@@ -500,8 +512,17 @@ export class AntseedNode extends EventEmitter {
           const stats = await channelsClient.getAgentStats(agentId);
           p.onChainChannelCount = stats.channelCount;
           p.onChainGhostCount = stats.ghostCount;
+          // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
+          // narrowing to Number — ~9M USDC fits Number.MAX_SAFE_INTEGER.
+          const volumeMicros = stats.totalVolumeUsdc;
+          p.onChainTotalVolumeUsdcMicros = volumeMicros <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(volumeMicros)
+            : Number.MAX_SAFE_INTEGER;
+          p.onChainLastSettledAtSec = stats.lastSettledAt;
+          p.onChainStatsFetchedAt = Date.now();
         } catch {
-          // Per-peer verification failure — keep claimed metadata.
+          // Per-peer verification failure — leave fields undefined so buyers can
+          // see "—" in the UI instead of stale seller-claimed values.
         }
       };
       for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
@@ -977,8 +998,6 @@ export class AntseedNode extends EventEmitter {
         ),
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
-        ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
-        ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
@@ -1461,8 +1480,10 @@ export class AntseedNode extends EventEmitter {
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
-      onChainChannelCount: result.metadata.onChainChannelCount,
-      onChainGhostCount: result.metadata.onChainGhostCount,
+      // On-chain stats are intentionally NOT copied from signed peer metadata:
+      // a malicious seller could announce inflated channel/volume numbers.
+      // They are populated exclusively by the buyer-side verification loop
+      // above (`verifyOne`), which reads `AntseedChannels.getAgentStats` directly.
     };
   }
 

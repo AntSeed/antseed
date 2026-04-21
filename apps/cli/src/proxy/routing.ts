@@ -32,14 +32,6 @@ export function getExplicitPeerIdOverride(
   return sessionPinnedPeerId?.toLowerCase() ?? null
 }
 
-export function getPreferredPeerIdHint(request: SerializedHttpRequest): string | null {
-  const header = request.headers['x-antseed-prefer-peer']?.trim().toLowerCase()
-  if (!header || header.length === 0) {
-    return null
-  }
-  return header
-}
-
 function getPeerProviderProtocols(
   peer: PeerInfo,
   provider: string,
