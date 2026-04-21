@@ -87,7 +87,11 @@ if (existsSync(cliDestDir)) {
 mkdirSync(path.dirname(bundleOutput), { recursive: true });
 
 console.log('[prepare-dist] Bundling CLI with esbuild...');
-execFileSync(esbuildEntry, [
+// Invoke via `node` rather than exec'ing the esbuild JS entry directly:
+// on Windows execFileSync can't run a shebanged JS file (no .exe/.cmd).
+// process.execPath works on all platforms.
+execFileSync(process.execPath, [
+  esbuildEntry,
   'src/cli/index.ts',
   '--bundle',
   '--platform=node',
@@ -126,9 +130,17 @@ const betterSqlite3Dir = path.resolve(appDir, '..', '..', 'node_modules', 'bette
 // Install the prebuild for the current arch — electron-builder handles
 // cross-arch builds by running the pack step separately for each arch,
 // and better-sqlite3 prebuilds are arch-specific.
+//
+// Resolve prebuild-install's JS entry from better-sqlite3's own deps and
+// invoke it via `node` rather than via `npx`: on Windows `npx` is `npx.cmd`
+// which execFileSync can't run without a shell, and shelling out complicates
+// argument escaping. process.execPath works identically on all platforms.
+const prebuildInstallEntry = createRequire(
+  path.join(betterSqlite3Dir, 'package.json'),
+).resolve('prebuild-install/bin.js');
 console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${process.arch})...`);
-execFileSync('npx', [
-  'prebuild-install',
+execFileSync(process.execPath, [
+  prebuildInstallEntry,
   '--runtime', 'electron',
   '--target', electronVersion,
   '--arch', process.arch,
