@@ -24,19 +24,37 @@ Ask the user what kind of version bump they want:
 
 ### 2. Bump all package versions at once
 
-Use pnpm to bump all workspace package versions in a single command. **Never edit each package.json manually.**
+Use pnpm to bump all publishable workspace package versions in a single command. **Never edit each package.json manually.**
 
 ```bash
-# Bump all 11 publishable packages at once
-pnpm -r --filter './packages/*' --filter './plugins/*' --filter '@antseed/dashboard' --filter '@antseed/cli' exec npm version <patch|minor|major> --no-git-tag-version
+# Bump all 15 publishable packages at once
+pnpm -r --filter './packages/*' \
+       --filter './plugins/*' \
+       --filter '@antseed/cli' \
+       --filter '@antseed/network-stats' \
+       --filter '@antseed/payments' \
+  exec npm version <patch|minor|major> --no-git-tag-version
 ```
 
-This bumps: `@antseed/node`, `@antseed/provider-core`, `@antseed/router-core`, all plugins, `@antseed/dashboard`, and `@antseed/cli`. Private packages (e2e, desktop, website) are excluded by the filter.
+This bumps everything under `packages/*` and `plugins/*`, plus the three publishable apps (`@antseed/cli`, `@antseed/network-stats`, `@antseed/payments`). Private packages (`e2e`, `@antseed/desktop`, `@antseed/website`, `@antseed/diem-staking`) are excluded.
+
+Before running, sanity-check which apps are public vs private (the set occasionally changes):
+
+```bash
+for d in apps/*/; do node -e "const p=require('./$d/package.json'); console.log((p.private?'[PRIV]':'[PUB] ')+p.name+'@'+p.version)"; done
+```
+
+If a new public app appears, add it to the filter list above and update this skill.
 
 Verify the bump worked:
 
 ```bash
-pnpm -r --filter './packages/*' --filter './plugins/*' --filter '@antseed/dashboard' --filter '@antseed/cli' exec -- node -p 'require("./package.json").name + "@" + require("./package.json").version'
+pnpm -r --filter './packages/*' \
+       --filter './plugins/*' \
+       --filter '@antseed/cli' \
+       --filter '@antseed/network-stats' \
+       --filter '@antseed/payments' \
+  exec -- node -p 'require("./package.json").name + "@" + require("./package.json").version'
 ```
 
 ### 3. Build all packages
@@ -64,7 +82,7 @@ Verify in the output:
 pnpm -r publish --no-git-checks --access public
 ```
 
-All 11 public packages publish in dependency order. If a package version already exists on npm, pnpm skips it gracefully.
+All 15 public packages publish in dependency order. If a package version already exists on npm, pnpm skips it gracefully.
 
 ### 6. Verify installation
 
@@ -90,18 +108,20 @@ chore: bump all packages to v<NEW_VERSION>
 
 - **Always use `pnpm publish`**, never `npm publish`. Only pnpm knows how to resolve `workspace:*` references to real version numbers in the published tarball.
 - The root `package.json` has convenience scripts: `pnpm run publish:all` (build + publish) and `pnpm run publish:dry` (build + dry-run).
-- The `e2e`, `@antseed/desktop`, and `@antseed/website` packages are private and are automatically skipped.
+- The `e2e`, `@antseed/desktop`, `@antseed/website`, and `@antseed/diem-staking` packages are private and are automatically skipped.
 - All publishable packages have `"files": ["dist"]` to keep tarballs clean.
-- The `@antseed/dashboard` package includes `"files": ["dist", "dist-web"]` for the bundled web frontend.
 - The `@antseed/node` package includes `"files": ["dist", "scripts"]` for the postinstall patch script.
+- If the `pnpm run build` step fails inside `@antseed/desktop` (e.g. native-module rebuild OOM), it does NOT block publishing — desktop is private, and all publishable packages build in earlier tiers. Just confirm each publishable package has a fresh `dist/` before proceeding to dry-run.
 
-## Package dependency order (for reference)
+## Publishable packages (for reference)
 
 ```
-tier0: @antseed/node
-tier1: @antseed/provider-core, @antseed/router-core
-tier2: provider-anthropic, provider-claude-code, provider-claude-oauth,
-       provider-openai, provider-local-llm, router-local
-tier3: @antseed/dashboard
-tier4: @antseed/cli
+packages/*   @antseed/node, @antseed/api-adapter, @antseed/ant-agent,
+             @antseed/provider-core, @antseed/router-core
+plugins/*    provider-anthropic, provider-claude-code, provider-claude-oauth,
+             provider-openai, provider-openai-responses, provider-local-llm,
+             router-local
+apps/*       @antseed/cli, @antseed/network-stats, @antseed/payments
 ```
+
+Private (not published): `e2e`, `@antseed/desktop`, `@antseed/website`, `@antseed/diem-staking`.
