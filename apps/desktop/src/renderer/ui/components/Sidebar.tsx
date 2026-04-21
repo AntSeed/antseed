@@ -314,6 +314,7 @@ function PeerGroupSection({
                 onClick={() => onSelectConv(id)}
               >
                 <div className={styles.chatConvTop}>
+                  <div className={styles.chatConvPeer}>{title}</div>
                   {isRunning && (
                     <span
                       className={styles.chatConvRunningDot}
@@ -322,7 +323,6 @@ function PeerGroupSection({
                       title="Request in progress"
                     />
                   )}
-                  <div className={styles.chatConvPeer}>{title}</div>
                   <div className={styles.chatConvRight}>
                     <button
                       className={styles.chatConvMenuBtn}
