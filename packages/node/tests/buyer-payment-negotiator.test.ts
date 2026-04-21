@@ -435,6 +435,95 @@ describe('BuyerPaymentNegotiator', () => {
     });
   });
 
+  describe('lock failure diagnostics (issue #333)', () => {
+    // These tests cover the enriched error messages that surface likely causes
+    // when the seller fails to confirm a payment lock. The enrichment is
+    // intentionally built from data the buyer already has locally (the reserve
+    // amount it authorized, the seller's minBudgetPerRequest) — no extra RPC
+    // calls to the buyer's (typically less reliable) endpoint. A follow-up
+    // plumbs a structured AuthNack from the seller so the buyer can render the
+    // exact revert reason and a fresh deposits snapshot instead.
+
+    it('enriches "Lock rejected" errors with the reserve ceiling hint and generic causes', async () => {
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.isLockRejected as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      let message = '';
+      try {
+        await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+
+      expect(message).toContain('Lock rejected by seller');
+      expect(message).toContain('Likely causes:');
+      // suggestedAmount=100_000 → 0.1 USDC reserve ceiling hint.
+      expect(message).toContain('reserve ceiling the seller will lock (0.1 USDC)');
+      expect(message).toContain("reserve() reverts");
+      expect(message).toContain('antseed buyer status');
+      expect(message).toContain('antseed buyer deposit');
+      expect(message).toContain('overloaded or gated on subscription');
+    });
+
+    it('enriches "Lock confirmation timed out" errors with likely causes', async () => {
+      vi.useFakeTimers();
+      try {
+        bufferPaymentRequired(negotiator, peer.peerId, conn);
+        // Seller neither confirms nor rejects — the 30s timeout fires.
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+        (bpm.isLockRejected as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+        const pending = negotiator.handle402(make402Response(), peer, conn, makeRequest());
+        // Suppress unhandled-rejection noise before the timers advance
+        pending.catch(() => undefined);
+
+        // Allow microtasks (handle402's internal balance check promise) to flush.
+        await vi.advanceTimersByTimeAsync(1);
+        // Advance past the 30s lock-confirmation deadline.
+        await vi.advanceTimersByTimeAsync(31_000);
+
+        await expect(pending).rejects.toThrow(/Lock confirmation timed out for seller/);
+        await expect(pending).rejects.toThrow(/Likely causes:/);
+        await expect(pending).rejects.toThrow(/reserve ceiling the seller will lock/);
+        await expect(pending).rejects.toThrow(/overloaded or gated on subscription/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not call the buyer RPC during or after a failed lock confirmation', async () => {
+      // The whole point of the zero-RPC design: surface the hint from local
+      // context (reserve, minBudget) without calling the buyer's less-reliable
+      // RPC endpoint. The only balance check that should ever fire is the
+      // pre-existing handle402 "available <= 0" gate, which runs once up front.
+      const balanceSpy = vi.fn().mockResolvedValue({
+        available: 1_000_000n,
+        reserved: 0n,
+        lastActivityAt: 0n,
+      });
+      depositsClient = { getBuyerBalance: balanceSpy } as unknown as DepositsClient;
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        channelsClient,
+        channelStore,
+        config,
+        emitter,
+      );
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.isLockRejected as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      await expect(
+        negotiator.handle402(make402Response(), peer, conn, makeRequest()),
+      ).rejects.toThrow(/Lock rejected/);
+
+      // Exactly one call — the pre-existing insufficient-credits gate. No extra
+      // RPC load from the enriched hint, and no pre-flight reserve-ceiling check.
+      expect(balanceSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('cost tracking', () => {
     it('estimateCostFromResponse stores estimated cost', () => {
       const response: SerializedHttpResponse = {
