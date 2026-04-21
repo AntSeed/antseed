@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed Desktop",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
@@ -33,6 +33,7 @@
     "dist:mac": "npm run build && npm run prepare-dist && electron-builder --mac",
     "release:mac": "npm run build && npm run prepare-dist && node scripts/release-mac.mjs",
     "dist:win": "npm run build && npm run prepare-dist && electron-builder --win",
+    "release:win": "npm run build && npm run prepare-dist && node scripts/release-win.mjs",
     "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux"
   },
   "dependencies": {

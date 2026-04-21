@@ -1,0 +1,190 @@
+name: Release Desktop
+
+# Builds and publishes the AntSeed Desktop Electron app for macOS and
+# Windows in parallel, attaching artifacts to the same GitHub Release
+# (tagged v<version> where <version> is read from apps/desktop/package.json).
+#
+# macOS: DMG + zip, arm64 + x64, code-signed with Developer ID and
+#        notarized via Apple App Store Connect API key.
+# Windows: NSIS installer, x64 + arm64. Optional code signing if the
+#          WIN_CSC_* secrets are set.
+#
+# Triggers:
+#   - Manual dispatch from the Actions tab (or `gh workflow run`). Choose
+#     which platforms to build via the `platforms` input.
+#   - Push of a `desktop-v*` tag builds both platforms.
+#
+# Required repo secrets:
+#   macOS:
+#     MAC_CSC_LINK              base64 of a .p12 containing the Developer
+#                               ID Application cert + private key
+#                               (export from Keychain Access, then
+#                               `base64 -i cert.p12 | pbcopy`)
+#     MAC_CSC_KEY_PASSWORD      password for the .p12
+#     APPLE_API_KEY_P8          contents of AuthKey_XXXXXXXXXX.p8 (paste
+#                               the file contents directly into the secret,
+#                               including the BEGIN/END lines)
+#     APPLE_API_KEY_ID          e.g. 6JDM29LC2C
+#     APPLE_API_ISSUER          issuer UUID from App Store Connect
+#     APPLE_TEAM_ID             e.g. H3M5BXXQR2
+#   Windows (optional, for signed installers):
+#     WIN_CSC_LINK              base64 of a .pfx
+#     WIN_CSC_KEY_PASSWORD      password for the .pfx
+#
+# Publishing auth uses the built-in GITHUB_TOKEN (contents: write).
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Which platforms to build'
+        type: choice
+        default: both
+        options:
+          - both
+          - mac
+          - win
+      dry_run:
+        description: 'Build only, do not publish to GitHub Releases'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write  # needed for electron-builder to publish to Releases
+
+jobs:
+  mac:
+    name: Build & publish macOS
+    # Skip if user explicitly chose win-only. Tag-push always runs both.
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'win'
+    runs-on: macos-14  # Apple Silicon; electron-builder cross-builds x64
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build monorepo (tiers 0-3)
+        run: |
+          pnpm run build:tier0
+          pnpm run build:tier1
+          pnpm run build:tier2
+          pnpm run build:tier3
+
+      - name: Write Apple API key to disk
+        # electron-builder's notarization expects APPLE_API_KEY to be a
+        # file path to the .p8. Write the secret contents to a temp file
+        # outside the repo so it can't accidentally be packaged.
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_dir="$RUNNER_TEMP/apple-api-key"
+          mkdir -p "$key_dir"
+          key_path="$key_dir/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build & publish desktop (macOS)
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder accepts base64-encoded content directly in CSC_LINK.
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # APPLE_API_KEY is set via GITHUB_ENV in the previous step.
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm run dist:mac
+          else
+            npm run release:mac
+          fi
+
+      - name: Upload installers as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: antseed-desktop-mac
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
+
+  win:
+    name: Build & publish Windows
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'mac'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      # windows-latest ships with Python + VS Build Tools, needed by
+      # node-gyp to rebuild native modules against Electron's Node ABI.
+      - name: Install dependencies
+        run: pnpm install
+        shell: pwsh
+
+      - name: Build monorepo (tiers 0-3)
+        run: |
+          pnpm run build:tier0
+          pnpm run build:tier1
+          pnpm run build:tier2
+          pnpm run build:tier3
+        shell: pwsh
+
+      - name: Build & publish desktop (Windows)
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ("${{ inputs.dry_run }}" -eq "true") {
+            npm run dist:win
+          } else {
+            npm run release:win
+          }
+        shell: pwsh
+
+      - name: Upload installers as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: antseed-desktop-win
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
