@@ -1315,7 +1315,9 @@ export function initChatModule({
       const result = await bridge.chatAiGetConversation(convId);
       if (result.ok && result.data) {
         const conv = result.data as ChatConversation;
-        const serverMessages = Array.isArray(conv.messages) ? conv.messages : [];
+        const serverMessages = normalizeInlineThinkInMessages(
+          Array.isArray(conv.messages) ? conv.messages : [],
+        );
         const shouldPreferLocalMessages =
           hasConversationStreamingMessage(convId) || isConversationSending(convId);
         const nextMessages =
@@ -1387,18 +1389,144 @@ export function initChatModule({
     // Strip synthetic renderKeys and IDs (e.g. "stream-text-0", "text-0") so that
     // when multiple turns get merged by buildDisplayMessages, getBlockRenderKey
     // falls back to the array-position index and avoids duplicate-key warnings.
+    // Also drop transient inline-think bookkeeping so persisted messages don't
+    // carry streaming-only markers.
     if (Array.isArray(cloned.content)) {
       for (const block of cloned.content as ContentBlock[]) {
         delete block.renderKey;
         if (typeof block.id === 'string' && /^(text|thinking)-[\d-]+$/.test(block.id)) {
           delete block.id;
         }
+        if (block.details && typeof block.details === 'object') {
+          const details = block.details as Record<string, unknown>;
+          delete details.inlineThinkFor;
+          if (Object.keys(details).length === 0) delete block.details;
+        }
       }
     }
     return cloned;
   }
 
+  // Move any leading <think>...[</think>] segment out of a text block and
+  // into an adjacent thinking block. Handles the streaming case (no closing
+  // tag yet — keeps accumulating into a streaming thinking block) and the
+  // non-streaming case (fully-closed segment present in the committed text).
+  // Used by both the per-delta path and the final commit path so models like
+  // DeepSeek / Qwen that emit thinking as inline XML render correctly.
+  function syncInlineThink(blocks: ContentBlock[], textBlock: ContentBlock): void {
+    const CLOSE_TAG = '</think>';
+    const OPEN_TAG = '<think>';
+
+    // If we've already opened an inline <think> for this text block, any
+    // text sitting on the text block was streamed in after that opening and
+    // still belongs to the thinking buffer. Migrate it over and scan for the
+    // closing tag.
+    const openThink = findOpenInlineThink(blocks, textBlock);
+    if (openThink) {
+      const pending = String(textBlock.text || '');
+      if (pending.length === 0) return;
+      const combined = `${String(openThink.thinking || '')}${pending}`;
+      textBlock.text = '';
+      const closeIdx = combined.indexOf(CLOSE_TAG);
+      if (closeIdx === -1) {
+        openThink.thinking = combined;
+      } else {
+        openThink.thinking = combined.slice(0, closeIdx).trim();
+        openThink.streaming = false;
+        textBlock.text = combined.slice(closeIdx + CLOSE_TAG.length).replace(/^\s*/, '');
+      }
+      return;
+    }
+
+    // No inline <think> open yet — see if the text block just grew into one.
+    const raw = String(textBlock.text || '');
+    if (!raw.startsWith(OPEN_TAG)) return;
+    const body = raw.slice(OPEN_TAG.length);
+    const closeIdx = body.indexOf(CLOSE_TAG);
+    const thinkingBlock = createInlineThinkingBlock(blocks, textBlock);
+    if (closeIdx === -1) {
+      thinkingBlock.thinking = body;
+      thinkingBlock.streaming = true;
+      textBlock.text = '';
+    } else {
+      thinkingBlock.thinking = body.slice(0, closeIdx).trim();
+      thinkingBlock.streaming = false;
+      textBlock.text = body.slice(closeIdx + CLOSE_TAG.length).replace(/^\s*/, '');
+    }
+  }
+
+  function findOpenInlineThink(
+    blocks: ContentBlock[],
+    textBlock: ContentBlock,
+  ): ContentBlock | undefined {
+    const textIdx = blocks.indexOf(textBlock);
+    const prev = textIdx > 0 ? blocks[textIdx - 1] : undefined;
+    if (
+      prev &&
+      prev.type === 'thinking' &&
+      prev.streaming &&
+      prev.details &&
+      (prev.details as Record<string, unknown>).inlineThinkFor === textBlock.renderKey
+    ) {
+      return prev;
+    }
+    return undefined;
+  }
+
+  function createInlineThinkingBlock(
+    blocks: ContentBlock[],
+    textBlock: ContentBlock,
+  ): ContentBlock {
+    const textIdx = blocks.indexOf(textBlock);
+    const thinkingBlock: ContentBlock = {
+      type: 'thinking',
+      thinking: '',
+      streaming: true,
+      details: { inlineThinkFor: textBlock.renderKey },
+    };
+    const insertAt = textIdx >= 0 ? textIdx : blocks.length;
+    blocks.splice(insertAt, 0, thinkingBlock);
+    return thinkingBlock;
+  }
+
+  // Run syncInlineThink across every text block in a committed message so the
+  // non-streaming path (onChatAiDone) gets the same treatment as streaming.
+  // Any inline thinking blocks left open (missing </think>) are finalized.
+  function extractInlineThinkBlocks(blocks: ContentBlock[]): void {
+    for (let i = 0; i < blocks.length; i += 1) {
+      const block = blocks[i];
+      if (block?.type === 'text') syncInlineThink(blocks, block);
+    }
+    for (const block of blocks) {
+      if (
+        block?.type === 'thinking' &&
+        block.details &&
+        (block.details as Record<string, unknown>).inlineThinkFor !== undefined
+      ) {
+        block.streaming = false;
+      }
+    }
+  }
+
+  // Apply inline-think extraction across every assistant message in a list.
+  // Used when messages are loaded from disk (via chatAiGetConversation) and
+  // may still contain raw '<think>...</think>' inside text blocks because the
+  // response was persisted before we extracted it.
+  function normalizeInlineThinkInMessages(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => {
+      if (message.role !== 'assistant' || !Array.isArray(message.content)) {
+        return message;
+      }
+      const content = (message.content as ContentBlock[]).map((b) => ({ ...b }));
+      extractInlineThinkBlocks(content);
+      return { ...message, content };
+    });
+  }
+
   function commitAssistantMessage(message: ChatMessage): void {
+    if (Array.isArray(message?.content)) {
+      extractInlineThinkBlocks(message.content as ContentBlock[]);
+    }
     const assistantMessage = {
       ...message,
       createdAt: message?.createdAt || Date.now(),
@@ -1420,6 +1548,9 @@ export function initChatModule({
   }
 
   function appendAssistantMessageToConversation(convId: string, message: ChatMessage): void {
+    if (Array.isArray(message?.content)) {
+      extractInlineThinkBlocks(message.content as ContentBlock[]);
+    }
     const assistantMessage = {
       ...message,
       createdAt: message?.createdAt || Date.now(),
@@ -1964,10 +2095,10 @@ export function initChatModule({
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const textBlock = findLastStreamingBlockByType(blocks, 'text');
-            if (textBlock) {
-              textBlock.text = `${String(textBlock.text || '')}${data.text}`;
-              textBlock.streaming = true;
-            }
+            if (!textBlock) return;
+            textBlock.text = `${String(textBlock.text || '')}${String(data.text ?? '')}`;
+            textBlock.streaming = true;
+            syncInlineThink(blocks, textBlock);
           });
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
@@ -1990,25 +2121,14 @@ export function initChatModule({
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const textBlock = findLastStreamingBlockByType(blocks, 'text');
-            if (textBlock) {
-              textBlock.streaming = false;
-              // Extract inline <think>...</think> tags (DeepSeek, Qwen, etc.)
-              // into proper thinking blocks so the UI renders them correctly.
-              const raw = String(textBlock.text || '');
-              const thinkMatch = raw.match(/^<think>([\s\S]*?)<\/think>\s*/);
-              if (thinkMatch) {
-                const thinkingText = thinkMatch[1]!.trim();
-                textBlock.text = raw.slice(thinkMatch[0].length);
-                if (thinkingText) {
-                  const idx = blocks.indexOf(textBlock);
-                  blocks.splice(idx, 0, {
-                    type: 'thinking',
-                    renderKey: createStreamingRenderKey('thinking', `inline-${idx}`),
-                    thinking: thinkingText,
-                    streaming: false,
-                  });
-                }
-              }
+            if (!textBlock) return;
+            textBlock.streaming = false;
+            // Handle the rare case where '<think>' opened but never closed:
+            // finalize the adjacent inline thinking block.
+            const openThink = findOpenInlineThink(blocks, textBlock);
+            if (openThink) {
+              openThink.thinking = String(openThink.thinking || '').trim();
+              openThink.streaming = false;
             }
           });
         } else if (data.blockType === 'thinking') {
