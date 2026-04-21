@@ -2462,8 +2462,11 @@ export function registerPiChatHandlers({
     },
   );
 
-  ipcMain.handle('chat:ai-abort', async () => {
-    const activeRuns = Array.from(activeRunsByConversation.values());
+  ipcMain.handle('chat:ai-abort', async (_event, conversationId?: string) => {
+    const trimmedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+    const activeRuns = trimmedConversationId
+      ? [activeRunsByConversation.get(trimmedConversationId)].filter((run): run is ActiveRun => Boolean(run))
+      : Array.from(activeRunsByConversation.values());
     if (activeRuns.length === 0) {
       return { ok: true };
     }

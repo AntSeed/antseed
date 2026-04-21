@@ -311,6 +311,27 @@
   width: 100%;
 }
 
+.chat-conv-running-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-green, #4ade80);
+  box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.6);
+  animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes chat-conv-running-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px rgba(var(--accent-green-rgb, 74, 222, 128), 0);
+  }
+}
+
 .chat-conv-peer {
   font-size: 14px;
   font-weight: 400;
