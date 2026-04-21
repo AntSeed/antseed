@@ -1,0 +1,81 @@
+name: Auto-release Desktop on version bump
+
+# Watches the desktop app's version field. When a commit lands on main that
+# actually changes `apps/desktop/package.json#version`, this workflow
+# dispatches the real `release-desktop.yml` so a full cross-platform
+# release goes out automatically.
+#
+# Why a separate workflow?
+#   Keeps the heavy release pipeline (code-signing secrets, macOS + Windows
+#   runners, ~45 min build time) completely unchanged. This dispatcher is
+#   cheap (one Ubuntu job, a few seconds), fails cleanly if the touched
+#   commit *didn't* bump the version, and is trivial to delete if we ever
+#   move to changesets / release-please.
+#
+# What counts as a version bump?
+#   The file at HEAD and at HEAD~1 are parsed as JSON and their `version`
+#   fields compared. Any other change to `apps/desktop/package.json`
+#   (dependency bumps, script tweaks, description edits, etc.) is ignored
+#   and no release is cut.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/package.json'
+
+permissions:
+  # Needed so `gh workflow run` can dispatch release-desktop.yml.
+  actions: write
+  contents: read
+
+jobs:
+  check-and-dispatch:
+    name: Detect version bump and trigger release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the previous commit so we can diff the version field.
+          fetch-depth: 2
+
+      - name: Compare desktop version before and after this push
+        id: check
+        run: |
+          set -euo pipefail
+
+          curr=$(node -pe "require('./apps/desktop/package.json').version")
+          # HEAD~1 may not exist on a freshly-initialised repo history; treat
+          # "no previous version" as "no change" so we don't accidentally
+          # release on the first push.
+          if prev_json=$(git show HEAD~1:apps/desktop/package.json 2>/dev/null); then
+            prev=$(printf '%s' "$prev_json" \
+              | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          else
+            prev=""
+          fi
+
+          echo "Previous version: ${prev:-<none>}"
+          echo "Current version:  ${curr}"
+
+          if [ -n "$curr" ] && [ "$prev" != "$curr" ]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "version=$curr" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch release-desktop workflow
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Desktop version bumped to v${{ steps.check.outputs.version }} — triggering release."
+          gh workflow run release-desktop.yml --ref "${GITHUB_REF_NAME}"
+
+      - name: No-op summary
+        if: steps.check.outputs.changed != 'true'
+        run: |
+          echo "::notice::apps/desktop/package.json changed but version field did not move; no release dispatched."
