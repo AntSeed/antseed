@@ -21,6 +21,7 @@ import {
   loadChatWorkspaceDir,
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
+import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 import { asErrorMessage } from './utils.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
@@ -472,10 +473,16 @@ async function discoverChatServiceCatalog(
 ): Promise<ChatServiceCatalogEntry[]> {
   // Read peers directly from buyer.state.json for immediate availability.
   // Falls back to the getNetworkPeers callback if the file isn't available.
+  //
+  // NOTE: `readFile` and `DEFAULT_BUYER_STATE_PATH` are imported statically
+  // at the top of this file. A previous version used dynamic
+  // `await import('./constants.js')` here, which broke in the packaged
+  // Windows Electron build — dynamic ESM imports of relative specifiers
+  // inside `app.asar` fail URL resolution on Windows, the catch below
+  // swallowed the error, and the chat service catalog silently stayed
+  // empty ("Searching for services..." forever).
   let peers: NetworkPeerAddress[] = [];
   try {
-    const { readFile } = await import('node:fs/promises');
-    const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
@@ -2294,8 +2301,9 @@ export function registerPiChatHandlers({
         }
       }));
 
-      const { readFile } = await import('node:fs/promises');
-      const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');
+      // Static imports at the top of the file — see note on the
+      // `discoverChatServiceCatalog` read for why these must not be
+      // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, {
         onChainChannelCount: number | null;
         providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
