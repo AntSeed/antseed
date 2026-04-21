@@ -1744,6 +1744,10 @@ export function initChatModule({
             if (paymentMatch) {
               setConversationSending(convId, false);
               void handlePaymentRequired(paymentMatch[1]);
+            } else if (errorMsg === 'Request aborted') {
+              // User-initiated abort: the stream-error handler has already
+              // finalized the partial message. Don't overwrite with an error.
+              setConversationSending(convId, false);
             } else {
               if (!uiState.chatError) {
                 reportChatError(result.stopReason?.message ?? result.error, 'Request failed');
@@ -2343,6 +2347,23 @@ export function initChatModule({
               stopReason.retryable ? 'retryable' : 'non-retryable',
             ].filter(Boolean).join(', ')
           : 'unknown';
+        const isAbort = data.error === 'Request aborted';
+
+        // Preserve whatever has already streamed in by committing the partial
+        // message (mirroring onChatAiStreamDone). This applies to both user
+        // aborts and upstream errors — users should never lose visible content
+        // just because the stream didn't finish. For non-abort errors the
+        // error itself is surfaced below the committed content.
+        const finalized = materializeStreamingMessage(
+          getConversationStreamingMessage(data.conversationId),
+        );
+        if (finalized) {
+          if (data.conversationId === uiState.chatActiveConversation) {
+            commitAssistantMessage(finalized);
+          } else {
+            appendAssistantMessageToConversation(data.conversationId, finalized);
+          }
+        }
         setConversationStreamingMessage(data.conversationId, null);
 
         if (data.conversationId === uiState.chatActiveConversation) {
@@ -2355,7 +2376,7 @@ export function initChatModule({
             setConversationSending(data.conversationId, false);
           }
 
-          if (data.error !== 'Request aborted') {
+          if (!isAbort) {
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
