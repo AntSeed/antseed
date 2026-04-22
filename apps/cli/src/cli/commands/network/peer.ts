@@ -12,9 +12,31 @@ import {
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { parsePersistedPeers } from '../../../proxy/buyer-proxy.js';
 import { buildPaymentsConfig } from './chain-config-helper.js';
+import {
+  collectServiceTags,
+  parseTagFilter,
+  serviceMatchesTagFilter,
+} from './tag-filter.js';
 
 interface PeerOptions {
   json?: boolean;
+  tag?: string;
+}
+
+/**
+ * Flat, machine-friendly representation of a single matching service for a
+ * peer. Emitted in JSON output alongside the full `PeerInfo` when a tag
+ * filter is in effect so callers can consume the narrowed set directly
+ * without re-walking `providerPricing`.
+ */
+interface MatchingServiceEntry {
+  provider: string;
+  service: string;
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion: number | null;
+  tags: string[];
+  protocols: string[];
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -75,7 +97,46 @@ function formatTimestampSec(sec: number | undefined): string {
   return `${date.toISOString()}  ${chalk.dim(`(${ageLabel})`)}`;
 }
 
-function printPeerDetail(peer: PeerInfo): void {
+/**
+ * Build the machine-friendly list of (provider, service) entries on this
+ * peer that match the given tag filter. When the filter is empty, every
+ * announced service is returned. Services without any tags are excluded
+ * when a filter is active — they can't match an opt-in tag constraint.
+ */
+function collectMatchingServices(peer: PeerInfo, requestedTags: Set<string>): MatchingServiceEntry[] {
+  const out: MatchingServiceEntry[] = [];
+  const pricing = peer.providerPricing;
+  if (!pricing) return out;
+
+  for (const [providerName, providerEntry] of Object.entries(pricing)) {
+    const services = providerEntry.services ?? {};
+    for (const [serviceName, servicePricing] of Object.entries(services)) {
+      if (requestedTags.size > 0 && !serviceMatchesTagFilter(peer, providerName, serviceName, requestedTags)) {
+        continue;
+      }
+      out.push({
+        provider: providerName,
+        service: serviceName,
+        inputUsdPerMillion: Number.isFinite(servicePricing.inputUsdPerMillion) ? servicePricing.inputUsdPerMillion : null,
+        outputUsdPerMillion: Number.isFinite(servicePricing.outputUsdPerMillion) ? servicePricing.outputUsdPerMillion : null,
+        cachedInputUsdPerMillion: servicePricing.cachedInputUsdPerMillion ?? null,
+        tags: collectServiceTags(peer, providerName, serviceName),
+        protocols: (peer.providerServiceApiProtocols?.[providerName]?.services?.[serviceName] ?? []).slice(),
+      });
+    }
+  }
+
+  out.sort((a, b) => a.provider.localeCompare(b.provider) || a.service.localeCompare(b.service));
+  return out;
+}
+
+/**
+ * Print the human-readable peer detail page. When `requestedTags` is
+ * non-empty, services that don't match the filter are hidden, providers
+ * whose services all fall out are skipped entirely, and matching tags are
+ * highlighted green so it's obvious why each surviving service is listed.
+ */
+function printPeerDetail(peer: PeerInfo, requestedTags: Set<string>): void {
   console.log('');
   console.log(chalk.bold('Peer'));
   console.log(`  ID:              ${peer.peerId}`);
@@ -119,28 +180,48 @@ function printPeerDetail(peer: PeerInfo): void {
   }
 
   console.log('');
-  console.log(chalk.bold('Providers & services'));
+  const servicesHeader = requestedTags.size > 0
+    ? chalk.bold('Providers & services') + chalk.dim(` (filtered by tag: ${Array.from(requestedTags).sort().join(', ')})`)
+    : chalk.bold('Providers & services');
+  console.log(servicesHeader);
   if (peer.providers.length === 0) {
     console.log(chalk.dim('  (none announced)'));
   } else {
+    let renderedAnyProvider = false;
     for (const providerName of peer.providers) {
-      console.log(`  ${chalk.cyan(providerName)}`);
       const pricingEntry = peer.providerPricing?.[providerName];
       const protocolsEntry = peer.providerServiceApiProtocols?.[providerName];
       const categoriesEntry = peer.providerServiceCategories?.[providerName];
 
-      if (pricingEntry?.defaults) {
+      const allServiceNames = pricingEntry?.services ? Object.keys(pricingEntry.services).sort() : [];
+      const visibleServices = requestedTags.size === 0
+        ? allServiceNames
+        : allServiceNames.filter((serviceName) =>
+            serviceMatchesTagFilter(peer, providerName, serviceName, requestedTags),
+          );
+
+      // Hide providers entirely when a filter is active and nothing matches —
+      // showing an empty block would just be noise.
+      if (requestedTags.size > 0 && visibleServices.length === 0) {
+        continue;
+      }
+      renderedAnyProvider = true;
+
+      console.log(`  ${chalk.cyan(providerName)}`);
+
+      // Provider defaults only render when no tag filter is in effect —
+      // defaults aren't tagged so they can't match.
+      if (requestedTags.size === 0 && pricingEntry?.defaults) {
         const d = pricingEntry.defaults;
         console.log(`    defaults:        in ${formatUsdPerMillion(d.inputUsdPerMillion)}  out ${formatUsdPerMillion(d.outputUsdPerMillion)}`
           + (d.cachedInputUsdPerMillion != null ? `  cached-in ${formatUsdPerMillion(d.cachedInputUsdPerMillion)}` : ''));
       }
 
-      const services = pricingEntry?.services ? Object.keys(pricingEntry.services).sort() : [];
-      if (services.length === 0) {
+      if (visibleServices.length === 0) {
         console.log(chalk.dim('    (no services announced for this provider)'));
         continue;
       }
-      for (const serviceName of services) {
+      for (const serviceName of visibleServices) {
         const s = pricingEntry!.services![serviceName]!;
         const protocols = protocolsEntry?.services?.[serviceName] ?? [];
         const categories = categoriesEntry?.services?.[serviceName] ?? [];
@@ -152,9 +233,17 @@ function printPeerDetail(peer: PeerInfo): void {
           parts.push(`cached-in ${formatUsdPerMillion(s.cachedInputUsdPerMillion)}`);
         }
         if (protocols.length > 0) parts.push(chalk.dim(`protocols: ${protocols.join(', ')}`));
-        if (categories.length > 0) parts.push(chalk.dim(`tags: ${categories.join(', ')}`));
+        if (categories.length > 0) {
+          const rendered = categories
+            .map((t) => (requestedTags.has(t.toLowerCase()) ? chalk.green(t) : t))
+            .join(', ');
+          parts.push(chalk.dim('tags: ') + rendered);
+        }
         console.log(`    ${serviceName.padEnd(28)} ${parts.join('  ')}`);
       }
+    }
+    if (requestedTags.size > 0 && !renderedAnyProvider) {
+      console.log(chalk.dim(`  (no services match tag(s): ${Array.from(requestedTags).sort().join(', ')})`));
     }
   }
 
@@ -172,6 +261,11 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
   networkCmd
     .command('peer <peerId>')
     .description('Show full details for a single peer (providers, services, on-chain stats)')
+    .option(
+      '-t, --tag <tags>',
+      'show only services matching tag(s); comma-separated for OR match '
+      + '(e.g. --tag coding,privacy). Well-known tags: privacy, legal, uncensored, coding, finance, tee',
+    )
     .option('--json', 'output as JSON', false)
     .action(async (peerIdArg: string, options: PeerOptions) => {
       const normalized = normalizePeerId(peerIdArg);
@@ -180,6 +274,7 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
         process.exit(1);
       }
 
+      const tagFilter = parseTagFilter(options.tag);
       const globalOpts = getGlobalOptions(networkCmd);
       const config = await loadConfig(globalOpts.config);
 
@@ -219,11 +314,20 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
       }
 
       if (options.json) {
-        console.log(JSON.stringify({ source: sourceLabel, peer: match }, null, 2));
+        // Always include `matchingServices` so callers can consume the flat,
+        // filtered list without walking providerPricing themselves. When no
+        // tag filter is in effect it simply contains every announced service.
+        const matchingServices = collectMatchingServices(match, tagFilter);
+        console.log(JSON.stringify({
+          source: sourceLabel,
+          filter: tagFilter.size > 0 ? { tags: Array.from(tagFilter).sort() } : null,
+          peer: match,
+          matchingServices,
+        }, null, 2));
         return;
       }
 
       console.log(chalk.dim(`Source: ${sourceLabel}`));
-      printPeerDetail(match);
+      printPeerDetail(match, tagFilter);
     });
 }

@@ -13,6 +13,11 @@ import {
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { parsePersistedPeers } from '../../../proxy/buyer-proxy.js';
 import { buildPaymentsConfig } from './chain-config-helper.js';
+import {
+  collectServiceTags,
+  parseTagFilter,
+  peerMatchesTagFilter,
+} from './tag-filter.js';
 
 type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
 
@@ -103,68 +108,6 @@ function collectServiceNames(peer: PeerInfo): string[] {
     }
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
-}
-
-/**
- * Collect every service category tag announced by the peer, flattened across
- * all providers and services and lowercased so comparison is case-insensitive.
- */
-function collectPeerTags(peer: PeerInfo): Set<string> {
-  const tags = new Set<string>();
-  const categories = peer.providerServiceCategories;
-  if (categories) {
-    for (const providerEntry of Object.values(categories)) {
-      for (const serviceTags of Object.values(providerEntry.services)) {
-        for (const raw of serviceTags) {
-          const normalized = raw.trim().toLowerCase();
-          if (normalized.length > 0) tags.add(normalized);
-        }
-      }
-    }
-  }
-  return tags;
-}
-
-/**
- * Collect the tags announced for a specific (provider, service) pair.
- * Returned sorted for stable rendering in the expanded table.
- */
-function collectServiceTags(
-  peer: PeerInfo,
-  providerName: string,
-  serviceName: string,
-): string[] {
-  const raw = peer.providerServiceCategories?.[providerName]?.services?.[serviceName] ?? [];
-  return Array.from(new Set(raw.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))).sort();
-}
-
-/**
- * Parse a comma-separated `--tag` argument into a lowercased set. Empty or
- * whitespace-only entries are dropped; returns an empty set for undefined
- * input so callers can treat "no filter" and "empty filter" uniformly.
- */
-function parseTagFilter(raw: string | undefined): Set<string> {
-  const out = new Set<string>();
-  if (!raw) return out;
-  for (const piece of raw.split(',')) {
-    const normalized = piece.trim().toLowerCase();
-    if (normalized.length > 0) out.add(normalized);
-  }
-  return out;
-}
-
-/**
- * A peer matches the `--tag` filter when *any* of its announced service tags
- * matches *any* of the requested tags (OR semantics across both sides).
- * An empty requested set matches every peer.
- */
-function peerMatchesTagFilter(peer: PeerInfo, requestedTags: Set<string>): boolean {
-  if (requestedTags.size === 0) return true;
-  const peerTags = collectPeerTags(peer);
-  for (const tag of requestedTags) {
-    if (peerTags.has(tag)) return true;
-  }
-  return false;
 }
 
 /**
