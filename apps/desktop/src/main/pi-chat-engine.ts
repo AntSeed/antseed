@@ -646,10 +646,27 @@ async function loadOnChainClients(configPath: string): Promise<{ stakingClient: 
   return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };
 }
 
+/**
+ * Per-peer snapshot of on-chain stats lifted from the running buyer daemon's
+ * `buyer.state.json`. When the daemon is up, it reads
+ * `AntseedChannels.getAgentStats` every discovery cycle and persists the
+ * result — so we can reuse those values here and skip the duplicate
+ * `channelsClient.getAgentStats()` RPC per peer. `agentId` and `stakeUsdc`
+ * are not in buyer.state.json, so we still call StakingClient for those.
+ */
+export type BuyerStateOnChainStats = {
+  channelCount: number;
+  ghostCount: number;
+  totalVolumeUsdcMicros: number;
+  lastSettledAtSec: number;
+  fetchedAtMs: number;
+};
+
 async function fetchOnChainEnrichment(
   peerEvmAddresses: string[],
   stakingClient: import('@antseed/node').StakingClient,
   channelsClient: import('@antseed/node').ChannelsClient,
+  buyerStateStatsByPeerId: Map<string, BuyerStateOnChainStats>,
 ): Promise<Map<string, OnChainPeerEnrichment>> {
   const now = Date.now();
   const out = new Map<string, OnChainPeerEnrichment>();
@@ -684,7 +701,28 @@ async function fetchOnChainEnrichment(
         out.set(addr, sentinel);
         return;
       }
-      const stats = await channelsClient.getAgentStats(agentId);
+
+      // Prefer values already fetched by the buyer daemon (persisted to
+      // buyer.state.json). We reuse them when they are within the desktop's
+      // own enrichment TTL — the daemon's authoritative on-chain read is the
+      // same one we'd make here, so skipping saves an RPC per peer.
+      const peerId = addr.slice(2).toLowerCase();
+      const fromBuyerState = buyerStateStatsByPeerId.get(peerId);
+      const buyerStateFresh = fromBuyerState
+        && now - fromBuyerState.fetchedAtMs < ON_CHAIN_ENRICHMENT_TTL_MS;
+
+      let stats: { channelCount: number; ghostCount: number; totalVolumeUsdc: bigint; lastSettledAt: number };
+      if (buyerStateFresh && fromBuyerState) {
+        stats = {
+          channelCount: fromBuyerState.channelCount,
+          ghostCount: fromBuyerState.ghostCount,
+          totalVolumeUsdc: BigInt(fromBuyerState.totalVolumeUsdcMicros),
+          lastSettledAt: fromBuyerState.lastSettledAtSec,
+        };
+      } else {
+        stats = await channelsClient.getAgentStats(agentId);
+      }
+
       const data: OnChainPeerEnrichment = {
         agentId,
         stakeUsdc: stake.toString(),
@@ -2308,6 +2346,7 @@ export function registerPiChatHandlers({
         onChainChannelCount: number | null;
         providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
       }> = {};
+      const buyerStateOnChainStats = new Map<string, BuyerStateOnChainStats>();
       try {
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -2315,12 +2354,36 @@ export function registerPiChatHandlers({
         for (const p of arr) {
           if (p && typeof p === 'object' && typeof (p as { peerId?: unknown }).peerId === 'string') {
             const rec = p as Record<string, unknown>;
-            discoveredPeersMap[rec.peerId as string] = {
+            const peerId = rec.peerId as string;
+            discoveredPeersMap[peerId] = {
               onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,
               providerPricing: rec.providerPricing as Record<string, {
                 services?: Record<string, { cachedInputUsdPerMillion?: number }>
               }> | undefined,
             };
+            // Capture the buyer daemon's on-chain stats snapshot so we can
+            // reuse it inside fetchOnChainEnrichment and skip the redundant
+            // `channelsClient.getAgentStats()` RPC per peer.
+            const channelCount = rec.onChainChannelCount;
+            const ghostCount = rec.onChainGhostCount;
+            const volume = rec.onChainTotalVolumeUsdcMicros;
+            const lastSettled = rec.onChainLastSettledAtSec;
+            const fetchedAt = rec.onChainStatsFetchedAt;
+            if (
+              typeof channelCount === 'number' && Number.isFinite(channelCount)
+              && typeof ghostCount === 'number' && Number.isFinite(ghostCount)
+              && typeof volume === 'number' && Number.isFinite(volume)
+              && typeof lastSettled === 'number' && Number.isFinite(lastSettled)
+              && typeof fetchedAt === 'number' && Number.isFinite(fetchedAt)
+            ) {
+              buyerStateOnChainStats.set(peerId.toLowerCase(), {
+                channelCount,
+                ghostCount,
+                totalVolumeUsdcMicros: volume,
+                lastSettledAtSec: lastSettled,
+                fetchedAtMs: fetchedAt,
+              });
+            }
           }
         }
       } catch {
@@ -2337,7 +2400,12 @@ export function registerPiChatHandlers({
         return { ok: true, data: [] as DiscoverRowEntry[] };
       }
       const { stakingClient, channelsClient } = clients;
-      const enrichment = await fetchOnChainEnrichment(uniqueAddresses, stakingClient, channelsClient);
+      const enrichment = await fetchOnChainEnrichment(
+        uniqueAddresses,
+        stakingClient,
+        channelsClient,
+        buyerStateOnChainStats,
+      );
 
       // Network-wide stats from @antseed/network-stats. On non-mainnet chains and on any
       // failure this returns an empty map and buildDiscoverRows falls back to local stats.
