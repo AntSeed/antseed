@@ -899,8 +899,19 @@ export class BuyerProxy {
       return
     }
 
+    // Narrow the candidate set to just the pinned peer (if we already know
+    // about it) before running the per-peer protocol/service match. This
+    // avoids wasting work — and spamming "Service strict-miss" log lines —
+    // on every other discovered peer. If the pinned peer isn't in cache yet,
+    // fall through with the full list so the "not in candidate set → force
+    // refresh" path still works.
+    const narrowToPinned = (sources: PeerInfo[]): PeerInfo[] => {
+      const match = sources.find((p) => p.peerId.toLowerCase() === explicitPeerId)
+      return match ? [match] : sources
+    }
+
     const selectPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection => selectCandidatePeersForRouting(
-      candidateSources,
+      narrowToPinned(candidateSources),
       requestProtocol,
       requestedService,
       explicitProvider,
