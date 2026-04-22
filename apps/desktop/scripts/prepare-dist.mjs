@@ -79,7 +79,6 @@ for (const [pkgName, sourcePath] of Object.entries(WORKSPACE_PACKAGES)) {
 const cliDir = path.resolve(appDir, '..', 'cli');
 const cliDestDir = path.join(appDir, 'cli-dist');
 const bundleOutput = path.join(cliDestDir, 'cli', 'index.js');
-const esbuildEntry = require.resolve('esbuild/bin/esbuild');
 
 if (existsSync(cliDestDir)) {
   rmSync(cliDestDir, { recursive: true });
@@ -87,23 +86,23 @@ if (existsSync(cliDestDir)) {
 mkdirSync(path.dirname(bundleOutput), { recursive: true });
 
 console.log('[prepare-dist] Bundling CLI with esbuild...');
-// Invoke via `node` rather than exec'ing the esbuild JS entry directly:
-// on Windows execFileSync can't run a shebanged JS file (no .exe/.cmd).
-// process.execPath works on all platforms.
-execFileSync(process.execPath, [
-  esbuildEntry,
-  'src/cli/index.ts',
-  '--bundle',
-  '--platform=node',
-  '--format=cjs',
-  `--outfile=${bundleOutput}`,
-  '--external:better-sqlite3',
-  '--external:node-datachannel',
-  '--external:koffi',
-  '--external:keytar',
-  '--define:import.meta.url=__importMetaUrl',
-  '--banner:js=const __importMetaUrl=require("url").pathToFileURL(__filename).href;',
-], { cwd: cliDir, stdio: 'inherit' });
+// Use esbuild's JS API (buildSync) rather than shelling out to its bin:
+// on macOS/Linux esbuild's postinstall replaces bin/esbuild with the native
+// binary, so `node bin/esbuild` fails; on Windows the bin is a shebanged JS
+// file that execFileSync can't exec directly. The JS API works everywhere.
+const esbuild = require('esbuild');
+esbuild.buildSync({
+  absWorkingDir: cliDir,
+  entryPoints: ['src/cli/index.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  outfile: bundleOutput,
+  external: ['better-sqlite3', 'node-datachannel', 'koffi', 'keytar'],
+  define: { 'import.meta.url': '__importMetaUrl' },
+  banner: { js: 'const __importMetaUrl=require("url").pathToFileURL(__filename).href;' },
+  logLevel: 'info',
+});
 
 chmodSync(bundleOutput, 0o755);
 
