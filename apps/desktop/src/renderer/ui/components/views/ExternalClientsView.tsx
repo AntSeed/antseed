@@ -274,16 +274,36 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
     chatProxyPort,
     chatServiceOptions,
     chatSelectedServiceValue,
+    discoverRows,
   } = useUiSnapshot();
   const isOnline = chatProxyStatus.tone === 'active' && chatProxyPort > 0;
   const displayPort = isOnline ? chatProxyPort : 8377;
 
+  // Active payment-channel count per peer, used to rank free services so the
+  // most-trafficked peer surfaces first in the picker.
+  const peerChannelCounts = useMemo<Map<string, number>>(() => {
+    const counts = new Map<string, number>();
+    for (const row of discoverRows) {
+      const prev = counts.get(row.peerId) ?? 0;
+      const candidate = row.onChainActiveChannelCount ?? row.onChainChannelCount ?? 0;
+      if (candidate > prev) counts.set(row.peerId, candidate);
+    }
+    return counts;
+  }, [discoverRows]);
+
   const freeOptions = useMemo<ChatServiceOptionEntry[]>(
-    () =>
-      chatServiceOptions.filter(
+    () => {
+      const filtered = chatServiceOptions.filter(
         (o) => o.inputUsdPerMillion === 0 && o.outputUsdPerMillion === 0,
-      ),
-    [chatServiceOptions],
+      );
+      return [...filtered].sort((a, b) => {
+        const ca = peerChannelCounts.get(a.peerId) ?? 0;
+        const cb = peerChannelCounts.get(b.peerId) ?? 0;
+        if (cb !== ca) return cb - ca;
+        return (a.peerLabel || '').localeCompare(b.peerLabel || '');
+      });
+    },
+    [chatServiceOptions, peerChannelCounts],
   );
 
   const [tryServiceValue, setTryServiceValue] = useState<string>('');
