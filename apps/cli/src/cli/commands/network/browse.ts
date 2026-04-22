@@ -17,6 +17,7 @@ import {
   collectServiceTags,
   parseTagFilter,
   peerMatchesTagFilter,
+  serviceMatchesTagFilter,
 } from './tag-filter.js';
 
 type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
@@ -393,7 +394,14 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
  * handy both for exploring categories and for verifying a `--tag` filter
  * actually matched the services you expected.
  *
- * When `requestedTags` is non-empty, matching tags are highlighted green.
+ * When `requestedTags` is non-empty:
+ *   - Services that don't match any requested tag are skipped.
+ *   - Tagless fallback rows (peers with no `providerPricing` entries; or a
+ *     provider with no services, rendered as a synthetic `(default)` row)
+ *     are skipped entirely — they can't match an opt-in tag constraint,
+ *     and surfacing them would contradict the `peer` detail command and
+ *     mislead callers auditing a filtered view.
+ *   - Matching tags inside the `Tags` cell are highlighted green.
  */
 function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): void {
   const rows: Array<{
@@ -407,9 +415,15 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     tags: string[];
   }> = [];
 
+  const hasTagFilter = requestedTags.size > 0;
+
   for (const peer of peers) {
     const pricing = peer.providerPricing;
     if (!pricing || Object.keys(pricing).length === 0) {
+      // Peer with no pricing info — render one row per provider as a fallback
+      // shape so the table is never empty for a known peer. These rows have
+      // no tags and can never match `--tag`, so suppress them under a filter.
+      if (hasTagFilter) continue;
       for (const provider of peer.providers) {
         rows.push({
           peerId: peer.peerId,
@@ -428,6 +442,9 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
       const services = providerEntry.services ?? {};
       const serviceEntries = Object.entries(services);
       if (serviceEntries.length === 0) {
+        // Synthetic `(default)` row — defaults aren't tagged so they can't
+        // match a tag filter; keep the row only when no filter is active.
+        if (hasTagFilter) continue;
         rows.push({
           peerId: peer.peerId,
           provider: providerName,
@@ -441,6 +458,9 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
         continue;
       }
       for (const [serviceName, servicePricing] of serviceEntries.sort(([a], [b]) => a.localeCompare(b))) {
+        if (hasTagFilter && !serviceMatchesTagFilter(peer, providerName, serviceName, requestedTags)) {
+          continue;
+        }
         rows.push({
           peerId: peer.peerId,
           provider: providerName,
