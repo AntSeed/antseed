@@ -19,6 +19,7 @@ import {
   peerMatchesTagFilter,
   serviceMatchesTagFilter,
 } from './tag-filter.js';
+import { formatUsdPerMillion } from './pricing-format.js';
 
 type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
 
@@ -188,11 +189,6 @@ function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output:
     bestOutput = peer.defaultOutputUsdPerMillion ?? null;
   }
   return { input: bestInput, output: bestOutput };
-}
-
-function formatUsdPerMillion(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return chalk.dim('—');
-  return `$${value.toFixed(2)}`;
 }
 
 function formatUsdcVolume(micros: number | undefined | null): string {

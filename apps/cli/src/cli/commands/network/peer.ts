@@ -17,6 +17,7 @@ import {
   parseTagFilter,
   serviceMatchesTagFilter,
 } from './tag-filter.js';
+import { formatUsdPerMillion as formatUsdPerMillionRaw } from './pricing-format.js';
 
 interface PeerOptions {
   json?: boolean;
@@ -67,9 +68,13 @@ function normalizePeerId(raw: string): string | null {
   return cleaned;
 }
 
+/**
+ * The detail view doesn't have a column header so it appends `/1M` to make
+ * each price self-describing. Precision is adaptive (see `pricing-format.ts`)
+ * so sub-cent rates don't collapse to $0.00.
+ */
 function formatUsdPerMillion(value: number | undefined): string {
-  if (value === undefined || !Number.isFinite(value)) return chalk.dim('—');
-  return `$${value.toFixed(4)}/1M`;
+  return formatUsdPerMillionRaw(value, { withUnit: true });
 }
 
 function formatUsdcVolume(micros: number | undefined): string {
