@@ -71,11 +71,17 @@ async function loadSnapshotFromBuyerState(dataDir: string): Promise<BrowseSnapsh
 }
 
 /**
- * Shorten a peer id for display (first 10 lowercase hex chars). The full id
- * is still echoed in the footer so the user can copy-paste the pin command.
+ * A pricing entry counts as "free" when both input and output prices are
+ * finite and zero. We intentionally don't treat undefined/negative values as
+ * free — those are "unknown" and handled separately by the formatter.
  */
-function shortPeerId(peerId: string): string {
-  return peerId.slice(0, 10);
+function isFreePricing(pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number }): boolean {
+  return (
+    Number.isFinite(pricing.inputUsdPerMillion)
+    && Number.isFinite(pricing.outputUsdPerMillion)
+    && pricing.inputUsdPerMillion === 0
+    && pricing.outputUsdPerMillion === 0
+  );
 }
 
 /**
@@ -100,6 +106,30 @@ function collectServiceNames(peer: PeerInfo): string[] {
 }
 
 /**
+ * Collect the names of free (both input and output = $0/1M) services a peer
+ * offers. Used to populate the optional "Free" column.
+ */
+function collectFreeServiceNames(peer: PeerInfo): string[] {
+  const names = new Set<string>();
+  const pricing = peer.providerPricing;
+  if (pricing) {
+    for (const entry of Object.values(pricing)) {
+      if (entry.services) {
+        for (const [serviceName, servicePricing] of Object.entries(entry.services)) {
+          if (isFreePricing(servicePricing)) names.add(serviceName);
+        }
+      }
+      // If the provider's defaults are free and no per-service override lifts
+      // them, consider "(default)" a free offering worth surfacing.
+      if (entry.defaults && isFreePricing(entry.defaults) && (!entry.services || Object.keys(entry.services).length === 0)) {
+        names.add('(default)');
+      }
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Check whether the peer matches a `--service` filter. Matches on provider
  * name OR any announced service name (case-insensitive).
  */
@@ -111,10 +141,13 @@ function peerMatchesServiceFilter(peer: PeerInfo, filter: string): boolean {
 }
 
 /**
- * Determine the cheapest input/output price pair across all services. Falls
- * back to the peer's provider defaults, then to the top-level default fields.
+ * Determine the cheapest *paid* input/output price pair across all services.
+ * Free services (input=output=0) are deliberately excluded from these
+ * columns — they are surfaced in a dedicated "Free" column when present —
+ * so the In/Out $/1M columns always reflect the cheapest paid option a peer
+ * offers. If every candidate is free or unknown, the result is `null`.
  */
-function resolveBestPricing(peer: PeerInfo): { input: number | null; output: number | null } {
+function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output: number | null } {
   let bestInput: number | null = null;
   let bestOutput: number | null = null;
   const pricing = peer.providerPricing;
@@ -124,19 +157,22 @@ function resolveBestPricing(peer: PeerInfo): { input: number | null; output: num
       if (entry.defaults) candidates.push(entry.defaults);
       if (entry.services) candidates.push(...Object.values(entry.services));
       for (const c of candidates) {
-        if (Number.isFinite(c.inputUsdPerMillion)) {
+        if (isFreePricing(c)) continue;
+        if (Number.isFinite(c.inputUsdPerMillion) && c.inputUsdPerMillion > 0) {
           if (bestInput === null || c.inputUsdPerMillion < bestInput) bestInput = c.inputUsdPerMillion;
         }
-        if (Number.isFinite(c.outputUsdPerMillion)) {
+        if (Number.isFinite(c.outputUsdPerMillion) && c.outputUsdPerMillion > 0) {
           if (bestOutput === null || c.outputUsdPerMillion < bestOutput) bestOutput = c.outputUsdPerMillion;
         }
       }
     }
   }
-  if (bestInput === null && Number.isFinite(peer.defaultInputUsdPerMillion)) {
+  // Top-level defaults are only used when we have nothing else — and only if
+  // they are positive (non-free).
+  if (bestInput === null && Number.isFinite(peer.defaultInputUsdPerMillion) && (peer.defaultInputUsdPerMillion ?? 0) > 0) {
     bestInput = peer.defaultInputUsdPerMillion ?? null;
   }
-  if (bestOutput === null && Number.isFinite(peer.defaultOutputUsdPerMillion)) {
+  if (bestOutput === null && Number.isFinite(peer.defaultOutputUsdPerMillion) && (peer.defaultOutputUsdPerMillion ?? 0) > 0) {
     bestOutput = peer.defaultOutputUsdPerMillion ?? null;
   }
   return { input: bestInput, output: bestOutput };
@@ -214,8 +250,8 @@ function sortPeers(peers: PeerInfo[], sortKey: PeerSortKey): PeerInfo[] {
         return (b.onChainTotalVolumeUsdcMicros ?? 0) - (a.onChainTotalVolumeUsdcMicros ?? 0);
       }
       case 'price': {
-        const pa = resolveBestPricing(a).input ?? Number.POSITIVE_INFINITY;
-        const pb = resolveBestPricing(b).input ?? Number.POSITIVE_INFINITY;
+        const pa = resolveBestPaidPricing(a).input ?? Number.POSITIVE_INFINITY;
+        const pb = resolveBestPaidPricing(b).input ?? Number.POSITIVE_INFINITY;
         if (pa !== pb) return pa - pb;
         return (b.onChainTotalVolumeUsdcMicros ?? 0) - (a.onChainTotalVolumeUsdcMicros ?? 0);
       }
@@ -246,24 +282,36 @@ function parseTopLimit(raw: string | undefined): number {
 
 /**
  * Render the default compact table: one row per peer with aggregate metrics.
+ * Full peer ids are printed so the output is directly copy-pasteable into
+ * `antseed buyer connection set --peer <id>` without any truncation.
+ * The "Free" column is only emitted when at least one displayed peer has
+ * free services; otherwise it's omitted so the common-case table stays
+ * compact.
  */
 function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
-  const table = new Table({
-    head: [
-      chalk.bold('Peer'),
-      chalk.bold('Name'),
-      chalk.bold('Providers'),
-      chalk.bold('Services'),
-      chalk.bold('In $/1M'),
-      chalk.bold('Out $/1M'),
-      chalk.bold('Sessions'),
-      chalk.bold('Ghosts'),
-      chalk.bold('Volume'),
-      chalk.bold('Last settled'),
-      chalk.bold('Load'),
-    ],
-    wordWrap: true,
-  });
+  const freeNamesByPeer = new Map(
+    peers.map((peer) => [peer.peerId, collectFreeServiceNames(peer)] as const),
+  );
+  const anyFreeService = Array.from(freeNamesByPeer.values()).some((names) => names.length > 0);
+
+  const head: string[] = [
+    chalk.bold('Peer'),
+    chalk.bold('Name'),
+    chalk.bold('Providers'),
+    chalk.bold('Services'),
+    chalk.bold('Min In $/1M'),
+    chalk.bold('Min Out $/1M'),
+  ];
+  if (anyFreeService) head.push(chalk.bold('Free'));
+  head.push(
+    chalk.bold('Sessions'),
+    chalk.bold('Ghosts'),
+    chalk.bold('Volume'),
+    chalk.bold('Last settled'),
+    chalk.bold('Load'),
+  );
+
+  const table = new Table({ head, wordWrap: true });
 
   for (const peer of peers) {
     const services = collectServiceNames(peer);
@@ -272,7 +320,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
       : services.length <= 2
         ? services.join(', ')
         : `${services.slice(0, 2).join(', ')} ${chalk.dim(`+${services.length - 2}`)}`;
-    const pricing = resolveBestPricing(peer);
+    const pricing = resolveBestPaidPricing(peer);
 
     const ghostCount = peer.onChainGhostCount;
     const ghostCell = typeof ghostCount === 'number'
@@ -288,27 +336,42 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
       : chalk.dim('—');
 
     const badge = isPeerVouched(peer) ? chalk.green(' ✓') : '';
-    const peerCell = chalk.dim(shortPeerId(peer.peerId)) + badge;
+    const peerCell = peer.peerId + badge;
 
-    table.push([
+    const freeNames = freeNamesByPeer.get(peer.peerId) ?? [];
+    const freeCell = freeNames.length === 0
+      ? chalk.dim('—')
+      : freeNames.length <= 2
+        ? chalk.green(freeNames.join(', '))
+        : chalk.green(`${freeNames.slice(0, 2).join(', ')}`) + chalk.dim(` +${freeNames.length - 2}`);
+
+    const row: string[] = [
       peerCell,
       peer.displayName ?? chalk.dim('—'),
       peer.providers.join(', ') || chalk.dim('—'),
       servicesCell,
       formatUsdPerMillion(pricing.input),
       formatUsdPerMillion(pricing.output),
+    ];
+    if (anyFreeService) row.push(freeCell);
+    row.push(
       sessionsCell,
       ghostCell,
       formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
       formatAge(peer.onChainLastSettledAtSec ?? null),
       load,
-    ]);
+    );
+
+    table.push(row);
   }
 
   console.log('');
   console.log(table.toString());
   if (!hasChainData) {
     console.log(chalk.dim('  Sessions / Ghosts / Volume / Last settled are dim — configure chain RPC to enable on-chain verification.'));
+  }
+  if (anyFreeService) {
+    console.log(chalk.dim('  Free column lists services a peer offers at $0 in/out. "Min In/Out $/1M" always reflects the cheapest PAID option.'));
   }
   console.log('');
 }
@@ -336,7 +399,7 @@ function renderExpandedTable(peers: PeerInfo[]): void {
       // Fall back to provider list without services.
       for (const provider of peer.providers) {
         table.push([
-          chalk.dim(shortPeerId(peer.peerId)),
+          peer.peerId,
           provider,
           chalk.dim('—'),
           formatUsdPerMillion(peer.defaultInputUsdPerMillion ?? null),
@@ -352,7 +415,7 @@ function renderExpandedTable(peers: PeerInfo[]): void {
       const serviceEntries = Object.entries(services);
       if (serviceEntries.length === 0) {
         table.push([
-          chalk.dim(shortPeerId(peer.peerId)),
+          peer.peerId,
           providerName,
           chalk.dim('(default)'),
           formatUsdPerMillion(providerEntry.defaults?.inputUsdPerMillion ?? null),
@@ -364,7 +427,7 @@ function renderExpandedTable(peers: PeerInfo[]): void {
       }
       for (const [serviceName, servicePricing] of serviceEntries.sort(([a], [b]) => a.localeCompare(b))) {
         table.push([
-          chalk.dim(shortPeerId(peer.peerId)),
+          peer.peerId,
           providerName,
           serviceName,
           formatUsdPerMillion(servicePricing.inputUsdPerMillion),
