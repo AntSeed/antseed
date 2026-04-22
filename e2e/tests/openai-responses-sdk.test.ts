@@ -123,10 +123,13 @@ describe('OpenAI SDK integration: Responses API over buyer proxy', () => {
   }
 
   it('supports non-streaming responses.create through the proxy', async () => {
-    const { provider, port } = await setupProxyNetwork();
+    const { provider, port, discoveredSeller } = await setupProxyNetwork();
     const client = new OpenAI({
       apiKey: 'sk-test',
       baseURL: `http://127.0.0.1:${port}/v1`,
+      // Auto peer selection is disabled. Every request must identify a peer
+      // via `x-antseed-pin-peer` or the buyer.state.json session pin.
+      defaultHeaders: { 'x-antseed-pin-peer': discoveredSeller.peerId },
     });
 
     const response = await client.responses.create({
@@ -151,10 +154,11 @@ describe('OpenAI SDK integration: Responses API over buyer proxy', () => {
   });
 
   it('supports streaming responses.create through the proxy', async () => {
-    const { provider, port } = await setupProxyNetwork();
+    const { provider, port, discoveredSeller } = await setupProxyNetwork();
     const client = new OpenAI({
       apiKey: 'sk-test',
       baseURL: `http://127.0.0.1:${port}/v1`,
+      defaultHeaders: { 'x-antseed-pin-peer': discoveredSeller.peerId },
     });
 
     const stream = client.responses.stream({

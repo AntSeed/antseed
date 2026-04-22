@@ -162,10 +162,16 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
     const body = (await response.text()).toLowerCase()
+    // Any of these markers indicate we reached an Antseed buyer proxy on this
+    // port. The `no_peer_pinned` case is the common one now that auto
+    // selection is disabled — a fresh proxy with no session pin answers
+    // /v1/models with a structured `{ error: { type: 'no_peer_pinned', ... } }`.
     return body.includes('no sellers available on the network')
       || body.includes('no peers support')
       || body.includes('p2p request failed')
       || body.includes('pinned peer')
+      || body.includes('no peer pinned')
+      || body.includes('"no_peer_pinned"')
   } catch {
     return false
   } finally {
@@ -280,6 +286,14 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           depositsAddress: chainConfig.depositsContractAddress,
           channelsAddress: chainConfig.channelsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
+          // Staking + identity registry addresses let the buyer-side node wire
+          // a StakingClient and IdentityClient. Without stakingAddress, the
+          // on-chain verification loop in AntseedNode.discoverPeers() is
+          // skipped entirely, so `onChainTotalVolumeUsdcMicros` and
+          // `onChainLastSettledAtSec` never populate on PeerInfo (and end up
+          // as `null` in buyer.state.json).
+          ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
+          ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
@@ -305,7 +319,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
-      if (pinnedPeerId) console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
+      if (pinnedPeerId) {
+        console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
+      } else {
+        console.log(chalk.yellow('  pinned peer: none — auto-selection is disabled, requests will 409 until a peer is pinned'))
+        console.log(chalk.dim('    Pin a peer with:  antseed network browse → antseed buyer connection set --peer <peerId>'))
+        console.log(chalk.dim('    Or per-request:   x-antseed-pin-peer: <peerId> header'))
+      }
       console.log('')
 
       const node = new AntseedNode({

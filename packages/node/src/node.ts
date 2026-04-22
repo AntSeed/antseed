@@ -478,7 +478,8 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Verify claimed on-chain stats against actual contract data.
+    // Verify claimed on-chain stats against actual contract data, and
+    // populate volume/last-settled which are never announced by sellers.
     //
     // Concurrency is capped so a wildcard DHT lookup returning hundreds of
     // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
@@ -491,7 +492,18 @@ export class AntseedNode extends EventEmitter {
       const DISCOVERY_RPC_CONCURRENCY = 8;
       const queue = peers.slice();
       const workers: Array<Promise<void>> = [];
+      // Throttle on-chain reads across rapid discovery cycles. 60s is short
+      // enough that freshness feels real-time in the UI, and long enough that
+      // back-to-back `discoverPeers()` calls don't hammer the RPC endpoint.
+      const ON_CHAIN_STATS_TTL_MS = 60_000;
+      const nowMs = Date.now();
       const verifyOne = async (p: PeerInfo): Promise<void> => {
+        if (
+          typeof p.onChainStatsFetchedAt === 'number'
+          && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
+        ) {
+          return;
+        }
         try {
           const evmAddress = resolver
             ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
@@ -500,8 +512,17 @@ export class AntseedNode extends EventEmitter {
           const stats = await channelsClient.getAgentStats(agentId);
           p.onChainChannelCount = stats.channelCount;
           p.onChainGhostCount = stats.ghostCount;
+          // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
+          // narrowing to Number — ~9M USDC fits Number.MAX_SAFE_INTEGER.
+          const volumeMicros = stats.totalVolumeUsdc;
+          p.onChainTotalVolumeUsdcMicros = volumeMicros <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(volumeMicros)
+            : Number.MAX_SAFE_INTEGER;
+          p.onChainLastSettledAtSec = stats.lastSettledAt;
+          p.onChainStatsFetchedAt = Date.now();
         } catch {
-          // Per-peer verification failure — keep claimed metadata.
+          // Per-peer verification failure — keep whatever seller metadata claimed
+          // (channelCount/ghostCount); volume/lastSettled remain undefined.
         }
       };
       for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
@@ -1461,6 +1482,10 @@ export class AntseedNode extends EventEmitter {
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
+      // channelCount/ghostCount are taken from seller-announced metadata as a
+      // starting value. `discoverPeers`' verifyOne then reads the contract
+      // directly and overwrites these fields with the authoritative values
+      // (and populates volume + lastSettled, which sellers never announce).
       onChainChannelCount: result.metadata.onChainChannelCount,
       onChainGhostCount: result.metadata.onChainGhostCount,
     };
