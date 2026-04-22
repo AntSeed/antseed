@@ -280,6 +280,14 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           depositsAddress: chainConfig.depositsContractAddress,
           channelsAddress: chainConfig.channelsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
+          // Staking + identity registry addresses let the buyer-side node wire
+          // a StakingClient and IdentityClient. Without stakingAddress, the
+          // on-chain verification loop in AntseedNode.discoverPeers() is
+          // skipped entirely, so `onChainTotalVolumeUsdcMicros` and
+          // `onChainLastSettledAtSec` never populate on PeerInfo (and end up
+          // as `null` in buyer.state.json).
+          ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
+          ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
