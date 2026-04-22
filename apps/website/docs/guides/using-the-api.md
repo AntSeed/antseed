@@ -22,10 +22,16 @@ export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 antseed buyer start
 # Proxy listening on http://localhost:8377
 
-# 4. Deposit USDC when you want to pay providers
+# 4. Pick a peer to route through
+antseed network browse                              # list peers + services
+antseed buyer connection set --peer <40-char-hex>   # pin one
+
+# 5. Deposit USDC when you want to pay providers
 antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
 ```
+
+Until a peer is pinned, every request returns `no_peer_pinned` — there is no auto-selection. See [Pick a peer](#pick-a-peer) below.
 
 `antseed buyer start` does not require a pre-existing `~/.antseed/config.json`. If the file is missing, the CLI starts with built-in defaults such as router `local` and proxy port `8377`.
 
@@ -107,45 +113,37 @@ curl http://localhost:8377/v1/chat/completions \
   }'
 ```
 
+## Pick a peer
+
+The buyer proxy does not auto-select peers. Every request returns `no_peer_pinned` until you pin one — this keeps routing predictable and puts pricing/quality choice in your hands.
+
+```bash
+# List peers and the services each one offers
+antseed network browse
+
+# Inspect one peer in detail (pricing, protocols, on-chain stats)
+antseed network peer <40-char-hex-peer-id>
+
+# Pin a peer for the session (survives daemon restart)
+antseed buyer connection set --peer <40-char-hex-peer-id>
+
+# Pin a service too — overrides the `model` field in all requests
+antseed buyer connection set --service claude-opus-4-6
+
+# Clear pins
+antseed buyer connection clear
+```
+
+You can also pin per-request by sending the `x-antseed-pin-peer: <peerId>` header — useful when different calls should go to different peers.
+
 ## How Routing Works
 
 When you send a request:
 
-1. The proxy extracts the `model` field as the service name
-2. The router queries the DHT for peers offering that service
-3. Peers are scored by price, latency, capacity, and reputation
-4. The request is forwarded to the best peer via encrypted WebRTC
-5. The response streams back through the proxy
-
-If a peer fails or is unavailable, the router retries with the next best peer.
-
-## Session Overrides
-
-Pin requests to a specific service or peer without restarting:
-
-```bash
-# Pin to a service (overrides the model field in all requests)
-antseed buyer connection set --service claude-opus-4-6
-
-# Pin to a specific peer
-antseed buyer connection set --peer <40-char-hex-peer-id>
-
-# Check current overrides
-antseed buyer connection get
-
-# Clear overrides
-antseed buyer connection clear
-```
-
-## Browse Available Services
-
-See what's available on the network before connecting:
-
-```bash
-antseed network browse
-```
-
-This shows all discoverable providers, their services, pricing, and capacity.
+1. The proxy verifies a peer is pinned; if not, it returns `no_peer_pinned`.
+2. It checks the pinned peer's metadata for the requested `model` (the service name).
+3. The request is forwarded to that peer via encrypted WebRTC.
+4. The response streams back through the proxy.
 
 ## No API Key Needed
 

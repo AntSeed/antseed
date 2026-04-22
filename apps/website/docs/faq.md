@@ -77,7 +77,7 @@ AntSeed automatically detects provider failures and reroutes to the next best sp
 
 ### Do I need to sign up or create an account?
 
-No account required. Install the CLI, run `antseed buyer start`, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.
+No account required. Install the CLI, run `antseed buyer start`, pick a peer with `antseed network browse` + `antseed buyer connection set --peer <peerId>`, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.
 
 ### How do I install AntSeed?
 
