@@ -877,16 +877,35 @@ export class BuyerProxy {
     // Auto peer selection is disabled. Every request MUST target a specific
     // peer, either via the per-request `x-antseed-pin-peer` header or via a
     // session-wide pin set by `antseed buyer connection set --peer <peerId>`.
+    //
+    // Surface the error in the structured shape OpenAI/Anthropic SDKs expect
+    // (`{ error: { type, code, message, ... } }`) so callers see a proper
+    // .message on their error objects instead of a raw text/plain body. We
+    // use HTTP 400 — the request is missing required information the buyer
+    // cannot infer on its own — which is what SDK retry/error logic treats
+    // as a non-retryable client mistake.
     if (!explicitPeerId) {
       log('Request rejected: no peer pinned')
-      res.writeHead(409, { 'content-type': 'text/plain' })
-      res.end(
+      const errorMessage =
         'No peer pinned. Auto-selection is disabled.\n'
         + 'Pin a peer one of two ways:\n'
         + '  • Per-request header:   x-antseed-pin-peer: <peerId>    (40-char hex EVM address)\n'
         + '  • Session pin:          antseed buyer connection set --peer <peerId>\n'
-        + 'Discover peers with:       antseed network browse\n',
-      )
+        + 'Discover peers with:       antseed network browse'
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        error: {
+          type: 'no_peer_pinned',
+          code: 'no_peer_pinned',
+          message: errorMessage,
+          param: 'x-antseed-pin-peer',
+          help: {
+            perRequestHeader: 'x-antseed-pin-peer: <peerId>',
+            sessionPin: 'antseed buyer connection set --peer <peerId>',
+            discoverPeers: 'antseed network browse',
+          },
+        },
+      }))
       return
     }
 

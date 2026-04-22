@@ -8,12 +8,11 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
-  resolveChainConfig,
-  type NodePaymentsConfig,
   type PeerInfo,
 } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { parsePersistedPeers } from '../../../proxy/buyer-proxy.js';
+import { buildPaymentsConfig } from './chain-config-helper.js';
 
 type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
 
@@ -146,6 +145,12 @@ function peerMatchesServiceFilter(peer: PeerInfo, filter: string): boolean {
  * columns — they are surfaced in a dedicated "Free" column when present —
  * so the In/Out $/1M columns always reflect the cheapest paid option a peer
  * offers. If every candidate is free or unknown, the result is `null`.
+ *
+ * CAVEAT: the returned input and output are picked independently across
+ * services. A peer with serviceA=$1/$2 and serviceB=$2/$1 is rendered as
+ * $1/$1 — a lower-bound approximation, not a real single-service offer.
+ * Use `antseed network browse --services` or `antseed network peer <id>`
+ * for per-service pricing when exact comparison matters.
  */
 function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output: number | null } {
   let bestInput: number | null = null;
@@ -445,47 +450,6 @@ function renderExpandedTable(peers: PeerInfo[]): void {
 }
 
 /**
- * Build the `NodePaymentsConfig` the ad-hoc buyer node needs to enrich peers
- * with on-chain stats. Returns `undefined` when chain config is missing.
- */
-function buildPaymentsConfig(
-  cryptoOverrides: {
-    chainId?: 'base-local' | 'base-sepolia' | 'base-mainnet';
-    rpcUrl?: string;
-    fallbackRpcUrls?: string[];
-    depositsContractAddress?: string;
-    channelsContractAddress?: string;
-    usdcContractAddress?: string;
-    stakingContractAddress?: string;
-    identityRegistryAddress?: string;
-  } | undefined,
-): NodePaymentsConfig | undefined {
-  try {
-    const resolved = resolveChainConfig({
-      chainId: cryptoOverrides?.chainId,
-      rpcUrl: cryptoOverrides?.rpcUrl,
-      depositsContractAddress: cryptoOverrides?.depositsContractAddress,
-      channelsContractAddress: cryptoOverrides?.channelsContractAddress,
-      usdcContractAddress: cryptoOverrides?.usdcContractAddress,
-    });
-    const paymentsConfig: NodePaymentsConfig = {
-      enabled: true,
-      rpcUrl: resolved.rpcUrl,
-      ...(resolved.fallbackRpcUrls ? { fallbackRpcUrls: resolved.fallbackRpcUrls } : {}),
-      depositsAddress: resolved.depositsContractAddress,
-      channelsAddress: resolved.channelsContractAddress,
-      usdcAddress: resolved.usdcContractAddress,
-      chainId: resolved.evmChainId,
-      ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
-      ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
-    };
-    return paymentsConfig;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * Register the `antseed network browse` command.
  */
 export function registerNetworkBrowseCommand(networkCmd: Command): void {
@@ -531,9 +495,17 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
         try {
           const peers = await node.discoverPeers(serviceFilter);
           spinner.succeed(chalk.green(`Found ${peers.length} peer(s)`));
+          // Only stamp `onChainStatsRefreshedAt` when the enrichment loop
+          // could actually have run — otherwise we'd display a misleading
+          // "On-chain stats as of just now" header on top of a table that
+          // has "—" in every on-chain column. Derive it from the per-peer
+          // timestamps so we reflect only real RPC reads.
+          const latestChainStamp = peers
+            .map((p) => p.onChainStatsFetchedAt ?? 0)
+            .reduce((max, v) => (v > max ? v : max), 0);
           snapshot = {
             peers,
-            onChainStatsRefreshedAt: peers.length > 0 ? Date.now() : null,
+            onChainStatsRefreshedAt: latestChainStamp > 0 ? latestChainStamp : null,
             sourceLabel: 'live DHT discovery',
           };
         } catch (err) {

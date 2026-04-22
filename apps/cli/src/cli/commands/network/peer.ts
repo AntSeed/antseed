@@ -7,12 +7,11 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
-  resolveChainConfig,
-  type NodePaymentsConfig,
   type PeerInfo,
 } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { parsePersistedPeers } from '../../../proxy/buyer-proxy.js';
+import { buildPaymentsConfig } from './chain-config-helper.js';
 
 interface PeerOptions {
   json?: boolean;
@@ -37,42 +36,6 @@ async function loadPeersFromBuyerDaemon(dataDir: string): Promise<PeerInfo[] | n
     return peers.length > 0 ? peers : null;
   } catch {
     return null;
-  }
-}
-
-function buildPaymentsConfig(
-  cryptoOverrides: {
-    chainId?: 'base-local' | 'base-sepolia' | 'base-mainnet';
-    rpcUrl?: string;
-    depositsContractAddress?: string;
-    channelsContractAddress?: string;
-    usdcContractAddress?: string;
-    stakingContractAddress?: string;
-    identityRegistryAddress?: string;
-  } | undefined,
-): NodePaymentsConfig | undefined {
-  try {
-    const resolved = resolveChainConfig({
-      chainId: cryptoOverrides?.chainId,
-      rpcUrl: cryptoOverrides?.rpcUrl,
-      depositsContractAddress: cryptoOverrides?.depositsContractAddress,
-      channelsContractAddress: cryptoOverrides?.channelsContractAddress,
-      usdcContractAddress: cryptoOverrides?.usdcContractAddress,
-    });
-    const paymentsConfig: NodePaymentsConfig = {
-      enabled: true,
-      rpcUrl: resolved.rpcUrl,
-      ...(resolved.fallbackRpcUrls ? { fallbackRpcUrls: resolved.fallbackRpcUrls } : {}),
-      depositsAddress: resolved.depositsContractAddress,
-      channelsAddress: resolved.channelsContractAddress,
-      usdcAddress: resolved.usdcContractAddress,
-      chainId: resolved.evmChainId,
-      ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
-      ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
-    };
-    return paymentsConfig;
-  } catch {
-    return undefined;
   }
 }
 
