@@ -15,6 +15,7 @@ import type { SellerAddressResolver } from '../discovery/seller-address-resolver
 import { SellerAuthorizationError } from '../discovery/seller-address-resolver.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
+import { formatUsdc } from './usdc-utils.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -471,7 +472,15 @@ export class BuyerPaymentNegotiator {
     pmux.sendSpendingAuth(payload);
     debugLog(`[BuyerNegotiator] External SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
-    await this._waitForLockConfirmation(peer.peerId);
+    let reserveCtxAmount: bigint | undefined;
+    try {
+      reserveCtxAmount = payload.reserveMaxAmount != null
+        ? BigInt(payload.reserveMaxAmount)
+        : BigInt(payload.cumulativeAmount);
+    } catch {
+      reserveCtxAmount = undefined;
+    }
+    await this._waitForLockConfirmation(peer.peerId, { requestedReserve: reserveCtxAmount });
     debugLog(`[BuyerNegotiator] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
     this._lockedPeers.add(peer.peerId);
 
@@ -648,7 +657,7 @@ export class BuyerPaymentNegotiator {
       await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing, pricingMap, peer.metadata);
       debugLog(`[BuyerNegotiator] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
-      await this._waitForLockConfirmation(peer.peerId);
+      await this._waitForLockConfirmation(peer.peerId, { requestedReserve: amount, minBudgetPerRequest });
       debugLog(`[BuyerNegotiator] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
       this._lockedPeers.add(peer.peerId);
 
@@ -764,7 +773,9 @@ export class BuyerPaymentNegotiator {
       if (this._bpm.canReplayReserveAuth(peer.peerId)) {
         const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
         await this._bpm.resendReserveAuth(peer.peerId, pmux);
-        await this._waitForLockConfirmation(peer.peerId);
+        await this._waitForLockConfirmation(peer.peerId, {
+          minBudgetPerRequest: minBudgetPerRequest ?? undefined,
+        });
         this._lockedPeers.add(peer.peerId);
         return true;
       }
@@ -809,7 +820,9 @@ export class BuyerPaymentNegotiator {
     } else {
       await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
     }
-    await this._waitForLockConfirmation(peer.peerId);
+    await this._waitForLockConfirmation(peer.peerId, {
+      minBudgetPerRequest: minBudgetPerRequest ?? undefined,
+    });
     this._lockedPeers.add(peer.peerId);
     return true;
   }
@@ -849,7 +862,10 @@ export class BuyerPaymentNegotiator {
     }
   }
 
-  private async _waitForLockConfirmation(sellerPeerId: string): Promise<void> {
+  private async _waitForLockConfirmation(
+    sellerPeerId: string,
+    ctx?: { requestedReserve?: bigint; minBudgetPerRequest?: bigint },
+  ): Promise<void> {
     const pollIntervalMs = 200;
     const timeoutMs = 30_000;
     const deadline = Date.now() + timeoutMs;
@@ -857,12 +873,59 @@ export class BuyerPaymentNegotiator {
     while (Date.now() < deadline) {
       if (this._bpm.isLockConfirmed(sellerPeerId)) return;
       if (this._bpm.isLockRejected(sellerPeerId)) {
-        throw new Error(`Lock rejected by seller ${sellerPeerId.slice(0, 12)}...`);
+        throw new Error(
+          `Lock rejected by seller ${sellerPeerId.slice(0, 12)}...${this._buildLockFailureHint(ctx)}`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
 
-    throw new Error(`Lock confirmation timed out for seller ${sellerPeerId.slice(0, 12)}... (${timeoutMs}ms)`);
+    throw new Error(
+      `Lock confirmation timed out for seller ${sellerPeerId.slice(0, 12)}... (${timeoutMs}ms).${this._buildLockFailureHint(ctx)}`,
+    );
+  }
+
+  /**
+   * Build a human-readable hint appended to lock-confirmation failures,
+   * listing the most likely causes so operators don't have to guess.
+   *
+   * Note: this intentionally does NOT call the buyer's RPC. The buyer's RPC
+   * is typically less reliable than the seller's, and the seller is the one
+   * making the on-chain call that is failing — it has the exact revert reason
+   * and a fresh deposits snapshot. A follow-up will plumb a structured
+   * AuthNack frame from the seller carrying that information; this hint
+   * exists so the surrounding error shape is already in place when that
+   * lands.
+   */
+  private _buildLockFailureHint(
+    ctx?: { requestedReserve?: bigint; minBudgetPerRequest?: bigint },
+  ): string {
+    const lines: string[] = [];
+
+    // We don't know the buyer's live balance here — only what we asked for.
+    // The binding on-chain constraint is lockForChannel(buyer, maxAmount) in
+    // reserve() / topUp(); settle()/close() cannot throw InsufficientBalance
+    // because their charges come from already-locked reserve. So the ceiling
+    // we need the buyer to have covered is requestedReserve.
+    const reserve = ctx?.requestedReserve;
+    const min = ctx?.minBudgetPerRequest;
+    if (reserve != null && reserve > 0n) {
+      lines.push(
+        `- Deposits may be below the reserve ceiling the seller will lock ` +
+        `(${formatUsdc(reserve)} USDC). The seller's on-chain reserve() reverts ` +
+        `with InsufficientBalance before AuthAck. ` +
+        `Check with "antseed buyer status"; top up with "antseed buyer deposit <amount>".`,
+      );
+    } else if (min != null && min > 0n) {
+      lines.push(
+        `- Deposits may be below seller minBudgetPerRequest (${formatUsdc(min)} USDC). ` +
+        `Check with "antseed buyer status"; top up with "antseed buyer deposit <amount>".`,
+      );
+    }
+    lines.push('- Seller may be overloaded or gated on subscription (try another peer).');
+    lines.push('- Seller may be online but the payment process stalled (retry, or pin a different peer).');
+
+    return `\nLikely causes:\n  ${lines.join('\n  ')}`;
   }
 
 }
