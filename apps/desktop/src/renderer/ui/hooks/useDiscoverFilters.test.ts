@@ -32,7 +32,7 @@ test('pipeline: filter → sort → paginate on 25 rows', () => {
     chattedOnly: true,
     minStakeUsdc: 0,
     lastSeenWindow: 'any', lastSettledWindow: 'any',
-    minVolumeUsdc: 0,
+    minOnChainChannels: 0,
   });
   assert.equal(filtered.length, 9);
   const sorted = applySort(filtered, 'recentlyUsed', 'desc');
@@ -51,7 +51,7 @@ test('pipeline: chattedOnly + stake filter', () => {
     chattedOnly: true,
     minStakeUsdc: 50,
     lastSeenWindow: 'any', lastSettledWindow: 'any',
-    minVolumeUsdc: 0,
+    minOnChainChannels: 0,
   });
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0]!.serviceLabel, 'Svc50');

@@ -5,16 +5,24 @@ export type DiscoverSortKey =
   | 'serviceAsc' | 'serviceDesc'
   | 'priceAsc' | 'priceDesc'
   | 'stakeDesc'
-  | 'volumeDesc'
+  | 'channelsDesc'
   | 'lastSettledDesc';
 
 export const MAX_INPUT_PRICE_SLIDER_USD = 3;
 export const INPUT_PRICE_SLIDER_STEP = 0.1;
 export const MAX_OUTPUT_PRICE_SLIDER_USD = 3;
 export const OUTPUT_PRICE_SLIDER_STEP = 0.1;
-export const MAX_VOLUME_SLIDER_USDC = 100;
-export const VOLUME_SLIDER_STEP = 5;
 export const MAX_STAKE_SLIDER_USDC = 1000;
+
+export const MAX_CHANNELS_SLIDER = 200;
+export const CHANNELS_SLIDER_STEP = 5;
+
+/**
+ * Default minimum on-chain channel count for Discover. 20 hides brand-new peers
+ * that haven't accumulated a track record while still showing modestly-active ones.
+ * Users can lower the slider to 0 to see every peer.
+ */
+export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 20;
 
 export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 
@@ -28,13 +36,8 @@ export type DiscoverFilterInputs = {
   lastSeenWindow: TimeWindow;
   lastSettledWindow: TimeWindow;
   minStakeUsdc: number;
-  minVolumeUsdc: number;
+  minOnChainChannels: number;
 };
-
-function parseBigintSafe(value: string | null | undefined): bigint {
-  if (!value) return 0n;
-  try { return BigInt(value); } catch { return 0n; }
-}
 
 export function hasBeenUsed(row: DiscoverRow): boolean {
   return row.lifetimeRequests > 0
@@ -113,11 +116,20 @@ export function matchesLastSettled(row: DiscoverRow, window: TimeWindow, nowMs?:
   return matchesTimeWindow(row.onChainLastSettledAt, window, 'sec', nowMs);
 }
 
-export function matchesMinVolume(row: DiscoverRow, minVolumeUsdc: number): boolean {
-  if (minVolumeUsdc <= 0) return true;
-  const volume = parseBigintSafe(row.onChainTotalVolumeUsdc);
-  const threshold = BigInt(Math.floor(minVolumeUsdc * 1_000_000));
-  return volume >= threshold;
+/**
+ * Effective on-chain channel count for a peer. Prefers the live value from
+ * AntseedChannels.getAgentStats; falls back to the peer-metadata count while
+ * chain stats haven't loaded yet.
+ */
+export function rowChannelCount(row: DiscoverRow): number {
+  const active = row.onChainActiveChannelCount ?? 0;
+  const meta = row.onChainChannelCount ?? 0;
+  return Math.max(active, meta);
+}
+
+export function matchesMinChannels(row: DiscoverRow, minChannels: number): boolean {
+  if (minChannels <= 0) return true;
+  return rowChannelCount(row) >= minChannels;
 }
 
 export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs): DiscoverRow[] {
@@ -132,7 +144,7 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
     && matchesMinStake(row, inputs.minStakeUsdc)
     && matchesLastSeen(row, inputs.lastSeenWindow, nowMs)
     && matchesLastSettled(row, inputs.lastSettledWindow, nowMs)
-    && matchesMinVolume(row, inputs.minVolumeUsdc)
+    && matchesMinChannels(row, inputs.minOnChainChannels)
   );
 }
 
@@ -165,8 +177,8 @@ export function applySort(rows: DiscoverRow[], key: DiscoverSortKey, dir: 'asc' 
         return priceOf(a) - priceOf(b);
       case 'stakeDesc':
         return Number(BigInt(b.stakeUsdc) - BigInt(a.stakeUsdc));
-      case 'volumeDesc': {
-        const diff = Number(BigInt(b.onChainTotalVolumeUsdc) - BigInt(a.onChainTotalVolumeUsdc));
+      case 'channelsDesc': {
+        const diff = rowChannelCount(b) - rowChannelCount(a);
         if (diff !== 0) return diff;
         return priceOf(a) - priceOf(b);
       }

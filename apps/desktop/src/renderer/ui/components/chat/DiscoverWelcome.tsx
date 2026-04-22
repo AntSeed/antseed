@@ -8,13 +8,14 @@ import {
   type DiscoverSortKey,
   MAX_INPUT_PRICE_SLIDER_USD,
   MAX_OUTPUT_PRICE_SLIDER_USD,
+  DEFAULT_MIN_ON_CHAIN_CHANNELS,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
-  { key: 'volumeDesc',      label: 'Most volume' },
+  { key: 'channelsDesc',    label: 'Most channels' },
   { key: 'recentlyUsed',    label: 'Recently used' },
   { key: 'serviceAsc',      label: 'Name A–Z' },
   { key: 'serviceDesc',     label: 'Name Z–A' },
@@ -244,7 +245,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.minStakeUsdc > 0 ||
     filterState.lastSeenWindow !== 'any' ||
     filterState.lastSettledWindow !== 'any' ||
-    filterState.minVolumeUsdc > 0;
+    filterState.minOnChainChannels !== DEFAULT_MIN_ON_CHAIN_CHANNELS;
 
   const hasNetworkData = serviceOptions.length > 0 || rows.length > 0;
   const cards = useMemo(() => {
@@ -269,7 +270,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.minStakeUsdc,
     filterState.lastSeenWindow,
     filterState.lastSettledWindow,
-    filterState.minVolumeUsdc,
+    filterState.minOnChainChannels,
     filterState.sortKey,
   ]);
 
