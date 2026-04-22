@@ -4,7 +4,7 @@ import { getTagOutlineTint } from '../../../core/peer-utils';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
-  MAX_VOLUME_SLIDER_USDC, VOLUME_SLIDER_STEP,
+  MAX_CHANNELS_SLIDER, CHANNELS_SLIDER_STEP,
   type TimeWindow,
 } from './discover-filter-util';
 import styles from './DiscoverFilters.module.scss';
@@ -19,14 +19,9 @@ function formatPriceLabel(value: number, max: number): string {
   return `Up to $${value.toFixed(2)}/M`;
 }
 
-function formatVolumeLabel(value: number): string {
+function formatChannelsLabel(value: number): string {
   if (value <= 0) return 'Any';
-  if (value >= 1_000) {
-    const k = value / 1_000;
-    const str = k % 1 === 0 ? k.toFixed(0) : k.toFixed(1);
-    return `$${str}K+`;
-  }
-  return `$${value}+`;
+  return `${value}+ channels`;
 }
 
 const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> = [
@@ -149,21 +144,21 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
         </div>
       </div>
 
-      {/* Min volume served slider */}
+      {/* On-chain channel count: simple proxy for whether a peer has a track record. */}
       <div className={styles.field}>
         <div className={styles.sliderHeader}>
-          <span className={styles.label}>Volume served</span>
-          <span className={styles.sliderValue}>{formatVolumeLabel(filters.minVolumeUsdc)}</span>
+          <span className={styles.label}>On-chain channels</span>
+          <span className={styles.sliderValue}>{formatChannelsLabel(filters.minOnChainChannels)}</span>
         </div>
         <div className={styles.sliderWrapper}>
           <input
             type="range"
             className={styles.slider}
             min={0}
-            max={MAX_VOLUME_SLIDER_USDC}
-            step={VOLUME_SLIDER_STEP}
-            value={filters.minVolumeUsdc}
-            onChange={(e) => filters.setMinVolumeUsdc(Number(e.target.value))}
+            max={MAX_CHANNELS_SLIDER}
+            step={CHANNELS_SLIDER_STEP}
+            value={filters.minOnChainChannels}
+            onChange={(e) => filters.setMinOnChainChannels(Number(e.target.value))}
           />
         </div>
       </div>

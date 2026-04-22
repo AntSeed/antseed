@@ -4,7 +4,7 @@ import {
   matchesSearch, matchesMaxInputPrice, matchesMaxOutputPrice,
   matchesMinStake,
   matchesLastSeen, matchesLastSettled,
-  matchesMinVolume,
+  matchesMinChannels, rowChannelCount,
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
@@ -84,11 +84,19 @@ test('matchesLastSettled uses onChainLastSettledAt in seconds', () => {
   assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: monthAgoSec }), 'month', nowMs));
 });
 
-test('matchesMinVolume compares base-6 USDC bigint to slider value', () => {
-  assert.ok(matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '10000000' }), 10));
-  assert.ok(!matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '9999999' }), 10));
-  assert.ok(matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '0' }), 0));
-  assert.ok(!matchesMinVolume(mkRow({ onChainTotalVolumeUsdc: '0' }), 1));
+test('rowChannelCount uses the larger of active vs metadata channel count', () => {
+  assert.equal(rowChannelCount(mkRow({ onChainActiveChannelCount: 20 })), 20);
+  assert.equal(rowChannelCount(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: 25 })), 25);
+  assert.equal(rowChannelCount(mkRow({ onChainActiveChannelCount: 5, onChainChannelCount: 8 })), 8);
+  assert.equal(rowChannelCount(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: null })), 0);
+});
+
+test('matchesMinChannels gates rows by channel-count threshold', () => {
+  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 20 }), 20));
+  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: 25 }), 20));
+  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 5, onChainChannelCount: 8 }), 20));
+  // A threshold of zero always passes, regardless of on-chain state
+  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: null }), 0));
 });
 
 test('applyFilters composes all predicates', () => {
@@ -103,10 +111,20 @@ test('applyFilters composes all predicates', () => {
     chattedOnly: false,
     minStakeUsdc: 0,
     lastSeenWindow: 'any', lastSettledWindow: 'any',
-    minVolumeUsdc: 0,
+    minOnChainChannels: 0,
   });
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0]!.serviceLabel, 'B');
+});
+
+test('applySort channelsDesc orders by channel count', () => {
+  const rows = [
+    mkRow({ serviceLabel: 'A', onChainActiveChannelCount: 5 }),
+    mkRow({ serviceLabel: 'B', onChainActiveChannelCount: 50 }),
+    mkRow({ serviceLabel: 'C', onChainActiveChannelCount: 20 }),
+  ];
+  const sorted = applySort(rows, 'channelsDesc', 'desc');
+  assert.deepEqual(sorted.map((r) => r.serviceLabel), ['B', 'C', 'A']);
 });
 
 test('applySort recentlyUsed floats chatted-with rows, then by lastSession desc', () => {
