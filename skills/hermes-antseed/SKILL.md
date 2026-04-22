@@ -173,6 +173,22 @@ Give the user `http://127.0.0.1:3118/?token=<hex>` (the URL from the portal log)
 
 If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, the remote sshd has `AllowTcpForwarding no`. Enable it in `/etc/ssh/sshd_config` (or a drop-in under `/etc/ssh/sshd_config.d/`), run `sudo sshd -t` to validate, then `sudo systemctl reload sshd`. Existing SSH sessions are not dropped by the reload.
 
+## Pick a peer
+
+The buyer proxy does not auto-select peers. Every request is rejected with `no_peer_pinned` until a peer is pinned — you must pick one explicitly.
+
+List the network, find a peer that serves the model you want, and pin it:
+
+```bash
+antseed network browse                              # table of peers and their services
+antseed network peer <peerId>                       # full details for one peer
+antseed buyer connection set --peer <peerId>        # pin it for this session
+```
+
+Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
+
+For persistent systemd deployments, put `--peer <peerId>` in the `ExecStart=` line instead — it survives restarts and avoids a stale state file.
+
 ## Wiring Hermes to the buyer proxy
 
 Register AntSeed as a custom provider in `~/.hermes/config.yaml` and point `model.default` at an AntSeed service ID. Hermes reads this file at startup; nothing needs to be in `.env` for the AntSeed route itself.
@@ -205,7 +221,7 @@ Notes:
 
 ### Swapping the routed model
 
-Edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call:
+If you switch to a model the currently-pinned peer doesn't serve, re-pin to a peer that does (`antseed network browse` → `antseed buyer connection set --peer <peerId>`) before the next request. Then edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call:
 
 ```bash
 sudo systemctl restart hermes

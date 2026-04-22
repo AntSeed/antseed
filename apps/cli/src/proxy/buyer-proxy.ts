@@ -1,6 +1,6 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { watch, type FSWatcher } from 'node:fs'
+import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
@@ -294,9 +294,9 @@ export class BuyerProxy {
   private readonly _peerCacheTtlMs: number
   private readonly _stateDir: string
   private readonly _stateFile: string
+  private _stateFileWatching = false
   private _pinnedPeer: string | null
   private _pinnedService: string | null
-  private _stateFileWatcher: FSWatcher | null = null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -334,6 +334,12 @@ export class BuyerProxy {
     // startup route from the warm cache without blocking on DHT discovery.
     // The background refresh still runs to pick up fresh peers and IP changes.
     await this._hydratePeersFromStateFile()
+    // If the CLI didn't pass --peer/--service, adopt whatever a previous
+    // `antseed buyer connection set` wrote to buyer.state.json so the pin
+    // survives daemon restart.
+    if (this._pinnedPeer === null && this._pinnedService === null) {
+      await this._reloadSessionOverrides()
+    }
     await new Promise<void>((resolve, reject) => {
       this._server.once('error', reject)
       this._server.listen(this._port, '127.0.0.1', () => {
@@ -377,9 +383,9 @@ export class BuyerProxy {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
     }
-    if (this._stateFileWatcher) {
-      this._stateFileWatcher.close()
-      this._stateFileWatcher = null
+    if (this._stateFileWatching) {
+      unwatchFile(this._stateFile)
+      this._stateFileWatching = false
     }
     if (this._bgRefreshHandle) {
       clearInterval(this._bgRefreshHandle)
@@ -392,17 +398,21 @@ export class BuyerProxy {
   }
 
   private _watchStateFile(): void {
+    // Use watchFile (stat polling) rather than watch(): we rewrite
+    // buyer.state.json via rename(tmp, stateFile), and fs.watch on Linux is
+    // bound to the original inode — after the atomic rename it stops firing,
+    // silently breaking `antseed buyer connection set`. watchFile compares
+    // stat each tick and works across inode replacement.
     try {
-      this._stateFileWatcher = watch(this._stateFile, { persistent: false }, () => {
+      watchFile(this._stateFile, { persistent: false, interval: 1000 }, (curr, prev) => {
+        if (curr.mtimeMs === prev.mtimeMs && curr.ino === prev.ino) return
         if (this._stateWatchDebounce) clearTimeout(this._stateWatchDebounce)
         this._stateWatchDebounce = setTimeout(() => {
           this._stateWatchDebounce = null
           void this._reloadSessionOverrides().catch(() => {})
         }, 50)
       })
-      this._stateFileWatcher.on('error', () => {
-        // watcher error is non-fatal
-      })
+      this._stateFileWatching = true
     } catch {
       // watcher setup failed; non-fatal
     }

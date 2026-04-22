@@ -198,15 +198,17 @@ response = client.chat.completions.create(
 
 The API key value doesn't matter when going through the proxy — set it to any non-empty string.
 
-## Step 10: Browse available services
+## Step 10: Browse available services and pick a peer
 
-Before connecting, or while connected, browse what's available on the network:
+The buyer proxy does not auto-select peers — every request returns `no_peer_pinned` until you pin one. Browse the network, pick a peer that offers the service you want, and pin it:
 
 ```bash
-antseed network browse
+antseed network browse                              # peers + their services
+antseed network peer <peerId>                       # full pricing/metadata for one peer
+antseed buyer connection set --peer <peerId>        # pin for this session (survives restart)
 ```
 
-This shows available peers, their services, pricing, and reputation.
+Or pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
 
 ## Step 11: Monitor usage
 
@@ -248,6 +250,7 @@ All signing happens with the identity key. No additional wallets or browser exte
 
 - **"Payment setup failed"**: Check `antseed buyer balance` — you need deposited USDC. Run `antseed buyer deposit <amount>`.
 - **"No peers found"**: The network may be sparse. Try `antseed network browse` to check. Add bootstrap nodes to config if needed.
+- **`no_peer_pinned`**: Pin a peer with `antseed buyer connection set --peer <peerId>` (see Step 10) or send the `x-antseed-pin-peer` header.
 - **"Lock confirmation timed out"**: The provider's on-chain reserve is slow. This is usually a testnet issue — retry the request.
 - **"Connection refused on 8377"**: Make sure `antseed buyer start` is still running.
 - **Tool says "invalid API key"**: Set the API key env var to any non-empty value (e.g., `antseed`).
