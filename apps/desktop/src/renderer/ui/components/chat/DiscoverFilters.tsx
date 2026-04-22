@@ -21,7 +21,7 @@ function formatPriceLabel(value: number, max: number): string {
 
 function formatChannelsLabel(value: number): string {
   if (value <= 0) return 'Any';
-  return `${value}+ channels`;
+  return `${value}+`;
 }
 
 const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> = [
@@ -147,7 +147,7 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
       {/* On-chain channel count: simple proxy for whether a peer has a track record. */}
       <div className={styles.field}>
         <div className={styles.sliderHeader}>
-          <span className={styles.label}>On-chain channels</span>
+          <span className={styles.label}>channels</span>
           <span className={styles.sliderValue}>{formatChannelsLabel(filters.minOnChainChannels)}</span>
         </div>
         <div className={styles.sliderWrapper}>
