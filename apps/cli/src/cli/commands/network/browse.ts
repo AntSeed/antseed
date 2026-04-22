@@ -18,6 +18,7 @@ type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
 
 interface BrowseOptions {
   service?: string;
+  tag?: string;
   json?: boolean;
   services?: boolean;
   sort?: string;
@@ -102,6 +103,68 @@ function collectServiceNames(peer: PeerInfo): string[] {
     }
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Collect every service category tag announced by the peer, flattened across
+ * all providers and services and lowercased so comparison is case-insensitive.
+ */
+function collectPeerTags(peer: PeerInfo): Set<string> {
+  const tags = new Set<string>();
+  const categories = peer.providerServiceCategories;
+  if (categories) {
+    for (const providerEntry of Object.values(categories)) {
+      for (const serviceTags of Object.values(providerEntry.services)) {
+        for (const raw of serviceTags) {
+          const normalized = raw.trim().toLowerCase();
+          if (normalized.length > 0) tags.add(normalized);
+        }
+      }
+    }
+  }
+  return tags;
+}
+
+/**
+ * Collect the tags announced for a specific (provider, service) pair.
+ * Returned sorted for stable rendering in the expanded table.
+ */
+function collectServiceTags(
+  peer: PeerInfo,
+  providerName: string,
+  serviceName: string,
+): string[] {
+  const raw = peer.providerServiceCategories?.[providerName]?.services?.[serviceName] ?? [];
+  return Array.from(new Set(raw.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0))).sort();
+}
+
+/**
+ * Parse a comma-separated `--tag` argument into a lowercased set. Empty or
+ * whitespace-only entries are dropped; returns an empty set for undefined
+ * input so callers can treat "no filter" and "empty filter" uniformly.
+ */
+function parseTagFilter(raw: string | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!raw) return out;
+  for (const piece of raw.split(',')) {
+    const normalized = piece.trim().toLowerCase();
+    if (normalized.length > 0) out.add(normalized);
+  }
+  return out;
+}
+
+/**
+ * A peer matches the `--tag` filter when *any* of its announced service tags
+ * matches *any* of the requested tags (OR semantics across both sides).
+ * An empty requested set matches every peer.
+ */
+function peerMatchesTagFilter(peer: PeerInfo, requestedTags: Set<string>): boolean {
+  if (requestedTags.size === 0) return true;
+  const peerTags = collectPeerTags(peer);
+  for (const tag of requestedTags) {
+    if (peerTags.has(tag)) return true;
+  }
+  return false;
 }
 
 /**
@@ -382,36 +445,39 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
 }
 
 /**
- * Render the expanded "one row per (peer, provider, service)" table.
+ * Render the expanded "one row per (peer, provider, service)" table. Adds a
+ * `Tags` column when at least one displayed (peer, service) pair has tags —
+ * handy both for exploring categories and for verifying a `--tag` filter
+ * actually matched the services you expected.
+ *
+ * When `requestedTags` is non-empty, matching tags are highlighted green.
  */
-function renderExpandedTable(peers: PeerInfo[]): void {
-  const table = new Table({
-    head: [
-      chalk.bold('Peer'),
-      chalk.bold('Provider'),
-      chalk.bold('Service'),
-      chalk.bold('In $/1M'),
-      chalk.bold('Out $/1M'),
-      chalk.bold('Sessions'),
-      chalk.bold('Volume'),
-    ],
-    wordWrap: true,
-  });
+function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): void {
+  const rows: Array<{
+    peerId: string;
+    provider: string;
+    service: string;
+    input: string;
+    output: string;
+    sessions: string;
+    volume: string;
+    tags: string[];
+  }> = [];
 
   for (const peer of peers) {
     const pricing = peer.providerPricing;
     if (!pricing || Object.keys(pricing).length === 0) {
-      // Fall back to provider list without services.
       for (const provider of peer.providers) {
-        table.push([
-          peer.peerId,
+        rows.push({
+          peerId: peer.peerId,
           provider,
-          chalk.dim('—'),
-          formatUsdPerMillion(peer.defaultInputUsdPerMillion ?? null),
-          formatUsdPerMillion(peer.defaultOutputUsdPerMillion ?? null),
-          typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : chalk.dim('—'),
-          formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-        ]);
+          service: '—',
+          input: formatUsdPerMillion(peer.defaultInputUsdPerMillion ?? null),
+          output: formatUsdPerMillion(peer.defaultOutputUsdPerMillion ?? null),
+          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
+          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
+          tags: [],
+        });
       }
       continue;
     }
@@ -419,33 +485,75 @@ function renderExpandedTable(peers: PeerInfo[]): void {
       const services = providerEntry.services ?? {};
       const serviceEntries = Object.entries(services);
       if (serviceEntries.length === 0) {
-        table.push([
-          peer.peerId,
-          providerName,
-          chalk.dim('(default)'),
-          formatUsdPerMillion(providerEntry.defaults?.inputUsdPerMillion ?? null),
-          formatUsdPerMillion(providerEntry.defaults?.outputUsdPerMillion ?? null),
-          typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : chalk.dim('—'),
-          formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-        ]);
+        rows.push({
+          peerId: peer.peerId,
+          provider: providerName,
+          service: '(default)',
+          input: formatUsdPerMillion(providerEntry.defaults?.inputUsdPerMillion ?? null),
+          output: formatUsdPerMillion(providerEntry.defaults?.outputUsdPerMillion ?? null),
+          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
+          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
+          tags: [],
+        });
         continue;
       }
       for (const [serviceName, servicePricing] of serviceEntries.sort(([a], [b]) => a.localeCompare(b))) {
-        table.push([
-          peer.peerId,
-          providerName,
-          serviceName,
-          formatUsdPerMillion(servicePricing.inputUsdPerMillion),
-          formatUsdPerMillion(servicePricing.outputUsdPerMillion),
-          typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : chalk.dim('—'),
-          formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-        ]);
+        rows.push({
+          peerId: peer.peerId,
+          provider: providerName,
+          service: serviceName,
+          input: formatUsdPerMillion(servicePricing.inputUsdPerMillion),
+          output: formatUsdPerMillion(servicePricing.outputUsdPerMillion),
+          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
+          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
+          tags: collectServiceTags(peer, providerName, serviceName),
+        });
       }
     }
   }
 
+  const anyTags = rows.some((r) => r.tags.length > 0);
+
+  const head: string[] = [
+    chalk.bold('Peer'),
+    chalk.bold('Provider'),
+    chalk.bold('Service'),
+    chalk.bold('In $/1M'),
+    chalk.bold('Out $/1M'),
+    chalk.bold('Sessions'),
+    chalk.bold('Volume'),
+  ];
+  if (anyTags) head.push(chalk.bold('Tags'));
+
+  const table = new Table({ head, wordWrap: true });
+
+  for (const r of rows) {
+    const row: string[] = [
+      r.peerId,
+      r.provider,
+      r.service === '—' || r.service === '(default)' ? chalk.dim(r.service) : r.service,
+      r.input,
+      r.output,
+      r.sessions === '—' ? chalk.dim('—') : r.sessions,
+      r.volume,
+    ];
+    if (anyTags) {
+      row.push(
+        r.tags.length === 0
+          ? chalk.dim('—')
+          : r.tags
+            .map((t) => (requestedTags.has(t) ? chalk.green(t) : t))
+            .join(', '),
+      );
+    }
+    table.push(row);
+  }
+
   console.log('');
   console.log(table.toString());
+  if (anyTags && requestedTags.size > 0) {
+    console.log(chalk.dim(`  Matching tags highlighted green: ${Array.from(requestedTags).sort().join(', ')}`));
+  }
   console.log('');
 }
 
@@ -457,6 +565,11 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
     .command('browse')
     .description('Browse peers on the network — prices, services, and on-chain settlements')
     .option('-s, --service <service>', 'filter by service or provider name')
+    .option(
+      '-t, --tag <tags>',
+      'filter by service category tag(s); comma-separated for OR match '
+      + '(e.g. --tag tee,privacy). Well-known tags: privacy, legal, uncensored, coding, finance, tee',
+    )
     .option('--services', 'expand to one row per (peer, provider, service) with per-service pricing', false)
     .option('--sort <key>', 'sort by volume | sessions | price | recent (default: volume)')
     .option('--top <n>', 'show only the top N peers (default: 20)')
@@ -465,6 +578,7 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
       const globalOpts = getGlobalOptions(networkCmd);
       const config = await loadConfig(globalOpts.config);
       const serviceFilter = rawOptions.service?.trim();
+      const tagFilter = parseTagFilter(rawOptions.tag);
       const sortKey = parseSortKey(rawOptions.sort);
       const topLimit = parseTopLimit(rawOptions.top);
 
@@ -521,9 +635,19 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
       if (serviceFilter) {
         peers = peers.filter((peer) => peerMatchesServiceFilter(peer, serviceFilter));
       }
+      if (tagFilter.size > 0) {
+        peers = peers.filter((peer) => peerMatchesTagFilter(peer, tagFilter));
+      }
 
       if (peers.length === 0) {
-        console.log(chalk.dim('No peers found. Try again later or adjust --service.'));
+        const filters = [
+          serviceFilter ? '--service' : null,
+          tagFilter.size > 0 ? '--tag' : null,
+        ].filter((x): x is string => x !== null);
+        const hint = filters.length > 0
+          ? `Try adjusting ${filters.join(' / ')} or widening your search.`
+          : 'Try again later once more peers announce.';
+        console.log(chalk.dim(`No peers found. ${hint}`));
         return;
       }
 
@@ -536,13 +660,21 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
           source: snapshot.sourceLabel,
           onChainStatsRefreshedAt: snapshot.onChainStatsRefreshedAt,
           sort: sortKey,
+          filters: {
+            service: serviceFilter ?? null,
+            tags: tagFilter.size > 0 ? Array.from(tagFilter).sort() : null,
+          },
           total: peers.length,
           peers: displayed,
         }, null, 2));
         return;
       }
 
-      console.log(chalk.dim(`Source: ${snapshot.sourceLabel} • ${peers.length} peer(s)${truncated ? ` (showing top ${topLimit})` : ''} • sort: ${sortKey}`));
+      const filterBits: string[] = [];
+      if (serviceFilter) filterBits.push(`service="${serviceFilter}"`);
+      if (tagFilter.size > 0) filterBits.push(`tags=[${Array.from(tagFilter).sort().join(',')}]`);
+      const filterSuffix = filterBits.length > 0 ? ` • filter: ${filterBits.join(' ')}` : '';
+      console.log(chalk.dim(`Source: ${snapshot.sourceLabel} • ${peers.length} peer(s)${truncated ? ` (showing top ${topLimit})` : ''} • sort: ${sortKey}${filterSuffix}`));
       if (snapshot.onChainStatsRefreshedAt) {
         const ageMs = Date.now() - snapshot.onChainStatsRefreshedAt;
         console.log(chalk.dim(`On-chain stats as of ${formatHumanAgeMs(ageMs)}`));
@@ -551,7 +683,7 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
       const hasChainData = displayed.some((peer) => typeof peer.onChainChannelCount === 'number');
 
       if (rawOptions.services) {
-        renderExpandedTable(displayed);
+        renderExpandedTable(displayed, tagFilter);
       } else {
         renderCompactTable(displayed, hasChainData);
       }
