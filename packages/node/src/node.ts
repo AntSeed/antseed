@@ -478,13 +478,13 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Populate on-chain stats by reading AntseedChannels directly. Seller
-    // metadata is untrusted for these fields — a malicious peer could
-    // announce inflated channel/ghost/volume numbers — so the contract is the
-    // only source of truth. Each peer costs one resolver + getAgentId +
-    // getAgentStats round-trip; concurrency is capped so wildcard DHT lookups
-    // returning hundreds of peers don't blow through RPC rate limits
-    // (~10-20 concurrent calls is the typical public-endpoint ceiling).
+    // Verify claimed on-chain stats against actual contract data, and
+    // populate volume/last-settled which are never announced by sellers.
+    //
+    // Concurrency is capped so a wildcard DHT lookup returning hundreds of
+    // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
+    // isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
+    // will rate-limit past ~10-20 concurrent calls; we stay well under that.
     if (this._channelsClient && this._stakingClient) {
       const channelsClient = this._channelsClient;
       const stakingClient = this._stakingClient;
@@ -521,8 +521,8 @@ export class AntseedNode extends EventEmitter {
           p.onChainLastSettledAtSec = stats.lastSettledAt;
           p.onChainStatsFetchedAt = Date.now();
         } catch {
-          // Per-peer verification failure — leave fields undefined so buyers can
-          // see "—" in the UI instead of stale seller-claimed values.
+          // Per-peer verification failure — keep whatever seller metadata claimed
+          // (channelCount/ghostCount); volume/lastSettled remain undefined.
         }
       };
       for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
@@ -998,6 +998,8 @@ export class AntseedNode extends EventEmitter {
         ),
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
+        ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
+        ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
@@ -1480,10 +1482,12 @@ export class AntseedNode extends EventEmitter {
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
-      // On-chain stats are intentionally NOT copied from signed peer metadata:
-      // a malicious seller could announce inflated channel/volume numbers.
-      // They are populated exclusively by the buyer-side verification loop
-      // above (`verifyOne`), which reads `AntseedChannels.getAgentStats` directly.
+      // channelCount/ghostCount are taken from seller-announced metadata as a
+      // starting value. `discoverPeers`' verifyOne then reads the contract
+      // directly and overwrites these fields with the authoritative values
+      // (and populates volume + lastSettled, which sellers never announce).
+      onChainChannelCount: result.metadata.onChainChannelCount,
+      onChainGhostCount: result.metadata.onChainGhostCount,
     };
   }
 

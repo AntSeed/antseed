@@ -152,10 +152,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
   });
 
-  it('should decode offerings and strip seller-claimed on-chain stats', () => {
-    // On-chain stats (channelCount/ghostCount/volume/lastSettled) are
-    // intentionally stripped by the encoder — a seller could lie about them.
-    // Buyers read these fields directly from AntseedChannels.getAgentStats.
+  it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {
     const original = makeMetadata({
       offerings: [
         {
@@ -171,8 +168,8 @@ describe('encodeMetadata / decodeMetadata', () => {
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.offerings?.[0]?.name).toBe('summarize');
-    expect(decoded.onChainChannelCount).toBeUndefined();
-    expect(decoded.onChainGhostCount).toBeUndefined();
+    expect(decoded.onChainChannelCount).toBe(123);
+    expect(decoded.onChainGhostCount).toBe(2);
   });
 
   it("round-trips a v8 metadata with sellerContract", () => {

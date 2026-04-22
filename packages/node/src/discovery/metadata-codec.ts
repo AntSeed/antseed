@@ -269,13 +269,19 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
-  // On-chain stats block: always emitted as "absent" (flag=0). On-chain stats
-  // are never announced by the seller — they're manipulable. Buyers read them
-  // authoritatively from `AntseedChannels.getAgentStats`. The flag byte is
-  // preserved so legacy decoders that expect a trailing optional block keep
-  // working. If decode encounters a present block from an old seller, the
-  // values are parsed but discarded by the buyer (see `_lookupResultToPeerInfo`).
-  parts.push(new Uint8Array([0]));
+  // On-chain stats: 1 flag byte + 10 data bytes (1 reserved + 4 channelCount + 4 ghostCount + 1 reserved)
+  if (metadata.onChainChannelCount !== undefined) {
+    parts.push(new Uint8Array([1])); // flag: present
+    const repBuf = new ArrayBuffer(10);
+    const repView = new DataView(repBuf);
+    repView.setUint8(0, Math.min(255, metadata.onChainChannelCount)); // legacy reputation byte — channelCount capped to u8
+    repView.setUint32(1, metadata.onChainChannelCount, false);
+    repView.setUint32(5, metadata.onChainGhostCount ?? 0, false);
+    repView.setUint8(9, 0); // reserved
+    parts.push(new Uint8Array(repBuf));
+  } else {
+    parts.push(new Uint8Array([0])); // flag: absent
+  }
 
   // Combine all parts
   const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
