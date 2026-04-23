@@ -1742,6 +1742,29 @@ export function initChatModule({
         return;
       }
 
+      // Multimodal gate — if the user attached image(s) but the current
+      // service isn't tagged `multimodal` in the catalog, the main side
+      // would silently drop the images and still send the text, which
+      // confuses the user ("the LLM only saw the files, not the image").
+      // Block the send and explain instead.
+      const hasReadyImage = preparedAttachments.some(
+        (attachment) => attachment.kind === 'image' && attachment.status === 'ready',
+      );
+      if (hasReadyImage) {
+        const currentOption = uiState.chatServiceOptions.find(
+          (opt) => opt.value === uiState.chatSelectedServiceValue,
+        );
+        const supportsMultimodal = currentOption?.categories?.includes('multimodal') ?? false;
+        if (!supportsMultimodal) {
+          const label = currentOption?.label || 'this service';
+          showChatError(
+            `${label} doesn't support images. Remove the image attachment or switch to a multimodal service (look for the “multimodal” tag in Discover).`,
+          );
+          setConversationSending(convId, false);
+          return;
+        }
+      }
+
       const messageContent = buildUserMessageContent(content, preparedAttachments);
       uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
       setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
