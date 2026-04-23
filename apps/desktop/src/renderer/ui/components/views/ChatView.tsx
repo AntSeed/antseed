@@ -650,6 +650,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 ref={fileInputRef}
                 id={fileInputId}
                 type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp,.pdf,.docx,.pptx,.xlsx,.odt,.odp,.ods,.rtf,.zip,.txt,.md,.json,.csv,.js,.ts,.tsx,.jsx,.html,.css,.py,.rs,.go,.java,.rb,.sh,.yaml,.yml,.xml,.svg"
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileAttach}
