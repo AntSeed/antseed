@@ -131,14 +131,16 @@ export async function handleAttachmentRequest(request: Request, rootDir?: string
     headers.set('X-Content-Type-Options', 'nosniff');
     return new Response(body, { status: response.status, headers });
   }
-  // For every other response type (plain text, JSON, source, images,
-  // PDFs) we forbid MIME sniffing so Chromium can't reclassify a text
-  // payload as HTML and start executing scripts from it.
+  // For every other response type (images, PDFs, JSON, XML, binary)
+  // we forbid MIME sniffing so Chromium can't reclassify a text
+  // payload as HTML and start executing scripts from it. Pass the
+  // underlying ReadableStream through so the `stream: true` privilege
+  // on the scheme is actually used — buffering full PDFs or video
+  // files into memory just to add a header would defeat the point.
   if (!response.headers.has('X-Content-Type-Options')) {
     const headers = new Headers(response.headers);
     headers.set('X-Content-Type-Options', 'nosniff');
-    const body = await response.arrayBuffer();
-    return new Response(body, { status: response.status, headers });
+    return new Response(response.body, { status: response.status, headers });
   }
   return response;
 }

@@ -150,6 +150,9 @@
   // width because flex items honour `min-width: auto`.
   flex-direction: column;
   min-height: 0;
+  // Anchor the loading overlay to the body so the spinner sits on top
+  // of the iframe without fighting its flex sizing.
+  position: relative;
 }
 
 .imageWrap {
@@ -200,4 +203,39 @@
 
 .errorMsg {
   color: var(--danger);
+}
+
+@keyframes av-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+// Overlay that sits on top of the iframe / img while the browser is
+// still streaming the content. Fades out via `pointer-events: none` so
+// the user can still interact with the loaded content the instant it's
+// ready, but the label stays visible as a cue.
+.loadingOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: av-spinner-rotate 0.8s linear infinite;
+}
+
+.loadingLabel {
+  letter-spacing: 0.02em;
 }

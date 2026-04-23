@@ -5,6 +5,7 @@ import {
   dialog,
   type OpenDialogOptions,
 } from 'electron';
+import { copyFile } from 'node:fs/promises';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
@@ -53,6 +54,7 @@ import {
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
+import { resolveAttachmentPath } from './attachment-store.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -352,6 +354,41 @@ ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
 });
+
+ipcMain.handle(
+  'attachment:download',
+  async (
+    _event,
+    conversationId: string,
+    attachmentId: string,
+    suggestedName: string,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    // Download flow via dialog.showSaveDialog + copyFile. More reliable
+    // cross-platform than relying on <a download> with a custom
+    // Electron protocol URL — Chromium's save-to-disk path is only
+    // guaranteed for http(s)/data/blob.
+    try {
+      const resolved = await resolveAttachmentPath(conversationId, attachmentId);
+      if (!resolved) {
+        return { ok: false, error: 'Attachment not found' };
+      }
+      const win = getMainWindow();
+      const safeSuggested = typeof suggestedName === 'string' && suggestedName.trim().length > 0
+        ? suggestedName.trim()
+        : 'attachment';
+      const result = win
+        ? await dialog.showSaveDialog(win, { defaultPath: safeSuggested })
+        : await dialog.showSaveDialog({ defaultPath: safeSuggested });
+      if (result.canceled || !result.filePath) {
+        return { ok: false, error: 'cancelled' };
+      }
+      await copyFile(resolved, result.filePath);
+      return { ok: true, path: result.filePath };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
+);
 
 ipcMain.handle('desktop:pick-directory', async () => {
   const dialogOptions: OpenDialogOptions = {

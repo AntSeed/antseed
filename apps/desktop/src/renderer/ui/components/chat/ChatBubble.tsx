@@ -501,7 +501,10 @@ function FileAttachmentBlock({ block, conversationId }: { block: ContentBlock; c
     mimeType,
     ...(typeof block.size === 'number' ? { size: block.size } : {}),
     ...(canPreview && attachmentId && conversationId
-      ? { src: `antseed-attachment://${encodeURIComponent(conversationId)}/${encodeURIComponent(attachmentId)}` }
+      ? {
+          src: `antseed-attachment://${encodeURIComponent(conversationId)}/${encodeURIComponent(attachmentId)}`,
+          downloadIpc: { conversationId, attachmentId },
+        }
       : {}),
     ...(isError && block.error ? { error: String(block.error) } : {}),
   }), [fileName, mimeType, block.size, canPreview, attachmentId, conversationId, isError, block.error]);

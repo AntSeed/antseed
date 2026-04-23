@@ -29,6 +29,12 @@ export type ViewerAttachment = {
    * megabytes through IPC.
    */
   src?: string;
+  /**
+   * When present, the Download button uses an IPC → `dialog.showSaveDialog`
+   * → `copyFile` path instead of `<a download>`. More reliable than
+   * relying on Chromium's save-to-disk handling of custom protocols.
+   */
+  downloadIpc?: { conversationId: string; attachmentId: string };
   error?: string;
 };
 
@@ -100,6 +106,7 @@ function buildDownloadHref(att: ViewerAttachment): string | null {
 
 export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps) {
   const [closing, setClosing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
   const close = useCallback(() => {
@@ -138,7 +145,43 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
     () => (attachment.src && isTextualMime(attachment.mimeType) ? attachment.src : null),
     [attachment],
   );
-  const download = useMemo(() => buildDownloadHref(attachment), [attachment]);
+  const inlineHref = useMemo(() => buildDownloadHref(attachment), [attachment]);
+  const hasPreview = Boolean(imgSrc || pdfSrc || htmlSrc || textSrc);
+
+  // Reset the loading indicator when we switch to a different attachment.
+  useEffect(() => {
+    setLoaded(false);
+  }, [imgSrc, pdfSrc, htmlSrc, textSrc]);
+
+  const handleDownload = useCallback(async () => {
+    const bridge = typeof window !== 'undefined'
+      ? (window as { antseedDesktop?: { attachmentDownload?: (c: string, a: string, n: string) => Promise<{ ok: boolean; error?: string }> } }).antseedDesktop
+      : undefined;
+    if (attachment.downloadIpc && bridge?.attachmentDownload) {
+      // Reliable path: main process streams the file through
+      // dialog.showSaveDialog + fs.copyFile.
+      await bridge.attachmentDownload(
+        attachment.downloadIpc.conversationId,
+        attachment.downloadIpc.attachmentId,
+        attachment.name || 'attachment',
+      );
+      return;
+    }
+    // Fallback for composer chips (dataUrl) and chat image blocks
+    // (inline base64) — these don't have a disk-backed id yet, so the
+    // classic <a download> flow is fine and doesn't hit the custom
+    // protocol quirk.
+    if (!inlineHref) return;
+    const anchor = document.createElement('a');
+    anchor.href = inlineHref;
+    anchor.download = attachment.name || 'attachment';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [attachment.downloadIpc, attachment.name, inlineHref]);
+
+  const canDownload = Boolean(attachment.downloadIpc) || Boolean(inlineHref);
 
   const metaParts = [attachment.mimeType, formatSize(attachment.size)].filter(Boolean).join(' · ');
 
@@ -161,15 +204,15 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             {metaParts && <div className={styles.meta}>{metaParts}</div>}
           </div>
           <div className={styles.actions}>
-            {download && (
-              <a
+            {canDownload && (
+              <button
+                type="button"
                 className={styles.downloadBtn}
-                href={download}
-                download={attachment.name || 'attachment'}
+                onClick={handleDownload}
                 title="Download"
               >
                 Download
-              </a>
+              </button>
             )}
             <button type="button" className={styles.closeBtn} onClick={close} aria-label="Close">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -183,13 +226,20 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             <div className={styles.errorMsg}>{attachment.error}</div>
           ) : imgSrc ? (
             <div className={styles.imageWrap}>
-              <img src={imgSrc} alt={attachment.name} className={styles.image} />
+              <img
+                src={imgSrc}
+                alt={attachment.name}
+                className={styles.image}
+                onLoad={() => setLoaded(true)}
+                onError={() => setLoaded(true)}
+              />
             </div>
           ) : pdfSrc ? (
             <iframe
               title={attachment.name}
               src={pdfSrc}
               className={styles.pdfFrame}
+              onLoad={() => setLoaded(true)}
             />
           ) : htmlSrc ? (
             // `sandbox=""` disables scripts, same-origin, forms and top
@@ -200,6 +250,7 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
               src={htmlSrc}
               sandbox=""
               className={styles.pdfFrame}
+              onLoad={() => setLoaded(true)}
             />
           ) : textSrc ? (
             // Plain text, source, JSON, CSV, etc. Chromium renders these
@@ -211,11 +262,21 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
               src={textSrc}
               sandbox=""
               className={styles.pdfFrame}
+              onLoad={() => setLoaded(true)}
             />
           ) : (
             <div className={styles.emptyMsg}>
               No inline preview available for this file type.
-              {download ? ' Use Download to save the file.' : ''}
+              {canDownload ? ' Use Download to save the file.' : ''}
+            </div>
+          )}
+          {hasPreview && !loaded && (
+            // Overlay spinner while the image / iframe is loading. First
+            // open has real latency (Chromium spinning up its PDF viewer
+            // or streaming a large file) and a blank modal feels broken.
+            <div className={styles.loadingOverlay} aria-live="polite" role="status">
+              <span className={styles.spinner} aria-hidden="true" />
+              <span className={styles.loadingLabel}>Loading preview…</span>
             </div>
           )}
         </div>

@@ -213,6 +213,9 @@ const api = {
   chatPrepareAttachments(conversationId: string, attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
     return ipcRenderer.invoke('chat:prepare-attachments', conversationId, attachments);
   },
+  attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+    return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
+  },
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments);
   },

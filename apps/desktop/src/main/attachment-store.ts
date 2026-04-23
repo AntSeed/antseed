@@ -16,7 +16,6 @@
  * Both IDs are validated against a strict charset before touching the
  * filesystem so a hostile renderer can't path-traverse out of the root.
  */
-import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CHAT_DATA_DIR } from './chat-workspace.js';
@@ -128,7 +127,8 @@ export async function resolveAttachmentPath(
 
 /**
  * Delete every attachment belonging to a conversation. Safe no-op when
- * the conversation never had any attachments.
+ * the conversation never had any attachments — `rm { force: true }`
+ * swallows ENOENT, so no pre-check is needed.
  */
 export async function deleteConversationAttachments(
   conversationId: string,
@@ -137,7 +137,6 @@ export async function deleteConversationAttachments(
   if (!isSafeId(conversationId)) return;
   const root = rootFor(options);
   const dir = path.join(root, conversationId);
-  if (!existsSync(dir)) return;
   await rm(dir, { recursive: true, force: true });
 }
 
@@ -154,7 +153,9 @@ export async function sweepOrphanAttachments(
   options: StoreOptions = {},
 ): Promise<string[]> {
   const root = rootFor(options);
-  if (!existsSync(root)) return [];
+  // No synchronous pre-check — the readdir try/catch below already
+  // short-circuits when the root doesn't exist, and `existsSync` would
+  // block the main event loop on every app startup.
   let entries: { name: string; isDirectory: () => boolean }[];
   try {
     entries = await readdir(root, { withFileTypes: true });
