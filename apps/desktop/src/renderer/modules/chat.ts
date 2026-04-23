@@ -958,33 +958,52 @@ export function initChatModule({
     }));
 
     const activeConversationPeerId = activeConversation?.peerId?.trim() ?? '';
+    const hasActiveConversation = Boolean(activeConversation?.id);
+
+    // Resolve the preferred selection. The first-available-option fallback
+    // (`optionCandidates[0]?.value`) is ONLY safe for the new-chat landing
+    // page — silently rebinding an active conversation to whatever happens
+    // to sort first in the catalog has catastrophic consequences:
+    // `chatSelectedPeerId` and `preferredPeerByConversationId` in main stay
+    // pinned to the conversation's original peer, so the outbound request
+    // ends up with pin-peer=<originalPeer> + service=<unrelated peer's
+    // service>, which the buyer proxy rejects with "Service strict-miss" in
+    // a permanent 502 loop. This is the exact flip that turned a kimi-k2.6
+    // chat into a chaotic-pm chat when the original peer's metadata briefly
+    // dropped its service on re-hydration.
+    const firstOptionFallback = hasActiveConversation ? null : (optionCandidates[0]?.value ?? null);
     const preferred =
       findMatchingChatServiceOptionValue(
         optionCandidates,
         currentSelection.id,
         currentSelection.provider,
         currentSelection.peerId,
-      ) ??
-      findMatchingChatServiceOptionValue(
+      )
+      ?? findMatchingChatServiceOptionValue(
         optionCandidates,
         activeConversationModel,
         activeConversationProvider,
         activeConversationPeerId,
-      ) ??
-      optionCandidates[0]?.value ??
-      '';
+      )
+      ?? firstOptionFallback;
 
     const nextSignature = computeServiceOptionsSignature(options);
     if (
-      nextSignature === lastServiceOptionsSignature &&
-      uiState.chatSelectedServiceValue === preferred
+      nextSignature === lastServiceOptionsSignature
+      && (preferred === null || uiState.chatSelectedServiceValue === preferred)
     ) {
       return;
     }
 
     if (options.length === 0) {
       uiState.chatServiceOptions = [];
-      uiState.chatSelectedServiceValue = '';
+      // Preserve the chat's pinned (service, peer) across a transient empty
+      // catalog. Clearing here would otherwise force the next refresh into
+      // the first-option fallback when options reappear, re-opening the
+      // silent-rebind hole above.
+      if (!hasActiveConversation) {
+        uiState.chatSelectedServiceValue = '';
+      }
       lastServiceOptionsSignature = '';
       notifyUiStateChanged();
       return;
@@ -1005,7 +1024,16 @@ export function initChatModule({
       description: entry.description,
     }));
 
-    uiState.chatSelectedServiceValue = preferred;
+    if (preferred !== null) {
+      uiState.chatSelectedServiceValue = preferred;
+    }
+    // When `preferred === null` (active conversation whose (service, peer)
+    // pair is temporarily missing from the catalog), we intentionally leave
+    // `chatSelectedServiceValue` as-is. The dropdown shows the refreshed
+    // option list; the chat stays bound to its original service until the
+    // user explicitly switches via `handleServiceChange`, and any send that
+    // reaches the proxy in the meantime surfaces a real error instead of
+    // silently retargeting a different peer's service.
     lastServiceOptionsSignature = nextSignature;
     notifyUiStateChanged();
   }
@@ -1758,7 +1786,7 @@ export function initChatModule({
         if (!supportsMultimodal) {
           const label = currentOption?.label || 'this service';
           showChatError(
-            `${label} doesn't support images. Remove the image attachment or switch to a multimodal service (look for the “multimodal” tag in Discover).`,
+            `${label} doesn't support images. Remove the image attachment or switch to a multimodal service (look for the “Image Upload” tag in Discover).`,
           );
           setConversationSending(convId, false);
           return;
