@@ -100,7 +100,7 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
  * pinned to the same peer/service. We only drop a peer once it has failed
  * repeatedly within a short window.
  */
-const PEER_FAILURE_THRESHOLD = 4
+const PEER_FAILURE_THRESHOLD = 10
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
