@@ -52,6 +52,7 @@ import {
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
+import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -85,6 +86,11 @@ function hasDesktopDebugFlag(argv: string[]): boolean {
 }
 
 let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+
+// The `antseed-attachment://` scheme must be registered as privileged
+// *before* `app.whenReady()` fires. The actual request handler is wired
+// inside whenReady() once Electron's protocol module is usable.
+registerAttachmentScheme();
 
 function resolveAppIconPath(): string | undefined {
   const candidates = [
@@ -854,6 +860,7 @@ ipcMain.handle('runtime:scan-network', async () => {
 });
 
 app.whenReady().then(async () => {
+  installAttachmentProtocol();
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,

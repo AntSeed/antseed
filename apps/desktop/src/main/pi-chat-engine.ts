@@ -17,6 +17,10 @@ import {
   type PreparedChatAttachment,
   type RawChatAttachment,
 } from './chat-attachments.js';
+import {
+  deleteConversationAttachments,
+  sweepOrphanAttachments,
+} from './attachment-store.js';
 import { webFetchTool } from './chat-web-fetch.js';
 import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
@@ -2614,8 +2618,33 @@ export function registerPiChatHandlers({
     preferredPeerByConversationId.delete(id);
     cachedPaymentRequired.delete(id);
     await store.delete(id);
+    // Best effort: wipe any raw attachment bytes we persisted for this
+    // conversation. Failures are swallowed so a stuck directory doesn't
+    // block the primary delete from returning ok.
+    try {
+      await deleteConversationAttachments(id);
+    } catch (err) {
+      appendSystemLog(`Failed to delete attachments for conversation ${id}: ${asErrorMessage(err)}`);
+    }
     return { ok: true };
   });
+
+  // Sweep attachment directories that no longer correspond to any
+  // conversation — can happen if a previous run crashed between persist
+  // and the delete handler. Cheap (directory stat-only) so we do it once
+  // on handler registration.
+  void (async () => {
+    try {
+      const summaries = await store.list();
+      const known = new Set<string>(summaries.map((s) => s.id));
+      const removed = await sweepOrphanAttachments(known);
+      if (removed.length > 0) {
+        appendSystemLog(`Swept ${removed.length} orphan attachment director${removed.length === 1 ? 'y' : 'ies'}.`);
+      }
+    } catch (err) {
+      appendSystemLog(`Attachment orphan sweep failed: ${asErrorMessage(err)}`);
+    }
+  })();
 
   ipcMain.handle('chat:ai-rename-conversation', async (_event, id: string, title: string) => {
     const manager = await store.openSessionManager(id);
