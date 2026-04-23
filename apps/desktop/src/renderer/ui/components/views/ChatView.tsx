@@ -21,7 +21,7 @@ import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
-import type { ChatWorkspaceGitStatus } from '../../../types/bridge';
+import type { ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
 import { AntStationStackedLogo } from '../AntStationLogo';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
@@ -33,6 +33,9 @@ const MAX_INPUT_HEIGHT = 220;
 const PREVIEW_MIN_WIDTH = 280;
 const CHAT_MIN_WIDTH = 320;
 const DEFAULT_PREVIEW_FRACTION = 0.5;
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -115,7 +118,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const snap = useUiSnapshot();
   const actions = useActions();
   const [inputValue, setInputValue] = useState('');
-  const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<RawChatAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
@@ -322,55 +326,94 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
-    if (!text && !attachedImage) return;
+    if (!text && attachedFiles.length === 0) return;
+    const filesToSend = attachedFiles;
     setInputValue('');
-    setAttachedImage(null);
+    setAttachedFiles([]);
+    setAttachmentError(null);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
       inputRef.current.style.overflowY = 'hidden';
       inputRef.current.focus();
     }
-    actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
-  }, [inputValue, attachedImage, actions]);
+    actions.sendMessage(text, filesToSend);
+  }, [inputValue, attachedFiles, actions]);
 
-  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-
-  const attachImageFile = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const [header, base64] = dataUrl.split(',');
-      const mimeType = header.replace('data:', '').replace(';base64', '');
-      setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
-    };
-    reader.readAsDataURL(file);
+  const readRawAttachment = useCallback((file: File): Promise<RawChatAttachment> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error(`Could not read ${file.name || 'attachment'}`));
+      reader.onload = () => {
+        resolve({
+          id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          name: file.name || 'attachment',
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+          base64: String(reader.result || ''),
+        });
+      };
+      reader.readAsDataURL(file);
+    });
   }, []);
 
-  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    attachImageFile(file);
-    e.target.value = '';
-  }, [attachImageFile]);
+  const attachFiles = useCallback(async (files: FileList | File[]) => {
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+    const accepted: File[] = [];
+    let totalBytes = attachedFiles.reduce((sum, file) => sum + file.size, 0);
 
-  const handleRemoveImage = useCallback(() => {
-    setAttachedImage(null);
+    for (const file of incoming) {
+      if (attachedFiles.length + accepted.length >= MAX_ATTACHMENTS) {
+        setAttachmentError(`Only ${MAX_ATTACHMENTS} attachments are allowed per message.`);
+        break;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentError(`${file.name || 'Attachment'} exceeds the 25 MiB per-file limit.`);
+        continue;
+      }
+      if (totalBytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+        setAttachmentError('Attachments exceed the 50 MiB per-message limit.');
+        continue;
+      }
+      accepted.push(file);
+      totalBytes += file.size;
+    }
+
+    if (accepted.length === 0) return;
+    try {
+      const raw = await Promise.all(accepted.map(readRawAttachment));
+      setAttachedFiles((prev) => [...prev, ...raw].slice(0, MAX_ATTACHMENTS));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : String(error));
+    }
+  }, [attachedFiles, readRawAttachment]);
+
+  const handleFileAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) void attachFiles(files);
+    e.target.value = '';
+  }, [attachFiles]);
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachedFiles((prev) => prev.filter((file) => file.id !== id));
+    setAttachmentError(null);
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
+    const files: File[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (!ALLOWED_PASTE_MIME_TYPES.has(item.type)) continue;
       const file = item.getAsFile();
-      if (!file) continue;
-      e.preventDefault();
-      attachImageFile(file);
-      return;
+      if (file) files.push(file);
     }
-  }, [attachImageFile]);
+    if (files.length === 0) return;
+    e.preventDefault();
+    void attachFiles(files);
+  }, [attachFiles]);
 
   const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -388,9 +431,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file && ALLOWED_PASTE_MIME_TYPES.has(file.type)) attachImageFile(file);
-  }, [attachImageFile]);
+    if (e.dataTransfer.files.length > 0) void attachFiles(e.dataTransfer.files);
+  }, [attachFiles]);
 
 
   const handleKeyDown = useCallback(
@@ -526,7 +568,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           {isDragOver && (
             <div className={styles.chatDropOverlay}>
               <div className={styles.chatDropOverlayInner}>
-                <span>Drop image here</span>
+                <span>Drop files here</span>
               </div>
             </div>
           )}
@@ -572,16 +614,34 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+            {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
             <LowBalanceWarning
               visible={snap.chatLowBalanceWarning}
               availableUsdc={snap.creditsAvailableUsdc}
               onAddCredits={() => actions.openPaymentsPortal?.()}
             />
 
-            {attachedImage && (
-              <div className={styles.chatImageAttachPreview}>
-                <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
-                <button className={styles.chatImageRemoveBtn} onClick={handleRemoveImage} title="Remove image">✕</button>
+            {attachedFiles.length > 0 && (
+              <div className={styles.chatAttachmentTray}>
+                {attachedFiles.map((file) => (
+                  <div className={styles.chatAttachmentChip} key={file.id} title={`${file.name} (${formatAttachmentSize(file.size)})`}>
+                    {file.mimeType.startsWith('image/') ? (
+                      <img src={file.base64} alt="" className={styles.chatAttachmentThumb} />
+                    ) : (
+                      <span className={styles.chatAttachmentFileIcon}>{getAttachmentExtension(file.name)}</span>
+                    )}
+                    <span className={styles.chatAttachmentName}>{file.name}</span>
+                    <span className={styles.chatAttachmentSize}>{formatAttachmentSize(file.size)}</span>
+                    <button
+                      className={styles.chatAttachmentRemoveBtn}
+                      onClick={() => handleRemoveAttachment(file.id)}
+                      title="Remove attachment"
+                      type="button"
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -590,9 +650,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 ref={fileInputRef}
                 id={fileInputId}
                 type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp"
+                accept="image/jpeg,image/png,image/gif,image/webp,.pdf,.docx,.pptx,.xlsx,.odt,.odp,.ods,.rtf,.zip,.txt,.md,.json,.csv,.js,.ts,.tsx,.jsx,.html,.css,.py,.rs,.go,.java,.rb,.sh,.yaml,.yml,.xml,.svg"
+                multiple
                 style={{ display: 'none' }}
-                onChange={handleImageAttach}
+                onChange={handleFileAttach}
               />
               <textarea
                 ref={inputRef}
@@ -609,7 +670,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <div className={styles.chatInputBottom}>
                 <button
                   className={styles.chatAttachBtn}
-                  title="Attach image"
+                  title="Attach files"
                   disabled={snap.chatInputDisabled}
                   onClick={() => fileInputRef.current?.click()}
                 >
@@ -620,7 +681,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     Stop
                   </button>
                 ) : (
-                  <button className={styles.chatSendBtn} disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
+                  <button className={styles.chatSendBtn} disabled={snap.chatSendDisabled && attachedFiles.length === 0} onClick={handleSend}>
                     <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
                   </button>
                 )}
@@ -694,6 +755,19 @@ function compactUsd(raw: string): string {
   if (n < 0.01) return `$${n.toFixed(4)}`;
   if (n < 1) return `$${n.toFixed(3)}`;
   return `$${n.toFixed(2)}`;
+}
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}
+
+function getAttachmentExtension(name: string): string {
+  const ext = name.split('.').pop()?.trim();
+  return ext && ext !== name ? ext.slice(0, 4).toUpperCase() : 'FILE';
 }
 
 function ChatSessionStats({

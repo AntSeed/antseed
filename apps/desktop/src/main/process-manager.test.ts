@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { resolveCommandArgs } from './process-manager.js';
 
@@ -14,8 +15,8 @@ test('resolveCommandArgs launches the grouped buyer runtime command without forc
 
   assert.deepEqual(args, [
     '--verbose',
-    '--config', '/tmp/antseed-config.json',
-    '--data-dir', `${homedir()}/.antseed`,
+    '--config', resolve('/tmp/antseed-config.json'),
+    '--data-dir', join(homedir(), '.antseed'),
     'buyer', 'start',
   ]);
 });
@@ -28,8 +29,8 @@ test('resolveCommandArgs forwards non-default routers', () => {
   });
 
   assert.deepEqual(args, [
-    '--config', '/tmp/antseed-config.json',
-    '--data-dir', `${homedir()}/.antseed`,
+    '--config', resolve('/tmp/antseed-config.json'),
+    '--data-dir', join(homedir(), '.antseed'),
     'buyer', 'start', '--router', 'custom-router',
   ]);
 });

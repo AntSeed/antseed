@@ -99,6 +99,28 @@ export type ChatAiStreamStopReason = {
   errorCode?: string;
 };
 
+export type RawChatAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  base64: string;
+};
+
+export type PreparedChatAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: 'image' | 'text' | 'archive' | 'error';
+  status: 'ready' | 'error';
+  text?: string;
+  image?: { type: 'image'; data: string; mimeType: string };
+  error?: string;
+  truncated?: boolean;
+  native?: { provider?: string; payload?: unknown };
+};
+
 export type StartOptions = {
   mode: RuntimeMode;
   router?: string;
@@ -136,8 +158,9 @@ export type DesktopBridge = {
   chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
+  chatPrepareAttachments?: (attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
+  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;

@@ -70,11 +70,14 @@ function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem
   const output = String(block.content || '');
   const diff = extractToolDiff(block);
   const diffStats = countDiffStats(diff);
+  const status = block.status === 'running' || block.status === 'error' || block.status === 'success'
+    ? block.status
+    : 'success';
   return {
     id: String(block.id || `tool-${index}`),
     label: formatToolExecutionLabel(block.name, block.input),
     kind: getToolKind(block.name),
-    status: block.status ?? 'success',
+    status,
     output,
     outputLineCount: output.split('\n').filter((line) => line.trim().length > 0).length,
     diff,
@@ -479,6 +482,28 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
     return <ThinkingBlockView key={blockKey} block={block} />;
   }
 
+  if (block.type === 'file') {
+    const fileName = String(block.fileName || 'attachment');
+    const mimeType = String(block.mimeType || 'application/octet-stream');
+    const size = typeof block.size === 'number' && Number.isFinite(block.size)
+      ? formatFileSize(block.size)
+      : '';
+    const isError = block.status === 'error' || Boolean(block.error);
+    return (
+      <div key={blockKey} className={`${styles.fileAttachment}${isError ? ` ${styles.fileAttachmentError}` : ''}`}>
+        <div className={styles.fileAttachmentIcon} aria-hidden="true">
+          {fileName.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}
+        </div>
+        <div className={styles.fileAttachmentBody}>
+          <div className={styles.fileAttachmentName}>{fileName}</div>
+          <div className={styles.fileAttachmentMeta}>
+            {[mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : ''].filter(Boolean).join(' · ')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (block.type === 'tool_use') {
     // tool_use blocks are grouped by renderAssistantBlocks into ToolGroupView
     return null;
@@ -509,6 +534,15 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   }
 
   return null;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function extractPlainText(content: unknown): string {

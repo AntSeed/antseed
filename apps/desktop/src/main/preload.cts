@@ -79,6 +79,28 @@ type PluginListResult = {
   error: string | null;
 };
 
+type RawChatAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  base64: string;
+};
+
+type PreparedChatAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: 'image' | 'text' | 'archive' | 'error';
+  status: 'ready' | 'error';
+  text?: string;
+  image?: { type: 'image'; data: string; mimeType: string };
+  error?: string;
+  truncated?: boolean;
+  native?: { provider?: string; payload?: unknown };
+};
+
 type PluginInstallResult = {
   ok: boolean;
   package: string;
@@ -185,11 +207,14 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
-  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType);
+  chatPrepareAttachments(attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
+    return ipcRenderer.invoke('chat:prepare-attachments', attachments);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments);
+  },
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments);
   },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
