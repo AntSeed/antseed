@@ -353,6 +353,24 @@ describe('SellerPaymentManager', () => {
     await expect(manager.awaitAcceptedAtLeast(channelId, 500_000n, 50)).resolves.toBe(false);
   });
 
+  it('awaitAcceptedAtLeast resolves false when the channel is closed before the target is reached', async () => {
+    const channelId = makeChannelId(80);
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    const waitPromise = manager.awaitAcceptedAtLeast(channelId, 500_000n, 5_000);
+
+    // Channel eviction (CloseRequested, settle, timeout) must wake waiters
+    // with `false` so the request handler correctly 402s instead of being
+    // told the target was reached when it wasn't.
+    await manager.handleCloseRequested(channelId);
+
+    await expect(waitPromise).resolves.toBe(false);
+  });
+
   it('test_recordSpend: tracks cumulative spend', async () => {
 
     const channelId = makeChannelId(3);

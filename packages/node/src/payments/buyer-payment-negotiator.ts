@@ -245,8 +245,12 @@ export class BuyerPaymentNegotiator {
       : await this._awaitPaymentRequired(peer.peerId, conn, waitMs);
     if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
 
-    const returnPaymentRequired = (reason: string): Handle402Result => {
-      debugLog(`[BuyerNegotiator] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${reason})`);
+    // Stable machine-readable codes for the 402 body. Kept deliberately small
+    // so callers (desktop UI, other SDK consumers) can switch on them without
+    // being coupled to internal debug strings.
+    type PaymentRequiredCode = 'insufficient_deposits';
+    const returnPaymentRequired = (code: PaymentRequiredCode, debugReason: string): Handle402Result => {
+      debugLog(`[BuyerNegotiator] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${debugReason})`);
       // Always return a normalized buyer-authored body so the desktop UI can
       // render a proper "top up your deposits" CTA instead of the raw seller
       // 402 JSON (which leaks internal fields like requiredCumulativeAmount,
@@ -264,7 +268,7 @@ export class BuyerPaymentNegotiator {
           : null);
       const enrichedBody = JSON.stringify({
         error: 'payment_required',
-        reason,
+        code,
         peerId: peer.peerId,
         ...(req?.minBudgetPerRequest != null ? { minBudgetPerRequest: req.minBudgetPerRequest } : {}),
         ...(req?.suggestedAmount != null ? { suggestedAmount: req.suggestedAmount } : {}),
@@ -360,7 +364,7 @@ export class BuyerPaymentNegotiator {
       const buyerAddr = this._identity.wallet.address;
       const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
       if (balance.available <= 0n) {
-        return returnPaymentRequired('insufficient credits');
+        return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
       }
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);

@@ -264,6 +264,17 @@ export class BuyerPaymentManager {
     // verifiedCost to N is safe because the buyer can either pay N or watch the seller
     // close() on its existing signed auth — the exposure is bounded by whatever the seller
     // can actually prove on-chain, which it can already claim up to `accepted`.
+    //
+    // SECURITY: a malicious seller can inflate `targetCumulative` up to the on-chain
+    // `reserveMaxAmount` (our `_currentReserveCeiling`) in a single 402, bypassing the
+    // usual per-request overdraft pacing. The upper bound is still bounded by that
+    // ceiling — `nextCumulative = min(requestedAmount, maxSignable)` and `maxSignable`
+    // is capped at the ceiling — so the seller can never push the buyer past what the
+    // buyer explicitly reserved. The effect is that an abusive seller could drain the
+    // reserve in one catch-up instead of over many well-metered requests, but cannot
+    // charge beyond the reserve. Accepting this tradeoff: the attacker could already
+    // settle up to `accepted` on-chain today with the signatures we've already issued,
+    // and losing the pacing doesn't expose new funds.
     const floor = targetCumulative != null && targetCumulative > currentCumulative
       ? targetCumulative
       : currentCumulative;

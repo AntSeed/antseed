@@ -451,6 +451,10 @@ describe('BuyerPaymentNegotiator', () => {
       const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
       const body = JSON.parse(new TextDecoder().decode(res.body));
       expect(body.error).toBe('payment_required');
+      // Stable machine-readable code — not a free-form debug string — so
+      // callers can switch on it without coupling to internal phrasing.
+      expect(body.code).toBe('insufficient_deposits');
+      expect(body.reason).toBeUndefined();
       expect(body.minBudgetPerRequest).toBe('10000');
       expect(body.suggestedAmount).toBe('100000');
       expect(body.peerId).toBe(peer.peerId);

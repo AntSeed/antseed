@@ -96,9 +96,10 @@ export class SellerPaymentManager {
    * Used to hide the NeedAuth → SpendingAuth round-trip latency from the next
    * request: if a new request arrives while the prior response's NeedAuth is
    * still on the wire, the request handler parks on this waiter instead of
-   * 402ing immediately.
+   * 402ing immediately. `resolve(true)` means the target was reached;
+   * `resolve(false)` means the channel was evicted before that could happen.
    */
-  private readonly _acceptedWaiters = new Map<string, Array<{ target: bigint; resolve: () => void }>>();
+  private readonly _acceptedWaiters = new Map<string, Array<{ target: bigint; resolve: (reached: boolean) => void }>>();
 
   /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
@@ -240,17 +241,17 @@ export class SellerPaymentManager {
    * trip when a follow-up request arrives before the catch-up auth has landed.
    */
   awaitAcceptedAtLeast(channelId: string, target: bigint, timeoutMs: number): Promise<boolean> {
-    const current = this._acceptedCumulative.get(channelId) ?? 0n;
-    if (current >= target) return Promise.resolve(true);
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+    if (accepted >= target) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
       let done = false;
       const waiter = {
         target,
-        resolve: () => {
+        resolve: (reached: boolean) => {
           if (done) return;
           done = true;
           clearTimeout(timer);
-          resolve(true);
+          resolve(reached);
         },
       };
       const waiters = this._acceptedWaiters.get(channelId) ?? [];
@@ -259,9 +260,9 @@ export class SellerPaymentManager {
       const timer = setTimeout(() => {
         if (done) return;
         done = true;
-        const current = this._acceptedWaiters.get(channelId);
-        if (current) {
-          const filtered = current.filter((w) => w !== waiter);
+        const list = this._acceptedWaiters.get(channelId);
+        if (list) {
+          const filtered = list.filter((w) => w !== waiter);
           if (filtered.length > 0) this._acceptedWaiters.set(channelId, filtered);
           else this._acceptedWaiters.delete(channelId);
         }
@@ -275,17 +276,23 @@ export class SellerPaymentManager {
     if (!waiters || waiters.length === 0) return;
     const remaining: typeof waiters = [];
     for (const w of waiters) {
-      if (newAccepted >= w.target) w.resolve();
+      if (newAccepted >= w.target) w.resolve(true);
       else remaining.push(w);
     }
     if (remaining.length > 0) this._acceptedWaiters.set(channelId, remaining);
     else this._acceptedWaiters.delete(channelId);
   }
 
+  /**
+   * Wake all waiters for a channel with `reached=false` — the target can no
+   * longer be reached (channel evicted, settled, or closed). Preserves the
+   * `awaitAcceptedAtLeast` contract: `true` only when the target was actually
+   * hit, `false` otherwise.
+   */
   private _releaseAcceptedWaiters(channelId: string): void {
     const waiters = this._acceptedWaiters.get(channelId);
     if (!waiters) return;
-    for (const w of waiters) w.resolve();
+    for (const w of waiters) w.resolve(false);
     this._acceptedWaiters.delete(channelId);
   }
 
@@ -869,6 +876,7 @@ export class SellerPaymentManager {
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
+    this._releaseAcceptedWaiters(channelId);
     this._activeBuyers.delete(buyerPeerId);
   }
 
@@ -1034,6 +1042,7 @@ export class SellerPaymentManager {
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
+    this._releaseAcceptedWaiters(channelId);
 
     // Find and remove buyer from active set
     const channel = this._channelStore.getChannel(channelId);
