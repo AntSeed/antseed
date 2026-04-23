@@ -60,6 +60,25 @@ function isHtmlMime(mimeType: string): boolean {
   return m === 'text/html' || m === 'application/xhtml+xml';
 }
 
+/**
+ * Mime types Chromium renders as plain text when asked. `text/html` is
+ * handled separately (it has its own sandbox branch) so we exclude it
+ * here.
+ */
+function isTextualMime(mimeType: string): boolean {
+  const m = mimeType.toLowerCase();
+  if (isHtmlMime(m)) return false;
+  if (m.startsWith('text/')) return true;
+  return (
+    m === 'application/json'
+    || m === 'application/javascript'
+    || m === 'application/x-javascript'
+    || m === 'application/xml'
+    || m === 'application/yaml'
+    || m === 'application/x-yaml'
+  );
+}
+
 function buildImageSrc(att: ViewerAttachment): string | null {
   // A `src` URL (custom protocol) beats any inline bytes for images —
   // Chromium can stream the file without JS touching the bytes.
@@ -113,6 +132,10 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
   );
   const htmlSrc = useMemo(
     () => (attachment.src && isHtmlMime(attachment.mimeType) ? attachment.src : null),
+    [attachment],
+  );
+  const textSrc = useMemo(
+    () => (attachment.src && isTextualMime(attachment.mimeType) ? attachment.src : null),
     [attachment],
   );
   const download = useMemo(() => buildDownloadHref(attachment), [attachment]);
@@ -175,6 +198,17 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             <iframe
               title={attachment.name}
               src={htmlSrc}
+              sandbox=""
+              className={styles.pdfFrame}
+            />
+          ) : textSrc ? (
+            // Plain text, source, JSON, CSV, etc. Chromium renders these
+            // as monospace text. `sandbox=""` is belt-and-braces — with
+            // `nosniff` set by the protocol handler, Chromium can't
+            // reclassify the response as HTML.
+            <iframe
+              title={attachment.name}
+              src={textSrc}
               sandbox=""
               className={styles.pdfFrame}
             />

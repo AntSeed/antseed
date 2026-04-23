@@ -476,15 +476,26 @@ function renderAssistantBlocks(
 }
 
 /**
- * Is `application/pdf`, `text/html`, `text/svg+xml`, `image/*`, etc. a
- * mime we know how to render natively in the AttachmentViewer? Anything
- * else falls back to metadata + Download.
+ * Mime types the AttachmentViewer can render natively. Image, PDF, and
+ * HTML get their dedicated branches in the viewer; everything else that
+ * Chromium will display as plain text (text/*, JSON, JS, XML, YAML)
+ * falls into a generic iframe path. Anything else degrades to a
+ * metadata-only card with a Download button.
  */
 function isRenderableMime(mimeType: string): boolean {
   const m = mimeType.toLowerCase();
   if (m.startsWith('image/')) return true;
   if (m === 'application/pdf') return true;
   if (m === 'text/html' || m === 'application/xhtml+xml') return true;
+  if (m.startsWith('text/')) return true;
+  if (
+    m === 'application/json'
+    || m === 'application/javascript'
+    || m === 'application/x-javascript'
+    || m === 'application/xml'
+    || m === 'application/yaml'
+    || m === 'application/x-yaml'
+  ) return true;
   return false;
 }
 
