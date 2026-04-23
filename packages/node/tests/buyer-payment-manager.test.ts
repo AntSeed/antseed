@@ -766,11 +766,11 @@ describe('BuyerPaymentManager', () => {
 
   it('extendCurrentSpendingAuth catches up to an explicit target in a single step within overdraft window', async () => {
     const sellerPeerId = fakePeerId('seller-catchup-target');
-    // Default-shaped config: the legitimate Open Forge race (56_218 signed,
-    // seller spent 85_119) is 28_901 behind — well within the 500_000-USDC
-    // overdraft window, so we expect a one-hop catch-up.
+    // CLI default-shaped config: the legitimate Open Forge race (56_218 signed,
+    // seller spent 85_119) is 28_901 behind — well within the 300_000-USDC
+    // CLI-default overdraft window, so we expect a one-hop catch-up.
     const catchupConfig = makeConfig(tempDir, {
-      maxPerRequestUsdc: 500_000n,
+      maxPerRequestUsdc: 300_000n,
       maxReserveAmountUsdc: 1_000_000n,
     });
     store.close();

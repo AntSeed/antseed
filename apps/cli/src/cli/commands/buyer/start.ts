@@ -299,7 +299,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
           platformFeeRate: config.payments?.platformFeeRate,
-          maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '100000',
+          // $0.30 overdraft window per channel — large enough that a single
+          // typical long-context request (~$0.05–$0.15 on the priciest
+          // published models) fits within verifiedCost + maxPerRequest, so the
+          // budget-exhausted 402 catch-up closes in a single signature. Set
+          // conservatively to bound the worst-case exposure a malicious
+          // seller can extract via an inflated 402 target (per 402 round trip).
+          maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '300000',
           maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
         }
       }
@@ -313,7 +319,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       }
       console.log(chalk.bold('Effective buyer settings:'))
       console.log(chalk.dim(`  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`))
-      const maxPerRequestUsdc = config.payments?.maxPerRequestUsdc ?? '100000'
+      const maxPerRequestUsdc = config.payments?.maxPerRequestUsdc ?? '300000'
       const maxReserveAmountUsdc = config.payments?.maxReserveAmountUsdc ?? '1000000'
       console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))

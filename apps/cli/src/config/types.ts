@@ -119,7 +119,13 @@ export interface PaymentsCLIConfig {
    * amount. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
-  /** Maximum USDC the buyer authorizes per single request in base units. Default: "100000" ($0.10). */
+  /**
+   * Maximum USDC the buyer authorizes per single request in base units — the
+   * per-request overdraft window beyond the buyer's independently-verified
+   * cumulative cost. Caps how much a misreporting or malicious seller can
+   * extract in one catch-up round trip. Default: "300000" ($0.30), sized to
+   * fit a single long-context request on the priciest published models.
+   */
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
   maxReserveAmountUsdc?: string;
