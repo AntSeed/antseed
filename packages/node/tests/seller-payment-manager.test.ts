@@ -302,6 +302,57 @@ describe('SellerPaymentManager', () => {
     expect(session!.tokensDelivered).toBe('50000');
   });
 
+  it('awaitAcceptedAtLeast resolves when a SpendingAuth raises accepted to the target', async () => {
+    const channelId = makeChannelId(77);
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    // Simulate the race: the request handler is waiting for accepted >= spent
+    // while the buyer's catch-up SpendingAuth is still on the wire.
+    const waitPromise = manager.awaitAcceptedAtLeast(channelId, 500_000n, 2_000);
+
+    // A late-arriving SpendingAuth unblocks the waiter in a single tick — the
+    // request handler resumes instead of emitting a spurious 402.
+    const catchUp = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 500_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, catchUp, mux);
+
+    await expect(waitPromise).resolves.toBe(true);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(500_000n);
+  });
+
+  it('awaitAcceptedAtLeast returns true immediately when the target is already satisfied', async () => {
+    const channelId = makeChannelId(78);
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+    const authPayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 300_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, authPayload, mux);
+
+    await expect(manager.awaitAcceptedAtLeast(channelId, 200_000n, 1_000)).resolves.toBe(true);
+  });
+
+  it('awaitAcceptedAtLeast times out with false when the SpendingAuth never arrives', async () => {
+    const channelId = makeChannelId(79);
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    await expect(manager.awaitAcceptedAtLeast(channelId, 500_000n, 50)).resolves.toBe(false);
+  });
+
   it('test_recordSpend: tracks cumulative spend', async () => {
 
     const channelId = makeChannelId(3);

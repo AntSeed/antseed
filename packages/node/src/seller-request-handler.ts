@@ -165,8 +165,25 @@ export class SellerRequestHandler {
             });
             return;
           }
-          const accepted = spm.getAcceptedCumulative(session.sessionId);
+          let accepted = spm.getAcceptedCumulative(session.sessionId);
           const spent = spm.getCumulativeSpend(session.sessionId);
+          if (spent > 0n && spent >= accepted) {
+            // Race cover: the buyer's SpendingAuth for the *previous* response's
+            // NeedAuth may still be on the wire when this request arrives. The
+            // per-buyer mutex in waitForPendingAuths only serializes *in-flight*
+            // handleSpendingAuth calls — it can't wait for a frame that hasn't
+            // been received yet. Park for up to 5s for the signed catch-up to
+            // land before giving up and emitting a 402. In pure steady-state
+            // operation this wait is a no-op; under pipelined requests (a new
+            // request dispatched before the prior NeedAuth → SpendingAuth has
+            // completed) it hides the round-trip latency from the buyer.
+            const CATCH_UP_WAIT_MS = 5_000;
+            const caughtUp = await spm.awaitAcceptedAtLeast(session.sessionId, spent, CATCH_UP_WAIT_MS);
+            accepted = spm.getAcceptedCumulative(session.sessionId);
+            if (caughtUp && spent <= accepted) {
+              debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
+            }
+          }
           if (spent > 0n && spent >= accepted) {
             const reserveMax = spm.getReserveMax(session.sessionId);
             const providerPricing = this.resolveProviderPricing(provider, request);
@@ -213,9 +230,8 @@ export class SellerRequestHandler {
               })),
             });
             paymentMux.sendPaymentRequired(requirements);
-            // Also emit a NeedAuth so the buyer's standard auto-sign path can
-            // catch up without the 402 ever needing to round-trip to the user.
-            // If the buyer responds in time the retried request will succeed.
+            // Auto-sign catch-up via NeedAuth so a transient underfund recovers
+            // without the 402 round-tripping to the user.
             if (!isFullyExhausted) {
               paymentMux.sendNeedAuth({
                 channelId: session.sessionId,

@@ -253,6 +253,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
         getReserveMax: () => 1_000_000n,
         getPaymentRequirements: () => ({ minBudgetPerRequest: '50000', suggestedAmount: '1000000' }),
         waitForPendingAuths: async () => {},
+        awaitAcceptedAtLeast: async () => false,
       } as any,
       sessionTracker: null,
       channelsClient: {} as any,
