@@ -252,39 +252,32 @@ export class BuyerPaymentManager {
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
     let maxSignable = this._maxSignable(sellerPeerId);
 
-    // If the overdraft window has collapsed to the current cumulative, the buyer has already
-    // signed up to verified + maxPerRequest and the seller returned 402 because spent caught up
-    // to the accepted cumulative. The buyer has already committed to pay currentCumulative via
-    // the signed SpendingAuth, so advancing verified to match reclaims the overdraft headroom
-    // without adding new exposure. Per-request cost claims are still tolerance-checked at
-    // NeedAuth time, so this is not a new attack surface.
+    // Overdraft-window unblock: when the buyer has already signed up to
+    // `verified + maxPerRequest` and the seller returned 402 because `spent`
+    // caught up, advance `verifiedCost` to the current signed cumulative so
+    // the window reopens. The buyer has already committed to pay
+    // `currentCumulative` via the signed SpendingAuth, so the seller can
+    // already claim that much on-chain — advancing verified to match doesn't
+    // expose new funds, it just reclaims overdraft headroom.
     //
-    // The same reasoning extends to catch-up against a seller-reported target: if the seller
-    // says it has already *spent* N (currentSpent in the PaymentRequired body), advancing
-    // verifiedCost to N is safe because the buyer can either pay N or watch the seller
-    // close() on its existing signed auth — the exposure is bounded by whatever the seller
-    // can actually prove on-chain, which it can already claim up to `accepted`.
-    //
-    // SECURITY: a malicious seller can inflate `targetCumulative` up to the on-chain
-    // `reserveMaxAmount` (our `_currentReserveCeiling`) in a single 402, bypassing the
-    // usual per-request overdraft pacing. The upper bound is still bounded by that
-    // ceiling — `nextCumulative = min(requestedAmount, maxSignable)` and `maxSignable`
-    // is capped at the ceiling — so the seller can never push the buyer past what the
-    // buyer explicitly reserved. The effect is that an abusive seller could drain the
-    // reserve in one catch-up instead of over many well-metered requests, but cannot
-    // charge beyond the reserve. Accepting this tradeoff: the attacker could already
-    // settle up to `accepted` on-chain today with the signatures we've already issued,
-    // and losing the pacing doesn't expose new funds.
-    const floor = targetCumulative != null && targetCumulative > currentCumulative
-      ? targetCumulative
-      : currentCumulative;
-    if (maxSignable <= floor) {
+    // SECURITY: the trust anchor here is `currentCumulative`, NOT the
+    // seller-supplied `targetCumulative`. A malicious seller could set
+    // `requiredCumulativeAmount` in the 402 body to the full reserve ceiling
+    // (pretending it spent that much) in an attempt to drain the channel in
+    // one signature. We defend by only ever using `targetCumulative` as a
+    // *destination hint* bounded by `maxSignable = verifiedCost +
+    // maxPerRequestUsdc`. Per-request cost validation still happens
+    // tolerance-checked in `handleNeedAuth`; nothing in the 402 body feeds
+    // `verifiedCost`. The worst a seller can extract per 402 round trip is
+    // one `maxPerRequestUsdc` window beyond what the buyer already signed —
+    // identical to the non-catchup trust model before this PR.
+    if (maxSignable <= currentCumulative) {
       const previousVerified = this._verifiedCost.get(sellerPeerId) ?? 0n;
-      if (floor > previousVerified) {
-        this._verifiedCost.set(sellerPeerId, floor);
+      if (currentCumulative > previousVerified) {
+        this._verifiedCost.set(sellerPeerId, currentCumulative);
         maxSignable = this._maxSignable(sellerPeerId);
         debugLog(
-          `[BuyerPayment] extendCurrentSpendingAuth: advanced verifiedCost ${previousVerified} → ${floor} ` +
+          `[BuyerPayment] extendCurrentSpendingAuth: advanced verifiedCost ${previousVerified} → ${currentCumulative} ` +
           `to unblock overdraft window for ${sellerPeerId.slice(0, 12)}...`,
         );
       }

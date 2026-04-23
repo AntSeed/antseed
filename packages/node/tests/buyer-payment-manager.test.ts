@@ -764,13 +764,13 @@ describe('BuyerPaymentManager', () => {
     expect((mux.sentSpendingAuths[0] as Record<string, string>).cumulativeAmount).toBe('20000');
   });
 
-  it('extendCurrentSpendingAuth catches up to an explicit target in a single step', async () => {
+  it('extendCurrentSpendingAuth catches up to an explicit target in a single step within overdraft window', async () => {
     const sellerPeerId = fakePeerId('seller-catchup-target');
-    // Tight per-request cap so a naive advance (currentCumulative + minBudgetPerRequest)
-    // would still fall below the seller-reported spend target, triggering the
-    // underfunded-SpendingAuth loop this fix closes.
+    // Default-shaped config: the legitimate Open Forge race (56_218 signed,
+    // seller spent 85_119) is 28_901 behind — well within the 500_000-USDC
+    // overdraft window, so we expect a one-hop catch-up.
     const catchupConfig = makeConfig(tempDir, {
-      maxPerRequestUsdc: 10_000n,
+      maxPerRequestUsdc: 500_000n,
       maxReserveAmountUsdc: 1_000_000n,
     });
     store.close();
@@ -783,8 +783,8 @@ describe('BuyerPaymentManager', () => {
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
     manager.handleAuthAck(sellerPeerId, { channelId });
 
-    // Simulate a session that has already signed cumulative=56_218 via NeedAuth
-    // while the seller has spent=85_119 (matches the Open Forge production log).
+    // Simulate a session that has already signed cumulative=56_218 via a
+    // tolerance-checked NeedAuth (so verifiedCost tracks that amount).
     await manager.handleNeedAuth(sellerPeerId, {
       channelId,
       requiredCumulativeAmount: '56218',
@@ -796,14 +796,65 @@ describe('BuyerPaymentManager', () => {
 
     mux.sentSpendingAuths.length = 0;
 
-    // Without a target, the next advance would only reach 56_218 + 10_000 = 66_218,
-    // which the seller would still reject as underfunded (spent=85_119). With the
-    // target passed through, the buyer jumps straight to ≥85_119.
+    // Without a target, the advance would only reach 56_218 + 10_000 = 66_218,
+    // which the seller would still reject as underfunded (spent=85_119). With
+    // the target passed through, the buyer jumps straight to the target in
+    // one hop because 85_119 < verifiedCost + maxPerRequestUsdc.
     await manager.extendCurrentSpendingAuth(sellerPeerId, 10_000n, mux, 85_119n);
 
     expect(mux.sentSpendingAuths).toHaveLength(1);
     const extended = mux.sentSpendingAuths[0] as Record<string, string>;
-    expect(BigInt(extended.cumulativeAmount)).toBeGreaterThanOrEqual(85_119n);
+    expect(BigInt(extended.cumulativeAmount)).toBe(85_119n);
+  });
+
+  it('extendCurrentSpendingAuth caps a malicious target at verifiedCost + maxPerRequestUsdc', async () => {
+    // Adversarial model: a rogue seller sends a 402 with an inflated
+    // requiredCumulativeAmount (claiming fictitious spend) in an attempt
+    // to drain the entire reserve in a single signature. The buyer must
+    // NOT let that target feed verifiedCost — the cap is the per-request
+    // overdraft window beyond what was already signed.
+    const sellerPeerId = fakePeerId('seller-malicious-target');
+    const tightConfig = makeConfig(tempDir, {
+      maxPerRequestUsdc: 10_000n,
+      maxReserveAmountUsdc: 1_000_000n,
+    });
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(identity, tightConfig, store);
+    manager.setSigner(identity.wallet);
+    mux = createMockPaymentMux();
+
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 1_000_000n, TEST_PRICING);
+    const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
+    manager.handleAuthAck(sellerPeerId, { channelId });
+
+    // Legitimate progress via NeedAuth: verifiedCost tracks this.
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '5000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '5000',
+    }, mux);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(5_000n);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(5_000n);
+
+    mux.sentSpendingAuths.length = 0;
+
+    // Seller claims via 402 body that it spent the entire 1_000_000 reserve.
+    // If the buyer trusted this, it would sign cumulative=1_000_000 and lose
+    // the whole channel reservation to an unvalidated claim.
+    await manager.extendCurrentSpendingAuth(sellerPeerId, 10_000n, mux, 1_000_000n);
+
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    const extended = mux.sentSpendingAuths[0] as Record<string, string>;
+    // Cap: verifiedCost (5_000) + maxPerRequestUsdc (10_000) = 15_000.
+    // The malicious 1_000_000 target is ignored beyond that bound.
+    expect(BigInt(extended.cumulativeAmount)).toBe(15_000n);
+    // And crucially: verifiedCost must NOT have been contaminated by the
+    // seller-supplied target — it only advances to the already-signed amount
+    // to reopen the overdraft window.
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(5_000n);
   });
 
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
