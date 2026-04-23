@@ -1,5 +1,6 @@
-/* AttachmentViewer.module.scss — fullscreen modal for previewing images,
-   PDFs, and text attachments in chat. */
+/* AttachmentViewer.module.scss — fullscreen modal for previewing images
+   in chat. Non-image previews are planned as a follow-up (disk-backed
+   attachments rendered via a custom Electron protocol). */
 
 @keyframes av-backdrop-in {
   from { opacity: 0; }
@@ -161,27 +162,6 @@
   object-fit: contain;
   display: block;
   border-radius: var(--radius-sm);
-}
-
-.pdfFrame {
-  flex: 1;
-  width: 100%;
-  min-height: 70vh;
-  border: 0;
-  background: #ffffff;
-}
-
-.textPreview {
-  flex: 1;
-  margin: 0;
-  padding: 14px 16px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: auto;
 }
 
 .emptyMsg,

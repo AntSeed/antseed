@@ -714,8 +714,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             {attachedFiles.length > 0 && (
               <div className={styles.chatAttachmentTray}>
                 {attachedFiles.map((file) => {
-                  const canPreview =
-                    file.mimeType.startsWith('image/') || file.mimeType === 'application/pdf';
+                  const isImage = file.mimeType.startsWith('image/');
                   const openPreview = () => {
                     setPreviewAttachment({
                       name: file.name,
@@ -725,8 +724,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     });
                   };
                   return (
-                    <div className={styles.chatAttachmentChip} key={file.id} title={`${file.name} (${formatAttachmentSize(file.size)})${canPreview ? ' — click to preview' : ''}`}>
-                      {file.mimeType.startsWith('image/') ? (
+                    <div className={styles.chatAttachmentChip} key={file.id} title={`${file.name} (${formatAttachmentSize(file.size)})${isImage ? ' — click to preview' : ''}`}>
+                      {isImage ? (
                         <img
                           src={file.base64}
                           alt=""
@@ -735,18 +734,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                           style={{ cursor: 'zoom-in' }}
                         />
                       ) : (
-                        <span
-                          className={styles.chatAttachmentFileIcon}
-                          onClick={canPreview ? openPreview : undefined}
-                          style={canPreview ? { cursor: 'pointer' } : undefined}
-                        >
+                        <span className={styles.chatAttachmentFileIcon}>
                           {getAttachmentExtension(file.name)}
                         </span>
                       )}
                       <span
                         className={styles.chatAttachmentName}
-                        onClick={canPreview ? openPreview : undefined}
-                        style={canPreview ? { cursor: 'pointer' } : undefined}
+                        onClick={isImage ? openPreview : undefined}
+                        style={isImage ? { cursor: 'pointer' } : undefined}
                       >
                         {file.name}
                       </span>

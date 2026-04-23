@@ -3,10 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './AttachmentViewer.module.scss';
 
 /**
- * Attachment that can be previewed. Shape is intentionally permissive so this
- * works for both composer chips (raw base64 data URLs) and chat-history file
- * blocks (PreparedChatAttachment, which has `image.data` for images and
- * `text` for parsed text/PDF content).
+ * Attachment that can be previewed. Currently scoped to images (composer
+ * uploads pre-send, and image blocks in chat history). Non-image file
+ * previews are intentionally out of scope here — they're planned as a
+ * follow-up that stores raw bytes on disk and uses a custom Electron
+ * protocol so the browser engine can render them natively.
  */
 export type ViewerAttachment = {
   name: string;
@@ -14,12 +15,9 @@ export type ViewerAttachment = {
   size?: number;
   /** Full data URL (e.g. "data:image/png;base64,...") — used by composer chips. */
   dataUrl?: string;
-  /** Image base64 body (no "data:" prefix) — from PreparedChatAttachment. */
+  /** Image base64 body (no "data:" prefix) — from ContentBlock.image source. */
   imageBase64?: string;
   imageMimeType?: string;
-  /** Extracted text (PDFs, docx, source, etc.). */
-  text?: string;
-  truncated?: boolean;
   error?: string;
 };
 
@@ -27,8 +25,6 @@ type AttachmentViewerProps = {
   attachment: ViewerAttachment;
   onClose: () => void;
 };
-
-const MAX_TEXT_PREVIEW_CHARS = 200_000;
 
 function formatSize(bytes: number | undefined): string {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes)) return '';
@@ -44,33 +40,10 @@ function isImageMime(mimeType: string | undefined): boolean {
   return Boolean(mimeType && mimeType.toLowerCase().startsWith('image/'));
 }
 
-function isPdfMime(mimeType: string | undefined): boolean {
-  return mimeType?.toLowerCase() === 'application/pdf';
-}
-
 function buildImageSrc(att: ViewerAttachment): string | null {
   if (att.dataUrl && att.dataUrl.startsWith('data:')) return att.dataUrl;
   if (att.imageBase64 && att.imageMimeType) {
     return `data:${att.imageMimeType};base64,${att.imageBase64}`;
-  }
-  // If dataUrl is a raw base64 body but mime is image/*, fall back
-  if (att.dataUrl && isImageMime(att.mimeType)) {
-    return att.dataUrl.startsWith('data:') ? att.dataUrl : `data:${att.mimeType};base64,${att.dataUrl}`;
-  }
-  return null;
-}
-
-/**
- * Build a download URL for the attachment. When `isBlob` is true the caller
- * owns the URL and must `URL.revokeObjectURL` it when no longer needed.
- */
-function buildDownloadHref(att: ViewerAttachment): { href: string; isBlob: boolean } | null {
-  if (att.dataUrl && att.dataUrl.startsWith('data:')) return { href: att.dataUrl, isBlob: false };
-  const imgSrc = buildImageSrc(att);
-  if (imgSrc) return { href: imgSrc, isBlob: false };
-  if (typeof att.text === 'string' && att.text.length > 0) {
-    const encoded = new Blob([att.text], { type: 'text/plain;charset=utf-8' });
-    return { href: URL.createObjectURL(encoded), isBlob: true };
   }
   return null;
 }
@@ -102,27 +75,13 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
     return () => window.removeEventListener('keydown', handleKey);
   }, [close]);
 
-  const download = useMemo(() => buildDownloadHref(attachment), [attachment]);
-  useEffect(() => {
-    if (!download?.isBlob) return;
-    return () => {
-      URL.revokeObjectURL(download.href);
-    };
-  }, [download]);
+  const imgSrc = useMemo(
+    () => (isImageMime(attachment.mimeType) ? buildImageSrc(attachment) : null),
+    [attachment],
+  );
+  const downloadHref = imgSrc;
 
-  const imgSrc = isImageMime(attachment.mimeType) ? buildImageSrc(attachment) : null;
-  const pdfSrc = isPdfMime(attachment.mimeType) && attachment.dataUrl?.startsWith('data:')
-    ? attachment.dataUrl
-    : null;
-  const textPreview = attachment.text
-    ? attachment.text.length > MAX_TEXT_PREVIEW_CHARS
-      ? `${attachment.text.slice(0, MAX_TEXT_PREVIEW_CHARS)}\n\n... (truncated for preview)`
-      : attachment.text
-    : null;
-
-  const metaParts = [attachment.mimeType, formatSize(attachment.size), attachment.truncated ? 'truncated' : '']
-    .filter(Boolean)
-    .join(' · ');
+  const metaParts = [attachment.mimeType, formatSize(attachment.size)].filter(Boolean).join(' · ');
 
   return createPortal(
     <div
@@ -143,10 +102,10 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             {metaParts && <div className={styles.meta}>{metaParts}</div>}
           </div>
           <div className={styles.actions}>
-            {download && (
+            {downloadHref && (
               <a
                 className={styles.downloadBtn}
-                href={download.href}
+                href={downloadHref}
                 download={attachment.name || 'attachment'}
                 title="Download"
               >
@@ -167,19 +126,8 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             <div className={styles.imageWrap}>
               <img src={imgSrc} alt={attachment.name} className={styles.image} />
             </div>
-          ) : pdfSrc ? (
-            <iframe
-              title={attachment.name}
-              src={pdfSrc}
-              className={styles.pdfFrame}
-            />
-          ) : textPreview ? (
-            <pre className={styles.textPreview}>{textPreview}</pre>
           ) : (
-            <div className={styles.emptyMsg}>
-              No inline preview available for this file type.
-              {download ? ' Use Download to save the file.' : ''}
-            </div>
+            <div className={styles.emptyMsg}>No inline preview available for this file type.</div>
           )}
         </div>
       </div>
