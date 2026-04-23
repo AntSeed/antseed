@@ -1658,6 +1658,9 @@ export function initChatModule({
         status: attachment.status,
         error: attachment.error,
         truncated: attachment.truncated,
+        // Carry the stable disk-store ID onto the block so the renderer
+        // can later open a native preview via `antseed-attachment://`.
+        ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
         attachment,
       });
       if (attachment.kind === 'image' && attachment.image?.data && attachment.image.mimeType) {
@@ -1670,13 +1673,16 @@ export function initChatModule({
     return blocks.length > 0 ? blocks : text;
   }
 
-  async function prepareAttachmentsForSend(rawAttachments: RawChatAttachment[] | undefined): Promise<PreparedChatAttachment[]> {
+  async function prepareAttachmentsForSend(
+    conversationId: string,
+    rawAttachments: RawChatAttachment[] | undefined,
+  ): Promise<PreparedChatAttachment[]> {
     if (!rawAttachments?.length) return [];
     const activeBridge = bridge;
     if (!activeBridge?.chatPrepareAttachments) {
       throw new Error('Attachment preparation is not available in this desktop build.');
     }
-    const result = await activeBridge.chatPrepareAttachments(rawAttachments);
+    const result = await activeBridge.chatPrepareAttachments(conversationId, rawAttachments);
     if (!result.ok) {
       throw new Error(result.error || 'Attachment preparation failed');
     }
@@ -1721,7 +1727,7 @@ export function initChatModule({
     void (async () => {
       let preparedAttachments: PreparedChatAttachment[];
       try {
-        preparedAttachments = await prepareAttachmentsForSend(rawAttachments);
+        preparedAttachments = await prepareAttachmentsForSend(convId, rawAttachments);
       } catch (err) {
         reportChatError(err, 'Attachment preparation failed');
         setConversationSending(convId, false);

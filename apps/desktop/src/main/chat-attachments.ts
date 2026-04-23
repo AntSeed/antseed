@@ -14,6 +14,14 @@ export interface RawChatAttachment {
 
 export interface PreparedChatAttachment {
   id: string;
+  /**
+   * Stable server-generated identifier under which the raw bytes were
+   * persisted on disk (via the storage callback passed to
+   * `prepareChatAttachments`). The renderer uses this to build
+   * `antseed-attachment://<conversationId>/<attachmentId>` URLs for the
+   * in-chat preview. Absent when no storage callback was supplied.
+   */
+  attachmentId?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -24,6 +32,22 @@ export interface PreparedChatAttachment {
   error?: string;
   truncated?: boolean;
   native?: { provider?: string; payload?: unknown };
+}
+
+/**
+ * Callback invoked for every non-error attachment. It receives the decoded
+ * bytes and must return (or resolve to) the stable `attachmentId` that will
+ * be stored on the `PreparedChatAttachment` and embedded in the persisted
+ * `<file id="...">` tag.
+ */
+export type AttachmentStorageCallback = (
+  raw: Pick<RawChatAttachment, 'id' | 'name' | 'mimeType' | 'size'>,
+  buffer: Buffer,
+) => Promise<string> | string;
+
+export interface PrepareChatAttachmentsOptions {
+  limits?: AttachmentPreparationLimits;
+  storage?: AttachmentStorageCallback;
 }
 
 export interface AttachmentPreparationLimits {
@@ -185,9 +209,16 @@ function truncateText(text: string, maxChars: number): { text: string; truncated
   };
 }
 
-function wrapFileText(name: string, mimeType: string, size: number, text: string, note?: string): string {
-  const header = `<file name="${safeAttribute(name)}" mime="${safeAttribute(mimeType || 'application/octet-stream')}" size="${size}">`;
-  const body = note ? `${note}\n\n${text}` : text;
+function wrapFileText(
+  name: string,
+  mimeType: string,
+  size: number,
+  text: string,
+  options: { note?: string; attachmentId?: string } = {},
+): string {
+  const idAttr = options.attachmentId ? ` id="${safeAttribute(options.attachmentId)}"` : '';
+  const header = `<file name="${safeAttribute(name)}" mime="${safeAttribute(mimeType || 'application/octet-stream')}" size="${size}"${idAttr}>`;
+  const body = options.note ? `${options.note}\n\n${text}` : text;
   return `${header}\n${neutralizeFileTags(body)}\n</file>`;
 }
 
@@ -223,7 +254,7 @@ function prepareTextResult(
   extractedText: string,
   limits: AttachmentPreparationLimits,
   remainingMessageChars: number,
-  note?: string,
+  options: { note?: string; attachmentId?: string } = {},
 ): { attachment: PreparedChatAttachment; consumedChars: number } {
   const cleanText = extractedText.trim();
   const perFileCap = Math.min(limits.maxExtractedCharsPerFile, remainingMessageChars);
@@ -233,11 +264,12 @@ function prepareTextResult(
     raw.mimeType || 'text/plain',
     raw.size,
     truncated.text || '[No extractable text found.]',
-    note,
+    { ...(options.note ? { note: options.note } : {}), ...(options.attachmentId ? { attachmentId: options.attachmentId } : {}) },
   );
   return {
     attachment: {
       id: raw.id,
+      ...(options.attachmentId ? { attachmentId: options.attachmentId } : {}),
       name: normalizeName(raw.name),
       mimeType: raw.mimeType || 'text/plain',
       size: raw.size,
@@ -255,6 +287,7 @@ function prepareZipAttachment(
   buffer: Buffer,
   limits: AttachmentPreparationLimits,
   remainingMessageChars: number,
+  attachmentId?: string,
 ): { attachment: PreparedChatAttachment; consumedChars: number } {
   let entries: Record<string, Uint8Array>;
   try {
@@ -312,7 +345,10 @@ function prepareZipAttachment(
     '',
     ...textParts,
   ].join('\n');
-  return prepareTextResult(raw, 'archive', archiveText, limits, remainingMessageChars, 'Archive was inspected in memory. Only safe text entries were included.');
+  return prepareTextResult(raw, 'archive', archiveText, limits, remainingMessageChars, {
+    note: 'Archive was inspected in memory. Only safe text entries were included.',
+    ...(attachmentId ? { attachmentId } : {}),
+  });
 }
 
 async function prepareOneAttachment(
@@ -320,6 +356,7 @@ async function prepareOneAttachment(
   buffer: Buffer,
   limits: AttachmentPreparationLimits,
   remainingMessageChars: number,
+  attachmentId?: string,
 ): Promise<{ attachment: PreparedChatAttachment; consumedChars: number }> {
   const name = normalizeName(raw.name);
   const mimeType = raw.mimeType || 'application/octet-stream';
@@ -328,6 +365,7 @@ async function prepareOneAttachment(
     return {
       attachment: {
         id: raw.id,
+        ...(attachmentId ? { attachmentId } : {}),
         name,
         mimeType,
         size: raw.size,
@@ -344,30 +382,47 @@ async function prepareOneAttachment(
   }
 
   if (isArchiveAttachment(name, mimeType)) {
-    return prepareZipAttachment(raw, buffer, limits, remainingMessageChars);
+    return prepareZipAttachment(raw, buffer, limits, remainingMessageChars, attachmentId);
   }
 
   if (isOfficeAttachment(name)) {
     try {
       const extracted = await withTimeout(extractOfficeText(buffer));
-      return prepareTextResult(raw, 'text', extracted, limits, remainingMessageChars, 'Document text was extracted without OCR or embedded attachments.');
+      return prepareTextResult(raw, 'text', extracted, limits, remainingMessageChars, {
+        note: 'Document text was extracted without OCR or embedded attachments.',
+        ...(attachmentId ? { attachmentId } : {}),
+      });
     } catch (error) {
       return { attachment: makeError(raw, `Could not extract document text: ${error instanceof Error ? error.message : String(error)}`), consumedChars: 0 };
     }
   }
 
   if (isTextAttachment(name, mimeType)) {
-    return prepareTextResult(raw, 'text', decodeText(buffer), limits, remainingMessageChars);
+    return prepareTextResult(raw, 'text', decodeText(buffer), limits, remainingMessageChars, {
+      ...(attachmentId ? { attachmentId } : {}),
+    });
   }
 
   return { attachment: makeError(raw, `Unsupported binary file type: ${extensionFor(name) || mimeType || 'unknown'}`), consumedChars: 0 };
 }
 
+function isLimits(value: AttachmentPreparationLimits | PrepareChatAttachmentsOptions): value is AttachmentPreparationLimits {
+  return typeof (value as AttachmentPreparationLimits).maxAttachments === 'number';
+}
+
 export async function prepareChatAttachments(
   rawAttachments: RawChatAttachment[] | undefined,
-  limits: AttachmentPreparationLimits = DEFAULT_ATTACHMENT_LIMITS,
+  limitsOrOptions: AttachmentPreparationLimits | PrepareChatAttachmentsOptions = DEFAULT_ATTACHMENT_LIMITS,
 ): Promise<PreparedChatAttachment[]> {
   if (!rawAttachments?.length) return [];
+
+  // Backward compatibility: callers may pass `AttachmentPreparationLimits`
+  // directly (as the tests do) or the newer options bag.
+  const options: PrepareChatAttachmentsOptions = isLimits(limitsOrOptions)
+    ? { limits: limitsOrOptions }
+    : limitsOrOptions;
+  const limits = options.limits ?? DEFAULT_ATTACHMENT_LIMITS;
+  const storage = options.storage;
 
   const prepared: PreparedChatAttachment[] = [];
   let totalRawBytes = 0;
@@ -405,8 +460,22 @@ export async function prepareChatAttachments(
     }
     totalRawBytes += buffer.byteLength;
 
+    // Persist raw bytes first when the caller provided a storage callback.
+    // Failures are recorded as errors for this attachment but don't abort
+    // the batch — the LLM pipeline can still receive extracted text for
+    // other files.
+    let attachmentId: string | undefined;
+    if (storage) {
+      try {
+        attachmentId = await storage(rawMeta, buffer);
+      } catch (error) {
+        prepared.push(makeError(rawMeta, `Could not persist attachment: ${error instanceof Error ? error.message : String(error)}`));
+        continue;
+      }
+    }
+
     const remainingChars = Math.max(0, limits.maxExtractedCharsPerMessage - totalExtractedChars);
-    const result = await prepareOneAttachment(rawMeta, buffer, limits, remainingChars);
+    const result = await prepareOneAttachment(rawMeta, buffer, limits, remainingChars, attachmentId);
     totalExtractedChars += result.consumedChars;
     prepared.push(result.attachment);
   }

@@ -109,6 +109,9 @@ export type RawChatAttachment = {
 
 export type PreparedChatAttachment = {
   id: string;
+  /** Stable server-generated ID for the on-disk copy; used by the
+   *  `antseed-attachment://` preview protocol. */
+  attachmentId?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -158,7 +161,7 @@ export type DesktopBridge = {
   chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
-  chatPrepareAttachments?: (attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
+  chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
