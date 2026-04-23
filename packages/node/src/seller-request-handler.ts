@@ -170,16 +170,30 @@ export class SellerRequestHandler {
           if (spent > 0n && spent >= accepted) {
             const reserveMax = spm.getReserveMax(session.sessionId);
             const providerPricing = this.resolveProviderPricing(provider, request);
-            const requirements = spm.getPaymentRequirements(
+            const baseRequirements = spm.getPaymentRequirements(
               request.requestId, buyerPeerId, providerPricing,
             );
-            if (reserveMax > 0n && accepted >= reserveMax) {
+            // Tell the buyer *exactly* how much cumulative signed authorization
+            // the seller needs to unblock further requests. Without this the
+            // buyer can only guess via minBudgetPerRequest and may sign an
+            // amount that is still below `spent`, which the seller would then
+            // reject as underfunded — producing an infinite 402 loop.
+            const target = spent + BigInt(baseRequirements.minBudgetPerRequest);
+            const requirements = {
+              ...baseRequirements,
+              requiredCumulativeAmount: target.toString(),
+              currentSpent: spent.toString(),
+              currentAcceptedCumulative: accepted.toString(),
+              channelId: session.sessionId,
+            };
+            const isFullyExhausted = reserveMax > 0n && accepted >= reserveMax;
+            if (isFullyExhausted) {
               debugLog(`[SellerHandler] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
               void spm.settleSession(buyerPeerId).catch((err) => {
                 debugWarn(`[SellerHandler] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
               });
             } else {
-              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting higher SpendingAuth / renegotiation`);
+              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402 with requiredCumulativeAmount=${target}, awaiting higher SpendingAuth`);
             }
             mux.sendProxyResponse({
               requestId: request.requestId,
@@ -189,12 +203,28 @@ export class SellerRequestHandler {
                 error: 'payment_required',
                 minBudgetPerRequest: requirements.minBudgetPerRequest,
                 suggestedAmount: requirements.suggestedAmount,
+                requiredCumulativeAmount: requirements.requiredCumulativeAmount,
+                currentSpent: requirements.currentSpent,
+                currentAcceptedCumulative: requirements.currentAcceptedCumulative,
+                channelId: requirements.channelId,
                 ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
                 ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
                 ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
               })),
             });
             paymentMux.sendPaymentRequired(requirements);
+            // Also emit a NeedAuth so the buyer's standard auto-sign path can
+            // catch up without the 402 ever needing to round-trip to the user.
+            // If the buyer responds in time the retried request will succeed.
+            if (!isFullyExhausted) {
+              paymentMux.sendNeedAuth({
+                channelId: session.sessionId,
+                requiredCumulativeAmount: target.toString(),
+                currentAcceptedCumulative: accepted.toString(),
+                deposit: session.authMax ?? '0',
+                requestId: request.requestId,
+              });
+            }
             return;
           }
         }

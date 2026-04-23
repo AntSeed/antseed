@@ -232,9 +232,43 @@ describe('BuyerPaymentNegotiator', () => {
         peer.peerId,
         BigInt(paymentRequiredPayload.minBudgetPerRequest),
         expect.anything(),
+        undefined,
       );
       expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('forwards requiredCumulativeAmount from the 402 body as the catch-up target', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.getCumulativeAmount as ReturnType<typeof vi.fn>).mockReturnValueOnce(56218n).mockReturnValueOnce(85119n);
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      // 402 body carries the seller-reported catch-up target (no need to buffer a
+      // PaymentRequired frame — the body alone should be enough to drive recovery).
+      const response = make402Response({
+        error: 'payment_required',
+        minBudgetPerRequest: '10000',
+        suggestedAmount: '1000000',
+        requiredCumulativeAmount: '85119',
+        currentSpent: '85119',
+        currentAcceptedCumulative: '56218',
+      });
+
+      const result = await negotiator.handle402(response, peer, conn, makeRequest());
+
+      expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalledWith(
+        peer.peerId,
+        10000n,
+        expect.anything(),
+        85119n, // <— the catch-up target the seller asked for
+      );
       expect(result.action).toBe('retry');
     });
 
@@ -416,9 +450,16 @@ describe('BuyerPaymentNegotiator', () => {
 
       const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
       const body = JSON.parse(new TextDecoder().decode(res.body));
+      expect(body.error).toBe('payment_required');
       expect(body.minBudgetPerRequest).toBe('10000');
       expect(body.suggestedAmount).toBe('100000');
       expect(body.peerId).toBe(peer.peerId);
+      // Should be the buyer-authored, user-friendly body — not the raw seller 402
+      // fields that would leak internal catch-up/accounting state.
+      expect(body.requiredCumulativeAmount).toBeUndefined();
+      expect(body.currentSpent).toBeUndefined();
+      expect(body.inputUsdPerMillion).toBeUndefined();
+      expect(typeof body.message).toBe('string');
     });
 
     it('throws on negotiation failure and clears locked state', async () => {

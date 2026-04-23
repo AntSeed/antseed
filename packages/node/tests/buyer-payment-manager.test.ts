@@ -764,6 +764,48 @@ describe('BuyerPaymentManager', () => {
     expect((mux.sentSpendingAuths[0] as Record<string, string>).cumulativeAmount).toBe('20000');
   });
 
+  it('extendCurrentSpendingAuth catches up to an explicit target in a single step', async () => {
+    const sellerPeerId = fakePeerId('seller-catchup-target');
+    // Tight per-request cap so a naive advance (currentCumulative + minBudgetPerRequest)
+    // would still fall below the seller-reported spend target, triggering the
+    // underfunded-SpendingAuth loop this fix closes.
+    const catchupConfig = makeConfig(tempDir, {
+      maxPerRequestUsdc: 10_000n,
+      maxReserveAmountUsdc: 1_000_000n,
+    });
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(identity, catchupConfig, store);
+    manager.setSigner(identity.wallet);
+    mux = createMockPaymentMux();
+
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 1_000_000n, TEST_PRICING);
+    const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
+    manager.handleAuthAck(sellerPeerId, { channelId });
+
+    // Simulate a session that has already signed cumulative=56_218 via NeedAuth
+    // while the seller has spent=85_119 (matches the Open Forge production log).
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '56218',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '56218',
+    }, mux);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(56_218n);
+
+    mux.sentSpendingAuths.length = 0;
+
+    // Without a target, the next advance would only reach 56_218 + 10_000 = 66_218,
+    // which the seller would still reject as underfunded (spent=85_119). With the
+    // target passed through, the buyer jumps straight to ≥85_119.
+    await manager.extendCurrentSpendingAuth(sellerPeerId, 10_000n, mux, 85_119n);
+
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    const extended = mux.sentSpendingAuths[0] as Record<string, string>;
+    expect(BigInt(extended.cumulativeAmount)).toBeGreaterThanOrEqual(85_119n);
+  });
+
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
     const sellerPeerId = fakePeerId('seller-record-restart');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);

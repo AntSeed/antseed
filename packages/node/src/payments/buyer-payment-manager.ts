@@ -242,6 +242,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     minBudgetPerRequest: bigint,
     paymentMux: PaymentMux,
+    targetCumulative?: bigint,
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
@@ -257,20 +258,35 @@ export class BuyerPaymentManager {
     // the signed SpendingAuth, so advancing verified to match reclaims the overdraft headroom
     // without adding new exposure. Per-request cost claims are still tolerance-checked at
     // NeedAuth time, so this is not a new attack surface.
-    if (maxSignable <= currentCumulative) {
+    //
+    // The same reasoning extends to catch-up against a seller-reported target: if the seller
+    // says it has already *spent* N (currentSpent in the PaymentRequired body), advancing
+    // verifiedCost to N is safe because the buyer can either pay N or watch the seller
+    // close() on its existing signed auth — the exposure is bounded by whatever the seller
+    // can actually prove on-chain, which it can already claim up to `accepted`.
+    const floor = targetCumulative != null && targetCumulative > currentCumulative
+      ? targetCumulative
+      : currentCumulative;
+    if (maxSignable <= floor) {
       const previousVerified = this._verifiedCost.get(sellerPeerId) ?? 0n;
-      if (currentCumulative > previousVerified) {
-        this._verifiedCost.set(sellerPeerId, currentCumulative);
+      if (floor > previousVerified) {
+        this._verifiedCost.set(sellerPeerId, floor);
         maxSignable = this._maxSignable(sellerPeerId);
         debugLog(
-          `[BuyerPayment] extendCurrentSpendingAuth: advanced verifiedCost ${previousVerified} → ${currentCumulative} ` +
+          `[BuyerPayment] extendCurrentSpendingAuth: advanced verifiedCost ${previousVerified} → ${floor} ` +
           `to unblock overdraft window for ${sellerPeerId.slice(0, 12)}...`,
         );
       }
     }
 
     const ceiling = this._getCeiling(sellerPeerId);
-    const requestedAmount = currentCumulative + minBudgetPerRequest;
+    // Prefer the seller-supplied target when present — a raw
+    // `currentCumulative + minBudgetPerRequest` advance may still fall short
+    // of what the seller has already spent, producing an infinite 402 loop.
+    const minAdvance = currentCumulative + minBudgetPerRequest;
+    const requestedAmount = targetCumulative != null && targetCumulative > minAdvance
+      ? targetCumulative
+      : minAdvance;
 
     if (requestedAmount > maxSignable && maxSignable >= ceiling) {
       await this.topUpReserve(sellerPeerId, paymentMux);
@@ -281,7 +297,7 @@ export class BuyerPaymentManager {
     if (nextCumulative <= currentCumulative) {
       debugWarn(
         `[BuyerPayment] Cannot extend active session for ${sellerPeerId.slice(0, 12)}... ` +
-        `(current=${currentCumulative} maxSignable=${maxSignable})`,
+        `(current=${currentCumulative} maxSignable=${maxSignable} target=${targetCumulative ?? 'n/a'})`,
       );
       return session.sessionId;
     }
