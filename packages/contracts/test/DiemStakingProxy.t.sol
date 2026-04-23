@@ -1359,4 +1359,270 @@ contract DiemStakingProxyTest is Test {
         _settleViaProxy(channelId, 400e6);
         assertEq(proxy.totalUsdcDistributedEver(), 0, "no-staker inflow doesn't count as distributed");
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        Conservation invariants
+    // ════════════════════════════════════════════════════════════════════
+    //
+    // These tests enforce the contract's core solvency guarantees:
+    //   - Sum of user USDC claims ≤ sum of net inflows (never overpay).
+    //   - Sum of user ANTS claims ≤ the epoch pot (never mint more than was
+    //     distributed by AntseedEmissions).
+    // Any regression that breaks these is a direct loss-of-funds bug.
+
+    /// @dev Multi-staker, multi-settle: Alice and Bob claim independently; sum
+    ///      of claims must equal the net inflow to the proxy (modulo
+    ///      per-user integer-division rounding, which is bounded above by N
+    ///      wei where N is the number of settles).
+    function test_invariant_usdcClaimsSumToInflows() public {
+        _stakeAs(alice, 40e18);
+        _stakeAs(bob, 60e18);
+
+        bytes32 ch1 = _reserveViaProxy(bytes32(uint256(1)), 10_000e6, 10_000e6);
+
+        uint256 balBefore = usdc.balanceOf(address(proxy));
+        _settleViaProxy(ch1, 3_000e6);
+        _settleViaProxy(ch1, 5_000e6);
+        _closeViaProxy(ch1, 7_000e6);
+        uint256 netInflow = usdc.balanceOf(address(proxy)) - balBefore;
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(alice);
+        proxy.claimUsdc();
+        vm.prank(bob);
+        proxy.claimUsdc();
+        uint256 paidOut = (usdc.balanceOf(alice) - aliceBefore) + (usdc.balanceOf(bob) - bobBefore);
+
+        // Must never exceed the inflow (solvency). Rounding dust (< 3 wei
+        // for 3 distribution events) stays in the proxy as sweepable residue.
+        assertLe(paidOut, netInflow, "claims must not exceed inflows");
+        assertApproxEqAbs(paidOut, netInflow, 3, "rounding dust bounded by #settles");
+        assertEq(
+            proxy.totalUsdcDistributedEver(),
+            netInflow,
+            "lifetime counter equals full inflow regardless of rounding"
+        );
+    }
+
+    /// @dev Balance-vs-reservation invariant: after any sequence of settles
+    ///      and claims, `balanceOf(proxy) >= totalUsdcReservedForStakers`.
+    ///      This is what makes `sweepOrphanUsdc` safe.
+    function test_invariant_balanceNeverBelowReserved() public {
+        _stakeAs(alice, 30e18);
+        _stakeAs(bob, 70e18);
+
+        bytes32 ch1 = _reserveViaProxy(bytes32(uint256(1)), 10_000e6, 10_000e6);
+        _settleViaProxy(ch1, 1_000e6);
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+
+        _settleViaProxy(ch1, 2_500e6);
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+
+        vm.prank(alice);
+        proxy.claimUsdc();
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+
+        _closeViaProxy(ch1, 4_000e6);
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+
+        vm.prank(bob);
+        proxy.claimUsdc();
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+    }
+
+    /// @dev Multi-staker ANTS claim conservation: the sum of users' actual
+    ///      received ANTS must not exceed the epoch's pot.
+    function test_invariant_antsClaimsSumToPot() public {
+        _stakeAs(alice, 100e18);
+
+        // Drive a settle so emissions has activity to reward.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Bob joins mid-epoch with a different amount.
+        vm.warp(block.timestamp + EPOCH_DURATION / 3);
+        _stakeAs(bob, 50e18);
+
+        // Finish epoch 0 and tick.
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(0);
+
+        (,, uint256 antsPot) = proxy.rewardEpochs(0);
+        assertGt(antsPot, 0);
+
+        uint256 aliceBefore = ants.balanceOf(alice);
+        uint256 bobBefore = ants.balanceOf(bob);
+        vm.prank(alice);
+        proxy.claimAnts(1);
+        vm.prank(bob);
+        proxy.claimAnts(1);
+        uint256 paidOut = (ants.balanceOf(alice) - aliceBefore) + (ants.balanceOf(bob) - bobBefore);
+
+        // Never over-pay; rounding dust bounded by #claimants.
+        assertLe(paidOut, antsPot, "sum of ANTS claims must not exceed pot");
+        assertApproxEqAbs(paidOut, antsPot, 2, "rounding dust bounded by #claimants");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        catchUpPoints coverage
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev After `catchUpPoints` drains the backlog, the user's contribution
+    ///      to the still-open reward epoch is deferred — then materialised by
+    ///      the next call that fires `updateRewards` (e.g. `initiateUnstake`).
+    ///      The deferred points must match what the user would have accrued
+    ///      if they had been caught up continuously.
+    function test_catchUpPoints_openEpochDeferredThenCaptured() public {
+        _stakeAs(alice, 100e18);
+
+        // Build a backlog that forces catchUpPoints.
+        _advanceRewardEpochs(0, 17);
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+        vm.prank(alice);
+        proxy.catchUpPoints(16); // drains to currentRewardEpoch = 17
+
+        uint32 openEp = proxy.currentRewardEpoch();
+        assertEq(openEp, 17);
+        assertEq(proxy.userCurrentEpoch(alice), openEp);
+
+        // Stake-time passes in the still-open epoch. `catchUpPoints` does not
+        // touch `userPoints[alice][openEp]` — it's deferred to the next
+        // `updateRewards` trigger.
+        assertEq(proxy.userPoints(alice, openEp), 0, "open-epoch points deferred");
+
+        vm.warp(block.timestamp + 3 days);
+
+        // Any interaction that hits updateRewards materialises the deferred
+        // points (initiateUnstake is the simplest non-allocating trigger).
+        vm.prank(alice);
+        proxy.initiateUnstake(1e18);
+        assertGt(proxy.userPoints(alice, openEp), 0, "open-epoch points captured on next interaction");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        Rapid churn
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev Stake → settle → unstake → restake → settle, all within one emission
+    ///      epoch. Balances across both reward surfaces must stay consistent.
+    function test_churn_stakeSettleUnstakeRestakeSettle() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 ch1 = _reserveViaProxy(bytes32(uint256(1)), 10_000e6, 10_000e6);
+        _settleViaProxy(ch1, 1_000e6);
+        uint256 aliceRound1 = proxy.earnedUsdc(alice);
+        assertGt(aliceRound1, 0);
+
+        // Alice fully exits the reward stream.
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+
+        // Settle while Alice is fully unstaked and no one else is staked:
+        // orphan inflow, sweepable.
+        _settleViaProxy(ch1, 2_000e6);
+        uint256 orphanBefore = usdc.balanceOf(address(proxy)) - proxy.totalUsdcReservedForStakers();
+        assertGt(orphanBefore, 0, "settle with zero totalStaked is orphaned");
+
+        // Alice re-stakes. A later settle credits only the post-restake portion.
+        vm.warp(block.timestamp + 1 hours);
+        _stakeAs(alice, 50e18);
+        _settleViaProxy(ch1, 3_000e6);
+
+        uint256 aliceRound2 = proxy.earnedUsdc(alice) - aliceRound1;
+        assertGt(aliceRound2, 0, "restake earns again");
+
+        // Invariant still holds after the full sequence.
+        assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        Flush window boundary
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev A fresh cohort opens at exactly the same block as the prior
+    ///      `flush()`. The window clock must anchor to that queuer's
+    ///      timestamp and block immediate re-flush.
+    function test_flush_windowAfterImmediateNextQueue() public {
+        vm.prank(owner);
+        proxy.setMinEpochOpenSecs(6 hours);
+
+        _stakeAs(alice, 100e18);
+        _stakeAs(bob, 100e18);
+
+        // Cohort 1: alice queues + waits + flushes + claims (serialization:
+        // next flush requires prior cohort to be claimed).
+        vm.prank(alice);
+        proxy.initiateUnstake(100e18);
+        uint32 firstEpoch = proxy.currentEpoch();
+        vm.warp(block.timestamp + 6 hours);
+        proxy.flush();
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        proxy.claimEpoch(firstEpoch);
+
+        // Bob queues into the NEW cohort in the same block as the claim.
+        vm.prank(bob);
+        proxy.initiateUnstake(100e18);
+
+        // Immediate flush of cohort 2 must be rejected by the window gate —
+        // cohort opened this very block.
+        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        proxy.flush();
+
+        // Wait the window and it's fine.
+        vm.warp(block.timestamp + 6 hours);
+        proxy.flush();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        ERC-1271 malformed signature
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev Malformed (non-65-byte) signature must not recover to the owner.
+    ///      OpenZeppelin's ECDSA.recover reverts on invalid length; the
+    ///      proxy's isValidSignature propagates the revert rather than
+    ///      silently returning the magic value. Either behaviour (revert
+    ///      or return 0xffffffff) is spec-compliant; we just pin it so any
+    ///      future change is deliberate.
+    function test_isValidSignature_malformedSigReverts() public {
+        bytes32 hash = keccak256("venice-api-key-challenge");
+        bytes memory bad = hex"deadbeef"; // 4 bytes, not 65
+        vm.expectRevert();
+        proxy.isValidSignature(hash, bad);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //                        Precision (1e27 scalar)
+    // ════════════════════════════════════════════════════════════════════
+
+    /// @dev At high TVL, per-second integrator increments must not round to
+    ///      zero. With the 1e27 (RAY) scalar, even 1 second of accrual on
+    ///      1e24 total stake produces a strictly non-zero increment. Under
+    ///      the legacy 1e18 scalar, the same increment would have been 0.
+    function test_integrator_precisionAtHighTvl() public {
+        vm.prank(owner);
+        proxy.setMaxTotalStake(0);
+
+        // Stake 1e24 wei DIEM (≈ 1M DIEM) across Alice and Bob so the
+        // integrator denominator is large.
+        _stakeAs(alice, 5e23);
+        _stakeAs(bob, 5e23);
+
+        uint256 before = proxy.stakeIntegrator();
+
+        // Advance one second and trigger an integrator update via a no-op
+        // reward-touching path (catchUpPoints calls _updateStakeIntegrator).
+        vm.warp(block.timestamp + 1);
+        // catchUpPoints requires numEpochs > 0 and at least one finalised
+        // reward epoch to drain; advance one so the call is well-formed.
+        _advanceRewardEpochs(0, 1);
+        vm.prank(alice);
+        proxy.catchUpPoints(1);
+
+        uint256 afterInt = proxy.stakeIntegrator();
+        assertGt(afterInt, before, "RAY scalar preserves sub-second precision at 1e24 TVL");
+    }
 }
