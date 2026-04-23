@@ -165,21 +165,52 @@ export class SellerRequestHandler {
             });
             return;
           }
-          const accepted = spm.getAcceptedCumulative(session.sessionId);
+          let accepted = spm.getAcceptedCumulative(session.sessionId);
           const spent = spm.getCumulativeSpend(session.sessionId);
+          if (spent > 0n && spent >= accepted) {
+            // Race cover: the buyer's SpendingAuth for the *previous* response's
+            // NeedAuth may still be on the wire when this request arrives. The
+            // per-buyer mutex in waitForPendingAuths only serializes *in-flight*
+            // handleSpendingAuth calls — it can't wait for a frame that hasn't
+            // been received yet. Park for up to 5s for the signed catch-up to
+            // land before giving up and emitting a 402. In pure steady-state
+            // operation this wait is a no-op; under pipelined requests (a new
+            // request dispatched before the prior NeedAuth → SpendingAuth has
+            // completed) it hides the round-trip latency from the buyer.
+            const CATCH_UP_WAIT_MS = 5_000;
+            const caughtUp = await spm.awaitAcceptedAtLeast(session.sessionId, spent, CATCH_UP_WAIT_MS);
+            accepted = spm.getAcceptedCumulative(session.sessionId);
+            if (caughtUp && spent <= accepted) {
+              debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
+            }
+          }
           if (spent > 0n && spent >= accepted) {
             const reserveMax = spm.getReserveMax(session.sessionId);
             const providerPricing = this.resolveProviderPricing(provider, request);
-            const requirements = spm.getPaymentRequirements(
+            const baseRequirements = spm.getPaymentRequirements(
               request.requestId, buyerPeerId, providerPricing,
             );
-            if (reserveMax > 0n && accepted >= reserveMax) {
+            // Tell the buyer *exactly* how much cumulative signed authorization
+            // the seller needs to unblock further requests. Without this the
+            // buyer can only guess via minBudgetPerRequest and may sign an
+            // amount that is still below `spent`, which the seller would then
+            // reject as underfunded — producing an infinite 402 loop.
+            const target = spent + BigInt(baseRequirements.minBudgetPerRequest);
+            const requirements = {
+              ...baseRequirements,
+              requiredCumulativeAmount: target.toString(),
+              currentSpent: spent.toString(),
+              currentAcceptedCumulative: accepted.toString(),
+              channelId: session.sessionId,
+            };
+            const isFullyExhausted = reserveMax > 0n && accepted >= reserveMax;
+            if (isFullyExhausted) {
               debugLog(`[SellerHandler] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
               void spm.settleSession(buyerPeerId).catch((err) => {
                 debugWarn(`[SellerHandler] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
               });
             } else {
-              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting higher SpendingAuth / renegotiation`);
+              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402 with requiredCumulativeAmount=${target}, awaiting higher SpendingAuth`);
             }
             mux.sendProxyResponse({
               requestId: request.requestId,
@@ -189,12 +220,27 @@ export class SellerRequestHandler {
                 error: 'payment_required',
                 minBudgetPerRequest: requirements.minBudgetPerRequest,
                 suggestedAmount: requirements.suggestedAmount,
+                requiredCumulativeAmount: requirements.requiredCumulativeAmount,
+                currentSpent: requirements.currentSpent,
+                currentAcceptedCumulative: requirements.currentAcceptedCumulative,
+                channelId: requirements.channelId,
                 ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
                 ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
                 ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
               })),
             });
             paymentMux.sendPaymentRequired(requirements);
+            // Auto-sign catch-up via NeedAuth so a transient underfund recovers
+            // without the 402 round-tripping to the user.
+            if (!isFullyExhausted) {
+              paymentMux.sendNeedAuth({
+                channelId: session.sessionId,
+                requiredCumulativeAmount: target.toString(),
+                currentAcceptedCumulative: accepted.toString(),
+                deposit: session.authMax ?? '0',
+                requestId: request.requestId,
+              });
+            }
             return;
           }
         }

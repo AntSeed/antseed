@@ -49,6 +49,24 @@ describe('payment codec round-trips', () => {
     expect(decoded).toEqual(payload);
   });
 
+  it('PaymentRequired with budget-exhausted catch-up fields', () => {
+    const payload = {
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '1000000',
+      requestId: 'req-789',
+      inputUsdPerMillion: 0.36,
+      outputUsdPerMillion: 1.65,
+      cachedInputUsdPerMillion: 0.07,
+      requiredCumulativeAmount: '85119',
+      currentSpent: '85119',
+      currentAcceptedCumulative: '56218',
+      channelId: '0x' + 'aa'.repeat(32),
+    };
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
+  });
+
   it('NeedAuth', () => {
     const payload = {
       channelId: '0x' + 'aa'.repeat(32),

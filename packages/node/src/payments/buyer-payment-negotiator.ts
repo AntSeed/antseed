@@ -51,6 +51,14 @@ function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | n
   }
 }
 
+function safeBigInt(value: string): bigint | null {
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Manages all buyer-side payment negotiation state and logic.
  *
@@ -237,28 +245,43 @@ export class BuyerPaymentNegotiator {
       : await this._awaitPaymentRequired(peer.peerId, conn, waitMs);
     if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
 
-    const returnPaymentRequired = (reason: string): Handle402Result => {
-      debugLog(`[BuyerNegotiator] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${reason})`);
-      if (responseAlreadyHasRequirements) {
-        return { action: 'return', response };
-      }
-      if (buffered) {
-        const enrichedBody = JSON.stringify({
-          error: 'payment_required',
-          peerId: peer.peerId,
-          minBudgetPerRequest: buffered.minBudgetPerRequest,
-          suggestedAmount: buffered.suggestedAmount,
-        });
-        return {
-          action: 'return',
-          response: {
-            ...response,
-            headers: { ...response.headers, 'content-type': 'application/json' },
-            body: new TextEncoder().encode(enrichedBody),
-          },
-        };
-      }
-      return { action: 'return', response };
+    // Stable machine-readable codes for the 402 body. Kept deliberately small
+    // so callers (desktop UI, other SDK consumers) can switch on them without
+    // being coupled to internal debug strings.
+    type PaymentRequiredCode = 'insufficient_deposits';
+    const returnPaymentRequired = (code: PaymentRequiredCode, debugReason: string): Handle402Result => {
+      debugLog(`[BuyerNegotiator] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${debugReason})`);
+      // Always return a normalized buyer-authored body so the desktop UI can
+      // render a proper "top up your deposits" CTA instead of the raw seller
+      // 402 JSON (which leaks internal fields like requiredCumulativeAmount,
+      // currentSpent, and per-service pricing).
+      const req = buffered
+        ?? (responseAlreadyHasRequirements && directPaymentBody != null
+          ? {
+            minBudgetPerRequest: directPaymentBody.minBudgetPerRequest != null
+              ? String(directPaymentBody.minBudgetPerRequest)
+              : undefined,
+            suggestedAmount: directPaymentBody.suggestedAmount != null
+              ? String(directPaymentBody.suggestedAmount)
+              : undefined,
+          }
+          : null);
+      const enrichedBody = JSON.stringify({
+        error: 'payment_required',
+        code,
+        peerId: peer.peerId,
+        ...(req?.minBudgetPerRequest != null ? { minBudgetPerRequest: req.minBudgetPerRequest } : {}),
+        ...(req?.suggestedAmount != null ? { suggestedAmount: req.suggestedAmount } : {}),
+        message: 'Deposits are insufficient to open a payment channel with this peer. Top up with "antseed buyer deposit <amount>" and retry.',
+      });
+      return {
+        action: 'return',
+        response: {
+          ...response,
+          headers: { ...response.headers, 'content-type': 'application/json' },
+          body: new TextEncoder().encode(enrichedBody),
+        },
+      };
     };
 
     const returnNegotiationFailure = (reason: string, message: string, statusCode = 409): Handle402Result => {
@@ -288,8 +311,24 @@ export class BuyerPaymentNegotiator {
         ? BigInt(String(directPaymentBody.minBudgetPerRequest))
         : null;
 
+    // Absolute cumulative target the seller needs us to sign to unblock the
+    // channel (sent by the seller in the budget-exhausted branch). When
+    // present we pass it through to extendCurrentSpendingAuth so the buyer
+    // catches up in one step instead of creeping by minBudgetPerRequest and
+    // repeatedly being rejected as underfunded.
+    const requiredCumulativeTarget = buffered?.requiredCumulativeAmount != null
+      ? safeBigInt(buffered.requiredCumulativeAmount)
+      : responseAlreadyHasRequirements && directPaymentBody?.requiredCumulativeAmount != null
+        ? safeBigInt(String(directPaymentBody.requiredCumulativeAmount))
+        : null;
+
     if (hadLockedSession || this._bpm.getActiveSession(peer.peerId)) {
-      const recovered = await this._recoverExistingSession(peer, conn, existingSessionBudgetRequest);
+      const recovered = await this._recoverExistingSession(
+        peer,
+        conn,
+        existingSessionBudgetRequest,
+        requiredCumulativeTarget,
+      );
       if (recovered) {
         return { action: 'retry' };
       }
@@ -325,7 +364,7 @@ export class BuyerPaymentNegotiator {
       const buyerAddr = this._identity.wallet.address;
       const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
       if (balance.available <= 0n) {
-        return returnPaymentRequired('insufficient credits');
+        return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
       }
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
@@ -753,6 +792,7 @@ export class BuyerPaymentNegotiator {
     peer: PeerInfo,
     conn: PeerConnection,
     minBudgetPerRequest: bigint | null = null,
+    targetCumulative: bigint | null = null,
   ): Promise<boolean> {
     const session = this._bpm.getActiveSession(peer.peerId);
     if (!session) {
@@ -802,7 +842,12 @@ export class BuyerPaymentNegotiator {
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
     if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
       const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
-      await this._bpm.extendCurrentSpendingAuth(peer.peerId, minBudgetPerRequest, pmux);
+      await this._bpm.extendCurrentSpendingAuth(
+        peer.peerId,
+        minBudgetPerRequest,
+        pmux,
+        targetCumulative != null && targetCumulative > 0n ? targetCumulative : undefined,
+      );
       const cumulativeAfter = this._bpm.getCumulativeAmount(peer.peerId);
       if (cumulativeAfter <= cumulativeBefore) {
         // extendCurrentSpendingAuth was a no-op — the overdraft window and reserve ceiling

@@ -242,6 +242,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     minBudgetPerRequest: bigint,
     paymentMux: PaymentMux,
+    targetCumulative?: bigint,
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
@@ -251,12 +252,25 @@ export class BuyerPaymentManager {
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
     let maxSignable = this._maxSignable(sellerPeerId);
 
-    // If the overdraft window has collapsed to the current cumulative, the buyer has already
-    // signed up to verified + maxPerRequest and the seller returned 402 because spent caught up
-    // to the accepted cumulative. The buyer has already committed to pay currentCumulative via
-    // the signed SpendingAuth, so advancing verified to match reclaims the overdraft headroom
-    // without adding new exposure. Per-request cost claims are still tolerance-checked at
-    // NeedAuth time, so this is not a new attack surface.
+    // Overdraft-window unblock: when the buyer has already signed up to
+    // `verified + maxPerRequest` and the seller returned 402 because `spent`
+    // caught up, advance `verifiedCost` to the current signed cumulative so
+    // the window reopens. The buyer has already committed to pay
+    // `currentCumulative` via the signed SpendingAuth, so the seller can
+    // already claim that much on-chain — advancing verified to match doesn't
+    // expose new funds, it just reclaims overdraft headroom.
+    //
+    // SECURITY: the trust anchor here is `currentCumulative`, NOT the
+    // seller-supplied `targetCumulative`. A malicious seller could set
+    // `requiredCumulativeAmount` in the 402 body to the full reserve ceiling
+    // (pretending it spent that much) in an attempt to drain the channel in
+    // one signature. We defend by only ever using `targetCumulative` as a
+    // *destination hint* bounded by `maxSignable = verifiedCost +
+    // maxPerRequestUsdc`. Per-request cost validation still happens
+    // tolerance-checked in `handleNeedAuth`; nothing in the 402 body feeds
+    // `verifiedCost`. The worst a seller can extract per 402 round trip is
+    // one `maxPerRequestUsdc` window beyond what the buyer already signed —
+    // identical to the non-catchup trust model before this PR.
     if (maxSignable <= currentCumulative) {
       const previousVerified = this._verifiedCost.get(sellerPeerId) ?? 0n;
       if (currentCumulative > previousVerified) {
@@ -270,7 +284,13 @@ export class BuyerPaymentManager {
     }
 
     const ceiling = this._getCeiling(sellerPeerId);
-    const requestedAmount = currentCumulative + minBudgetPerRequest;
+    // Prefer the seller-supplied target when present — a raw
+    // `currentCumulative + minBudgetPerRequest` advance may still fall short
+    // of what the seller has already spent, producing an infinite 402 loop.
+    const minAdvance = currentCumulative + minBudgetPerRequest;
+    const requestedAmount = targetCumulative != null && targetCumulative > minAdvance
+      ? targetCumulative
+      : minAdvance;
 
     if (requestedAmount > maxSignable && maxSignable >= ceiling) {
       await this.topUpReserve(sellerPeerId, paymentMux);
@@ -281,7 +301,7 @@ export class BuyerPaymentManager {
     if (nextCumulative <= currentCumulative) {
       debugWarn(
         `[BuyerPayment] Cannot extend active session for ${sellerPeerId.slice(0, 12)}... ` +
-        `(current=${currentCumulative} maxSignable=${maxSignable})`,
+        `(current=${currentCumulative} maxSignable=${maxSignable} target=${targetCumulative ?? 'n/a'})`,
       );
       return session.sessionId;
     }

@@ -91,6 +91,16 @@ export class SellerPaymentManager {
   /** channelId -> latest buyer-signed auth (both sigs + cumulative values + metadata) for settle/close */
   private readonly _latestAuth = new Map<string, LatestAuth>();
 
+  /**
+   * channelId -> waiters blocked on acceptedCumulative reaching a target.
+   * Used to hide the NeedAuth → SpendingAuth round-trip latency from the next
+   * request: if a new request arrives while the prior response's NeedAuth is
+   * still on the wire, the request handler parks on this waiter instead of
+   * 402ing immediately. `resolve(true)` means the target was reached;
+   * `resolve(false)` means the channel was evicted before that could happen.
+   */
+  private readonly _acceptedWaiters = new Map<string, Array<{ target: bigint; resolve: (reached: boolean) => void }>>();
+
   /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
 
@@ -219,8 +229,71 @@ export class SellerPaymentManager {
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
+    this._releaseAcceptedWaiters(channelId);
     this._activeBuyers.delete(peerId);
     debugLog(`[SellerPayment] Evicted stale channel ${channelId.slice(0, 18)}... — ${reason}`);
+  }
+
+  /**
+   * Block until `acceptedCumulative(channelId)` reaches `target`, or `timeoutMs`
+   * elapses. Returns true if the target was reached, false on timeout. Used by
+   * the request handler to wait out the buyer's NeedAuth → SpendingAuth round
+   * trip when a follow-up request arrives before the catch-up auth has landed.
+   */
+  awaitAcceptedAtLeast(channelId: string, target: bigint, timeoutMs: number): Promise<boolean> {
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+    if (accepted >= target) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      const waiter = {
+        target,
+        resolve: (reached: boolean) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(reached);
+        },
+      };
+      const waiters = this._acceptedWaiters.get(channelId) ?? [];
+      waiters.push(waiter);
+      this._acceptedWaiters.set(channelId, waiters);
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const list = this._acceptedWaiters.get(channelId);
+        if (list) {
+          const filtered = list.filter((w) => w !== waiter);
+          if (filtered.length > 0) this._acceptedWaiters.set(channelId, filtered);
+          else this._acceptedWaiters.delete(channelId);
+        }
+        resolve(false);
+      }, timeoutMs);
+    });
+  }
+
+  private _notifyAcceptedUpdate(channelId: string, newAccepted: bigint): void {
+    const waiters = this._acceptedWaiters.get(channelId);
+    if (!waiters || waiters.length === 0) return;
+    const remaining: typeof waiters = [];
+    for (const w of waiters) {
+      if (newAccepted >= w.target) w.resolve(true);
+      else remaining.push(w);
+    }
+    if (remaining.length > 0) this._acceptedWaiters.set(channelId, remaining);
+    else this._acceptedWaiters.delete(channelId);
+  }
+
+  /**
+   * Wake all waiters for a channel with `reached=false` — the target can no
+   * longer be reached (channel evicted, settled, or closed). Preserves the
+   * `awaitAcceptedAtLeast` contract: `true` only when the target was actually
+   * hit, `false` otherwise.
+   */
+  private _releaseAcceptedWaiters(channelId: string): void {
+    const waiters = this._acceptedWaiters.get(channelId);
+    if (!waiters) return;
+    for (const w of waiters) w.resolve(false);
+    this._acceptedWaiters.delete(channelId);
   }
 
   get channelsClient(): ChannelsClient {
@@ -477,6 +550,7 @@ export class SellerPaymentManager {
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
         });
+        this._notifyAcceptedUpdate(channelId, cumulativeAmount);
 
         // Persist latest auth + sigs to ChannelStore
         const session = this._channelStore.getChannel(channelId);
@@ -653,6 +727,7 @@ export class SellerPaymentManager {
         metadataHash: auth.metadataHash,
         metadata: auth.metadata,
       });
+      this._notifyAcceptedUpdate(channelId, newCumulative);
 
       // Persist latest auth + sigs to ChannelStore
       const storedSession = this._channelStore.getChannel(channelId);
@@ -801,6 +876,7 @@ export class SellerPaymentManager {
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
+    this._releaseAcceptedWaiters(channelId);
     this._activeBuyers.delete(buyerPeerId);
   }
 
@@ -966,6 +1042,7 @@ export class SellerPaymentManager {
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
+    this._releaseAcceptedWaiters(channelId);
 
     // Find and remove buyer from active set
     const channel = this._channelStore.getChannel(channelId);

@@ -83,6 +83,11 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
   };
   if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
   if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;
+  if (typeof obj.cachedInputUsdPerMillion === 'number') result.cachedInputUsdPerMillion = obj.cachedInputUsdPerMillion;
+  if (typeof obj.requiredCumulativeAmount === 'string') result.requiredCumulativeAmount = obj.requiredCumulativeAmount;
+  if (typeof obj.currentSpent === 'string') result.currentSpent = obj.currentSpent;
+  if (typeof obj.currentAcceptedCumulative === 'string') result.currentAcceptedCumulative = obj.currentAcceptedCumulative;
+  if (typeof obj.channelId === 'string') result.channelId = obj.channelId;
   return result;
 }
 

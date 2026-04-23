@@ -76,6 +76,18 @@ export interface PaymentRequiredPayload {
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
   cachedInputUsdPerMillion?: number;
+  /**
+   * For budget-exhausted 402s on an existing channel: the cumulative
+   * amount the buyer must sign to catch up with the seller's recorded
+   * spend and unblock further requests. Absent for pre-session 402s.
+   */
+  requiredCumulativeAmount?: string;
+  /** Seller-side cumulative spend at the time the 402 was emitted. */
+  currentSpent?: string;
+  /** Seller-side last-accepted cumulative at the time the 402 was emitted. */
+  currentAcceptedCumulative?: string;
+  /** Channel ID for the exhausted session (so buyer can match it locally). */
+  channelId?: string;
 }
 
 /**
