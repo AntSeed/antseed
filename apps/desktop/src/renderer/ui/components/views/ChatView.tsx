@@ -781,7 +781,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 placeholder={
                   snap.chatInputDisabled
                     ? 'Type your next message — it will send when the current response finishes…'
-                    : 'Message Community Peers...'
+                    : 'Type a message... (Shift+Enter for newline)'
                 }
                 rows={1}
                 value={inputValue}
