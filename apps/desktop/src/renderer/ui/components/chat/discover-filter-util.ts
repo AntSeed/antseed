@@ -26,6 +26,23 @@ export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 20;
 
 export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 
+/**
+ * Friendlier display labels for raw lowercase category tags announced by
+ * sellers. The map is deliberately small — only tags whose raw form is
+ * opaque to end users get a rewrite. Everything else passes through as-is.
+ *
+ * The underlying data (categorySet, row.categories, search matching) still
+ * uses the raw tag — this is purely a render-time convenience.
+ */
+const CATEGORY_DISPLAY_LABELS: Record<string, string> = {
+  multimodal: 'image upload',
+};
+
+export function formatCategoryLabel(category: string): string {
+  const key = category.trim().toLowerCase();
+  return CATEGORY_DISPLAY_LABELS[key] ?? category;
+}
+
 export type DiscoverFilterInputs = {
   search: string;
   categorySet: Set<string>;

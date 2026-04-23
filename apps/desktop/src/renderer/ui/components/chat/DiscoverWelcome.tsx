@@ -9,10 +9,19 @@ import {
   MAX_INPUT_PRICE_SLIDER_USD,
   MAX_OUTPUT_PRICE_SLIDER_USD,
   DEFAULT_MIN_ON_CHAIN_CHANNELS,
+  formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
+
+/**
+ * Cap the visible tag count on Discover cards to avoid wrapping onto a
+ * second line when a service has 5+ categories (e.g. anon + chat + coding +
+ * reasoning + multimodal). Overflow is shown as a single “+N” pill whose
+ * tooltip lists the hidden tags.
+ */
+const MAX_VISIBLE_CARD_TAGS = 4;
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
   { key: 'channelsDesc',    label: 'Most channels' },
@@ -66,7 +75,7 @@ function generateDescription(serviceId: string, categories: string[], provider: 
   if (lower.includes('qwen')) return `Alibaba's Qwen model series. Multilingual and versatile.`;
   if (lower.includes('gemini') || lower.includes('gemma')) return `Google's model. Powered by ${prov}.`;
   if (lower.includes('flux') || lower.includes('sdxl')) return `Image generation model. Served by ${prov}.`;
-  if (categories.length > 0) return `${categories.join(' & ')} service powered by ${prov}.`;
+  if (categories.length > 0) return `${categories.map(formatCategoryLabel).join(' & ')} service powered by ${prov}.`;
   return `AI service powered by ${prov}.`;
 }
 
@@ -489,9 +498,19 @@ function Card({
     >
       <div className={styles.cardBody}>
         <div className={styles.cardTags}>
-          {item.tags.map((t) => (
-            <span key={t} className={styles.tag} style={getTagTint(t)}>{t}</span>
+          {item.tags.slice(0, MAX_VISIBLE_CARD_TAGS).map((t) => (
+            <span key={t} className={styles.tag} style={getTagTint(t)}>{formatCategoryLabel(t)}</span>
           ))}
+          {item.tags.length > MAX_VISIBLE_CARD_TAGS && (
+            <span
+              className={styles.tag}
+              title={item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+              aria-label={`${item.tags.length - MAX_VISIBLE_CARD_TAGS} more categories: `
+                + item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+            >
+              +{item.tags.length - MAX_VISIBLE_CARD_TAGS}
+            </span>
+          )}
         </div>
         <div className={styles.cardName}>{item.displayName}</div>
         <div className={styles.cardDesc}>{item.description}</div>

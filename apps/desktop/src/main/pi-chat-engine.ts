@@ -1119,6 +1119,7 @@ function makeProxyService(
   providerHint?: string | null,
   preferredPeerId?: string | null,
   spendingAuth?: string | null,
+  supportsMultimodal: boolean = false,
 ): Model<any> {
   const headers: Record<string, string> = {};
   if (providerHint) headers['x-antseed-provider'] = providerHint;
@@ -1128,13 +1129,19 @@ function makeProxyService(
   // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
   // to baseUrl, so include /v1 to match the buyer proxy's expected paths.
   const needsV1 = protocol === 'openai-responses' || protocol === 'openai-chat-completions';
+  // Image input is only enabled when the selected service advertises the
+  // `multimodal` category tag. Otherwise we declare the model as text-only so
+  // pi-ai strips image blocks before hitting the wire (upstream providers
+  // return errors like "Multimodal is not supported for model" for text-only
+  // LLMs even when the provider catalog lists vision-capable siblings).
+  const inputModalities: ('text' | 'image')[] = supportsMultimodal ? ['text', 'image'] : ['text'];
   const base = {
     id: serviceId,
     name: serviceId,
     provider: PROXY_PROVIDER_ID,
     baseUrl: needsV1 ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`,
     reasoning: true,
-    input: ['text', 'image'] as ('text' | 'image')[],
+    input: inputModalities,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 16_384,
@@ -1809,7 +1816,38 @@ export function registerPiChatHandlers({
       providerOverride,
     );
     const protocol = await resolveProtocolForSend(serviceId);
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, null);
+    // Determine vision support from the catalog entry for this (service, peer)
+    // pair. We look for a `multimodal` category tag; sellers announce this via
+    // serviceCategories in their peer metadata. Absent catalog info, we fall
+    // back to text-only so we never blindly forward images to a model whose
+    // upstream will reject them (DeepInfra, for example, returns
+    // "Multimodal is not supported for model: …" for text-only LLMs).
+    const normalizedServiceForCatalog = serviceId.trim().toLowerCase();
+    const catalogEntry = lastServiceCatalogEntries.find((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceForCatalog
+      && (!preferredPeerId || entry.peerId === preferredPeerId)
+    )) ?? lastServiceCatalogEntries.find((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceForCatalog
+    ));
+    const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
+    const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
+    if (droppedImageCount > 0) {
+      appendSystemLog(
+        `Dropping ${String(droppedImageCount)} image attachment(s): service `
+        + `"${serviceId}" is not tagged \`multimodal\` in the catalog. `
+        + 'Other attachment types (pdf/docs/text) are unaffected.',
+      );
+    }
+    const effectiveAttachmentImages = supportsMultimodal ? attachmentImages : [];
+    const proxyModel = makeProxyService(
+      serviceId,
+      proxyPort,
+      protocol,
+      providerHint,
+      preferredPeerId,
+      null,
+      supportsMultimodal,
+    );
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2166,7 +2204,7 @@ export function registerPiChatHandlers({
 
     try {
       const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
-      await session.prompt(promptText || ' ', { images: attachmentImages.length > 0 ? attachmentImages : undefined });
+      await session.prompt(promptText || ' ', { images: effectiveAttachmentImages.length > 0 ? effectiveAttachmentImages : undefined });
 
       if (terminalStreamFailure !== null) {
         // `terminalStreamFailure` is mutated inside the subscribe callback,

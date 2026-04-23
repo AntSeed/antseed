@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import type { ChatServiceOptionEntry } from '../../../core/state';
 import { formatPerMillionPrice } from '../../../core/peer-utils';
+import { formatCategoryLabel } from './discover-filter-util';
 import styles from './ServiceDropdown.module.scss';
 
 type ServiceDropdownProps = {
@@ -97,7 +98,7 @@ export function ServiceDropdown({ options, value, disabled, onChange, onFocus, o
                 {tags.length > 0 && (
                   <span className={styles.itemTags}>
                     {tags.map((t) => (
-                      <span key={t} className={styles.itemTag}>{t}</span>
+                      <span key={t} className={styles.itemTag}>{formatCategoryLabel(t)}</span>
                     ))}
                   </span>
                 )}
