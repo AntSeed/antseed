@@ -118,11 +118,17 @@ function withTimeout<T>(promise: Promise<T>): Promise<T> {
 }
 
 function neutralizeFileTags(text: string): string {
+  // Insert a literal backslash so the tag no longer parses as a `<file>` /
+  // `<zip-entry>` wrapper when the prompt is round-tripped through Pi
+  // history or the conversation reloader. Note: the replacement strings use
+  // doubled backslashes because JS ignores `\z` and treats `\f` as form-feed,
+  // so `'<\file'` would silently become `<\x0Cile` and `'<\zip-entry'` would
+  // become the unchanged `<zip-entry` (a no-op replacement).
   return text
     .replace(/<\/file>/gi, '<\\/file>')
-    .replace(/<file\b/gi, '<\file')
+    .replace(/<file\b/gi, '<\\file')
     .replace(/<\/zip-entry>/gi, '<\\/zip-entry>')
-    .replace(/<zip-entry\b/gi, '<\zip-entry');
+    .replace(/<zip-entry\b/gi, '<\\zip-entry');
 }
 
 function isImageAttachment(name: string, mimeType: string): boolean {
