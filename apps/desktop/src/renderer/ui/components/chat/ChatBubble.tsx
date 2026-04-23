@@ -6,6 +6,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
+import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
   buildChatMetaParts,
@@ -468,6 +469,41 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messag
   return nodes;
 }
 
+function ImageBlockView({ block }: { block: ContentBlock }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const mediaType = String(block.source?.media_type || 'image/png');
+  const data = String(block.source?.data || '');
+  if (!data) return null;
+  const src = `data:${mediaType};base64,${data}`;
+  const viewer: ViewerAttachment = {
+    name: 'image',
+    mimeType: mediaType,
+    imageBase64: data,
+    imageMimeType: mediaType,
+  };
+  return (
+    <>
+      <img
+        src={src}
+        className="chat-image-preview chat-image-clickable"
+        alt="Attached image"
+        onClick={() => setViewerOpen(true)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setViewerOpen(true);
+          }
+        }}
+      />
+      {viewerOpen && (
+        <AttachmentViewer attachment={viewer} onClose={() => setViewerOpen(false)} />
+      )}
+    </>
+  );
+}
+
 function renderBlock(block: ContentBlock, index: number, streaming = false, messagePrefix = ''): ReactNode {
   const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
@@ -523,14 +559,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   }
 
   if (block.type === 'image' && block.source?.data && block.source?.media_type) {
-    return (
-      <img
-        key={blockKey}
-        src={`data:${block.source.media_type};base64,${block.source.data}`}
-        className="chat-image-preview"
-        alt="Attached image"
-      />
-    );
+    return <ImageBlockView key={blockKey} block={block} />;
   }
 
   return null;

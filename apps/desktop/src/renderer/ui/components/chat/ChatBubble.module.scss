@@ -234,6 +234,21 @@
         display: block;
         object-fit: contain;
       }
+
+      .chat-image-clickable {
+        cursor: zoom-in;
+        transition: transform 0.12s ease, box-shadow 0.12s ease;
+
+        &:hover {
+          transform: scale(1.01);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        }
+
+        &:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 2px;
+        }
+      }
     }
   }
 
