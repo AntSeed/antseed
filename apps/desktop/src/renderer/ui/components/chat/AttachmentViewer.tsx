@@ -3,21 +3,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './AttachmentViewer.module.scss';
 
 /**
- * Attachment that can be previewed. Currently scoped to images (composer
- * uploads pre-send, and image blocks in chat history). Non-image file
- * previews are intentionally out of scope here — they're planned as a
- * follow-up that stores raw bytes on disk and uses a custom Electron
- * protocol so the browser engine can render them natively.
+ * Attachment that can be previewed. Three shapes coexist so the same modal
+ * works in every call site:
+ *
+ * 1. Composer chips pre-send — carry a full `data:` URL in `dataUrl`.
+ * 2. Chat image blocks — carry the base64 body in `imageBase64` +
+ *    `imageMimeType`.
+ * 3. Chat file blocks with disk-backed storage — carry a
+ *    `antseed-attachment://` URL in `src`, and the renderer dispatches
+ *    to the right engine based on `mimeType`.
  */
 export type ViewerAttachment = {
   name: string;
   mimeType: string;
   size?: number;
-  /** Full data URL (e.g. "data:image/png;base64,...") — used by composer chips. */
+  /** Full data URL (e.g. "data:image/png;base64,...") — composer chips. */
   dataUrl?: string;
-  /** Image base64 body (no "data:" prefix) — from ContentBlock.image source. */
+  /** Image base64 body (no "data:" prefix) — image blocks. */
   imageBase64?: string;
   imageMimeType?: string;
+  /**
+   * Custom-protocol URL that Chromium can fetch directly (via Electron's
+   * `antseed-attachment://` handler). Used by persisted file blocks so
+   * PDFs, HTML, SVG and images render natively without round-tripping
+   * megabytes through IPC.
+   */
+  src?: string;
   error?: string;
 };
 
@@ -36,15 +47,35 @@ function formatSize(bytes: number | undefined): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function isImageMime(mimeType: string | undefined): boolean {
-  return Boolean(mimeType && mimeType.toLowerCase().startsWith('image/'));
+function isImageMime(mimeType: string): boolean {
+  return mimeType.toLowerCase().startsWith('image/');
+}
+
+function isPdfMime(mimeType: string): boolean {
+  return mimeType.toLowerCase() === 'application/pdf';
+}
+
+function isHtmlMime(mimeType: string): boolean {
+  const m = mimeType.toLowerCase();
+  return m === 'text/html' || m === 'application/xhtml+xml';
 }
 
 function buildImageSrc(att: ViewerAttachment): string | null {
+  // A `src` URL (custom protocol) beats any inline bytes for images —
+  // Chromium can stream the file without JS touching the bytes.
+  if (att.src && isImageMime(att.mimeType)) return att.src;
   if (att.dataUrl && att.dataUrl.startsWith('data:')) return att.dataUrl;
   if (att.imageBase64 && att.imageMimeType) {
     return `data:${att.imageMimeType};base64,${att.imageBase64}`;
   }
+  return null;
+}
+
+function buildDownloadHref(att: ViewerAttachment): string | null {
+  // Anything reachable over the custom protocol is downloadable as-is.
+  if (att.src) return att.src;
+  const img = buildImageSrc(att);
+  if (img) return img;
   return null;
 }
 
@@ -75,11 +106,16 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
     return () => window.removeEventListener('keydown', handleKey);
   }, [close]);
 
-  const imgSrc = useMemo(
-    () => (isImageMime(attachment.mimeType) ? buildImageSrc(attachment) : null),
+  const imgSrc = useMemo(() => buildImageSrc(attachment), [attachment]);
+  const pdfSrc = useMemo(
+    () => (attachment.src && isPdfMime(attachment.mimeType) ? attachment.src : null),
     [attachment],
   );
-  const downloadHref = imgSrc;
+  const htmlSrc = useMemo(
+    () => (attachment.src && isHtmlMime(attachment.mimeType) ? attachment.src : null),
+    [attachment],
+  );
+  const download = useMemo(() => buildDownloadHref(attachment), [attachment]);
 
   const metaParts = [attachment.mimeType, formatSize(attachment.size)].filter(Boolean).join(' · ');
 
@@ -102,10 +138,10 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             {metaParts && <div className={styles.meta}>{metaParts}</div>}
           </div>
           <div className={styles.actions}>
-            {downloadHref && (
+            {download && (
               <a
                 className={styles.downloadBtn}
-                href={downloadHref}
+                href={download}
                 download={attachment.name || 'attachment'}
                 title="Download"
               >
@@ -126,8 +162,27 @@ export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps)
             <div className={styles.imageWrap}>
               <img src={imgSrc} alt={attachment.name} className={styles.image} />
             </div>
+          ) : pdfSrc ? (
+            <iframe
+              title={attachment.name}
+              src={pdfSrc}
+              className={styles.pdfFrame}
+            />
+          ) : htmlSrc ? (
+            // `sandbox=""` disables scripts, same-origin, forms and top
+            // navigation — even if the protocol handler's CSP were bypassed
+            // the iframe still can't phone home or run JS.
+            <iframe
+              title={attachment.name}
+              src={htmlSrc}
+              sandbox=""
+              className={styles.pdfFrame}
+            />
           ) : (
-            <div className={styles.emptyMsg}>No inline preview available for this file type.</div>
+            <div className={styles.emptyMsg}>
+              No inline preview available for this file type.
+              {download ? ' Use Download to save the file.' : ''}
+            </div>
           )}
         </div>
       </div>
