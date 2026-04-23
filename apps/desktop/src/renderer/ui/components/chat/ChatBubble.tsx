@@ -475,30 +475,6 @@ function renderAssistantBlocks(
   return nodes;
 }
 
-/**
- * Mime types the AttachmentViewer can render natively. Image, PDF, and
- * HTML get their dedicated branches in the viewer; everything else that
- * Chromium will display as plain text (text/*, JSON, JS, XML, YAML)
- * falls into a generic iframe path. Anything else degrades to a
- * metadata-only card with a Download button.
- */
-function isRenderableMime(mimeType: string): boolean {
-  const m = mimeType.toLowerCase();
-  if (m.startsWith('image/')) return true;
-  if (m === 'application/pdf') return true;
-  if (m === 'text/html' || m === 'application/xhtml+xml') return true;
-  if (m.startsWith('text/')) return true;
-  if (
-    m === 'application/json'
-    || m === 'application/javascript'
-    || m === 'application/x-javascript'
-    || m === 'application/xml'
-    || m === 'application/yaml'
-    || m === 'application/x-yaml'
-  ) return true;
-  return false;
-}
-
 function FileAttachmentBlock({ block, conversationId }: { block: ContentBlock; conversationId?: string }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const fileName = String(block.fileName || 'attachment');
@@ -508,17 +484,17 @@ function FileAttachmentBlock({ block, conversationId }: { block: ContentBlock; c
     : '';
   const isError = block.status === 'error' || Boolean(block.error);
 
-  // Only render a preview when we have both a conversationId and an
-  // attachmentId — together they address a disk-backed file the custom
-  // protocol can serve. Old messages (pre-storage) have neither, so the
-  // card stays a plain metadata row with no surprise 404s.
+  // The card is clickable whenever we can address the bytes on disk
+  // (conversationId + attachmentId). The viewer itself decides whether
+  // to render an inline preview (image / PDF / HTML / text) or fall
+  // back to a metadata-only state with a Download button — so docx,
+  // xlsx, zip, etc. are still reachable, just not previewable in-line.
+  // Old messages (pre-storage) have no attachmentId and stay as plain
+  // non-clickable metadata rows.
   const attachmentId = typeof block.attachmentId === 'string' && block.attachmentId.length > 0
     ? block.attachmentId
     : null;
-  const canPreview = !isError
-    && Boolean(attachmentId)
-    && Boolean(conversationId)
-    && isRenderableMime(mimeType);
+  const canPreview = !isError && Boolean(attachmentId) && Boolean(conversationId);
 
   const viewer: ViewerAttachment = useMemo(() => ({
     name: fileName,
