@@ -205,6 +205,10 @@ export type ContentBlock = {
   fileName?: string;
   mimeType?: string;
   size?: number;
+  /** ID under which the raw bytes live in the attachment store. When
+   *  present the renderer can build an `antseed-attachment://` URL and
+   *  preview the file natively. */
+  attachmentId?: string;
   error?: string;
   truncated?: boolean;
   attachment?: unknown;

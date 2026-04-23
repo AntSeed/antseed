@@ -440,7 +440,13 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   );
 }
 
-function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messagePrefix = '', onOpenPreview?: (url: string) => void): ReactNode[] {
+function renderAssistantBlocks(
+  blocks: ContentBlock[],
+  streaming = false,
+  messagePrefix = '',
+  onOpenPreview?: (url: string) => void,
+  conversationId?: string,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
 
@@ -462,11 +468,83 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messag
       return;
     }
     flushToolGroup();
-    nodes.push(renderBlock(block, index, streaming, messagePrefix));
+    nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId));
   });
 
   flushToolGroup();
   return nodes;
+}
+
+function FileAttachmentBlock({ block, conversationId }: { block: ContentBlock; conversationId?: string }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const fileName = String(block.fileName || 'attachment');
+  const mimeType = String(block.mimeType || 'application/octet-stream');
+  const size = typeof block.size === 'number' && Number.isFinite(block.size)
+    ? formatFileSize(block.size)
+    : '';
+  const isError = block.status === 'error' || Boolean(block.error);
+
+  // The card is clickable whenever we can address the bytes on disk
+  // (conversationId + attachmentId). The viewer itself decides whether
+  // to render an inline preview (image / PDF / HTML / text) or fall
+  // back to a metadata-only state with a Download button — so docx,
+  // xlsx, zip, etc. are still reachable, just not previewable in-line.
+  // Old messages (pre-storage) have no attachmentId and stay as plain
+  // non-clickable metadata rows.
+  const attachmentId = typeof block.attachmentId === 'string' && block.attachmentId.length > 0
+    ? block.attachmentId
+    : null;
+  const canPreview = !isError && Boolean(attachmentId) && Boolean(conversationId);
+
+  const viewer: ViewerAttachment = useMemo(() => ({
+    name: fileName,
+    mimeType,
+    ...(typeof block.size === 'number' ? { size: block.size } : {}),
+    ...(canPreview && attachmentId && conversationId
+      ? {
+          src: `antseed-attachment://${encodeURIComponent(conversationId)}/${encodeURIComponent(attachmentId)}`,
+          downloadIpc: { conversationId, attachmentId },
+        }
+      : {}),
+    ...(isError && block.error ? { error: String(block.error) } : {}),
+  }), [fileName, mimeType, block.size, canPreview, attachmentId, conversationId, isError, block.error]);
+
+  const className = `${styles.fileAttachment}${isError ? ` ${styles.fileAttachmentError}` : ''}${canPreview ? ` ${styles.fileAttachmentClickable}` : ''}`;
+  const metaText = [mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : '']
+    .filter(Boolean)
+    .join(' · ');
+
+  const inner = (
+    <>
+      <div className={styles.fileAttachmentIcon} aria-hidden="true">
+        {fileName.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}
+      </div>
+      <div className={styles.fileAttachmentBody}>
+        <div className={styles.fileAttachmentName}>{fileName}</div>
+        <div className={styles.fileAttachmentMeta}>{metaText}</div>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      {canPreview ? (
+        <button
+          type="button"
+          className={className}
+          onClick={() => setViewerOpen(true)}
+          aria-label={`Preview ${fileName}`}
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className={className}>{inner}</div>
+      )}
+      {viewerOpen && (
+        <AttachmentViewer attachment={viewer} onClose={() => setViewerOpen(false)} />
+      )}
+    </>
+  );
 }
 
 function ImageBlockView({ block }: { block: ContentBlock }) {
@@ -504,7 +582,13 @@ function ImageBlockView({ block }: { block: ContentBlock }) {
   );
 }
 
-function renderBlock(block: ContentBlock, index: number, streaming = false, messagePrefix = ''): ReactNode {
+function renderBlock(
+  block: ContentBlock,
+  index: number,
+  streaming = false,
+  messagePrefix = '',
+  conversationId?: string,
+): ReactNode {
   const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
   if (block.type === 'text') {
@@ -519,25 +603,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   }
 
   if (block.type === 'file') {
-    const fileName = String(block.fileName || 'attachment');
-    const mimeType = String(block.mimeType || 'application/octet-stream');
-    const size = typeof block.size === 'number' && Number.isFinite(block.size)
-      ? formatFileSize(block.size)
-      : '';
-    const isError = block.status === 'error' || Boolean(block.error);
-    return (
-      <div key={blockKey} className={`${styles.fileAttachment}${isError ? ` ${styles.fileAttachmentError}` : ''}`}>
-        <div className={styles.fileAttachmentIcon} aria-hidden="true">
-          {fileName.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}
-        </div>
-        <div className={styles.fileAttachmentBody}>
-          <div className={styles.fileAttachmentName}>{fileName}</div>
-          <div className={styles.fileAttachmentMeta}>
-            {[mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : ''].filter(Boolean).join(' · ')}
-          </div>
-        </div>
-      </div>
-    );
+    return <FileAttachmentBlock key={blockKey} block={block} conversationId={conversationId} />;
   }
 
   if (block.type === 'tool_use') {
@@ -639,9 +705,12 @@ type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
   onOpenPreview?: (url: string) => void;
+  /** Identifies the surrounding conversation so file-block previews can
+   *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
+  conversationId?: string;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -663,7 +732,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview }: ChatBu
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview);
+        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
       }
       return <MarkdownContent text={String(message.content)} />;
     }
@@ -673,11 +742,11 @@ export function ChatBubble({ message, streaming = false, onOpenPreview }: ChatBu
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix));
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix, conversationId));
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, isStreamingBubble, messagePrefix]);
+  }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId]);
 
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (

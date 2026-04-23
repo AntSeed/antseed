@@ -631,7 +631,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={getMessageKey(msg, i)} message={msg} onOpenPreview={handleOpenPreview} />
+                <ChatBubble
+                  key={getMessageKey(msg, i)}
+                  message={msg}
+                  onOpenPreview={handleOpenPreview}
+                  conversationId={snap.chatActiveConversation || undefined}
+                />
               ))
             )}
             {snap.chatStreamingMessage ? (
@@ -640,6 +645,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 message={snap.chatStreamingMessage as ChatMessage}
                 streaming
                 onOpenPreview={handleOpenPreview}
+                conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (

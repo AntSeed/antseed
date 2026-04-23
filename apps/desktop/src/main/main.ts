@@ -5,6 +5,7 @@ import {
   dialog,
   type OpenDialogOptions,
 } from 'electron';
+import { copyFile } from 'node:fs/promises';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
@@ -52,6 +53,8 @@ import {
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
+import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
+import { resolveAttachmentPath } from './attachment-store.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -85,6 +88,11 @@ function hasDesktopDebugFlag(argv: string[]): boolean {
 }
 
 let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+
+// The `antseed-attachment://` scheme must be registered as privileged
+// *before* `app.whenReady()` fires. The actual request handler is wired
+// inside whenReady() once Electron's protocol module is usable.
+registerAttachmentScheme();
 
 function resolveAppIconPath(): string | undefined {
   const candidates = [
@@ -346,6 +354,41 @@ ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
 });
+
+ipcMain.handle(
+  'attachment:download',
+  async (
+    _event,
+    conversationId: string,
+    attachmentId: string,
+    suggestedName: string,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    // Download flow via dialog.showSaveDialog + copyFile. More reliable
+    // cross-platform than relying on <a download> with a custom
+    // Electron protocol URL — Chromium's save-to-disk path is only
+    // guaranteed for http(s)/data/blob.
+    try {
+      const resolved = await resolveAttachmentPath(conversationId, attachmentId);
+      if (!resolved) {
+        return { ok: false, error: 'Attachment not found' };
+      }
+      const win = getMainWindow();
+      const safeSuggested = typeof suggestedName === 'string' && suggestedName.trim().length > 0
+        ? suggestedName.trim()
+        : 'attachment';
+      const result = win
+        ? await dialog.showSaveDialog(win, { defaultPath: safeSuggested })
+        : await dialog.showSaveDialog({ defaultPath: safeSuggested });
+      if (result.canceled || !result.filePath) {
+        return { ok: false, error: 'cancelled' };
+      }
+      await copyFile(resolved, result.filePath);
+      return { ok: true, path: result.filePath };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
+);
 
 ipcMain.handle('desktop:pick-directory', async () => {
   const dialogOptions: OpenDialogOptions = {
@@ -854,6 +897,7 @@ ipcMain.handle('runtime:scan-network', async () => {
 });
 
 app.whenReady().then(async () => {
+  installAttachmentProtocol();
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,

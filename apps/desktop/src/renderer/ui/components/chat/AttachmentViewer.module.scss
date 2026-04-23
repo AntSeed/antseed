@@ -1,6 +1,7 @@
-/* AttachmentViewer.module.scss — fullscreen modal for previewing images
-   in chat. Non-image previews are planned as a follow-up (disk-backed
-   attachments rendered via a custom Electron protocol). */
+/* AttachmentViewer.module.scss — fullscreen modal for previewing chat
+   attachments. Images render inline; PDFs / HTML are served via the
+   `antseed-attachment://` custom protocol and rendered by Chromium's
+   native engines inside an iframe. */
 
 @keyframes av-backdrop-in {
   from { opacity: 0; }
@@ -143,7 +144,15 @@
   overflow: auto;
   background: var(--bg-primary);
   display: flex;
+  // Column-flex so the single child (image wrap, PDF iframe, HTML iframe
+  // or empty / error state) stretches across the full cross axis. The
+  // default row direction collapsed the iframe to its intrinsic 300px
+  // width because flex items honour `min-width: auto`.
+  flex-direction: column;
   min-height: 0;
+  // Anchor the loading overlay to the body so the spinner sits on top
+  // of the iframe without fighting its flex sizing.
+  position: relative;
 }
 
 .imageWrap {
@@ -164,6 +173,19 @@
   border-radius: var(--radius-sm);
 }
 
+// Shared by PDF and HTML previews — the iframe fills the whole modal
+// body. `min-width: 0` disables flex's default intrinsic-size protection
+// so the iframe really takes 100% of the available width.
+.pdfFrame {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 70vh;
+  border: 0;
+  background: #ffffff;
+}
+
 .emptyMsg,
 .errorMsg {
   flex: 1;
@@ -181,4 +203,39 @@
 
 .errorMsg {
   color: var(--danger);
+}
+
+@keyframes av-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+// Overlay that sits on top of the iframe / img while the browser is
+// still streaming the content. Fades out via `pointer-events: none` so
+// the user can still interact with the loaded content the instant it's
+// ready, but the label stays visible as a cue.
+.loadingOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: av-spinner-rotate 0.8s linear infinite;
+}
+
+.loadingLabel {
+  letter-spacing: 0.02em;
 }

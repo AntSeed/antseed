@@ -1,4 +1,5 @@
 import type { IpcMain } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -17,6 +18,12 @@ import {
   type PreparedChatAttachment,
   type RawChatAttachment,
 } from './chat-attachments.js';
+import {
+  deleteConversationAttachments,
+  isSafeId,
+  saveAttachment,
+  sweepOrphanAttachments,
+} from './attachment-store.js';
 import { webFetchTool } from './chat-web-fetch.js';
 import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
@@ -58,6 +65,12 @@ type FileBlock = {
   size?: number;
   status?: 'ready' | 'error';
   truncated?: boolean;
+  /**
+   * Stable ID under which the raw bytes live in the attachment store.
+   * When present the renderer can build an `antseed-attachment://` URL
+   * and preview the file natively.
+   */
+  attachmentId?: string;
 };
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type?: string; data?: string } };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
@@ -936,6 +949,7 @@ function convertPersistedAttachmentPromptToBlocks(text: string): string | Conten
     const attrs = parseAttachmentAttributes(match[1] ?? '');
     const size = Number(attrs.size);
     const body = match[2] ?? '';
+    const attachmentId = attrs.id && isSafeId(attrs.id) ? attrs.id : undefined;
     blocks.push({
       type: 'file',
       fileName: attrs.name || 'attachment',
@@ -943,6 +957,7 @@ function convertPersistedAttachmentPromptToBlocks(text: string): string | Conten
       ...(Number.isFinite(size) && size >= 0 ? { size } : {}),
       status: 'ready',
       truncated: body.includes('[Attachment truncated:'),
+      ...(attachmentId ? { attachmentId } : {}),
     });
     lastIndex = index + match[0].length;
   }
@@ -2614,8 +2629,33 @@ export function registerPiChatHandlers({
     preferredPeerByConversationId.delete(id);
     cachedPaymentRequired.delete(id);
     await store.delete(id);
+    // Best effort: wipe any raw attachment bytes we persisted for this
+    // conversation. Failures are swallowed so a stuck directory doesn't
+    // block the primary delete from returning ok.
+    try {
+      await deleteConversationAttachments(id);
+    } catch (err) {
+      appendSystemLog(`Failed to delete attachments for conversation ${id}: ${asErrorMessage(err)}`);
+    }
     return { ok: true };
   });
+
+  // Sweep attachment directories that no longer correspond to any
+  // conversation — can happen if a previous run crashed between persist
+  // and the delete handler. Cheap (directory stat-only) so we do it once
+  // on handler registration.
+  void (async () => {
+    try {
+      const summaries = await store.list();
+      const known = new Set<string>(summaries.map((s) => s.id));
+      const removed = await sweepOrphanAttachments(known);
+      if (removed.length > 0) {
+        appendSystemLog(`Swept ${removed.length} orphan attachment director${removed.length === 1 ? 'y' : 'ies'}.`);
+      }
+    } catch (err) {
+      appendSystemLog(`Attachment orphan sweep failed: ${asErrorMessage(err)}`);
+    }
+  })();
 
   ipcMain.handle('chat:ai-rename-conversation', async (_event, id: string, title: string) => {
     const manager = await store.openSessionManager(id);
@@ -2626,9 +2666,24 @@ export function registerPiChatHandlers({
     return { ok: true };
   });
 
-  ipcMain.handle('chat:prepare-attachments', async (_event, attachments: RawChatAttachment[]) => {
+  ipcMain.handle('chat:prepare-attachments', async (_event, conversationId: string, attachments: RawChatAttachment[]) => {
     try {
-      return { ok: true, data: await prepareChatAttachments(attachments) };
+      const trimmedId = typeof conversationId === 'string' ? conversationId.trim() : '';
+      // Guard the filesystem boundary: only run the disk-backed storage
+      // path when the renderer supplied a conversationId we can vouch for.
+      // Otherwise fall back to the legacy pure-prepare behaviour — the
+      // LLM pipeline still works, we just can't offer native previews.
+      const storage = trimmedId && isSafeId(trimmedId)
+        ? async (raw: { id: string; name: string; mimeType: string; size: number }, buffer: Buffer): Promise<string> => {
+            const attachmentId = randomUUID();
+            await saveAttachment(trimmedId, attachmentId, raw.name, buffer);
+            return attachmentId;
+          }
+        : undefined;
+      return {
+        ok: true,
+        data: await prepareChatAttachments(attachments, { ...(storage ? { storage } : {}) }),
+      };
     } catch (error) {
       return { ok: false, error: asErrorMessage(error) };
     }

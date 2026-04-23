@@ -89,6 +89,9 @@ type RawChatAttachment = {
 
 type PreparedChatAttachment = {
   id: string;
+  /** Stable server-generated ID for the on-disk copy; used by the
+   *  `antseed-attachment://` preview protocol. */
+  attachmentId?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -207,8 +210,11 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
-  chatPrepareAttachments(attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
-    return ipcRenderer.invoke('chat:prepare-attachments', attachments);
+  chatPrepareAttachments(conversationId: string, attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
+    return ipcRenderer.invoke('chat:prepare-attachments', conversationId, attachments);
+  },
+  attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+    return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
   },
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments);

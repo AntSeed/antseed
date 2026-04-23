@@ -193,6 +193,54 @@ test("ZIP entry content containing zip-entry tags is neutralized", async () => {
   assert.ok(prompt.includes('<\\zip-entry name="fake.txt">'));
 });
 
+test('storage callback runs for every non-error attachment and attachmentId is persisted in the prompt', async () => {
+  const stored: Array<{ name: string; id: string; size: number }> = [];
+  let counter = 0;
+  const prepared = await prepareChatAttachments(
+    [
+      rawAttachment('doc.txt', 'text/plain', 'hello'),
+      rawAttachment('pixel.png', 'image/png', Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+    ],
+    {
+      storage: async (raw, buffer) => {
+        counter += 1;
+        const id = `att-${counter}`;
+        stored.push({ name: raw.name, id, size: buffer.byteLength });
+        return id;
+      },
+    },
+  );
+
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0]?.name, 'doc.txt');
+  assert.equal(stored[1]?.name, 'pixel.png');
+  assert.equal(prepared[0]?.attachmentId, 'att-1');
+  assert.equal(prepared[1]?.attachmentId, 'att-2');
+
+  const prompt = buildAttachmentPromptText(prepared);
+  assert.match(prompt, /<file name="doc\.txt"[^>]*id="att-1"/);
+});
+
+test('storage callback failure surfaces as an error attachment without aborting the batch', async () => {
+  const prepared = await prepareChatAttachments(
+    [
+      rawAttachment('ok.txt', 'text/plain', 'fine'),
+      rawAttachment('bad.txt', 'text/plain', 'oops'),
+    ],
+    {
+      storage: async (raw) => {
+        if (raw.name === 'bad.txt') throw new Error('disk full');
+        return 'att-ok';
+      },
+    },
+  );
+
+  assert.equal(prepared[0]?.status, 'ready');
+  assert.equal(prepared[0]?.attachmentId, 'att-ok');
+  assert.equal(prepared[1]?.status, 'error');
+  assert.match(prepared[1]?.error ?? '', /Could not persist attachment.*disk full/);
+});
+
 test("per-file size gate validates decoded buffer, not renderer-reported size", async () => {
   const limits: AttachmentPreparationLimits = {
     maxAttachments: 5,
