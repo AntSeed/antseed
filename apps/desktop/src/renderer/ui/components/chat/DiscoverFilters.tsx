@@ -5,6 +5,7 @@ import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
   MAX_CHANNELS_SLIDER, CHANNELS_SLIDER_STEP,
+  formatCategoryLabel,
   type TimeWindow,
 } from './discover-filter-util';
 import styles from './DiscoverFilters.module.scss';
@@ -94,7 +95,7 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
                   style={active ? undefined : getTagOutlineTint(c)}
                   onClick={() => filters.toggleCategory(c)}
                 >
-                  {c}
+                  {formatCategoryLabel(c)}
                 </button>
               );
             })}

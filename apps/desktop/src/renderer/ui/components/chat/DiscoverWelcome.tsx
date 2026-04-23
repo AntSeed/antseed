@@ -9,6 +9,7 @@ import {
   MAX_INPUT_PRICE_SLIDER_USD,
   MAX_OUTPUT_PRICE_SLIDER_USD,
   DEFAULT_MIN_ON_CHAIN_CHANNELS,
+  formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
@@ -490,7 +491,7 @@ function Card({
       <div className={styles.cardBody}>
         <div className={styles.cardTags}>
           {item.tags.map((t) => (
-            <span key={t} className={styles.tag} style={getTagTint(t)}>{t}</span>
+            <span key={t} className={styles.tag} style={getTagTint(t)}>{formatCategoryLabel(t)}</span>
           ))}
         </div>
         <div className={styles.cardName}>{item.displayName}</div>
