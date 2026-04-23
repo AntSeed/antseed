@@ -106,6 +106,17 @@ function safeAttribute(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
+function withTimeout<T>(promise: Promise<T>): Promise<T> {
+  const ms = 30_000;
+  const label = 'Document text extraction';
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+}
+
 function neutralizeFileTags(text: string): string {
   return text
     .replace(/<\/file>/gi, '<\\/file>')
@@ -332,7 +343,7 @@ async function prepareOneAttachment(
 
   if (isOfficeAttachment(name)) {
     try {
-      const extracted = await extractOfficeText(buffer);
+      const extracted = await withTimeout(extractOfficeText(buffer));
       return prepareTextResult(raw, 'text', extracted, limits, remainingMessageChars, 'Document text was extracted without OCR or embedded attachments.');
     } catch (error) {
       return { attachment: makeError(raw, `Could not extract document text: ${error instanceof Error ? error.message : String(error)}`), consumedChars: 0 };
