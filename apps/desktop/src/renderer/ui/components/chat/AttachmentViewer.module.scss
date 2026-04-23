@@ -1,6 +1,7 @@
-/* AttachmentViewer.module.scss — fullscreen modal for previewing images
-   in chat. Non-image previews are planned as a follow-up (disk-backed
-   attachments rendered via a custom Electron protocol). */
+/* AttachmentViewer.module.scss — fullscreen modal for previewing chat
+   attachments. Images render inline; PDFs / HTML are served via the
+   `antseed-attachment://` custom protocol and rendered by Chromium's
+   native engines inside an iframe. */
 
 @keyframes av-backdrop-in {
   from { opacity: 0; }
@@ -143,6 +144,11 @@
   overflow: auto;
   background: var(--bg-primary);
   display: flex;
+  // Column-flex so the single child (image wrap, PDF iframe, HTML iframe
+  // or empty / error state) stretches across the full cross axis. The
+  // default row direction collapsed the iframe to its intrinsic 300px
+  // width because flex items honour `min-width: auto`.
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -162,6 +168,19 @@
   object-fit: contain;
   display: block;
   border-radius: var(--radius-sm);
+}
+
+// Shared by PDF and HTML previews — the iframe fills the whole modal
+// body. `min-width: 0` disables flex's default intrinsic-size protection
+// so the iframe really takes 100% of the available width.
+.pdfFrame {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 70vh;
+  border: 0;
+  background: #ffffff;
 }
 
 .emptyMsg,
