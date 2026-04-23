@@ -28,6 +28,7 @@ const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
 const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
 
 import styles from './ChatView.module.scss';
+import bubbleStyles from '../chat/ChatBubble.module.scss';
 
 const MAX_INPUT_HEIGHT = 220;
 const PREVIEW_MIN_WIDTH = 280;
@@ -126,6 +127,16 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
   const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
+  // While the LLM is streaming we still let the user type/paste.
+  // Drafts the user confirms (Enter / Send) are parked in this queue as
+  // cards above the composer and ship one-per-turn as soon as the current
+  // stream ends (naturally or via Stop). See issue #59.
+  type PendingDraft = {
+    id: string;
+    text: string;
+    attachments: RawChatAttachment[];
+  };
+  const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
   const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
@@ -200,15 +211,23 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => observer.disconnect();
   }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending]);
 
-  // Re-focus the input when it transitions from disabled → enabled
+  // Re-focus the input when it transitions from disabled → enabled, and if a
+  // draft is queued, ship the head of the queue as its own turn. Each draft
+  // stays a distinct message so the model can reason/respond between them
+  // (matches CLI-style turn-by-turn flow).
+  // Dispatch is inlined (rather than delegating to handleSend) so the effect
+  // isn't coupled to handleSend's stale closure over chatInputDisabled.
   useEffect(() => {
     const wasDisabled = prevInputDisabled.current;
     const isDisabled = snap.chatInputDisabled;
     prevInputDisabled.current = isDisabled;
-    if (wasDisabled && !isDisabled && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [snap.chatInputDisabled]);
+    if (!wasDisabled || isDisabled) return;
+    if (inputRef.current) inputRef.current.focus();
+    if (pendingQueue.length === 0) return;
+    const [head, ...rest] = pendingQueue;
+    setPendingQueue(rest);
+    actions.sendMessage(head.text, head.attachments);
+  }, [snap.chatInputDisabled, pendingQueue, actions]);
 
   // --- Divider drag (pointer capture — no orphaned listeners) ---
   const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
@@ -324,10 +343,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     [pendingSwitchValue, snap.chatServiceOptions],
   );
 
-  const handleSend = useCallback(() => {
-    const text = inputValue.trim();
-    if (!text && attachedFiles.length === 0) return;
-    const filesToSend = attachedFiles;
+  const resetComposer = useCallback(() => {
     setInputValue('');
     setAttachedFiles([]);
     setAttachmentError(null);
@@ -336,8 +352,39 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       inputRef.current.style.overflowY = 'hidden';
       inputRef.current.focus();
     }
+  }, []);
+
+  const handleSend = useCallback(() => {
+    const text = inputValue.trim();
+    if (!text && attachedFiles.length === 0) return;
+    // If the current turn is still streaming, park the draft as a pending
+    // card above the composer and clear the input so the user can keep
+    // typing the next one. The disabled→enabled effect flushes the queue
+    // head once the stream ends.
+    if (snap.chatInputDisabled) {
+      const id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `pending-${String(Date.now())}-${String(Math.random())}`;
+      setPendingQueue((prev) => [...prev, { id, text, attachments: attachedFiles }]);
+      resetComposer();
+      return;
+    }
+    const filesToSend = attachedFiles;
+    resetComposer();
     actions.sendMessage(text, filesToSend);
-  }, [inputValue, attachedFiles, actions]);
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, resetComposer]);
+
+  const handleRemovePending = useCallback((id: string) => {
+    setPendingQueue((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const handleStop = useCallback(() => {
+    // Deliberately leave pendingQueue intact: aborting is how the user asks
+    // to move on to the queued drafts, so the disabled→enabled effect should
+    // begin flushing the queue as soon as the abort lands.
+    void actions.abortChat();
+  }, [actions]);
 
   const readRawAttachment = useCallback((file: File): Promise<RawChatAttachment> => {
     return new Promise((resolve, reject) => {
@@ -599,6 +646,47 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 phaseLabel={snap.chatThinkingPhase}
               />
             )}
+            {pendingQueue.map((item) => (
+              <div
+                key={`pending-${item.id}`}
+                className={`${bubbleStyles.chatBubble} ${bubbleStyles.own}`}
+                style={{ opacity: 0.7 }}
+                title="Will send when the current response finishes"
+              >
+                <span
+                  className={bubbleStyles.chatBubbleStats}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                >
+                  pending
+                  <button
+                    type="button"
+                    aria-label="Remove queued message"
+                    title="Remove queued message"
+                    onClick={() => handleRemovePending(item.id)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                      padding: 0,
+                      fontSize: 14,
+                      lineHeight: 1,
+                      opacity: 0.6,
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+                <div>
+                  {item.text || <em style={{ opacity: 0.7 }}>(attachments only)</em>}
+                  {item.attachments.length > 0 && (
+                    <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                      · {item.attachments.length} file{item.attachments.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
             <SessionApprovalCard
               visible={snap.chatPaymentApprovalVisible}
               peerName={snap.chatPaymentApprovalPeerName}
@@ -658,9 +746,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
-                placeholder="Message Community Peers..."
+                placeholder={
+                  snap.chatInputDisabled
+                    ? 'Type your next message — it will send when the current response finishes…'
+                    : 'Message Community Peers...'
+                }
                 rows={1}
-                disabled={snap.chatInputDisabled}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onInput={handleInput}
@@ -671,13 +762,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 <button
                   className={styles.chatAttachBtn}
                   title="Attach files"
-                  disabled={snap.chatInputDisabled}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
                 </button>
                 {snap.chatAbortVisible ? (
-                  <button className={styles.chatAbortBtn} onClick={() => void actions.abortChat()}>
+                  <button className={styles.chatAbortBtn} onClick={handleStop}>
                     Stop
                   </button>
                 ) : (
