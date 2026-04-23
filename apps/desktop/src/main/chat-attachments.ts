@@ -107,7 +107,11 @@ function safeAttribute(value: string): string {
 }
 
 function neutralizeFileTags(text: string): string {
-  return text.replace(/<\/file>/gi, '<\\/file>');
+  return text
+    .replace(/<\/file>/gi, '<\\/file>')
+    .replace(/<file\b/gi, '<\file')
+    .replace(/<\/zip-entry>/gi, '<\\/zip-entry>')
+    .replace(/<zip-entry\b/gi, '<\zip-entry');
 }
 
 function isImageAttachment(name: string, mimeType: string): boolean {
