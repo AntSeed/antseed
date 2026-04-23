@@ -365,10 +365,6 @@ export async function prepareChatAttachments(
       prepared.push(makeError(rawMeta, `Only ${limits.maxAttachments} attachments are allowed per message.`));
       continue;
     }
-    if (raw.size > limits.maxFileBytes) {
-      prepared.push(makeError(rawMeta, `File exceeds the ${limits.maxFileBytes} byte per-file limit.`));
-      continue;
-    }
     if (totalRawBytes + raw.size > limits.maxTotalRawBytes) {
       prepared.push(makeError(rawMeta, `Attachments exceed the ${limits.maxTotalRawBytes} byte per-message limit.`));
       continue;
@@ -379,6 +375,15 @@ export async function prepareChatAttachments(
       buffer = decodeBase64(raw);
     } catch {
       prepared.push(makeError(rawMeta, 'Attachment data is not valid base64.'));
+      continue;
+    }
+
+    if (buffer.byteLength > limits.maxFileBytes) {
+      prepared.push(makeError(rawMeta, `File exceeds the ${limits.maxFileBytes} byte per-file limit.`));
+      continue;
+    }
+    if (totalRawBytes + buffer.byteLength > limits.maxTotalRawBytes) {
+      prepared.push(makeError(rawMeta, `Attachments exceed the ${limits.maxTotalRawBytes} byte per-message limit.`));
       continue;
     }
     totalRawBytes += buffer.byteLength;
