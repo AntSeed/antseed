@@ -6,6 +6,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
+import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
   buildChatMetaParts,
@@ -468,6 +469,116 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messag
   return nodes;
 }
 
+function buildViewerFromFileBlock(block: ContentBlock): ViewerAttachment {
+  const att = (block.attachment && typeof block.attachment === 'object')
+    ? (block.attachment as Record<string, unknown>)
+    : {};
+  const image = (att.image && typeof att.image === 'object')
+    ? (att.image as { data?: unknown; mimeType?: unknown })
+    : null;
+  return {
+    name: String(block.fileName || 'attachment'),
+    mimeType: String(block.mimeType || 'application/octet-stream'),
+    size: typeof block.size === 'number' ? block.size : undefined,
+    imageBase64: typeof image?.data === 'string' ? image.data : undefined,
+    imageMimeType: typeof image?.mimeType === 'string' ? image.mimeType : undefined,
+    text: typeof att.text === 'string' ? att.text : undefined,
+    truncated: block.truncated,
+    error: block.error || (typeof att.error === 'string' ? att.error : undefined),
+  };
+}
+
+function fileBlockIsPreviewable(block: ContentBlock, viewer: ViewerAttachment): boolean {
+  if (block.status === 'error' || block.error) return false;
+  if (viewer.imageBase64 && viewer.imageMimeType) return true;
+  if (typeof viewer.text === 'string' && viewer.text.length > 0) return true;
+  return false;
+}
+
+function FileAttachmentBlock({ block }: { block: ContentBlock }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const fileName = String(block.fileName || 'attachment');
+  const mimeType = String(block.mimeType || 'application/octet-stream');
+  const size = typeof block.size === 'number' && Number.isFinite(block.size)
+    ? formatFileSize(block.size)
+    : '';
+  const isError = block.status === 'error' || Boolean(block.error);
+  const viewer = useMemo(() => buildViewerFromFileBlock(block), [block]);
+  const canPreview = !isError && fileBlockIsPreviewable(block, viewer);
+
+  const className = `${styles.fileAttachment}${isError ? ` ${styles.fileAttachmentError}` : ''}${canPreview ? ` ${styles.fileAttachmentClickable}` : ''}`;
+  const metaText = [mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : '']
+    .filter(Boolean)
+    .join(' · ');
+
+  const inner = (
+    <>
+      <div className={styles.fileAttachmentIcon} aria-hidden="true">
+        {fileName.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}
+      </div>
+      <div className={styles.fileAttachmentBody}>
+        <div className={styles.fileAttachmentName}>{fileName}</div>
+        <div className={styles.fileAttachmentMeta}>{metaText}</div>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      {canPreview ? (
+        <button
+          type="button"
+          className={className}
+          onClick={() => setViewerOpen(true)}
+          aria-label={`Preview ${fileName}`}
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className={className}>{inner}</div>
+      )}
+      {viewerOpen && (
+        <AttachmentViewer attachment={viewer} onClose={() => setViewerOpen(false)} />
+      )}
+    </>
+  );
+}
+
+function ImageBlockView({ block }: { block: ContentBlock }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const mediaType = String(block.source?.media_type || 'image/png');
+  const data = String(block.source?.data || '');
+  if (!data) return null;
+  const src = `data:${mediaType};base64,${data}`;
+  const viewer: ViewerAttachment = {
+    name: 'image',
+    mimeType: mediaType,
+    imageBase64: data,
+    imageMimeType: mediaType,
+  };
+  return (
+    <>
+      <img
+        src={src}
+        className="chat-image-preview chat-image-clickable"
+        alt="Attached image"
+        onClick={() => setViewerOpen(true)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setViewerOpen(true);
+          }
+        }}
+      />
+      {viewerOpen && (
+        <AttachmentViewer attachment={viewer} onClose={() => setViewerOpen(false)} />
+      )}
+    </>
+  );
+}
+
 function renderBlock(block: ContentBlock, index: number, streaming = false, messagePrefix = ''): ReactNode {
   const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
@@ -483,25 +594,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   }
 
   if (block.type === 'file') {
-    const fileName = String(block.fileName || 'attachment');
-    const mimeType = String(block.mimeType || 'application/octet-stream');
-    const size = typeof block.size === 'number' && Number.isFinite(block.size)
-      ? formatFileSize(block.size)
-      : '';
-    const isError = block.status === 'error' || Boolean(block.error);
-    return (
-      <div key={blockKey} className={`${styles.fileAttachment}${isError ? ` ${styles.fileAttachmentError}` : ''}`}>
-        <div className={styles.fileAttachmentIcon} aria-hidden="true">
-          {fileName.split('.').pop()?.slice(0, 3).toUpperCase() || 'FILE'}
-        </div>
-        <div className={styles.fileAttachmentBody}>
-          <div className={styles.fileAttachmentName}>{fileName}</div>
-          <div className={styles.fileAttachmentMeta}>
-            {[mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : ''].filter(Boolean).join(' · ')}
-          </div>
-        </div>
-      </div>
-    );
+    return <FileAttachmentBlock key={blockKey} block={block} />;
   }
 
   if (block.type === 'tool_use') {
@@ -523,14 +616,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   }
 
   if (block.type === 'image' && block.source?.data && block.source?.media_type) {
-    return (
-      <img
-        key={blockKey}
-        src={`data:${block.source.media_type};base64,${block.source.data}`}
-        className="chat-image-preview"
-        alt="Attached image"
-      />
-    );
+    return <ImageBlockView key={blockKey} block={block} />;
   }
 
   return null;

@@ -18,6 +18,7 @@ import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 import { ServiceDropdown } from '../chat/ServiceDropdown';
 import { SwitchServiceDialog } from '../chat/SwitchServiceDialog';
 import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
+import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewer';
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
@@ -137,6 +138,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     attachments: RawChatAttachment[];
   };
   const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<ViewerAttachment | null>(null);
   const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
@@ -711,25 +713,55 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
             {attachedFiles.length > 0 && (
               <div className={styles.chatAttachmentTray}>
-                {attachedFiles.map((file) => (
-                  <div className={styles.chatAttachmentChip} key={file.id} title={`${file.name} (${formatAttachmentSize(file.size)})`}>
-                    {file.mimeType.startsWith('image/') ? (
-                      <img src={file.base64} alt="" className={styles.chatAttachmentThumb} />
-                    ) : (
-                      <span className={styles.chatAttachmentFileIcon}>{getAttachmentExtension(file.name)}</span>
-                    )}
-                    <span className={styles.chatAttachmentName}>{file.name}</span>
-                    <span className={styles.chatAttachmentSize}>{formatAttachmentSize(file.size)}</span>
-                    <button
-                      className={styles.chatAttachmentRemoveBtn}
-                      onClick={() => handleRemoveAttachment(file.id)}
-                      title="Remove attachment"
-                      type="button"
-                    >
-                      x
-                    </button>
-                  </div>
-                ))}
+                {attachedFiles.map((file) => {
+                  const canPreview =
+                    file.mimeType.startsWith('image/') || file.mimeType === 'application/pdf';
+                  const openPreview = () => {
+                    setPreviewAttachment({
+                      name: file.name,
+                      mimeType: file.mimeType,
+                      size: file.size,
+                      dataUrl: file.base64,
+                    });
+                  };
+                  return (
+                    <div className={styles.chatAttachmentChip} key={file.id} title={`${file.name} (${formatAttachmentSize(file.size)})${canPreview ? ' — click to preview' : ''}`}>
+                      {file.mimeType.startsWith('image/') ? (
+                        <img
+                          src={file.base64}
+                          alt=""
+                          className={styles.chatAttachmentThumb}
+                          onClick={openPreview}
+                          style={{ cursor: 'zoom-in' }}
+                        />
+                      ) : (
+                        <span
+                          className={styles.chatAttachmentFileIcon}
+                          onClick={canPreview ? openPreview : undefined}
+                          style={canPreview ? { cursor: 'pointer' } : undefined}
+                        >
+                          {getAttachmentExtension(file.name)}
+                        </span>
+                      )}
+                      <span
+                        className={styles.chatAttachmentName}
+                        onClick={canPreview ? openPreview : undefined}
+                        style={canPreview ? { cursor: 'pointer' } : undefined}
+                      >
+                        {file.name}
+                      </span>
+                      <span className={styles.chatAttachmentSize}>{formatAttachmentSize(file.size)}</span>
+                      <button
+                        className={styles.chatAttachmentRemoveBtn}
+                        onClick={() => handleRemoveAttachment(file.id)}
+                        title="Remove attachment"
+                        type="button"
+                      >
+                        x
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -826,6 +858,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         onStartNew={handleSwitchStartNew}
         onCancel={handleSwitchCancel}
       />
+      {previewAttachment && (
+        <AttachmentViewer
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
     </section>
   );
 }
