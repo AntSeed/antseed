@@ -126,6 +126,9 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   const [amount, setAmount] = useState('');
   const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customTarget, setCustomTarget] = useState('');
+  const [customTargetEdited, setCustomTargetEdited] = useState(false);
 
   const currentTotal = balance ? parseFloat(balance.total) : 0;
   const creditLimit = balance ? parseFloat(balance.creditLimit) : 0;
@@ -166,7 +169,29 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     isSwitchingChain,
     ensureCorrectNetwork,
   } = usePaymentNetwork(config);
-  const depositTarget = buyerAddress ?? address;
+  const defaultTarget = buyerAddress ?? address;
+
+  // Pre-fill the override input with the signer address once available,
+  // until the user manually edits it. This lets people see what the deposit
+  // will credit to, and gives them a concrete address to replace.
+  useEffect(() => {
+    if (customTargetEdited) return;
+    if (!address) return;
+    setCustomTarget(address);
+  }, [address, customTargetEdited]);
+
+  const customTargetTrimmed = customTarget.trim();
+  const customTargetIsValid = /^0x[a-fA-F0-9]{40}$/.test(customTargetTrimmed);
+  const customTargetInvalid = showAdvanced && customTargetTrimmed !== '' && !customTargetIsValid;
+  const depositTarget =
+    showAdvanced && customTargetIsValid
+      ? (customTargetTrimmed as `0x${string}`)
+      : defaultTarget;
+  const isOverridingTarget =
+    showAdvanced &&
+    customTargetIsValid &&
+    defaultTarget !== undefined &&
+    customTargetTrimmed.toLowerCase() !== (defaultTarget as string).toLowerCase();
 
   // Read on-chain allowance (always, when connected)
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -391,10 +416,66 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
             </div>
           )}
 
+          <div className="deposit-advanced">
+            <button
+              type="button"
+              className="deposit-advanced-toggle"
+              onClick={() => setShowAdvanced((v) => !v)}
+              aria-expanded={showAdvanced}
+              aria-controls="deposit-advanced-panel"
+            >
+              <span className={`deposit-advanced-chevron ${showAdvanced ? 'deposit-advanced-chevron--open' : ''}`} aria-hidden="true">›</span>
+              Advanced — deposit to a different address
+            </button>
+            {showAdvanced && (
+              <div id="deposit-advanced-panel" className="deposit-advanced-body">
+                <p className="deposit-advanced-desc">
+                  Deposits credit the AntSeed account whose address you enter below.
+                  Anyone can fund any AntSeed account — the balance is still spendable
+                  only by that account's signer. Override only if you mean to top up
+                  someone else's AntSeed account (e.g. a teammate). This does not change
+                  which account spends the credits.
+                </p>
+                <label className="input-label" htmlFor="deposit-custom-target">Signer address</label>
+                <input
+                  id="deposit-custom-target"
+                  className="input-field input-field--mono"
+                  type="text"
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder={defaultTarget ?? '0x…'}
+                  value={customTarget}
+                  onChange={(e) => {
+                    setCustomTargetEdited(true);
+                    setCustomTarget(e.target.value);
+                  }}
+                  disabled={step !== 'idle'}
+                />
+                <div className="deposit-advanced-warn" role="note">
+                  <span className="deposit-advanced-warn-icon" aria-hidden="true">⚠</span>
+                  <span>
+                    Do not send USDC directly to this address — it will not be credited.
+                    Use the Deposit button below; funds must go through the AntSeed
+                    Deposits contract.
+                  </span>
+                </div>
+                {customTargetInvalid && (
+                  <span className="hint hint--error">Enter a valid 0x… address (42 chars).</span>
+                )}
+                {isOverridingTarget && (
+                  <span className="hint hint--warn">
+                    Credits will go to {customTargetTrimmed.slice(0, 6)}…{customTargetTrimmed.slice(-4)},
+                    not your connected wallet.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             className="btn-primary"
             onClick={handleDeposit}
-            disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain}
+            disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain || customTargetInvalid || !depositTarget}
           >
             {isSwitchingChain ? `Switching to ${targetChainName}...` :
              wrongChain ? `Switch to ${targetChainName}` :
