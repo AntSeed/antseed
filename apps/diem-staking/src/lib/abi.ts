@@ -18,13 +18,13 @@ import { parseAbi } from 'viem';
  *   - firstRewardEpoch / currentRewardEpoch / userLastClaimedEpoch(user) /
  *     pendingAntsForEpoch(user, epoch) — per-epoch ANTS preview, summed
  *     across the user's claimable range
- *   - currentEpoch / oldestUnclaimed / epochs(id) / epochUsers(id, i) /
- *     epochUserAmount(id, user) — unstake queue state machine
- *   - minEpochOpenSecs / currentEpochOpenedAt / flushableAt — minimum
- *     cohort-open window gate (so a first queuer can't immediately flush)
+ *   - currentUnstakeBatch / oldestUnclaimedUnstakeBatch / unstakeBatches(id) /
+ *     unstakeBatchUserAmount(id, user) — unstake queue state machine
+ *   - minUnstakeBatchOpenSecs / currentUnstakeBatchOpenedAt / flushableAt — minimum
+ *     batch-open window gate (so a first queuer can't immediately flush)
  *
  * Writes:
- *   - stake, initiateUnstake, flush, claimEpoch, claimUsdc, claimAnts,
+ *   - stake, initiateUnstake, flush, claimUnstakeBatch, claimUsdc, claimAnts,
  *     syncRewardEpochs
  */
 export const DIEM_STAKING_PROXY_ABI = parseAbi([
@@ -45,21 +45,21 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function pendingAntsForEpoch(address user, uint32 rewardEpoch) view returns (uint256)',
 
   // Reads — unstake queue
-  'function currentEpoch() view returns (uint32)',
-  'function oldestUnclaimed() view returns (uint32)',
-  'function epochs(uint32 id) view returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)',
-  'function epochUserAmount(uint32 id, address user) view returns (uint128)',
+  'function currentUnstakeBatch() view returns (uint32)',
+  'function oldestUnclaimedUnstakeBatch() view returns (uint32)',
+  'function unstakeBatches(uint32 id) view returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)',
+  'function unstakeBatchUserAmount(uint32 id, address user) view returns (uint128)',
 
-  // Reads — minimum cohort-open window
-  'function minEpochOpenSecs() view returns (uint64)',
-  'function currentEpochOpenedAt() view returns (uint64)',
+  // Reads — minimum batch-open window
+  'function minUnstakeBatchOpenSecs() view returns (uint64)',
+  'function currentUnstakeBatchOpenedAt() view returns (uint64)',
   'function flushableAt() view returns (uint64)',
 
   // Writes — staker actions
   'function stake(uint256 amount)',
   'function initiateUnstake(uint256 amount)',
   'function flush()',
-  'function claimEpoch(uint32 epochId)',
+  'function claimUnstakeBatch(uint32 batchId)',
   'function claimUsdc()',
   'function claimAnts(uint32 numEpochs)',
   'function syncRewardEpochs(uint32 maxEpochs)',

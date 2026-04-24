@@ -313,18 +313,18 @@ export function FAQ() {
           <div className="body">
             From Venice's side the proxy is a single staker, so every unstake would reset
             the cooldown for the whole pool. To avoid that we batch: unstakes queue into
-            the currently-open cohort on-chain. You'll see three states in the app:
-            <strong>queued</strong> (your amount is in the open cohort, accrual stopped
-            instantly) → <strong>cooling down</strong> (cohort flushed to Venice in one call,
+            the currently-open unstake batch on-chain. You'll see three states in the app:
+            <strong>queued</strong> (your amount is in the open batch, accrual stopped
+            instantly) → <strong>cooling down</strong> (batch flushed to Venice in one call,
             waiting for Venice's native cooldown) → <strong>claimable</strong> (your DIEM is
-            ready to withdraw). Once the current cohort finishes claiming, a new cohort
-            opens. Each state advances with a tx anyone in the cohort can trigger — so you'll
+            ready to withdraw). Once the current batch finishes claiming, a new batch
+            opens. Each state advances with a tx anyone in the batch can trigger — so you'll
             often find yours has moved already by the time you check back.
             <br /><br />
-            Each cohort also has a minimum open window (24h by default) measured from the
+            Each batch also has a minimum open window (24h by default) measured from the
             first queuer — this stops a single user from queuing and immediately flushing,
             which would push everyone else into a fresh Venice cooldown. The queue state
-            shows a live countdown until the cohort is flushable.
+            shows a live countdown until the batch is flushable.
           </div>
         </details>
         <details className="faq">

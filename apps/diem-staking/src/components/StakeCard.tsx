@@ -23,7 +23,7 @@ import {
   useStake,
   useInitiateUnstake,
   useFlush,
-  useClaimEpoch,
+  useClaimUnstakeBatch,
   useClaimUsdc,
   useClaimAnts,
 } from '../lib/actions';
@@ -136,7 +136,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             stakedDiem={user.stakedDiem}
             amtUsd={amtUsd}
             diemCooldownSecs={pool.diemCooldownSecs}
-            minEpochOpenSecs={pool.minEpochOpenSecs}
+            minUnstakeBatchOpenSecs={pool.minUnstakeBatchOpenSecs}
             flushableAt={pool.flushableAt}
           />
         )}
@@ -314,9 +314,9 @@ interface UnstakePanelProps {
   stakedDiem: bigint | null;
   amtUsd: number | null;
   diemCooldownSecs: number | null;
-  /** Minimum cohort-open window (seconds). Owner-settable; 0 = disabled. */
-  minEpochOpenSecs: number | null;
-  /** Unix timestamp at which the currently-open cohort can first be flushed. */
+  /** Minimum batch-open window (seconds). Owner-settable; 0 = disabled. */
+  minUnstakeBatchOpenSecs: number | null;
+  /** Unix timestamp at which the currently-open batch can first be flushed. */
   flushableAt: number | null;
 }
 
@@ -342,14 +342,14 @@ function UnstakePanel(props: UnstakePanelProps) {
       {/* Always-visible educational note — this is the UX best-practice bit
           that the author's original "1-day cooldown" copy couldn't convey. */}
       <div className="claim-note">
-        <strong>Three-step unstake.</strong> Unstakes are batched into cohorts on-chain.
+        <strong>Three-step unstake.</strong> Unstakes are batched on-chain.
         You'll see <code>queued</code> → <code>cooling down</code> → <code>claimable</code>.
-        Each state advances with a tx that <em>any</em> user in your cohort can trigger,
+        Each state advances with a tx that <em>any</em> user in your batch can trigger,
         so you'll often find yours has moved when you check back. After the first
-        queuer opens a cohort, it stays open for at least the minimum cohort window
-        (currently {props.minEpochOpenSecs != null ? fmtDuration(props.minEpochOpenSecs) : '—'})
+        queuer opens a batch, it stays open for at least the minimum batch window
+        (currently {props.minUnstakeBatchOpenSecs != null ? fmtDuration(props.minUnstakeBatchOpenSecs) : '—'})
         so other stakers get a predictable chance to join before it leaves. Total wait ≈
-        cohort window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
+        batch window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
       </div>
 
       {/* Input only makes sense while the user has no active unstake in flight. */}
@@ -410,10 +410,10 @@ function UnstakeStateView({
   flushableAt: number | null;
 }) {
   const flush = useFlush();
-  const claim = useClaimEpoch();
+  const claim = useClaimUnstakeBatch();
 
   // Keep countdown ticking for both `cooling` (Venice cooldown) and `queued`
-  // (cohort-open window before flush is allowed). The queued tick is cheap:
+  // (batch-open window before flush is allowed). The queued tick is cheap:
   // it only runs while the user actually has an active unstake.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -428,29 +428,29 @@ function UnstakeStateView({
 
   if (state.status === 'queued') {
     // Three sub-states, in priority order:
-    //   1. Waiting for prior cohort to be claimed (protocol serialization).
-    //   2. Waiting for the minimum cohort-open window to elapse.
+    //   1. Waiting for prior batch to be claimed (protocol serialization).
+    //   2. Waiting for the minimum batch-open window to elapse.
     //   3. Ready to flush.
     const waitingForWindow = flushableAt != null && now < flushableAt;
     const windowRemaining = waitingForWindow ? flushableAt! - now : 0;
-    const canFlush = !state.waitingForPriorEpoch && !waitingForWindow;
+    const canFlush = !state.waitingForPriorBatch && !waitingForWindow;
 
     let message: string;
-    if (state.waitingForPriorEpoch) {
+    if (state.waitingForPriorBatch) {
       message =
-        'Waiting for the previous cohort to finish claiming before your cohort can start the cooldown. Anyone in that cohort can click their Claim button to advance it.';
+        'Waiting for the previous batch to finish claiming before your batch can start the cooldown. Anyone in that batch can click their Claim button to advance it.';
     } else if (waitingForWindow) {
       message =
-        'Cohort is still in its open window so other stakers can join before it leaves for Venice. The counter below is the earliest time anyone can flush it — including you.';
+        'Batch is still in its open window so other stakers can join before it leaves for Venice. The counter below is the earliest time anyone can flush it — including you.';
     } else {
       message =
-        'Your cohort is ready to be sent to Venice. Click below to start the cooldown. Anyone in your cohort can do this — pay once for the whole group.';
+        'Your batch is ready to be sent to Venice. Click below to start the cooldown. Anyone in your batch can do this — pay once for the whole group.';
     }
 
     return (
       <div className="yield-box" style={{ marginTop: 8 }}>
         <div className="yield-row hero-row">
-          <span className="lbl">Queued<span className="sub">epoch #{state.epochId}</span></span>
+          <span className="lbl">Queued<span className="sub">batch #{state.batchId}</span></span>
           <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
         </div>
         <div className="yield-row">
@@ -489,7 +489,7 @@ function UnstakeStateView({
     return (
       <div className="yield-box" style={{ marginTop: 8 }}>
         <div className="yield-row hero-row">
-          <span className="lbl">Cooling down<span className="sub">epoch #{state.epochId}</span></span>
+          <span className="lbl">Cooling down<span className="sub">batch #{state.batchId}</span></span>
           <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
         </div>
         <div className="yield-row">
@@ -507,16 +507,16 @@ function UnstakeStateView({
   return (
     <div className="yield-box" style={{ marginTop: 8 }}>
       <div className="yield-row hero-row">
-        <span className="lbl">Ready to withdraw<span className="sub">epoch #{state.epochId}</span></span>
+        <span className="lbl">Ready to withdraw<span className="sub">batch #{state.batchId}</span></span>
         <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
       </div>
       <p style={{ margin: '12px 0 14px', fontSize: 13, color: 'var(--muted)' }}>
-        Your DIEM is ready. Clicking below finalises the unstake for your whole cohort in one tx — this is cheaper than everyone paying individually.
+        Your DIEM is ready. Clicking below finalises the unstake for your whole batch in one tx — this is cheaper than everyone paying individually.
       </p>
       <button
         className="stake-cta brand-fill"
         disabled={claim.isPending}
-        onClick={() => claim.run(state.epochId)}
+        onClick={() => claim.run(state.batchId)}
       >
         {claim.isPending ? 'Finalising…' : `Withdraw ${amountDiem} $DIEM →`}
       </button>

@@ -4,11 +4,11 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
-import { AntseedSellerDelegation } from "./AntseedSellerDelegation.sol";
-import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
+import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 
 /// @dev Venice's DIEM ERC20 is also the staking contract (stake / initiateUnstake / unstake live on the token itself).
 interface IDiemStake {
@@ -43,14 +43,14 @@ interface IAntseedEmissionsClock {
  *         {AntseedSellerDelegation}. This contract overrides each to wrap the
  *         super call with USDC balance-delta capture and instant distribution.
  *
- *         UNSTAKE FLOW — epoch batching:
- *           1. `initiateUnstake(amount)` queues into `currentEpoch`. No Venice
+ *         UNSTAKE FLOW — batch queueing:
+ *           1. `initiateUnstake(amount)` queues into `currentUnstakeBatch`. No Venice
  *              call yet. Reward accrual on the queued amount stops immediately.
- *           2. `flush()` (permissionless) sends the epoch to Venice in one
- *              shot, stamps `unlockAt = now + venice_cd`, opens a fresh epoch.
- *           3. After Venice's cooldown, `claimEpoch(id)` (permissionless)
+ *           2. `flush()` (permissionless) sends the batch to Venice in one
+ *              shot, stamps `unlockAt = now + venice_cd`, opens a fresh batch.
+ *           3. After Venice's cooldown, `claimUnstakeBatch(id)` (permissionless)
  *              drains Venice and pays every user from the explicit per-user
- *              map. Serialization invariant: Venice only holds one epoch at a
+ *              map. Serialization invariant: Venice only holds one batch at a
  *              time.
  *
  *         USDC DISTRIBUTION — instant credit:
@@ -64,12 +64,12 @@ interface IAntseedEmissionsClock {
  *           1/totalStaked (a Compound-style integrator). Finalized AntSeed
  *           emission epochs are closed at their real time boundaries; the
  *           operator later attaches each claimed ANTS pot to the matching
- *           epoch. Users call `claimAnts(n)` to convert their points for the
- *           next `n` accounted epochs into ANTS.
+ *           reward epoch. Users call `claimAnts(n)` to convert their points for
+ *           the next `n` accounted reward epochs into ANTS.
  *
  *           Properties:
  *             - Points persist through unstakes — a user who fully unstakes
- *               can still claim ANTS for epochs they contributed to.
+ *               can still claim ANTS for reward epochs they contributed to.
  *             - Attribution matches the emission accrual window: long-term
  *               stakers are rewarded proportionally to their time-weighted
  *               contribution, not their presence at tick time.
@@ -97,10 +97,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        Structs
     // ═══════════════════════════════════════════════════════════════════
 
-    struct Epoch {
-        uint128 total; // sum of every user's queued amount in this epoch
+    struct UnstakeBatch {
+        uint128 total; // sum of every user's queued amount in this batch
         uint64 unlockAt; // 0 = not yet flushed; otherwise venice-release time
-        uint32 userCount; // length of epochUsers[id], cached for MAX check
+        uint32 userCount; // length of unstakeBatchUsers[id], cached for MAX check
         bool claimed;
     }
 
@@ -123,15 +123,15 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     uint256 public immutable emissionEpochDuration;
     uint32 public immutable firstRewardEpoch;
 
-    /// @dev Max distinct users per unstake epoch. Caps `claimEpoch`'s transfer
+    /// @dev Max distinct users per unstake batch. Caps `claimUnstakeBatch`'s transfer
     ///      loop at ~50 × 50k gas = 2.5M gas, well under the block limit while
-    ///      giving each epoch room for a realistic cohort of unstakers.
-    uint32 public constant MAX_PER_EPOCH = 50;
+    ///      giving each batch room for a realistic batch of unstakers.
+    uint32 public constant MAX_PER_UNSTAKE_BATCH = 50;
 
     /// @dev Max reward-epoch backlog that `_captureUserPoints` will traverse in
     ///      a single tx. Beyond this, stake/unstake reverts with `BacklogTooLarge`
     ///      and the user must call `catchUpPoints` first to process incrementally.
-    ///      16 epochs × an expected ~weekly tick = ~4 months of dormancy tolerated.
+    ///      16 reward epochs × an expected ~weekly tick = ~4 months of dormancy tolerated.
     uint32 public constant MAX_EPOCHS_PER_CAPTURE = 16;
 
     /// @dev Alpha-launch cap applied at construction. Caps `totalStaked` at 50
@@ -150,22 +150,22 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      (staked × accumulator, S × Δintegrator, amount × scalar) stay
     ///      well under uint256 max (~1.16e77).
 
-    /// @dev Default minimum time an unstake cohort must remain open before
+    /// @dev Default minimum time an unstake batch must remain open before
     ///      `flush()` is allowed. Prevents a first queuer from immediately
     ///      flushing and pushing every other would-be unstaker into the next
-    ///      cohort (which would then have to wait a full extra Venice cooldown).
+    ///      batch (which would then have to wait a full extra Venice cooldown).
     ///      The window is measured from the first `initiateUnstake` into the
-    ///      cohort, so dry-spell cohorts still enforce it. 24h gives stakers a
+    ///      batch, so dry-spell batches still enforce it. 24h gives stakers a
     ///      predictable joining window without adding noticeable friction on
     ///      top of Venice's own cooldown.
-    uint64 public constant ALPHA_MIN_EPOCH_OPEN_SECS = 1 days;
+    uint64 public constant ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS = 1 days;
 
-    /// @dev Upper bound on `setMinEpochOpenSecs`. Caps how long the owner can
-    ///      make stakers wait before a cohort can leave. 7 days is long
+    /// @dev Upper bound on `setMinUnstakeBatchOpenSecs`. Caps how long the owner can
+    ///      make stakers wait before a batch can leave. 7 days is long
     ///      enough to absorb any reasonable operational need (e.g. a one-week
-    ///      cohort cadence) but short enough that owner misconfiguration
+    ///      batch cadence) but short enough that owner misconfiguration
     ///      can't effectively freeze withdrawals.
-    uint64 public constant MAX_MIN_EPOCH_OPEN_SECS = 7 days;
+    uint64 public constant MAX_MIN_UNSTAKE_BATCH_OPEN_SECS = 7 days;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — Staking
@@ -188,26 +188,26 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      stakers" tile with a single SLOAD — no event indexer required.
     uint32 public stakerCount;
 
-    /// @dev Unstake-epoch state. `currentEpoch` accepts new queuers;
-    ///      `oldestUnclaimed` is the lowest flushed-but-not-yet-claimed epoch
-    ///      id. A new epoch can only be flushed once the prior one has been
-    ///      claimed — Venice only ever holds one epoch at a time.
-    mapping(uint32 => Epoch) public epochs;
-    mapping(uint32 => address[]) public epochUsers;
-    mapping(uint32 => mapping(address => uint128)) public epochUserAmount;
-    uint32 public currentEpoch;
-    uint32 public oldestUnclaimed;
+    /// @dev Unstake-batch state. `currentUnstakeBatch` accepts new queuers;
+    ///      `oldestUnclaimedUnstakeBatch` is the lowest flushed-but-not-yet-claimed batch
+    ///      id. A new batch can only be flushed once the prior one has been
+    ///      claimed — Venice only ever holds one batch at a time.
+    mapping(uint32 => UnstakeBatch) public unstakeBatches;
+    mapping(uint32 => address[]) public unstakeBatchUsers;
+    mapping(uint32 => mapping(address => uint128)) public unstakeBatchUserAmount;
+    uint32 public currentUnstakeBatch;
+    uint32 public oldestUnclaimedUnstakeBatch;
 
-    /// @dev Timestamp (as uint64) at which the currently-open cohort received
-    ///      its first queuer. Zero means the cohort is empty. Reset to zero
-    ///      on flush so the next cohort's clock restarts fresh on its first
+    /// @dev Timestamp (as uint64) at which the currently-open batch received
+    ///      its first queuer. Zero means the batch is empty. Reset to zero
+    ///      on flush so the next batch's clock restarts fresh on its first
     ///      `initiateUnstake`.
-    uint64 public currentEpochOpenedAt;
+    uint64 public currentUnstakeBatchOpenedAt;
 
-    /// @dev Minimum wall-clock seconds a cohort must stay open before
+    /// @dev Minimum wall-clock seconds a batch must stay open before
     ///      `flush()` will accept it. Owner-settable, bounded by
-    ///      `MAX_MIN_EPOCH_OPEN_SECS`. `0` disables the gate entirely.
-    uint64 public minEpochOpenSecs;
+    ///      `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS`. `0` disables the gate entirely.
+    uint64 public minUnstakeBatchOpenSecs;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Storage — USDC rewards (instant credit)
@@ -253,9 +253,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      fraction: sum over users of points in epoch = activeSeconds in epoch.
     uint256 public activeSecondsAccumulator;
 
-    /// @dev Reward-epoch state. Epoch ids match AntseedEmissions epoch ids.
+    /// @dev Reward-epoch state. Reward epoch ids match AntseedEmissions epoch ids.
     ///      `currentRewardEpoch` is the first not-yet-finalized epoch; finalized
-    ///      epochs are funded later by `operatorClaimEmissions`.
+    ///      reward epochs are funded later by `operatorClaimEmissions`.
     mapping(uint32 => RewardEpoch) public rewardEpochs;
     uint32 public currentRewardEpoch;
     mapping(uint32 => bool) public rewardEpochAccounted;
@@ -278,9 +278,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
 
     event Staked(address indexed user, uint256 amount);
-    event UnstakeQueued(address indexed user, uint32 indexed epochId, uint256 amount);
-    event EpochFlushed(uint32 indexed epochId, uint256 total, uint256 unlockAt);
-    event EpochClaimed(uint32 indexed epochId, uint256 total, uint32 userCount);
+    event UnstakeQueued(address indexed user, uint32 indexed batchId, uint256 amount);
+    event UnstakeBatchFlushed(uint32 indexed batchId, uint256 total, uint256 unlockAt);
+    event UnstakeBatchClaimed(uint32 indexed batchId, uint256 total, uint32 userCount);
     event Unstaked(address indexed user, uint256 amount);
     event UsdcDistributed(uint256 amount);
     event UsdcPaid(address indexed user, uint256 amount);
@@ -294,7 +294,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event OrphanUsdcSwept(address indexed recipient, uint256 amount);
     event MaxTotalStakeSet(uint256 newMaxTotalStake);
-    event MinEpochOpenSecsSet(uint64 newMinEpochOpenSecs);
+    event MinUnstakeBatchOpenSecsSet(uint64 newMinUnstakeBatchOpenSecs);
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Custom Errors
@@ -302,16 +302,16 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     error InvalidAmount();
     error InsufficientStake();
-    error EpochFull();
+    error UnstakeBatchFull();
     error NothingToFlush();
-    error PriorEpochUnclaimed();
-    error EpochNotReady();
-    error EpochAlreadyClaimed();
-    error EpochTooYoung();
+    error PriorUnstakeBatchUnclaimed();
+    error UnstakeBatchNotReady();
+    error UnstakeBatchAlreadyClaimed();
+    error UnstakeBatchTooYoung();
     error BacklogTooLarge();
     error NothingToClaim();
     error MaxStakeExceeded();
-    error MinEpochOpenSecsTooLarge();
+    error MinUnstakeBatchOpenSecsTooLarge();
     error RewardEpochNotFinalized();
     error RewardEpochAlreadyAccounted();
 
@@ -345,10 +345,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emissionGenesis = IAntseedEmissionsClock(_emissions).genesis();
         emissionEpochDuration = IAntseedEmissionsClock(_emissions).EPOCH_DURATION();
 
-        // Epoch 0 is unused so `unlockAt == 0` remains a reliable "not yet
-        // flushed" sentinel. Queuing starts at epoch 1.
-        currentEpoch = 1;
-        oldestUnclaimed = 1;
+        // Batch 0 is unused so `unlockAt == 0` remains a reliable "not yet
+        // flushed" sentinel. Queuing starts at batch 1.
+        currentUnstakeBatch = 1;
+        oldestUnclaimedUnstakeBatch = 1;
 
         uint32 _firstRewardEpoch = IAntseedEmissionsClock(_emissions).currentEpoch().toUint32();
         firstRewardEpoch = _firstRewardEpoch;
@@ -362,12 +362,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         maxTotalStake = ALPHA_MAX_TOTAL_STAKE;
         emit MaxTotalStakeSet(ALPHA_MAX_TOTAL_STAKE);
 
-        // Ship with a 24h minimum cohort-open window so a first queuer can't
+        // Ship with a 24h minimum batch-open window so a first queuer can't
         // immediately flush and push later unstakers into a fresh Venice
-        // cooldown. Owner can retune via `setMinEpochOpenSecs` (capped at
-        // `MAX_MIN_EPOCH_OPEN_SECS`) or disable by setting `0`.
-        minEpochOpenSecs = ALPHA_MIN_EPOCH_OPEN_SECS;
-        emit MinEpochOpenSecsSet(ALPHA_MIN_EPOCH_OPEN_SECS);
+        // cooldown. Owner can retune via `setMinUnstakeBatchOpenSecs` (capped at
+        // `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS`) or disable by setting `0`.
+        minUnstakeBatchOpenSecs = ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS;
+        emit MinUnstakeBatchOpenSecsSet(ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -412,28 +412,28 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     /**
-     * @notice Queue `amount` DIEM for unstaking. Joins the current open epoch.
+     * @notice Queue `amount` DIEM for unstaking. Joins the current open batch.
      *         Reward accrual on the queued amount stops immediately. The
-     *         epoch is sent to Venice in one shot via `flush()`.
+     *         batch is sent to Venice in one shot via `flush()`.
      */
     function initiateUnstake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         if (amount > staked[msg.sender]) revert InsufficientStake();
 
-        uint32 epochId = currentEpoch;
-        Epoch storage e = epochs[epochId];
+        uint32 batchId = currentUnstakeBatch;
+        UnstakeBatch storage e = unstakeBatches[batchId];
 
-        // First queuer into this cohort starts the minimum-open-window
-        // clock. Measuring from the first queue (not from when the cohort
-        // slot was created) means a dry-spell cohort still enforces the
+        // First queuer into this batch starts the minimum-open-window
+        // clock. Measuring from the first queue (not from when the batch
+        // slot was created) means a dry-spell batch still enforces the
         // window on whoever eventually queues first, matching user intent:
-        // "give other stakers a chance to join before the cohort leaves".
-        if (e.total == 0) currentEpochOpenedAt = uint64(block.timestamp);
+        // "give other stakers a chance to join before the batch leaves".
+        if (e.total == 0) currentUnstakeBatchOpenedAt = uint64(block.timestamp);
 
-        uint128 existing = epochUserAmount[epochId][msg.sender];
+        uint128 existing = unstakeBatchUserAmount[batchId][msg.sender];
         if (existing == 0) {
-            if (e.userCount >= MAX_PER_EPOCH) revert EpochFull();
-            epochUsers[epochId].push(msg.sender);
+            if (e.userCount >= MAX_PER_UNSTAKE_BATCH) revert UnstakeBatchFull();
+            unstakeBatchUsers[batchId].push(msg.sender);
             e.userCount += 1;
         }
 
@@ -446,73 +446,73 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (staked[msg.sender] == 0) stakerCount -= 1;
 
         uint128 amt128 = amount.toUint128();
-        epochUserAmount[epochId][msg.sender] = existing + amt128;
+        unstakeBatchUserAmount[batchId][msg.sender] = existing + amt128;
         e.total += amt128;
 
-        emit UnstakeQueued(msg.sender, epochId, amount);
+        emit UnstakeQueued(msg.sender, batchId, amount);
     }
 
     /**
-     * @notice Send the current unstake epoch to Venice and open a fresh one.
-     *         Permissionless. Serialization: a new epoch can only be flushed
+     * @notice Send the current unstake batch to Venice and open a fresh one.
+     *         Permissionless. Serialization: a new batch can only be flushed
      *         after the prior one is claimed.
      */
     function flush() external nonReentrant {
-        if (currentEpoch != oldestUnclaimed) revert PriorEpochUnclaimed();
+        if (currentUnstakeBatch != oldestUnclaimedUnstakeBatch) revert PriorUnstakeBatchUnclaimed();
 
-        uint32 epochId = currentEpoch;
-        Epoch storage e = epochs[epochId];
+        uint32 batchId = currentUnstakeBatch;
+        UnstakeBatch storage e = unstakeBatches[batchId];
         if (e.total == 0) revert NothingToFlush();
 
-        // Enforce the minimum open window. `currentEpochOpenedAt == 0`
-        // when the cohort is empty, which is caught by the NothingToFlush
+        // Enforce the minimum open window. `currentUnstakeBatchOpenedAt == 0`
+        // when the batch is empty, which is caught by the NothingToFlush
         // check above — so by this point `openedAt` is always a real
         // timestamp. Using `>` (not `>=`) is deliberate: exactly-at-boundary
         // plays nicely with test warps that land on the exact second.
-        uint64 openedAt = currentEpochOpenedAt;
-        if (block.timestamp < uint256(openedAt) + uint256(minEpochOpenSecs)) {
-            revert EpochTooYoung();
+        uint64 openedAt = currentUnstakeBatchOpenedAt;
+        if (block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)) {
+            revert UnstakeBatchTooYoung();
         }
 
         uint256 cd = IDiemStake(address(diem)).cooldownDuration();
         uint64 unlockAt = (block.timestamp + cd).toUint64();
         e.unlockAt = unlockAt;
 
-        currentEpoch = epochId + 1;
-        // Next cohort starts empty — its clock will set on its first queuer.
-        currentEpochOpenedAt = 0;
+        currentUnstakeBatch = batchId + 1;
+        // Next batch starts empty — its clock will set on its first queuer.
+        currentUnstakeBatchOpenedAt = 0;
 
         IDiemStake(address(diem)).initiateUnstake(e.total);
 
-        emit EpochFlushed(epochId, e.total, unlockAt);
+        emit UnstakeBatchFlushed(batchId, e.total, unlockAt);
     }
 
     /**
-     * @notice Drain `epochId` from Venice and pay out every user in it.
+     * @notice Drain `batchId` from Venice and pay out every user in it.
      *         Permissionless. Proxy's direct DIEM balance is 0 before and
      *         after this call.
      */
-    function claimEpoch(uint32 epochId) external nonReentrant {
-        Epoch storage e = epochs[epochId];
-        if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert EpochNotReady();
-        if (e.claimed) revert EpochAlreadyClaimed();
+    function claimUnstakeBatch(uint32 batchId) external nonReentrant {
+        UnstakeBatch storage e = unstakeBatches[batchId];
+        if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert UnstakeBatchNotReady();
+        if (e.claimed) revert UnstakeBatchAlreadyClaimed();
 
         e.claimed = true;
-        if (epochId == oldestUnclaimed) oldestUnclaimed = epochId + 1;
+        if (batchId == oldestUnclaimedUnstakeBatch) oldestUnclaimedUnstakeBatch = batchId + 1;
 
         IDiemStake(address(diem)).unstake();
 
-        address[] storage users = epochUsers[epochId];
+        address[] storage users = unstakeBatchUsers[batchId];
         uint256 count = users.length;
         for (uint256 i = 0; i < count; i++) {
             address user = users[i];
-            uint128 amount = epochUserAmount[epochId][user];
-            delete epochUserAmount[epochId][user];
+            uint128 amount = unstakeBatchUserAmount[batchId][user];
+            delete unstakeBatchUserAmount[batchId][user];
             diem.safeTransfer(user, amount);
             emit Unstaked(user, amount);
         }
 
-        emit EpochClaimed(epochId, e.total, uint32(count));
+        emit UnstakeBatchClaimed(batchId, e.total, uint32(count));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -553,11 +553,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         for (uint32 N = from; N < to; N++) {
             if (!rewardEpochAccounted[N]) break;
 
-            // Advancing `userLastClaimedEpoch` past this epoch permanently
+            // Advancing `userLastClaimedEpoch` past this reward epoch permanently
             // abandons any userPoints entry here. For the zero-payout skip
             // paths below we explicitly `delete` the slot so no stale storage
             // lingers — cheap at time-of-claim since each user only walks
-            // their own epochs once.
+            // their own reward epochs once.
             uint256 userPts = userPoints[msg.sender][N];
             if (userPts == 0) {
                 processedTo = N + 1;
@@ -616,7 +616,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint256 S = staked[msg.sender];
         uint256 userSnap = userIntegratorSnap[msg.sender];
 
-        // Accumulate points for fully completed epochs [userEp, targetEp).
+        // Accumulate points for fully completed reward epochs [userEp, targetEp).
         // `targetEp` itself (and, if targetEp == currentEp, the open epoch)
         // are left for a later capture, since their integratorAtEnd isn't
         // finalized yet.
@@ -782,16 +782,16 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     /**
-     * @notice Set the minimum cohort-open window (seconds). `0` disables the
-     *         gate. Capped at `MAX_MIN_EPOCH_OPEN_SECS` so owner cannot grief
+     * @notice Set the minimum batch-open window (seconds). `0` disables the
+     *         gate. Capped at `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS` so owner cannot grief
      *         stakers with an unreasonably long window.
      *         Takes effect on the next `flush` check; does not retroactively
      *         shorten an already-elapsed window.
      */
-    function setMinEpochOpenSecs(uint64 newMinEpochOpenSecs) external onlyOwner {
-        if (newMinEpochOpenSecs > MAX_MIN_EPOCH_OPEN_SECS) revert MinEpochOpenSecsTooLarge();
-        minEpochOpenSecs = newMinEpochOpenSecs;
-        emit MinEpochOpenSecsSet(newMinEpochOpenSecs);
+    function setMinUnstakeBatchOpenSecs(uint64 newMinUnstakeBatchOpenSecs) external onlyOwner {
+        if (newMinUnstakeBatchOpenSecs > MAX_MIN_UNSTAKE_BATCH_OPEN_SECS) revert MinUnstakeBatchOpenSecsTooLarge();
+        minUnstakeBatchOpenSecs = newMinUnstakeBatchOpenSecs;
+        emit MinUnstakeBatchOpenSecsSet(newMinUnstakeBatchOpenSecs);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -799,13 +799,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
 
     /// @notice Unix timestamp at which `flush()` will first be callable for
-    ///         the currently-open cohort. Returns `0` if the cohort is still
+    ///         the currently-open batch. Returns `0` if the batch is still
     ///         empty (no first queuer yet) — in that case `flush` is blocked
     ///         by `NothingToFlush` regardless of this timestamp.
     function flushableAt() external view returns (uint64) {
-        uint64 openedAt = currentEpochOpenedAt;
+        uint64 openedAt = currentUnstakeBatchOpenedAt;
         if (openedAt == 0) return 0;
-        return openedAt + minEpochOpenSecs;
+        return openedAt + minUnstakeBatchOpenSecs;
     }
 
     /// @notice USDC earned and claimable by `account` right now.
@@ -817,7 +817,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     /// @notice Preview ANTS for a single completed reward epoch for `account`.
     ///         Does not mutate state. Returns 0 for the currently-open epoch.
     /// @dev Computes uncaptured points lazily if the user hasn't interacted
-    ///      since before/during the epoch, assuming their stake has been
+    ///      since before/during the reward epoch, assuming their stake has been
     ///      constant since their last interaction. (This invariant holds
     ///      because any stake change would have triggered `updateRewards`.)
     function pendingAntsForEpoch(address account, uint32 rewardEpoch) external view returns (uint256) {
@@ -833,7 +833,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint256 userPts = userPoints[account][rewardEpoch];
 
         // Add uncaptured contribution if the user's last capture was at or
-        // before the start of this epoch and they're currently staked.
+        // before the start of this reward epoch and they're currently staked.
         uint32 userEp = userCurrentEpoch[account];
         uint256 S = staked[account];
         if (S > 0 && userEp <= rewardEpoch) {

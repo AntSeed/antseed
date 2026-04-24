@@ -68,15 +68,15 @@ export function useFlush() {
   return { run, isPending, error, reset };
 }
 
-export function useClaimEpoch() {
+export function useClaimUnstakeBatch() {
   const { writeContractAsync, isPending, error, reset } = useWriteContract();
   const run = useCallback(
-    async (epochId: number) => {
+    async (batchId: number) => {
       return writeContractAsync({
         address: DIEM_STAKING_PROXY,
         abi: DIEM_STAKING_PROXY_ABI,
-        functionName: 'claimEpoch',
-        args: [epochId],
+        functionName: 'claimUnstakeBatch',
+        args: [batchId],
       });
     },
     [writeContractAsync],

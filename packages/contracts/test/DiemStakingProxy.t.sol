@@ -3,18 +3,18 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import { MockUSDC } from "../MockUSDC.sol";
-import { MockERC8004Registry } from "../MockERC8004Registry.sol";
-import { ANTSToken } from "../ANTSToken.sol";
-import { AntseedRegistry } from "../AntseedRegistry.sol";
-import { AntseedDeposits } from "../AntseedDeposits.sol";
-import { AntseedStaking } from "../AntseedStaking.sol";
-import { AntseedChannels } from "../AntseedChannels.sol";
-import { AntseedEmissions } from "../AntseedEmissions.sol";
-import { DiemStakingProxy } from "../DiemStakingProxy.sol";
-import { AntseedSellerDelegation } from "../AntseedSellerDelegation.sol";
+import {MockUSDC} from "../MockUSDC.sol";
+import {MockERC8004Registry} from "../MockERC8004Registry.sol";
+import {ANTSToken} from "../ANTSToken.sol";
+import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {AntseedDeposits} from "../AntseedDeposits.sol";
+import {AntseedStaking} from "../AntseedStaking.sol";
+import {AntseedChannels} from "../AntseedChannels.sol";
+import {AntseedEmissions} from "../AntseedEmissions.sol";
+import {DiemStakingProxy} from "../DiemStakingProxy.sol";
+import {AntseedSellerDelegation} from "../AntseedSellerDelegation.sol";
 
-import { MockDiem } from "./mocks/MockDiem.sol";
+import {MockDiem} from "./mocks/MockDiem.sol";
 
 /// @dev Integration tests for DiemStakingProxy against the real AntSeed stack
 ///      (Channels, Deposits, Staking, Emissions, Registry, ANTSToken). The only
@@ -127,12 +127,12 @@ contract DiemStakingProxyTest is Test {
         vm.prank(owner);
         proxy.setMaxTotalStake(0);
 
-        // Disable the minimum cohort-open window for the default fixture so
+        // Disable the minimum batch-open window for the default fixture so
         // legacy tests that `flush()` immediately after `initiateUnstake`
         // still pass. Tests that specifically exercise the gate set their
-        // own value via setMinEpochOpenSecs.
+        // own value via setMinUnstakeBatchOpenSecs.
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(0);
+        proxy.setMinUnstakeBatchOpenSecs(0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -264,13 +264,13 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.staked(alice), 0);
         assertEq(proxy.totalStaked(), 0);
 
-        uint32 epochId = proxy.currentEpoch();
-        (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed) = proxy.epochs(epochId);
+        uint32 batchId = proxy.currentUnstakeBatch();
+        (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed) = proxy.unstakeBatches(batchId);
         assertEq(total, 100e18);
         assertEq(userCount, 1);
         assertFalse(claimed);
         assertEq(unlockAt, 0, "no unlockAt until flush");
-        assertEq(proxy.epochUserAmount(epochId, alice), 100e18);
+        assertEq(proxy.unstakeBatchUserAmount(batchId, alice), 100e18);
 
         vm.warp(block.timestamp + 5 hours);
         uint256 earnedAfter = proxy.earnedUsdc(alice);
@@ -284,16 +284,16 @@ contract DiemStakingProxyTest is Test {
 
         vm.prank(alice);
         proxy.initiateUnstake(50e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(alice);
         proxy.initiateUnstake(30e18);
 
-        (uint128 total,, uint32 userCount,) = proxy.epochs(epochId);
+        (uint128 total,, uint32 userCount,) = proxy.unstakeBatches(batchId);
         assertEq(total, 80e18);
         assertEq(userCount, 1, "same user shouldn't add a second row");
-        assertEq(proxy.epochUserAmount(epochId, alice), 80e18);
+        assertEq(proxy.unstakeBatchUserAmount(batchId, alice), 80e18);
     }
 
     /// @dev Alice and Bob queue into the same epoch, operator flushes, then a
@@ -304,22 +304,22 @@ contract DiemStakingProxyTest is Test {
 
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
 
         vm.warp(block.timestamp + 6 hours);
         vm.prank(bob);
         proxy.initiateUnstake(50e18);
 
-        (uint128 total,, uint32 userCount,) = proxy.epochs(epochId);
+        (uint128 total,, uint32 userCount,) = proxy.unstakeBatches(batchId);
         assertEq(total, 150e18);
         assertEq(userCount, 2);
 
-        // Flush the epoch (permissionless).
+        // Flush the batch (permissionless).
         proxy.flush();
-        assertEq(proxy.currentEpoch(), epochId + 1, "flush advances currentEpoch");
+        assertEq(proxy.currentUnstakeBatch(), batchId + 1, "flush advances currentUnstakeBatch");
 
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(epochId);
+        proxy.claimUnstakeBatch(batchId);
 
         assertEq(diem.balanceOf(alice), 100e18);
         assertEq(diem.balanceOf(bob), 50e18);
@@ -331,7 +331,7 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
-    function test_flush_revertsWhilePriorEpochUnclaimed() public {
+    function test_flush_revertsWhilePriorBatchUnclaimed() public {
         _stakeAs(alice, 100e18);
         _stakeAs(bob, 50e18);
 
@@ -342,32 +342,32 @@ contract DiemStakingProxyTest is Test {
         vm.prank(bob);
         proxy.initiateUnstake(50e18);
 
-        // Epoch 1 still in Venice cooldown, not yet claimed.
-        vm.expectRevert(DiemStakingProxy.PriorEpochUnclaimed.selector);
+        // Batch 1 still in Venice cooldown, not yet claimed.
+        vm.expectRevert(DiemStakingProxy.PriorUnstakeBatchUnclaimed.selector);
         proxy.flush();
     }
 
-    // ── Minimum cohort-open window ─────────────────────────────────────
+    // ── Minimum batch-open window ─────────────────────────────────────
 
     /// @dev Alice queues and tries to flush immediately — gate must reject.
     ///      Without the gate, a first queuer could push every later unstaker
-    ///      into the next cohort and force them to wait an extra full
+    ///      into the next batch and force them to wait an extra full
     ///      Venice cooldown.
-    function test_flush_revertsBeforeMinEpochOpenSecs() public {
+    function test_flush_revertsBeforeMinUnstakeBatchOpenSecs() public {
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(6 hours);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
 
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
 
         // Same block as queue — gate closed.
-        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchTooYoung.selector);
         proxy.flush();
 
         // Just short of the window.
         vm.warp(block.timestamp + 6 hours - 1);
-        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchTooYoung.selector);
         proxy.flush();
 
         // Exactly at the boundary — accepted (uses `<`, not `<=`).
@@ -375,28 +375,28 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
-    /// @dev Window measures from the first queuer into the cohort, not from
-    ///      `flush` of the previous cohort. A dry spell doesn't fast-track a
-    ///      late queuer — they still need to wait `minEpochOpenSecs` after
-    ///      joining an empty cohort.
+    /// @dev Window measures from the first queuer into the batch, not from
+    ///      `flush` of the previous batch. A dry spell doesn't fast-track a
+    ///      late queuer — they still need to wait `minUnstakeBatchOpenSecs` after
+    ///      joining an empty batch.
     function test_flush_windowMeasuredFromFirstQueuer() public {
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(6 hours);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
 
-        // Seed and fully cycle a first cohort so the cohort slot for epoch 2
+        // Seed and fully cycle a first batch so the batch slot for batch 2
         // has existed for a while before anyone queues into it.
         _stakeAs(alice, 50e18);
         vm.prank(alice);
         proxy.initiateUnstake(50e18);
-        uint32 firstEpoch = proxy.currentEpoch();
+        uint32 firstBatch = proxy.currentUnstakeBatch();
         vm.warp(block.timestamp + 6 hours);
         proxy.flush();
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(firstEpoch);
+        proxy.claimUnstakeBatch(firstBatch);
 
-        // Dry spell: no queuers for a week. `currentEpochOpenedAt` stays 0.
+        // Dry spell: no queuers for a week. `currentUnstakeBatchOpenedAt` stays 0.
         vm.warp(block.timestamp + 7 days);
-        assertEq(proxy.currentEpochOpenedAt(), 0, "no queuer: clock not started");
+        assertEq(proxy.currentUnstakeBatchOpenedAt(), 0, "no queuer: clock not started");
 
         // Bob queues — clock starts now.
         _stakeAs(bob, 50e18);
@@ -404,7 +404,7 @@ contract DiemStakingProxyTest is Test {
         proxy.initiateUnstake(50e18);
 
         // Immediate flush still blocked despite the long dry spell.
-        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchTooYoung.selector);
         proxy.flush();
 
         // Wait the window → flush accepted.
@@ -412,26 +412,26 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
-    /// @dev Subsequent queuers into the same cohort do not extend the
+    /// @dev Subsequent queuers into the same batch do not extend the
     ///      window — the clock is anchored to the first queuer, so the
-    ///      cohort's earliest-flush time is predictable from the moment it
+    ///      batch's earliest-flush time is predictable from the moment it
     ///      opens.
     function test_flush_windowNotExtendedByLaterQueuers() public {
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(6 hours);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
 
         _stakeAs(alice, 100e18);
         _stakeAs(bob, 50e18);
 
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint64 openedAt = proxy.currentEpochOpenedAt();
+        uint64 openedAt = proxy.currentUnstakeBatchOpenedAt();
 
         // Bob piles in 3h later — the clock should not move.
         vm.warp(block.timestamp + 3 hours);
         vm.prank(bob);
         proxy.initiateUnstake(50e18);
-        assertEq(proxy.currentEpochOpenedAt(), openedAt, "later queuer must not bump clock");
+        assertEq(proxy.currentUnstakeBatchOpenedAt(), openedAt, "later queuer must not bump clock");
 
         // 6h after Alice's queue → flush accepted.
         vm.warp(openedAt + 6 hours);
@@ -439,41 +439,41 @@ contract DiemStakingProxyTest is Test {
     }
 
     /// @dev `flushableAt()` returns the predicted earliest-flush timestamp
-    ///      while the cohort is non-empty, and `0` while empty.
+    ///      while the batch is non-empty, and `0` while empty.
     function test_flushableAt_reflectsWindow() public {
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(6 hours);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
 
-        assertEq(proxy.flushableAt(), 0, "empty cohort: zero");
+        assertEq(proxy.flushableAt(), 0, "empty batch: zero");
 
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
 
-        uint64 openedAt = proxy.currentEpochOpenedAt();
+        uint64 openedAt = proxy.currentUnstakeBatchOpenedAt();
         assertEq(proxy.flushableAt(), openedAt + 6 hours);
 
-        // After flush, the next cohort is empty again → flushableAt resets.
+        // After flush, the next batch is empty again → flushableAt resets.
         vm.warp(block.timestamp + 6 hours);
         proxy.flush();
         assertEq(proxy.flushableAt(), 0, "post-flush empty: zero");
     }
 
-    function test_setMinEpochOpenSecs_onlyOwner() public {
+    function test_setMinUnstakeBatchOpenSecs_onlyOwner() public {
         vm.prank(alice);
         vm.expectRevert();
-        proxy.setMinEpochOpenSecs(1 hours);
+        proxy.setMinUnstakeBatchOpenSecs(1 hours);
     }
 
-    function test_setMinEpochOpenSecs_enforcesUpperBound() public {
+    function test_setMinUnstakeBatchOpenSecs_enforcesUpperBound() public {
         vm.prank(owner);
-        vm.expectRevert(DiemStakingProxy.MinEpochOpenSecsTooLarge.selector);
-        proxy.setMinEpochOpenSecs(7 days + 1);
+        vm.expectRevert(DiemStakingProxy.MinUnstakeBatchOpenSecsTooLarge.selector);
+        proxy.setMinUnstakeBatchOpenSecs(7 days + 1);
 
         // Exactly the bound is allowed.
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(7 days);
-        assertEq(proxy.minEpochOpenSecs(), 7 days);
+        proxy.setMinUnstakeBatchOpenSecs(7 days);
+        assertEq(proxy.minUnstakeBatchOpenSecs(), 7 days);
     }
 
     // ── catchUpPoints ────────────────────────────────────────────────────────────────
@@ -526,7 +526,7 @@ contract DiemStakingProxyTest is Test {
         proxy.claimUsdc();
         vm.stopPrank();
 
-        // Drain 16 epochs — leaves a 1-epoch gap, which is within the limit.
+        // Drain 16 reward epochs — leaves a 1-epoch gap, which is within the limit.
         vm.prank(alice);
         proxy.catchUpPoints(16);
         assertEq(proxy.userCurrentEpoch(alice), 16);
@@ -577,86 +577,86 @@ contract DiemStakingProxyTest is Test {
         assertGt(proxy.usdcRewards(alice), 0, "pending USDC materialised");
     }
 
-    function test_constructor_defaultMinEpochOpenSecs() public {
+    function test_constructor_defaultMinUnstakeBatchOpenSecs() public {
         // Default fixture sets it to 0 explicitly; deploy a fresh proxy to
         // verify the constructor ships with the alpha default.
         vm.prank(owner);
         DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
-        assertEq(fresh.minEpochOpenSecs(), fresh.ALPHA_MIN_EPOCH_OPEN_SECS());
-        assertEq(fresh.ALPHA_MIN_EPOCH_OPEN_SECS(), 1 days);
+        assertEq(fresh.minUnstakeBatchOpenSecs(), fresh.ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS());
+        assertEq(fresh.ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS(), 1 days);
     }
 
-    function test_claimEpoch_revertBeforeCooldown() public {
+    function test_claimUnstakeBatch_revertBeforeCooldown() public {
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
         proxy.flush();
 
-        vm.expectRevert(DiemStakingProxy.EpochNotReady.selector);
-        proxy.claimEpoch(epochId);
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchNotReady.selector);
+        proxy.claimUnstakeBatch(batchId);
     }
 
-    function test_claimEpoch_revertOnUnflushedEpoch() public {
+    function test_claimUnstakeBatch_revertOnUnflushedBatch() public {
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
 
-        // Not yet flushed → unlockAt is 0 → EpochNotReady.
-        vm.expectRevert(DiemStakingProxy.EpochNotReady.selector);
-        proxy.claimEpoch(epochId);
+        // Not yet flushed → unlockAt is 0 → UnstakeBatchNotReady.
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchNotReady.selector);
+        proxy.claimUnstakeBatch(batchId);
     }
 
-    function test_claimEpoch_revertOnDoubleClaim() public {
+    function test_claimUnstakeBatch_revertOnDoubleClaim() public {
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
         proxy.flush();
 
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(epochId);
+        proxy.claimUnstakeBatch(batchId);
 
-        vm.expectRevert(DiemStakingProxy.EpochAlreadyClaimed.selector);
-        proxy.claimEpoch(epochId);
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchAlreadyClaimed.selector);
+        proxy.claimUnstakeBatch(batchId);
     }
 
-    /// @dev After an epoch is claimed, new queuers land in a fresh epoch and
+    /// @dev After a batch is claimed, new queuers land in a fresh batch and
     ///      flush/claim cycles continue normally.
-    function test_multipleEpochsSerialize() public {
+    function test_multipleUnstakeBatchesSerialize() public {
         _stakeAs(alice, 100e18);
         _stakeAs(bob, 50e18);
 
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 firstEpoch = proxy.currentEpoch();
+        uint32 firstBatch = proxy.currentUnstakeBatch();
         proxy.flush();
 
         vm.prank(bob);
         proxy.initiateUnstake(50e18);
-        uint32 secondEpoch = proxy.currentEpoch();
-        assertEq(secondEpoch, firstEpoch + 1);
+        uint32 secondBatch = proxy.currentUnstakeBatch();
+        assertEq(secondBatch, firstBatch + 1);
 
         skip(DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(firstEpoch);
+        proxy.claimUnstakeBatch(firstBatch);
 
-        // Second epoch can now flush.
+        // Second batch can now flush.
         proxy.flush();
         skip(DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(secondEpoch);
+        proxy.claimUnstakeBatch(secondBatch);
 
         assertEq(diem.balanceOf(alice), 100e18);
         assertEq(diem.balanceOf(bob), 50e18);
     }
 
     /// @dev Direct DIEM donation to the proxy does not corrupt accounting —
-    ///      `claimEpoch` pays from explicit per-user amounts, not balanceOf.
+    ///      `claimUnstakeBatch` pays from explicit per-user amounts, not balanceOf.
     function test_donationDoesNotStealOrStrand() public {
         _stakeAs(alice, 100e18);
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 epochId = proxy.currentEpoch();
+        uint32 batchId = proxy.currentUnstakeBatch();
         proxy.flush();
 
         // Attacker drops DIEM directly on the proxy.
@@ -664,7 +664,7 @@ contract DiemStakingProxyTest is Test {
         diem.transfer(address(proxy), 100e18);
 
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(epochId);
+        proxy.claimUnstakeBatch(batchId);
 
         assertEq(diem.balanceOf(alice), 100e18, "alice got exactly her stake");
         // Donation remains in the proxy as unaccounted dust; admin can
@@ -878,7 +878,7 @@ contract DiemStakingProxyTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION / 2);
         _stakeAs(bob, 100e18);
 
-        // Finish the epoch and tick.
+        // Finish the reward epoch and tick.
         vm.warp(block.timestamp + EPOCH_DURATION / 2 + 1);
         vm.prank(operator);
         proxy.operatorClaimEmissions(0);
@@ -957,7 +957,7 @@ contract DiemStakingProxyTest is Test {
         proxy.initiateUnstake(100e18);
         proxy.flush();
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(proxy.oldestUnclaimed());
+        proxy.claimUnstakeBatch(proxy.oldestUnclaimedUnstakeBatch());
 
         // Alice is now fully unstaked. Operator ticks later.
         vm.warp(block.timestamp + EPOCH_DURATION);
@@ -1384,7 +1384,7 @@ contract DiemStakingProxyTest is Test {
     //
     // These tests enforce the contract's core solvency guarantees:
     //   - Sum of user USDC claims ≤ sum of net inflows (never overpay).
-    //   - Sum of user ANTS claims ≤ the epoch pot (never mint more than was
+    //   - Sum of user ANTS claims <= the reward epoch pot (never mint more than was
     //     distributed by AntseedEmissions).
     // Any regression that breaks these is a direct loss-of-funds bug.
 
@@ -1448,7 +1448,7 @@ contract DiemStakingProxyTest is Test {
     }
 
     /// @dev Multi-staker ANTS claim conservation: the sum of users' actual
-    ///      received ANTS must not exceed the epoch's pot.
+    ///      received ANTS must not exceed the reward epoch's pot.
     function test_invariant_antsClaimsSumToPot() public {
         _stakeAs(alice, 100e18);
 
@@ -1559,33 +1559,33 @@ contract DiemStakingProxyTest is Test {
     //                        Flush window boundary
     // ════════════════════════════════════════════════════════════════════
 
-    /// @dev A fresh cohort opens at exactly the same block as the prior
+    /// @dev A fresh batch opens at exactly the same block as the prior
     ///      `flush()`. The window clock must anchor to that queuer's
     ///      timestamp and block immediate re-flush.
     function test_flush_windowAfterImmediateNextQueue() public {
         vm.prank(owner);
-        proxy.setMinEpochOpenSecs(6 hours);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
 
         _stakeAs(alice, 100e18);
         _stakeAs(bob, 100e18);
 
-        // Cohort 1: alice queues + waits + flushes + claims (serialization:
-        // next flush requires prior cohort to be claimed).
+        // Batch 1: alice queues + waits + flushes + claims (serialization:
+        // next flush requires prior batch to be claimed).
         vm.prank(alice);
         proxy.initiateUnstake(100e18);
-        uint32 firstEpoch = proxy.currentEpoch();
+        uint32 firstBatch = proxy.currentUnstakeBatch();
         vm.warp(block.timestamp + 6 hours);
         proxy.flush();
         vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
-        proxy.claimEpoch(firstEpoch);
+        proxy.claimUnstakeBatch(firstBatch);
 
-        // Bob queues into the NEW cohort in the same block as the claim.
+        // Bob queues into the NEW batch in the same block as the claim.
         vm.prank(bob);
         proxy.initiateUnstake(100e18);
 
-        // Immediate flush of cohort 2 must be rejected by the window gate —
-        // cohort opened this very block.
-        vm.expectRevert(DiemStakingProxy.EpochTooYoung.selector);
+        // Immediate flush of batch 2 must be rejected by the window gate —
+        // batch opened this very block.
+        vm.expectRevert(DiemStakingProxy.UnstakeBatchTooYoung.selector);
         proxy.flush();
 
         // Wait the window and it's fine.

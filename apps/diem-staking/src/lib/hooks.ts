@@ -84,10 +84,10 @@ export interface PoolStats {
   currentRewardEpoch: number | null;
   /** Venice DIEM unstake cooldown in seconds (read live from the token). */
   diemCooldownSecs: number | null;
-  /** Minimum seconds a cohort must stay open before `flush()` is allowed. */
-  minEpochOpenSecs: number | null;
-  /** Unix timestamp at which the currently-open cohort can first be
-   *  flushed. `0` means the cohort is empty (no first queuer yet) — in
+  /** Minimum seconds a batch must stay open before `flush()` is allowed. */
+  minUnstakeBatchOpenSecs: number | null;
+  /** Unix timestamp at which the currently-open batch can first be
+   *  flushed. `0` means the batch is empty (no first queuer yet) — in
    *  that case `flush` is blocked by `NothingToFlush` regardless. */
   flushableAt: number | null;
   /** True while any of the reads above are in-flight. */
@@ -106,7 +106,7 @@ export function usePoolStats(): PoolStats {
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentRewardEpoch' },
       { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minEpochOpenSecs' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minUnstakeBatchOpenSecs' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'flushableAt' },
     ],
     query: { enabled: deployed, refetchInterval: POLL_MS },
@@ -121,12 +121,12 @@ export function usePoolStats(): PoolStats {
       firstRewardEpoch: null,
       currentRewardEpoch: null,
       diemCooldownSecs: null,
-      minEpochOpenSecs: null,
+      minUnstakeBatchOpenSecs: null,
       flushableAt: null,
       isLoading,
     };
   }
-  // `flushableAt()` returns `0` while the cohort is empty (no first queuer
+  // `flushableAt()` returns `0` while the batch is empty (no first queuer
   // yet). We preserve the distinction by mapping `0` → `null` so the UI can
   // tell "no clock running" apart from "clock running, starting now".
   const flushableAtRaw = data[8]?.result != null ? Number(data[8].result) : null;
@@ -138,7 +138,7 @@ export function usePoolStats(): PoolStats {
     firstRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
     currentRewardEpoch: data[5]?.result != null ? Number(data[5].result) : null,
     diemCooldownSecs: data[6]?.result != null ? Number(data[6].result) : null,
-    minEpochOpenSecs: data[7]?.result != null ? Number(data[7].result) : null,
+    minUnstakeBatchOpenSecs: data[7]?.result != null ? Number(data[7].result) : null,
     flushableAt: flushableAtRaw && flushableAtRaw > 0 ? flushableAtRaw : null,
     isLoading,
   };
@@ -206,7 +206,7 @@ export function useUserStats(): UserStats {
   };
 }
 
-/** Maximum number of epochs to preview-sum in one call.
+/** Maximum number of reward epochs to preview-sum in one call.
  *
  *  MUST stay in lockstep with `DiemStakingProxy.MAX_EPOCHS_PER_CAPTURE`
  *  (see packages/contracts/DiemStakingProxy.sol). If the contract raises
@@ -266,20 +266,20 @@ function usePendingAnts(
 
 export type UnstakeState =
   | { status: 'none' }
-  | { status: 'queued'; epochId: number; amount: bigint; waitingForPriorEpoch: boolean }
-  | { status: 'cooling'; epochId: number; amount: bigint; unlockAt: number }
-  | { status: 'claimable'; epochId: number; amount: bigint };
+  | { status: 'queued'; batchId: number; amount: bigint; waitingForPriorBatch: boolean }
+  | { status: 'cooling'; batchId: number; amount: bigint; unlockAt: number }
+  | { status: 'claimable'; batchId: number; amount: bigint };
 
 /**
  * Resolves the user's unstake-queue state by reading:
- *   - `currentEpoch` (the open-for-queuing epoch)
- *   - `oldestUnclaimed` (lowest flushed-but-not-yet-claimed)
- *   - user's amount in each epoch from `oldestUnclaimed..=currentEpoch`
- *   - `epochs(id).unlockAt` + `claimed` for the epoch the user is in
+ *   - `currentUnstakeBatch` (the open-for-queuing batch)
+ *   - `oldestUnclaimedUnstakeBatch` (lowest flushed-but-not-yet-claimed)
+ *   - user's amount in each batch from `oldestUnclaimedUnstakeBatch..=currentUnstakeBatch`
+ *   - `unstakeBatches(id).unlockAt` + `claimed` for the batch the user is in
  *
- * A user can only have queued amount in at most one epoch at a time per the
- * contract's semantics (initiateUnstake always adds to `currentEpoch`, and
- * claimEpoch removes the mapping entry). We scan up to 4 recent epochs to
+ * A user can only have queued amount in at most one batch at a time per the
+ * contract's semantics (initiateUnstake always adds to `currentUnstakeBatch`, and
+ * claimUnstakeBatch removes the mapping entry). We scan up to 4 recent batches to
  * be safe against races between reads.
  */
 export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
@@ -290,41 +290,47 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
     allowFailure: true,
     contracts: deployed
       ? [
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentEpoch' },
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'oldestUnclaimed' },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentUnstakeBatch' },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'oldestUnclaimedUnstakeBatch' },
         ]
       : [],
     query: { enabled: deployed, refetchInterval: POLL_MS },
   });
 
-  const currentEpoch = clockData?.[0]?.result != null ? Number(clockData[0].result) : null;
-  const oldestUnclaimed = clockData?.[1]?.result != null ? Number(clockData[1].result) : null;
+  const currentUnstakeBatch = clockData?.[0]?.result != null ? Number(clockData[0].result) : null;
+  const oldestUnclaimedUnstakeBatch = clockData?.[1]?.result != null ? Number(clockData[1].result) : null;
 
-  // Epoch ids to probe: every in-flight epoch [oldestUnclaimed, currentEpoch].
-  // Capped at a small window since MAX_PER_EPOCH bounds the cohort size and
-  // the user can only hold amount in one epoch at a time.
-  const epochIds = useMemo(() => {
-    if (currentEpoch == null || oldestUnclaimed == null) return [];
+  // batch ids to probe: every in-flight batch [oldestUnclaimedUnstakeBatch, currentUnstakeBatch].
+  // Capped at a small window since MAX_PER_UNSTAKE_BATCH bounds the batch size and
+  // the user can only hold amount in one batch at a time.
+  const batchIds = useMemo(() => {
+    if (currentUnstakeBatch == null || oldestUnclaimedUnstakeBatch == null) return [];
     const ids: number[] = [];
-    for (let e = oldestUnclaimed; e <= currentEpoch && e < oldestUnclaimed + 4; e++) ids.push(e);
+    for (
+      let batch = oldestUnclaimedUnstakeBatch;
+      batch <= currentUnstakeBatch && batch < oldestUnclaimedUnstakeBatch + 4;
+      batch++
+    ) {
+      ids.push(batch);
+    }
     return ids;
-  }, [currentEpoch, oldestUnclaimed]);
+  }, [currentUnstakeBatch, oldestUnclaimedUnstakeBatch]);
 
   const { data: amtData, isLoading: loadingAmts } = useReadContracts({
     allowFailure: true,
     contracts:
-      deployed && address && epochIds.length > 0
-        ? epochIds.map((e) => ({
+      deployed && address && batchIds.length > 0
+        ? batchIds.map((batch) => ({
             address: DIEM_STAKING_PROXY,
             abi: DIEM_STAKING_PROXY_ABI,
-            functionName: 'epochUserAmount' as const,
-            args: [e, address] as const,
+            functionName: 'unstakeBatchUserAmount' as const,
+            args: [batch, address] as const,
           }))
         : [],
-    query: { enabled: deployed && !!address && epochIds.length > 0, refetchInterval: POLL_MS },
+    query: { enabled: deployed && !!address && batchIds.length > 0, refetchInterval: POLL_MS },
   });
 
-  const activeEpochIdx = useMemo(() => {
+  const activeBatchIdx = useMemo(() => {
     if (!amtData) return -1;
     for (let i = 0; i < amtData.length; i++) {
       const r = amtData[i]?.result;
@@ -333,44 +339,44 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
     return -1;
   }, [amtData]);
 
-  const activeEpochId = activeEpochIdx >= 0 ? epochIds[activeEpochIdx] : null;
+  const activeBatchId = activeBatchIdx >= 0 ? batchIds[activeBatchIdx] : null;
   const activeAmount =
-    activeEpochIdx >= 0 ? (amtData?.[activeEpochIdx]?.result as bigint | undefined) ?? null : null;
+    activeBatchIdx >= 0 ? (amtData?.[activeBatchIdx]?.result as bigint | undefined) ?? null : null;
 
-  const { data: epochDetail, isLoading: loadingDetail } = useReadContract({
+  const { data: batchDetail, isLoading: loadingBatchDetail } = useReadContract({
     address: DIEM_STAKING_PROXY,
     abi: DIEM_STAKING_PROXY_ABI,
-    functionName: 'epochs',
-    args: activeEpochId != null ? [activeEpochId] : undefined,
-    query: { enabled: deployed && activeEpochId != null, refetchInterval: POLL_MS },
+    functionName: 'unstakeBatches',
+    args: activeBatchId != null ? [activeBatchId] : undefined,
+    query: { enabled: deployed && activeBatchId != null, refetchInterval: POLL_MS },
   });
 
   const state = useMemo<UnstakeState>(() => {
-    if (activeEpochId == null || activeAmount == null || activeAmount === 0n) return { status: 'none' };
-    if (!epochDetail) return { status: 'none' };
-    // epochs(id) returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)
-    const [, unlockAtRaw, , claimed] = epochDetail as readonly [bigint, bigint, number, boolean];
+    if (activeBatchId == null || activeAmount == null || activeAmount === 0n) return { status: 'none' };
+    if (!batchDetail) return { status: 'none' };
+    // unstakeBatches(id) returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)
+    const [, unlockAtRaw, , claimed] = batchDetail as readonly [bigint, bigint, number, boolean];
     const unlockAt = Number(unlockAtRaw);
     const now = Math.floor(Date.now() / 1000);
 
     if (unlockAt === 0) {
-      // Still queuing: this is the current open epoch. Flush is blocked
-      // until the prior epoch is claimed (currentEpoch == oldestUnclaimed).
-      const waitingForPriorEpoch = currentEpoch != null && oldestUnclaimed != null && currentEpoch !== oldestUnclaimed;
-      return { status: 'queued', epochId: activeEpochId!, amount: activeAmount!, waitingForPriorEpoch };
+      // Still queuing: this is the current open batch. Flush is blocked
+      // until the prior batch is claimed (currentUnstakeBatch == oldestUnclaimedUnstakeBatch).
+      const waitingForPriorBatch = currentUnstakeBatch != null && oldestUnclaimedUnstakeBatch != null && currentUnstakeBatch !== oldestUnclaimedUnstakeBatch;
+      return { status: 'queued', batchId: activeBatchId!, amount: activeAmount!, waitingForPriorBatch };
     }
     if (!claimed && now < unlockAt) {
-      return { status: 'cooling', epochId: activeEpochId!, amount: activeAmount!, unlockAt };
+      return { status: 'cooling', batchId: activeBatchId!, amount: activeAmount!, unlockAt };
     }
     if (!claimed && now >= unlockAt) {
-      return { status: 'claimable', epochId: activeEpochId!, amount: activeAmount! };
+      return { status: 'claimable', batchId: activeBatchId!, amount: activeAmount! };
     }
     // claimed but user still shown as having amount → the mapping entry will
     // be cleared on next claim batch. Treat as `none` so the UI clears.
     return { status: 'none' };
-  }, [activeEpochId, activeAmount, epochDetail, currentEpoch, oldestUnclaimed]);
+  }, [activeBatchId, activeAmount, batchDetail, currentUnstakeBatch, oldestUnclaimedUnstakeBatch]);
 
-  return { state, isLoading: loadingClock || loadingAmts || loadingDetail };
+  return { state, isLoading: loadingClock || loadingAmts || loadingBatchDetail };
 }
 
 // ─── Last-epoch USDC: in-browser getLogs aggregation ─────────────────────
@@ -408,7 +414,7 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       );
       if (!closedAbi || !distAbi) return null;
 
-      // Find the RewardEpochClosed(epochId = currentRewardEpoch - 1) block to
+      // Find the RewardEpochClosed(rewardEpochId = currentRewardEpoch - 1) block to
       // bound the window. Search over the last 500k blocks (≈ 11 days on Base
       // at 2s). If a deployment is older than that or under heavy traffic,
       // the caller should migrate to an indexer.
