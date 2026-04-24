@@ -38,6 +38,26 @@ function detectApplePlatform(): boolean {
 const isMacPlatform = detectApplePlatform();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
+// On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
+// the window traffic-light buttons are mirrored to the top-right. We need to
+// flip the title-bar padding so the right-side controls are not covered.
+function detectRtlSystemLocale(): boolean {
+  const rtlPrefixes = ['he', 'iw', 'ar', 'fa', 'ur', 'yi', 'ji'];
+  const candidates = [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ].filter(Boolean);
+  return candidates.some((lang) => {
+    const primary = String(lang).toLowerCase().split(/[-_]/)[0];
+    return rtlPrefixes.includes(primary);
+  });
+}
+
+document.body.classList.toggle(
+  'platform-macos-rtl',
+  isMacPlatform && detectRtlSystemLocale(),
+);
+
 const bridge = window.antseedDesktop as DesktopBridge | undefined;
 const uiState = createInitialUiState();
 initStore(uiState);
