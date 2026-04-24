@@ -1,4 +1,5 @@
 import {useEffect, useState, useMemo} from 'react';
+import Head from '@docusaurus/Head';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 import styles from './network.module.css';
@@ -329,19 +330,59 @@ export default function PricingPage() {
 
   const hasActiveFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching;
 
+  const datasetLd = useMemo(() => ({
+    '@context': 'https://schema.org',
+    '@type': 'Dataset',
+    name: 'AntSeed Live AI Inference Pricing',
+    description:
+      'Live pricing and provider availability for AI models across the AntSeed peer-to-peer network. Prices per million tokens, updated every 30 seconds.',
+    url: 'https://antseed.com/network',
+    keywords: [
+      'AI inference pricing',
+      'LLM API pricing',
+      'peer-to-peer AI',
+      'decentralized AI',
+      'OpenRouter alternative',
+      'USDC AI payments',
+    ],
+    creator: {
+      '@type': 'Organization',
+      name: 'AntSeed',
+      url: 'https://antseed.com',
+    },
+    distribution: {
+      '@type': 'DataDownload',
+      encodingFormat: 'application/json',
+      contentUrl: 'https://network.antseed.com/stats',
+    },
+    variableMeasured: [
+      {'@type': 'PropertyValue', name: 'inputPricePerMillionTokens', unitText: 'USD'},
+      {'@type': 'PropertyValue', name: 'outputPricePerMillionTokens', unitText: 'USD'},
+      {'@type': 'PropertyValue', name: 'activePeers', unitText: 'count'},
+    ],
+  }), []);
+
   return (
-    <Layout title="Pricing" description="Compare AI service pricing across AntSeed network providers. Find the best rates for input and output tokens.">
+    <Layout
+      title="Live AI Inference Pricing"
+      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Pay per request in USDC.">
+      <Head>
+        <title>Live AI Inference Pricing Across the AntSeed Network | AntSeed</title>
+        <link rel="canonical" href="https://antseed.com/network" />
+        <script type="application/ld+json">{JSON.stringify(datasetLd)}</script>
+      </Head>
       <div className={styles.page}>
         {/* Hero */}
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
-          <h1 className={styles.title}>Service Pricing</h1>
+          <p className={styles.eyebrow}>Live Network Data</p>
+          <h1 className={styles.title}>Live pricing across the peer-to-peer network.</h1>
           <p className={styles.subtitle}>
             {loading
               ? 'Loading live network data...'
               : error
                 ? 'Unable to reach the network. Showing cached data if available.'
-                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} services. Best rate per million tokens.</>
+                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} models. Pay in USDC — best rate per million tokens.</>
             }
           </p>
         </div>
