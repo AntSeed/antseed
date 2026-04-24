@@ -4,11 +4,11 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
-import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+import { AntseedSellerDelegation } from "./AntseedSellerDelegation.sol";
+import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
 
 /// @dev Venice's DIEM ERC20 is also the staking contract (stake / initiateUnstake / unstake live on the token itself).
 interface IDiemStake {
@@ -98,16 +98,16 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
 
     struct Epoch {
-        uint128 total;      // sum of every user's queued amount in this epoch
-        uint64 unlockAt;    // 0 = not yet flushed; otherwise venice-release time
-        uint32 userCount;   // length of epochUsers[id], cached for MAX check
+        uint128 total; // sum of every user's queued amount in this epoch
+        uint64 unlockAt; // 0 = not yet flushed; otherwise venice-release time
+        uint32 userCount; // length of epochUsers[id], cached for MAX check
         bool claimed;
     }
 
     struct RewardEpoch {
-        uint256 stakeIntegratorAtEnd;  // global integrator value at epoch close
-        uint256 activeSecondsAtEnd;    // cumulative seconds with totalStaked > 0 at close
-        uint256 antsPot;               // ANTS received from AntseedEmissions at close
+        uint256 stakeIntegratorAtEnd; // global integrator value at epoch close
+        uint256 activeSecondsAtEnd; // cumulative seconds with totalStaked > 0 at close
+        uint256 antsPot; // ANTS received from AntseedEmissions at close
     }
 
     // ═══════════════════════════════════════════════════════════════════

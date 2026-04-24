@@ -3,35 +3,35 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {MockUSDC} from "../MockUSDC.sol";
-import {MockERC8004Registry} from "../MockERC8004Registry.sol";
-import {ANTSToken} from "../ANTSToken.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
-import {AntseedDeposits} from "../AntseedDeposits.sol";
-import {AntseedStaking} from "../AntseedStaking.sol";
-import {AntseedChannels} from "../AntseedChannels.sol";
-import {AntseedEmissions} from "../AntseedEmissions.sol";
-import {DiemStakingProxy} from "../DiemStakingProxy.sol";
-import {AntseedSellerDelegation} from "../AntseedSellerDelegation.sol";
+import { MockUSDC } from "../MockUSDC.sol";
+import { MockERC8004Registry } from "../MockERC8004Registry.sol";
+import { ANTSToken } from "../ANTSToken.sol";
+import { AntseedRegistry } from "../AntseedRegistry.sol";
+import { AntseedDeposits } from "../AntseedDeposits.sol";
+import { AntseedStaking } from "../AntseedStaking.sol";
+import { AntseedChannels } from "../AntseedChannels.sol";
+import { AntseedEmissions } from "../AntseedEmissions.sol";
+import { DiemStakingProxy } from "../DiemStakingProxy.sol";
+import { AntseedSellerDelegation } from "../AntseedSellerDelegation.sol";
 
-import {MockDiem} from "./mocks/MockDiem.sol";
+import { MockDiem } from "./mocks/MockDiem.sol";
 
 /// @dev Integration tests for DiemStakingProxy against the real AntSeed stack
 ///      (Channels, Deposits, Staking, Emissions, Registry, ANTSToken). The only
 ///      mock is MockDiem — Venice's DIEM contract is external, we don't own it.
 contract DiemStakingProxyTest is Test {
     // ─── Deterministic private keys ──────────────────────────────────
-    uint256 constant OWNER_PK    = 0x0A;
+    uint256 constant OWNER_PK = 0x0A;
     uint256 constant OPERATOR_PK = 0x0B;
-    uint256 constant ALICE_PK    = 0x0C;
-    uint256 constant BOB_PK      = 0x0D;
-    uint256 constant BUYER_PK    = 0xA11CE;
+    uint256 constant ALICE_PK = 0x0C;
+    uint256 constant BOB_PK = 0x0D;
+    uint256 constant BUYER_PK = 0xA11CE;
 
     // ─── Durations / amounts ─────────────────────────────────────────
-    uint256 constant DIEM_COOLDOWN    = 1 days;
-    uint256 constant PROXY_STAKE      = 10_000_000;     // MIN_SELLER_STAKE
+    uint256 constant DIEM_COOLDOWN = 1 days;
+    uint256 constant PROXY_STAKE = 10_000_000; // MIN_SELLER_STAKE
     uint256 constant INITIAL_EMISSION = 1000 ether;
-    uint256 constant EPOCH_DURATION   = 1 weeks;
+    uint256 constant EPOCH_DURATION = 1 weeks;
 
     // ─── Actors ──────────────────────────────────────────────────────
     address owner;
@@ -39,9 +39,9 @@ contract DiemStakingProxyTest is Test {
     address alice;
     address bob;
     address buyer;
-    address buyerOperator  = address(0xAA);
+    address buyerOperator = address(0xAA);
     address protocolReserve = address(0xFEE);
-    address teamWallet     = address(0xBEEF);
+    address teamWallet = address(0xBEEF);
 
     // ─── Tokens ──────────────────────────────────────────────────────
     MockDiem diem;
@@ -68,11 +68,11 @@ contract DiemStakingProxyTest is Test {
     uint256 constant METADATA_VERSION = 1;
 
     function setUp() public {
-        owner    = vm.addr(OWNER_PK);
+        owner = vm.addr(OWNER_PK);
         operator = vm.addr(OPERATOR_PK);
-        alice    = vm.addr(ALICE_PK);
-        bob      = vm.addr(BOB_PK);
-        buyer    = vm.addr(BUYER_PK);
+        alice = vm.addr(ALICE_PK);
+        bob = vm.addr(BOB_PK);
+        buyer = vm.addr(BUYER_PK);
 
         // Start at a non-zero timestamp so epoch 0 has a clean window.
         vm.warp(1_700_000_000);
@@ -84,11 +84,11 @@ contract DiemStakingProxyTest is Test {
 
         // ── Real stack ──
         identityRegistry = new MockERC8004Registry();
-        antseedRegistry  = new AntseedRegistry();
-        deposits         = new AntseedDeposits(address(usdc));
-        staking          = new AntseedStaking(address(usdc), address(antseedRegistry));
-        channels         = new AntseedChannels(address(antseedRegistry));
-        emissions        = new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, EPOCH_DURATION);
+        antseedRegistry = new AntseedRegistry();
+        deposits = new AntseedDeposits(address(usdc));
+        staking = new AntseedStaking(address(usdc), address(antseedRegistry));
+        channels = new AntseedChannels(address(antseedRegistry));
+        emissions = new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, EPOCH_DURATION);
 
         antseedRegistry.setChannels(address(channels));
         antseedRegistry.setDeposits(address(deposits));
@@ -227,7 +227,6 @@ contract DiemStakingProxyTest is Test {
         vm.prank(operator);
         proxy.close(channelId, finalAmount, metadata, sig);
     }
-
 
     // ═══════════════════════════════════════════════════════════════════
     //                        STAKING (DIEM)
@@ -782,7 +781,7 @@ contract DiemStakingProxyTest is Test {
 
         assertGt(minted, 0, "emissions should mint ANTS to the proxy");
         assertEq(proxy.currentRewardEpoch(), rewardEpochBefore + 1, "reward epoch advanced");
-        (, , uint256 antsPot) = proxy.rewardEpochs(rewardEpochBefore);
+        (,, uint256 antsPot) = proxy.rewardEpochs(rewardEpochBefore);
         assertEq(antsPot, minted, "epoch pot captures the inflow");
     }
 
@@ -829,7 +828,7 @@ contract DiemStakingProxyTest is Test {
         uint256 totalEarned = aliceUsdc + bobUsdc;
 
         assertApproxEqAbs(aliceUsdc, (totalEarned * 30) / 100, 1);
-        assertApproxEqAbs(bobUsdc,   (totalEarned * 70) / 100, 1);
+        assertApproxEqAbs(bobUsdc, (totalEarned * 70) / 100, 1);
     }
 
     /// @dev The reviewer's P1 concern: USDC earned during one user's staked
