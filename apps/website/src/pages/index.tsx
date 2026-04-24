@@ -284,13 +284,13 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. No gatekeepers. Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers."
+      description="The open market for AI inference. Serve or consume AI peer-to-peer. Pay per request in USDC. Anonymous. Private. No gatekeepers."
       wrapperClassName="homepage-wrapper">
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>AI, Set Free</h1>
-        <p className={styles.heroSub}>The open market for AI inference. No gatekeepers.</p>
+        <h1 className={styles.heroTitle}>The open market for AI inference.</h1>
+        <p className={styles.heroSub}>Permissionless peer-to-peer. Pay per request in USDC.</p>
       </section>
 
       {/* Liveness */}
