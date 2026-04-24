@@ -15,15 +15,17 @@ import { parseAbi } from 'viem';
  *   - totalUsdcDistributedEver — lifetime USDC tile
  *   - maxTotalStake — cap display + stake-disabled guard
  *   - earnedUsdc(user) — claimable USDC
- *   - currentRewardEpoch / userLastClaimedEpoch(user) / pendingAntsForEpoch(user, epoch)
- *     — per-epoch ANTS preview, summed across the user's claimable range
+ *   - firstRewardEpoch / currentRewardEpoch / userLastClaimedEpoch(user) /
+ *     pendingAntsForEpoch(user, epoch) — per-epoch ANTS preview, summed
+ *     across the user's claimable range
  *   - currentEpoch / oldestUnclaimed / epochs(id) / epochUsers(id, i) /
  *     epochUserAmount(id, user) — unstake queue state machine
  *   - minEpochOpenSecs / currentEpochOpenedAt / flushableAt — minimum
  *     cohort-open window gate (so a first queuer can't immediately flush)
  *
  * Writes:
- *   - stake, initiateUnstake, flush, claimEpoch, claimUsdc, claimAnts
+ *   - stake, initiateUnstake, flush, claimEpoch, claimUsdc, claimAnts,
+ *     syncRewardEpochs
  */
 export const DIEM_STAKING_PROXY_ABI = parseAbi([
   // Reads — staking
@@ -37,6 +39,7 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function totalUsdcDistributedEver() view returns (uint256)',
 
   // Reads — ANTS rewards
+  'function firstRewardEpoch() view returns (uint32)',
   'function currentRewardEpoch() view returns (uint32)',
   'function userLastClaimedEpoch(address user) view returns (uint32)',
   'function pendingAntsForEpoch(address user, uint32 rewardEpoch) view returns (uint256)',
@@ -59,11 +62,13 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function claimEpoch(uint32 epochId)',
   'function claimUsdc()',
   'function claimAnts(uint32 numEpochs)',
+  'function syncRewardEpochs(uint32 maxEpochs)',
 
   // Events — for "USDC distributed per completed reward epoch" aggregation.
   // Aggregated in-browser via getLogs over a bounded window; see hooks.ts.
   'event UsdcDistributed(uint256 amount)',
   'event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd)',
+  'event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot)',
 ]);
 
 /**

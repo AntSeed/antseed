@@ -78,6 +78,8 @@ export interface PoolStats {
   totalUsdcDistributedEver: bigint | null;
   /** Owner-set cap on totalStaked (0 = unlimited). */
   maxTotalStake: bigint | null;
+  /** First Antseed emission epoch this proxy can attribute rewards for. */
+  firstRewardEpoch: number | null;
   /** Completed reward-epoch count (from the proxy). Open epoch is currentRewardEpoch. */
   currentRewardEpoch: number | null;
   /** Venice DIEM unstake cooldown in seconds (read live from the token). */
@@ -101,6 +103,7 @@ export function usePoolStats(): PoolStats {
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'stakerCount' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalUsdcDistributedEver' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'maxTotalStake' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentRewardEpoch' },
       { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minEpochOpenSecs' },
@@ -115,6 +118,7 @@ export function usePoolStats(): PoolStats {
       stakerCount: null,
       totalUsdcDistributedEver: null,
       maxTotalStake: null,
+      firstRewardEpoch: null,
       currentRewardEpoch: null,
       diemCooldownSecs: null,
       minEpochOpenSecs: null,
@@ -125,15 +129,16 @@ export function usePoolStats(): PoolStats {
   // `flushableAt()` returns `0` while the cohort is empty (no first queuer
   // yet). We preserve the distinction by mapping `0` → `null` so the UI can
   // tell "no clock running" apart from "clock running, starting now".
-  const flushableAtRaw = data[7]?.result != null ? Number(data[7].result) : null;
+  const flushableAtRaw = data[8]?.result != null ? Number(data[8].result) : null;
   return {
     totalStaked: data[0]?.result ?? null,
     stakerCount: data[1]?.result != null ? Number(data[1].result) : null,
     totalUsdcDistributedEver: data[2]?.result ?? null,
     maxTotalStake: data[3]?.result ?? null,
-    currentRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
-    diemCooldownSecs: data[5]?.result != null ? Number(data[5].result) : null,
-    minEpochOpenSecs: data[6]?.result != null ? Number(data[6].result) : null,
+    firstRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
+    currentRewardEpoch: data[5]?.result != null ? Number(data[5].result) : null,
+    diemCooldownSecs: data[6]?.result != null ? Number(data[6].result) : null,
+    minEpochOpenSecs: data[7]?.result != null ? Number(data[7].result) : null,
     flushableAt: flushableAtRaw && flushableAtRaw > 0 ? flushableAtRaw : null,
     isLoading,
   };
@@ -221,15 +226,16 @@ function usePendingAnts(
   user: Address | null,
   userLastClaimedEpoch: number | null,
 ): { pendingAnts: bigint | null; isLoading: boolean } {
-  const { currentRewardEpoch } = usePoolStats();
+  const { firstRewardEpoch, currentRewardEpoch } = usePoolStats();
 
   const epochsToRead = useMemo(() => {
-    if (user == null || userLastClaimedEpoch == null || currentRewardEpoch == null) return [];
-    const to = Math.min(currentRewardEpoch, userLastClaimedEpoch + MAX_EPOCHS_PREVIEW);
+    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || currentRewardEpoch == null) return [];
+    const from = Math.max(userLastClaimedEpoch, firstRewardEpoch);
+    const to = Math.min(currentRewardEpoch, from + MAX_EPOCHS_PREVIEW);
     const out: number[] = [];
-    for (let e = userLastClaimedEpoch; e < to; e++) out.push(e);
+    for (let e = from; e < to; e++) out.push(e);
     return out;
-  }, [user, userLastClaimedEpoch, currentRewardEpoch]);
+  }, [user, userLastClaimedEpoch, firstRewardEpoch, currentRewardEpoch]);
 
   const { data, isLoading } = useReadContracts({
     allowFailure: true,

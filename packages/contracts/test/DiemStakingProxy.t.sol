@@ -61,12 +61,10 @@ contract DiemStakingProxyTest is Test {
     uint256 proxyAgentId;
 
     // ─── AntSeed EIP-712 typehashes (mirror contracts) ───────────────
-    bytes32 constant SPENDING_AUTH_TYPEHASH = keccak256(
-        "SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
-    );
-    bytes32 constant RESERVE_AUTH_TYPEHASH = keccak256(
-        "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
-    );
+    bytes32 constant SPENDING_AUTH_TYPEHASH =
+        keccak256("SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)");
+    bytes32 constant RESERVE_AUTH_TYPEHASH =
+        keccak256("ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)");
     uint256 constant METADATA_VERSION = 1;
 
     function setUp() public {
@@ -109,12 +107,7 @@ contract DiemStakingProxyTest is Test {
 
         // ── Proxy ──
         vm.prank(owner);
-        proxy = new DiemStakingProxy(
-            address(diem),
-            address(usdc),
-            address(antseedRegistry),
-            operator
-        );
+        proxy = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
 
         // Register proxy as an ERC-8004 agent and fund its seller stake so
         // AntseedChannels.reserve accepts the proxy (isStakedAboveMin check).
@@ -166,12 +159,8 @@ contract DiemStakingProxyTest is Test {
         deposits.setCreditLimitOverride(buyer, type(uint256).max);
 
         uint256 nonce = deposits.getOperatorNonce(buyer);
-        bytes32 structHash = keccak256(
-            abi.encode(deposits.SET_OPERATOR_TYPEHASH(), buyerOperator, nonce)
-        );
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash)
-        );
+        bytes32 structHash = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), buyerOperator, nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, digest);
         deposits.setOperator(buyer, buyerOperator, nonce, abi.encodePacked(r, s, v));
 
@@ -186,44 +175,36 @@ contract DiemStakingProxyTest is Test {
         return keccak256(abi.encodePacked("\x19\x01", channels.domainSeparator(), structHash));
     }
 
-    function _signReserveAuth(
-        bytes32 channelId,
-        uint128 maxAmount,
-        uint256 deadline
-    ) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(
-            abi.encode(RESERVE_AUTH_TYPEHASH, channelId, maxAmount, deadline)
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
-        return abi.encodePacked(r, s, v);
-    }
-
-    function _signSpendingAuth(
-        bytes32 channelId,
-        uint256 cumulativeAmount,
-        bytes memory metadata
-    ) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(
-            abi.encode(SPENDING_AUTH_TYPEHASH, channelId, cumulativeAmount, keccak256(metadata))
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
-        return abi.encodePacked(r, s, v);
-    }
-
-    function _encodeMetadata(uint256 inputTokens, uint256 outputTokens)
+    function _signReserveAuth(bytes32 channelId, uint128 maxAmount, uint256 deadline)
         internal
-        pure
+        view
         returns (bytes memory)
     {
+        bytes32 structHash = keccak256(abi.encode(RESERVE_AUTH_TYPEHASH, channelId, maxAmount, deadline));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _signSpendingAuth(bytes32 channelId, uint256 cumulativeAmount, bytes memory metadata)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash =
+            keccak256(abi.encode(SPENDING_AUTH_TYPEHASH, channelId, cumulativeAmount, keccak256(metadata)));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, _hashTypedDataChannels(structHash));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _encodeMetadata(uint256 inputTokens, uint256 outputTokens) internal pure returns (bytes memory) {
         return abi.encode(METADATA_VERSION, inputTokens, outputTokens, uint256(0));
     }
 
     /// @dev Full reserve helper via the proxy. Buyer is created if needed.
-    function _reserveViaProxy(
-        bytes32 salt,
-        uint128 maxAmount,
-        uint256 depositAmount
-    ) internal returns (bytes32 channelId) {
+    function _reserveViaProxy(bytes32 salt, uint128 maxAmount, uint256 depositAmount)
+        internal
+        returns (bytes32 channelId)
+    {
         _setupBuyer(depositAmount);
         channelId = channels.computeChannelId(buyer, address(proxy), salt);
         bytes memory reserveSig = _signReserveAuth(channelId, maxAmount, block.timestamp + 1 days);
@@ -601,12 +582,7 @@ contract DiemStakingProxyTest is Test {
         // Default fixture sets it to 0 explicitly; deploy a fresh proxy to
         // verify the constructor ships with the alpha default.
         vm.prank(owner);
-        DiemStakingProxy fresh = new DiemStakingProxy(
-            address(diem),
-            address(usdc),
-            address(antseedRegistry),
-            operator
-        );
+        DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
         assertEq(fresh.minEpochOpenSecs(), fresh.ALPHA_MIN_EPOCH_OPEN_SECS());
         assertEq(fresh.ALPHA_MIN_EPOCH_OPEN_SECS(), 1 days);
     }
@@ -913,6 +889,59 @@ contract DiemStakingProxyTest is Test {
         assertGt(aliceAnts, bobAnts, "longer staker earns more");
     }
 
+    /// @dev ANTS attribution must follow the finalized Antseed emission epoch,
+    ///      not the later operator claim timestamp. Bob joins only after epoch 0
+    ///      has ended, so a delayed claim for epoch 0 must not give him points.
+    function test_antsAttribution_delayedOperatorClaimDoesNotDilutePastEpoch() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Epoch 0 is finalized, but the operator has not claimed it yet.
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        // Bob joins after the epoch-0 accrual window. His stake call syncs the
+        // finalized reward epoch before adding his stake.
+        _stakeAs(bob, 100e18);
+
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(0);
+
+        assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "alice earned during epoch 0");
+        assertEq(proxy.pendingAntsForEpoch(bob, 0), 0, "post-epoch staker must not dilute epoch 0");
+    }
+
+    /// @dev If the operator catches up multiple finalized Antseed epochs in the
+    ///      same block, each ANTS pot must still have a non-zero point window.
+    ///      Otherwise later pots become permanently unclaimable.
+    function test_antsAttribution_backloggedClaimsDoNotStrandLaterPots() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 10_000e6, 10_000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        _settleViaProxy(channelId, 900e6);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(0);
+        vm.prank(operator);
+        proxy.operatorClaimEmissions(1);
+
+        (,, uint256 pot0) = proxy.rewardEpochs(0);
+        (,, uint256 pot1) = proxy.rewardEpochs(1);
+        assertGt(pot0, 0, "epoch 0 pot");
+        assertGt(pot1, 0, "epoch 1 pot");
+
+        uint256 beforeBal = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(2);
+        assertEq(ants.balanceOf(alice) - beforeBal, pot0 + pot1, "sole staker claims both pots");
+    }
+
     /// @dev Staker who unstakes BEFORE the operator tick still earns ANTS
     ///      for their contribution during the completed epoch. Points
     ///      persist past unstaking.
@@ -1169,12 +1198,7 @@ contract DiemStakingProxyTest is Test {
         // Deploy a fresh proxy so the constructor-set alpha cap is observable
         // (the shared fixture lifts it in setUp so other tests aren't blocked).
         vm.prank(owner);
-        DiemStakingProxy fresh = new DiemStakingProxy(
-            address(diem),
-            address(usdc),
-            address(antseedRegistry),
-            operator
-        );
+        DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
         assertEq(fresh.maxTotalStake(), fresh.ALPHA_MAX_TOTAL_STAKE());
         assertEq(fresh.maxTotalStake(), 50e18);
     }
@@ -1183,12 +1207,7 @@ contract DiemStakingProxyTest is Test {
     ///      whole point of shipping with it on.
     function test_alphaCap_enforcedOnFreshDeploy() public {
         vm.prank(owner);
-        DiemStakingProxy fresh = new DiemStakingProxy(
-            address(diem),
-            address(usdc),
-            address(antseedRegistry),
-            operator
-        );
+        DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
 
         diem.mint(alice, 60e18);
         vm.startPrank(alice);
@@ -1399,9 +1418,7 @@ contract DiemStakingProxyTest is Test {
         assertLe(paidOut, netInflow, "claims must not exceed inflows");
         assertApproxEqAbs(paidOut, netInflow, 3, "rounding dust bounded by #settles");
         assertEq(
-            proxy.totalUsdcDistributedEver(),
-            netInflow,
-            "lifetime counter equals full inflow regardless of rounding"
+            proxy.totalUsdcDistributedEver(), netInflow, "lifetime counter equals full inflow regardless of rounding"
         );
     }
 

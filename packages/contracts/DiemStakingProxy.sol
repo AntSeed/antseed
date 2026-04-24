@@ -26,6 +26,12 @@ interface IAntseedEmissionsClaim {
     function claimSellerEmissions(uint256[] calldata epochs) external;
 }
 
+interface IAntseedEmissionsClock {
+    function currentEpoch() external view returns (uint256);
+    function genesis() external view returns (uint256);
+    function EPOCH_DURATION() external view returns (uint256);
+}
+
 /**
  * @title DiemStakingProxy
  * @notice Pooled DIEM staker / AntSeed seller façade.
@@ -53,12 +59,13 @@ interface IAntseedEmissionsClaim {
  *           `claimUsdc()` at any time. Equivalent to a Synthetix drip with
  *           `duration = 1` — settles are discrete events, not periods.
  *
- *         ANTS DISTRIBUTION — points + per-epoch pot:
+ *         ANTS DISTRIBUTION — points + per-emission-epoch pot:
  *           Users accumulate internal "points" based on stake-time weighted by
- *           1/totalStaked (a Compound-style integrator). At operator tick for
- *           a finalized emission epoch, the ANTS arrives and is stored as a
- *           per-epoch pot. Users call `claimAnts(n)` to convert their points
- *           for the next `n` completed epochs into ANTS.
+ *           1/totalStaked (a Compound-style integrator). Finalized AntSeed
+ *           emission epochs are closed at their real time boundaries; the
+ *           operator later attaches each claimed ANTS pot to the matching
+ *           epoch. Users call `claimAnts(n)` to convert their points for the
+ *           next `n` accounted epochs into ANTS.
  *
  *           Properties:
  *             - Points persist through unstakes — a user who fully unstakes
@@ -112,6 +119,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     IERC20 public immutable ants;
     address public immutable emissions;
     address public immutable antseedStaking;
+    uint256 public immutable emissionGenesis;
+    uint256 public immutable emissionEpochDuration;
+    uint32 public immutable firstRewardEpoch;
 
     /// @dev Max distinct users per unstake epoch. Caps `claimEpoch`'s transfer
     ///      loop at ~50 × 50k gas = 2.5M gas, well under the block limit while
@@ -243,11 +253,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      fraction: sum over users of points in epoch = activeSeconds in epoch.
     uint256 public activeSecondsAccumulator;
 
-    /// @dev Reward-epoch state. `currentRewardEpoch` is the one accumulating
-    ///      USDC inflows and stake-time; each `operatorClaimEmissions` call
-    ///      closes it and opens the next.
+    /// @dev Reward-epoch state. Epoch ids match AntseedEmissions epoch ids.
+    ///      `currentRewardEpoch` is the first not-yet-finalized epoch; finalized
+    ///      epochs are funded later by `operatorClaimEmissions`.
     mapping(uint32 => RewardEpoch) public rewardEpochs;
     uint32 public currentRewardEpoch;
+    mapping(uint32 => bool) public rewardEpochAccounted;
 
     /// @dev Per-user points per reward epoch (the "internal points system").
     ///      Populated lazily on the user's next interaction; persists across
@@ -273,7 +284,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event Unstaked(address indexed user, uint256 amount);
     event UsdcDistributed(uint256 amount);
     event UsdcPaid(address indexed user, uint256 amount);
-    event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd);
+    event RewardEpochClosed(
+        uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd
+    );
+    event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot);
+    event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
     event AntsClaimed(address indexed user, uint32 fromEpoch, uint32 toEpoch, uint256 antsAmount);
     event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
@@ -297,6 +312,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error NothingToClaim();
     error MaxStakeExceeded();
     error MinEpochOpenSecsTooLarge();
+    error RewardEpochNotFinalized();
+    error RewardEpochAlreadyAccounted();
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Constructor
@@ -308,12 +325,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///                  `antseedStaking` are resolved from it at construction
     ///                  and pinned as immutables for the proxy's lifetime.
     /// @param _operator Initial authorized operator for channel lifecycle ops.
-    constructor(
-        address _diem,
-        address _usdc,
-        address _registry,
-        address _operator
-    )
+    constructor(address _diem, address _usdc, address _registry, address _operator)
         AntseedSellerDelegation(_registry, _operator)
     {
         if (_diem == address(0) || _usdc == address(0)) revert InvalidAddress();
@@ -330,12 +342,17 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         ants = IERC20(_ants);
         emissions = _emissions;
         antseedStaking = _antseedStaking;
+        emissionGenesis = IAntseedEmissionsClock(_emissions).genesis();
+        emissionEpochDuration = IAntseedEmissionsClock(_emissions).EPOCH_DURATION();
 
         // Epoch 0 is unused so `unlockAt == 0` remains a reliable "not yet
         // flushed" sentinel. Queuing starts at epoch 1.
         currentEpoch = 1;
         oldestUnclaimed = 1;
 
+        uint32 _firstRewardEpoch = IAntseedEmissionsClock(_emissions).currentEpoch().toUint32();
+        firstRewardEpoch = _firstRewardEpoch;
+        currentRewardEpoch = _firstRewardEpoch;
         lastIntegratorUpdate = block.timestamp;
 
         // Ship with an alpha-launch stake cap. Owner can raise it or remove
@@ -364,6 +381,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      `MAX_EPOCHS_PER_CAPTURE`).
     modifier updateRewards(address account) {
         _updateUsdcForUser(account);
+        _syncFinalizedRewardEpochsForUpdate();
         _updateStakeIntegrator();
         _captureUserPoints(account);
         _;
@@ -525,41 +543,51 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (numEpochs == 0) revert InvalidAmount();
 
         uint32 from = userLastClaimedEpoch[msg.sender];
+        if (from < firstRewardEpoch) from = firstRewardEpoch;
         uint32 to = from + numEpochs;
         if (to > currentRewardEpoch) to = currentRewardEpoch;
         if (to == from) revert NothingToClaim();
 
         uint256 totalAnts;
+        uint32 processedTo = from;
         for (uint32 N = from; N < to; N++) {
+            if (!rewardEpochAccounted[N]) break;
+
             // Advancing `userLastClaimedEpoch` past this epoch permanently
             // abandons any userPoints entry here. For the zero-payout skip
             // paths below we explicitly `delete` the slot so no stale storage
             // lingers — cheap at time-of-claim since each user only walks
             // their own epochs once.
             uint256 userPts = userPoints[msg.sender][N];
-            if (userPts == 0) continue;
+            if (userPts == 0) {
+                processedTo = N + 1;
+                continue;
+            }
 
             RewardEpoch memory re = rewardEpochs[N];
             if (re.antsPot == 0) {
                 delete userPoints[msg.sender][N];
+                processedTo = N + 1;
                 continue;
             }
-            uint256 totalPoints = N == 0
-                ? re.activeSecondsAtEnd
-                : re.activeSecondsAtEnd - rewardEpochs[N - 1].activeSecondsAtEnd;
+            uint256 totalPoints =
+                N == 0 ? re.activeSecondsAtEnd : re.activeSecondsAtEnd - rewardEpochs[N - 1].activeSecondsAtEnd;
             if (totalPoints == 0) {
                 delete userPoints[msg.sender][N];
+                processedTo = N + 1;
                 continue;
             }
             totalAnts += (re.antsPot * userPts) / totalPoints;
             delete userPoints[msg.sender][N];
+            processedTo = N + 1;
         }
-        userLastClaimedEpoch[msg.sender] = to;
+        if (processedTo == from) revert NothingToClaim();
+        userLastClaimedEpoch[msg.sender] = processedTo;
 
         if (totalAnts > 0) {
             ants.safeTransfer(msg.sender, totalAnts);
         }
-        emit AntsClaimed(msg.sender, from, to, totalAnts);
+        emit AntsClaimed(msg.sender, from, processedTo, totalAnts);
     }
 
     /**
@@ -576,6 +604,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     function catchUpPoints(uint32 numEpochs) external {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
+        _syncFinalizedRewardEpochsForUpdate();
         _updateStakeIntegrator();
 
         uint32 userEp = userCurrentEpoch[msg.sender];
@@ -634,24 +663,22 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     /// @inheritdoc AntseedSellerDelegation
-    function settle(
-        bytes32 channelId,
-        uint128 cumulativeAmount,
-        bytes calldata metadata,
-        bytes calldata buyerSig
-    ) public override nonReentrant {
+    function settle(bytes32 channelId, uint128 cumulativeAmount, bytes calldata metadata, bytes calldata buyerSig)
+        public
+        override
+        nonReentrant
+    {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.settle(channelId, cumulativeAmount, metadata, buyerSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
     /// @inheritdoc AntseedSellerDelegation
-    function close(
-        bytes32 channelId,
-        uint128 finalAmount,
-        bytes calldata metadata,
-        bytes calldata buyerSig
-    ) public override nonReentrant {
+    function close(bytes32 channelId, uint128 finalAmount, bytes calldata metadata, bytes calldata buyerSig)
+        public
+        override
+        nonReentrant
+    {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.close(channelId, finalAmount, metadata, buyerSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
@@ -661,14 +688,34 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        OPERATOR TICK (ANTS emissions)
     // ═══════════════════════════════════════════════════════════════════
 
+    /// @notice Permissionlessly close finalized reward epochs in bounded chunks.
+    ///         Useful after long dormancy before users call stake/unstake/claim.
+    function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
+        if (maxEpochs == 0) revert InvalidAmount();
+
+        uint32 finalized = _finalizedRewardEpoch();
+        uint32 target = currentRewardEpoch + maxEpochs;
+        if (target > finalized) target = finalized;
+        if (target == currentRewardEpoch) revert NothingToClaim();
+
+        _syncRewardEpochsUntil(target);
+    }
+
     /**
      * @notice Claim ANTS emissions for the given finalized `emissionEpochId`
-     *         and close the current reward epoch, making its points claimable.
-     *         Operator is expected to tick sequentially as AntseedEmissions
-     *         finalizes each epoch.
+     *         and attach the pot to the matching closed reward epoch. Reward
+     *         epochs close at AntseedEmissions time boundaries, so delayed
+     *         operator calls cannot change the staker attribution window.
      */
     function operatorClaimEmissions(uint256 emissionEpochId) external onlyOperator nonReentrant {
-        _updateStakeIntegrator();
+        uint32 rewardEpoch = emissionEpochId.toUint32();
+        uint32 target = rewardEpoch + 1;
+        if (target > _finalizedRewardEpoch()) revert RewardEpochNotFinalized();
+        if (target > currentRewardEpoch) {
+            if (target - currentRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
+            _syncRewardEpochsUntil(target);
+        }
+        if (rewardEpochAccounted[rewardEpoch]) revert RewardEpochAlreadyAccounted();
 
         uint256 beforeBal = ants.balanceOf(address(this));
         uint256[] memory ids = new uint256[](1);
@@ -676,15 +723,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         IAntseedEmissionsClaim(emissions).claimSellerEmissions(ids);
         uint256 inflow = ants.balanceOf(address(this)) - beforeBal;
 
-        uint32 rewardEpoch = currentRewardEpoch;
-        rewardEpochs[rewardEpoch] = RewardEpoch({
-            stakeIntegratorAtEnd: stakeIntegrator,
-            activeSecondsAtEnd: activeSecondsAccumulator,
-            antsPot: inflow
-        });
-        currentRewardEpoch = rewardEpoch + 1;
+        rewardEpochs[rewardEpoch].antsPot = inflow;
+        rewardEpochAccounted[rewardEpoch] = true;
 
-        emit RewardEpochClosed(rewardEpoch, inflow, stakeIntegrator, activeSecondsAccumulator);
+        emit RewardEpochFunded(rewardEpoch, inflow);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -778,12 +820,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      since before/during the epoch, assuming their stake has been
     ///      constant since their last interaction. (This invariant holds
     ///      because any stake change would have triggered `updateRewards`.)
-    function pendingAntsForEpoch(address account, uint32 rewardEpoch)
-        external
-        view
-        returns (uint256)
-    {
+    function pendingAntsForEpoch(address account, uint32 rewardEpoch) external view returns (uint256) {
         if (rewardEpoch >= currentRewardEpoch) return 0;
+        if (!rewardEpochAccounted[rewardEpoch]) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
         if (re.antsPot == 0) return 0;
         uint256 totalPoints = rewardEpoch == 0
@@ -822,12 +861,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///         the signature recovers to the current `owner()`. Used by
     ///         Venice to verify off-chain challenges when issuing the proxy's
     ///         API key.
-    function isValidSignature(bytes32 hash, bytes calldata signature)
-        external
-        view
-        override
-        returns (bytes4)
-    {
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         address recovered = ECDSA.recover(hash, signature);
         return recovered == owner() ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
     }
@@ -841,14 +875,18 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      proxy balance as operational dust and can be recovered by admin.
     function _distributeUsdcInstant(uint256 amount) internal {
         if (amount == 0 || totalStaked == 0) return;
-        usdcRewardPerTokenStored += (amount * _RAY) / totalStaked;
-        // Track total owed for the sweep-safety ledger. Includes rounding dust
-        // (which is never actually owed to a user) as a conservative margin.
-        totalUsdcReservedForStakers += amount;
+        uint256 rewardPerTokenDelta = (amount * _RAY) / totalStaked;
+        if (rewardPerTokenDelta == 0) return;
+
+        usdcRewardPerTokenStored += rewardPerTokenDelta;
+        uint256 distributable = (rewardPerTokenDelta * totalStaked) / _RAY;
+        // Track accumulator-distributable units for the sweep-safety ledger.
+        // Per-user integer rounding can still leave tiny conservative dust.
+        totalUsdcReservedForStakers += distributable;
         // Lifetime counter — never decremented, powers the "USDC distributed
         // · all time" frontend tile with a single SLOAD.
-        totalUsdcDistributedEver += amount;
-        emit UsdcDistributed(amount);
+        totalUsdcDistributedEver += distributable;
+        emit UsdcDistributed(distributable);
     }
 
     /// @dev Settle `account`'s USDC reward debt against the current
@@ -863,12 +901,53 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     /// @dev Advance `stakeIntegrator` and `activeSecondsAccumulator` to now.
     function _updateStakeIntegrator() internal {
-        uint256 delta = block.timestamp - lastIntegratorUpdate;
+        _updateStakeIntegratorTo(block.timestamp);
+    }
+
+    /// @dev Advance `stakeIntegrator` and `activeSecondsAccumulator` to `timestamp`.
+    function _updateStakeIntegratorTo(uint256 timestamp) internal {
+        if (timestamp <= lastIntegratorUpdate) return;
+        uint256 delta = timestamp - lastIntegratorUpdate;
         if (delta > 0 && totalStaked > 0) {
             stakeIntegrator += (delta * _RAY) / totalStaked;
             activeSecondsAccumulator += delta;
         }
-        lastIntegratorUpdate = block.timestamp;
+        lastIntegratorUpdate = timestamp;
+    }
+
+    function _finalizedRewardEpoch() internal view returns (uint32) {
+        return IAntseedEmissionsClock(emissions).currentEpoch().toUint32();
+    }
+
+    /// @dev Normal reward-touching paths only sync a bounded backlog. If the
+    ///      contract has been dormant for longer, users call `syncRewardEpochs`
+    ///      first to close old epochs incrementally.
+    function _syncFinalizedRewardEpochsForUpdate() internal {
+        uint32 finalized = _finalizedRewardEpoch();
+        if (finalized > currentRewardEpoch && finalized - currentRewardEpoch > MAX_EPOCHS_PER_CAPTURE) {
+            revert BacklogTooLarge();
+        }
+        _syncRewardEpochsUntil(finalized);
+    }
+
+    /// @dev Close reward epochs at AntseedEmissions boundaries up to `target`.
+    ///      This keeps ANTS attribution tied to the external emission window,
+    ///      not to the operator's eventual claim transaction timestamp.
+    function _syncRewardEpochsUntil(uint32 target) internal {
+        uint32 from = currentRewardEpoch;
+        while (currentRewardEpoch < target) {
+            uint32 rewardEpoch = currentRewardEpoch;
+            uint256 epochEnd = emissionGenesis + ((uint256(rewardEpoch) + 1) * emissionEpochDuration);
+            _updateStakeIntegratorTo(epochEnd);
+
+            RewardEpoch storage re = rewardEpochs[rewardEpoch];
+            re.stakeIntegratorAtEnd = stakeIntegrator;
+            re.activeSecondsAtEnd = activeSecondsAccumulator;
+
+            currentRewardEpoch = rewardEpoch + 1;
+            emit RewardEpochClosed(rewardEpoch, re.antsPot, stakeIntegrator, activeSecondsAccumulator);
+        }
+        if (currentRewardEpoch > from) emit RewardEpochsSynced(from, currentRewardEpoch);
     }
 
     /// @dev Capture `account`'s point contribution across every reward epoch
@@ -906,9 +985,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         }
 
         // And the currently-open epoch: from (user's start boundary) to NOW.
-        uint256 openSegStart = userEp == currentEp
-            ? userSnap
-            : rewardEpochs[currentEp - 1].stakeIntegratorAtEnd;
+        uint256 openSegStart = userEp == currentEp ? userSnap : rewardEpochs[currentEp - 1].stakeIntegratorAtEnd;
         _addUserPoints(account, currentEp, S, openSegStart, stakeIntegrator);
 
         userIntegratorSnap[account] = stakeIntegrator;
@@ -919,13 +996,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      No-op when `S == 0` or the integrator hasn't advanced. Shared by
     ///      `_captureUserPoints` and `catchUpPoints` so their math is
     ///      guaranteed identical.
-    function _addUserPoints(
-        address account,
-        uint32 epoch,
-        uint256 S,
-        uint256 segStart,
-        uint256 segEnd
-    ) internal {
+    function _addUserPoints(address account, uint32 epoch, uint256 S, uint256 segStart, uint256 segEnd) internal {
         if (S == 0 || segEnd <= segStart) return;
         userPoints[account][epoch] += (S * (segEnd - segStart)) / _RAY;
     }
