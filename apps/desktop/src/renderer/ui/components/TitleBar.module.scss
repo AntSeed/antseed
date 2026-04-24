@@ -15,8 +15,17 @@
     padding-left: 80px;
   }
 
+  // macOS mirrors the traffic-light buttons to the right side when the
+  // system UI language is RTL (e.g. Hebrew, Arabic). Flip the padding so
+  // the right-side controls are not covered by the window buttons.
+  :global(body.platform-macos-rtl) & {
+    padding-left: 16px;
+    padding-right: 80px;
+  }
+
   :global(body.platform-fullscreen) & {
     padding-left: 16px;
+    padding-right: 16px;
   }
 }
 
