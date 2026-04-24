@@ -78,6 +78,33 @@ test('selectCandidatePeersForRouting excludes peers when requested service is no
   assert.equal(result.routePlanByPeerId.get(claudePeer.peerId)?.provider, 'claude-oauth')
 })
 
+test('selectCandidatePeersForRouting in lenient mode keeps a peer whose advertised services miss the requested model, as long as the provider protocol set matches', () => {
+  // The buyer explicitly pinned this peer. It advertises one service
+  // (kimi-k2.6 over openai-chat-completions) but the request asks for
+  // anthropic-messages with model="claude-4". Strict mode would drop the
+  // peer; lenient mode keeps it and relies on the cross-protocol adapter
+  // plus the seller's upstream error to surface "model not found".
+  const peer = makePeer('a', ['openai'])
+  peer.providerServiceApiProtocols = {
+    openai: {
+      services: {
+        'kimi-k2.6': ['openai-chat-completions'],
+      },
+    },
+  }
+
+  const strict = selectCandidatePeersForRouting([peer], 'anthropic-messages', 'claude-4', null, 'strict')
+  assert.equal(strict.candidatePeers.length, 0, 'strict mode should drop the peer on service mismatch')
+
+  const lenient = selectCandidatePeersForRouting([peer], 'anthropic-messages', 'claude-4', null, 'lenient')
+  assert.equal(lenient.candidatePeers.length, 1, 'lenient mode should keep the peer on service mismatch')
+  const plan = lenient.routePlanByPeerId.get(peer.peerId)
+  assert.ok(plan, 'expected a route plan for the lenient-kept peer')
+  assert.equal(plan!.provider, 'openai')
+  // Anthropic→openai transform should be the selected path.
+  assert.equal(plan!.selection?.requiresTransform, true)
+})
+
 test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
   const peerWithoutMetadata = makePeer('a', ['openai'])
   const result = selectCandidatePeersForRouting(
