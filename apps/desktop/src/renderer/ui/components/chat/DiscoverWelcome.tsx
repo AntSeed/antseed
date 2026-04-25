@@ -503,12 +503,17 @@ function Card({
           ))}
           {item.tags.length > MAX_VISIBLE_CARD_TAGS && (
             <span
-              className={styles.tag}
-              title={item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+              className={`${styles.tag} ${styles.tagMore}`}
+              tabIndex={0}
               aria-label={`${item.tags.length - MAX_VISIBLE_CARD_TAGS} more categories: `
                 + item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }}
             >
               +{item.tags.length - MAX_VISIBLE_CARD_TAGS}
+              <span className={styles.tagMoreTooltip} role="tooltip">
+                {item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+              </span>
             </span>
           )}
         </div>
