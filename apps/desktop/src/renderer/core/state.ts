@@ -47,6 +47,7 @@ export type ConfigFormData = {
   minRep: number;
   paymentMethod: string;
   devMode: boolean;
+  showThinking: boolean;
   cryptoChainId: string;
 };
 
@@ -174,6 +175,7 @@ export type RendererUiState = {
   configFormData: ConfigFormData | null;
   configSaving: boolean;
   devMode: boolean;
+  showThinking: boolean;
 
   // --- Plugin setup ---
   installedPlugins: Set<string>;
@@ -324,6 +326,7 @@ export function createInitialUiState(): RendererUiState {
     configFormData: null,
     configSaving: false,
     devMode: false,
+    showThinking: true,
 
     // Plugin setup
     installedPlugins: new Set<string>(),

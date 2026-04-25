@@ -7,7 +7,7 @@ type ConfigViewProps = {
 };
 
 export function ConfigView({ active }: ConfigViewProps) {
-  const { configFormData, configSaving, devMode, configMessage } = useUiSnapshot();
+  const { configFormData, configSaving, devMode, showThinking, configMessage } = useUiSnapshot();
   const actions = useActions();
 
   // Local form state — initialized from config, edited locally, saved on button click
@@ -37,6 +37,11 @@ export function ConfigView({ active }: ConfigViewProps) {
   function toggleDevMode() {
     if (!configFormData) return;
     void actions.saveConfig({ ...configFormData, devMode: !devMode });
+  }
+
+  function toggleShowThinking() {
+    if (!configFormData) return;
+    void actions.saveConfig({ ...configFormData, showThinking: !showThinking });
   }
 
   // Save all config and restart the buyer runtime
@@ -183,6 +188,24 @@ export function ConfigView({ active }: ConfigViewProps) {
                   <span className="settings-switch-thumb" />
                 </span>
                 <span className="settings-switch-label">{devMode ? 'On' : 'Off'}</span>
+              </button>
+            </div>
+            <div className="settings-item">
+              <div className="settings-copy">
+                <h4>Show Thinking</h4>
+                <p>Show the model&apos;s internal thoughts in chat responses.</p>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch${showThinking ? ' is-on' : ''}`}
+                aria-pressed={showThinking}
+                onClick={toggleShowThinking}
+                disabled={configSaving}
+              >
+                <span className="settings-switch-track">
+                  <span className="settings-switch-thumb" />
+                </span>
+                <span className="settings-switch-label">{showThinking ? 'On' : 'Off'}</span>
               </button>
             </div>
           </div>

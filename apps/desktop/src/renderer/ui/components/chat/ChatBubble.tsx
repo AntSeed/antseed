@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
+import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
   buildChatMetaParts,
@@ -165,9 +166,11 @@ function StreamingMarkdown({ text }: { text: string }) {
 }
 
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
+  const showThinking = useUiSnapshot().showThinking;
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const isOpen = manualToggle ?? true;
 
+  if (!showThinking) return null;
   if (!block.thinking?.trim()) return null;
 
   const thinkingText = String(block.thinking || '');
