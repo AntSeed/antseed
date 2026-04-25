@@ -29,7 +29,7 @@ export function registerBuyerMeteringCommand(buyerCmd: Command): void {
         const store = openChannelStore(globalOpts.dataDir);
 
         try {
-          const activeChannels = store.getActiveChannels('buyer');
+          const activeChannels = store.getActiveChannelsByBuyer('buyer', buyerAddress);
           const channels = options.peer
             ? activeChannels.filter((channel) => channel.peerId === options.peer)
             : activeChannels;
