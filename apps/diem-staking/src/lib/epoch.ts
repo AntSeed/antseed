@@ -1,7 +1,7 @@
 // AntseedEmissions epoch math. The emissions contract advances epochs on a
 // 1-week wall-clock schedule from a fixed genesis; the DIEM staking proxy's
-// reward epochs track the emission epochs (operator ticks once per finalized
-// emission epoch). The frontend uses the wall-clock cadence for its
+// reward epochs track the emission epochs and can be synced/funded lazily
+// after finalization. The frontend uses the wall-clock cadence for its
 // countdown tile — it's what users care about: "when does the next
 // distribution happen".
 

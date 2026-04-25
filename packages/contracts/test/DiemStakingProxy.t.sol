@@ -577,6 +577,23 @@ contract DiemStakingProxyTest is Test {
         assertGt(proxy.usdcRewards(alice), 0, "pending USDC materialised");
     }
 
+    function test_catchUpPoints_syncsGlobalBacklogInChunks() public {
+        _stakeAs(alice, 100e18);
+
+        skip((EPOCH_DURATION * 17) + 1);
+        assertEq(proxy.currentRewardEpoch(), 0, "global reward epochs not synced yet");
+
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+        assertEq(proxy.currentRewardEpoch(), 16, "bounded sync closes first chunk");
+        assertEq(proxy.userCurrentEpoch(alice), 16, "user catches up to first chunk");
+
+        vm.prank(alice);
+        proxy.catchUpPoints(16);
+        assertEq(proxy.currentRewardEpoch(), 17, "second call closes remaining finalized epoch");
+        assertEq(proxy.userCurrentEpoch(alice), 17, "user catches up fully");
+    }
+
     function test_constructor_defaultMinUnstakeBatchOpenSecs() public {
         // Default fixture sets it to 0 explicitly; deploy a fresh proxy to
         // verify the constructor ships with the alpha default.
@@ -796,11 +813,11 @@ contract DiemStakingProxyTest is Test {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
         _settleViaProxy(channelId, 500e6);
 
-        // Cross an emission-epoch boundary so ANTS becomes claimable, then
-        // operator ticks — closes reward epoch 0 with ANTS pot.
+        // Cross an emission-epoch boundary, then close reward epoch 0. The
+        // ANTS pot is funded lazily by claimAnts.
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
+        proxy.syncRewardEpochs(1);
+        assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "pending preview uses emissions pot");
 
         // Claim USDC (O(1)).
         uint256 usdcBefore = usdc.balanceOf(alice);
@@ -813,6 +830,7 @@ contract DiemStakingProxyTest is Test {
         vm.prank(alice);
         proxy.claimAnts(1);
         assertGt(ants.balanceOf(alice) - antsBefore, 0);
+        assertTrue(proxy.rewardEpochAccounted(0), "claimAnts lazily funded epoch");
     }
 
     function test_multiStaker_proRataUsdc() public {
@@ -878,10 +896,9 @@ contract DiemStakingProxyTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION / 2);
         _stakeAs(bob, 100e18);
 
-        // Finish the reward epoch and tick.
+        // Finish and close the reward epoch; the ANTS pot is only previewed.
         vm.warp(block.timestamp + EPOCH_DURATION / 2 + 1);
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
+        proxy.syncRewardEpochs(1);
 
         uint256 aliceAnts = proxy.pendingAntsForEpoch(alice, 0);
         uint256 bobAnts = proxy.pendingAntsForEpoch(bob, 0);
@@ -903,9 +920,6 @@ contract DiemStakingProxyTest is Test {
         // Bob joins after the epoch-0 accrual window. His stake call syncs the
         // finalized reward epoch before adding his stake.
         _stakeAs(bob, 100e18);
-
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
 
         assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "alice earned during epoch 0");
         assertEq(proxy.pendingAntsForEpoch(bob, 0), 0, "post-epoch staker must not dilute epoch 0");
@@ -961,8 +975,7 @@ contract DiemStakingProxyTest is Test {
 
         // Alice is now fully unstaked. Operator ticks later.
         vm.warp(block.timestamp + EPOCH_DURATION);
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
+        proxy.syncRewardEpochs(1);
 
         // Alice should still have ANTS claimable for her contribution.
         assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "unstaked user retains points");

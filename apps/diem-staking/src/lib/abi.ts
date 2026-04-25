@@ -25,7 +25,7 @@ import { parseAbi } from 'viem';
  *
  * Writes:
  *   - stake, initiateUnstake, flush, claimUnstakeBatch, claimUsdc, claimAnts,
- *     syncRewardEpochs
+ *     syncRewardEpochs, fundRewardEpoch
  */
 export const DIEM_STAKING_PROXY_ABI = parseAbi([
   // Reads — staking
@@ -63,6 +63,7 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function claimUsdc()',
   'function claimAnts(uint32 numEpochs)',
   'function syncRewardEpochs(uint32 maxEpochs)',
+  'function fundRewardEpoch(uint32 rewardEpoch)',
 
   // Events — for "USDC distributed per completed reward epoch" aggregation.
   // Aggregated in-browser via getLogs over a bounded window; see hooks.ts.
