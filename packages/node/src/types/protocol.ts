@@ -119,12 +119,21 @@ export interface NeedAuthPayload {
   requestId?: string;
   /** Seller-computed cost for the last request (USDC base units). */
   lastRequestCost?: string;
-  /** Input tokens consumed by the last request. */
+  /** Total input tokens consumed by the last request (provider-style total — may include cached). */
   inputTokens?: string;
   /** Output tokens consumed by the last request. */
   outputTokens?: string;
   /** Cached input tokens consumed by the last request. */
   cachedInputTokens?: string;
+  /**
+   * Fresh (non-cached) input tokens consumed by the last request.
+   * Sent explicitly by the seller so the buyer doesn't have to guess at
+   * OpenAI-vs-Anthropic cached-token semantics (OpenAI: prompt_tokens
+   * includes cached; Anthropic: input_tokens excludes cached). When absent,
+   * the buyer falls back to `inputTokens - cachedInputTokens` (OpenAI
+   * convention) for backward compat with older sellers.
+   */
+  freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
 }
