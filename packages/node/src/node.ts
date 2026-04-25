@@ -151,7 +151,7 @@ export interface NodeConfig {
   /** Use only the provided bootstrapNodes and skip the official public DHT nodes. Default: false.
    *  Set true for isolated local testing where official nodes must not be contacted. */
   noOfficialBootstrap?: boolean;
-  /** Override the DHT operation timeout in ms. Defaults to DEFAULT_DHT_CONFIG.operationTimeoutMs (10 000). */
+  /** Override the DHT operation timeout in ms. Defaults to DEFAULT_DHT_CONFIG.operationTimeoutMs. */
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
@@ -478,69 +478,125 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Verify claimed on-chain stats against actual contract data, and
-    // populate volume/last-settled which are never announced by sellers.
-    //
-    // Concurrency is capped so a wildcard DHT lookup returning hundreds of
-    // peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
-    // isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
-    // will rate-limit past ~10-20 concurrent calls; we stay well under that.
-    if (this._channelsClient && this._stakingClient) {
-      const channelsClient = this._channelsClient;
-      const stakingClient = this._stakingClient;
-      const resolver = this._sellerAddressResolver;
-      const DISCOVERY_RPC_CONCURRENCY = 8;
-      const queue = peers.slice();
-      const workers: Array<Promise<void>> = [];
-      // Throttle on-chain reads across rapid discovery cycles. 60s is short
-      // enough that freshness feels real-time in the UI, and long enough that
-      // back-to-back `discoverPeers()` calls don't hammer the RPC endpoint.
-      const ON_CHAIN_STATS_TTL_MS = 60_000;
-      const nowMs = Date.now();
-      const verifyOne = async (p: PeerInfo): Promise<void> => {
-        if (
-          typeof p.onChainStatsFetchedAt === 'number'
-          && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
-        ) {
-          return;
-        }
-        try {
-          const evmAddress = resolver
-            ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
-            : peerIdToAddress(p.peerId);
-          const agentId = await stakingClient.getAgentId(evmAddress);
-          const stats = await channelsClient.getAgentStats(agentId);
-          p.onChainChannelCount = stats.channelCount;
-          p.onChainGhostCount = stats.ghostCount;
-          // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
-          // narrowing to Number — ~9M USDC fits Number.MAX_SAFE_INTEGER.
-          const volumeMicros = stats.totalVolumeUsdc;
-          p.onChainTotalVolumeUsdcMicros = volumeMicros <= BigInt(Number.MAX_SAFE_INTEGER)
-            ? Number(volumeMicros)
-            : Number.MAX_SAFE_INTEGER;
-          p.onChainLastSettledAtSec = stats.lastSettledAt;
-          p.onChainStatsFetchedAt = Date.now();
-        } catch {
-          // Per-peer verification failure — keep whatever seller metadata claimed
-          // (channelCount/ghostCount); volume/lastSettled remain undefined.
-        }
-      };
-      for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
-        workers.push((async () => {
-          for (;;) {
-            const next = queue.shift();
-            if (!next) return;
-            await verifyOne(next);
-          }
-        })());
-      }
-      await Promise.all(workers);
-    }
+    await this._enrichPeersWithOnChainStats(peers);
 
     for (const p of peers) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
     }
     return peers;
+  }
+
+  /**
+   * Look up a single peer by its peerId via the per-peer DHT topic.
+   * Much cheaper and more deterministic than walking the wildcard topic:
+   * one infohash lookup, return the first endpoint that serves matching
+   * signed metadata. Falls back to wildcard discovery for compatibility with
+   * old sellers that do not announce per-peer topics yet.
+   * Returns `null` if the peer is not currently announcing
+   * (or if its metadata is stale / signature-invalid).
+   *
+   * The returned `PeerInfo` is on-chain-enriched the same way `discoverPeers`
+   * enriches its results, so volume / last-settled / ghost counts are
+   * available when chain RPC is configured.
+   */
+  async findPeer(peerId: string): Promise<PeerInfo | null> {
+    if (!this._peerLookup) {
+      throw new Error("Node not started or not in buyer mode");
+    }
+    const normalized = peerId.trim().toLowerCase().replace(/^0x/, "");
+    if (!/^[0-9a-f]{40}$/.test(normalized)) {
+      return null;
+    }
+
+    debugLog(`[Node] findPeer(${normalized.slice(0, 12)}...) via per-peer DHT topic`);
+    let results = await this._peerLookup.findByPeerId(normalized);
+    if (results.length === 0) {
+      debugLog(`[Node]   per-peer topic empty; falling back to wildcard scan`);
+      results = (await this._peerLookup.findAll()).filter(
+        (r) => r.metadata.peerId.toLowerCase() === normalized,
+      );
+      if (results.length === 0) {
+        debugLog(`[Node]   wildcard fallback empty; not found`);
+        return null;
+      }
+    }
+
+    // Multiple endpoints can legitimately announce for the same peerId
+    // (multi-homed seller). The lookup already filtered to those whose
+    // served metadata matches the id; pick the freshest by timestamp.
+    const best = results.reduce((acc, r) =>
+      r.metadata.timestamp > acc.metadata.timestamp ? r : acc,
+    );
+    const peer = this._lookupResultToPeerInfo(best);
+    await this._enrichPeersWithOnChainStats([peer]);
+    return peer;
+  }
+
+  /**
+   * Verify claimed on-chain stats against actual contract data, and
+   * populate volume / last-settled which are never announced by sellers.
+   *
+   * Concurrency is capped so a wildcard DHT lookup returning hundreds of
+   * peers doesn't fan out into hundreds of simultaneous eth_calls (resolver
+   * isOperator + getAgentId + getAgentStats per peer). Most RPC endpoints
+   * will rate-limit past ~10-20 concurrent calls; we stay well under that.
+   *
+   * Mutates the supplied peers in place. No-op when chain clients aren't
+   * configured — callers can safely invoke this regardless.
+   */
+  private async _enrichPeersWithOnChainStats(peers: PeerInfo[]): Promise<void> {
+    if (!this._channelsClient || !this._stakingClient || peers.length === 0) {
+      return;
+    }
+    const channelsClient = this._channelsClient;
+    const stakingClient = this._stakingClient;
+    const resolver = this._sellerAddressResolver;
+    const DISCOVERY_RPC_CONCURRENCY = 8;
+    // Throttle on-chain reads across rapid discovery cycles. 60s is short
+    // enough that freshness feels real-time in the UI, and long enough that
+    // back-to-back `discoverPeers()` calls don't hammer the RPC endpoint.
+    const ON_CHAIN_STATS_TTL_MS = 60_000;
+    const nowMs = Date.now();
+    const queue = peers.slice();
+    const verifyOne = async (p: PeerInfo): Promise<void> => {
+      if (
+        typeof p.onChainStatsFetchedAt === 'number'
+        && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
+      ) {
+        return;
+      }
+      try {
+        const evmAddress = resolver
+          ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
+          : peerIdToAddress(p.peerId);
+        const agentId = await stakingClient.getAgentId(evmAddress);
+        const stats = await channelsClient.getAgentStats(agentId);
+        p.onChainChannelCount = stats.channelCount;
+        p.onChainGhostCount = stats.ghostCount;
+        // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
+        // narrowing to Number — ~9M USDC fits Number.MAX_SAFE_INTEGER.
+        const volumeMicros = stats.totalVolumeUsdc;
+        p.onChainTotalVolumeUsdcMicros = volumeMicros <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(volumeMicros)
+          : Number.MAX_SAFE_INTEGER;
+        p.onChainLastSettledAtSec = stats.lastSettledAt;
+        p.onChainStatsFetchedAt = Date.now();
+      } catch {
+        // Per-peer verification failure — keep whatever seller metadata claimed
+        // (channelCount/ghostCount); volume/lastSettled remain undefined.
+      }
+    };
+    const workers: Array<Promise<void>> = [];
+    for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
+      workers.push((async () => {
+        for (;;) {
+          const next = queue.shift();
+          if (!next) return;
+          await verifyOne(next);
+        }
+      })());
+    }
+    await Promise.all(workers);
   }
 
   /**

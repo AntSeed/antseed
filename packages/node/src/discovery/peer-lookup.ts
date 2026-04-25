@@ -5,6 +5,7 @@ import {
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
+  peerTopic,
   topicToInfoHash,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
@@ -35,7 +36,10 @@ export const DEFAULT_LOOKUP_CONFIG: Omit<LookupConfig, "dht" | "metadataResolver
   requireValidSignature: true,
   allowStaleMetadata: false,
   maxAnnouncementAgeMs: 30 * 60 * 1000,
-  maxResults: 50,
+  // Old cap was 50; with the network growing past that, browse views were
+  // silently truncated. 200 keeps the parallel metadata fan-out reasonable
+  // while no longer hiding peers from ‘network browse’.
+  maxResults: 200,
 };
 
 export interface LookupResult {
@@ -84,7 +88,31 @@ export class PeerLookup {
     return this.resolveLookupResults(shuffle(peers));
   }
 
-  private async resolveLookupResults(peers: PeerEndpoint[]): Promise<LookupResult[]> {
+  /**
+   * Look up a single peer by its peerId via the per-peer DHT topic
+   * (`antseed:peer:<peerId>`). Returns every endpoint whose served metadata
+   * actually matches the requested peerId — a remote endpoint announcing
+   * the topic but serving a different peer's metadata is filtered out, so
+   * a hostile peer cannot squat another peer's identity.
+   *
+   * The peerId is normalized to lowercase hex; passing an empty / invalid
+   * id returns an empty list.
+   */
+  async findByPeerId(peerId: string): Promise<LookupResult[]> {
+    const normalized = peerId.trim().toLowerCase().replace(/^0x/, "");
+    if (!/^[0-9a-f]{40}$/.test(normalized)) return [];
+    const infoHash = topicToInfoHash(peerTopic(normalized));
+    const peers = await this.config.dht.lookup(infoHash);
+    return this.resolveLookupResults(shuffle(peers), { metadataPeerId: normalized });
+  }
+
+  private async resolveLookupResults(
+    peers: PeerEndpoint[],
+    options?: { metadataPeerId?: string; maxResults?: number },
+  ): Promise<LookupResult[]> {
+    const maxResults = options?.maxResults ?? this.config.maxResults;
+    const metadataPeerId = options?.metadataPeerId;
+
     // Deduplicate endpoints before firing parallel requests
     const seenEndpoints = new Set<string>();
     const uniquePeers: PeerEndpoint[] = [];
@@ -104,8 +132,11 @@ export class PeerLookup {
     const results: LookupResult[] = [];
     for (const r of settled) {
       if (r.status === "fulfilled" && r.value !== null) {
+        if (metadataPeerId && r.value.metadata.peerId.toLowerCase() !== metadataPeerId) {
+          continue;
+        }
         results.push(r.value);
-        if (results.length >= this.config.maxResults) break;
+        if (results.length >= maxResults) break;
       }
     }
     return results;
