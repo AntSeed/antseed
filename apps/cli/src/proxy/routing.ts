@@ -87,6 +87,51 @@ function getPeerProviderProtocols(
   return inferred
 }
 
+function getDirectServiceProtocols(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string | null,
+): ServiceApiProtocol[] {
+  const normalizedRequestedService = requestedService?.trim()
+  if (!normalizedRequestedService) return []
+
+  const fromMetadata = (
+    peer as PeerInfo & {
+      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
+    }
+  ).providerServiceApiProtocols?.[provider]?.services
+  if (!fromMetadata) return []
+
+  const directMatchKey = Object.keys(fromMetadata).find(
+    (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+  )
+  const protocols = directMatchKey ? fromMetadata[directMatchKey] : undefined
+  return protocols?.length ? Array.from(new Set(protocols)) : []
+}
+
+function selectProviderByProtocol(
+  candidates: string[],
+  requestProtocol: ServiceApiProtocol,
+  getSupportedProtocols: (provider: string) => ServiceApiProtocol[],
+): PeerProtocolRoutePlan | null {
+  let transformedFallback: PeerProtocolRoutePlan | null = null
+  for (const provider of candidates) {
+    const supportedProtocols = getSupportedProtocols(provider)
+    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
+    if (!selection) {
+      continue
+    }
+    if (!selection.requiresTransform) {
+      return { provider, selection }
+    }
+    if (!transformedFallback) {
+      transformedFallback = { provider, selection }
+    }
+  }
+
+  return transformedFallback
+}
+
 export function resolvePeerRoutePlan(
   peer: PeerInfo,
   requestProtocol: ServiceApiProtocol | null,
@@ -113,22 +158,20 @@ export function resolvePeerRoutePlan(
     return provider ? { provider, selection: null } : null
   }
 
-  let transformedFallback: PeerProtocolRoutePlan | null = null
-  for (const provider of candidates) {
-    const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedService, serviceFilterMode)
-    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
-    if (!selection) {
-      continue
-    }
-    if (!selection.requiresTransform) {
-      return { provider, selection }
-    }
-    if (!transformedFallback) {
-      transformedFallback = { provider, selection }
-    }
+  if (serviceFilterMode === 'lenient' && requestedService?.trim()) {
+    const exactPlan = selectProviderByProtocol(
+      candidates,
+      requestProtocol,
+      (provider) => getDirectServiceProtocols(peer, provider, requestedService),
+    )
+    if (exactPlan) return exactPlan
   }
 
-  return transformedFallback
+  return selectProviderByProtocol(
+    candidates,
+    requestProtocol,
+    (provider) => getPeerProviderProtocols(peer, provider, requestedService, serviceFilterMode),
+  )
 }
 
 export function selectCandidatePeersForRouting(

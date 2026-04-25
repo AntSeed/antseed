@@ -105,6 +105,36 @@ test('selectCandidatePeersForRouting in lenient mode keeps a peer whose advertis
   assert.equal(plan!.selection?.requiresTransform, true)
 })
 
+test('selectCandidatePeersForRouting in lenient mode prefers exact service matches before provider fallback', () => {
+  const peer = makePeer('a', ['openai', 'local-llm'])
+  peer.providerServiceApiProtocols = {
+    openai: {
+      services: {
+        'gpt-4o': ['openai-chat-completions'],
+      },
+    },
+    'local-llm': {
+      services: {
+        llama: ['openai-chat-completions'],
+      },
+    },
+  }
+
+  const result = selectCandidatePeersForRouting(
+    [peer],
+    'openai-chat-completions',
+    'llama',
+    null,
+    'lenient',
+  )
+
+  assert.equal(result.candidatePeers.length, 1)
+  const plan = result.routePlanByPeerId.get(peer.peerId)
+  assert.ok(plan, 'expected a route plan for the lenient-kept peer')
+  assert.equal(plan!.provider, 'local-llm')
+  assert.equal(plan!.selection?.requiresTransform, false)
+})
+
 test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
   const peerWithoutMetadata = makePeer('a', ['openai'])
   const result = selectCandidatePeersForRouting(
