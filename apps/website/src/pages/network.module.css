@@ -24,6 +24,17 @@
   text-decoration: none;
 }
 
+.eyebrow {
+  font-size: 12px;
+  color: #1FD87A;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  font-style: italic;
+  margin-bottom: 12px;
+  margin-top: 0;
+}
+
 .title {
   font-size: clamp(32px, 5vw, 52px);
   font-weight: 800;
