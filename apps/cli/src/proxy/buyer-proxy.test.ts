@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { Readable } from 'node:stream'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
-import { parsePersistedPeers, selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
+import { BuyerProxy, parsePersistedPeers, selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -10,6 +11,83 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
     lastSeen: Date.now(),
     providers,
   }
+}
+
+function makeProxyRequest(options: {
+  path?: string
+  headers?: Record<string, string>
+  body?: Record<string, unknown>
+}): Readable {
+  const body = JSON.stringify(options.body ?? { model: 'gpt-4o', messages: [] })
+  const req = Readable.from([Buffer.from(body)]) as Readable & {
+    method: string
+    url: string
+    headers: Record<string, string>
+    complete: boolean
+  }
+  req.method = 'POST'
+  req.url = options.path ?? '/v1/chat/completions'
+  req.headers = {
+    'content-type': 'application/json',
+    ...(options.headers ?? {}),
+  }
+  req.complete = true
+  return req
+}
+
+function makeProxyResponse(): {
+  statusCode: number
+  headers: Record<string, string>
+  body: string
+  headersSent: boolean
+  writableEnded: boolean
+  writeHead: (statusCode: number, headers: Record<string, string>) => unknown
+  end: (chunk?: string | Buffer | Uint8Array) => unknown
+  once: () => unknown
+} {
+  return {
+    statusCode: 0,
+    headers: {},
+    body: '',
+    headersSent: false,
+    writableEnded: false,
+    writeHead(statusCode: number, headers: Record<string, string>) {
+      this.statusCode = statusCode
+      this.headers = headers
+      this.headersSent = true
+      return this
+    },
+    end(chunk?: string | Buffer | Uint8Array) {
+      if (chunk !== undefined) {
+        this.body += Buffer.from(chunk).toString('utf8')
+      }
+      this.writableEnded = true
+      return this
+    },
+    once() {
+      return this
+    },
+  }
+}
+
+function makeBuyerProxyWithPeers(initialPeers: PeerInfo[], refreshedPeers = initialPeers): BuyerProxy {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: {
+      router: null,
+    } as any,
+  })
+  ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) =>
+    options?.forceRefresh ? refreshedPeers : initialPeers
+  ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
+  return proxy
+}
+
+async function invokeProxy(proxy: BuyerProxy, req: Readable): Promise<ReturnType<typeof makeProxyResponse>> {
+  const res = makeProxyResponse()
+  await (proxy as any)._handleRequest(req, res)
+  return res
 }
 
 test('selectCandidatePeersForRouting enforces explicit provider overrides even without request protocol', () => {
@@ -146,6 +224,68 @@ test('selectCandidatePeersForRouting can still include peers without service pro
 
   assert.equal(result.candidatePeers.length, 1)
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
+})
+
+test('pinned proxy request reports when the pinned peer is not discoverable', async () => {
+  const pinnedPeerId = 'a'.repeat(40)
+  const otherPeer = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([otherPeer])
+  const req = makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': pinnedPeerId,
+    },
+  })
+
+  const res = await invokeProxy(proxy, req)
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /is not reachable right now/)
+  assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
+})
+
+test('pinned proxy request reports explicit provider mismatch separately', async () => {
+  const pinnedPeer = makePeer('a', ['local-llm'])
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer])
+  const req = makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': pinnedPeer.peerId,
+      'x-antseed-provider': 'openai',
+    },
+  })
+
+  const res = await invokeProxy(proxy, req)
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /does not offer provider=openai/)
+  assert.match(res.body, /Available providers: local-llm/)
+  assert.match(res.body, /x-antseed-provider header/)
+})
+
+test('pinned proxy request reports protocol or service mismatch when provider is available', async () => {
+  const pinnedPeer = makePeer('a', ['local-llm'])
+  pinnedPeer.providerServiceApiProtocols = {
+    'local-llm': {
+      services: {
+        llama: ['anthropic-messages'],
+      },
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer])
+  const req = makeProxyRequest({
+    path: '/v1/responses',
+    headers: {
+      'x-antseed-pin-peer': pinnedPeer.peerId,
+      'x-antseed-provider': 'local-llm',
+    },
+    body: { model: 'llama', input: 'hello' },
+  })
+
+  const res = await invokeProxy(proxy, req)
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /does not support this request/)
+  assert.match(res.body, /provider=local-llm/)
+  assert.match(res.body, /protocol=openai-responses/)
 })
 
 // parsePersistedPeers — hydrates _cachedPeers from buyer.state.json at startup

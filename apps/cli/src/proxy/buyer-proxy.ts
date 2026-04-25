@@ -1044,9 +1044,9 @@ export class BuyerProxy {
     }
 
     if (!pinnedDiscovered) {
-      const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
+      const logSource = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${source})`)
+      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
         `Pinned peer ${explicitPeerId.slice(0, 12)}... is not reachable right now. `
@@ -1058,10 +1058,30 @@ export class BuyerProxy {
     }
 
     if (routingPeers.length === 0) {
+      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === explicitPeerId) ?? null
       const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
       const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
       const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
+
+      if (explicitProvider && pinnedPeer) {
+        const providers = pinnedPeer.providers
+          .map((provider) => provider.trim().toLowerCase())
+          .filter((provider) => provider.length > 0)
+        if (!providers.includes(explicitProvider)) {
+          const providerList = providers.length > 0 ? providers.join(', ') : 'none'
+          log(`Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
+          res.writeHead(502, { 'content-type': 'text/plain' })
+          res.end(
+            `Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
+            + `Available providers: ${providerList}. `
+            + 'Remove or change the x-antseed-provider header, or pick a different peer. '
+            + diagnostics,
+          )
+          return
+        }
+      }
+
       log(`Pinned peer ${explicitPeerId.slice(0, 12)}... filtered out by protocol/service match`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
