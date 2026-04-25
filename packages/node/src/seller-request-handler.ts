@@ -197,7 +197,7 @@ export class SellerRequestHandler {
             // amount that is still below `spent`, which the seller would then
             // reject as underfunded — producing an infinite 402 loop.
             const target = spent + BigInt(baseRequirements.minBudgetPerRequest);
-            const isFullyExhausted = reserveMax > 0n && accepted >= reserveMax;
+            const isFullyExhausted = reserveMax > 0n && (accepted >= reserveMax || target > reserveMax);
             const requirements = {
               ...baseRequirements,
               requiredCumulativeAmount: target.toString(),
@@ -208,9 +208,12 @@ export class SellerRequestHandler {
               ...(isFullyExhausted ? { code: PAYMENT_CODE_CHANNEL_EXHAUSTED } : {}),
             };
             if (isFullyExhausted) {
-              debugLog(`[SellerHandler] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
+              debugLog(`[SellerHandler] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted} target=${target} reserveMax=${reserveMax}) — closing and returning 402`);
+              // Default settleSession() performs final close(); do not use
+              // settleOnly here because exhausted channels must release the
+              // buyer's unused reserve before the buyer opens a replacement.
               void spm.settleSession(buyerPeerId).catch((err) => {
-                debugWarn(`[SellerHandler] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
+                debugWarn(`[SellerHandler] Failed to close exhausted session: ${err instanceof Error ? err.message : err}`);
               });
             } else {
               debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402 with requiredCumulativeAmount=${target}, awaiting higher SpendingAuth`);
