@@ -308,21 +308,10 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
           await node.start();
           match = await node.findPeer(normalized);
           if (match) {
-            spinner.succeed(chalk.green('Found via per-peer DHT topic'));
-            sourceLabel = 'live DHT (per-peer topic)';
+            spinner.succeed(chalk.green('Found via live DHT lookup'));
+            sourceLabel = 'live DHT lookup';
           } else {
-            // Per-peer topic missed — fall back to a wildcard scan in case
-            // this peer is running an older build that doesn't announce
-            // the per-peer topic yet.
-            spinner.text = `Per-peer topic empty, scanning wildcard for ${normalized.slice(0, 12)}...`;
-            const all = await node.discoverPeers();
-            match = all.find((p) => p.peerId.toLowerCase() === normalized) ?? null;
-            if (match) {
-              spinner.succeed(chalk.green('Found via wildcard scan'));
-              sourceLabel = 'live DHT (wildcard scan)';
-            } else {
-              spinner.fail(chalk.red(`Peer ${normalized} not announcing right now`));
-            }
+            spinner.fail(chalk.red(`Peer ${normalized} not announcing right now`));
           }
         } catch (err) {
           spinner.fail(chalk.red(`Discovery failed: ${(err as Error).message}`));

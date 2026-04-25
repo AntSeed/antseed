@@ -490,7 +490,9 @@ export class AntseedNode extends EventEmitter {
    * Look up a single peer by its peerId via the per-peer DHT topic.
    * Much cheaper and more deterministic than walking the wildcard topic:
    * one infohash lookup, return the first endpoint that serves matching
-   * signed metadata. Returns `null` if the peer is not currently announcing
+   * signed metadata. Falls back to wildcard discovery for compatibility with
+   * old sellers that do not announce per-peer topics yet.
+   * Returns `null` if the peer is not currently announcing
    * (or if its metadata is stale / signature-invalid).
    *
    * The returned `PeerInfo` is on-chain-enriched the same way `discoverPeers`
@@ -507,10 +509,16 @@ export class AntseedNode extends EventEmitter {
     }
 
     debugLog(`[Node] findPeer(${normalized.slice(0, 12)}...) via per-peer DHT topic`);
-    const results = await this._peerLookup.findByPeerId(normalized);
+    let results = await this._peerLookup.findByPeerId(normalized);
     if (results.length === 0) {
-      debugLog(`[Node]   per-peer topic empty; not found`);
-      return null;
+      debugLog(`[Node]   per-peer topic empty; falling back to wildcard scan`);
+      results = (await this._peerLookup.findAll()).filter(
+        (r) => r.metadata.peerId.toLowerCase() === normalized,
+      );
+      if (results.length === 0) {
+        debugLog(`[Node]   wildcard fallback empty; not found`);
+        return null;
+      }
     }
 
     // Multiple endpoints can legitimately announce for the same peerId
