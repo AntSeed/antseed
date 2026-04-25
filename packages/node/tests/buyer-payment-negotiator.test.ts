@@ -272,6 +272,78 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('retry');
     });
 
+    it('retires session as settled and renegotiates without retrying extend when seller flags channel_exhausted', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockClear();
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.retireSession as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      });
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      // Seller signals the channel is permanently exhausted: requiredCumulativeAmount
+      // exceeds the on-chain reserveMaxAmount, so no signing on this channel can succeed.
+      const response = make402Response({
+        error: 'payment_required',
+        code: 'channel_exhausted',
+        minBudgetPerRequest: '10000',
+        suggestedAmount: '1000000',
+        requiredCumulativeAmount: '11019626',
+        currentSpent: '11009626',
+        currentAcceptedCumulative: '10998222',
+        reserveMaxAmount: '11000000',
+        channelId: '0x' + 'cd'.repeat(32),
+      });
+
+      const result = await negotiator.handle402(response, peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      // Critical: no futile signing on the dead channel.
+      expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
+      // Fresh negotiation opens a new channel.
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('detects exhaustion via reserveMaxAmount even when seller omits the explicit code', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockClear();
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.retireSession as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      });
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      // Older sellers might emit reserveMaxAmount without the explicit code field —
+      // the buyer should still detect exhaustion when required > reserveMax.
+      const response = make402Response({
+        error: 'payment_required',
+        minBudgetPerRequest: '10000',
+        suggestedAmount: '1000000',
+        requiredCumulativeAmount: '11019626',
+        reserveMaxAmount: '11000000',
+        channelId: '0x' + 'cd'.repeat(32),
+      });
+
+      const result = await negotiator.handle402(response, peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
     it('retires session as ghost and negotiates fresh reserve when extendCurrentSpendingAuth makes no progress', async () => {
       await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();

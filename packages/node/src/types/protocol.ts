@@ -88,7 +88,22 @@ export interface PaymentRequiredPayload {
   currentAcceptedCumulative?: string;
   /** Channel ID for the exhausted session (so buyer can match it locally). */
   channelId?: string;
+  /**
+   * On-chain reserve ceiling for this channel. When present and the seller's
+   * `requiredCumulativeAmount` exceeds it, the channel is permanently
+   * exhausted and the buyer must retire it and open a new one — no amount
+   * of additional signing on the same channel will be accepted.
+   */
+  reserveMaxAmount?: string;
+  /**
+   * Stable machine-readable code so callers can switch on it without coupling
+   * to internal phrasing. Only set on irrecoverable 402s today.
+   */
+  code?: PaymentRequiredCode;
 }
+
+export const PAYMENT_CODE_CHANNEL_EXHAUSTED = 'channel_exhausted' as const;
+export type PaymentRequiredCode = typeof PAYMENT_CODE_CHANNEL_EXHAUSTED;
 
 /**
  * Seller tells buyer that the current cumulative authorization is insufficient.

@@ -3,7 +3,7 @@ import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import type { PaymentRequiredPayload } from '../types/protocol.js';
+import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
 import type { ChannelsClient } from './evm/channels-client.js';
@@ -322,7 +322,32 @@ export class BuyerPaymentNegotiator {
         ? safeBigInt(String(directPaymentBody.requiredCumulativeAmount))
         : null;
 
-    if (hadLockedSession || this._bpm.getActiveSession(peer.peerId)) {
+    // On-chain reserve ceiling the seller is willing to accept. Used to detect
+    // permanently exhausted channels (where requiredCumulativeAmount > reserveMaxAmount)
+    // so the buyer doesn't loop signing higher cumulatives the seller will reject.
+    const sellerReserveMax = buffered?.reserveMaxAmount != null
+      ? safeBigInt(buffered.reserveMaxAmount)
+      : responseAlreadyHasRequirements && directPaymentBody?.reserveMaxAmount != null
+        ? safeBigInt(String(directPaymentBody.reserveMaxAmount))
+        : null;
+    const channelExhausted = buffered?.code === PAYMENT_CODE_CHANNEL_EXHAUSTED
+      || (responseAlreadyHasRequirements && directPaymentBody?.code === PAYMENT_CODE_CHANNEL_EXHAUSTED)
+      || (requiredCumulativeTarget != null && sellerReserveMax != null && requiredCumulativeTarget > sellerReserveMax);
+
+    const hasActiveSession = hadLockedSession || this._bpm.getActiveSession(peer.peerId) != null;
+
+    if (channelExhausted && hasActiveSession) {
+      debugLog(
+        `[BuyerNegotiator] Channel exhausted for ${peer.peerId.slice(0, 12)}... ` +
+        `(required=${requiredCumulativeTarget ?? 'n/a'} > reserveMax=${sellerReserveMax ?? 'n/a'}) — ` +
+        `retiring session and renegotiating a fresh reserve`,
+      );
+      // 'ghost' rather than 'settled' — buyer hasn't observed the on-chain
+      // settle land. Matches the other buyer-side give-up-locally callsites.
+      this._bpm.retireSession(peer.peerId, 'ghost');
+      this._lockedPeers.delete(peer.peerId);
+      this._firstRequestSent.delete(peer.peerId);
+    } else if (hasActiveSession) {
       const recovered = await this._recoverExistingSession(
         peer,
         conn,
