@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState, useMemo} from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
+import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
@@ -242,7 +243,7 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds your earnings until payout. AntSeed removes the aggregator entirely. Requests go peer-to-peer. Payments settle on-chain directly to the provider's wallet. Anyone can provide — no approval needed. The network has no company behind it and no off switch."},
+  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds your earnings until payout. AntSeed removes the aggregator entirely. Requests go peer-to-peer. Payments settle on-chain directly to the provider's wallet. Anyone can provide — no approval needed. The network has no company behind it and no off switch. <a href=\"/vs/openrouter\" style=\"color:#1FD87A;font-weight:500;\">Read the full comparison →</a>"},
   {q:'What happens when LLMs become so good that anyone can do anything?', a:"That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers. The supply side grows, not shrinks. But \"anyone can do anything\" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service."},
   {q:"Isn't this just like P2P file sharing? Netflix killed that.", a:"Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. But that logic only applies to humans who care about experience. Agents don't. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability. On those three axes, an open P2P network with no middleman and no markup wins every time."},
   {q:'Is AntSeed built for agents specifically?', a:"It works for humans today and is being used by humans now. But the architecture decisions: USDC-native payments, no account system, open discovery, always-on peers, are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use."},
@@ -281,16 +282,32 @@ export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   const download = useLatestDesktopDownload();
 
+  const faqLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: FAQ_DATA.map(({q, a}) => ({
+      '@type': 'Question',
+      name: q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: a.replace(/<[^>]*>/g, '').trim(),
+      },
+    })),
+  };
+
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. No gatekeepers. Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers."
+      description="The open market for AI inference. Serve or consume AI peer-to-peer. Pay per request in USDC. Anonymous. Private. No gatekeepers."
       wrapperClassName="homepage-wrapper">
+      <Head>
+        <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
+      </Head>
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>AI, Set Free</h1>
-        <p className={styles.heroSub}>The open market for AI inference. No gatekeepers.</p>
+        <h1 className={styles.heroTitle}>The open market for AI inference.</h1>
+        <p className={styles.heroSub}>Permissionless peer-to-peer. Pay per request in USDC.</p>
       </section>
 
       {/* Liveness */}

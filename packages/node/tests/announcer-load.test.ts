@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { ANTSEED_WILDCARD_TOPIC, serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
+import { ANTSEED_WILDCARD_TOPIC, peerTopic, serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { verifySignature, bytesToHex, hexToBytes } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 
@@ -100,7 +100,7 @@ describe('PeerAnnouncer live load metadata', () => {
     });
   });
 
-  it('announces deduped lowercase service topics and wildcard', async () => {
+  it('announces deduped lowercase service topics, wildcard, and per-peer topic', async () => {
     const { config, dht } = makeConfig();
     config.providers = [
       {
@@ -116,9 +116,11 @@ describe('PeerAnnouncer live load metadata', () => {
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
 
-    expect(dht.announce).toHaveBeenCalledTimes(2);
+    // canonical service topic + wildcard + per-peer topic = 3
+    expect(dht.announce).toHaveBeenCalledTimes(3);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi2.5')), 6882);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(ANTSEED_WILDCARD_TOPIC), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(peerTopic(config.identity.peerId)), 6882);
   });
 
   it('announces compact service-search topic when canonical service key differs', async () => {
@@ -142,5 +144,6 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi 2.5')), 6882);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceSearchTopic('kimi2.5')), 6882);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(ANTSEED_WILDCARD_TOPIC), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(peerTopic(config.identity.peerId)), 6882);
   });
 });

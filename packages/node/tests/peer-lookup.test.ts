@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PeerLookup, type LookupConfig } from '../src/discovery/peer-lookup.js';
-import { serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
+import { peerTopic, serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import type { DHTNode } from '../src/discovery/dht-node.js';
 import type { MetadataResolver, PeerEndpoint } from '../src/discovery/metadata-resolver.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
@@ -119,6 +119,96 @@ describe('PeerLookup', () => {
     const results = await peerLookup.findByService('kimi2.5');
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(results).toHaveLength(1);
+  });
+
+  it('findByPeerId looks up the per-peer topic and filters out spoofed metadata', async () => {
+    const targetId = 'a'.repeat(40);
+    const otherId = 'b'.repeat(40);
+
+    const honest: PeerEndpoint = { host: '34.10.10.10', port: 6882 };
+    const liar: PeerEndpoint = { host: '5.5.5.5', port: 6882 };
+    const expectedHashHex = topicToInfoHash(peerTopic(targetId)).toString('hex');
+
+    const lookup = vi.fn(async (hash: Buffer) => {
+      if (hash.toString('hex') === expectedHashHex) return [honest, liar];
+      return [];
+    });
+    const dht = { lookup } as unknown as DHTNode;
+
+    const resolve = vi.fn(async (peer: PeerEndpoint) => {
+      // Honest peer serves metadata that matches the requested id; the
+      // liar announces under the same per-peer topic but serves a
+      // different identity — PeerLookup must drop it.
+      if (peer.host === honest.host) return buildMetadata({ peerId: targetId as any });
+      if (peer.host === liar.host) return buildMetadata({ peerId: otherId as any });
+      return null;
+    });
+    const metadataResolver: MetadataResolver = { resolve };
+    const config: LookupConfig = {
+      dht,
+      metadataResolver,
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 50,
+    };
+    const peerLookup = new PeerLookup(config);
+
+    const results = await peerLookup.findByPeerId(targetId);
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.host).toBe(honest.host);
+    expect(results[0]?.metadata.peerId).toBe(targetId);
+  });
+
+  it('findByPeerId applies maxResults after filtering matching metadata', async () => {
+    const targetId = 'a'.repeat(40);
+    const otherId = 'b'.repeat(40);
+
+    const liar: PeerEndpoint = { host: '5.5.5.5', port: 6882 };
+    const honest: PeerEndpoint = { host: '34.10.10.10', port: 6882 };
+    const lookup = vi.fn(async () => [liar, honest]);
+    const dht = { lookup } as unknown as DHTNode;
+
+    const resolve = vi.fn(async (peer: PeerEndpoint) => {
+      if (peer.host === liar.host) return buildMetadata({ peerId: otherId as any });
+      if (peer.host === honest.host) return buildMetadata({ peerId: targetId as any });
+      return null;
+    });
+    const metadataResolver: MetadataResolver = { resolve };
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver,
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 1,
+    });
+
+    const results = await peerLookup.findByPeerId(targetId);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.host).toBe(honest.host);
+  });
+
+  it('findByPeerId returns empty for invalid input without hitting the DHT', async () => {
+    const lookup = vi.fn();
+    const dht = { lookup } as unknown as DHTNode;
+    const metadataResolver: MetadataResolver = { resolve: vi.fn() };
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver,
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 50,
+    });
+
+    expect(await peerLookup.findByPeerId('')).toEqual([]);
+    expect(await peerLookup.findByPeerId('   ')).toEqual([]);
+    expect(await peerLookup.findByPeerId('not-a-peer')).toEqual([]);
+    expect(await peerLookup.findByPeerId('a'.repeat(39))).toEqual([]);
+    expect(await peerLookup.findByPeerId('g'.repeat(40))).toEqual([]);
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it('preserves metadata publicAddress so callers can prefer it over the DHT source host', async () => {
