@@ -17,8 +17,14 @@ export interface DHTNodeConfig {
 export const DEFAULT_DHT_CONFIG: Omit<DHTNodeConfig, "peerId"> = {
   port: 6881,
   bootstrapNodes: toBootstrapConfig(OFFICIAL_BOOTSTRAP_NODES),
-  reannounceIntervalMs: 15 * 60 * 1000,
-  operationTimeoutMs: 10_000,
+  // 5 min — short enough that a missed reannounce is recovered well before
+  // most BEP-5 storage nodes expire the value (~30 min). Used to be 15 min,
+  // which sat right at the edge and caused intermittent visibility gaps.
+  reannounceIntervalMs: 5 * 60 * 1000,
+  // 25s — long enough for a cold routing table to fan out and for the DHT
+  // to drain its 'peer' events. With 10s we frequently observed lookups
+  // returning a small subset of announcers right after bootstrap.
+  operationTimeoutMs: 25_000,
 };
 
 function isPublicIP(host: string): boolean {
@@ -45,6 +51,17 @@ function normalizeTopicSegment(value: string): string {
 
 /** Wildcard topic that all peers announce on — used for general discovery. */
 export const ANTSEED_WILDCARD_TOPIC = "antseed:*";
+
+/**
+ * Per-peer topic that the announcer registers under so callers can look
+ * up a single peer by its peerId without scanning the wildcard. Buyers do
+ * `dht.lookup(topicToInfoHash(peerTopic(peerId)))` to get the peer's
+ * signaling endpoint(s) directly. The peerId is normalized to lowercase
+ * hex (no `0x`); validation is the caller's responsibility.
+ */
+export function peerTopic(peerId: string): string {
+  return "antseed:peer:" + peerId.trim().toLowerCase().replace(/^0x/, "");
+}
 
 export function normalizeServiceTopicKey(serviceName: string): string {
   return normalizeTopicSegment(serviceName);

@@ -6,6 +6,7 @@ import {
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
+  peerTopic,
   topicToInfoHash,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
@@ -302,6 +303,13 @@ export class PeerAnnouncer {
     }
 
     if (!(await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC))) failures += 1;
+
+    // Per-peer topic: lets buyers do a deterministic lookup-by-peerId without
+    // scanning the (saturated) wildcard. Cheap to publish — one extra announce
+    // per cycle — and dramatically improves "find this exact peer" queries.
+    if (!(await this._tryAnnounceTopic(peerTopic(this.config.identity.peerId)))) {
+      failures += 1;
+    }
 
     if (this.config.offerings) {
       const announcedCapabilities = new Set<string>();

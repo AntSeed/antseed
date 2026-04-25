@@ -283,15 +283,21 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
       const globalOpts = getGlobalOptions(networkCmd);
       const config = await loadConfig(globalOpts.config);
 
-      let peers = await loadPeersFromBuyerDaemon(globalOpts.dataDir);
-      let sourceLabel = 'buyer daemon cache';
+      const cachedPeers = await loadPeersFromBuyerDaemon(globalOpts.dataDir);
+      let match: PeerInfo | null =
+        cachedPeers?.find((p) => p.peerId.toLowerCase() === normalized) ?? null;
+      let sourceLabel = match ? 'buyer daemon cache' : '';
 
-      if (!peers) {
+      // Fall back to a live DHT lookup when the cache misses or the daemon
+      // isn't running. Prefer the per-peer topic (deterministic, one infohash)
+      // over scanning the wildcard — the wildcard is saturated on a busy
+      // network and routinely omits individual peers.
+      if (!match) {
         const bootstrapNodes = config.network.bootstrapNodes.length > 0
           ? toBootstrapConfig(parseBootstrapList(config.network.bootstrapNodes))
           : undefined;
         const paymentsConfig = buildPaymentsConfig(config.payments?.crypto);
-        const spinner = ora(`Discovering peer ${normalized.slice(0, 12)}...`).start();
+        const spinner = ora(`Looking up peer ${normalized.slice(0, 12)}...`).start();
         const node = new AntseedNode({
           role: 'buyer',
           ...(bootstrapNodes ? { bootstrapNodes } : {}),
@@ -300,9 +306,24 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
         });
         try {
           await node.start();
-          peers = await node.discoverPeers();
-          spinner.succeed(chalk.green(`Found ${peers.length} peer(s)`));
-          sourceLabel = 'live DHT discovery';
+          match = await node.findPeer(normalized);
+          if (match) {
+            spinner.succeed(chalk.green('Found via per-peer DHT topic'));
+            sourceLabel = 'live DHT (per-peer topic)';
+          } else {
+            // Per-peer topic missed — fall back to a wildcard scan in case
+            // this peer is running an older build that doesn't announce
+            // the per-peer topic yet.
+            spinner.text = `Per-peer topic empty, scanning wildcard for ${normalized.slice(0, 12)}...`;
+            const all = await node.discoverPeers();
+            match = all.find((p) => p.peerId.toLowerCase() === normalized) ?? null;
+            if (match) {
+              spinner.succeed(chalk.green('Found via wildcard scan'));
+              sourceLabel = 'live DHT (wildcard scan)';
+            } else {
+              spinner.fail(chalk.red(`Peer ${normalized} not announcing right now`));
+            }
+          }
         } catch (err) {
           spinner.fail(chalk.red(`Discovery failed: ${(err as Error).message}`));
           try { await node.stop(); } catch { /* ignore */ }
@@ -311,9 +332,12 @@ export function registerNetworkPeerCommand(networkCmd: Command): void {
         try { await node.stop(); } catch { /* ignore */ }
       }
 
-      const match = peers!.find((p) => p.peerId.toLowerCase() === normalized) ?? null;
       if (!match) {
-        console.error(chalk.red(`Peer ${normalized} not found (source: ${sourceLabel}).`));
+        console.error(
+          chalk.red(
+            `Peer ${normalized} not found${sourceLabel ? ` (source: ${sourceLabel})` : ''}.`,
+          ),
+        );
         console.error(chalk.dim('Run `antseed network browse` to see all peers currently visible on the network.'));
         process.exit(1);
       }
