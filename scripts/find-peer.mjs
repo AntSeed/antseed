@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Fresh DHT lookup for a specific peerId, independent of any running buyer
-// daemon's cache. Bootstraps a brand-new DHT node, performs a wildcard-topic
-// lookup, fetches metadata over HTTP for every endpoint, and prints whichever
-// announcement matches the requested peerId.
+// daemon's cache. Bootstraps a brand-new DHT node, performs a per-peer-topic
+// lookup first, then falls back to the wildcard topic to characterize the old
+// discovery path. For each endpoint it fetches metadata over HTTP and prints
+// announcements that match the requested peerId.
 //
 // Usage:
 //   node scripts/find-peer.mjs <peerId>
@@ -13,13 +14,19 @@ import {
   DHTNode,
   DEFAULT_DHT_CONFIG,
   ANTSEED_WILDCARD_TOPIC,
+  peerTopic,
   topicToInfoHash,
 } from "../packages/node/dist/discovery/dht-node.js";
 import { HttpMetadataResolver } from "../packages/node/dist/discovery/http-metadata-resolver.js";
 
-const TARGET = (process.argv[2] ?? "").toLowerCase();
+function normalizePeerId(raw) {
+  const cleaned = raw.trim().toLowerCase().replace(/^0x/, "");
+  return /^[0-9a-f]{40}$/.test(cleaned) ? cleaned : null;
+}
+
+const TARGET = normalizePeerId(process.argv[2] ?? "");
 if (!TARGET) {
-  console.error("usage: node scripts/find-peer.mjs <peerId>");
+  console.error("usage: node scripts/find-peer.mjs <40-char-peerId>");
   process.exit(1);
 }
 
@@ -48,28 +55,7 @@ function summarizeMetadata(md) {
   return { peerId, name, services };
 }
 
-async function main() {
-  console.log(`[*] target peerId: ${TARGET}`);
-  console.log(`[*] starting fresh DHT node on port ${LOOKUP_PORT}...`);
-
-  const dht = new DHTNode({
-    ...DEFAULT_DHT_CONFIG,
-    peerId: "00".repeat(20), // dummy — we only do lookups, never announce
-    port: LOOKUP_PORT,
-    operationTimeoutMs: OPERATION_TIMEOUT_MS,
-  });
-
-  await dht.start();
-  console.log(`[*] DHT ready; routing-table nodes: ${dht.getNodeCount()}`);
-
-  const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-  console.log(
-    `[*] looking up wildcard topic '${ANTSEED_WILDCARD_TOPIC}' (${infoHash.toString("hex")})`,
-  );
-
-  const rawEndpoints = await dht.lookup(infoHash);
-  console.log(`[*] DHT returned ${rawEndpoints.length} endpoint(s)`);
-
+function dedupeEndpoints(rawEndpoints) {
   const seen = new Set();
   const endpoints = [];
   for (const ep of rawEndpoints) {
@@ -78,9 +64,18 @@ async function main() {
     seen.add(key);
     endpoints.push(ep);
   }
-  console.log(`[*] ${endpoints.length} unique endpoint(s); resolving metadata...`);
+  return endpoints;
+}
 
-  const resolver = new HttpMetadataResolver({ timeoutMs: METADATA_TIMEOUT_MS });
+async function lookupTopic({ dht, resolver, label, topic, target }) {
+  const infoHash = topicToInfoHash(topic);
+  console.log(`[*] looking up ${label} topic '${topic}' (${infoHash.toString("hex")})`);
+
+  const rawEndpoints = await dht.lookup(infoHash);
+  console.log(`[*] ${label} DHT returned ${rawEndpoints.length} endpoint(s)`);
+
+  const endpoints = dedupeEndpoints(rawEndpoints);
+  console.log(`[*] ${endpoints.length} unique endpoint(s); resolving metadata...`);
 
   let found = null;
   let resolved = 0;
@@ -94,8 +89,8 @@ async function main() {
       }
       resolved += 1;
       const { peerId, name, services } = summarizeMetadata(md);
-      const isMatch = peerId === TARGET;
-      const tag = isMatch ? "  <-- MATCH" : "";
+      const isMatch = peerId === target;
+      const tag = isMatch ? "  <-- MATCH" : "  <-- different peerId";
       const svcSummary =
         services.length === 0
           ? "no services"
@@ -111,35 +106,93 @@ async function main() {
     }),
   );
 
-  console.log("");
-  if (found) {
-    const ageSec = Math.round((Date.now() - (found.md.timestamp ?? Date.now())) / 1000);
-    console.log(`[✓] FOUND ${TARGET}`);
-    console.log(`    endpoint:  ${found.peer.host}:${found.peer.port}`);
-    console.log(`    name:      ${found.name}`);
-    if (found.md.timestamp) {
-      console.log(
-        `    timestamp: ${new Date(found.md.timestamp).toISOString()} (age ${ageSec}s)`,
-      );
-    }
-    console.log(`    services:  ${found.services.length} total`);
-    if (found.services.length > 0) {
-      const preview = found.services.slice(0, 10).join(", ");
-      const more = found.services.length > 10 ? ` +${found.services.length - 10} more` : "";
-      console.log(`               ${preview}${more}`);
-    }
-  } else {
-    console.log(`[✗] peer ${TARGET} NOT FOUND on the wildcard topic`);
+  return { found, resolved, endpointCount: endpoints.length };
+}
+
+function printFound(target, found, label) {
+  const ageSec = Math.round((Date.now() - (found.md.timestamp ?? Date.now())) / 1000);
+  console.log(`[✓] FOUND ${target} via ${label}`);
+  console.log(`    endpoint:  ${found.peer.host}:${found.peer.port}`);
+  console.log(`    name:      ${found.name}`);
+  if (found.md.timestamp) {
     console.log(
-      `    (resolved metadata for ${resolved}/${endpoints.length} endpoints)`,
+      `    timestamp: ${new Date(found.md.timestamp).toISOString()} (age ${ageSec}s)`,
     );
   }
+  console.log(`    services:  ${found.services.length} total`);
+  if (found.services.length > 0) {
+    const preview = found.services.slice(0, 10).join(", ");
+    const more = found.services.length > 10 ? ` +${found.services.length - 10} more` : "";
+    console.log(`               ${preview}${more}`);
+  }
+}
 
-  await dht.stop();
-  process.exit(found ? 0 : 1);
+async function main() {
+  console.log(`[*] target peerId: ${TARGET}`);
+  console.log(`[*] starting fresh DHT node on port ${LOOKUP_PORT}...`);
+
+  const dht = new DHTNode({
+    ...DEFAULT_DHT_CONFIG,
+    peerId: "00".repeat(20), // dummy — we only do lookups, never announce
+    port: LOOKUP_PORT,
+    operationTimeoutMs: OPERATION_TIMEOUT_MS,
+  });
+
+  try {
+    await dht.start();
+    console.log(`[*] DHT ready; routing-table nodes: ${dht.getNodeCount()}`);
+
+    const resolver = new HttpMetadataResolver({ timeoutMs: METADATA_TIMEOUT_MS });
+
+    const perPeer = await lookupTopic({
+      dht,
+      resolver,
+      label: "per-peer",
+      topic: peerTopic(TARGET),
+      target: TARGET,
+    });
+
+    console.log("");
+    if (perPeer.found) {
+      printFound(TARGET, perPeer.found, "per-peer topic");
+      return true;
+    }
+
+    console.log(
+      `[!] peer ${TARGET} not found on per-peer topic; scanning wildcard fallback`,
+    );
+    console.log("");
+
+    const wildcard = await lookupTopic({
+      dht,
+      resolver,
+      label: "wildcard",
+      topic: ANTSEED_WILDCARD_TOPIC,
+      target: TARGET,
+    });
+
+    console.log("");
+    if (wildcard.found) {
+      printFound(TARGET, wildcard.found, "wildcard topic");
+      return true;
+    }
+
+    console.log(`[✗] peer ${TARGET} NOT FOUND`);
+    console.log(
+      `    (resolved metadata for ${perPeer.resolved}/${perPeer.endpointCount} per-peer endpoints, `
+        + `${wildcard.resolved}/${wildcard.endpointCount} wildcard endpoints)`,
+    );
+    return false;
+  } finally {
+    await dht.stop();
+  }
 }
 
 main().catch((err) => {
   console.error(`[!] fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(2);
+}).then((found) => {
+  if (typeof found === "boolean") {
+    process.exit(found ? 0 : 1);
+  }
 });

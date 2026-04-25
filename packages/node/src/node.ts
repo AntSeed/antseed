@@ -151,7 +151,7 @@ export interface NodeConfig {
   /** Use only the provided bootstrapNodes and skip the official public DHT nodes. Default: false.
    *  Set true for isolated local testing where official nodes must not be contacted. */
   noOfficialBootstrap?: boolean;
-  /** Override the DHT operation timeout in ms. Defaults to DEFAULT_DHT_CONFIG.operationTimeoutMs (10 000). */
+  /** Override the DHT operation timeout in ms. Defaults to DEFAULT_DHT_CONFIG.operationTimeoutMs. */
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;

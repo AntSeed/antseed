@@ -100,14 +100,19 @@ export class PeerLookup {
    */
   async findByPeerId(peerId: string): Promise<LookupResult[]> {
     const normalized = peerId.trim().toLowerCase().replace(/^0x/, "");
-    if (normalized.length === 0) return [];
+    if (!/^[0-9a-f]{40}$/.test(normalized)) return [];
     const infoHash = topicToInfoHash(peerTopic(normalized));
     const peers = await this.config.dht.lookup(infoHash);
-    const all = await this.resolveLookupResults(shuffle(peers));
-    return all.filter((r) => r.metadata.peerId.toLowerCase() === normalized);
+    return this.resolveLookupResults(shuffle(peers), { metadataPeerId: normalized });
   }
 
-  private async resolveLookupResults(peers: PeerEndpoint[]): Promise<LookupResult[]> {
+  private async resolveLookupResults(
+    peers: PeerEndpoint[],
+    options?: { metadataPeerId?: string; maxResults?: number },
+  ): Promise<LookupResult[]> {
+    const maxResults = options?.maxResults ?? this.config.maxResults;
+    const metadataPeerId = options?.metadataPeerId;
+
     // Deduplicate endpoints before firing parallel requests
     const seenEndpoints = new Set<string>();
     const uniquePeers: PeerEndpoint[] = [];
@@ -127,8 +132,11 @@ export class PeerLookup {
     const results: LookupResult[] = [];
     for (const r of settled) {
       if (r.status === "fulfilled" && r.value !== null) {
+        if (metadataPeerId && r.value.metadata.peerId.toLowerCase() !== metadataPeerId) {
+          continue;
+        }
         results.push(r.value);
-        if (results.length >= this.config.maxResults) break;
+        if (results.length >= maxResults) break;
       }
     }
     return results;
