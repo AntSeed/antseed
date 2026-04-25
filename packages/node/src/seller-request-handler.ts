@@ -375,6 +375,7 @@ export class SellerRequestHandler {
               inputTokens: String(usage.inputTokens),
               outputTokens: String(usage.outputTokens),
               cachedInputTokens: String(usage.cachedInputTokens),
+              freshInputTokens: String(usage.freshInputTokens),
               service: this._extractRequestedService(request) ?? undefined,
             });
           }
