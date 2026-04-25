@@ -171,14 +171,16 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   } = usePaymentNetwork(config);
   const defaultTarget = buyerAddress ?? address;
 
-  // Pre-fill the override input with the signer address once available,
+  // Pre-fill the override input with the signer/buyer address once available,
   // until the user manually edits it. This lets people see what the deposit
-  // will credit to, and gives them a concrete address to replace.
+  // will credit to, and gives them a concrete address to replace. Falls back
+  // to the connected wallet only when the buyer address isn't known yet.
   useEffect(() => {
     if (customTargetEdited) return;
-    if (!address) return;
-    setCustomTarget(address);
-  }, [address, customTargetEdited]);
+    const next = buyerAddress ?? address;
+    if (!next) return;
+    setCustomTarget(next);
+  }, [buyerAddress, address, customTargetEdited]);
 
   const customTargetTrimmed = customTarget.trim();
   const customTargetIsValid = /^0x[a-fA-F0-9]{40}$/.test(customTargetTrimmed);

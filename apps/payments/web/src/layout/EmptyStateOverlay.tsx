@@ -86,28 +86,6 @@ export function EmptyStateOverlay({
               </p>
             </div>
 
-            <div className="empty-state-signer">
-              <div className="empty-state-signer-label">
-                <span className="empty-state-signer-dot" />
-                Your AntSeed signer
-              </div>
-              <button
-                type="button"
-                className={`empty-state-signer-value${copied ? ' empty-state-signer-value--copied' : ''}`}
-                onClick={handleCopy}
-                disabled={!buyerAddress}
-                title={buyerAddress ?? 'Loading…'}
-              >
-                <span className="empty-state-signer-addr">{buyerAddress ?? 'Loading…'}</span>
-                <span className="empty-state-signer-icon">
-                  {copied ? <CheckIcon /> : <CopyIcon />}
-                </span>
-              </button>
-              <p className="empty-state-signer-hint">
-                Your signer authorizes every spend — it never holds USDC itself.
-              </p>
-            </div>
-
             <div className="empty-state-step">
               <div className="empty-state-step-label">Step 1 · Deposit USDC</div>
               <DepositView
