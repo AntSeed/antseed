@@ -211,6 +211,90 @@
   margin-bottom: 5px;
 }
 
+.deposit-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: -4px;
+}
+
+.deposit-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.14s;
+
+  &:hover { color: var(--text-secondary); }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+.deposit-advanced-chevron {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.15s;
+  transform: rotate(0deg);
+
+  &--open { transform: rotate(90deg); }
+}
+
+.deposit-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+}
+
+.deposit-advanced-desc {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.deposit-advanced-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--danger-dim, rgba(220, 80, 80, 0.08));
+  border: 1px solid var(--danger-border, rgba(220, 80, 80, 0.35));
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.deposit-advanced-warn-icon {
+  flex-shrink: 0;
+  line-height: 1.4;
+  color: var(--danger);
+}
+
+.input-field--mono {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.hint--error { color: var(--danger); }
+.hint--warn { color: var(--accent-text); }
+
 .deposit-amount-max {
   border: none;
   background: none;
