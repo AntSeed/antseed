@@ -412,6 +412,15 @@ ipcMain.handle('app:get-setup-status', () => ({
   complete: appSetupComplete,
 }));
 
+// Returns the macOS UI language (e.g. 'he', 'ar-EG', 'en-US') as Electron sees
+// it. This is the same locale that drives the system window-chrome direction,
+// so it's the authoritative signal for whether the traffic-light buttons are
+// mirrored to the top-right. Prefer this over `navigator.language` /
+// `navigator.languages` in the renderer — those reflect the *web* preferred
+// language list, not the OS UI language, and can disagree on multilingual
+// systems.
+ipcMain.handle('app:get-system-locale', () => app.getLocale());
+
 ipcMain.handle('identity:get', async () => {
   try {
     await ensureSecureIdentity();

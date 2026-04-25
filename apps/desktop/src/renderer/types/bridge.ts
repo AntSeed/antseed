@@ -131,6 +131,12 @@ export type StartOptions = {
 };
 
 export type DesktopBridge = {
+  /** `process.platform` from the preload (Node side). */
+  platform?:
+    | 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux'
+    | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
+  /** Authoritative macOS UI locale (Electron `app.getLocale()`). */
+  getSystemLocale?: () => Promise<string>;
   getState?: () => Promise<RuntimeSnapshot>;
   start?: (options: StartOptions) => Promise<unknown>;
   stop?: (mode: RuntimeMode) => Promise<unknown>;

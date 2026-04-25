@@ -126,6 +126,17 @@ type ChatAiStreamStopReason = {
 };
 
 const api = {
+  // Synchronous platform info from the Node side of the preload. Renderer
+  // code can use this without a round-trip to the main process — useful for
+  // the title bar which needs to apply macOS padding before first paint.
+  platform: process.platform as NodeJS.Platform,
+
+  // Authoritative macOS UI language as seen by Electron. Use this (not
+  // `navigator.language`) to decide whether to swap the title-bar padding
+  // for RTL traffic-light placement.
+  getSystemLocale(): Promise<string> {
+    return ipcRenderer.invoke('app:get-system-locale') as Promise<string>;
+  },
   getState(): Promise<RuntimeSnapshot> {
     return ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeSnapshot>;
   },
