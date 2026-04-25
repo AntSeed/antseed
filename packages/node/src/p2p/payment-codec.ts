@@ -1,8 +1,9 @@
-import type {
-  SpendingAuthPayload,
-  AuthAckPayload,
-  PaymentRequiredPayload,
-  NeedAuthPayload,
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  type SpendingAuthPayload,
+  type AuthAckPayload,
+  type PaymentRequiredPayload,
+  type NeedAuthPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
@@ -88,6 +89,8 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
   if (typeof obj.currentSpent === 'string') result.currentSpent = obj.currentSpent;
   if (typeof obj.currentAcceptedCumulative === 'string') result.currentAcceptedCumulative = obj.currentAcceptedCumulative;
   if (typeof obj.channelId === 'string') result.channelId = obj.channelId;
+  if (typeof obj.reserveMaxAmount === 'string') result.reserveMaxAmount = obj.reserveMaxAmount;
+  if (obj.code === PAYMENT_CODE_CHANNEL_EXHAUSTED) result.code = obj.code;
   return result;
 }
 
