@@ -2,17 +2,11 @@ import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
   ANTSEED_WILDCARD_TOPIC,
-  serviceTopic,
-  serviceSearchTopic,
-  serviceSubnetTopic,
-  serviceSearchSubnetTopic,
   capabilityTopic,
   peerTopic,
   subnetTopic,
   SUBNET_COUNT,
   topicToInfoHash,
-  normalizeServiceTopicKey,
-  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
@@ -73,38 +67,17 @@ export class PeerLookup {
    *
    * `DHTNode.lookupMany` shares a single temporary "peer" listener across
    * the fan-out so subnet enumeration does not trip EventEmitter's default
-   * listener limit.
+   * listener limit. Failures inside `lookupMany` (per-infohash callback
+   * errors) are absorbed and contribute zero endpoints, so a misbehaving
+   * subnet doesn't black-hole the whole enumeration.
    */
   async findAll(): Promise<LookupResult[]> {
-    const merged = await this.lookupTopicHashes([
+    const hashes = [
       ...Array.from({ length: SUBNET_COUNT }, (_, i) => topicToInfoHash(subnetTopic(i))),
       topicToInfoHash(ANTSEED_WILDCARD_TOPIC),
-    ]);
+    ];
+    const merged = await this.config.dht.lookupMany(hashes);
     return this.resolveLookupResults(shuffle(merged));
-  }
-
-  async findByService(service: string): Promise<LookupResult[]> {
-    const canonicalServiceKey = normalizeServiceTopicKey(service);
-    if (!canonicalServiceKey) return [];
-
-    const compactServiceKey = normalizeServiceSearchTopicKey(service);
-    const topics = new Set<string>();
-    for (let i = 0; i < SUBNET_COUNT; i++) {
-      topics.add(serviceSubnetTopic(canonicalServiceKey, i));
-      if (compactServiceKey !== canonicalServiceKey) {
-        topics.add(serviceSearchSubnetTopic(compactServiceKey, i));
-      }
-    }
-
-    // Legacy single-infohash topics remain in the query set during rollout so
-    // subnet-aware buyers still discover old sellers.
-    topics.add(serviceTopic(canonicalServiceKey));
-    if (compactServiceKey !== canonicalServiceKey) {
-      topics.add(serviceSearchTopic(compactServiceKey));
-    }
-
-    const peers = await this.lookupTopicHashes([...topics].map(topicToInfoHash));
-    return this.resolveLookupResults(shuffle(peers));
   }
 
   async findByCapability(capability: string, name?: string): Promise<LookupResult[]> {
@@ -130,23 +103,6 @@ export class PeerLookup {
     const infoHash = topicToInfoHash(peerTopic(normalized));
     const peers = await this.config.dht.lookup(infoHash);
     return this.resolveLookupResults(shuffle(peers), { metadataPeerId: normalized });
-  }
-
-  private async lookupTopicHashes(hashes: Buffer[]): Promise<PeerEndpoint[]> {
-    const dhtWithLookupMany = this.config.dht as DHTNode & {
-      lookupMany?: (hashes: Buffer[]) => Promise<PeerEndpoint[]>;
-    };
-    if (typeof dhtWithLookupMany.lookupMany === "function") {
-      return dhtWithLookupMany.lookupMany(hashes);
-    }
-
-    const settled = await Promise.allSettled(hashes.map((hash) => this.config.dht.lookup(hash)));
-    const merged: PeerEndpoint[] = [];
-    for (const result of settled) {
-      if (result.status !== "fulfilled") continue;
-      for (const peer of result.value) merged.push(peer);
-    }
-    return merged;
   }
 
   private async resolveLookupResults(

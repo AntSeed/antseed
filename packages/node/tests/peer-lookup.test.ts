@@ -4,10 +4,6 @@ import {
   ANTSEED_WILDCARD_TOPIC,
   SUBNET_COUNT,
   peerTopic,
-  serviceSearchSubnetTopic,
-  serviceSearchTopic,
-  serviceSubnetTopic,
-  serviceTopic,
   subnetOf,
   subnetTopic,
   topicToInfoHash,
@@ -55,13 +51,17 @@ describe('PeerLookup', () => {
     const wildcardEndpoint: PeerEndpoint = { host: '10.99.99.1', port: 6882 };
     const wildcardHashHex = topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex');
 
-    const lookup = vi.fn(async (hash: Buffer) => {
-      const hex = hash.toString('hex');
-      if (hex === wildcardHashHex) return [wildcardEndpoint];
-      const ep = subnetEndpoints[hex];
-      return ep ? [ep] : [];
+    const lookupMany = vi.fn(async (hashes: Buffer[]) => {
+      const merged: PeerEndpoint[] = [];
+      for (const hash of hashes) {
+        const hex = hash.toString('hex');
+        if (hex === wildcardHashHex) merged.push(wildcardEndpoint);
+        const ep = subnetEndpoints[hex];
+        if (ep) merged.push(ep);
+      }
+      return merged;
     });
-    const dht = { lookup } as unknown as DHTNode;
+    const dht = { lookupMany } as unknown as DHTNode;
 
     const resolve = vi.fn(async () => buildMetadata());
     const metadataResolver: MetadataResolver = { resolve };
@@ -75,8 +75,8 @@ describe('PeerLookup', () => {
     });
 
     const results = await peerLookup.findAll();
-    // SUBNET_COUNT subnet lookups + 1 wildcard fallback lookup
-    expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
+    expect(lookupMany).toHaveBeenCalledTimes(1);
+    expect(lookupMany.mock.calls[0]?.[0]).toHaveLength(SUBNET_COUNT + 1);
     expect(results).toHaveLength(SUBNET_COUNT + 1);
     const hosts = results.map((r) => r.host).sort();
     const expectedHosts = [
@@ -86,52 +86,18 @@ describe('PeerLookup', () => {
     expect(hosts).toEqual(expectedHosts);
   });
 
-  it('findAll keeps surfacing peers when one subnet lookup rejects', async () => {
-    // `DHTNode.lookup` currently swallows timeouts, but we don't want a single
-    // future regression on one subnet to wipe the entire enumeration. Reject
-    // the lookup for subnet 3; the other subnets and the wildcard must still
-    // produce results.
-    const failingHashHex = topicToInfoHash(subnetTopic(3)).toString('hex');
-    const lookup = vi.fn(async (hash: Buffer) => {
-      if (hash.toString('hex') === failingHashHex) {
-        throw new Error('synthetic dht failure');
-      }
-      return [{ host: '10.0.42.1', port: 6882 }] as PeerEndpoint[];
-    });
-    const dht = { lookup } as unknown as DHTNode;
-
-    const resolve = vi.fn(async () => buildMetadata());
-    const metadataResolver: MetadataResolver = { resolve };
-    const peerLookup = new PeerLookup({
-      dht,
-      metadataResolver,
-      requireValidSignature: false,
-      allowStaleMetadata: true,
-      maxAnnouncementAgeMs: 60_000,
-      maxResults: 1000,
-    });
-
-    const results = await peerLookup.findAll();
-    expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
-    // After dedup the same endpoint collapses to one result; the important
-    // assertion is that findAll did not throw and still produced peers from
-    // the surviving subnets / wildcard.
-    expect(results).toHaveLength(1);
-    expect(results[0]?.host).toBe('10.0.42.1');
-  });
-
   it('findAll queries the exact set of subnet + wildcard topics announcer-side advertises', async () => {
     // Symmetry guard: the announcer chooses `subnetTopic(subnetOf(peerId))`
     // and the wildcard; the buyer must query every subnet topic plus the
     // wildcard, with no extras and no missing entries. If a future change
     // diverges the two sides (e.g. announcer adopts a new SUBNET_COUNT but
     // lookup is left behind), this test fails immediately.
-    const queriedHashes: string[] = [];
-    const lookup = vi.fn(async (hash: Buffer) => {
-      queriedHashes.push(hash.toString('hex'));
-      return [];
+    let capturedHashes: Buffer[] = [];
+    const lookupMany = vi.fn(async (hashes: Buffer[]) => {
+      capturedHashes = hashes;
+      return [] as PeerEndpoint[];
     });
-    const dht = { lookup } as unknown as DHTNode;
+    const dht = { lookupMany } as unknown as DHTNode;
 
     const peerLookup = new PeerLookup({
       dht,
@@ -149,10 +115,9 @@ describe('PeerLookup', () => {
         topicToInfoHash(subnetTopic(i)).toString('hex'),
       ),
     ]);
-    // Every announcer-produced subnet hash must have been queried, and
-    // nothing else should have been queried beyond the expected set.
-    expect(new Set(queriedHashes)).toEqual(expectedHashes);
-    expect(queriedHashes).toHaveLength(SUBNET_COUNT + 1);
+    const queriedHashes = new Set(capturedHashes.map((h) => h.toString('hex')));
+    expect(queriedHashes).toEqual(expectedHashes);
+    expect(capturedHashes).toHaveLength(SUBNET_COUNT + 1);
   });
 
   it('findAll covers every subnetOf(peerId) the announcer might pick, across the full byte space', async () => {
@@ -161,12 +126,12 @@ describe('PeerLookup', () => {
     // findAll asks the DHT about. Combined with the symmetry test above, this
     // pins down the contract: announcer + lookup agree for every possible
     // peerId.
-    const queriedHashes = new Set<string>();
-    const lookup = vi.fn(async (hash: Buffer) => {
-      queriedHashes.add(hash.toString('hex'));
-      return [];
+    let capturedHashes: Buffer[] = [];
+    const lookupMany = vi.fn(async (hashes: Buffer[]) => {
+      capturedHashes = hashes;
+      return [] as PeerEndpoint[];
     });
-    const dht = { lookup } as unknown as DHTNode;
+    const dht = { lookupMany } as unknown as DHTNode;
     const peerLookup = new PeerLookup({
       dht,
       metadataResolver: { resolve: vi.fn() },
@@ -177,6 +142,7 @@ describe('PeerLookup', () => {
     });
     await peerLookup.findAll();
 
+    const queriedHashes = new Set(capturedHashes.map((h) => h.toString('hex')));
     for (let byte = 0; byte < 256; byte++) {
       const peerId = byte.toString(16).padStart(2, '0') + 'a'.repeat(38);
       const announcedHashHex = topicToInfoHash(subnetTopic(subnetOf(peerId))).toString('hex');
@@ -186,40 +152,18 @@ describe('PeerLookup', () => {
 
   it('findAll deduplicates a peer that appears on multiple topics (subnet + wildcard)', async () => {
     // Sellers running this build announce on both a subnet AND the wildcard
-    // during the transition. The same host:port shouldn't be metadata-resolved
-    // more than once.
+    // during the transition. `lookupMany` returns the duplicate raw endpoint
+    // pair to the resolver, which must collapse it via the host:port dedup
+    // before issuing metadata fetches.
     const shared: PeerEndpoint = { host: '10.0.7.1', port: 6882 };
-    const lookup = vi.fn(async () => [shared]);
-    const dht = { lookup } as unknown as DHTNode;
+    const lookupMany = vi.fn(async (hashes: Buffer[]) => hashes.map(() => shared));
+    const dht = { lookupMany } as unknown as DHTNode;
 
     const resolve = vi.fn(async () => buildMetadata());
     const metadataResolver: MetadataResolver = { resolve };
     const peerLookup = new PeerLookup({
       dht,
       metadataResolver,
-      requireValidSignature: false,
-      allowStaleMetadata: true,
-      maxAnnouncementAgeMs: 60_000,
-      maxResults: 1000,
-    });
-
-    const results = await peerLookup.findAll();
-    expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
-    // Even though every lookup returned the same endpoint, metadata is
-    // resolved exactly once and the result list has a single entry.
-    expect(resolve).toHaveBeenCalledTimes(1);
-    expect(results).toHaveLength(1);
-    expect(results[0]?.host).toBe(shared.host);
-  });
-
-  it('findAll uses DHTNode.lookupMany when available to avoid listener fan-out', async () => {
-    const lookup = vi.fn();
-    const lookupMany = vi.fn(async () => [{ host: '10.0.7.1', port: 6882 }] as PeerEndpoint[]);
-    const dht = { lookup, lookupMany } as unknown as DHTNode;
-
-    const peerLookup = new PeerLookup({
-      dht,
-      metadataResolver: { resolve: vi.fn(async () => buildMetadata()) },
       requireValidSignature: false,
       allowStaleMetadata: true,
       maxAnnouncementAgeMs: 60_000,
@@ -228,110 +172,9 @@ describe('PeerLookup', () => {
 
     const results = await peerLookup.findAll();
     expect(lookupMany).toHaveBeenCalledTimes(1);
-    expect(lookupMany.mock.calls[0]?.[0]).toHaveLength(SUBNET_COUNT + 1);
-    expect(lookup).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledTimes(1);
     expect(results).toHaveLength(1);
-  });
-
-  it('deduplicates repeated host:port endpoints before metadata resolution', async () => {
-    const peers: PeerEndpoint[] = [
-      { host: '84.228.226.179', port: 6882 },
-      { host: '84.228.226.179', port: 6882 },
-      { host: '84.228.226.179', port: 6882 },
-      { host: '147.236.231.105', port: 6882 },
-    ];
-    const dht = {
-      lookup: vi.fn().mockResolvedValue(peers),
-    } as unknown as DHTNode;
-
-    const resolve = vi.fn(async () => buildMetadata());
-    const metadataResolver: MetadataResolver = { resolve };
-
-    const config: LookupConfig = {
-      dht,
-      metadataResolver,
-      requireValidSignature: false,
-      allowStaleMetadata: true,
-      maxAnnouncementAgeMs: 60_000,
-      maxResults: 50,
-    };
-    const lookup = new PeerLookup(config);
-
-    const results = await lookup.findAll();
-
-    expect(resolve).toHaveBeenCalledTimes(2);
-    expect(results).toHaveLength(2);
-    expect(results.map((r) => `${r.host}:${r.port}`)).toEqual(
-      expect.arrayContaining(['84.228.226.179:6882', '147.236.231.105:6882']),
-    );
-  });
-
-  it('findByService queries sharded canonical and compact service topics plus legacy fallbacks', async () => {
-    const canonicalPeers: PeerEndpoint[] = [
-      { host: '84.228.226.179', port: 6882 },
-    ];
-    const compactPeers: PeerEndpoint[] = [
-      { host: '84.228.226.179', port: 6882 },
-      { host: '147.236.231.105', port: 6882 },
-    ];
-
-    const canonicalHashHex = topicToInfoHash(serviceTopic('kimi-2.5')).toString('hex');
-    const compactHashHex = topicToInfoHash(serviceSearchTopic('kimi-2.5')).toString('hex');
-    const subnetHashHex = topicToInfoHash(serviceSubnetTopic('kimi-2.5', 3)).toString('hex');
-    const compactSubnetHashHex = topicToInfoHash(serviceSearchSubnetTopic('kimi-2.5', 4)).toString('hex');
-    const lookup = vi.fn(async (hash: Buffer) => {
-      const hex = hash.toString('hex');
-      if (hex === canonicalHashHex) return canonicalPeers;
-      if (hex === compactHashHex) return compactPeers;
-      if (hex === subnetHashHex) return [{ host: '147.236.231.106', port: 6882 }];
-      if (hex === compactSubnetHashHex) return [{ host: '147.236.231.107', port: 6882 }];
-      return [];
-    });
-    const dht = { lookup } as unknown as DHTNode;
-
-    const resolve = vi.fn(async () => buildMetadata());
-    const metadataResolver: MetadataResolver = { resolve };
-    const config: LookupConfig = {
-      dht,
-      metadataResolver,
-      requireValidSignature: false,
-      allowStaleMetadata: true,
-      maxAnnouncementAgeMs: 60_000,
-      maxResults: 50,
-    };
-    const peerLookup = new PeerLookup(config);
-
-    const results = await peerLookup.findByService('kimi-2.5');
-    expect(lookup).toHaveBeenCalledTimes((SUBNET_COUNT * 2) + 2);
-    const queriedHashes = new Set(lookup.mock.calls.map(([hash]) => hash.toString('hex')));
-    expect(queriedHashes.has(canonicalHashHex)).toBe(true);
-    expect(queriedHashes.has(compactHashHex)).toBe(true);
-    expect(queriedHashes.has(subnetHashHex)).toBe(true);
-    expect(queriedHashes.has(compactSubnetHashHex)).toBe(true);
-    expect(resolve).toHaveBeenCalledTimes(4);
-    expect(results).toHaveLength(4);
-  });
-
-  it('findByService queries sharded canonical topics plus legacy fallback when compact key matches canonical', async () => {
-    const peers: PeerEndpoint[] = [{ host: '84.228.226.179', port: 6882 }];
-    const lookup = vi.fn(async () => peers);
-    const dht = { lookup } as unknown as DHTNode;
-
-    const resolve = vi.fn(async () => buildMetadata());
-    const metadataResolver: MetadataResolver = { resolve };
-    const config: LookupConfig = {
-      dht,
-      metadataResolver,
-      requireValidSignature: false,
-      allowStaleMetadata: true,
-      maxAnnouncementAgeMs: 60_000,
-      maxResults: 50,
-    };
-    const peerLookup = new PeerLookup(config);
-
-    const results = await peerLookup.findByService('kimi2.5');
-    expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
-    expect(results).toHaveLength(1);
+    expect(results[0]?.host).toBe(shared.host);
   });
 
   it('findByPeerId looks up the per-peer topic and filters out spoofed metadata', async () => {
@@ -426,8 +269,8 @@ describe('PeerLookup', () => {
 
   it('preserves metadata publicAddress so callers can prefer it over the DHT source host', async () => {
     const peers: PeerEndpoint[] = [{ host: '34.134.97.133', port: 6882 }];
-    const lookup = vi.fn(async () => peers);
-    const dht = { lookup } as unknown as DHTNode;
+    const lookupMany = vi.fn(async () => peers);
+    const dht = { lookupMany } as unknown as DHTNode;
 
     const resolve = vi.fn(async () => buildMetadata({ publicAddress: '34.27.100.162:6882' }));
     const metadataResolver: MetadataResolver = { resolve };
@@ -441,7 +284,7 @@ describe('PeerLookup', () => {
     };
     const peerLookup = new PeerLookup(config);
 
-    const results = await peerLookup.findByService('kimi2.5');
+    const results = await peerLookup.findAll();
     expect(results).toHaveLength(1);
     expect(results[0]?.host).toBe('34.134.97.133');
     expect(results[0]?.port).toBe(6882);

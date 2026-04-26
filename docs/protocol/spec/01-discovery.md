@@ -14,33 +14,22 @@ The network uses the BitTorrent Mainline DHT (BEP 5) as a decentralised director
 
 ### Topic Hashing
 
-Sellers announce multiple topic types on the DHT:
+Sellers announce a small fixed set of topics on the DHT — one subnet, the wildcard, the per-peer topic, and any capability topics. Service-level topics were intentionally removed: the signed metadata document carries the full service catalog (`providers[].services`, pricing, categories, protocols), so service filtering is metadata-driven and the announce cycle stays O(1) in the seller's service count regardless of how many services a provider exposes.
 
 ```
 ANTSEED_WILDCARD_TOPIC           = "antseed:*"
 subnetTopic(index)               = "antseed:subnet:" + index
-serviceTopic(service)            = "antseed:service:" + normalize(service)
-serviceSearchTopic(service)      = "antseed:service-search:" + compact(normalize(service))
-serviceSubnetTopic(service,i)    = "antseed:service:" + normalize(service) + ":subnet:" + i
-serviceSearchSubnetTopic(s,i)    = "antseed:service-search:" + compact(normalize(s)) + ":subnet:" + i
 peerTopic(peerId)                = "antseed:peer:" + normalizeHex(peerId)
 capabilityTopic(capability)      = "antseed:" + normalize(capability)
 capabilityTopic(capability,id)   = "antseed:" + normalize(capability) + ":" + normalize(id)
 
 normalize(x) = trim(lowercase(x))
 normalizeHex(x) = trim(lowercase(x)).removeLeading("0x")
-compact(x)   = remove all spaces, "-" and "_" (preserve ".")
 subnet(peer) = parseInt(peerId[0:2], 16) % SUBNET_COUNT   // SUBNET_COUNT = 16
 infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The announcer always publishes canonical service topics (`serviceTopic`) and the matching `serviceSubnetTopic` for its peer subnet. It additionally publishes compact `serviceSearchTopic` and `serviceSearchSubnetTopic` entries only when the compact key differs from canonical. During the subnet rollout it also keeps publishing the wildcard topic for older buyers.
-
-Examples:
-
-- `kimi 2.5` => canonical `antseed:service:kimi 2.5`, compact `antseed:service-search:kimi2.5`
-- `kimi-2.5` => canonical `antseed:service:kimi-2.5`, compact `antseed:service-search:kimi2.5`
-- `kimi_2.5` => canonical `antseed:service:kimi_2.5`, compact `antseed:service-search:kimi2.5`
+The announcer always publishes the peer's `subnetTopic`, the wildcard topic (kept during the subnet rollout for older buyers), the per-peer topic, and any configured capability topics. Service filtering is performed against the signed metadata fetched after enumeration.
 
 `topicToInfoHash()` produces the SHA-1 digest used as the DHT info hash.
 
@@ -58,8 +47,9 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 | Parameter              | Value          | Constant / Location                          |
 |------------------------|----------------|----------------------------------------------|
 | Port                   | 6881           | `DEFAULT_DHT_CONFIG.port`                    |
-| Re-announce interval   | 15 minutes     | `DEFAULT_DHT_CONFIG.reannounceIntervalMs` (15 * 60 * 1000 = 900 000 ms) |
-| Operation timeout      | 10 seconds     | `DEFAULT_DHT_CONFIG.operationTimeoutMs` (10 000 ms) |
+| Re-announce interval   | 5 minutes      | `DEFAULT_DHT_CONFIG.reannounceIntervalMs` (5 * 60 * 1000 = 300 000 ms) |
+| Operation timeout      | 25 seconds     | `DEFAULT_DHT_CONFIG.operationTimeoutMs` (25 000 ms) |
+| Subnet count           | 16             | `SUBNET_COUNT` in `dht-node.ts`              |
 
 ### Operations
 
@@ -267,9 +257,12 @@ The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
    - all-peer lookup: `SHA1(subnetTopic(i))` for every subnet, plus `SHA1(ANTSEED_WILDCARD_TOPIC)` as a transition fallback
-   - service lookup: `SHA1(serviceSubnetTopic(service, i))` for every subnet, plus legacy `SHA1(serviceTopic(service))`; if the compact key differs, also query every `serviceSearchSubnetTopic(service, i)` plus legacy `serviceSearchTopic(service)`
+   - service "lookup": there is no DHT-level service lookup. Service filtering happens against the signed metadata returned by `findAll()` — see `AntseedNode.discoverPeers(service)`.
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
+   - per-peer lookup (`findByPeerId`): `SHA1(peerTopic(peerId))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
+   `DHTNode.lookupMany(hashes)` shares one temporary `peer` listener across all hashes so the 17-way subnet fan-out doesn't trip Node's default EventEmitter listener cap.
+   Per-infohash lookup failures are absorbed (return zero endpoints for that hash) so a misbehaving subnet does not abort the whole enumeration.
 3. For each peer (up to `maxResults`):
    a. Fetch metadata via the configured `MetadataResolver`.
    b. If `requireValidSignature` is `true`, verify the secp256k1 signature over the encoded body using ecrecover and compare the recovered address to the peer's `peerId`. Discard peers with invalid signatures.
@@ -297,15 +290,11 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 2. Set `version` to `METADATA_VERSION` (7) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's secp256k1 private key (via EIP-191 personal_sign).
-5. Announce DHT topics at the configured signaling port:
-   - canonical service topics (`serviceTopic(service)`)
-   - canonical service subnet topics (`serviceSubnetTopic(service, subnetOf(peerId))`)
-   - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ
-   - compact service-search subnet topics (`serviceSearchSubnetTopic(service, subnetOf(peerId))`) when canonical and compact keys differ
+5. Announce DHT topics in parallel at the configured signaling port (constant in service count):
    - subnet topic (`subnetTopic(subnetOf(peerId))`)
-   - wildcard topic (`ANTSEED_WILDCARD_TOPIC`)
+   - wildcard topic (`ANTSEED_WILDCARD_TOPIC`) — kept during the subnet rollout so older buyers still find this peer
    - per-peer topic (`peerTopic(peerId)`)
-   - capability topics when offerings are configured
+   - capability topics when offerings are configured (one per offering plus one per unique capability name)
 
 Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `announce()` immediately and then every `reannounceIntervalMs` milliseconds. Load can be updated at any time via `updateLoad(providerName, currentLoad)` and will be reflected in the next announcement cycle.
 

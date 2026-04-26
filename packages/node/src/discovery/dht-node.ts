@@ -122,32 +122,6 @@ export function peerTopic(peerId: string): string {
   return "antseed:peer:" + peerId.trim().toLowerCase().replace(/^0x/, "");
 }
 
-export function normalizeServiceTopicKey(serviceName: string): string {
-  return normalizeTopicSegment(serviceName);
-}
-
-export function normalizeServiceSearchTopicKey(serviceName: string): string {
-  const canonical = normalizeServiceTopicKey(serviceName);
-  const compact = canonical.replace(/[\s_-]+/g, "");
-  return compact.length > 0 ? compact : canonical;
-}
-
-export function serviceTopic(serviceName: string): string {
-  return "antseed:service:" + normalizeServiceTopicKey(serviceName);
-}
-
-export function serviceSearchTopic(serviceName: string): string {
-  return "antseed:service-search:" + normalizeServiceSearchTopicKey(serviceName);
-}
-
-export function serviceSubnetTopic(serviceName: string, index: number): string {
-  return `antseed:service:${normalizeServiceTopicKey(serviceName)}:subnet:${index}`;
-}
-
-export function serviceSearchSubnetTopic(serviceName: string, index: number): string {
-  return `antseed:service-search:${normalizeServiceSearchTopicKey(serviceName)}:subnet:${index}`;
-}
-
 export function capabilityTopic(capability: string, name?: string): string {
   const base = "antseed:" + normalizeTopicSegment(capability);
   return name ? base + ":" + normalizeTopicSegment(name) : base;

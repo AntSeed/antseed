@@ -109,22 +109,14 @@ export class NetworkPoller {
         topicToInfoHash(subnetTopic(i)),
       );
       const wildcardHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-      const hashes = [...subnetHashes, wildcardHash];
-      const dhtWithLookupMany = dht as DHTNode & {
-        lookupMany?: (hashes: Buffer[]) => Promise<Array<{ host: string; port: number }>>;
-      };
-      const lookupResults = typeof dhtWithLookupMany.lookupMany === 'function'
-        ? [await dhtWithLookupMany.lookupMany(hashes)]
-        : await Promise.all(hashes.map((hash) => dht.lookup(hash)));
+      const rawEndpoints = await dht.lookupMany([...subnetHashes, wildcardHash]);
       const seenEndpoints = new Set<string>();
       const endpoints: Array<{ host: string; port: number }> = [];
-      for (const subset of lookupResults) {
-        for (const ep of subset) {
-          const key = `${ep.host.toLowerCase()}:${ep.port}`;
-          if (seenEndpoints.has(key)) continue;
-          seenEndpoints.add(key);
-          endpoints.push(ep);
-        }
+      for (const ep of rawEndpoints) {
+        const key = `${ep.host.toLowerCase()}:${ep.port}`;
+        if (seenEndpoints.has(key)) continue;
+        seenEndpoints.add(key);
+        endpoints.push(ep);
       }
 
       await Promise.allSettled(

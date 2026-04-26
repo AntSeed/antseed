@@ -160,22 +160,23 @@ async function main() {
       return true;
     }
 
+    const targetSubnet = subnetOf(TARGET);
     console.log(
-      `[!] peer ${TARGET} not found on per-peer topic; scanning subnet ${subnetOf(TARGET)} fallback`,
+      `[!] peer ${TARGET} not found on per-peer topic; scanning subnet ${targetSubnet} fallback`,
     );
     console.log("");
 
     const subnet = await lookupTopic({
       dht,
       resolver,
-      label: `subnet-${subnetOf(TARGET)}`,
-      topic: subnetTopic(subnetOf(TARGET)),
+      label: `subnet-${targetSubnet}`,
+      topic: subnetTopic(targetSubnet),
       target: TARGET,
     });
 
     console.log("");
     if (subnet.found) {
-      printFound(TARGET, subnet.found, `subnet ${subnetOf(TARGET)} topic`);
+      printFound(TARGET, subnet.found, `subnet ${targetSubnet} topic`);
       return true;
     }
 

@@ -455,16 +455,14 @@ export class AntseedNode extends EventEmitter {
 
     debugLog(`[Node] Discovering peers (service: "${service ?? "*"}")...`);
 
-    // Query service-level DHT topic when a service is specified — returns only peers
-    // that explicitly announced that service. Fall back to wildcard if no results.
-    let results = service
-      ? await this._peerLookup.findByService(service)
-      : await this._peerLookup.findAll();
-
-    if (service && results.length === 0) {
-      debugLog(`[Node] No service-topic results for "${service}", falling back to wildcard`);
-      results = await this._peerLookup.findAll();
-    }
+    // Always enumerate via subnet+wildcard. Service filtering is metadata
+    // driven — announcing per-service DHT topics did O(services) work per
+    // reannounce cycle, recreated the K-closest saturation problem on every
+    // popular service infohash, and was already an opportunistic optimisation
+    // (the production proxy never used it; the CLI always re-filtered
+    // metadata-side anyway). The signed metadata document carries the full
+    // service catalog, so we filter against that after enumeration.
+    const results = await this._peerLookup.findAll();
     debugLog(`[Node] DHT returned ${results.length} result(s)`);
 
     // Deduplicate by peerId (DHT can return the same peer from multiple topic lookups)
@@ -478,12 +476,16 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    await this._enrichPeersWithOnChainStats(peers);
+    const filtered = service ? peers.filter((p) => peerOffersService(p, service)) : peers;
 
-    for (const p of peers) {
+    // On-chain enrichment runs after the metadata filter so we don't waste
+    // RPC calls on peers we'll discard.
+    await this._enrichPeersWithOnChainStats(filtered);
+
+    for (const p of filtered) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
     }
-    return peers;
+    return filtered;
   }
 
   /**
@@ -1552,4 +1554,28 @@ export class AntseedNode extends EventEmitter {
 function parsePeerAddress(address: string): { host: string; port: number } {
   const parts = address.split(":");
   return { host: parts[0]!, port: parseInt(parts[1] ?? "6882", 10) };
+}
+
+/**
+ * Predicate used by `discoverPeers(service)` to filter the enumerated peer
+ * list against an optional service hint. Matches case-insensitively against
+ * either a provider name (e.g. `openai`) or any service name announced in
+ * the peer's signed metadata across all of its providers. Returns true when
+ * `service` is empty/whitespace so the caller can skip the filter.
+ */
+function peerOffersService(peer: PeerInfo, service: string): boolean {
+  const needle = service.trim().toLowerCase();
+  if (needle.length === 0) return true;
+  for (const provider of peer.providers) {
+    if (provider.trim().toLowerCase() === needle) return true;
+  }
+  if (peer.providerPricing) {
+    for (const entry of Object.values(peer.providerPricing)) {
+      if (!entry.services) continue;
+      for (const serviceName of Object.keys(entry.services)) {
+        if (serviceName.trim().toLowerCase() === needle) return true;
+      }
+    }
+  }
+  return false;
 }
