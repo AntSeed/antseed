@@ -34,10 +34,10 @@ export const DEFAULT_LOOKUP_CONFIG: Omit<LookupConfig, "dht" | "metadataResolver
   requireValidSignature: true,
   allowStaleMetadata: false,
   maxAnnouncementAgeMs: 30 * 60 * 1000,
-  // Old cap was 50; with the network growing past that, browse views were
-  // silently truncated. 200 keeps the parallel metadata fan-out reasonable
-  // while no longer hiding peers from ‘network browse’.
-  maxResults: 200,
+  // Old cap was 50, then 200; with subnet fan-out and larger live networks,
+  // keep browse/discovery truncation comfortably above current scale while
+  // still bounding downstream enrichment/rendering work.
+  maxResults: 1000,
 };
 
 export interface LookupResult {
