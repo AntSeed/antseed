@@ -248,7 +248,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (e.total == 0) revert NothingToFlush();
 
         uint64 openedAt = currentUnstakeBatchOpenedAt;
-        if (block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)) {
+        if (e.userCount < MAX_PER_UNSTAKE_BATCH && block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)) {
             revert UnstakeBatchTooYoung();
         }
 
