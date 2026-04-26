@@ -37,9 +37,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
+    // ─── Constants ──────────────────────────────────────────────────
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
-
+    // ─── Structs ────────────────────────────────────────────────────
     struct UnstakeBatch {
         uint128 total; // sum of every user's queued amount in this batch
         uint64 unlockAt; // 0 = not yet flushed; otherwise venice-release time
@@ -54,7 +55,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         bool funded; // true once the epoch's ANTS pot has been claimed from AntseedEmissions
     }
 
-
+    // ─── Immutables ─────────────────────────────────────────────────
     IERC20 public immutable diem;
     IERC20 public immutable usdc;
     IERC20 public immutable ants;
@@ -72,7 +73,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     uint64 public constant MAX_MIN_UNSTAKE_BATCH_OPEN_SECS = 7 days;
 
-
+    // ─── Staking State ──────────────────────────────────────────────
     uint256 public totalStaked;
     mapping(address => uint256) public staked;
 
@@ -90,7 +91,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     uint64 public minUnstakeBatchOpenSecs;
 
-
+    // ─── USDC Rewards ───────────────────────────────────────────────
     uint256 public usdcRewardPerTokenStored;
 
     mapping(address => uint256) public userUsdcRewardPerTokenPaid;
@@ -100,7 +101,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     uint256 public totalUsdcDistributedEver;
 
-
+    // ─── ANTS Rewards ───────────────────────────────────────────────
     uint256 private constant _RAY = 1e27;
 
     uint256 public currentEpochRevenuePoints;
@@ -115,7 +116,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     mapping(address => uint32) public userLastClaimedEpoch;
     mapping(address => mapping(uint32 => bool)) public userEpochClaimed;
 
-
+    // ─── Events ─────────────────────────────────────────────────────
     event Staked(address indexed user, uint256 amount);
     event UnstakeQueued(address indexed user, uint32 indexed batchId, uint256 amount);
     event UnstakeBatchFlushed(uint32 indexed batchId, uint256 total, uint256 unlockAt);
@@ -133,7 +134,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event MaxTotalStakeSet(uint256 newMaxTotalStake);
     event MinUnstakeBatchOpenSecsSet(uint64 newMinUnstakeBatchOpenSecs);
 
-
+    // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAmount();
     error InsufficientStake();
     error UnstakeBatchFull();
@@ -149,7 +150,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error MinUnstakeBatchOpenSecsTooLarge();
     error RewardEpochNotFinalized();
 
-
+    // ─── Constructor ────────────────────────────────────────────────
     constructor(address _diem, address _usdc, address _registry, address _operator)
         AntseedSellerDelegation(_registry, _operator)
     {
@@ -182,7 +183,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit MinUnstakeBatchOpenSecsSet(ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS);
     }
 
-
+    // ─── Modifiers ──────────────────────────────────────────────────
     modifier updateRewards(address account) {
         _updateUsdcForUser(account);
         _syncFinalizedRewardEpochsForUpdate();
@@ -190,6 +191,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _;
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        STAKING
+    // ═══════════════════════════════════════════════════════════════════
 
     function stake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
@@ -282,6 +286,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeBatchClaimed(batchId, e.total, uint32(count));
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REWARD CLAIMS
+    // ═══════════════════════════════════════════════════════════════════
 
     function claimUsdc() external nonReentrant updateRewards(msg.sender) {
         uint256 owed = usdcRewards[msg.sender];
@@ -377,8 +384,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit PointsCaughtUp(msg.sender, targetEp);
     }
 
-
-
+    // ═══════════════════════════════════════════════════════════════════
+    //                        CHANNEL OVERRIDES
+    // ═══════════════════════════════════════════════════════════════════
 
     function topUp(
         bytes32 channelId,
@@ -414,6 +422,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REWARD EPOCHS
+    // ═══════════════════════════════════════════════════════════════════
 
     function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
         if (maxEpochs == 0) revert InvalidAmount();
@@ -421,6 +432,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        ADMIN
+    // ═══════════════════════════════════════════════════════════════════
 
     function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
@@ -452,6 +466,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit MinUnstakeBatchOpenSecsSet(newMinUnstakeBatchOpenSecs);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        VIEWS
+    // ═══════════════════════════════════════════════════════════════════
 
     function flushableAt() external view returns (uint64) {
         uint64 openedAt = currentUnstakeBatchOpenedAt;
@@ -498,12 +515,18 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         return (antsPot * userPts) / totalPoints;
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        ERC-1271
+    // ═══════════════════════════════════════════════════════════════════
 
     function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         address recovered = ECDSA.recover(hash, signature);
         return recovered == owner() ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        INTERNAL HELPERS
+    // ═══════════════════════════════════════════════════════════════════
 
     function _distributeUsdcInstant(uint256 amount) internal {
         if (amount == 0 || totalStaked == 0) return;
