@@ -34,6 +34,99 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
 }
 
 describe('SellerRequestHandler payment pricing selection', () => {
+  it('routes GET /v1/models to the local handler even when a query string is appended', async () => {
+    // Codex CLI calls `GET /v1/models?client_version=…` at startup. The
+    // local-models fast path used to compare `request.path === "/v1/models"`,
+    // which fails once a query string is present, so the request fell through
+    // to the model-matching branch and 400'd.
+    const provider = makeProvider(1, 1, {
+      name: 'openai',
+      services: ['gpt-5.4', 'gpt-5.5'],
+    });
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: null,
+      sessionTracker: null,
+      channelsClient: null,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth: vi.fn(),
+      sendPaymentRequired: vi.fn(),
+    } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-models-list',
+        method: 'GET',
+        path: '/v1/models?client_version=0.125.0',
+        headers: {},
+        body: new Uint8Array(0),
+      }),
+    });
+
+    const decoded = decodeFrame(sentFrames[0]!);
+    expect(decoded?.message.type).toBe(MessageType.HttpResponse);
+    const response = decodeHttpResponse(decoded!.message.payload);
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    expect(body.object).toBe('list');
+    expect(body.data.map((m: { id: string }) => m.id).sort()).toEqual(['gpt-5.4', 'gpt-5.5']);
+  });
+
+  it('routes GET /v1/models/:id to the local handler even when a query string is appended', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai',
+      services: ['gpt-5.5'],
+    });
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: null,
+      sessionTracker: null,
+      channelsClient: null,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-models-single',
+        method: 'GET',
+        path: '/v1/models/gpt-5.5?client_version=0.125.0',
+        headers: {},
+        body: new Uint8Array(0),
+      }),
+    });
+
+    const decoded = decodeFrame(sentFrames[0]!);
+    const response = decodeHttpResponse(decoded!.message.payload);
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    expect(body.id).toBe('gpt-5.5');
+  });
+
   it('matches the requested provider and service pricing instead of using the first provider defaults', () => {
     const anthropic = makeProvider(3, 15, {
       name: 'anthropic',

@@ -60,18 +60,34 @@ export interface TokenUsage {
 }
 
 export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
-  const usage = parsed.usage && typeof parsed.usage === 'object'
-    ? (parsed.usage as Record<string, unknown>)
-    : {};
+  // Direct shape: { usage: {...} } (OpenAI Chat, Anthropic Messages, etc.)
+  // Nested shape: { response: { usage: {...} } } (OpenAI Responses SSE
+  // `response.completed` events from the Codex backend bury usage under
+  // `response`).
+  let usage: Record<string, unknown> = {};
+  if (parsed.usage && typeof parsed.usage === 'object') {
+    usage = parsed.usage as Record<string, unknown>;
+  } else if (parsed.response && typeof parsed.response === 'object') {
+    const inner = parsed.response as Record<string, unknown>;
+    if (inner.usage && typeof inner.usage === 'object') {
+      usage = inner.usage as Record<string, unknown>;
+    }
+  }
 
   const totalInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
-  // OpenAI/Together: prompt_tokens_details.cached_tokens (subset of prompt_tokens)
-  const details = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+  // Cache hits — supports both shapes:
+  //   - OpenAI Chat:      usage.prompt_tokens_details.cached_tokens
+  //   - OpenAI Responses: usage.input_tokens_details.cached_tokens
+  // Both express the cached portion as a *subset* of the total input count.
+  const promptDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
     ? (usage.prompt_tokens_details as Record<string, unknown>)
     : {};
-  const openaiCached = toNonNegativeInt(details.cached_tokens);
+  const inputDetails = usage.input_tokens_details && typeof usage.input_tokens_details === 'object'
+    ? (usage.input_tokens_details as Record<string, unknown>)
+    : {};
+  const openaiCached = toNonNegativeInt(promptDetails.cached_tokens ?? inputDetails.cached_tokens);
 
   // Anthropic: cache_read_input_tokens is separate from input_tokens (which is fresh-only)
   const anthropicCached = toNonNegativeInt(usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
