@@ -69,6 +69,7 @@ const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__
 const APP_NAME = 'AntStation Desktop';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
+const DEFAULT_BUYER_PROXY_PORT = 8377;
 
 function isTruthyEnv(value: string | undefined): boolean {
   if (!value) {
@@ -192,6 +193,55 @@ function isPublicMetadataHost(rawHost: string): boolean {
   }
 
   return true;
+}
+
+async function resolveBuyerProxyPort(): Promise<number> {
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const buyer = asRecord(config['buyer']);
+    const port = Number(buyer['proxyPort']);
+    if (Number.isInteger(port) && port > 0 && port <= 65535) {
+      return port;
+    }
+  } catch {
+    // Fall back to the default proxy port when config is unavailable.
+  }
+  return DEFAULT_BUYER_PROXY_PORT;
+}
+
+async function requestBuyerPeerRefresh(): Promise<void> {
+  const port = await resolveBuyerProxyPort();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/_antseed/peers/refresh`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = text ? JSON.parse(text) as Record<string, unknown> : {};
+    } catch {
+      payload = {};
+    }
+
+    if (!response.ok || payload['ok'] !== true) {
+      const error = typeof payload['error'] === 'string' && payload['error'].trim().length > 0
+        ? payload['error']
+        : `Buyer proxy returned HTTP ${response.status}`;
+      throw new Error(error);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Timed out refreshing peers via buyer proxy on port ${port}`);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Unable to refresh peers via buyer proxy on port ${port}: ${message}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Runtime Activity & Log Wiring ──
@@ -899,10 +949,21 @@ registerPiChatHandlers({
 });
 
 ipcMain.handle('runtime:scan-network', async () => {
-  // The buyer runtime handles peer discovery; just return the current state.
-  await refreshPeerCache();
-  const snapshot = getNetworkSnapshot();
-  return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
+  try {
+    await requestBuyerPeerRefresh();
+    await refreshPeerCache();
+    const snapshot = getNetworkSnapshot();
+    return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
+  } catch (err) {
+    await refreshPeerCache();
+    const snapshot = getNetworkSnapshot();
+    return {
+      ok: false,
+      data: snapshot,
+      error: err instanceof Error ? err.message : String(err),
+      status: null,
+    };
+  }
 });
 
 app.whenReady().then(async () => {

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { ANTSEED_WILDCARD_TOPIC, peerTopic, serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
+import { ANTSEED_WILDCARD_TOPIC, peerTopic, subnetOf, subnetTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { verifySignature, bytesToHex, hexToBytes } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 
@@ -100,12 +100,12 @@ describe('PeerAnnouncer live load metadata', () => {
     });
   });
 
-  it('announces deduped lowercase service topics, wildcard, and per-peer topic', async () => {
+  it('announces only subnet, wildcard, and per-peer topics — never service topics', async () => {
     const { config, dht } = makeConfig();
     config.providers = [
       {
         provider: 'openai',
-        services: ['KIMI2.5', 'kimi2.5'],
+        services: ['KIMI2.5', 'kimi2.5', 'KIMI-2.5'],
         maxConcurrency: 5,
       },
     ];
@@ -116,34 +116,81 @@ describe('PeerAnnouncer live load metadata', () => {
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
 
-    // canonical service topic + wildcard + per-peer topic = 3
+    // Subnet + wildcard + per-peer = 3, regardless of how many services or
+    // casing variants the seller advertises. Service-level DHT topics were
+    // intentionally retired — the signed metadata is the source of truth
+    // for service filtering, and announce work no longer scales with the
+    // service catalog.
     expect(dht.announce).toHaveBeenCalledTimes(3);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi2.5')), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(ANTSEED_WILDCARD_TOPIC), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(peerTopic(config.identity.peerId)), 6882);
+    const announcedHashes = new Set(
+      dht.announce.mock.calls.map(([hash]) => (hash as Buffer).toString('hex')),
+    );
+    expect(announcedHashes).toEqual(new Set([
+      topicToInfoHash(subnetTopic(subnetOf(config.identity.peerId))).toString('hex'),
+      topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex'),
+      topicToInfoHash(peerTopic(config.identity.peerId)).toString('hex'),
+    ]));
+    // Sanity-check the strings: nothing announced should look like a service topic.
+    for (const call of dht.announce.mock.calls) {
+      // The hash is opaque, so we re-derive each candidate from its source string.
+      const hashHex = (call[0] as Buffer).toString('hex');
+      expect(hashHex).toMatch(/^[0-9a-f]{40}$/);
+    }
   });
 
-  it('announces compact service-search topic when canonical service key differs', async () => {
-    const { config, dht } = makeConfig();
-    config.providers = [
-      {
+  it('keeps announce work O(1) in the seller\'s service count', async () => {
+    // Property-style: announcing N services must produce the same number of
+    // DHT announces as announcing 1, because service filtering is metadata
+    // driven. Walks 1 / 10 / 78 / 200 services to cover both "healthy" and
+    // "pathological catalog" cases.
+    for (const n of [1, 10, 78, 200]) {
+      const { config, dht } = makeConfig();
+      config.providers = [{
         provider: 'openai',
-        services: ['KIMI-2.5', 'kimi_2.5', 'kimi 2.5'],
+        services: Array.from({ length: n }, (_, i) => `service-${i}`),
         maxConcurrency: 5,
-      },
-    ];
+      }];
+      config.pricing = new Map([
+        ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
+      ]);
+
+      const announcer = new PeerAnnouncer(config);
+      await announcer.announce();
+
+      // Always 3 — subnet + wildcard + per-peer. Capabilities aren't configured here.
+      expect(dht.announce).toHaveBeenCalledTimes(3);
+    }
+  });
+
+  it('announces topics in parallel rather than sequentially', async () => {
+    // Parallel announce is what makes the cycle time bounded by the slowest
+    // single announce instead of summed across all of them. Verify by
+    // watching how many announces are in flight at the moment any single
+    // call resolves — with a sequential implementation it'd always be 1.
+    const { config } = makeConfig();
+    config.providers = [{
+      provider: 'openai',
+      services: ['svc'],
+      maxConcurrency: 5,
+    }];
     config.pricing = new Map([
       ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
     ]);
 
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const announce = vi.fn(async () => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+    });
+    config.dht = { announce } as unknown as AnnouncerConfig['dht'];
+
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
 
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi-2.5')), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi_2.5')), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi 2.5')), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceSearchTopic('kimi2.5')), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(ANTSEED_WILDCARD_TOPIC), 6882);
-    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(peerTopic(config.identity.peerId)), 6882);
+    expect(announce).toHaveBeenCalledTimes(3);
+    expect(peakInFlight).toBe(3);
   });
 });

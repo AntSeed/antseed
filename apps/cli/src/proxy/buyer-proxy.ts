@@ -344,6 +344,17 @@ export class BuyerProxy {
         res.end(`Proxy error: ${err instanceof Error ? err.message : String(err)}`)
       })
     })
+
+    const eventNode = this._node as AntseedNode & {
+      on?: (event: 'peers:discovered', listener: (peers: PeerInfo[]) => void) => unknown
+    }
+    if (typeof eventNode.on === 'function') {
+      eventNode.on('peers:discovered', (peers: PeerInfo[]) => {
+        if (peers.length === 0) return
+        log(`Background discovery found ${peers.length} peer(s)`)
+        this._replacePeers(peers)
+      })
+    }
   }
 
   async start(): Promise<void> {
@@ -756,6 +767,21 @@ export class BuyerProxy {
       res.end()
       return
     }
+
+    if (path === '/_antseed/peers/refresh' && method === 'POST') {
+      try {
+        const peers = await this._refreshPeersNow()
+        await this._stateWriteChain
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, total: peers.length }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
     if (path === '/_antseed/peers' && method === 'GET') {
       const peers = await this._getPeers()
       const payload = peers.map((p) => ({

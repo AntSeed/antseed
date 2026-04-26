@@ -151,7 +151,8 @@ The proxy does not require an API key. Authentication and payments are handled b
 
 ## Agent Skills
 
-If you're using Claude Code or another agent, these skills can walk you through the full setup:
+If you're using Pi, Codex or another agent, these skills can walk you through the full setup:
 
+- [`antseed/antseed-pi`](https://github.com/AntSeed/pi-antseed) — Use the AntSeed local buyer proxy as a model provider in pi.
 - [`@skills/join-buyer`](https://github.com/AntSeed/antseed/tree/main/skills/join-buyer) — step-by-step buyer setup for Claude Code agents
 - [`@skills/openclaw-antseed`](https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed) — connect OpenClaw to AntSeed as a buyer

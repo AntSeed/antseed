@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, cp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -86,6 +86,24 @@ export function toFileInstallSpec(packageName: string, localPath: string): strin
 
 export function toNpmAliasInstallSpec(packageName: string, legacyPackageName: string): string {
   return `${packageName}@npm:${legacyPackageName}`;
+}
+
+function packageNodeModulesPath(root: string, packageName: string): string {
+  return path.join(root, 'node_modules', ...packageName.split('/'));
+}
+
+function bundledPackagePath(bundleRoot: string, packageName: string): string {
+  return path.join(bundleRoot, ...packageName.split('/'));
+}
+
+async function readPackageVersion(packageDir: string): Promise<string | null> {
+  try {
+    const raw = await readFile(path.join(packageDir, 'package.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function ensurePluginsDirectory(): Promise<void> {
@@ -186,7 +204,7 @@ export async function installPluginDependency(packageSpec: string): Promise<void
 export async function installPluginFromBundle(packageName: string): Promise<boolean> {
   // In production builds, plugins are bundled into Resources/bundled-plugins/.
   const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
-  if (!existsSync(path.join(bundleRoot, packageName))) return false;
+  if (!existsSync(bundledPackagePath(bundleRoot, packageName))) return false;
 
   await ensurePluginsDirectory();
   const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
@@ -201,18 +219,43 @@ export async function installPluginFromBundle(packageName: string): Promise<bool
       const src = path.join(bundleRoot, scope.name, pkg.name);
       const dest = path.join(destRoot, scope.name, pkg.name);
       await mkdir(path.dirname(dest), { recursive: true });
+      await rm(dest, { recursive: true, force: true });
       await cp(src, dest, { recursive: true, force: true });
       _appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name}.`);
     }
   }
 
-  return existsSync(path.join(destRoot, packageName, 'package.json'));
+  return existsSync(path.join(destRoot, ...packageName.split('/'), 'package.json'));
 }
 
 export function isPluginInstalled(packageName: string): boolean {
-  const pluginDir = path.join(DEFAULT_PLUGINS_DIR, 'node_modules', packageName);
+  const pluginDir = packageNodeModulesPath(DEFAULT_PLUGINS_DIR, packageName);
   return existsSync(path.join(pluginDir, 'package.json'))
     && existsSync(path.join(pluginDir, 'dist', 'index.js'));
+}
+
+export async function isBundledPluginRefreshNeeded(packageName: string): Promise<boolean> {
+  const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
+  if (!existsSync(bundledPackagePath(bundleRoot, packageName))) return false;
+
+  const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
+  const scopeDirs = bundleEntries.filter((e) => e.isDirectory() && e.name.startsWith('@'));
+
+  for (const scope of scopeDirs) {
+    const pkgEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
+    for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
+      const pkgName = `${scope.name}/${pkg.name}`;
+      const bundledVersion = await readPackageVersion(bundledPackagePath(bundleRoot, pkgName));
+      if (bundledVersion == null) continue;
+
+      const installedVersion = await readPackageVersion(packageNodeModulesPath(DEFAULT_PLUGINS_DIR, pkgName));
+      if (installedVersion !== bundledVersion) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 export async function resolveLocalPluginSource(packageName: string): Promise<string | null> {
@@ -292,14 +335,22 @@ export async function ensureDefaultPlugin(
   packageName: string,
   ctx: EnsureDefaultPluginContext,
 ): Promise<void> {
-  if (isPluginInstalled(packageName)) {
+  const installed = isPluginInstalled(packageName);
+  const refreshFromBundle = installed ? await isBundledPluginRefreshNeeded(packageName) : false;
+  if (installed && !refreshFromBundle) {
     ctx.setAppSetupNeeded(false);
     ctx.setAppSetupComplete(true);
     return;
   }
   ctx.setAppSetupNeeded(true);
   ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
-  ctx.appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing`);
+  ctx.appendLog(
+    'connect',
+    'system',
+    refreshFromBundle
+      ? `Refreshing bundled plugin "${packageName}".`
+      : `Required plugin "${packageName}" not found. Installing`,
+  );
   try {
     // 1. Try copying from the app bundle (production builds — instant, no network)
     const installedFromBundle = await installPluginFromBundle(packageName);

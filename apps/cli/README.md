@@ -33,7 +33,8 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer status` | Show buyer status |
 | `antseed config` | Manage configuration |
 | `antseed profile` | Manage your peer profile |
-| `antseed peer <peerId>` | Show a peer profile |
+| `antseed peer <peerId>` | Show a peer's profile (lightweight) |
+| `antseed network peer <peerId>` | Show full peer details (providers, services, on-chain stats) |
 | `antseed dashboard` | Start the web dashboard |
 | `antseed buyer channels` | List payment channels |
 | `antseed seller emissions info` | View ANTS emissions and epoch info |

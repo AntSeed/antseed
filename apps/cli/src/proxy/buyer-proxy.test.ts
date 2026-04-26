@@ -125,6 +125,23 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
+test('peer refresh control endpoint triggers immediate refresh', async () => {
+  const refreshedPeer = makePeer('a', ['anthropic'])
+  const proxy = makeBuyerProxyWithPeers([], [refreshedPeer])
+  let refreshCalled = false
+  ;(proxy as any)._refreshPeersNow = async () => {
+    refreshCalled = true
+    return [refreshedPeer]
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/peers/refresh' }))
+  const body = JSON.parse(res.body) as { ok: boolean; total: number }
+
+  assert.equal(refreshCalled, true)
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(body, { ok: true, total: 1 })
+})
+
 test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {
   const openAiPeer = makePeer('a', ['openai'])
   openAiPeer.providerServiceApiProtocols = {

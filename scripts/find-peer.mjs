@@ -15,6 +15,8 @@ import {
   DEFAULT_DHT_CONFIG,
   ANTSEED_WILDCARD_TOPIC,
   peerTopic,
+  subnetOf,
+  subnetTopic,
   topicToInfoHash,
 } from "../packages/node/dist/discovery/dht-node.js";
 import { HttpMetadataResolver } from "../packages/node/dist/discovery/http-metadata-resolver.js";
@@ -158,8 +160,28 @@ async function main() {
       return true;
     }
 
+    const targetSubnet = subnetOf(TARGET);
     console.log(
-      `[!] peer ${TARGET} not found on per-peer topic; scanning wildcard fallback`,
+      `[!] peer ${TARGET} not found on per-peer topic; scanning subnet ${targetSubnet} fallback`,
+    );
+    console.log("");
+
+    const subnet = await lookupTopic({
+      dht,
+      resolver,
+      label: `subnet-${targetSubnet}`,
+      topic: subnetTopic(targetSubnet),
+      target: TARGET,
+    });
+
+    console.log("");
+    if (subnet.found) {
+      printFound(TARGET, subnet.found, `subnet ${targetSubnet} topic`);
+      return true;
+    }
+
+    console.log(
+      `[!] peer ${TARGET} not found on subnet topic; scanning wildcard fallback`,
     );
     console.log("");
 
@@ -180,6 +202,7 @@ async function main() {
     console.log(`[✗] peer ${TARGET} NOT FOUND`);
     console.log(
       `    (resolved metadata for ${perPeer.resolved}/${perPeer.endpointCount} per-peer endpoints, `
+        + `${subnet.resolved}/${subnet.endpointCount} subnet endpoints, `
         + `${wildcard.resolved}/${wildcard.endpointCount} wildcard endpoints)`,
     );
     return false;

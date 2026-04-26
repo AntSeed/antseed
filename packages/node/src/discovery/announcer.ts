@@ -3,13 +3,11 @@ import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
   ANTSEED_WILDCARD_TOPIC,
-  serviceTopic,
-  serviceSearchTopic,
   capabilityTopic,
   peerTopic,
+  subnetOf,
+  subnetTopic,
   topicToInfoHash,
-  normalizeServiceTopicKey,
-  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
@@ -79,8 +77,7 @@ export interface AnnouncerConfig {
 }
 
 /**
- * Retry schedule when one or more canonical service topics fail to announce.
- * Silent 15-min waits used to be the failure mode; these short backoffs let
+ * Retry schedule when one or more topic announces fail. Short backoffs let
  * a seller recover from transient DHT hiccups before buyers decide the peer
  * has disappeared (buyer staleness cutoff is 30 min).
  */
@@ -103,7 +100,7 @@ export class PeerAnnouncer {
     const metadata = await this._buildSignedMetadata(true);
     this._latestMetadata = metadata;
 
-    const failures = await this._announceTopics(metadata.providers);
+    const failures = await this._announceTopics();
     if (failures > 0) {
       this._scheduleRetryAfterFailure(failures);
     } else {
@@ -275,61 +272,62 @@ export class PeerAnnouncer {
     return metadata;
   }
 
-  private async _announceTopics(providers: ProviderAnnouncement[]): Promise<number> {
-    const announcedServiceTopics = new Set<string>();
-    let failures = 0;
+  /**
+   * Announce the topics that let buyers discover this peer.
+   *
+   * Topics are intentionally O(1) in the seller's service count. Service
+   * filtering is metadata-driven: the signed metadata document carries the
+   * full service catalog (`providers[].services`, `providerPricing.services`,
+   * `providerServiceCategories`, `providerServiceApiProtocols`), and buyers
+   * filter against that after enumeration. Announcing a per-service topic
+   * once gave us topic-targeted discovery, but: (a) the proxy never used it,
+   * (b) the CLI already filtered metadata-side anyway, (c) the existing
+   * "empty service-topic → fall back to wildcard" path made it best-effort,
+   * and (d) it grew the announce cycle linearly with services and recreated
+   * the K-closest saturation problem on every popular service infohash.
+   *
+   * All topics are published in parallel — each announce is independent
+   * (separate K-closest fan-out per infohash) and they share no state, so
+   * sequencing them just slows the reannounce cycle for no benefit.
+   */
+  private async _announceTopics(): Promise<number> {
+    const subnet = subnetOf(this.config.identity.peerId);
+    const topics = new Set<string>();
 
-    for (const p of providers) {
-      for (const service of p.services) {
-        const canonicalServiceKey = normalizeServiceTopicKey(service);
-        if (!canonicalServiceKey) {
-          continue;
-        }
-        const canonicalTopic = serviceTopic(canonicalServiceKey);
-        if (!announcedServiceTopics.has(canonicalTopic)) {
-          announcedServiceTopics.add(canonicalTopic);
-          if (!(await this._tryAnnounceTopic(canonicalTopic))) failures += 1;
-        }
+    // Subnet topic: shards the peer set across SUBNET_COUNT infohashes so no
+    // single one carries every announcer at once. Buyers fan out parallel
+    // lookups across all subnets in `PeerLookup.findAll()`.
+    topics.add(subnetTopic(subnet));
 
-        const compactServiceKey = normalizeServiceSearchTopicKey(service);
-        if (compactServiceKey !== canonicalServiceKey) {
-          const compactTopic = serviceSearchTopic(compactServiceKey);
-          if (!announcedServiceTopics.has(compactTopic)) {
-            announcedServiceTopics.add(compactTopic);
-            if (!(await this._tryAnnounceTopic(compactTopic))) failures += 1;
-          }
-        }
-      }
-    }
-
-    if (!(await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC))) failures += 1;
+    // Wildcard remains during the transition: it lets older buyers (still on
+    // the single-infohash scan) keep finding this peer. Once subnet-aware
+    // buyers are universal it can be dropped — see SUBNET_COUNT comment in
+    // dht-node.ts.
+    topics.add(ANTSEED_WILDCARD_TOPIC);
 
     // Per-peer topic: lets buyers do a deterministic lookup-by-peerId without
-    // scanning the (saturated) wildcard. Cheap to publish — one extra announce
-    // per cycle — and dramatically improves "find this exact peer" queries.
-    if (!(await this._tryAnnounceTopic(peerTopic(this.config.identity.peerId)))) {
-      failures += 1;
-    }
+    // scanning the wildcard or any subnet.
+    topics.add(peerTopic(this.config.identity.peerId));
 
     if (this.config.offerings) {
-      const announcedCapabilities = new Set<string>();
       for (const offering of this.config.offerings) {
-        if (!(await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name)))) {
-          failures += 1;
-        }
+        topics.add(capabilityTopic(offering.capability, offering.name));
         const normalizedCapability = offering.capability.trim().toLowerCase();
-        if (!normalizedCapability) {
-          continue;
-        }
-        if (!announcedCapabilities.has(normalizedCapability)) {
-          announcedCapabilities.add(normalizedCapability);
-          if (!(await this._tryAnnounceTopic(capabilityTopic(normalizedCapability)))) {
-            failures += 1;
-          }
+        if (normalizedCapability) {
+          topics.add(capabilityTopic(normalizedCapability));
         }
       }
     }
 
+    const results = await Promise.allSettled(
+      [...topics].map((topic) => this._tryAnnounceTopic(topic)),
+    );
+    let failures = 0;
+    for (const r of results) {
+      if (r.status === "rejected" || (r.status === "fulfilled" && !r.value)) {
+        failures += 1;
+      }
+    }
     return failures;
   }
 

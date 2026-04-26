@@ -3,7 +3,7 @@ import type { PeerMetadata } from './peer-metadata.js';
 import { debugWarn } from '../utils/debug.js';
 
 export interface HttpMetadataResolverConfig {
-  /** Timeout in ms for each metadata fetch. Default: 2000 */
+  /** Timeout in ms for each metadata fetch. Default: 1500 */
   timeoutMs?: number;
   /** Port offset from the signaling port to the metadata HTTP port. Default: 0 (same port) */
   metadataPortOffset?: number;
@@ -11,6 +11,8 @@ export interface HttpMetadataResolverConfig {
   failureCooldownMs?: number;
   /** Upper bound for failure cooldown backoff. Default: 1800000 (30 minutes) */
   maxFailureCooldownMs?: number;
+  /** Maximum concurrent metadata fetches. Default: 24 */
+  maxConcurrent?: number;
 }
 
 type FailedEndpointState = {
@@ -23,16 +25,20 @@ export class HttpMetadataResolver implements MetadataResolver {
   private readonly metadataPortOffset: number;
   private readonly failureCooldownMs: number;
   private readonly maxFailureCooldownMs: number;
+  private readonly maxConcurrent: number;
   private readonly failedEndpoints: Map<string, FailedEndpointState>;
+  private activeCount = 0;
+  private readonly waiters: Array<() => void> = [];
 
   constructor(config?: HttpMetadataResolverConfig) {
-    this.timeoutMs = config?.timeoutMs ?? 2000;
+    this.timeoutMs = config?.timeoutMs ?? 1500;
     this.metadataPortOffset = config?.metadataPortOffset ?? 0;
     this.failureCooldownMs = Math.max(0, config?.failureCooldownMs ?? 30_000);
     this.maxFailureCooldownMs = Math.max(
       this.failureCooldownMs,
       config?.maxFailureCooldownMs ?? 30 * 60_000,
     );
+    this.maxConcurrent = Math.max(1, config?.maxConcurrent ?? 24);
     this.failedEndpoints = new Map<string, FailedEndpointState>();
   }
 
@@ -51,6 +57,7 @@ export class HttpMetadataResolver implements MetadataResolver {
 
     const url = `http://${peer.host}:${metadataPort}/metadata`;
 
+    await this.acquireSlot();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -75,6 +82,28 @@ export class HttpMetadataResolver implements MetadataResolver {
       return null;
     } finally {
       clearTimeout(timeout);
+      this.releaseSlot();
+    }
+  }
+
+  private async acquireSlot(): Promise<void> {
+    if (this.activeCount < this.maxConcurrent) {
+      this.activeCount += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.waiters.push(resolve);
+    });
+    this.activeCount += 1;
+  }
+
+  private releaseSlot(): void {
+    if (this.activeCount > 0) {
+      this.activeCount -= 1;
+    }
+    const next = this.waiters.shift();
+    if (next) {
+      next();
     }
   }
 

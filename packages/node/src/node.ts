@@ -22,6 +22,7 @@ import { ConnectionState } from "./types/connection.js";
 import {
   DHTNode,
   DEFAULT_DHT_CONFIG,
+  SUBNET_COUNT,
   type DHTNodeConfig,
 } from "./discovery/dht-node.js";
 import { toBootstrapConfig, OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes } from "./discovery/bootstrap.js";
@@ -236,6 +237,8 @@ export class AntseedNode extends EventEmitter {
   private _closeRequestedFromBlock: number = 0;
   /** Seller session lifecycle tracking (metering, settlement). */
   private _sessionTracker: SellerSessionTracker | null = null;
+  /** Buyer-side background full discovery sweep, if one is running. */
+  private _backgroundPeerDiscoveryPromise: Promise<PeerInfo[]> | null = null;
 
   constructor(config: NodeConfig) {
     super();
@@ -442,6 +445,7 @@ export class AntseedNode extends EventEmitter {
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
     this._buyerHandler = null;
+    this._backgroundPeerDiscoveryPromise = null;
     this._sellerPaymentManager = null;
     this._sessionTracker = null;
     this._started = false;
@@ -454,19 +458,22 @@ export class AntseedNode extends EventEmitter {
     }
 
     debugLog(`[Node] Discovering peers (service: "${service ?? "*"}")...`);
+    debugLog(`[Node] Discovery plan: wildcard warmup + budgeted sequential subnet shard lookups (${SUBNET_COUNT} total) + parallel metadata resolve; exhaustive sweep continues in background`);
 
-    // Query service-level DHT topic when a service is specified — returns only peers
-    // that explicitly announced that service. Fall back to wildcard if no results.
-    let results = service
-      ? await this._peerLookup.findByService(service)
-      : await this._peerLookup.findAll();
+    // Always enumerate via subnet+wildcard. Service filtering is metadata
+    // driven — announcing per-service DHT topics did O(services) work per
+    // reannounce cycle, recreated the K-closest saturation problem on every
+    // popular service infohash, and was already an opportunistic optimisation
+    // (the production proxy never used it; the CLI always re-filtered
+    // metadata-side anyway). The signed metadata document carries the full
+    // service catalog, so we filter against that after enumeration.
+    const results = await this._peerLookup.findAll();
+    debugLog(`[Node] DHT returned ${results.length} foreground result(s)`);
+    this._startBackgroundPeerDiscoverySweep();
+    return this._lookupResultsToPeerInfos(results, service);
+  }
 
-    if (service && results.length === 0) {
-      debugLog(`[Node] No service-topic results for "${service}", falling back to wildcard`);
-      results = await this._peerLookup.findAll();
-    }
-    debugLog(`[Node] DHT returned ${results.length} result(s)`);
-
+  private async _lookupResultsToPeerInfos(results: LookupResult[], service?: string): Promise<PeerInfo[]> {
     // Deduplicate by peerId (DHT can return the same peer from multiple topic lookups)
     const seen = new Set<string>();
     const peers: PeerInfo[] = [];
@@ -478,12 +485,45 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    await this._enrichPeersWithOnChainStats(peers);
+    const filtered = service ? peers.filter((p) => peerOffersService(p, service)) : peers;
 
-    for (const p of peers) {
+    // On-chain enrichment runs after the metadata filter so we don't waste
+    // RPC calls on peers we'll discard.
+    await this._enrichPeersWithOnChainStats(filtered);
+
+    for (const p of filtered) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
     }
-    return peers;
+    return filtered;
+  }
+
+  private _startBackgroundPeerDiscoverySweep(): void {
+    if (!this._peerLookup || this._backgroundPeerDiscoveryPromise) {
+      return;
+    }
+    const peerLookup = this._peerLookup;
+    debugLog(`[Node] Starting background exhaustive peer discovery sweep`);
+    this._backgroundPeerDiscoveryPromise = (async () => {
+      const results = await peerLookup.findAllExhaustive(async (partialResults, context) => {
+        if (partialResults.length === 0) return;
+        const peers = await this._lookupResultsToPeerInfos(partialResults);
+        debugLog(
+          `[Node] Background DHT partial ${context.phase}`
+          + `${context.subnet !== undefined ? ` ${context.subnet}/${SUBNET_COUNT - 1}` : ""}`
+          + ` emitted ${peers.length} peer(s) from ${context.endpointCount} endpoint(s)`,
+        );
+        this.emit("peers:discovered", peers);
+      });
+      debugLog(`[Node] Background DHT sweep returned ${results.length} result(s)`);
+      const peers = await this._lookupResultsToPeerInfos(results);
+      this.emit("peers:discovered", peers);
+      return peers;
+    })().catch((err) => {
+      debugWarn(`[Node] Background DHT sweep failed: ${err instanceof Error ? err.message : err}`);
+      return [];
+    }).finally(() => {
+      this._backgroundPeerDiscoveryPromise = null;
+    });
   }
 
   /**
@@ -1105,7 +1145,10 @@ export class AntseedNode extends EventEmitter {
     });
 
     // Create PeerLookup with HttpMetadataResolver
-    const metadataResolver = new HttpMetadataResolver();
+    const metadataResolver = new HttpMetadataResolver({
+      timeoutMs: 750,
+      maxConcurrent: 24,
+    });
     const lookupConfig: LookupConfig = {
       dht: this._dht,
       metadataResolver,
@@ -1113,6 +1156,7 @@ export class AntseedNode extends EventEmitter {
       allowStaleMetadata: DEFAULT_LOOKUP_CONFIG.allowStaleMetadata,
       maxAnnouncementAgeMs: DEFAULT_LOOKUP_CONFIG.maxAnnouncementAgeMs,
       maxResults: DEFAULT_LOOKUP_CONFIG.maxResults,
+      maxFindAllDhtDurationMs: DEFAULT_LOOKUP_CONFIG.maxFindAllDhtDurationMs,
     };
     this._peerLookup = new PeerLookup(lookupConfig);
 
@@ -1552,4 +1596,28 @@ export class AntseedNode extends EventEmitter {
 function parsePeerAddress(address: string): { host: string; port: number } {
   const parts = address.split(":");
   return { host: parts[0]!, port: parseInt(parts[1] ?? "6882", 10) };
+}
+
+/**
+ * Predicate used by `discoverPeers(service)` to filter the enumerated peer
+ * list against an optional service hint. Matches case-insensitively against
+ * either a provider name (e.g. `openai`) or any service name announced in
+ * the peer's signed metadata across all of its providers. Returns true when
+ * `service` is empty/whitespace so the caller can skip the filter.
+ */
+function peerOffersService(peer: PeerInfo, service: string): boolean {
+  const needle = service.trim().toLowerCase();
+  if (needle.length === 0) return true;
+  for (const provider of peer.providers) {
+    if (provider.trim().toLowerCase() === needle) return true;
+  }
+  if (peer.providerPricing) {
+    for (const entry of Object.values(peer.providerPricing)) {
+      if (!entry.services) continue;
+      for (const serviceName of Object.keys(entry.services)) {
+        if (serviceName.trim().toLowerCase() === needle) return true;
+      }
+    }
+  }
+  return false;
 }
