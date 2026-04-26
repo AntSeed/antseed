@@ -4,6 +4,11 @@ import { EventEmitter } from "node:events";
 import type { PeerId } from "../types/peer.js";
 import { OFFICIAL_BOOTSTRAP_NODES, toBootstrapConfig } from "./bootstrap.js";
 
+export interface DHTPeerEndpoint {
+  host: string;
+  port: number;
+}
+
 export interface DHTNodeConfig {
   peerId: PeerId;
   port: number;
@@ -135,6 +140,14 @@ export function serviceSearchTopic(serviceName: string): string {
   return "antseed:service-search:" + normalizeServiceSearchTopicKey(serviceName);
 }
 
+export function serviceSubnetTopic(serviceName: string, index: number): string {
+  return `antseed:service:${normalizeServiceTopicKey(serviceName)}:subnet:${index}`;
+}
+
+export function serviceSearchSubnetTopic(serviceName: string, index: number): string {
+  return `antseed:service-search:${normalizeServiceSearchTopicKey(serviceName)}:subnet:${index}`;
+}
+
 export function capabilityTopic(capability: string, name?: string): string {
   const base = "antseed:" + normalizeTopicSegment(capability);
   return name ? base + ":" + normalizeTopicSegment(name) : base;
@@ -224,22 +237,37 @@ export class DHTNode {
     });
   }
 
-  async lookup(infoHash: Buffer): Promise<Array<{ host: string; port: number }>> {
-    return new Promise<Array<{ host: string; port: number }>>((resolve) => {
+  async lookup(infoHash: Buffer): Promise<DHTPeerEndpoint[]> {
+    return this.lookupMany([infoHash]);
+  }
+
+  /**
+   * Look up multiple infohashes concurrently while sharing one temporary
+   * bittorrent-dht "peer" listener. Calling `lookup()` N times in parallel
+   * attaches N listeners to the same EventEmitter and trips Node's default
+   * listener warning once subnet fan-out exceeds 10 topics.
+   */
+  async lookupMany(infoHashes: Buffer[]): Promise<DHTPeerEndpoint[]> {
+    return new Promise<DHTPeerEndpoint[]>((resolve) => {
       if (!this.dht) {
         resolve([]);
         return;
       }
+      if (infoHashes.length === 0) {
+        resolve([]);
+        return;
+      }
 
-      const peers: Array<{ host: string; port: number }> = [];
+      const wantedHashes = new Set(infoHashes.map((hash) => hash.toString("hex")));
+      const peers: DHTPeerEndpoint[] = [];
+      let pending = infoHashes.length;
       let done = false;
 
       const onPeer = (peer: { host: string; port: number }, hash: Buffer): void => {
-        if (hash.equals(infoHash)) {
-          if (peer.port < 1 || peer.port > 65535) return;
-          if (!this.config.allowPrivateIPs && !isPublicIP(peer.host)) return;
-          peers.push({ host: peer.host, port: peer.port });
-        }
+        if (!wantedHashes.has(hash.toString("hex"))) return;
+        if (peer.port < 1 || peer.port > 65535) return;
+        if (!this.config.allowPrivateIPs && !isPublicIP(peer.host)) return;
+        peers.push({ host: peer.host, port: peer.port });
       };
 
       const finish = (): void => {
@@ -256,9 +284,12 @@ export class DHTNode {
         finish();
       }, this.config.operationTimeoutMs);
 
-      this.dht.lookup(infoHash, () => {
-        finish();
-      });
+      for (const infoHash of infoHashes) {
+        this.dht.lookup(infoHash, () => {
+          pending -= 1;
+          if (pending === 0) finish();
+        });
+      }
     });
   }
 

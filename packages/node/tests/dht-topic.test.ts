@@ -4,6 +4,8 @@ import {
   SUBNET_COUNT,
   serviceTopic,
   serviceSearchTopic,
+  serviceSubnetTopic,
+  serviceSearchSubnetTopic,
   capabilityTopic,
   peerTopic,
   subnetTopic,
@@ -27,6 +29,11 @@ describe('DHT topic helpers', () => {
     expect(normalizeServiceSearchTopicKey('  kimi_2.5  ')).toBe('kimi2.5');
     expect(normalizeServiceSearchTopicKey('  kimi 2.5  ')).toBe('kimi2.5');
     expect(serviceSearchTopic('  kimi_2.5  ')).toBe('antseed:service-search:kimi2.5');
+  });
+
+  it('builds service subnet topics with normalized service keys', () => {
+    expect(serviceSubnetTopic('  KIMI-2.5  ', 7)).toBe('antseed:service:kimi-2.5:subnet:7');
+    expect(serviceSearchSubnetTopic('  kimi_2.5  ', 7)).toBe('antseed:service-search:kimi2.5:subnet:7');
   });
 
   it('normalizes capability topics to lowercase', () => {

@@ -4,7 +4,9 @@ import {
   ANTSEED_WILDCARD_TOPIC,
   SUBNET_COUNT,
   peerTopic,
+  serviceSearchSubnetTopic,
   serviceSearchTopic,
+  serviceSubnetTopic,
   serviceTopic,
   subnetOf,
   subnetTopic,
@@ -210,6 +212,27 @@ describe('PeerLookup', () => {
     expect(results[0]?.host).toBe(shared.host);
   });
 
+  it('findAll uses DHTNode.lookupMany when available to avoid listener fan-out', async () => {
+    const lookup = vi.fn();
+    const lookupMany = vi.fn(async () => [{ host: '10.0.7.1', port: 6882 }] as PeerEndpoint[]);
+    const dht = { lookup, lookupMany } as unknown as DHTNode;
+
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver: { resolve: vi.fn(async () => buildMetadata()) },
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 1000,
+    });
+
+    const results = await peerLookup.findAll();
+    expect(lookupMany).toHaveBeenCalledTimes(1);
+    expect(lookupMany.mock.calls[0]?.[0]).toHaveLength(SUBNET_COUNT + 1);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+  });
+
   it('deduplicates repeated host:port endpoints before metadata resolution', async () => {
     const peers: PeerEndpoint[] = [
       { host: '84.228.226.179', port: 6882 },
@@ -243,7 +266,7 @@ describe('PeerLookup', () => {
     );
   });
 
-  it('findByService queries canonical and compact service topics when keys differ', async () => {
+  it('findByService queries sharded canonical and compact service topics plus legacy fallbacks', async () => {
     const canonicalPeers: PeerEndpoint[] = [
       { host: '84.228.226.179', port: 6882 },
     ];
@@ -254,10 +277,14 @@ describe('PeerLookup', () => {
 
     const canonicalHashHex = topicToInfoHash(serviceTopic('kimi-2.5')).toString('hex');
     const compactHashHex = topicToInfoHash(serviceSearchTopic('kimi-2.5')).toString('hex');
+    const subnetHashHex = topicToInfoHash(serviceSubnetTopic('kimi-2.5', 3)).toString('hex');
+    const compactSubnetHashHex = topicToInfoHash(serviceSearchSubnetTopic('kimi-2.5', 4)).toString('hex');
     const lookup = vi.fn(async (hash: Buffer) => {
       const hex = hash.toString('hex');
       if (hex === canonicalHashHex) return canonicalPeers;
       if (hex === compactHashHex) return compactPeers;
+      if (hex === subnetHashHex) return [{ host: '147.236.231.106', port: 6882 }];
+      if (hex === compactSubnetHashHex) return [{ host: '147.236.231.107', port: 6882 }];
       return [];
     });
     const dht = { lookup } as unknown as DHTNode;
@@ -275,12 +302,17 @@ describe('PeerLookup', () => {
     const peerLookup = new PeerLookup(config);
 
     const results = await peerLookup.findByService('kimi-2.5');
-    expect(lookup).toHaveBeenCalledTimes(2);
-    expect(resolve).toHaveBeenCalledTimes(2);
-    expect(results).toHaveLength(2);
+    expect(lookup).toHaveBeenCalledTimes((SUBNET_COUNT * 2) + 2);
+    const queriedHashes = new Set(lookup.mock.calls.map(([hash]) => hash.toString('hex')));
+    expect(queriedHashes.has(canonicalHashHex)).toBe(true);
+    expect(queriedHashes.has(compactHashHex)).toBe(true);
+    expect(queriedHashes.has(subnetHashHex)).toBe(true);
+    expect(queriedHashes.has(compactSubnetHashHex)).toBe(true);
+    expect(resolve).toHaveBeenCalledTimes(4);
+    expect(results).toHaveLength(4);
   });
 
-  it('findByService queries only canonical topic when compact key matches canonical', async () => {
+  it('findByService queries sharded canonical topics plus legacy fallback when compact key matches canonical', async () => {
     const peers: PeerEndpoint[] = [{ host: '84.228.226.179', port: 6882 }];
     const lookup = vi.fn(async () => peers);
     const dht = { lookup } as unknown as DHTNode;
@@ -298,7 +330,7 @@ describe('PeerLookup', () => {
     const peerLookup = new PeerLookup(config);
 
     const results = await peerLookup.findByService('kimi2.5');
-    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
     expect(results).toHaveLength(1);
   });
 

@@ -5,6 +5,8 @@ export {
   ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
+  serviceSubnetTopic,
+  serviceSearchSubnetTopic,
   capabilityTopic,
   peerTopic,
   subnetTopic,
@@ -12,6 +14,7 @@ export {
   SUBNET_COUNT,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
+  type DHTPeerEndpoint,
   type DHTNodeConfig,
 } from './dht-node.js';
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';

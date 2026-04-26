@@ -5,6 +5,8 @@ import {
   ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
+  serviceSubnetTopic,
+  serviceSearchSubnetTopic,
   capabilityTopic,
   peerTopic,
   subnetOf,
@@ -280,6 +282,7 @@ export class PeerAnnouncer {
   private async _announceTopics(providers: ProviderAnnouncement[]): Promise<number> {
     const announcedServiceTopics = new Set<string>();
     let failures = 0;
+    const subnet = subnetOf(this.config.identity.peerId);
 
     for (const p of providers) {
       for (const service of p.services) {
@@ -292,6 +295,11 @@ export class PeerAnnouncer {
           announcedServiceTopics.add(canonicalTopic);
           if (!(await this._tryAnnounceTopic(canonicalTopic))) failures += 1;
         }
+        const canonicalSubnetTopic = serviceSubnetTopic(canonicalServiceKey, subnet);
+        if (!announcedServiceTopics.has(canonicalSubnetTopic)) {
+          announcedServiceTopics.add(canonicalSubnetTopic);
+          if (!(await this._tryAnnounceTopic(canonicalSubnetTopic))) failures += 1;
+        }
 
         const compactServiceKey = normalizeServiceSearchTopicKey(service);
         if (compactServiceKey !== canonicalServiceKey) {
@@ -299,6 +307,11 @@ export class PeerAnnouncer {
           if (!announcedServiceTopics.has(compactTopic)) {
             announcedServiceTopics.add(compactTopic);
             if (!(await this._tryAnnounceTopic(compactTopic))) failures += 1;
+          }
+          const compactSubnetTopic = serviceSearchSubnetTopic(compactServiceKey, subnet);
+          if (!announcedServiceTopics.has(compactSubnetTopic)) {
+            announcedServiceTopics.add(compactSubnetTopic);
+            if (!(await this._tryAnnounceTopic(compactSubnetTopic))) failures += 1;
           }
         }
       }
@@ -308,7 +321,6 @@ export class PeerAnnouncer {
     // single one carries every announcer at once. Buyers fan out parallel
     // lookups across all subnets in `PeerLookup.findAll()`. This is the path
     // that replaces the wildcard for enumeration.
-    const subnet = subnetOf(this.config.identity.peerId);
     if (!(await this._tryAnnounceTopic(subnetTopic(subnet)))) failures += 1;
 
     // Wildcard remains during the transition: it lets older buyers (still on

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { ANTSEED_WILDCARD_TOPIC, peerTopic, serviceSearchTopic, serviceTopic, subnetOf, subnetTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
+import { ANTSEED_WILDCARD_TOPIC, peerTopic, serviceSearchSubnetTopic, serviceSearchTopic, serviceSubnetTopic, serviceTopic, subnetOf, subnetTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { verifySignature, bytesToHex, hexToBytes } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 
@@ -116,9 +116,13 @@ describe('PeerAnnouncer live load metadata', () => {
     const announcer = new PeerAnnouncer(config);
     await announcer.announce();
 
-    // canonical service topic + subnet + wildcard + per-peer topic = 4
-    expect(dht.announce).toHaveBeenCalledTimes(4);
+    // canonical service + service subnet + peer subnet + wildcard + per-peer topic = 5
+    expect(dht.announce).toHaveBeenCalledTimes(5);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi2.5')), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(
+      topicToInfoHash(serviceSubnetTopic('kimi2.5', subnetOf(config.identity.peerId))),
+      6882,
+    );
     expect(dht.announce).toHaveBeenCalledWith(
       topicToInfoHash(subnetTopic(subnetOf(config.identity.peerId))),
       6882,
@@ -147,6 +151,22 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi_2.5')), 6882);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceTopic('kimi 2.5')), 6882);
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(serviceSearchTopic('kimi2.5')), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(
+      topicToInfoHash(serviceSubnetTopic('kimi-2.5', subnetOf(config.identity.peerId))),
+      6882,
+    );
+    expect(dht.announce).toHaveBeenCalledWith(
+      topicToInfoHash(serviceSubnetTopic('kimi_2.5', subnetOf(config.identity.peerId))),
+      6882,
+    );
+    expect(dht.announce).toHaveBeenCalledWith(
+      topicToInfoHash(serviceSubnetTopic('kimi 2.5', subnetOf(config.identity.peerId))),
+      6882,
+    );
+    expect(dht.announce).toHaveBeenCalledWith(
+      topicToInfoHash(serviceSearchSubnetTopic('kimi2.5', subnetOf(config.identity.peerId))),
+      6882,
+    );
     expect(dht.announce).toHaveBeenCalledWith(
       topicToInfoHash(subnetTopic(subnetOf(config.identity.peerId))),
       6882,

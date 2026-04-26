@@ -18,17 +18,23 @@ Sellers announce multiple topic types on the DHT:
 
 ```
 ANTSEED_WILDCARD_TOPIC           = "antseed:*"
+subnetTopic(index)               = "antseed:subnet:" + index
 serviceTopic(service)            = "antseed:service:" + normalize(service)
 serviceSearchTopic(service)      = "antseed:service-search:" + compact(normalize(service))
-capabilityTopic(capability)    = "antseed:" + normalize(capability)
-capabilityTopic(capability,id) = "antseed:" + normalize(capability) + ":" + normalize(id)
+serviceSubnetTopic(service,i)    = "antseed:service:" + normalize(service) + ":subnet:" + i
+serviceSearchSubnetTopic(s,i)    = "antseed:service-search:" + compact(normalize(s)) + ":subnet:" + i
+peerTopic(peerId)                = "antseed:peer:" + normalizeHex(peerId)
+capabilityTopic(capability)      = "antseed:" + normalize(capability)
+capabilityTopic(capability,id)   = "antseed:" + normalize(capability) + ":" + normalize(id)
 
 normalize(x) = trim(lowercase(x))
+normalizeHex(x) = trim(lowercase(x)).removeLeading("0x")
 compact(x)   = remove all spaces, "-" and "_" (preserve ".")
+subnet(peer) = parseInt(peerId[0:2], 16) % SUBNET_COUNT   // SUBNET_COUNT = 16
 infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The announcer always publishes canonical service topics (`serviceTopic`). It additionally publishes compact `serviceSearchTopic` entries only when the compact key differs from canonical.
+The announcer always publishes canonical service topics (`serviceTopic`) and the matching `serviceSubnetTopic` for its peer subnet. It additionally publishes compact `serviceSearchTopic` and `serviceSearchSubnetTopic` entries only when the compact key differs from canonical. During the subnet rollout it also keeps publishing the wildcard topic for older buyers.
 
 Examples:
 
@@ -260,8 +266,8 @@ All peers returned by a DHT lookup are resolved in parallel, so a single slow or
 The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
-   - wildcard lookup: `SHA1(ANTSEED_WILDCARD_TOPIC)` — finds all peers
-   - service lookup: `SHA1(serviceTopic(service))`, and if compact key differs, also `SHA1(serviceSearchTopic(service))`
+   - all-peer lookup: `SHA1(subnetTopic(i))` for every subnet, plus `SHA1(ANTSEED_WILDCARD_TOPIC)` as a transition fallback
+   - service lookup: `SHA1(serviceSubnetTopic(service, i))` for every subnet, plus legacy `SHA1(serviceTopic(service))`; if the compact key differs, also query every `serviceSearchSubnetTopic(service, i)` plus legacy `serviceSearchTopic(service)`
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
@@ -277,7 +283,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 | requireValidSignature    | true             | Reject metadata with invalid signatures  |
 | allowStaleMetadata       | false            | Reject stale metadata                    |
 | maxAnnouncementAgeMs     | 30 minutes       | 30 * 60 * 1000 = 1 800 000 ms           |
-| maxResults               | 50               | Maximum peers returned per lookup        |
+| maxResults               | 200              | Maximum peers returned per lookup        |
 
 ---
 
@@ -293,8 +299,12 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 4. Sign the body with the seller's secp256k1 private key (via EIP-191 personal_sign).
 5. Announce DHT topics at the configured signaling port:
    - canonical service topics (`serviceTopic(service)`)
+   - canonical service subnet topics (`serviceSubnetTopic(service, subnetOf(peerId))`)
    - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ
+   - compact service-search subnet topics (`serviceSearchSubnetTopic(service, subnetOf(peerId))`) when canonical and compact keys differ
+   - subnet topic (`subnetTopic(subnetOf(peerId))`)
    - wildcard topic (`ANTSEED_WILDCARD_TOPIC`)
+   - per-peer topic (`peerTopic(peerId)`)
    - capability topics when offerings are configured
 
 Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `announce()` immediately and then every `reannounceIntervalMs` milliseconds. Load can be updated at any time via `updateLoad(providerName, currentLoad)` and will be reflected in the next announcement cycle.

@@ -4,6 +4,8 @@ import {
   ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
+  serviceSubnetTopic,
+  serviceSearchSubnetTopic,
   capabilityTopic,
   peerTopic,
   subnetTopic,
@@ -69,48 +71,40 @@ export class PeerLookup {
    * resolving metadata, so the union has no extra cost beyond the parallel
    * lookups themselves.
    *
-   * `Promise.allSettled` (not `Promise.all`) defends against a single
-   * misbehaving subnet lookup taking the whole enumeration down: today
-   * `DHTNode.lookup` swallows timeouts and resolves to `[]`, but that
-   * invariant is one refactor away from breaking, and 17 in-flight lookups
-   * raise the probability of any rejection accordingly. A failed subnet
-   * just contributes zero endpoints; the rest of the network still surfaces.
+   * `DHTNode.lookupMany` shares a single temporary "peer" listener across
+   * the fan-out so subnet enumeration does not trip EventEmitter's default
+   * listener limit.
    */
   async findAll(): Promise<LookupResult[]> {
-    const subnetHashes = Array.from({ length: SUBNET_COUNT }, (_, i) =>
-      topicToInfoHash(subnetTopic(i)),
-    );
-    const wildcardHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-
-    const settled = await Promise.allSettled(
-      [...subnetHashes, wildcardHash].map((hash) => this.config.dht.lookup(hash)),
-    );
-    const merged: PeerEndpoint[] = [];
-    for (const result of settled) {
-      if (result.status !== "fulfilled") continue;
-      for (const peer of result.value) merged.push(peer);
-    }
+    const merged = await this.lookupTopicHashes([
+      ...Array.from({ length: SUBNET_COUNT }, (_, i) => topicToInfoHash(subnetTopic(i))),
+      topicToInfoHash(ANTSEED_WILDCARD_TOPIC),
+    ]);
     return this.resolveLookupResults(shuffle(merged));
   }
 
   async findByService(service: string): Promise<LookupResult[]> {
-    const canonicalTopic = serviceTopic(service);
-    const canonicalInfoHash = topicToInfoHash(canonicalTopic);
-
     const canonicalServiceKey = normalizeServiceTopicKey(service);
+    if (!canonicalServiceKey) return [];
+
     const compactServiceKey = normalizeServiceSearchTopicKey(service);
-    if (compactServiceKey === canonicalServiceKey) {
-      const peers = await this.config.dht.lookup(canonicalInfoHash);
-      return this.resolveLookupResults(shuffle(peers));
+    const topics = new Set<string>();
+    for (let i = 0; i < SUBNET_COUNT; i++) {
+      topics.add(serviceSubnetTopic(canonicalServiceKey, i));
+      if (compactServiceKey !== canonicalServiceKey) {
+        topics.add(serviceSearchSubnetTopic(compactServiceKey, i));
+      }
     }
 
-    const compactTopic = serviceSearchTopic(service);
-    const compactInfoHash = topicToInfoHash(compactTopic);
-    const [canonicalPeers, compactPeers] = await Promise.all([
-      this.config.dht.lookup(canonicalInfoHash),
-      this.config.dht.lookup(compactInfoHash),
-    ]);
-    return this.resolveLookupResults(shuffle([...canonicalPeers, ...compactPeers]));
+    // Legacy single-infohash topics remain in the query set during rollout so
+    // subnet-aware buyers still discover old sellers.
+    topics.add(serviceTopic(canonicalServiceKey));
+    if (compactServiceKey !== canonicalServiceKey) {
+      topics.add(serviceSearchTopic(compactServiceKey));
+    }
+
+    const peers = await this.lookupTopicHashes([...topics].map(topicToInfoHash));
+    return this.resolveLookupResults(shuffle(peers));
   }
 
   async findByCapability(capability: string, name?: string): Promise<LookupResult[]> {
@@ -136,6 +130,23 @@ export class PeerLookup {
     const infoHash = topicToInfoHash(peerTopic(normalized));
     const peers = await this.config.dht.lookup(infoHash);
     return this.resolveLookupResults(shuffle(peers), { metadataPeerId: normalized });
+  }
+
+  private async lookupTopicHashes(hashes: Buffer[]): Promise<PeerEndpoint[]> {
+    const dhtWithLookupMany = this.config.dht as DHTNode & {
+      lookupMany?: (hashes: Buffer[]) => Promise<PeerEndpoint[]>;
+    };
+    if (typeof dhtWithLookupMany.lookupMany === "function") {
+      return dhtWithLookupMany.lookupMany(hashes);
+    }
+
+    const settled = await Promise.allSettled(hashes.map((hash) => this.config.dht.lookup(hash)));
+    const merged: PeerEndpoint[] = [];
+    for (const result of settled) {
+      if (result.status !== "fulfilled") continue;
+      for (const peer of result.value) merged.push(peer);
+    }
+    return merged;
   }
 
   private async resolveLookupResults(
