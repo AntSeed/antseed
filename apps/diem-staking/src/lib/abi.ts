@@ -16,8 +16,9 @@ import { parseAbi } from 'viem';
  *   - maxTotalStake — cap display + stake-disabled guard
  *   - earnedUsdc(user) — claimable USDC
  *   - firstRewardEpoch / syncedRewardEpoch / finalizedRewardEpoch /
- *     userLastClaimedEpoch(user) / pendingAntsForEpoch(user, epoch) —
- *     per-epoch ANTS preview, summed across the user's synced range
+ *     userLastClaimedEpoch(user) / userEpochClaimed(user, epoch) /
+ *     pendingAntsForEpoch(user, epoch) — per-epoch ANTS preview, summed
+ *     across the user's synced range
  *   - currentUnstakeBatch / oldestUnclaimedUnstakeBatch / unstakeBatches(id) /
  *     unstakeBatchUserAmount(id, user) — unstake queue state machine
  *   - minUnstakeBatchOpenSecs / currentUnstakeBatchOpenedAt / flushableAt — minimum
@@ -43,6 +44,7 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function syncedRewardEpoch() view returns (uint32)',
   'function finalizedRewardEpoch() view returns (uint32)',
   'function userLastClaimedEpoch(address user) view returns (uint32)',
+  'function userEpochClaimed(address user, uint32 rewardEpoch) view returns (bool)',
   'function pendingAntsForEpoch(address user, uint32 rewardEpoch) view returns (uint256)',
 
   // Reads — unstake queue
@@ -62,7 +64,7 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function flush()',
   'function claimUnstakeBatch(uint32 batchId)',
   'function claimUsdc()',
-  'function claimAnts(uint32 numEpochs)',
+  'function claimAnts(uint32[] rewardEpochs)',
   'function syncRewardEpochs(uint32 maxEpochs)',
   'function fundRewardEpoch(uint32 rewardEpoch)',
 

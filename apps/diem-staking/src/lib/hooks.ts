@@ -160,6 +160,8 @@ export interface UserStats {
   pendingUsdc: bigint | null;
   /** Total ANTS claimable across user's backlog of completed reward epochs. */
   pendingAnts: bigint | null;
+  /** Explicit reward epochs to pass to claimAnts. */
+  claimableAntsEpochs: number[];
   /** Next reward-epoch index the user hasn't claimed yet. */
   userLastClaimedEpoch: number | null;
   /** True while any of the reads above are in-flight. */
@@ -189,7 +191,7 @@ export function useUserStats(): UserStats {
   });
 
   const userLastClaimedEpoch = simple?.[3]?.result != null ? Number(simple[3].result) : null;
-  const { pendingAnts, isLoading: loadingAnts } = usePendingAnts(address ?? null, userLastClaimedEpoch);
+  const { pendingAnts, claimableEpochs, isLoading: loadingAnts } = usePendingAnts(address ?? null, userLastClaimedEpoch);
 
   if (!enabled) {
     return {
@@ -197,6 +199,7 @@ export function useUserStats(): UserStats {
       stakedDiem: null,
       pendingUsdc: null,
       pendingAnts: null,
+      claimableAntsEpochs: [],
       userLastClaimedEpoch: null,
       isLoading: loadingSimple,
     };
@@ -206,6 +209,7 @@ export function useUserStats(): UserStats {
     stakedDiem: simple?.[1]?.result ?? null,
     pendingUsdc: simple?.[2]?.result ?? null,
     pendingAnts,
+    claimableAntsEpochs: claimableEpochs,
     userLastClaimedEpoch,
     isLoading: loadingSimple || loadingAnts,
   };
@@ -216,10 +220,7 @@ export function useUserStats(): UserStats {
  *  MUST stay in lockstep with `DiemStakingProxy.MAX_EPOCHS_PER_CAPTURE`
  *  (see packages/contracts/DiemStakingProxy.sol). If the contract raises
  *  or lowers its bound, update this constant too — otherwise `claimAnts`
- *  calls sized from this preview can revert `BacklogTooLarge` on-chain.
- *  The UI's `ClaimPanel` also reuses the same cap (inline literal) when
- *  sizing `claimAnts(n)`; grep for `MAX_EPOCHS_PREVIEW` / `16` together
- *  when changing this. */
+ *  calls sized from this preview can revert `BacklogTooLarge` on-chain. */
 const MAX_EPOCHS_PREVIEW = 16;
 
 /**
@@ -230,19 +231,19 @@ const MAX_EPOCHS_PREVIEW = 16;
 function usePendingAnts(
   user: Address | null,
   userLastClaimedEpoch: number | null,
-): { pendingAnts: bigint | null; isLoading: boolean } {
-  const { firstRewardEpoch, syncedRewardEpoch } = usePoolStats();
+): { pendingAnts: bigint | null; claimableEpochs: number[]; isLoading: boolean } {
+  const { firstRewardEpoch, finalizedRewardEpoch } = usePoolStats();
 
   const epochsToRead = useMemo(() => {
-    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || syncedRewardEpoch == null) return [];
+    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || finalizedRewardEpoch == null) return [];
     const from = Math.max(userLastClaimedEpoch, firstRewardEpoch);
-    const to = Math.min(syncedRewardEpoch, from + MAX_EPOCHS_PREVIEW);
+    const to = Math.min(finalizedRewardEpoch, from + MAX_EPOCHS_PREVIEW);
     const out: number[] = [];
     for (let e = from; e < to; e++) out.push(e);
     return out;
-  }, [user, userLastClaimedEpoch, firstRewardEpoch, syncedRewardEpoch]);
+  }, [user, userLastClaimedEpoch, firstRewardEpoch, finalizedRewardEpoch]);
 
-  const { data, isLoading } = useReadContracts({
+  const { data: pendingData, isLoading: loadingPending } = useReadContracts({
     allowFailure: true,
     contracts: epochsToRead.map((e) => ({
       address: DIEM_STAKING_PROXY,
@@ -253,18 +254,34 @@ function usePendingAnts(
     query: { enabled: epochsToRead.length > 0, refetchInterval: POLL_MS },
   });
 
+  const { data: claimedData, isLoading: loadingClaimed } = useReadContracts({
+    allowFailure: true,
+    contracts: epochsToRead.map((e) => ({
+      address: DIEM_STAKING_PROXY,
+      abi: DIEM_STAKING_PROXY_ABI,
+      functionName: 'userEpochClaimed' as const,
+      args: [user!, e] as const,
+    })),
+    query: { enabled: epochsToRead.length > 0, refetchInterval: POLL_MS },
+  });
+
   const pendingAnts = useMemo<bigint | null>(() => {
     if (user == null) return null;
     if (epochsToRead.length === 0) return 0n;
-    if (!data) return null;
+    if (!pendingData) return null;
     let sum = 0n;
-    for (const r of data) {
+    for (const r of pendingData) {
       if (typeof r.result === 'bigint') sum += r.result;
     }
     return sum;
-  }, [user, epochsToRead.length, data]);
+  }, [user, epochsToRead.length, pendingData]);
 
-  return { pendingAnts, isLoading };
+  const claimableEpochs = useMemo<number[]>(() => {
+    if (user == null || epochsToRead.length === 0 || !claimedData) return [];
+    return epochsToRead.filter((_, i) => claimedData[i]?.result !== true);
+  }, [user, epochsToRead, claimedData]);
+
+  return { pendingAnts, claimableEpochs, isLoading: loadingPending || loadingClaimed };
 }
 
 // ─── Unstake queue: derived state machine ────────────────────────────────

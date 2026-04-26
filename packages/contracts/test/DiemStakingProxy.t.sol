@@ -200,6 +200,13 @@ contract DiemStakingProxyTest is Test {
         return abi.encode(METADATA_VERSION, inputTokens, outputTokens, uint256(0));
     }
 
+    function _rewardEpochs(uint32 first, uint32 count) internal pure returns (uint32[] memory epochs) {
+        epochs = new uint32[](count);
+        for (uint32 i = 0; i < count; i++) {
+            epochs[i] = first + i;
+        }
+    }
+
     /// @dev Full reserve helper via the proxy. Buyer is created if needed.
     function _reserveViaProxy(bytes32 salt, uint128 maxAmount, uint256 depositAmount)
         internal
@@ -828,7 +835,7 @@ contract DiemStakingProxyTest is Test {
         // Claim ANTS for the first completed reward epoch.
         uint256 antsBefore = ants.balanceOf(alice);
         vm.prank(alice);
-        proxy.claimAnts(1);
+        proxy.claimAnts(_rewardEpochs(0, 1));
         assertGt(ants.balanceOf(alice) - antsBefore, 0);
         assertTrue(proxy.rewardEpochAccounted(0), "claimAnts lazily funded epoch");
     }
@@ -845,7 +852,7 @@ contract DiemStakingProxyTest is Test {
 
         uint256 antsBefore = ants.balanceOf(alice);
         vm.prank(alice);
-        proxy.claimAnts(1);
+        proxy.claimAnts(_rewardEpochs(0, 1));
 
         assertEq(proxy.syncedRewardEpoch(), 1, "claimAnts syncs before claiming");
         assertGt(ants.balanceOf(alice) - antsBefore, 0, "lazy claim pays finalized epoch");
@@ -958,10 +965,10 @@ contract DiemStakingProxyTest is Test {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 10_000e6, 10_000e6);
         _settleViaProxy(channelId, 500e6);
 
-        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        skip(EPOCH_DURATION + 1);
         _settleViaProxy(channelId, 900e6);
 
-        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        skip(EPOCH_DURATION + 1);
 
         vm.prank(operator);
         proxy.operatorClaimEmissions(0);
@@ -975,8 +982,36 @@ contract DiemStakingProxyTest is Test {
 
         uint256 beforeBal = ants.balanceOf(alice);
         vm.prank(alice);
-        proxy.claimAnts(2);
+        proxy.claimAnts(_rewardEpochs(0, 2));
         assertEq(ants.balanceOf(alice) - beforeBal, pot0 + pot1, "sole staker claims both pots");
+    }
+
+    function test_claimAnts_acceptsExplicitEpochArray() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(7)), 10_000e6, 10_000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        skip(EPOCH_DURATION + 1);
+        _settleViaProxy(channelId, 900e6);
+
+        skip(EPOCH_DURATION + 1);
+        proxy.syncRewardEpochs(2);
+
+        uint256 beforeBal = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(1, 1));
+        (,, uint256 pot1,) = proxy.rewardEpochs(1);
+        assertEq(ants.balanceOf(alice) - beforeBal, pot1, "can claim epoch 1 before epoch 0");
+        assertEq(proxy.userLastClaimedEpoch(alice), 0, "cursor waits for epoch 0");
+        assertTrue(proxy.userEpochClaimed(alice, 1), "epoch 1 marked claimed");
+
+        beforeBal = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(0, 1));
+        (,, uint256 pot0,) = proxy.rewardEpochs(0);
+        assertEq(ants.balanceOf(alice) - beforeBal, pot0, "epoch 0 remains claimable");
+        assertEq(proxy.userLastClaimedEpoch(alice), 2, "cursor advances across claimed epochs");
     }
 
     /// @dev Staker who unstakes BEFORE the operator tick still earns ANTS
@@ -1508,9 +1543,9 @@ contract DiemStakingProxyTest is Test {
         uint256 aliceBefore = ants.balanceOf(alice);
         uint256 bobBefore = ants.balanceOf(bob);
         vm.prank(alice);
-        proxy.claimAnts(1);
+        proxy.claimAnts(_rewardEpochs(0, 1));
         vm.prank(bob);
-        proxy.claimAnts(1);
+        proxy.claimAnts(_rewardEpochs(0, 1));
         uint256 paidOut = (ants.balanceOf(alice) - aliceBefore) + (ants.balanceOf(bob) - bobBefore);
 
         // Never over-pay; rounding dust bounded by #claimants.

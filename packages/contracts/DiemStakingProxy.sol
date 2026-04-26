@@ -75,9 +75,9 @@ interface IAntseedEmissionsClock {
  *             - Attribution matches the proxy's revenue window: stakers earn
  *               ANTS in the same proportions as the USDC inflows that generated
  *               the epoch's seller emissions.
- *             - Claim is sequential (N before N+1) and bounded per call so
+ *             - Claim accepts explicit epoch arrays and is bounded per call so
  *               backlogs never trap a stake/unstake transaction. Users with
- *               large backlogs call `catchUpPoints(n)` to process incrementally.
+ *               large point-capture backlogs call `catchUpPoints(n)` first.
  *
  *         ERC-1271 is keyed on `owner()` (not operators). Venice API-key
  *         onboarding is an admin action, separate from operator channel ops.
@@ -260,10 +260,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     /// @dev Per-user bookkeeping for revenue-point capture.
     ///      `userRevenuePerTokenSnap` = USDC reward-per-token at the user's last capture.
     ///      `userCurrentEpoch` = reward epoch at the user's last capture.
-    ///      `userLastClaimedEpoch` = next unclaimed reward epoch (sequential).
+    ///      `userLastClaimedEpoch` = first not-yet-claimed reward epoch used as
+    ///      a cheap UI scan cursor. Users may still claim explicit later epochs.
     mapping(address => uint256) public userRevenuePerTokenSnap;
     mapping(address => uint32) public userCurrentEpoch;
     mapping(address => uint32) public userLastClaimedEpoch;
+    mapping(address => mapping(uint32 => bool)) public userEpochClaimed;
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Events
@@ -281,7 +283,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     );
     event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot);
     event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
-    event AntsClaimed(address indexed user, uint32 fromEpoch, uint32 toEpoch, uint256 antsAmount);
+    event AntsClaimed(address indexed user, uint32[] rewardEpochs, uint256 antsAmount);
     event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
     event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event OrphanUsdcSwept(address indexed recipient, uint256 amount);
@@ -523,62 +525,69 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     /**
-     * @notice Convert points for the next `numEpochs` completed reward epochs
-     *         into ANTS. Sequential — must process epoch N before N+1.
+     * @notice Convert points for completed reward epochs into ANTS.
      * @dev If the caller has a large backlog that would exceed
      *      `MAX_EPOCHS_PER_CAPTURE`, call `catchUpPoints` first.
      */
-    function claimAnts(uint32 numEpochs) external nonReentrant {
-        if (numEpochs == 0) revert InvalidAmount();
+    function claimAnts(uint32[] calldata rewardEpochIds) external nonReentrant {
+        uint256 len = rewardEpochIds.length;
+        if (len == 0 || len > MAX_EPOCHS_PER_CAPTURE) revert InvalidAmount();
+
+        uint32 target = firstRewardEpoch;
+        for (uint256 i = 0; i < len; i++) {
+            uint32 rewardEpoch = rewardEpochIds[i];
+            if (rewardEpoch < firstRewardEpoch) revert RewardEpochNotFinalized();
+            uint32 next = rewardEpoch + 1;
+            if (next > target) target = next;
+        }
+
+        uint32 finalized = _finalizedRewardEpoch();
+        if (target > finalized) revert RewardEpochNotFinalized();
 
         _updateUsdcForUser(msg.sender);
-        _syncFinalizedRewardEpochsBounded(numEpochs);
+        if (target > syncedRewardEpoch) {
+            if (target - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
+            _syncRewardEpochsUntil(target);
+        }
         _captureUserPoints(msg.sender);
 
-        uint32 from = userLastClaimedEpoch[msg.sender];
-        if (from < firstRewardEpoch) from = firstRewardEpoch;
-        uint32 to = from + numEpochs;
-        if (to > syncedRewardEpoch) to = syncedRewardEpoch;
-        if (to == from) revert NothingToClaim();
-
         uint256 totalAnts;
-        uint32 processedTo = from;
-        for (uint32 N = from; N < to; N++) {
-            uint256 antsPot = rewardEpochs[N].funded ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
+        bool processed;
+        for (uint256 i = 0; i < len; i++) {
+            uint32 N = rewardEpochIds[i];
+            if (userEpochClaimed[msg.sender][N]) continue;
 
-            // Advancing `userLastClaimedEpoch` past this reward epoch permanently
-            // abandons any userPoints entry here. For the zero-payout skip
-            // paths below we explicitly `delete` the slot so no stale storage
-            // lingers — cheap at time-of-claim since each user only walks
-            // their own reward epochs once.
+            uint256 antsPot = rewardEpochs[N].funded ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
+            userEpochClaimed[msg.sender][N] = true;
+            processed = true;
+
+            // Marking an epoch claimed permanently abandons any userPoints
+            // entry here. For zero-payout paths we delete the slot so no stale
+            // storage lingers.
             uint256 userPts = userPoints[msg.sender][N];
             if (userPts == 0) {
-                processedTo = N + 1;
                 continue;
             }
 
             if (antsPot == 0) {
                 delete userPoints[msg.sender][N];
-                processedTo = N + 1;
                 continue;
             }
             uint256 totalPoints = rewardEpochs[N].totalPoints;
             if (totalPoints == 0) {
                 delete userPoints[msg.sender][N];
-                processedTo = N + 1;
                 continue;
             }
             totalAnts += (antsPot * userPts) / totalPoints;
             delete userPoints[msg.sender][N];
-            processedTo = N + 1;
         }
-        if (processedTo == from) revert NothingToClaim();
-        userLastClaimedEpoch[msg.sender] = processedTo;
+        if (!processed) revert NothingToClaim();
+        _advanceUserClaimCursor(msg.sender);
 
         if (totalAnts > 0) {
             ants.safeTransfer(msg.sender, totalAnts);
         }
-        emit AntsClaimed(msg.sender, from, processedTo, totalAnts);
+        emit AntsClaimed(msg.sender, rewardEpochIds, totalAnts);
     }
 
     /**
@@ -807,6 +816,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      constant since their last interaction. (This invariant holds
     ///      because any stake change would have triggered `updateRewards`.)
     function pendingAntsForEpoch(address account, uint32 rewardEpoch) external view returns (uint256) {
+        if (userEpochClaimed[account][rewardEpoch]) return 0;
         if (rewardEpoch >= syncedRewardEpoch) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
         uint256 antsPot = re.funded ? re.antsPot : _pendingRewardEpochPot(rewardEpoch);
@@ -962,6 +972,19 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     function _singleRewardEpochArray(uint32 rewardEpoch) internal pure returns (uint256[] memory ids) {
         ids = new uint256[](1);
         ids[0] = rewardEpoch;
+    }
+
+    function _advanceUserClaimCursor(address account) internal {
+        uint32 cursor = userLastClaimedEpoch[account];
+        if (cursor < firstRewardEpoch) cursor = firstRewardEpoch;
+
+        uint32 limit = syncedRewardEpoch;
+        uint32 scanned;
+        while (cursor < limit && userEpochClaimed[account][cursor] && scanned < MAX_EPOCHS_PER_CAPTURE) {
+            cursor++;
+            scanned++;
+        }
+        userLastClaimedEpoch[account] = cursor;
     }
 
     /// @dev Capture `account`'s point contribution across every reward epoch
