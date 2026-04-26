@@ -307,7 +307,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error MaxStakeExceeded();
     error MinUnstakeBatchOpenSecsTooLarge();
     error RewardEpochNotFinalized();
-    error RewardEpochAlreadyAccounted();
 
     // ═══════════════════════════════════════════════════════════════════
     //                        Constructor
@@ -684,7 +683,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        OPERATOR TICK (ANTS emissions)
+    //                        REWARD EPOCHS (ANTS emissions)
     // ═══════════════════════════════════════════════════════════════════
 
     /// @notice Permissionlessly close finalized reward epochs in bounded chunks.
@@ -693,22 +692,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (maxEpochs == 0) revert InvalidAmount();
 
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToClaim();
-    }
-
-    /// @notice Permissionlessly claim the proxy's ANTS pot for a closed reward epoch.
-    ///         `claimAnts` calls this lazily, but anyone can pre-fund an epoch.
-    function fundRewardEpoch(uint32 rewardEpoch) external nonReentrant {
-        _closeAndFundRewardEpoch(rewardEpoch);
-    }
-
-    /**
-     * @notice Claim ANTS emissions for the given finalized `emissionEpochId`
-     *         and attach the pot to the matching closed reward epoch. Reward
-     *         epochs close at AntseedEmissions time boundaries, so delayed
-     *         operator calls cannot change the staker attribution window.
-     */
-    function operatorClaimEmissions(uint256 emissionEpochId) external onlyOperator nonReentrant {
-        _closeAndFundRewardEpoch(emissionEpochId.toUint32());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -941,37 +924,22 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (syncedRewardEpoch > from) emit RewardEpochsSynced(from, syncedRewardEpoch);
     }
 
-    function _closeAndFundRewardEpoch(uint32 rewardEpoch) internal {
-        uint32 target = rewardEpoch + 1;
-        if (target > _finalizedRewardEpoch()) revert RewardEpochNotFinalized();
-        if (target > syncedRewardEpoch) {
-            if (target - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
-            _syncRewardEpochsUntil(target);
-        }
-        if (rewardEpochs[rewardEpoch].funded) revert RewardEpochAlreadyAccounted();
-        _fundRewardEpoch(rewardEpoch);
-    }
-
-    function _fundRewardEpoch(uint32 rewardEpoch) internal returns (uint256 inflow) {
-        uint256 beforeBal = ants.balanceOf(address(this));
-        uint256[] memory ids = _singleRewardEpochArray(rewardEpoch);
+    function _fundRewardEpoch(uint32 rewardEpoch) internal returns (uint256 antsPot) {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = rewardEpoch;
+        (antsPot,) = IAntseedEmissionsClaim(emissions).pendingEmissions(address(this), ids);
         IAntseedEmissionsClaim(emissions).claimSellerEmissions(ids);
-        inflow = ants.balanceOf(address(this)) - beforeBal;
 
-        rewardEpochs[rewardEpoch].antsPot = inflow;
+        rewardEpochs[rewardEpoch].antsPot = antsPot;
         rewardEpochs[rewardEpoch].funded = true;
 
-        emit RewardEpochFunded(rewardEpoch, inflow);
+        emit RewardEpochFunded(rewardEpoch, antsPot);
     }
 
     function _pendingRewardEpochPot(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
-        uint256[] memory ids = _singleRewardEpochArray(rewardEpoch);
-        (pendingSeller,) = IAntseedEmissionsClaim(emissions).pendingEmissions(address(this), ids);
-    }
-
-    function _singleRewardEpochArray(uint32 rewardEpoch) internal pure returns (uint256[] memory ids) {
-        ids = new uint256[](1);
+        uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
+        (pendingSeller,) = IAntseedEmissionsClaim(emissions).pendingEmissions(address(this), ids);
     }
 
     function _advanceUserClaimCursor(address account) internal {

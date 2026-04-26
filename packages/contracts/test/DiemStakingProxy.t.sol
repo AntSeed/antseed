@@ -493,16 +493,15 @@ contract DiemStakingProxyTest is Test {
     // can proceed again. These tests cover that round-trip + the new
     // "catchUpPoints also settles USDC" guarantee.
 
-    /// @dev Advance the proxy's reward epoch by driving emissions ticks.
+    /// @dev Advance the proxy's reward epoch by closing finalized epochs.
     ///      Each iteration warps past EPOCH_DURATION so the emission
-    ///      contract finalises the next epoch, then calls
-    ///      `operatorClaimEmissions`. No seller activity is required for
+    ///      contract finalises the next epoch, then calls `syncRewardEpochs`.
+    ///      No seller activity is required for
     ///      the reward epoch to advance — emissions just distribute 0.
-    function _advanceRewardEpochs(uint256 fromEpochId, uint256 count) internal {
+    function _advanceRewardEpochs(uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
             skip(EPOCH_DURATION + 1);
-            vm.prank(operator);
-            proxy.operatorClaimEmissions(fromEpochId + i);
+            proxy.syncRewardEpochs(1);
         }
     }
 
@@ -516,7 +515,7 @@ contract DiemStakingProxyTest is Test {
         // Alice's userCurrentEpoch is 0 here (set on her stake via
         // _captureUserPoints). Advance 17 reward epochs so the gap is 17,
         // which is > MAX_EPOCHS_PER_CAPTURE (16).
-        _advanceRewardEpochs(0, 17);
+        _advanceRewardEpochs(17);
         assertEq(proxy.syncedRewardEpoch(), 17);
         assertEq(proxy.userCurrentEpoch(alice), 0);
 
@@ -568,7 +567,7 @@ contract DiemStakingProxyTest is Test {
 
         // Build a backlog so the only reasonable way to "clear" it is via
         // catchUpPoints (a stake/unstake would revert BacklogTooLarge).
-        _advanceRewardEpochs(0, 17);
+        _advanceRewardEpochs(17);
 
         vm.prank(alice);
         proxy.catchUpPoints(16);
@@ -787,7 +786,7 @@ contract DiemStakingProxyTest is Test {
     //                        EMISSIONS (real Emissions)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_operatorClaimEmissions_opensRewardEpoch() public {
+    function test_claimAnts_opensAndFundsRewardEpoch() public {
         _stakeAs(alice, 100e18);
 
         // Real settle accrues seller points to the proxy in the current epoch.
@@ -798,15 +797,15 @@ contract DiemStakingProxyTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
         uint32 rewardEpochBefore = proxy.syncedRewardEpoch();
-        uint256 antsBefore = ants.balanceOf(address(proxy));
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
-        uint256 minted = ants.balanceOf(address(proxy)) - antsBefore;
+        uint256 antsBefore = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(0, 1));
+        uint256 claimed = ants.balanceOf(alice) - antsBefore;
 
-        assertGt(minted, 0, "emissions should mint ANTS to the proxy");
+        assertGt(claimed, 0, "emissions should pay ANTS through the proxy");
         assertEq(proxy.syncedRewardEpoch(), rewardEpochBefore + 1, "reward epoch advanced");
         (,, uint256 antsPot,) = proxy.rewardEpochs(rewardEpochBefore);
-        assertEq(antsPot, minted, "epoch pot captures the inflow");
+        assertEq(antsPot, claimed, "epoch pot captures the lazy claim");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -956,7 +955,7 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.pendingAntsForEpoch(bob, 0), 0, "post-epoch staker must not dilute epoch 0");
     }
 
-    /// @dev If the operator catches up multiple finalized Antseed epochs in the
+    /// @dev If multiple finalized Antseed epochs are funded in the
     ///      same block, each ANTS pot must still have a non-zero point window.
     ///      Otherwise later pots become permanently unclaimable.
     function test_antsAttribution_backloggedClaimsDoNotStrandLaterPots() public {
@@ -970,19 +969,13 @@ contract DiemStakingProxyTest is Test {
 
         skip(EPOCH_DURATION + 1);
 
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(1);
-
+        uint256 beforeBal = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(0, 2));
         (,, uint256 pot0,) = proxy.rewardEpochs(0);
         (,, uint256 pot1,) = proxy.rewardEpochs(1);
         assertGt(pot0, 0, "epoch 0 pot");
         assertGt(pot1, 0, "epoch 1 pot");
-
-        uint256 beforeBal = ants.balanceOf(alice);
-        vm.prank(alice);
-        proxy.claimAnts(_rewardEpochs(0, 2));
         assertEq(ants.balanceOf(alice) - beforeBal, pot0 + pot1, "sole staker claims both pots");
     }
 
@@ -1532,13 +1525,8 @@ contract DiemStakingProxyTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION / 3);
         _stakeAs(bob, 50e18);
 
-        // Finish epoch 0 and tick.
+        // Finish epoch 0.
         vm.warp(block.timestamp + EPOCH_DURATION);
-        vm.prank(operator);
-        proxy.operatorClaimEmissions(0);
-
-        (,, uint256 antsPot,) = proxy.rewardEpochs(0);
-        assertGt(antsPot, 0);
 
         uint256 aliceBefore = ants.balanceOf(alice);
         uint256 bobBefore = ants.balanceOf(bob);
@@ -1546,6 +1534,8 @@ contract DiemStakingProxyTest is Test {
         proxy.claimAnts(_rewardEpochs(0, 1));
         vm.prank(bob);
         proxy.claimAnts(_rewardEpochs(0, 1));
+        (,, uint256 antsPot,) = proxy.rewardEpochs(0);
+        assertGt(antsPot, 0);
         uint256 paidOut = (ants.balanceOf(alice) - aliceBefore) + (ants.balanceOf(bob) - bobBefore);
 
         // Never over-pay; rounding dust bounded by #claimants.
@@ -1564,7 +1554,7 @@ contract DiemStakingProxyTest is Test {
         _stakeAs(alice, 100e18);
 
         // Build a backlog that forces catchUpPoints.
-        _advanceRewardEpochs(0, 17);
+        _advanceRewardEpochs(17);
         vm.prank(alice);
         proxy.catchUpPoints(16);
         vm.prank(alice);
