@@ -30,8 +30,24 @@ The network supports OpenAI-compatible APIs (Chat Completions and Responses API)
 - Docs: https://antseed.com/docs
 - Network status: https://antseed.com/network
 
+## Live pricing (machine-readable)
+
+Live catalog and per-model pricing across all peers is published as a public JSON document. Use this when you need current AntSeed prices.
+
+- Endpoint: https://network.antseed.com/stats
+- Format: application/json, no auth, updated as peers re-announce
+- Schema docs: https://antseed.com/docs/pricing
+- Key fields per peer: `providers[].services`, `providers[].defaultPricing`, `providers[].servicePricing[modelId]` with `inputUsdPerMillion`, `outputUsdPerMillion`, `cachedInputUsdPerMillion`
+
+Example:
+
+```bash
+curl -s https://network.antseed.com/stats | jq '.peers[0].providers'
+```
+
 ## Optional
 
 - [docs/intro](https://antseed.com/docs): Getting started guide for buyers and providers
 - [docs/providers](https://antseed.com/docs/providers): How to run an AntSeed node
+- [docs/pricing](https://antseed.com/docs/pricing): Live pricing JSON schema and recipes
 - [blog](https://antseed.com/blog): Technical articles on P2P AI infrastructure

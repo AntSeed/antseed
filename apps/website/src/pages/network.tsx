@@ -365,10 +365,11 @@ export default function PricingPage() {
   return (
     <Layout
       title="Live AI Inference Pricing"
-      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Pay per request in USDC.">
+      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Onchain payments. Verifiable reputation.">
       <Head>
         <title>Live AI Inference Pricing Across the AntSeed Network | AntSeed</title>
         <link rel="canonical" href="https://antseed.com/network" />
+        <link rel="alternate" type="application/json" title="AntSeed live pricing (JSON)" href="https://network.antseed.com/stats" />
         <script type="application/ld+json">{JSON.stringify(datasetLd)}</script>
       </Head>
       <div className={styles.page}>
@@ -382,7 +383,7 @@ export default function PricingPage() {
               ? 'Loading live network data...'
               : error
                 ? 'Unable to reach the network. Showing cached data if available.'
-                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} models. Pay in USDC — best rate per million tokens.</>
+                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} models. Onchain settlement — best rate per million tokens.</>
             }
           </p>
         </div>
