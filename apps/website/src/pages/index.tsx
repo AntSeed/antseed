@@ -342,8 +342,8 @@ export default function Home(): JSX.Element {
                 <div className={styles.entryBadges}><b>No account</b></div>
               </div>
               <div className={styles.entryDownloadPair}>
-                <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform="mac" />Mac</a>
-                <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform="win" />Windows</a>
+                <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform={download.platform} />{download.platform === 'win' ? 'Windows' : 'Mac'}</a>
+                <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform={download.platform === 'win' ? 'mac' : 'win'} />{download.platform === 'win' ? 'Mac' : 'Windows'}</a>
               </div>
             </article>
 
@@ -361,7 +361,7 @@ export default function Home(): JSX.Element {
                 <p>Sort coding providers by model, price, latency, or reputation — then plug your tools into one local endpoint.</p>
                 <code>localhost:8377/v1</code>
               </div>
-              <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
+              <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
             </article>
 
             <article className={styles.entryCard}>
@@ -375,7 +375,7 @@ export default function Home(): JSX.Element {
                 <p>Let agents sort providers by task, price, latency, reputation, capability, or Private Provider routes.</p>
                 <div className={styles.entryBadges}><b>cheap</b><b>fast</b><b>reliable</b></div>
               </div>
-              <a href="https://github.com/AntSeed/antseed/blob/7cc2d30a168dc2231e11994ee2b989fd99f2b87b/skills/hermes-antseed/SKILL.md#L4" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
+              <a href="https://github.com/AntSeed/antseed/tree/main/skills" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
             </article>
           </div>
         </div>
@@ -394,13 +394,13 @@ export default function Home(): JSX.Element {
             <div><strong>Private Providers</strong><span>Prefer TEE providers and direct P2P transport.</span></div>
           </div>
           <div className={styles.pathActions}>
-            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>
-              <DesktopDownloadIcon platform="mac" />
-              Download Mac
+            <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>
+              <DesktopDownloadIcon platform={download.platform} />
+              {download.platform === 'win' ? 'Download Windows' : 'Download Mac'}
             </a>
             <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>
-              <DesktopDownloadIcon platform="win" />
-              Download Windows
+              <DesktopDownloadIcon platform={download.platform === 'win' ? 'mac' : 'win'} />
+              {download.platform === 'win' ? 'Download Mac' : 'Download Windows'}
             </a>
             <Link to="/network" className={styles.pathSecondaryBtn}>See live providers →</Link>
           </div>
@@ -451,7 +451,7 @@ export default function Home(): JSX.Element {
             <li>Compare price, latency, and reputation before routing</li>
             <li>Works with normal SDKs, CLIs, and editor plugins</li>
           </ul>
-          <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect CLI →</a>
+          <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect CLI →</a>
         </div>
       </section>
 
@@ -477,7 +477,7 @@ export default function Home(): JSX.Element {
             <li>Specialist AI agents for packaged expertise and tools</li>
             <li>USDC settlement without platform custody</li>
           </ul>
-          <a href="https://github.com/AntSeed/antseed/blob/7cc2d30a168dc2231e11994ee2b989fd99f2b87b/skills/hermes-antseed/SKILL.md#L4" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect →</a>
+          <a href="https://github.com/AntSeed/antseed/tree/main/skills" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect →</a>
         </div>
         <div className={styles.agentAnimation} aria-label="Agent provider routing animation">
           <div className={styles.orbitRing} />
@@ -531,12 +531,12 @@ export default function Home(): JSX.Element {
           <div className={styles.bottomCard}>
             <h3>Connect your CLI</h3>
             <p>Point Claude Code, Codex, VS Code, or any OpenAI-compatible tool at your local AntSeed endpoint.</p>
-            <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.bottomBtn}>Connect a tool →</a>
+            <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.bottomBtn}>Connect a tool →</a>
           </div>
           <div className={styles.bottomCard}>
             <h3>Build with agents</h3>
             <p>Route tasks by model quality, price, latency, privacy, and on-chain reputation.</p>
-            <Link to="/docs/overview" className={styles.bottomBtn}>Build agents →</Link>
+            <Link to="https://github.com/AntSeed/antseed/tree/main/skills" className={styles.bottomBtn}>Connect agents →</Link>
           </div>
         </div>
       </section>

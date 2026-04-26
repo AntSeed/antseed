@@ -984,10 +984,10 @@
 @media (max-width: 700px) { .agentAnimation { min-height: 390px; } .orbitRing { width: 260px; height: 260px; } .orbitRingTwo { width: 190px; height: 190px; } .providerNode { width: 96px; min-height: 64px; } .providerPrice { left: 18px; } .providerCode { right: 18px; } .providerTee { left: 14px; bottom: 92px; } .providerResearch { right: 18px; bottom: 94px; } .providerOpen { display: none; } }
 
 /* ---- provider stripe: larger + separated ---- */
-.providerStripe { max-width: 1120px; margin: 38px auto 54px; padding: 28px 34px; border-radius: 26px; justify-content: space-between; text-align: left; background: linear-gradient(135deg, rgba(31,216,122,.09), #fff 46%, rgba(31,216,122,.04)); box-shadow: 0 18px 50px rgba(10,14,20,.055); }
-.providerStripe span { width: 100%; font-size: 12px; }
-.providerStripe strong { flex: 1; font-size: clamp(20px, 2.4vw, 30px); line-height: 1.12; letter-spacing: -1px; max-width: 760px; }
-.providerStripe a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border-radius: 999px; background: #111; color: #fff; text-decoration: none; }
+.providerStripe { max-width: min(1120px, calc(100vw - 32px)); margin: 38px auto 54px; padding: 28px 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; align-items: center; border: 1px solid rgba(31,216,122,.22); border-radius: 26px; text-align: left; background: linear-gradient(135deg, rgba(31,216,122,.09), #fff 46%, rgba(31,216,122,.04)); box-shadow: 0 18px 50px rgba(10,14,20,.055); overflow: hidden; overflow-wrap: anywhere; }
+.providerStripe span { grid-column: 1 / -1; width: 100%; min-width: 0; font-size: 12px; }
+.providerStripe strong { min-width: 0; font-size: clamp(20px, 2.4vw, 30px); line-height: 1.12; letter-spacing: -1px; max-width: 760px; }
+.providerStripe a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; max-width: 100%; padding: 0 18px; border-radius: 999px; background: #111; color: #fff; text-decoration: none; white-space: nowrap; }
 .providerStripe a:hover { color: #fff; text-decoration: none; background: #222; }
 
 /* ---- richer agent animation ---- */
@@ -1018,7 +1018,7 @@
 .agentAnimation .agentCore::before { width: 8px; height: 8px; left: -80px; top: 72px; animation: packetToCore 2.8s ease-in-out infinite; }
 .agentAnimation .agentCore::after { width: 6px; height: 6px; right: -82px; top: 52px; animation: packetToCore 3.4s ease-in-out infinite reverse; }
 @keyframes packetToCore { 0%,100% { transform: translateX(0); opacity: .15; } 45% { opacity: 1; } 50% { transform: translateX(80px); opacity: .9; } }
-@media (max-width: 900px) { .providerStripe { margin-left: 20px; margin-right: 20px; text-align: center; justify-content: center; } .providerStripe strong { flex-basis: 100%; } }
+@media (max-width: 900px) { .providerStripe { width: auto; margin-left: 20px; margin-right: 20px; grid-template-columns: 1fr; text-align: center; justify-items: center; } .providerStripe strong { max-width: 100%; } .providerStripe a { width: min(100%, 260px); max-width: 260px; } }
 @media (max-width: 700px) { .agentAnimation { min-height: 430px; } .providerNode { width: 104px; min-height: 70px; } }
 
 .entryContent code { background: #f3f3ef; color: #555; border: 1px solid #e8e8e3; }
@@ -1062,7 +1062,7 @@
 
   .antsUtilitySection { padding-top: 52px; padding-bottom: 44px; }
   .antsUtilitySection h2 { font-size: 30px; }
-  .providerStripe { margin-top: 16px; margin-bottom: 42px; padding: 24px 20px; }
+  .providerStripe { margin-top: 16px; margin-bottom: 42px; padding: 24px 20px; gap: 12px; }
   .providerStripe strong { font-size: 22px; }
   .bottomCtas { padding-top: 32px; }
 }
@@ -1142,7 +1142,7 @@ img, video, canvas, svg { max-width: 100%; }
   .agentAnimation { min-height: 390px; }
   .antsOrb { width: 88px; height: 88px; border-radius: 24px; }
   .antsOrb img { width: 54px; height: 54px; }
-  .providerStripe { margin-left: 16px; margin-right: 16px; padding: 22px 18px; }
+  .providerStripe { width: auto; max-width: calc(100vw - 32px); margin-left: 16px; margin-right: 16px; padding: 22px 18px; }
 }
 
 @media (max-width: 380px) {
