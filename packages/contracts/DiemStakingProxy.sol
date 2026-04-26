@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
@@ -33,7 +34,7 @@ interface IAntseedEmissionsClock {
     function currentEpoch() external view returns (uint256);
 }
 
-contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
+contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -195,7 +196,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        STAKING
     // ═══════════════════════════════════════════════════════════════════
 
-    function stake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
+    function stake(uint256 amount) external nonReentrant whenNotPaused updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         uint256 cap = maxTotalStake;
         if (cap != 0 && totalStaked + amount > cap) revert MaxStakeExceeded();
@@ -211,7 +212,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit Staked(msg.sender, amount);
     }
 
-    function initiateUnstake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
+    function initiateUnstake(uint256 amount) external nonReentrant whenNotPaused updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         if (amount > staked[msg.sender]) revert InsufficientStake();
 
@@ -239,7 +240,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeQueued(msg.sender, batchId, amount);
     }
 
-    function flush() external nonReentrant {
+    function flush() external nonReentrant whenNotPaused {
         if (currentUnstakeBatch != oldestUnclaimedUnstakeBatch) revert PriorUnstakeBatchUnclaimed();
 
         uint32 batchId = currentUnstakeBatch;
@@ -263,7 +264,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeBatchFlushed(batchId, e.total, unlockAt);
     }
 
-    function claimUnstakeBatch(uint32 batchId) external nonReentrant {
+    function claimUnstakeBatch(uint32 batchId) external nonReentrant whenNotPaused {
         UnstakeBatch storage e = unstakeBatches[batchId];
         if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert UnstakeBatchNotReady();
         if (e.claimed) revert UnstakeBatchAlreadyClaimed();
@@ -290,7 +291,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        REWARD CLAIMS
     // ═══════════════════════════════════════════════════════════════════
 
-    function claimUsdc() external nonReentrant updateRewards(msg.sender) {
+    function claimUsdc() external nonReentrant whenNotPaused updateRewards(msg.sender) {
         uint256 owed = usdcRewards[msg.sender];
         if (owed == 0) revert NothingToClaim();
         usdcRewards[msg.sender] = 0;
@@ -299,7 +300,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UsdcPaid(msg.sender, owed);
     }
 
-    function claimAnts(uint32[] calldata rewardEpochIds) external nonReentrant {
+    function claimAnts(uint32[] calldata rewardEpochIds) external nonReentrant whenNotPaused {
         uint256 len = rewardEpochIds.length;
         if (len == 0 || len > MAX_EPOCHS_PER_CAPTURE) revert InvalidAmount();
 
@@ -358,7 +359,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit AntsClaimed(msg.sender, rewardEpochIds, totalAnts);
     }
 
-    function catchUpPoints(uint32 numEpochs) external nonReentrant {
+    function catchUpPoints(uint32 numEpochs) external nonReentrant whenNotPaused {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
         _syncFinalizedRewardEpochsBounded(numEpochs);
@@ -396,7 +397,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint128 newMaxAmount,
         uint256 deadline,
         bytes calldata reserveSig
-    ) public override nonReentrant {
+    ) public override nonReentrant whenNotPaused {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
@@ -406,6 +407,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         public
         override
         nonReentrant
+        whenNotPaused
     {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.settle(channelId, cumulativeAmount, metadata, buyerSig);
@@ -416,6 +418,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         public
         override
         nonReentrant
+        whenNotPaused
     {
         uint256 beforeBal = usdc.balanceOf(address(this));
         super.close(channelId, finalAmount, metadata, buyerSig);
@@ -426,7 +429,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        REWARD EPOCHS
     // ═══════════════════════════════════════════════════════════════════
 
-    function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
+    function syncRewardEpochs(uint32 maxEpochs) external nonReentrant whenNotPaused {
         if (maxEpochs == 0) revert InvalidAmount();
 
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
@@ -435,6 +438,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
 
     function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
