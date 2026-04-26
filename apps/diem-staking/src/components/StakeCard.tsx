@@ -148,7 +148,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             pendingAnts={user.pendingAnts}
             userLastClaimedEpoch={user.userLastClaimedEpoch}
             firstRewardEpoch={pool.firstRewardEpoch}
-            currentRewardEpoch={pool.currentRewardEpoch}
+            finalizedRewardEpoch={pool.finalizedRewardEpoch}
           />
         )}
 
@@ -535,7 +535,7 @@ interface ClaimPanelProps {
   pendingAnts: bigint | null;
   userLastClaimedEpoch: number | null;
   firstRewardEpoch: number | null;
-  currentRewardEpoch: number | null;
+  finalizedRewardEpoch: number | null;
 }
 
 function ClaimPanel(props: ClaimPanelProps) {
@@ -549,8 +549,8 @@ function ClaimPanel(props: ClaimPanelProps) {
   // Epoch backlog the claimAnts call should cover — read bounds it to
   // MAX_EPOCHS_PREVIEW (16) so we stay under the contract's tx-size cap.
   const claimableEpochs =
-    props.currentRewardEpoch != null && props.userLastClaimedEpoch != null && props.firstRewardEpoch != null
-      ? Math.min(16, Math.max(0, props.currentRewardEpoch - Math.max(props.userLastClaimedEpoch, props.firstRewardEpoch)))
+    props.finalizedRewardEpoch != null && props.userLastClaimedEpoch != null && props.firstRewardEpoch != null
+      ? Math.min(16, Math.max(0, props.finalizedRewardEpoch - Math.max(props.userLastClaimedEpoch, props.firstRewardEpoch)))
       : 0;
 
   return (

@@ -80,8 +80,10 @@ export interface PoolStats {
   maxTotalStake: bigint | null;
   /** First Antseed emission epoch this proxy can attribute rewards for. */
   firstRewardEpoch: number | null;
-  /** Completed reward-epoch count (from the proxy). Open epoch is currentRewardEpoch. */
-  currentRewardEpoch: number | null;
+  /** First finalized reward epoch not yet closed in proxy storage. */
+  syncedRewardEpoch: number | null;
+  /** First reward epoch not finalized yet by deterministic Antseed emissions time. */
+  finalizedRewardEpoch: number | null;
   /** Venice DIEM unstake cooldown in seconds (read live from the token). */
   diemCooldownSecs: number | null;
   /** Minimum seconds a batch must stay open before `flush()` is allowed. */
@@ -104,7 +106,8 @@ export function usePoolStats(): PoolStats {
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalUsdcDistributedEver' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'maxTotalStake' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentRewardEpoch' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'syncedRewardEpoch' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'finalizedRewardEpoch' },
       { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minUnstakeBatchOpenSecs' },
       { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'flushableAt' },
@@ -119,7 +122,8 @@ export function usePoolStats(): PoolStats {
       totalUsdcDistributedEver: null,
       maxTotalStake: null,
       firstRewardEpoch: null,
-      currentRewardEpoch: null,
+      syncedRewardEpoch: null,
+      finalizedRewardEpoch: null,
       diemCooldownSecs: null,
       minUnstakeBatchOpenSecs: null,
       flushableAt: null,
@@ -129,16 +133,17 @@ export function usePoolStats(): PoolStats {
   // `flushableAt()` returns `0` while the batch is empty (no first queuer
   // yet). We preserve the distinction by mapping `0` → `null` so the UI can
   // tell "no clock running" apart from "clock running, starting now".
-  const flushableAtRaw = data[8]?.result != null ? Number(data[8].result) : null;
+  const flushableAtRaw = data[9]?.result != null ? Number(data[9].result) : null;
   return {
     totalStaked: data[0]?.result ?? null,
     stakerCount: data[1]?.result != null ? Number(data[1].result) : null,
     totalUsdcDistributedEver: data[2]?.result ?? null,
     maxTotalStake: data[3]?.result ?? null,
     firstRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
-    currentRewardEpoch: data[5]?.result != null ? Number(data[5].result) : null,
-    diemCooldownSecs: data[6]?.result != null ? Number(data[6].result) : null,
-    minUnstakeBatchOpenSecs: data[7]?.result != null ? Number(data[7].result) : null,
+    syncedRewardEpoch: data[5]?.result != null ? Number(data[5].result) : null,
+    finalizedRewardEpoch: data[6]?.result != null ? Number(data[6].result) : null,
+    diemCooldownSecs: data[7]?.result != null ? Number(data[7].result) : null,
+    minUnstakeBatchOpenSecs: data[8]?.result != null ? Number(data[8].result) : null,
     flushableAt: flushableAtRaw && flushableAtRaw > 0 ? flushableAtRaw : null,
     isLoading,
   };
@@ -226,16 +231,16 @@ function usePendingAnts(
   user: Address | null,
   userLastClaimedEpoch: number | null,
 ): { pendingAnts: bigint | null; isLoading: boolean } {
-  const { firstRewardEpoch, currentRewardEpoch } = usePoolStats();
+  const { firstRewardEpoch, syncedRewardEpoch } = usePoolStats();
 
   const epochsToRead = useMemo(() => {
-    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || currentRewardEpoch == null) return [];
+    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || syncedRewardEpoch == null) return [];
     const from = Math.max(userLastClaimedEpoch, firstRewardEpoch);
-    const to = Math.min(currentRewardEpoch, from + MAX_EPOCHS_PREVIEW);
+    const to = Math.min(syncedRewardEpoch, from + MAX_EPOCHS_PREVIEW);
     const out: number[] = [];
     for (let e = from; e < to; e++) out.push(e);
     return out;
-  }, [user, userLastClaimedEpoch, firstRewardEpoch, currentRewardEpoch]);
+  }, [user, userLastClaimedEpoch, firstRewardEpoch, syncedRewardEpoch]);
 
   const { data, isLoading } = useReadContracts({
     allowFailure: true,
@@ -386,7 +391,7 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
  * completed reward epoch. The "last epoch" boundary comes from the indexed
  * `RewardEpochClosed(rewardEpochId, ...)` events: the range is the block of
  * RewardEpochClosed(N-2) (exclusive, defaults to contract creation if none)
- * through RewardEpochClosed(N-1) (inclusive), where N = currentRewardEpoch.
+ * through RewardEpochClosed(N-1) (inclusive), where N = syncedRewardEpoch.
  *
  * Provider RPCs cap `eth_getLogs` range differently (10k blocks on public
  * nodes is typical). A fully-indexed deployment should replace this with a
@@ -396,15 +401,15 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
 export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
   const client = usePublicClient();
   const deployed = useProxyDeployed();
-  const { currentRewardEpoch } = usePoolStats();
+  const { syncedRewardEpoch } = usePoolStats();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['lastEpochUsdc', DIEM_STAKING_PROXY, currentRewardEpoch],
-    enabled: !!client && deployed && currentRewardEpoch != null && currentRewardEpoch >= 1,
+    queryKey: ['lastEpochUsdc', DIEM_STAKING_PROXY, syncedRewardEpoch],
+    enabled: !!client && deployed && syncedRewardEpoch != null && syncedRewardEpoch >= 1,
     staleTime: POLL_MS,
     refetchInterval: POLL_MS * 5,
     queryFn: async (): Promise<bigint | null> => {
-      if (!client || currentRewardEpoch == null || currentRewardEpoch < 1) return null;
+      if (!client || syncedRewardEpoch == null || syncedRewardEpoch < 1) return null;
 
       const closedAbi = DIEM_STAKING_PROXY_ABI.find(
         (e) => e.type === 'event' && e.name === 'RewardEpochClosed',
@@ -414,7 +419,7 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       );
       if (!closedAbi || !distAbi) return null;
 
-      // Find the RewardEpochClosed(rewardEpochId = currentRewardEpoch - 1) block to
+      // Find the RewardEpochClosed(rewardEpochId = syncedRewardEpoch - 1) block to
       // bound the window. Search over the last 500k blocks (≈ 11 days on Base
       // at 2s). If a deployment is older than that or under heavy traffic,
       // the caller should migrate to an indexer.
@@ -425,7 +430,7 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       const closedLogs = await client.getLogs({
         address: DIEM_STAKING_PROXY,
         event: closedAbi,
-        args: { rewardEpochId: currentRewardEpoch - 1 },
+        args: { rewardEpochId: syncedRewardEpoch - 1 },
         fromBlock,
         toBlock: head,
       });
@@ -433,13 +438,13 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       const closedAt = closedLogs[closedLogs.length - 1]!.blockNumber;
       if (closedAt == null) return null;
 
-      // Prior closure (may be absent if currentRewardEpoch === 1).
+      // Prior closure (may be absent if syncedRewardEpoch === 1).
       let priorAt: bigint = fromBlock;
-      if (currentRewardEpoch >= 2) {
+      if (syncedRewardEpoch >= 2) {
         const priorLogs = await client.getLogs({
           address: DIEM_STAKING_PROXY,
           event: closedAbi,
-          args: { rewardEpochId: currentRewardEpoch - 2 },
+          args: { rewardEpochId: syncedRewardEpoch - 2 },
           fromBlock,
           toBlock: closedAt,
         });

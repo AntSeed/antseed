@@ -479,7 +479,7 @@ contract DiemStakingProxyTest is Test {
     // ── catchUpPoints ────────────────────────────────────────────────────────────────
     //
     // BacklogTooLarge is the escape-valve failure mode: when a staker's
-    // userCurrentEpoch lags currentRewardEpoch by more than
+    // userCurrentEpoch lags syncedRewardEpoch by more than
     // MAX_EPOCHS_PER_CAPTURE, any call that hits `updateRewards` (stake,
     // initiateUnstake, claimUsdc, claimAnts) reverts. `catchUpPoints`
     // lets the staker drain the backlog incrementally so those calls
@@ -510,7 +510,7 @@ contract DiemStakingProxyTest is Test {
         // _captureUserPoints). Advance 17 reward epochs so the gap is 17,
         // which is > MAX_EPOCHS_PER_CAPTURE (16).
         _advanceRewardEpochs(0, 17);
-        assertEq(proxy.currentRewardEpoch(), 17);
+        assertEq(proxy.syncedRewardEpoch(), 17);
         assertEq(proxy.userCurrentEpoch(alice), 0);
 
         // stake, initiateUnstake and claimUsdc all revert: updateRewards →
@@ -581,16 +581,16 @@ contract DiemStakingProxyTest is Test {
         _stakeAs(alice, 100e18);
 
         skip((EPOCH_DURATION * 17) + 1);
-        assertEq(proxy.currentRewardEpoch(), 0, "global reward epochs not synced yet");
+        assertEq(proxy.syncedRewardEpoch(), 0, "global reward epochs not synced yet");
 
         vm.prank(alice);
         proxy.catchUpPoints(16);
-        assertEq(proxy.currentRewardEpoch(), 16, "bounded sync closes first chunk");
+        assertEq(proxy.syncedRewardEpoch(), 16, "bounded sync closes first chunk");
         assertEq(proxy.userCurrentEpoch(alice), 16, "user catches up to first chunk");
 
         vm.prank(alice);
         proxy.catchUpPoints(16);
-        assertEq(proxy.currentRewardEpoch(), 17, "second call closes remaining finalized epoch");
+        assertEq(proxy.syncedRewardEpoch(), 17, "second call closes remaining finalized epoch");
         assertEq(proxy.userCurrentEpoch(alice), 17, "user catches up fully");
     }
 
@@ -790,15 +790,15 @@ contract DiemStakingProxyTest is Test {
         // Warp past epoch 0 so it's claimable.
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        uint32 rewardEpochBefore = proxy.currentRewardEpoch();
+        uint32 rewardEpochBefore = proxy.syncedRewardEpoch();
         uint256 antsBefore = ants.balanceOf(address(proxy));
         vm.prank(operator);
         proxy.operatorClaimEmissions(0);
         uint256 minted = ants.balanceOf(address(proxy)) - antsBefore;
 
         assertGt(minted, 0, "emissions should mint ANTS to the proxy");
-        assertEq(proxy.currentRewardEpoch(), rewardEpochBefore + 1, "reward epoch advanced");
-        (,, uint256 antsPot) = proxy.rewardEpochs(rewardEpochBefore);
+        assertEq(proxy.syncedRewardEpoch(), rewardEpochBefore + 1, "reward epoch advanced");
+        (,, uint256 antsPot,) = proxy.rewardEpochs(rewardEpochBefore);
         assertEq(antsPot, minted, "epoch pot captures the inflow");
     }
 
@@ -831,6 +831,24 @@ contract DiemStakingProxyTest is Test {
         proxy.claimAnts(1);
         assertGt(ants.balanceOf(alice) - antsBefore, 0);
         assertTrue(proxy.rewardEpochAccounted(0), "claimAnts lazily funded epoch");
+    }
+
+    function test_claimAnts_lazilySyncsUnsyncedFinalizedEpoch() public {
+        _stakeAs(alice, 100e18);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        assertEq(proxy.syncedRewardEpoch(), 0, "proxy has not synced the finalized epoch");
+        assertEq(proxy.finalizedRewardEpoch(), 1, "emissions clock finalized epoch 0");
+
+        uint256 antsBefore = ants.balanceOf(alice);
+        vm.prank(alice);
+        proxy.claimAnts(1);
+
+        assertEq(proxy.syncedRewardEpoch(), 1, "claimAnts syncs before claiming");
+        assertGt(ants.balanceOf(alice) - antsBefore, 0, "lazy claim pays finalized epoch");
     }
 
     function test_multiStaker_proRataUsdc() public {
@@ -944,8 +962,8 @@ contract DiemStakingProxyTest is Test {
         vm.prank(operator);
         proxy.operatorClaimEmissions(1);
 
-        (,, uint256 pot0) = proxy.rewardEpochs(0);
-        (,, uint256 pot1) = proxy.rewardEpochs(1);
+        (,, uint256 pot0,) = proxy.rewardEpochs(0);
+        (,, uint256 pot1,) = proxy.rewardEpochs(1);
         assertGt(pot0, 0, "epoch 0 pot");
         assertGt(pot1, 0, "epoch 1 pot");
 
@@ -1478,7 +1496,7 @@ contract DiemStakingProxyTest is Test {
         vm.prank(operator);
         proxy.operatorClaimEmissions(0);
 
-        (,, uint256 antsPot) = proxy.rewardEpochs(0);
+        (,, uint256 antsPot,) = proxy.rewardEpochs(0);
         assertGt(antsPot, 0);
 
         uint256 aliceBefore = ants.balanceOf(alice);
@@ -1511,9 +1529,9 @@ contract DiemStakingProxyTest is Test {
         vm.prank(alice);
         proxy.catchUpPoints(16);
         vm.prank(alice);
-        proxy.catchUpPoints(16); // drains to currentRewardEpoch = 17
+        proxy.catchUpPoints(16); // drains to syncedRewardEpoch = 17
 
-        uint32 openEp = proxy.currentRewardEpoch();
+        uint32 openEp = proxy.syncedRewardEpoch();
         assertEq(openEp, 17);
         assertEq(proxy.userCurrentEpoch(alice), openEp);
 

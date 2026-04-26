@@ -15,9 +15,9 @@ import { parseAbi } from 'viem';
  *   - totalUsdcDistributedEver — lifetime USDC tile
  *   - maxTotalStake — cap display + stake-disabled guard
  *   - earnedUsdc(user) — claimable USDC
- *   - firstRewardEpoch / currentRewardEpoch / userLastClaimedEpoch(user) /
- *     pendingAntsForEpoch(user, epoch) — per-epoch ANTS preview, summed
- *     across the user's claimable range
+ *   - firstRewardEpoch / syncedRewardEpoch / finalizedRewardEpoch /
+ *     userLastClaimedEpoch(user) / pendingAntsForEpoch(user, epoch) —
+ *     per-epoch ANTS preview, summed across the user's synced range
  *   - currentUnstakeBatch / oldestUnclaimedUnstakeBatch / unstakeBatches(id) /
  *     unstakeBatchUserAmount(id, user) — unstake queue state machine
  *   - minUnstakeBatchOpenSecs / currentUnstakeBatchOpenedAt / flushableAt — minimum
@@ -40,7 +40,8 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
 
   // Reads — ANTS rewards
   'function firstRewardEpoch() view returns (uint32)',
-  'function currentRewardEpoch() view returns (uint32)',
+  'function syncedRewardEpoch() view returns (uint32)',
+  'function finalizedRewardEpoch() view returns (uint32)',
   'function userLastClaimedEpoch(address user) view returns (uint32)',
   'function pendingAntsForEpoch(address user, uint32 rewardEpoch) view returns (uint256)',
 
@@ -68,7 +69,7 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   // Events — for "USDC distributed per completed reward epoch" aggregation.
   // Aggregated in-browser via getLogs over a bounded window; see hooks.ts.
   'event UsdcDistributed(uint256 amount)',
-  'event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd)',
+  'event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 totalPoints)',
   'event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot)',
 ]);
 

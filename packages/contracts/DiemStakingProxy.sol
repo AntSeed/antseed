@@ -109,8 +109,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     struct RewardEpoch {
         uint256 stakeIntegratorAtEnd; // global integrator value at epoch close
-        uint256 activeSecondsAtEnd; // cumulative seconds with totalStaked > 0 at close
+        uint256 totalPoints; // epoch-local denominator for userPoints shares
         uint256 antsPot; // ANTS received from AntseedEmissions at close
+        bool funded; // true once the epoch's ANTS pot has been claimed from AntseedEmissions
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -251,17 +252,17 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     uint256 public stakeIntegrator;
     uint256 public lastIntegratorUpdate;
 
-    /// @dev Cumulative wall-clock seconds where `totalStaked > 0`. Serves as
-    ///      the denominator when converting per-user points into an epoch
-    ///      fraction: sum over users of points in epoch = activeSeconds in epoch.
+    /// @dev Cumulative wall-clock seconds where `totalStaked > 0`. Used only
+    ///      to compute each closed epoch's local `totalPoints` denominator.
     uint256 public activeSecondsAccumulator;
+    uint256 public lastClosedActiveSecondsAccumulator;
 
     /// @dev Reward-epoch state. Reward epoch ids match AntseedEmissions epoch ids.
-    ///      `currentRewardEpoch` is the first not-yet-finalized epoch; finalized
-    ///      reward epochs are funded lazily when users claim ANTS.
+    ///      `syncedRewardEpoch` is the first finalized-by-time epoch not yet
+    ///      closed in proxy storage; reward epochs are funded lazily when users
+    ///      claim ANTS.
     mapping(uint32 => RewardEpoch) public rewardEpochs;
-    uint32 public currentRewardEpoch;
-    mapping(uint32 => bool) public rewardEpochAccounted;
+    uint32 public syncedRewardEpoch;
 
     /// @dev Per-user points per reward epoch (the "internal points system").
     ///      Populated lazily on the user's next interaction; persists across
@@ -288,7 +289,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event UsdcDistributed(uint256 amount);
     event UsdcPaid(address indexed user, uint256 amount);
     event RewardEpochClosed(
-        uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 activeSecondsAtEnd
+        uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 totalPoints
     );
     event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot);
     event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
@@ -355,7 +356,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         uint32 _firstRewardEpoch = IAntseedEmissionsClock(_emissions).currentEpoch().toUint32();
         firstRewardEpoch = _firstRewardEpoch;
-        currentRewardEpoch = _firstRewardEpoch;
+        syncedRewardEpoch = _firstRewardEpoch;
         lastIntegratorUpdate = block.timestamp;
 
         // Ship with an alpha-launch stake cap. Owner can raise it or remove
@@ -542,19 +543,24 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      * @dev If the caller has a large backlog that would exceed
      *      `MAX_EPOCHS_PER_CAPTURE`, call `catchUpPoints` first.
      */
-    function claimAnts(uint32 numEpochs) external nonReentrant updateRewards(msg.sender) {
+    function claimAnts(uint32 numEpochs) external nonReentrant {
         if (numEpochs == 0) revert InvalidAmount();
+
+        _updateUsdcForUser(msg.sender);
+        _syncFinalizedRewardEpochsBounded(numEpochs);
+        if (syncedRewardEpoch == _finalizedRewardEpoch()) _updateStakeIntegrator();
+        _captureUserPoints(msg.sender);
 
         uint32 from = userLastClaimedEpoch[msg.sender];
         if (from < firstRewardEpoch) from = firstRewardEpoch;
         uint32 to = from + numEpochs;
-        if (to > currentRewardEpoch) to = currentRewardEpoch;
+        if (to > syncedRewardEpoch) to = syncedRewardEpoch;
         if (to == from) revert NothingToClaim();
 
         uint256 totalAnts;
         uint32 processedTo = from;
         for (uint32 N = from; N < to; N++) {
-            uint256 antsPot = rewardEpochAccounted[N] ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
+            uint256 antsPot = rewardEpochs[N].funded ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
 
             // Advancing `userLastClaimedEpoch` past this reward epoch permanently
             // abandons any userPoints entry here. For the zero-payout skip
@@ -572,9 +578,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
                 processedTo = N + 1;
                 continue;
             }
-            RewardEpoch memory re = rewardEpochs[N];
-            uint256 totalPoints =
-                N == 0 ? re.activeSecondsAtEnd : re.activeSecondsAtEnd - rewardEpochs[N - 1].activeSecondsAtEnd;
+            uint256 totalPoints = rewardEpochs[N].totalPoints;
             if (totalPoints == 0) {
                 delete userPoints[msg.sender][N];
                 processedTo = N + 1;
@@ -608,10 +612,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
         _syncFinalizedRewardEpochsBounded(numEpochs);
-        if (currentRewardEpoch == _finalizedRewardEpoch()) _updateStakeIntegrator();
+        if (syncedRewardEpoch == _finalizedRewardEpoch()) _updateStakeIntegrator();
 
         uint32 userEp = userCurrentEpoch[msg.sender];
-        uint32 currentEp = currentRewardEpoch;
+        uint32 currentEp = syncedRewardEpoch;
         uint32 targetEp = userEp + numEpochs;
         if (targetEp > currentEp) targetEp = currentEp;
         if (targetEp == userEp) revert NothingToClaim();
@@ -702,14 +706,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     /// @notice Permissionlessly claim the proxy's ANTS pot for a closed reward epoch.
     ///         `claimAnts` calls this lazily, but anyone can pre-fund an epoch.
     function fundRewardEpoch(uint32 rewardEpoch) external nonReentrant {
-        uint32 target = rewardEpoch + 1;
-        if (target > _finalizedRewardEpoch()) revert RewardEpochNotFinalized();
-        if (target > currentRewardEpoch) {
-            if (target - currentRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
-            _syncRewardEpochsUntil(target);
-        }
-        if (rewardEpochAccounted[rewardEpoch]) revert RewardEpochAlreadyAccounted();
-        _fundRewardEpoch(rewardEpoch);
+        _closeAndFundRewardEpoch(rewardEpoch);
     }
 
     /**
@@ -719,15 +716,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      *         operator calls cannot change the staker attribution window.
      */
     function operatorClaimEmissions(uint256 emissionEpochId) external onlyOperator nonReentrant {
-        uint32 rewardEpoch = emissionEpochId.toUint32();
-        uint32 target = rewardEpoch + 1;
-        if (target > _finalizedRewardEpoch()) revert RewardEpochNotFinalized();
-        if (target > currentRewardEpoch) {
-            if (target - currentRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
-            _syncRewardEpochsUntil(target);
-        }
-        if (rewardEpochAccounted[rewardEpoch]) revert RewardEpochAlreadyAccounted();
-        _fundRewardEpoch(rewardEpoch);
+        _closeAndFundRewardEpoch(emissionEpochId.toUint32());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -815,6 +804,19 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             + (staked[account] * (usdcRewardPerTokenStored - userUsdcRewardPerTokenPaid[account])) / _RAY;
     }
 
+    /// @notice First Antseed emission epoch finalized by wall-clock time.
+    ///         May be ahead of `syncedRewardEpoch` until someone lazily closes
+    ///         finalized epochs.
+    function finalizedRewardEpoch() external view returns (uint32) {
+        return _finalizedRewardEpoch();
+    }
+
+    /// @notice Compatibility view for callers that only need to know whether
+    ///         an epoch's ANTS pot has been attached to the proxy.
+    function rewardEpochAccounted(uint32 rewardEpoch) external view returns (bool) {
+        return rewardEpochs[rewardEpoch].funded;
+    }
+
     /// @notice Preview ANTS for a single completed reward epoch for `account`.
     ///         Does not mutate state. Returns 0 for the currently-open epoch.
     /// @dev Computes uncaptured points lazily if the user hasn't interacted
@@ -822,13 +824,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      constant since their last interaction. (This invariant holds
     ///      because any stake change would have triggered `updateRewards`.)
     function pendingAntsForEpoch(address account, uint32 rewardEpoch) external view returns (uint256) {
-        if (rewardEpoch >= currentRewardEpoch) return 0;
+        if (rewardEpoch >= syncedRewardEpoch) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
-        uint256 antsPot = rewardEpochAccounted[rewardEpoch] ? re.antsPot : _pendingRewardEpochPot(rewardEpoch);
+        uint256 antsPot = re.funded ? re.antsPot : _pendingRewardEpochPot(rewardEpoch);
         if (antsPot == 0) return 0;
-        uint256 totalPoints = rewardEpoch == 0
-            ? re.activeSecondsAtEnd
-            : re.activeSecondsAtEnd - rewardEpochs[rewardEpoch - 1].activeSecondsAtEnd;
+        uint256 totalPoints = re.totalPoints;
         if (totalPoints == 0) return 0;
 
         uint256 userPts = userPoints[account][rewardEpoch];
@@ -925,14 +925,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      first to close old epochs incrementally.
     function _syncFinalizedRewardEpochsForUpdate() internal {
         uint32 finalized = _finalizedRewardEpoch();
-        if (finalized > currentRewardEpoch && finalized - currentRewardEpoch > MAX_EPOCHS_PER_CAPTURE) {
+        if (finalized > syncedRewardEpoch && finalized - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) {
             revert BacklogTooLarge();
         }
         _syncRewardEpochsUntil(finalized);
     }
 
     function _syncFinalizedRewardEpochsBounded(uint32 maxEpochs) internal returns (uint32 synced) {
-        uint32 from = currentRewardEpoch;
+        uint32 from = syncedRewardEpoch;
         uint32 finalized = _finalizedRewardEpoch();
         uint32 target = from + maxEpochs;
         if (target > finalized) target = finalized;
@@ -946,20 +946,32 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      This keeps ANTS attribution tied to the external emission window,
     ///      not to the operator's eventual claim transaction timestamp.
     function _syncRewardEpochsUntil(uint32 target) internal {
-        uint32 from = currentRewardEpoch;
-        while (currentRewardEpoch < target) {
-            uint32 rewardEpoch = currentRewardEpoch;
+        uint32 from = syncedRewardEpoch;
+        while (syncedRewardEpoch < target) {
+            uint32 rewardEpoch = syncedRewardEpoch;
             uint256 epochEnd = emissionGenesis + ((uint256(rewardEpoch) + 1) * emissionEpochDuration);
             _updateStakeIntegratorTo(epochEnd);
 
             RewardEpoch storage re = rewardEpochs[rewardEpoch];
             re.stakeIntegratorAtEnd = stakeIntegrator;
-            re.activeSecondsAtEnd = activeSecondsAccumulator;
+            re.totalPoints = activeSecondsAccumulator - lastClosedActiveSecondsAccumulator;
+            lastClosedActiveSecondsAccumulator = activeSecondsAccumulator;
 
-            currentRewardEpoch = rewardEpoch + 1;
-            emit RewardEpochClosed(rewardEpoch, re.antsPot, stakeIntegrator, activeSecondsAccumulator);
+            syncedRewardEpoch = rewardEpoch + 1;
+            emit RewardEpochClosed(rewardEpoch, re.antsPot, stakeIntegrator, re.totalPoints);
         }
-        if (currentRewardEpoch > from) emit RewardEpochsSynced(from, currentRewardEpoch);
+        if (syncedRewardEpoch > from) emit RewardEpochsSynced(from, syncedRewardEpoch);
+    }
+
+    function _closeAndFundRewardEpoch(uint32 rewardEpoch) internal {
+        uint32 target = rewardEpoch + 1;
+        if (target > _finalizedRewardEpoch()) revert RewardEpochNotFinalized();
+        if (target > syncedRewardEpoch) {
+            if (target - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) revert BacklogTooLarge();
+            _syncRewardEpochsUntil(target);
+        }
+        if (rewardEpochs[rewardEpoch].funded) revert RewardEpochAlreadyAccounted();
+        _fundRewardEpoch(rewardEpoch);
     }
 
     function _fundRewardEpoch(uint32 rewardEpoch) internal returns (uint256 inflow) {
@@ -969,7 +981,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         inflow = ants.balanceOf(address(this)) - beforeBal;
 
         rewardEpochs[rewardEpoch].antsPot = inflow;
-        rewardEpochAccounted[rewardEpoch] = true;
+        rewardEpochs[rewardEpoch].funded = true;
 
         emit RewardEpochFunded(rewardEpoch, inflow);
     }
@@ -993,7 +1005,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (account == address(0)) return;
 
         uint256 S = staked[account];
-        uint32 currentEp = currentRewardEpoch;
+        uint32 currentEp = syncedRewardEpoch;
 
         // Fast path: user has no stake (never interacted, or fully unstaked).
         // Nothing to capture — just snap them to the current state.
