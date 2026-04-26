@@ -531,7 +531,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     // ═══════════════════════════════════════════════════════════════════
 
     function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
-        address recovered = ECDSA.recover(hash, signature);
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(hash, signature);
+        if (err != ECDSA.RecoverError.NoError) return bytes4(0xffffffff);
         return recovered == owner() ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
     }
 

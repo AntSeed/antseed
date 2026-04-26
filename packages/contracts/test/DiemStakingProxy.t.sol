@@ -1393,11 +1393,10 @@ contract DiemStakingProxyTest is Test {
     }
 
 
-    function test_isValidSignature_malformedSigReverts() public {
+    function test_isValidSignature_malformedSigReturnsInvalid() public {
         bytes32 hash = keccak256("venice-api-key-challenge");
         bytes memory bad = hex"deadbeef"; // 4 bytes, not 65
-        vm.expectRevert();
-        proxy.isValidSignature(hash, bad);
+        assertEq(proxy.isValidSignature(hash, bad), bytes4(0xffffffff));
     }
 
 
