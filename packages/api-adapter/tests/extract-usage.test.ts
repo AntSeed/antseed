@@ -82,6 +82,51 @@ describe('extractUsage', () => {
     expect(result.cachedInputTokens).toBe(100);
   });
 
+  it('unwraps OpenAI Responses SSE shape (response.completed event)', () => {
+    // The Codex backend's `response.completed` event nests usage under
+    // `response`, not at the top level. Without unwrapping, every Responses
+    // request was metered as zero tokens.
+    const result = extractUsage({
+      type: 'response.completed',
+      response: {
+        id: 'resp_abc',
+        model: 'gpt-5.5',
+        usage: {
+          input_tokens: 22,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 20,
+          output_tokens_details: { reasoning_tokens: 12 },
+          total_tokens: 42,
+        },
+      },
+    });
+    expect(result).toEqual({
+      inputTokens: 22,
+      outputTokens: 20,
+      freshInputTokens: 22,
+      cachedInputTokens: 0,
+    });
+  });
+
+  it('reads input_tokens_details.cached_tokens (OpenAI Responses cached subset)', () => {
+    const result = extractUsage({
+      type: 'response.completed',
+      response: {
+        usage: {
+          input_tokens: 1000,
+          input_tokens_details: { cached_tokens: 750 },
+          output_tokens: 100,
+        },
+      },
+    });
+    expect(result).toEqual({
+      inputTokens: 1000,
+      outputTokens: 100,
+      freshInputTokens: 250,    // 1000 - 750
+      cachedInputTokens: 750,
+    });
+  });
+
   it('prefers Anthropic cache field over OpenAI when both present', () => {
     // Anthropic cache_read_input_tokens takes priority since it's checked first
     const result = extractUsage({
