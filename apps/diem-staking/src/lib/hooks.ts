@@ -162,6 +162,8 @@ export interface UserStats {
   pendingAnts: bigint | null;
   /** Explicit reward epochs to pass to claimAnts. */
   claimableAntsEpochs: number[];
+  /** True when the preview is capped and another claim batch remains after this one. */
+  hasMoreClaimableAntsEpochs: boolean;
   /** Next reward-epoch index the user hasn't claimed yet. */
   userLastClaimedEpoch: number | null;
   /** True while any of the reads above are in-flight. */
@@ -191,7 +193,10 @@ export function useUserStats(): UserStats {
   });
 
   const userLastClaimedEpoch = simple?.[3]?.result != null ? Number(simple[3].result) : null;
-  const { pendingAnts, claimableEpochs, isLoading: loadingAnts } = usePendingAnts(address ?? null, userLastClaimedEpoch);
+  const { pendingAnts, claimableEpochs, hasMoreClaimableEpochs, isLoading: loadingAnts } = usePendingAnts(
+    address ?? null,
+    userLastClaimedEpoch,
+  );
 
   if (!enabled) {
     return {
@@ -200,6 +205,7 @@ export function useUserStats(): UserStats {
       pendingUsdc: null,
       pendingAnts: null,
       claimableAntsEpochs: [],
+      hasMoreClaimableAntsEpochs: false,
       userLastClaimedEpoch: null,
       isLoading: loadingSimple,
     };
@@ -210,6 +216,7 @@ export function useUserStats(): UserStats {
     pendingUsdc: simple?.[2]?.result ?? null,
     pendingAnts,
     claimableAntsEpochs: claimableEpochs,
+    hasMoreClaimableAntsEpochs: hasMoreClaimableEpochs,
     userLastClaimedEpoch,
     isLoading: loadingSimple || loadingAnts,
   };
@@ -231,7 +238,7 @@ const MAX_EPOCHS_PREVIEW = 16;
 function usePendingAnts(
   user: Address | null,
   userLastClaimedEpoch: number | null,
-): { pendingAnts: bigint | null; claimableEpochs: number[]; isLoading: boolean } {
+): { pendingAnts: bigint | null; claimableEpochs: number[]; hasMoreClaimableEpochs: boolean; isLoading: boolean } {
   const { firstRewardEpoch, finalizedRewardEpoch } = usePoolStats();
 
   const epochsToRead = useMemo(() => {
@@ -241,6 +248,12 @@ function usePendingAnts(
     const out: number[] = [];
     for (let e = from; e < to; e++) out.push(e);
     return out;
+  }, [user, userLastClaimedEpoch, firstRewardEpoch, finalizedRewardEpoch]);
+
+  const hasMoreClaimableEpochs = useMemo(() => {
+    if (user == null || userLastClaimedEpoch == null || firstRewardEpoch == null || finalizedRewardEpoch == null) return false;
+    const from = Math.max(userLastClaimedEpoch, firstRewardEpoch);
+    return from + MAX_EPOCHS_PREVIEW < finalizedRewardEpoch;
   }, [user, userLastClaimedEpoch, firstRewardEpoch, finalizedRewardEpoch]);
 
   const { data: pendingData, isLoading: loadingPending } = useReadContracts({
@@ -281,7 +294,7 @@ function usePendingAnts(
     return epochsToRead.filter((_, i) => claimedData[i]?.result !== true);
   }, [user, epochsToRead, claimedData]);
 
-  return { pendingAnts, claimableEpochs, isLoading: loadingPending || loadingClaimed };
+  return { pendingAnts, claimableEpochs, hasMoreClaimableEpochs, isLoading: loadingPending || loadingClaimed };
 }
 
 // ─── Unstake queue: derived state machine ────────────────────────────────

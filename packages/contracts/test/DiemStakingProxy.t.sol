@@ -808,6 +808,35 @@ contract DiemStakingProxyTest is Test {
         assertEq(antsPot, claimed, "epoch pot captures the lazy claim");
     }
 
+    function test_claimAnts_zeroRevenueEpochDoesNotFundPot() public {
+        // Seller activity without any DIEM stakers creates external emissions
+        // points, but no internal revenue denominator for staker distribution.
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 0;
+        (uint256 pendingSeller,) = emissions.pendingEmissions(address(proxy), ids);
+        assertGt(pendingSeller, 0, "proxy has external seller emissions");
+
+        _stakeAs(alice, 100e18);
+
+        (,, uint256 potBefore, bool fundedBefore) = proxy.rewardEpochs(0);
+        assertEq(potBefore, 0, "zero-revenue epoch has no pot before claim");
+        assertFalse(fundedBefore, "zero-revenue epoch starts unfunded");
+
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(0, 1));
+
+        (,, uint256 potAfter, bool fundedAfter) = proxy.rewardEpochs(0);
+        assertEq(potAfter, 0, "zero-revenue epoch stays unfunded");
+        assertFalse(fundedAfter, "claim must not strand an undistributable pot");
+        assertEq(ants.balanceOf(address(proxy)), 0, "no ANTS minted into proxy");
+        assertTrue(proxy.userEpochClaimed(alice, 0), "user can advance past empty epoch");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        REWARDS (real flows, both streams)
     // ═══════════════════════════════════════════════════════════════════

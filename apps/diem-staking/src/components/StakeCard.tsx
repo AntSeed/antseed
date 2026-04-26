@@ -147,6 +147,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             pendingUsdc={user.pendingUsdc}
             pendingAnts={user.pendingAnts}
             claimableAntsEpochs={user.claimableAntsEpochs}
+            hasMoreClaimableAntsEpochs={user.hasMoreClaimableAntsEpochs}
           />
         )}
 
@@ -532,6 +533,7 @@ interface ClaimPanelProps {
   pendingUsdc: bigint | null;
   pendingAnts: bigint | null;
   claimableAntsEpochs: number[];
+  hasMoreClaimableAntsEpochs: boolean;
 }
 
 function ClaimPanel(props: ClaimPanelProps) {
@@ -564,6 +566,12 @@ function ClaimPanel(props: ClaimPanelProps) {
       <div className="claim-note">
         Claim both on-chain here. <strong>Spend your $ANTS inside AntStation</strong> — the AntSeed desktop app lets you use them on any model on the network. Same wallet, auto-synced.
       </div>
+
+      {props.hasMoreClaimableAntsEpochs && (
+        <div className="claim-note">
+          More $ANTS epochs are available. Claim again after this batch.
+        </div>
+      )}
 
       {props.isConnected ? (
         <>

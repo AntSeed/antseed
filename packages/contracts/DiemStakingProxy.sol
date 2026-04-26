@@ -138,13 +138,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      set to `0` (unlimited) at any time. Assumes 18-decimal DIEM.
     uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
 
-    /// @dev Scalar (RAY) used by the USDC reward-per-token accumulator.
-    ///      Chosen at 1e27 so that very small USDC inflows still produce
-    ///      non-zero per-stake increments at high TVL. Upper-bound analysis:
-    ///      with 18-dec stake capped realistically below 1e24 and USDC inflows
-    ///      below 1e18 per call, all intermediate products stay well under
-    ///      uint256 max (~1.16e77).
-
     /// @dev Default minimum time an unstake batch must remain open before
     ///      `flush()` is allowed. Prevents a first queuer from immediately
     ///      flushing and pushing every other would-be unstaker into the next
@@ -235,6 +228,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     //                        Storage — ANTS rewards (points + epoch pots)
     // ═══════════════════════════════════════════════════════════════════
 
+    /// @dev Scalar (RAY) used by the USDC reward-per-token accumulator.
+    ///      Chosen at 1e27 so that very small USDC inflows still produce
+    ///      non-zero per-stake increments at high TVL. Upper-bound analysis:
+    ///      with 18-dec stake capped realistically below 1e24 and USDC inflows
+    ///      below 1e18 per call, all intermediate products stay well under
+    ///      uint256 max (~1.16e77).
     uint256 private constant _RAY = 1e27;
 
     /// @dev Sum of USDC units distributed to stakers in the currently-open
@@ -298,6 +297,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error UnstakeBatchTooYoung();
     error BacklogTooLarge();
     error NothingToClaim();
+    error NothingToSync();
     error MaxStakeExceeded();
     error MinUnstakeBatchOpenSecsTooLarge();
     error RewardEpochNotFinalized();
@@ -548,7 +548,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             uint32 N = rewardEpochIds[i];
             if (userEpochClaimed[msg.sender][N]) continue;
 
-            uint256 antsPot = rewardEpochs[N].funded ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
             userEpochClaimed[msg.sender][N] = true;
             processed = true;
 
@@ -560,12 +559,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
                 continue;
             }
 
-            if (antsPot == 0) {
+            uint256 totalPoints = rewardEpochs[N].totalPoints;
+            if (totalPoints == 0) {
                 delete userPoints[msg.sender][N];
                 continue;
             }
-            uint256 totalPoints = rewardEpochs[N].totalPoints;
-            if (totalPoints == 0) {
+
+            uint256 antsPot = rewardEpochs[N].funded ? rewardEpochs[N].antsPot : _fundRewardEpoch(N);
+            if (antsPot == 0) {
                 delete userPoints[msg.sender][N];
                 continue;
             }
@@ -592,7 +593,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      *         but surprising. Settling here means `catchUpPoints` leaves
      *         both reward surfaces in a consistent state for the caller.
      */
-    function catchUpPoints(uint32 numEpochs) external {
+    function catchUpPoints(uint32 numEpochs) external nonReentrant {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
         _syncFinalizedRewardEpochsBounded(numEpochs);
@@ -683,7 +684,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
         if (maxEpochs == 0) revert InvalidAmount();
 
-        if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToClaim();
+        if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -913,8 +914,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     function _fundRewardEpoch(uint32 rewardEpoch) internal returns (uint256 antsPot) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
-        (antsPot,) = IAntseedEmissionsClaim(emissions).pendingEmissions(address(this), ids);
+        uint256 beforeBal = ants.balanceOf(address(this));
         IAntseedEmissionsClaim(emissions).claimSellerEmissions(ids);
+        antsPot = ants.balanceOf(address(this)) - beforeBal;
 
         rewardEpochs[rewardEpoch].antsPot = antsPot;
         rewardEpochs[rewardEpoch].funded = true;

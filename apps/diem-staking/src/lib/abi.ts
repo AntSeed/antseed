@@ -67,8 +67,8 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function claimAnts(uint32[] rewardEpochs)',
   'function syncRewardEpochs(uint32 maxEpochs)',
 
-  // Events — for "USDC distributed per completed reward epoch" aggregation.
-  // Aggregated in-browser via getLogs over a bounded window; see hooks.ts.
+  // Events — for "USDC distributed per completed reward epoch" lookup.
+  // Read in-browser from RewardEpochClosed.totalPoints; see hooks.ts.
   'event UsdcDistributed(uint256 amount)',
   'event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 revenuePerTokenAtEnd, uint256 totalPoints)',
   'event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot)',
