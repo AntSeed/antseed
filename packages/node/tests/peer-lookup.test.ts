@@ -50,9 +50,6 @@ describe('PeerLookup', () => {
     const wildcardEndpoint: PeerEndpoint = { host: '10.99.99.1', port: 6882 };
     const wildcardHashHex = topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex');
 
-    // findAll now calls dht.lookup(infoHash) (single-hash) sequentially
-    // — once for the wildcard, then once per subnet. Each call goes
-    // through lookupMany under the hood (which `lookup` delegates to).
     const lookupMany = vi.fn(async (hashes: Buffer[]) => {
       const merged: PeerEndpoint[] = [];
       for (const hash of hashes) {
@@ -78,7 +75,6 @@ describe('PeerLookup', () => {
     });
 
     const results = await peerLookup.findAll();
-    // Sequential fan-out: 1 wildcard + 16 subnets = 17 calls total.
     expect(lookup).toHaveBeenCalledTimes(SUBNET_COUNT + 1);
     expect(results).toHaveLength(SUBNET_COUNT + 1);
     const hosts = results.map((r) => r.host).sort();
@@ -104,6 +100,7 @@ describe('PeerLookup', () => {
       allowStaleMetadata: true,
       maxAnnouncementAgeMs: 60_000,
       maxResults: 1000,
+      maxFindAllDhtDurationMs: Number.POSITIVE_INFINITY,
     });
     await peerLookup.findAll();
 
@@ -115,7 +112,78 @@ describe('PeerLookup', () => {
     }
   });
 
-  it('findAll queries the exact set of subnet + wildcard topics announcer-side advertises', async () => {
+  it('findAll honors the foreground DHT budget and resumes from the next subnet', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    const capturedHashes: Buffer[] = [];
+    const lookup = vi.fn(async (hash: Buffer) => {
+      capturedHashes.push(hash);
+      vi.setSystemTime(Date.now() + 10_000);
+      return [] as PeerEndpoint[];
+    });
+    const dht = { lookup } as unknown as DHTNode;
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver: { resolve: vi.fn() },
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 1000,
+      maxFindAllDhtDurationMs: 20_000,
+    });
+
+    await peerLookup.findAll();
+    await peerLookup.findAll();
+
+    const calls = capturedHashes.map((h) => h.toString('hex'));
+    expect(calls).toEqual([
+      topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex'),
+      topicToInfoHash(subnetTopic(0)).toString('hex'),
+      topicToInfoHash(subnetTopic(1)).toString('hex'),
+      topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex'),
+      topicToInfoHash(subnetTopic(2)).toString('hex'),
+      topicToInfoHash(subnetTopic(3)).toString('hex'),
+    ]);
+  });
+
+  it('findAllExhaustive emits metadata partials for non-empty batches', async () => {
+    const wildcardPeer: PeerEndpoint = { host: '10.99.99.1', port: 6882 };
+    const subnetPeer: PeerEndpoint = { host: '10.0.7.1', port: 6882 };
+    const wildcardHashHex = topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex');
+    const subnet7HashHex = topicToInfoHash(subnetTopic(7)).toString('hex');
+    const lookup = vi.fn(async (hash: Buffer) => {
+      const hex = hash.toString('hex');
+      if (hex === wildcardHashHex) return [wildcardPeer];
+      if (hex === subnet7HashHex) return [subnetPeer];
+      return [] as PeerEndpoint[];
+    });
+    const dht = { lookup } as unknown as DHTNode;
+    const resolve = vi.fn(async (peer: PeerEndpoint) => buildMetadata({
+      peerId: peer.host === wildcardPeer.host ? 'a'.repeat(40) as any : 'b'.repeat(40) as any,
+    }));
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver: { resolve },
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 1000,
+    });
+
+    const partials: Array<{ count: number; phase: string; subnet?: number }> = [];
+    const results = await peerLookup.findAllExhaustive((batch, context) => {
+      partials.push({ count: batch.length, phase: context.phase, subnet: context.subnet });
+    });
+
+    expect(partials).toEqual([
+      { count: 1, phase: 'wildcard' },
+      { count: 1, phase: 'subnet', subnet: 7 },
+    ]);
+    expect(results).toHaveLength(2);
+  });
+
+  it('findAllExhaustive queries the exact set of subnet + wildcard topics announcer-side advertises', async () => {
     // Symmetry guard: the announcer chooses `subnetTopic(subnetOf(peerId))`
     // and the wildcard; the buyer must query every subnet topic plus the
     // wildcard, with no extras and no missing entries. If a future change
@@ -136,7 +204,7 @@ describe('PeerLookup', () => {
       maxAnnouncementAgeMs: 60_000,
       maxResults: 1000,
     });
-    await peerLookup.findAll();
+    await peerLookup.findAllExhaustive();
 
     const expectedHashes = new Set<string>([
       topicToInfoHash(ANTSEED_WILDCARD_TOPIC).toString('hex'),
@@ -149,12 +217,12 @@ describe('PeerLookup', () => {
     expect(capturedHashes).toHaveLength(SUBNET_COUNT + 1);
   });
 
-  it('findAll covers every subnetOf(peerId) the announcer might pick, across the full byte space', async () => {
+  it('findAllExhaustive covers every subnetOf(peerId) the announcer might pick, across the full byte space', async () => {
     // Property-style: for any peerId, the subnet the announcer would publish
     // under (subnetTopic(subnetOf(peerId))) must be in the set of topics
-    // findAll asks the DHT about. Combined with the symmetry test above, this
-    // pins down the contract: announcer + lookup agree for every possible
-    // peerId.
+    // exhaustive discovery asks the DHT about. Combined with the symmetry test
+    // above, this pins down the contract: announcer + lookup agree for every
+    // possible peerId.
     const capturedHashes: Buffer[] = [];
     const lookup = vi.fn(async (hash: Buffer) => {
       capturedHashes.push(hash);
@@ -169,7 +237,7 @@ describe('PeerLookup', () => {
       maxAnnouncementAgeMs: 60_000,
       maxResults: 1000,
     });
-    await peerLookup.findAll();
+    await peerLookup.findAllExhaustive();
 
     const queriedHashes = new Set(capturedHashes.map((h) => h.toString('hex')));
     for (let byte = 0; byte < 256; byte++) {
