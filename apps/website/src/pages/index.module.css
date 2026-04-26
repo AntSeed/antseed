@@ -1069,3 +1069,68 @@
 
 /* Make the top switchboard labels larger */
 .entryContent > span { font-size: 14px; letter-spacing: 1.7px; }
+
+/* ---- stronger separation between user drill-down sections ---- */
+.chatSection,
+.cliSection,
+.agentSection { position: relative; }
+
+.chatSection { padding-bottom: 96px; }
+
+.cliSection { 
+  max-width: none;
+  padding-left: max(60px, calc((100vw - 1180px)/2 + 60px));
+  padding-right: max(60px, calc((100vw - 1180px)/2 + 60px));
+  padding-top: 120px;
+  padding-bottom: 110px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(31,216,122,.055), transparent 24%),
+    linear-gradient(180deg, #fbfbf7, #fff 34%, #fbfbf7);
+  border-top: 1px solid #e8e8e3;
+  border-bottom: 1px solid #e8e8e3;
+}
+.cliSection::before {
+  content: '02 / CLI';
+  position: absolute;
+  top: 34px;
+  left: max(60px, calc((100vw - 1180px)/2 + 60px));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.8px;
+  color: #16a863;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border: 1px solid rgba(31,216,122,.18);
+  border-radius: 999px;
+  background: rgba(31,216,122,.055);
+}
+
+.agentSection { padding-top: 110px; }
+.agentSection::before {
+  content: '03 / AGENTS';
+  position: absolute;
+  top: 34px;
+  left: max(60px, calc((100vw - 1180px)/2 + 60px));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.8px;
+  color: #16a863;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border: 1px solid rgba(31,216,122,.18);
+  border-radius: 999px;
+  background: rgba(31,216,122,.055);
+}
+
+@media (max-width: 900px) {
+  .cliSection { padding-left: 24px; padding-right: 24px; }
+  .cliSection::before, .agentSection::before { left: 24px; }
+}
+@media (max-width: 700px) {
+  .chatSection { padding-bottom: 52px; }
+  .cliSection { padding: 84px 20px 58px; }
+  .agentSection { padding-top: 84px; }
+  .cliSection::before, .agentSection::before { top: 28px; left: 20px; }
+}
