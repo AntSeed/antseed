@@ -15,6 +15,8 @@ export function AppShell() {
   const [activeView, setActiveView] = useState<ViewName>('discover');
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [setupVisible, setSetupVisible] = useState(false);
+  const isStudioMode = snap.experienceMode === 'studio';
+  const resolvedActiveView: ViewName = isStudioMode ? 'chat' : activeView;
 
   const hasServices = snap.chatServiceOptions.length > 0;
 
@@ -39,6 +41,7 @@ export function AppShell() {
 
   const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
   const showOnboarding =
+    !isStudioMode &&
     !onboardingDismissed &&
     !hasConversations &&
     !snap.chatActiveConversation &&
@@ -66,6 +69,14 @@ export function AppShell() {
     [actions],
   );
 
+  const handleSelectView = useCallback(
+    (view: ViewName) => {
+      if (isStudioMode) return;
+      setActiveView(view);
+    },
+    [isStudioMode],
+  );
+
   if (showSetup) {
     return <SetupScreen />;
   }
@@ -91,9 +102,9 @@ export function AppShell() {
     <>
       <TitleBar />
       <div className="app-container">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} />
+        {!isStudioMode && <Sidebar activeView={resolvedActiveView} onSelectView={handleSelectView} />}
         <main className="main-content">
-          <ViewHost activeView={activeView} onSelectView={setActiveView} />
+          <ViewHost activeView={resolvedActiveView} onSelectView={handleSelectView} />
         </main>
       </div>
       <StreamingIndicator />

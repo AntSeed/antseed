@@ -18,7 +18,7 @@ import {
   UI_MESSAGES,
 } from './core/constants';
 import { safeNumber, safeString } from './core/safe';
-import type { BadgeTone } from './core/state';
+import type { BadgeTone, ExperienceMode } from './core/state';
 import { createInitialUiState } from './core/state';
 import { initStore, notifyUiStateChanged } from './core/store';
 import type { DesktopBridge } from './types/bridge';
@@ -45,6 +45,7 @@ const isMacPlatform = bridge?.platform
   : detectApplePlatformFromNavigator();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
+<<<<<<< HEAD
 // On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
 // the window traffic-light buttons are mirrored to the top-right and would
 // cover the title-bar right-side controls. Flip the padding in that case.
@@ -73,7 +74,38 @@ async function applyMacOsRtlClass(): Promise<void> {
 }
 void applyMacOsRtlClass();
 
+=======
+const EXPERIENCE_MODE_STORAGE_KEY = 'antseed:experience-mode';
+
+function normalizeExperienceMode(value: unknown): ExperienceMode {
+  return value === 'studio' ? 'studio' : 'code';
+}
+
+function loadExperienceMode(): ExperienceMode {
+  try {
+    return normalizeExperienceMode(localStorage.getItem(EXPERIENCE_MODE_STORAGE_KEY));
+  } catch {
+    return 'code';
+  }
+}
+
+function persistExperienceMode(mode: ExperienceMode): void {
+  try {
+    localStorage.setItem(EXPERIENCE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Ignore localStorage errors in restricted environments.
+  }
+}
+
+function applyExperienceModeBodyClass(mode: ExperienceMode): void {
+  document.body.classList.toggle('experience-studio', mode === 'studio');
+}
+
+const bridge = window.antseedDesktop as DesktopBridge | undefined;
+>>>>>>> ea092c60 (Continue studio mode work)
 const uiState = createInitialUiState();
+uiState.experienceMode = loadExperienceMode();
+applyExperienceModeBodyClass(uiState.experienceMode);
 initStore(uiState);
 
 bridge?.onFullscreenChange?.((isFullscreen) => {
@@ -424,6 +456,15 @@ async function actionClearLogs(): Promise<void> {
   }
 }
 
+function actionSetExperienceMode(mode: ExperienceMode): void {
+  const nextMode = normalizeExperienceMode(mode);
+  if (uiState.experienceMode === nextMode) return;
+  uiState.experienceMode = nextMode;
+  applyExperienceModeBodyClass(nextMode);
+  persistExperienceMode(nextMode);
+  notifyUiStateChanged();
+}
+
 /* ------------------------------------------------------------------ */
 /*  Register actions for React                                         */
 /* ------------------------------------------------------------------ */
@@ -472,6 +513,7 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
+  setExperienceMode: actionSetExperienceMode,
   openPaymentsPortal: (tab?: string) => {
     void bridge?.paymentsOpenPortal?.(tab);
   },
