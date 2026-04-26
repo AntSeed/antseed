@@ -313,304 +313,229 @@ export default function Home(): JSX.Element {
       {/* Liveness */}
       <section className={styles.live}><LiveBar /></section>
 
-      {/* Local Gateway */}
-      <section className={styles.gateway}>
-        <h2 className={styles.gatewayTitle}>Your local gateway to AI providers</h2>
-        <p className={styles.gatewaySub}>No central registry. One localhost endpoint.</p>
-        <div className={styles.gatewayCards}>
-          <div className={`${styles.gwCard} ${styles.gwCardLocal}`}>
-            <span className={`${styles.gwBadge} ${styles.gwBadgeLocal}`}>Local</span>
-            <div className={styles.gwName}>AntSeed Proxy</div>
-            <div className={`${styles.gwUrl} ${styles.gwUrlLocal}`}>http://localhost:8377</div>
-            <div className={styles.gwRoute}>
-              <div className={styles.gwRouteNode}>
-                <span className={styles.gwDot} style={{background:'#1FD87A'}} />
-                <span className={styles.gwRouteLabel}>You</span>
-              </div>
-              <div className={`${styles.gwRouteLine} ${styles.gwRouteLineGreen}`} />
-              <div className={styles.gwRouteNode}>
-                <span className={styles.gwDot} style={{background:'#1FD87A'}} />
-                <span className={styles.gwRouteLabel}>Provider</span>
-              </div>
-            </div>
-            <div className={styles.gwTags}>
-              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>direct</span>
-              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>onchain</span>
-              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>private</span>
+      {/* Audience paths */}
+      <section className={styles.entrySwitchboard}>
+        <div className={styles.entryHeader}>
+          <h2>Three ways in.</h2>
+        </div>
+
+        <div className={styles.switchboardShell}>
+          <div className={styles.modelTicker} aria-label="Available models">
+            <div className={styles.modelTickerTrack}>
+              {[
+                ['anthropic.png', 'Claude'], ['openai.png', 'GPT'], ['google.png', 'Gemini'], ['deepseek.png', 'DeepSeek'], ['meta.png', 'Llama'], ['qwen.png', 'Qwen'], ['mistral.png', 'Mistral'], ['moonshot.png', 'Kimi'], ['zhipu.png', 'GLM'],
+                ['anthropic.png', 'Claude'], ['openai.png', 'GPT'], ['google.png', 'Gemini'], ['deepseek.png', 'DeepSeek'], ['meta.png', 'Llama'], ['qwen.png', 'Qwen'], ['mistral.png', 'Mistral'], ['moonshot.png', 'Kimi'], ['zhipu.png', 'GLM'],
+              ].map(([logo, name], i) => (
+                <span key={`${name}-${i}`}><img src={`/logos/${logo}`} alt="" />{name}</span>
+              ))}
             </div>
           </div>
-          <div className={styles.gwCard}>
-            <span className={`${styles.gwBadge} ${styles.gwBadgeCloud}`}>Cloud</span>
-            <div className={styles.gwName}>Cloud Proxy</div>
-            <div className={styles.gwUrl}>https://api.cloud-provider.com</div>
-            <div className={styles.gwRoute}>
-              <div className={styles.gwRouteNode}>
-                <span className={styles.gwDot} style={{background:'#ccc'}} />
-                <span className={styles.gwRouteLabel}>You</span>
+
+          <div className={styles.entryGrid}>
+            <article className={styles.entryCard}>
+              <div className={styles.stationIcon}><img src="/logos/antseed-mark.svg" alt="AntStation" /></div>
+              <div className={styles.entryContent}>
+                <span>Chat</span>
+                <h3>AntStation</h3>
+                <p>Sort providers by what you need — video, images, coding, price, privacy — then chat anonymously.</p>
+                <div className={styles.entryBadges}><b>No account</b></div>
               </div>
-              <div className={styles.gwRouteLine} />
-              <div className={styles.gwRouteNode}>
-                <span className={styles.gwDot} style={{background:'#ccc'}} />
-                <span className={styles.gwRouteLabel}>Proxy API</span>
+              <div className={styles.entryDownloadPair}>
+                <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform="mac" />Mac</a>
+                <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform="win" />Windows</a>
               </div>
-              <div className={styles.gwRouteLine} />
-              <div className={styles.gwRouteNode}>
-                <span className={styles.gwDot} style={{background:'#ccc'}} />
-                <span className={styles.gwRouteLabel}>Provider</span>
+            </article>
+
+            <article className={styles.entryCard}>
+              <div className={styles.toolStack} aria-label="Coding tools">
+                <span><img src="/logos/anthropic.png" alt="" /></span>
+                <span><img src="/logos/openai.png" alt="" /></span>
+                <span className={styles.toolText}>VS</span>
+                <span className={styles.toolText}>OC</span>
+                <span className={styles.toolText}>PI</span>
               </div>
-            </div>
-            <div className={styles.gwTags}>
-              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>via gatekeeper</span>
-              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>custodial</span>
-              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>logged</span>
-            </div>
+              <div className={styles.entryContent}>
+                <span>CLI</span>
+                <h3>Coding tools</h3>
+                <p>Sort coding providers by model, price, latency, or reputation — then plug your tools into one local endpoint.</p>
+                <code>localhost:8377/v1</code>
+              </div>
+              <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
+            </article>
+
+            <article className={styles.entryCard}>
+              <div className={styles.agentStack} aria-label="Agent tools">
+                <span><img src="/logos/openclaw.svg" alt="" />OpenClaw</span>
+                <span><img src="/logos/nousresearch.svg" alt="" />Hermes</span>
+              </div>
+              <div className={styles.entryContent}>
+                <span>Agents</span>
+                <h3>Connect your agent</h3>
+                <p>Let agents sort providers by task, price, latency, reputation, capability, or Private Provider routes.</p>
+                <div className={styles.entryBadges}><b>cheap</b><b>fast</b><b>reliable</b></div>
+              </div>
+              <a href="https://github.com/AntSeed/antseed/blob/7cc2d30a168dc2231e11994ee2b989fd99f2b87b/skills/hermes-antseed/SKILL.md#L4" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
+            </article>
           </div>
         </div>
       </section>
 
-      {/* AntStation */}
-      <div className={styles.agentsSection}>
-        <div className={styles.agentsCopy}>
-          <h3>AntStation</h3>
-          <p className={styles.agentsVision}>Your desktop gateway to the AntSeed network. Provide services, route requests, and manage your node. All from one app.</p>
-          <div className={styles.downloads} style={{alignItems:'flex-start',padding:0}}>
-            <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
-              <DesktopDownloadIcon platform={download.platform} />
-              {download.label}
+      {/* Chat users */}
+      <section className={`${styles.audienceSection} ${styles.chatSection}`}>
+        <div className={styles.audienceCopy}>
+          <span className={styles.kicker}>For chat users</span>
+          <h2>AntStation is the anonymous AI app for the open model market.</h2>
+          <p className={styles.audienceLead}>Open the desktop app, pick a model, chat anonymously, and pay providers in USDC. Providers compete directly, so users get some of the lowest AI prices in the market.</p>
+          <div className={styles.conversionGrid}>
+            <div><strong>Anon by default</strong><span>No account wall before you can ask.</span></div>
+            <div><strong>Uncensored market</strong><span>Providers compete; no single policy team controls access.</span></div>
+            <div><strong>Frontier + open source</strong><span>Use the best model for the job, not the one your subscription picked.</span></div>
+            <div><strong>Private Providers</strong><span>Prefer TEE providers and direct P2P transport.</span></div>
+          </div>
+          <div className={styles.pathActions}>
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>
+              <DesktopDownloadIcon platform="mac" />
+              Download Mac
             </a>
-            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlnote}>All releases →</a>
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>
+              <DesktopDownloadIcon platform="win" />
+              Download Windows
+            </a>
+            <Link to="/network" className={styles.pathSecondaryBtn}>See live providers →</Link>
           </div>
         </div>
-        <div className={styles.agentsVideo}>
+        <div className={styles.audienceMedia}>
           <video
             src="/videos/desktop-app-v2.mp4"
             autoPlay
             loop
             muted
             playsInline
-            style={{width:'100%',borderRadius:'8px',display:'block',border:'1px solid #e0e0db',boxShadow:'0 4px 20px rgba(0,0,0,0.06)'}}
+            className={styles.mediaVideo}
           />
-        </div>
-      </div>
-
-      {/* What is AntSeed — unified feature section */}
-      <section className={styles.features}>
-        <div className={styles.featuresGrid}>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
-            <h4>True peer-to-peer. No relay.</h4>
-            <p>Requests travel directly to the provider. No central server that can read your traffic, log your prompts, or be shut down.</p>
-          </div>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-            <h4>On-Chain Stats. Build Reputation.</h4>
-            <p>Every delivery produces a cryptographically signed receipt. Stats are on-chain. Reputation belongs to your wallet. No platform can revoke what you earned.</p>
-          </div>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
-            <h4>No account. No log. No censor.</h4>
-            <p>No sign-up. No content policy. TEE-secured providers where not even the operator sees your data. Your requests, your models, your business.</p>
-          </div>
         </div>
       </section>
 
-      {/* Agents & Developers — full width */}
-      <div className={styles.agentsSection}>
-        <div className={styles.agentsCopy}>
-          <h3>One endpoint.<br/>The whole open market.</h3>
-          <p className={styles.agentsVision}>Any agent or coding tool connects in one command. Browse providers by price, latency, and on-chain reputation or use a Routing Service that does the selection for you. Raw inference, specialized models, your choice. No API key approval. Pay per token.</p>
-          <ul className={styles.agentsBullets}>
-            <li>One command: <code>npm install -g @antseed/cli</code></li>
-            <li>Works with any AI agent or coding tool</li>
-            <li>Choose providers directly or delegate to a Routing Service</li>
-          </ul>
-          <Link to="/docs/" className={styles.agentsCta}>Read the Docs →</Link>
-        </div>
-        <div className={styles.agentsVideo}>
+      {/* CLI users */}
+      <section className={`${styles.audienceSection} ${styles.cliSection}`}>
+        <div className={styles.audienceMedia}>
           <video
             src="/videos/claude-code.mp4"
             autoPlay
             loop
             muted
             playsInline
-            style={{width:'100%',borderRadius:'8px',display:'block'}}
+            className={styles.mediaVideo}
           />
-          <div className={styles.compatChips}>
-            <span className={styles.compatChip}>Claude Code</span>
-            <span className={styles.compatChip}>Codex</span>
-            <span className={styles.compatChip}>VS Code</span>
-            <span className={styles.compatChip}>Any OpenAI client</span>
+          <div className={styles.toolLogoRow}>
+            <span><img src="/logos/anthropic.png" alt="" />Claude Code</span>
+            <span><img src="/logos/openai.png" alt="" />Codex</span>
+            <span className={styles.toolLogoText}>VS</span>
+            <span className={styles.toolLogoText}>OC</span>
+            <span className={styles.toolLogoText}>PI</span>
+            <span>OpenAI API</span>
           </div>
         </div>
-      </div>
-
-      {/* Structurally different */}
-      <section className={styles.structural}>
-        <div className={styles.structuralHeader}>
-          <h2>Not just different policies.<br/>Different by design.</h2>
-          <p className={styles.structuralSub}>Some things aren't policy decisions. They're impossible by design.</p>
-        </div>
-        <div className={styles.structuralGrid}>
-          <div className={styles.structuralItem}>
-            <h4>Reading your requests</h4>
-            <p>No central relay exists. Requests travel peer-to-peer. There is no server to subpoena, no logs to leak.</p>
+        <div className={styles.audienceCopy}>
+          <span className={styles.kicker}>For CLI users</span>
+          <h2>Keep your workflow. Swap in the open market.</h2>
+          <p className={styles.audienceLead}>Developers care about speed, model quality, low prices, easy integration, and not getting stuck with one provider. AntSeed exposes a local OpenAI-compatible endpoint for the tools they already use.</p>
+          <div className={styles.localEndpoint}>
+            <span>Base URL</span>
+            <code>http://localhost:8377/v1</code>
           </div>
-          <div className={styles.structuralItem}>
-            <h4>Freezing your earnings</h4>
-            <p>Payments settle in USDC directly to your wallet via on-chain escrow. No company holds your funds. No trust required.</p>
-          </div>
-          <div className={styles.structuralItem}>
-            <h4>Delisting your capability</h4>
-            <p>No editorial team. Anyone who delivers gets discovered. Reputation is built by results, not relationships with a platform.</p>
-          </div>
-          <div className={styles.structuralItem}>
-            <h4>Deciding who can participate</h4>
-            <p>Anyone can provide. Anyone can consume. The network has no gatekeeper. Only the protocol and the proof of delivery.</p>
-          </div>
+          <ul className={styles.checkList}>
+            <li>Use the best coding model available right now</li>
+            <li>Fallback across providers when one is slow or unavailable</li>
+            <li>Compare price, latency, and reputation before routing</li>
+            <li>Works with normal SDKs, CLIs, and editor plugins</li>
+          </ul>
+          <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect CLI →</a>
         </div>
       </section>
 
-      {/* Two Layers */}
-      <section className={styles.layers}>
-        <div className={styles.layersHeader}>
-          <h2>Two layers. One protocol.</h2>
-          <p>The foundation is the unstoppable P2P network. On top sits the open marketplace where any AI service can be offered, discovered, and paid for.</p>
+      {/* Agent users */}
+      <section className={`${styles.audienceSection} ${styles.agentSection}`}>
+        <div className={styles.audienceCopy}>
+          <span className={styles.kicker}>For agents</span>
+          <div className={styles.agentLogoRow}>
+            <span><img src="/logos/openclaw.svg" alt="" />OpenClaw</span>
+            <span><img src="/logos/nousresearch.svg" alt="" />Hermes</span>
+          </div>
+          <h2>Agents need economic routing, not another SaaS account.</h2>
+          <p className={styles.audienceLead}>Autonomous agents optimize for cost, capability, reliability, and privacy. AntSeed gives them a discoverable service market where providers compete for the lowest viable price.</p>
+          <div className={styles.agentMetrics}>
+            <div><span>Price</span><strong>lowest viable</strong></div>
+            <div><span>Latency</span><strong>fastest healthy</strong></div>
+            <div><span>Trust</span><strong>on-chain reputation</strong></div>
+            <div><span>Privacy</span><strong>TEE / direct P2P</strong></div>
+          </div>
+          <ul className={styles.checkList}>
+            <li>Raw inference for commodity tasks</li>
+            <li>Routing services for cost, latency, privacy, or domain policies</li>
+            <li>Specialist AI agents for packaged expertise and tools</li>
+            <li>USDC settlement without platform custody</li>
+          </ul>
+          <a href="https://github.com/AntSeed/antseed/blob/7cc2d30a168dc2231e11994ee2b989fd99f2b87b/skills/hermes-antseed/SKILL.md#L4" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect →</a>
         </div>
-        <div className={styles.layersStack}>
-          <div className={styles.layerCard}>
-            <div className={styles.layerContent}>
-              <div className={styles.layerNum}>01</div>
-              <h4>Unstoppable Infrastructure</h4>
-              <p className={styles.layerTags}>Open source · Peer-to-peer · Anonymous · Always-on</p>
-              <p>No login. No central point that can be shut down. Discovery via BitTorrent DHT. Transport via WebRTC. The network routes around failures.</p>
+        <div className={styles.agentAnimation} aria-label="Agent provider routing animation">
+          <div className={styles.orbitRing} />
+          <div className={styles.orbitRingTwo} />
+          <div className={styles.agentCore}>
+            <div className={styles.agentCoreIcons}>
+              <img src="/logos/openclaw.svg" alt="" />
+              <img src="/logos/nousresearch.svg" alt="" />
             </div>
-            <div className={styles.layerIllust}>
-              <svg viewBox="0 0 200 160" fill="none" className={styles.layerSvg}>
-                <line x1="50" y1="35" x2="150" y2="70" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
-                <line x1="50" y1="35" x2="150" y2="120" stroke="rgba(31,216,122,0.15)" strokeWidth="1"/>
-                <line x1="50" y1="80" x2="150" y2="35" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
-                <line x1="50" y1="80" x2="150" y2="120" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
-                <line x1="50" y1="125" x2="150" y2="35" stroke="rgba(31,216,122,0.15)" strokeWidth="1"/>
-                <line x1="50" y1="125" x2="150" y2="70" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
-                <line x1="53" y1="35" x2="147" y2="35" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
-                <line x1="53" y1="80" x2="147" y2="80" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
-                <line x1="53" y1="125" x2="147" y2="125" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
-                <circle cx="38" cy="35" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="38" y="33" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
-                <text x="38" y="41" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
-                <circle cx="38" cy="80" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="38" y="78" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
-                <text x="38" y="86" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
-                <circle cx="38" cy="125" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="38" y="123" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
-                <text x="38" y="131" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
-                <circle cx="162" cy="35" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="162" y="33" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
-                <text x="162" y="41" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
-                <circle cx="162" cy="80" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="162" y="78" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
-                <text x="162" y="86" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
-                <circle cx="162" cy="125" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
-                <text x="162" y="123" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
-                <text x="162" y="131" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
-                <rect x="72" y="70" width="56" height="16" rx="3" fill="#f0faf5" stroke="#1FD87A" strokeWidth="1"/>
-                <text x="100" y="81" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A" letterSpacing="0.5">DIRECT P2P</text>
-              </svg>
-            </div>
+            <strong>agent</strong>
+            <span>selects provider</span>
           </div>
-          <div className={styles.layerConnector}>↑ built on top of ↑</div>
-          <div className={styles.layerCard}>
-            <div className={styles.layerContent}>
-              <div className={styles.layerNum}>02</div>
-              <h4>An Open Marketplace for AI Services</h4>
-              <p className={styles.layerTags}>Gasless Payments · On-Chain Stats · Built-in Escrow</p>
-              <p>Any provider. Any service. Set your own price. Buyers commit USDC to escrow. Providers settle when delivery is proven. Zero gas for buyers. Every delivery is recorded as on-chain stats.</p>
-            </div>
-            <div className={styles.layerIllust}>
-              <div className={styles.svcList}>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Llama 3.3 70B</span><span className={styles.svcJobs}>6,102 verified · Raw Inference</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.4</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>TEE Price Router</span><span className={styles.svcJobs}>1,847 verified · Routing</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.8</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis Agent</span><span className={styles.svcJobs}>2,103 verified · AI Agent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review Agent</span><span className={styles.svcJobs}>4,821 verified · AI Agent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
-              </div>
-            </div>
-          </div>
+          <div className={`${styles.providerNode} ${styles.providerPrice}`}><b>$</b><span>lowest price</span></div>
+          <div className={`${styles.providerNode} ${styles.providerCode}`}><b>{`</>`}</b><span>coding model</span></div>
+          <div className={`${styles.providerNode} ${styles.providerTee}`}><b>TEE</b><span>private route</span></div>
+          <div className={`${styles.providerNode} ${styles.providerResearch}`}><b>R</b><span>research agent</span></div>
+          <div className={`${styles.providerNode} ${styles.providerOpen}`}><b>OS</b><span>open source</span></div>
+          <div className={styles.routeBeam} />
+          <div className={styles.routeBeamTwo} />
+          <div className={styles.routePacket} />
+          <div className={styles.agentSettlement}>provider selected → USDC settlement</div>
         </div>
       </section>
 
-      {/* Three ways to provide */}
-      <section className={styles.threeWays}>
-        <div className={styles.threeWaysHeader}>
-          <h2>Three ways to provide.</h2>
-          <p>All three expose a standard API. What runs behind it is entirely yours.</p>
-          <Link to="/providers" className={styles.threeWaysLink}>Become a provider <span className={styles.liveArrow}>→</span></Link>
+      {/* ANTS utility */}
+      <section className={styles.antsUtilitySection}>
+        <div className={styles.antsOrb}><img src="/logos/antseed-mark.svg" alt="ANTS" /></div>
+        <div>
+          <span className={styles.kicker}>Network utility</span>
+          <h2>$ANTS will power Subscription Pools, reputation and more.</h2>
+          <p>As AntSeed grows from individual requests to recurring agent workloads, ANTS becomes the coordination layer for access, incentives, and subscription pool utility.</p>
         </div>
-        <div className={styles.threeWaysGrid}>
-          <div className={styles.threeWaysCard}>
-            <div className={styles.threeWaysNum}>01</div>
-            <h4>Raw Inference</h4>
-            <p className={styles.threeWaysTags}>Any model · Any backend · Standard API</p>
-            <p>Serve a fine-tune, a local GPU, or proxy an existing API. You set the price per token. Buyers route to you based on price, latency, and on-chain reputation.</p>
-          </div>
-          <div className={styles.threeWaysCard}>
-            <div className={styles.threeWaysNum}>02</div>
-            <h4>Routing Service</h4>
-            <p className={styles.threeWaysTags}>Latency · Cost · TEE · Domain-aware</p>
-            <p>Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, jurisdiction-aware. Earn on every request you route without running a single model.</p>
-          </div>
-          <div className={styles.threeWaysCard}>
-            <div className={styles.threeWaysNum}>03</div>
-            <h4>AI Agent</h4>
-            <p className={styles.threeWaysTags}>Packaged expertise · Private logic · Always-on</p>
-            <p>Wrap domain knowledge as a named, always-on service. Your system prompt, RAG, and toolchain stay private. Buyers pay for the expertise, not just the tokens.</p>
-          </div>
-        </div>
+        <Link to="/ants-token" className={styles.antsUtilityCta}>Explore ANTS →</Link>
       </section>
 
-      {/* Build Once. Earn Forever. */}
-      <section className={styles.creator}>
-        <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
-        <p className={styles.creatorSub}>Set your price. Serve the network. Get paid on-chain. Your earnings go directly to your wallet, no platform in the middle, no kill switch on your income. Every delivery builds a track record that belongs to you, not a platform that can revoke it.</p>
-        <BrowserOnly fallback={<div style={{height:'740px'}}/>}>{() => <EarnAnimation />}</BrowserOnly>
-        <Link to="/docs/" className={styles.creatorCta}>Start Building →</Link>
-      </section>
-
-      {/* Works with your tools */}
-      <section className={styles.compat}>
-        <h3>Works with your tools</h3>
-        <p className={styles.compatSub}>Change one URL. Access the whole market.</p>
-        <div className={styles.compatLogos}>
-          <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/><path d="M7 12h10M12 7v10" stroke="#1FD87A" strokeWidth="2"/></svg></div>
-            <span className={styles.compatName}>Claude Code</span>
-          </div>
-          <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/></svg></div>
-            <span className={styles.compatName}>Codex</span>
-          </div>
-          <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></div>
-            <span className={styles.compatName}>VS Code</span>
-          </div>
-          <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg></div>
-            <span className={styles.compatName}>Any OpenAI client</span>
-          </div>
-        </div>
+      {/* Provider stripe */}
+      <section className={styles.providerStripe}>
+        <span>Have GPUs, an API, a router, or a specialist agent?</span>
+        <strong>Become a provider and get discovered when users choose where to route.</strong>
+        <Link to="/providers">Provider page →</Link>
       </section>
 
       {/* Bottom CTAs */}
       <section className={styles.bottomCtas}>
         <div className={styles.bottomGrid}>
           <div className={styles.bottomCard}>
-            <h3>Read the Light Paper</h3>
-            <p>Understand the protocol, the architecture, and the economics behind the open AI market.</p>
-            <Link to="/docs/lightpaper" className={styles.bottomBtn}>Read Light Paper →</Link>
+            <h3>Chat Anonymously</h3>
+            <p>Download AntStation and use frontier or open-source models without creating a central account.</p>
+            <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.bottomBtn}>Download AntStation →</a>
           </div>
           <div className={styles.bottomCard}>
-            <h3>Become a provider</h3>
-            <p>Serve raw inference, build a routing service, or wrap domain expertise as an AI Agent. Set your price. Start earning.</p>
-            <Link to="/providers" className={styles.bottomBtn}>Start providing →</Link>
+            <h3>Connect your CLI</h3>
+            <p>Point Claude Code, Codex, VS Code, or any OpenAI-compatible tool at your local AntSeed endpoint.</p>
+            <a href="https://github.com/AntSeed/pi-antseed" target="_blank" rel="noopener noreferrer" className={styles.bottomBtn}>Connect a tool →</a>
+          </div>
+          <div className={styles.bottomCard}>
+            <h3>Build with agents</h3>
+            <p>Route tasks by model quality, price, latency, privacy, and on-chain reputation.</p>
+            <Link to="/docs/overview" className={styles.bottomBtn}>Build agents →</Link>
           </div>
         </div>
       </section>
