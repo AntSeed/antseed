@@ -401,19 +401,18 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
   return { state, isLoading: loadingClock || loadingAmts || loadingBatchDetail };
 }
 
-// ─── Last-epoch USDC: in-browser getLogs aggregation ─────────────────────
+// ─── Last-epoch USDC: RewardEpochClosed totalPoints lookup ───────────────
 
 /**
- * Sum the `UsdcDistributed(amount)` events emitted during the most recently
- * completed reward epoch. The "last epoch" boundary comes from the indexed
- * `RewardEpochClosed(rewardEpochId, ...)` events: the range is the block of
- * RewardEpochClosed(N-2) (exclusive, defaults to contract creation if none)
- * through RewardEpochClosed(N-1) (inclusive), where N = syncedRewardEpoch.
+ * Read the USDC distributed during the most recently completed reward epoch.
+ * The proxy records this in `RewardEpochClosed(..., totalPoints)` at the
+ * moment it closes the epoch, where N = syncedRewardEpoch and the last closed
+ * epoch is N-1.
  *
  * Provider RPCs cap `eth_getLogs` range differently (10k blocks on public
- * nodes is typical). A fully-indexed deployment should replace this with a
- * dedicated indexer, but while demand is light the in-browser getLogs call
- * is sufficient and keeps the app self-contained.
+ * nodes is typical). A fully-indexed deployment can replace this with a
+ * dedicated indexer, but while demand is light the in-browser close-event
+ * lookup is sufficient and keeps the app self-contained.
  */
 export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
   const client = usePublicClient();
@@ -431,15 +430,11 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       const closedAbi = DIEM_STAKING_PROXY_ABI.find(
         (e) => e.type === 'event' && e.name === 'RewardEpochClosed',
       );
-      const distAbi = DIEM_STAKING_PROXY_ABI.find(
-        (e) => e.type === 'event' && e.name === 'UsdcDistributed',
-      );
-      if (!closedAbi || !distAbi) return null;
+      if (!closedAbi) return null;
 
-      // Find the RewardEpochClosed(rewardEpochId = syncedRewardEpoch - 1) block to
-      // bound the window. Search over the last 500k blocks (≈ 11 days on Base
-      // at 2s). If a deployment is older than that or under heavy traffic,
-      // the caller should migrate to an indexer.
+      // Find RewardEpochClosed(rewardEpochId = syncedRewardEpoch - 1) and use
+      // its totalPoints payload. That avoids block-only windows, which are
+      // ambiguous when a close and next-epoch distribution share a block.
       const head = await client.getBlockNumber();
       const lookback = 500_000n;
       const fromBlock = head > lookback ? head - lookback : 0n;
@@ -452,37 +447,8 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
         toBlock: head,
       });
       if (closedLogs.length === 0) return null;
-      const closedAt = closedLogs[closedLogs.length - 1]!.blockNumber;
-      if (closedAt == null) return null;
-
-      // Prior closure (may be absent if syncedRewardEpoch === 1).
-      let priorAt: bigint = fromBlock;
-      if (syncedRewardEpoch >= 2) {
-        const priorLogs = await client.getLogs({
-          address: DIEM_STAKING_PROXY,
-          event: closedAbi,
-          args: { rewardEpochId: syncedRewardEpoch - 2 },
-          fromBlock,
-          toBlock: closedAt,
-        });
-        if (priorLogs.length > 0 && priorLogs[priorLogs.length - 1]!.blockNumber != null) {
-          priorAt = priorLogs[priorLogs.length - 1]!.blockNumber! + 1n;
-        }
-      }
-
-      const distLogs = await client.getLogs({
-        address: DIEM_STAKING_PROXY,
-        event: distAbi,
-        fromBlock: priorAt,
-        toBlock: closedAt,
-      });
-
-      let sum = 0n;
-      for (const l of distLogs) {
-        const amt = (l.args as { amount?: bigint }).amount;
-        if (typeof amt === 'bigint') sum += amt;
-      }
-      return sum;
+      const totalPoints = (closedLogs[closedLogs.length - 1]!.args as { totalPoints?: bigint }).totalPoints;
+      return typeof totalPoints === 'bigint' ? totalPoints : null;
     },
   });
 
