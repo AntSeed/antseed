@@ -30,25 +30,37 @@ export function registerBuyerMeteringCommand(buyerCmd: Command): void {
 
         try {
           const activeChannels = store.getActiveChannelsByBuyer('buyer', buyerAddress);
-          const channels = options.peer
-            ? activeChannels.filter((channel) => channel.peerId === options.peer)
+          // The displayed peerId is truncated (peerId.slice(0,16) + '...'), so
+          // accept either an exact peerId or a prefix the user copied from the table.
+          const matchesPeer = (peerId: string): boolean =>
+            peerId === options.peer || peerId.startsWith(options.peer);
+          const matchedActive = options.peer
+            ? activeChannels.filter((channel) => matchesPeer(channel.peerId))
             : activeChannels;
 
-          if (channels.length === 0) {
-            const allChannels = options.peer
-              ? [store.getLatestChannelByPeerAndBuyer(options.peer, 'buyer', buyerAddress)].filter(Boolean)
-              : [];
-
-            if (allChannels.length === 0) {
-              console.log(chalk.dim(options.peer ? 'No channels found for this peer.' : 'No active payment channels.'));
+          let peerIds: string[];
+          if (options.peer) {
+            if (matchedActive.length > 0) {
+              peerIds = [...new Set(matchedActive.map((channel) => channel.peerId))];
+            } else {
+              // No active channel matched — fall back to the latest channel for that
+              // exact peerId (prefix lookup isn't supported by the store).
+              const fallback = store.getLatestChannelByPeerAndBuyer(options.peer, 'buyer', buyerAddress);
+              if (!fallback) {
+                console.log(chalk.dim('No channels found for this peer.'));
+                return;
+              }
+              peerIds = [fallback.peerId];
+            }
+          } else {
+            if (activeChannels.length === 0) {
+              console.log(chalk.dim('No active payment channels.'));
               return;
             }
+            peerIds = [...new Set(activeChannels.map((channel) => channel.peerId))];
           }
 
           const results: Record<string, unknown> = {};
-          const peerIds = options.peer
-            ? [options.peer]
-            : [...new Set(activeChannels.map((channel) => channel.peerId))];
 
           for (const peerId of peerIds) {
             const channel = store.getActiveChannelByPeerAndBuyer(peerId, 'buyer', buyerAddress)

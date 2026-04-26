@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
+import { loadOrCreateIdentity } from '@antseed/node';
 import { getGlobalOptions } from '../types.js';
 import { openChannelStore } from '../../payment-utils.js';
 
@@ -22,11 +23,13 @@ export function registerBuyerChannelsCommand(buyerCmd: Command): void {
     .command('channels')
     .description('List payment channels from local store')
     .option('--status <status>', 'filter by status: active, settled, timeout, ghost')
-    .option('--role <role>', 'filter by role: buyer or seller')
     .option('--limit <number>', 'max number of channels to show', '20')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(buyerCmd);
+
+      const identity = await loadOrCreateIdentity(globalOpts.dataDir);
+      const buyerAddress = identity.wallet.address;
 
       let store;
       try {
@@ -40,12 +43,10 @@ export function registerBuyerChannelsCommand(buyerCmd: Command): void {
       try {
         const limit = parseInt(options.limit as string, 10) || 20;
         const statusFilter = options.status as string | undefined;
-        const roleFilter = options.role as string | undefined;
 
-        const allSessions = store.listAllChannels(limit * 2);
+        const allSessions = store.getAllChannelsByBuyer('buyer', buyerAddress);
         let filtered = allSessions;
         if (statusFilter) filtered = filtered.filter((session) => session.status === statusFilter);
-        if (roleFilter) filtered = filtered.filter((session) => session.role === roleFilter);
 
         filtered.sort((a, b) => b.updatedAt - a.updatedAt);
         const limited = filtered.slice(0, limit);

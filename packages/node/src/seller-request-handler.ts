@@ -60,7 +60,10 @@ export class SellerRequestHandler {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
       // Handle /v1/models locally — free metadata endpoint, no payment required.
-      if (request.method === 'GET' && (request.path === '/v1/models' || request.path.startsWith('/v1/models/'))) {
+      // Compare against the path without its query string so callers like
+      // Codex CLI (which appends `?client_version=…`) hit the local fast path.
+      const pathOnly = request.path.split('?')[0] ?? request.path;
+      if (request.method === 'GET' && (pathOnly === '/v1/models' || pathOnly.startsWith('/v1/models/'))) {
         const modelsResponse = this._handleModelsRequest(request);
         mux.sendProxyResponse(modelsResponse);
         return;
@@ -395,7 +398,9 @@ export class SellerRequestHandler {
     const now = Math.floor(Date.now() / 1000);
 
     // GET /v1/models/:id — single model lookup
-    const singleModelMatch = request.path.match(/^\/v1\/models\/(.+)$/);
+    // Strip query string so `/v1/models/gpt-5.5?client_version=…` resolves to "gpt-5.5".
+    const pathOnly = request.path.split('?')[0] ?? request.path;
+    const singleModelMatch = pathOnly.match(/^\/v1\/models\/(.+)$/);
     if (singleModelMatch) {
       const modelId = decodeURIComponent(singleModelMatch[1]!);
       if (allServices.includes(modelId)) {
