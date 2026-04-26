@@ -1151,3 +1151,7 @@ img, video, canvas, svg { max-width: 100%; }
   .audienceCopy h2 { font-size: 28px; }
   .agentAnimation { min-height: 360px; }
 }
+
+/* smoother endless model ticker */
+.modelTickerTrack { will-change: transform; animation-duration: 42s; }
+@keyframes modelScroll { from { transform: translate3d(0,0,0); } to { transform: translate3d(-33.333%,0,0); } }

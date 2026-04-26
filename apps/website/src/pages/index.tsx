@@ -325,6 +325,7 @@ export default function Home(): JSX.Element {
               {[
                 ['anthropic.png', 'Claude'], ['openai.png', 'GPT'], ['google.png', 'Gemini'], ['deepseek.png', 'DeepSeek'], ['meta.png', 'Llama'], ['qwen.png', 'Qwen'], ['mistral.png', 'Mistral'], ['moonshot.png', 'Kimi'], ['zhipu.png', 'GLM'],
                 ['anthropic.png', 'Claude'], ['openai.png', 'GPT'], ['google.png', 'Gemini'], ['deepseek.png', 'DeepSeek'], ['meta.png', 'Llama'], ['qwen.png', 'Qwen'], ['mistral.png', 'Mistral'], ['moonshot.png', 'Kimi'], ['zhipu.png', 'GLM'],
+                ['anthropic.png', 'Claude'], ['openai.png', 'GPT'], ['google.png', 'Gemini'], ['deepseek.png', 'DeepSeek'], ['meta.png', 'Llama'], ['qwen.png', 'Qwen'], ['mistral.png', 'Mistral'], ['moonshot.png', 'Kimi'], ['zhipu.png', 'GLM'],
               ].map(([logo, name], i) => (
                 <span key={`${name}-${i}`}><img src={`/logos/${logo}`} alt="" />{name}</span>
               ))}
