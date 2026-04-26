@@ -2,13 +2,11 @@ import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
   ANTSEED_WILDCARD_TOPIC,
-  serviceTopic,
-  serviceSearchTopic,
   capabilityTopic,
   peerTopic,
+  subnetTopic,
+  SUBNET_COUNT,
   topicToInfoHash,
-  normalizeServiceTopicKey,
-  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
@@ -36,10 +34,10 @@ export const DEFAULT_LOOKUP_CONFIG: Omit<LookupConfig, "dht" | "metadataResolver
   requireValidSignature: true,
   allowStaleMetadata: false,
   maxAnnouncementAgeMs: 30 * 60 * 1000,
-  // Old cap was 50; with the network growing past that, browse views were
-  // silently truncated. 200 keeps the parallel metadata fan-out reasonable
-  // while no longer hiding peers from ‘network browse’.
-  maxResults: 200,
+  // Old cap was 50, then 200; with subnet fan-out and larger live networks,
+  // keep browse/discovery truncation comfortably above current scale while
+  // still bounding downstream enrichment/rendering work.
+  maxResults: 1000,
 };
 
 export interface LookupResult {
@@ -55,30 +53,31 @@ export class PeerLookup {
     this.config = config;
   }
 
+  /**
+   * Enumerate every peer on the network.
+   *
+   * Each subnet topic only holds ~total/SUBNET_COUNT announcers, which keeps
+   * us well under the K-closest saturation limit that made the single
+   * wildcard topic return inconsistent subsets. The wildcard lookup is kept
+   * in parallel as a transition fallback so buyers running this build still
+   * see peers on older sellers that haven't started announcing on a subnet
+   * topic yet. `resolveLookupResults` deduplicates by `host:port` before
+   * resolving metadata, so the union has no extra cost beyond the parallel
+   * lookups themselves.
+   *
+   * `DHTNode.lookupMany` shares a single temporary "peer" listener across
+   * the fan-out so subnet enumeration does not trip EventEmitter's default
+   * listener limit. Failures inside `lookupMany` (per-infohash callback
+   * errors) are absorbed and contribute zero endpoints, so a misbehaving
+   * subnet doesn't black-hole the whole enumeration.
+   */
   async findAll(): Promise<LookupResult[]> {
-    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-    const peers = await this.config.dht.lookup(infoHash);
-    return this.resolveLookupResults(shuffle(peers));
-  }
-
-  async findByService(service: string): Promise<LookupResult[]> {
-    const canonicalTopic = serviceTopic(service);
-    const canonicalInfoHash = topicToInfoHash(canonicalTopic);
-
-    const canonicalServiceKey = normalizeServiceTopicKey(service);
-    const compactServiceKey = normalizeServiceSearchTopicKey(service);
-    if (compactServiceKey === canonicalServiceKey) {
-      const peers = await this.config.dht.lookup(canonicalInfoHash);
-      return this.resolveLookupResults(shuffle(peers));
-    }
-
-    const compactTopic = serviceSearchTopic(service);
-    const compactInfoHash = topicToInfoHash(compactTopic);
-    const [canonicalPeers, compactPeers] = await Promise.all([
-      this.config.dht.lookup(canonicalInfoHash),
-      this.config.dht.lookup(compactInfoHash),
-    ]);
-    return this.resolveLookupResults(shuffle([...canonicalPeers, ...compactPeers]));
+    const hashes = [
+      ...Array.from({ length: SUBNET_COUNT }, (_, i) => topicToInfoHash(subnetTopic(i))),
+      topicToInfoHash(ANTSEED_WILDCARD_TOPIC),
+    ];
+    const merged = await this.config.dht.lookupMany(hashes);
+    return this.resolveLookupResults(shuffle(merged));
   }
 
   async findByCapability(capability: string, name?: string): Promise<LookupResult[]> {

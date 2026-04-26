@@ -3,12 +3,12 @@ export {
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
   ANTSEED_WILDCARD_TOPIC,
-  serviceTopic,
-  serviceSearchTopic,
   capabilityTopic,
   peerTopic,
-  normalizeServiceTopicKey,
-  normalizeServiceSearchTopicKey,
+  subnetTopic,
+  subnetOf,
+  SUBNET_COUNT,
+  type DHTPeerEndpoint,
   type DHTNodeConfig,
 } from './dht-node.js';
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';

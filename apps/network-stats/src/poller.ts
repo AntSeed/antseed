@@ -14,6 +14,8 @@ import {
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
   ANTSEED_WILDCARD_TOPIC,
+  SUBNET_COUNT,
+  subnetTopic,
   HttpMetadataResolver,
   OFFICIAL_BOOTSTRAP_NODES,
   toBootstrapConfig,
@@ -99,8 +101,23 @@ export class NetworkPoller {
       const metadataResolver = new HttpMetadataResolver();
       const discoveredPeers = new Map<string, PeerMetadata>();
 
-      const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-      const endpoints = await dht.lookup(infoHash);
+      // Fan out across every subnet (and the wildcard, kept as a transition
+      // fallback for sellers still on the single-topic build) so we don't
+      // hit the K-closest saturation problem the wildcard alone suffers
+      // from at scale. See SUBNET_COUNT in @antseed/node discovery.
+      const subnetHashes = Array.from({ length: SUBNET_COUNT }, (_, i) =>
+        topicToInfoHash(subnetTopic(i)),
+      );
+      const wildcardHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
+      const rawEndpoints = await dht.lookupMany([...subnetHashes, wildcardHash]);
+      const seenEndpoints = new Set<string>();
+      const endpoints: Array<{ host: string; port: number }> = [];
+      for (const ep of rawEndpoints) {
+        const key = `${ep.host.toLowerCase()}:${ep.port}`;
+        if (seenEndpoints.has(key)) continue;
+        seenEndpoints.add(key);
+        endpoints.push(ep);
+      }
 
       await Promise.allSettled(
         endpoints.map(async (ep: { host: string; port: number }) => {
