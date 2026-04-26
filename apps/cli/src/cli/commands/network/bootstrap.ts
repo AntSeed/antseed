@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import { getGlobalOptions } from '../types.js'
 import { loadOrCreateIdentity } from '@antseed/node'
-import { DHTNode, parseBootstrapList } from '@antseed/node/discovery'
+import { DEFAULT_DHT_CONFIG, DHTNode, parseBootstrapList } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 
 export function registerNetworkBootstrapCommand(networkCmd: Command): void {
@@ -40,8 +40,8 @@ export function registerNetworkBootstrapCommand(networkCmd: Command): void {
         peerId: identity.peerId,
         port,
         bootstrapNodes,
-        reannounceIntervalMs: 15 * 60 * 1000,
-        operationTimeoutMs: 10_000,
+        reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
+        operationTimeoutMs: DEFAULT_DHT_CONFIG.operationTimeoutMs,
       })
 
       await dht.start()

@@ -1005,6 +1005,7 @@ export class BuyerProxy {
       requestProtocol,
       requestedService,
       explicitProvider,
+      'lenient',
     )
 
     let hasForcedRefresh = false
@@ -1030,15 +1031,64 @@ export class BuyerProxy {
     let routingPlans = routePlanByPeerId
     let discoveredPeers = peers
 
-    if (routingPeers.length === 0) {
-      await refreshPeerSelection('empty initial routing candidate set')
+    const isPinnedDiscovered = (): boolean =>
+      discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+
+    // Single refresh guard covers all three doubts about the cache: pin
+    // missing, candidate filter empty, or cache past TTL.
+    const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+    let pinnedDiscovered = isPinnedDiscovered()
+    if (!pinnedDiscovered || routingPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
+      await refreshPeerSelection('pinned-peer routing preflight')
+      pinnedDiscovered = isPinnedDiscovered()
+    }
+
+    if (!pinnedDiscovered) {
+      const logSource = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
+      const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
+      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(
+        `Pinned peer ${explicitPeerId.slice(0, 12)}... is not reachable right now. `
+        + 'It may be offline, not announcing, or temporarily unreachable. '
+        + 'Pick a different service in Discover or try again later. '
+        + diagnostics,
+      )
+      return
     }
 
     if (routingPeers.length === 0) {
+      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === explicitPeerId) ?? null
+      const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
+      const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
+      const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      const providerLabel = explicitProvider ? ` for provider "${explicitProvider}"` : ''
+
+      if (explicitProvider && pinnedPeer) {
+        const providers = pinnedPeer.providers
+          .map((provider) => provider.trim().toLowerCase())
+          .filter((provider) => provider.length > 0)
+        if (!providers.includes(explicitProvider)) {
+          const providerList = providers.length > 0 ? providers.join(', ') : 'none'
+          log(`Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
+          res.writeHead(502, { 'content-type': 'text/plain' })
+          res.end(
+            `Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
+            + `Available providers: ${providerList}. `
+            + 'Remove or change the x-antseed-provider header, or pick a different peer. '
+            + diagnostics,
+          )
+          return
+        }
+      }
+
+      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... filtered out by protocol/service match`)
       res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`No peers support ${requestProtocol ?? 'this request'}${providerLabel}. ${diagnostics}`)
+      res.end(
+        `Pinned peer ${explicitPeerId.slice(0, 12)}... does not support this request `
+        + `(${protocolLabel}, ${providerLabel}, ${serviceLabel}). `
+        + `Pick a different service in Discover. ${diagnostics}`,
+      )
       return
     }
 
@@ -1046,38 +1096,15 @@ export class BuyerProxy {
 
     const router = this._node.router
 
-    // Pinned-peer dispatch (the only path — auto-selection is disabled).
-    // Pinned peers must use fresh discovery data so IP changes are picked up.
-    // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
-    // this request, the cache is already fresh and cacheAgeMs will be < TTL.
-    const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
-    if (cacheAgeMs > this._peerCacheTtlMs) {
-      await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
-    }
+    const selectedPeer = routingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
 
-    let pinnedRoutingPeers = routingPeers
-    let pinnedRoutePlans = routingPlans
-    let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
-
+    // Defence in depth: the discovered+narrowed checks above should make this
+    // branch unreachable. Keep a structured fallback so we don't silently hang
+    // if an invariant breaks.
     if (!selectedPeer) {
-      await refreshPeerSelection(`pinned peer ${explicitPeerId.slice(0, 12)}... not in candidate set`)
-      pinnedRoutingPeers = routingPeers
-      pinnedRoutePlans = routingPlans
-      selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
-    }
-
-    if (!selectedPeer) {
-      const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
-      const peerDiscovered = discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
-      const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
-      const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
-      const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
-      const mismatchHint = peerDiscovered
-        ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${serviceLabel}).`
-        : 'Peer is not discoverable right now.'
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
+      log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
       res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request. ${mismatchHint}`)
+      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
@@ -1085,7 +1112,7 @@ export class BuyerProxy {
       res,
       serializedReq,
       selectedPeer,
-      pinnedRoutePlans,
+      routingPlans,
       requestProtocol,
       requestedService,
       explicitProvider,
@@ -1122,7 +1149,7 @@ export class BuyerProxy {
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
   > {
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
-      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider)
+      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
 
     if (!selectedRoutePlan) {
       return { done: false, statusCode: 502, responseBody: Buffer.from('No compatible provider route'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: null }

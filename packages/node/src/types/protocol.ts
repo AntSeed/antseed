@@ -88,7 +88,22 @@ export interface PaymentRequiredPayload {
   currentAcceptedCumulative?: string;
   /** Channel ID for the exhausted session (so buyer can match it locally). */
   channelId?: string;
+  /**
+   * On-chain reserve ceiling for this channel. When present and the seller's
+   * `requiredCumulativeAmount` exceeds it, the channel is permanently
+   * exhausted and the buyer must retire it and open a new one — no amount
+   * of additional signing on the same channel will be accepted.
+   */
+  reserveMaxAmount?: string;
+  /**
+   * Stable machine-readable code so callers can switch on it without coupling
+   * to internal phrasing. Only set on irrecoverable 402s today.
+   */
+  code?: PaymentRequiredCode;
 }
+
+export const PAYMENT_CODE_CHANNEL_EXHAUSTED = 'channel_exhausted' as const;
+export type PaymentRequiredCode = typeof PAYMENT_CODE_CHANNEL_EXHAUSTED;
 
 /**
  * Seller tells buyer that the current cumulative authorization is insufficient.
@@ -104,12 +119,21 @@ export interface NeedAuthPayload {
   requestId?: string;
   /** Seller-computed cost for the last request (USDC base units). */
   lastRequestCost?: string;
-  /** Input tokens consumed by the last request. */
+  /** Total input tokens consumed by the last request (provider-style total — may include cached). */
   inputTokens?: string;
   /** Output tokens consumed by the last request. */
   outputTokens?: string;
   /** Cached input tokens consumed by the last request. */
   cachedInputTokens?: string;
+  /**
+   * Fresh (non-cached) input tokens consumed by the last request.
+   * Sent explicitly by the seller so the buyer doesn't have to guess at
+   * OpenAI-vs-Anthropic cached-token semantics (OpenAI: prompt_tokens
+   * includes cached; Anthropic: input_tokens excludes cached). When absent,
+   * the buyer falls back to `inputTokens - cachedInputTokens` (OpenAI
+   * convention) for backward compat with older sellers.
+   */
+  freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
 }

@@ -1,8 +1,9 @@
-import type {
-  SpendingAuthPayload,
-  AuthAckPayload,
-  PaymentRequiredPayload,
-  NeedAuthPayload,
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  type SpendingAuthPayload,
+  type AuthAckPayload,
+  type PaymentRequiredPayload,
+  type NeedAuthPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
@@ -88,6 +89,8 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
   if (typeof obj.currentSpent === 'string') result.currentSpent = obj.currentSpent;
   if (typeof obj.currentAcceptedCumulative === 'string') result.currentAcceptedCumulative = obj.currentAcceptedCumulative;
   if (typeof obj.channelId === 'string') result.channelId = obj.channelId;
+  if (typeof obj.reserveMaxAmount === 'string') result.reserveMaxAmount = obj.reserveMaxAmount;
+  if (obj.code === PAYMENT_CODE_CHANNEL_EXHAUSTED) result.code = obj.code;
   return result;
 }
 
@@ -104,6 +107,7 @@ export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
   if (typeof obj.inputTokens === 'string') result.inputTokens = obj.inputTokens;
   if (typeof obj.outputTokens === 'string') result.outputTokens = obj.outputTokens;
   if (typeof obj.cachedInputTokens === 'string') result.cachedInputTokens = obj.cachedInputTokens;
+  if (typeof obj.freshInputTokens === 'string') result.freshInputTokens = obj.freshInputTokens;
   if (typeof obj.service === 'string') result.service = obj.service;
   return result;
 }

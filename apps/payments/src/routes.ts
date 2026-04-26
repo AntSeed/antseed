@@ -5,7 +5,6 @@ import {
   EmissionsClient,
   ANTSTokenClient,
   formatUsdc,
-  parseUsdc,
   signSetOperator,
   makeDepositsDomain,
   type ChainConfig,
@@ -31,7 +30,6 @@ interface RouteContext {
 
 // Use shared utilities from @antseed/node
 const formatUsdc6 = formatUsdc;
-const parseUsdc6 = parseUsdc;
 
 // Retry helper for on-chain view calls. Base RPC occasionally returns an
 // unparseable response (ethers surfaces it as CALL_EXCEPTION with null
@@ -146,26 +144,10 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return { transactions: [] };
   });
 
-  fastify.post('/api/withdraw', async (request, reply) => {
-    if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
-    }
-
-    const body = request.body as { amount?: string } | null;
-    const amount = body?.amount;
-    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return reply.status(400).send({ ok: false, error: 'Invalid amount' });
-    }
-
-    try {
-      const baseUnits = parseUsdc6(amount);
-      const client = getClient()!;
-      const txHash = await client.withdraw(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress, baseUnits);
-      return { ok: true, txHash };
-    } catch (err) {
-      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  });
+  // Withdrawals are now submitted directly from the connected wallet
+  // (see apps/payments/web/src/hooks/useWithdraw.ts). The contract requires
+  // msg.sender == operator and sends funds to msg.sender, so the server-side
+  // signer cannot execute withdraw once a separate wallet is authorized.
 
   fastify.get('/api/channels', async () => {
     if (!ctx.cryptoCtx) return { channels: [] };

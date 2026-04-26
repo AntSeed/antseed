@@ -246,7 +246,7 @@ function AppShell({
         title="Withdraw USDC"
         subtitle="Send funds to your authorized wallet."
       >
-        <WithdrawView balance={balance} onAction={refreshBalance} />
+        <WithdrawView config={config} balance={balance} onAction={refreshBalance} />
       </ActionModal>
     </>
   );

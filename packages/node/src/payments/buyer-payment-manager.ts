@@ -808,14 +808,21 @@ export class BuyerPaymentManager {
       const sellerIn = BigInt(payload.inputTokens ?? '0');
       const sellerOut = BigInt(payload.outputTokens ?? '0');
       const sellerCached = BigInt(payload.cachedInputTokens ?? '0');
+      // Prefer seller-supplied freshInputTokens to avoid OpenAI-vs-Anthropic
+      // cached-semantics ambiguity (OpenAI: prompt_tokens includes cached;
+      // Anthropic: input_tokens excludes cached). Fall back to OpenAI-style
+      // subtraction for older sellers that don't emit the field.
+      const sellerFreshExplicit = payload.freshInputTokens != null
+        ? BigInt(payload.freshInputTokens)
+        : null;
 
       // Use the buyer's own knowledge of which service it requested, not the seller's claim.
       // A malicious seller could set service to a more expensive model to inflate the ceiling.
       const pricing = this.getSessionPricing(sellerPeerId, buyerService);
       if (pricing && sellerCost > 0n) {
-        const freshIn = sellerCached > 0n
+        const freshIn = sellerFreshExplicit ?? (sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
-          : sellerIn;
+          : sellerIn);
         const buyerEstimate = computeCostUsdc(Number(freshIn), Number(sellerOut), pricing, Number(sellerCached));
         const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
         if (buyerEstimate > 0n && sellerCost > maxAcceptable) {
@@ -867,21 +874,20 @@ export class BuyerPaymentManager {
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, effectiveAmount);
 
-    // Update cumulative metadata from reported tokens
-    if (payload.inputTokens || payload.outputTokens) {
-      const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
-      const newMeta: SpendingAuthMetadata = {
-        cumulativeInputTokens: prev.cumulativeInputTokens + BigInt(payload.inputTokens ?? '0'),
-        cumulativeOutputTokens: prev.cumulativeOutputTokens + BigInt(payload.outputTokens ?? '0'),
-        cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
-      };
-      this._metadata.set(sellerPeerId, newMeta);
-    }
+    // Advance cumulative metadata. requestCount always increments so the
+    // on-chain metadata stays consistent even when older sellers omit token
+    // fields; absent token fields contribute 0 to the running totals.
+    const prevMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    const newMeta: SpendingAuthMetadata = {
+      cumulativeInputTokens: prevMeta.cumulativeInputTokens + BigInt(payload.inputTokens ?? '0'),
+      cumulativeOutputTokens: prevMeta.cumulativeOutputTokens + BigInt(payload.outputTokens ?? '0'),
+      cumulativeRequestCount: prevMeta.cumulativeRequestCount + 1n,
+    };
+    this._metadata.set(sellerPeerId, newMeta);
 
-    // Sign SpendingAuth with the effective amount and current metadata
-    const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
-    const metadataHashHex = computeMetadataHash(currentMeta);
-    const encodedMetadata = encodeMetadata(currentMeta);
+    // Sign SpendingAuth with the effective amount and updated metadata
+    const metadataHashHex = computeMetadataHash(newMeta);
+    const encodedMetadata = encodeMetadata(newMeta);
 
     const channelsDomain = this._channelsDomain;
     const metadataMsg: SpendingAuthMessage = {

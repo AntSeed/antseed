@@ -27,18 +27,52 @@ import type { DesktopBridge } from './types/bridge';
 /*  Bootstrap                                                          */
 /* ------------------------------------------------------------------ */
 
-function detectApplePlatform(): boolean {
-  const nav = navigator as Navigator & {
-    userAgentData?: { platform?: string };
-  };
-  const platformHint = nav.userAgentData?.platform || navigator.platform || navigator.userAgent;
-  return /Mac|iPhone|iPad|iPod/i.test(platformHint);
+const bridge = window.antseedDesktop as DesktopBridge | undefined;
+
+// `bridge.platform` comes from `process.platform` in the preload (Node side),
+// which is the authoritative source. Fall back to a navigator sniff only when
+// the preload didn't load (e.g. running the renderer in a plain browser for
+// dev). We need this synchronously so the title bar paints with the correct
+// macOS padding on the very first frame.
+function detectApplePlatformFromNavigator(): boolean {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const hint = nav.userAgentData?.platform || navigator.platform || navigator.userAgent;
+  return /Mac|iPhone|iPad|iPod/i.test(hint);
 }
 
-const isMacPlatform = detectApplePlatform();
+const isMacPlatform = bridge?.platform
+  ? bridge.platform === 'darwin'
+  : detectApplePlatformFromNavigator();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
-const bridge = window.antseedDesktop as DesktopBridge | undefined;
+// On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
+// the window traffic-light buttons are mirrored to the top-right and would
+// cover the title-bar right-side controls. Flip the padding in that case.
+//
+// We ask Electron's main process for `app.getLocale()` rather than reading
+// `navigator.language`/`navigator.languages`. The latter reflect the *web*
+// preferred-language list, which can disagree with the OS UI language on
+// multilingual machines and produce false positives for LTR users.
+const RTL_LANGUAGE_PREFIXES = new Set(['he', 'iw', 'ar', 'fa', 'ur', 'yi', 'ji']);
+
+function isRtlLocale(locale: string | null | undefined): boolean {
+  if (!locale) return false;
+  const primary = String(locale).toLowerCase().split(/[-_]/)[0];
+  return RTL_LANGUAGE_PREFIXES.has(primary);
+}
+
+async function applyMacOsRtlClass(): Promise<void> {
+  if (!isMacPlatform) return;
+  let locale: string | null = null;
+  try {
+    locale = (await bridge?.getSystemLocale?.()) ?? null;
+  } catch {
+    locale = null;
+  }
+  document.body.classList.toggle('platform-macos-rtl', isRtlLocale(locale));
+}
+void applyMacOsRtlClass();
+
 const uiState = createInitialUiState();
 initStore(uiState);
 

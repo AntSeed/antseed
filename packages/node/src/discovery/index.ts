@@ -6,6 +6,7 @@ export {
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
+  peerTopic,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
   type DHTNodeConfig,
