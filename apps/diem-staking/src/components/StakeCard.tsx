@@ -535,7 +535,7 @@ function ClaimPanel(props: ClaimPanelProps) {
           <span className="lbl">Pending $ANTS</span>
           <span className="big">{fmtNum(pendingAntsNum)}</span>
           <span className="sub">
-            {claimableEpochs > 0 ? `across ${claimableEpochs} epoch${claimableEpochs === 1 ? '' : 's'}` : 'no unclaimed epochs'}
+            {claimableEpochs > 0 ? `across ${claimableEpochs} unprocessed epoch${claimableEpochs === 1 ? '' : 's'}` : 'no unprocessed epochs'}
           </span>
         </div>
       </div>
@@ -547,6 +547,12 @@ function ClaimPanel(props: ClaimPanelProps) {
       {props.hasMoreClaimableAntsEpochs && (
         <div className="claim-note">
           More $ANTS epochs are available. Claim again after this batch.
+        </div>
+      )}
+
+      {claimableEpochs > 0 && props.pendingAnts === 0n && (
+        <div className="claim-note">
+          These epochs have no $ANTS payout for this wallet, but clearing them advances your claim cursor so later epochs can appear.
         </div>
       )}
 
@@ -572,7 +578,7 @@ function ClaimPanel(props: ClaimPanelProps) {
               ? 'Claiming $ANTS…'
               : pendingAntsNum > 0
                 ? `Claim ${fmtNum(pendingAntsNum)} $ANTS →`
-                : 'Claim $ANTS →'}
+                : 'Clear 0-$ANTS epochs →'}
           </button>
           <a
             href={antstationHref}

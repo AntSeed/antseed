@@ -8,7 +8,12 @@
 /** AntseedEmissions: 7-day epochs. */
 export const EPOCH_DURATION_SECS = 7 * 24 * 60 * 60;
 
-/** AntseedEmissions genesis on Base (2026-04-09T09:54:21Z). */
+// AntseedEmissions genesis on Base (2026-04-09T09:54:21Z). This is only
+// used for the marketing/countdown tile; authoritative reward finalization is
+// read from `DiemStakingProxy.finalizedRewardEpoch()` on-chain. If the proxy is
+// pointed at a different emissions deployment, update this constant (or replace
+// it with an on-chain `genesis()`/`EPOCH_DURATION()` read) so the countdown
+// remains aligned with the contract clock.
 export const EMISSIONS_GENESIS_UNIX = 1_775_728_461;
 
 /** Epochs per year for APR annualization. */
