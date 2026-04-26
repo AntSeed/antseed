@@ -1089,48 +1089,65 @@
   border-top: 1px solid #e8e8e3;
   border-bottom: 1px solid #e8e8e3;
 }
-.cliSection::before {
-  content: '02 / CLI';
-  position: absolute;
-  top: 34px;
-  left: max(60px, calc((100vw - 1180px)/2 + 60px));
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.8px;
-  color: #16a863;
-  text-transform: uppercase;
-  padding: 8px 12px;
-  border: 1px solid rgba(31,216,122,.18);
-  border-radius: 999px;
-  background: rgba(31,216,122,.055);
-}
-
 .agentSection { padding-top: 110px; }
-.agentSection::before {
-  content: '03 / AGENTS';
-  position: absolute;
-  top: 34px;
-  left: max(60px, calc((100vw - 1180px)/2 + 60px));
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.8px;
-  color: #16a863;
-  text-transform: uppercase;
-  padding: 8px 12px;
-  border: 1px solid rgba(31,216,122,.18);
-  border-radius: 999px;
-  background: rgba(31,216,122,.055);
-}
 
 @media (max-width: 900px) {
   .cliSection { padding-left: 24px; padding-right: 24px; }
-  .cliSection::before, .agentSection::before { left: 24px; }
 }
 @media (max-width: 700px) {
   .chatSection { padding-bottom: 52px; }
-  .cliSection { padding: 84px 20px 58px; }
-  .agentSection { padding-top: 84px; }
-  .cliSection::before, .agentSection::before { top: 28px; left: 20px; }
+  .cliSection { padding: 64px 20px 58px; }
+  .agentSection { padding-top: 64px; }
+}
+
+/* ---- responsive hardening pass ---- */
+* { box-sizing: border-box; }
+.homepage-wrapper { overflow-x: clip; }
+img, video, canvas, svg { max-width: 100%; }
+.audienceSection, .entrySwitchboard, .antsUtilitySection, .bottomCtas, .providerStripe { width: 100%; }
+
+@media (max-width: 1200px) {
+  .audienceSection { gap: clamp(28px, 4vw, 46px); }
+  .audienceCopy h2 { font-size: clamp(34px, 4.4vw, 50px); }
+}
+
+@media (max-width: 900px) {
+  .entryGrid { grid-template-columns: 1fr; }
+  .audienceSection { grid-template-columns: 1fr; max-width: 760px; }
+  .chatSection, .cliSection, .agentSection { max-width: none; }
+  .chatSection .audienceCopy,
+  .cliSection .audienceCopy,
+  .agentSection .audienceCopy,
+  .chatSection .audienceMedia,
+  .cliSection .audienceMedia,
+  .agentSection .agentAnimation { max-width: 760px; width: 100%; margin-left: auto; margin-right: auto; }
+  .conversionGrid, .agentMetrics, .marketGrid, .bottomGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .heroTitle { font-size: clamp(34px, 10vw, 44px); }
+  .lbar { max-width: calc(100vw - 32px); padding: 10px 16px; gap: 12px; overflow: hidden; }
+  .modelTicker { margin-left: -10px; margin-right: -10px; }
+  .entrySwitchboard { padding-left: 14px; padding-right: 14px; }
+  .switchboardShell { border-radius: 20px; }
+  .entryCard { min-height: auto; }
+  .entryContent > span { font-size: 12px; }
+  .entryDownloadPair, .pathActions { gap: 8px; }
+  .pathPrimaryBtn, .pathSecondaryBtn, .entryCta { min-height: 38px; padding-left: 13px; padding-right: 13px; }
+  .audienceSection { padding-left: 18px; padding-right: 18px; }
+  .conversionGrid { grid-template-columns: 1fr; }
+  .conversionGrid div { padding: 14px; }
+  .toolLogoRow span, .agentLogoRow span { max-width: 100%; }
+  .localEndpoint code { font-size: 12px; word-break: break-all; }
+  .agentAnimation { min-height: 390px; }
+  .antsOrb { width: 88px; height: 88px; border-radius: 24px; }
+  .antsOrb img { width: 54px; height: 54px; }
+  .providerStripe { margin-left: 16px; margin-right: 16px; padding: 22px 18px; }
+}
+
+@media (max-width: 380px) {
+  .pathPrimaryBtn, .pathSecondaryBtn, .entryCta { font-size: 10px; }
+  .entryContent h3 { font-size: 21px; }
+  .audienceCopy h2 { font-size: 28px; }
+  .agentAnimation { min-height: 360px; }
 }
