@@ -32,6 +32,53 @@ afterEach(() => {
 });
 
 describe('HttpMetadataResolver', () => {
+  it('limits concurrent metadata fetches', async () => {
+    let active = 0;
+    let peak = 0;
+    const releaseQueue: Array<() => void> = [];
+    const fetchMock = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => {
+        releaseQueue.push(() => {
+          active -= 1;
+          resolve();
+        });
+      });
+      return new Response(JSON.stringify(buildMetadata()), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolver = new HttpMetadataResolver({
+      timeoutMs: 100,
+      maxConcurrent: 2,
+      failureCooldownMs: 0,
+    });
+
+    const pending = [
+      resolver.resolve({ host: '1.1.1.1', port: 6882 }),
+      resolver.resolve({ host: '1.1.1.2', port: 6882 }),
+      resolver.resolve({ host: '1.1.1.3', port: 6882 }),
+    ];
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(peak).toBe(2);
+
+    releaseQueue.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    while (releaseQueue.length > 0) {
+      releaseQueue.shift()?.();
+    }
+    const results = await Promise.all(pending);
+    expect(results.every((result) => result !== null)).toBe(true);
+  });
   it('caches failed endpoints for the configured cooldown', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
     vi.stubGlobal('fetch', fetchMock);

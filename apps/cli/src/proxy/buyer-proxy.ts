@@ -344,6 +344,12 @@ export class BuyerProxy {
         res.end(`Proxy error: ${err instanceof Error ? err.message : String(err)}`)
       })
     })
+
+    this._node.on('peers:discovered', (peers: PeerInfo[]) => {
+      if (peers.length === 0) return
+      log(`Background discovery found ${peers.length} peer(s)`)
+      this._replacePeers(peers)
+    })
   }
 
   async start(): Promise<void> {
