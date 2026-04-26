@@ -2,6 +2,8 @@
 
 A peer-to-peer AI services network. Providers offer AI services, buyers discover providers via DHT and route requests through encrypted P2P connections.
 
+**Live pricing:** see [PRICING.md](PRICING.md) or `https://network.antseed.com/stats` (public JSON, no auth).
+
 ## How It Works
 
 **Providers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenAI-compatible APIs, local Ollama, etc.) and announce capacity on the DHT network.

@@ -20,6 +20,7 @@ const sidebars: SidebarsConfig = {
         'guides/using-the-api',
         'guides/become-a-provider',
         'guides/payments',
+        'guides/pricing',
       ],
     },
     {
