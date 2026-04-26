@@ -333,9 +333,9 @@ export default function PricingPage() {
   const datasetLd = useMemo(() => ({
     '@context': 'https://schema.org',
     '@type': 'Dataset',
-    name: 'AntSeed Cached AI Inference Pricing (Indexer Snapshot)',
+    name: 'AntSeed Live AI Inference Pricing',
     description:
-      'Cached pricing snapshot from the AntSeed indexer for AI models served across the peer-to-peer network. Prices per million tokens, refreshed as peers re-announce. For live data, install the AntSeed CLI and run `antseed network browse`.',
+      'Live pricing and provider availability for AI models across the AntSeed peer-to-peer network. Prices per million tokens, updated every 30 seconds.',
     url: 'https://antseed.com/network',
     keywords: [
       'AI inference pricing',
@@ -364,26 +364,26 @@ export default function PricingPage() {
 
   return (
     <Layout
-      title="AI Inference Pricing (Cached Snapshot)"
-      description="Cached pricing snapshot from the AntSeed indexer. Compare AI model rates per million tokens across decentralized providers. Onchain payments. Verifiable reputation. For live data, install the AntSeed CLI.">
+      title="Live AI Inference Pricing"
+      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Onchain payments. Verifiable reputation.">
       <Head>
-        <title>AI Inference Pricing Across the AntSeed Network (Cached Snapshot) | AntSeed</title>
+        <title>Live AI Inference Pricing Across the AntSeed Network | AntSeed</title>
         <link rel="canonical" href="https://antseed.com/network" />
-        <link rel="alternate" type="application/json" title="AntSeed cached pricing snapshot (JSON)" href="https://network.antseed.com/stats" />
+        <link rel="alternate" type="application/json" title="AntSeed live pricing (JSON)" href="https://network.antseed.com/stats" />
         <script type="application/ld+json">{JSON.stringify(datasetLd)}</script>
       </Head>
       <div className={styles.page}>
         {/* Hero */}
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
-          <p className={styles.eyebrow}>Cached Indexer Snapshot</p>
-          <h1 className={styles.title}>Cached pricing across the peer-to-peer network.</h1>
+          <p className={styles.eyebrow}>Live Network Data</p>
+          <h1 className={styles.title}>Live pricing across the peer-to-peer network.</h1>
           <p className={styles.subtitle}>
             {loading
-              ? 'Loading network snapshot...'
+              ? 'Loading live network data...'
               : error
                 ? 'Unable to reach the network. Showing cached data if available.'
-                : <>Cached snapshot of {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} models, refreshed as peers re-announce. For live pricing, install the <Link to="/install">AntSeed CLI</Link> and run <code>antseed network browse</code>.</>
+                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {uniqueServiceCount} models. Onchain settlement — best rate per million tokens.</>
             }
           </p>
         </div>

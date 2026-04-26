@@ -191,5 +191,5 @@ If a user asks for AntSeed prices:
 
 - [Network catalog UI](https://antseed.com/network) — same cached data, rendered in the browser.
 - [Install](../getting-started/install.md) — get the CLI for live pricing.
-- [Become a Provider](./become-a-provider.md) — how to set your own prices.
+- [Using the API](./using-the-api.md) — how to actually call AntSeed and route requests through it.
 - [Payments](../protocol/payments.md) — how the announced prices are settled on-chain.
