@@ -70,7 +70,7 @@ export function AppShell() {
     return <SetupScreen />;
   }
 
-  if (showOnboarding) {
+  /* if (showOnboarding) {
     return (
       <>
         <TitleBar />
@@ -85,7 +85,7 @@ export function AppShell() {
         <StreamingIndicator />
       </>
     );
-  }
+  } */
 
   return (
     <>
