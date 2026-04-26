@@ -29,7 +29,7 @@ export function registerBuyerMeteringCommand(buyerCmd: Command): void {
         const store = openChannelStore(globalOpts.dataDir);
 
         try {
-          const activeChannels = store.getActiveChannels('buyer');
+          const activeChannels = store.getActiveChannelsByBuyer('buyer', buyerAddress);
           // The displayed peerId is truncated (peerId.slice(0,16) + '...'), so
           // accept either an exact peerId or a prefix the user copied from the table.
           const matchesPeer = (peerId: string): boolean =>
