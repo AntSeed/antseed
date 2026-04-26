@@ -47,6 +47,18 @@ extraResources:
       - "**/*.js"
   - from: ../../plugins/router-local/node_modules/@antseed/router-core/package.json
     to: bundled-plugins/@antseed/router-core/package.json
+  - from: ../../packages/node/dist
+    to: bundled-plugins/@antseed/node/dist
+    filter:
+      - "**/*.js"
+  - from: ../../packages/node/package.json
+    to: bundled-plugins/@antseed/node/package.json
+  - from: ../../packages/api-adapter/dist
+    to: bundled-plugins/@antseed/api-adapter/dist
+    filter:
+      - "**/*.js"
+  - from: ../../packages/api-adapter/package.json
+    to: bundled-plugins/@antseed/api-adapter/package.json
 
 afterPack: ./scripts/after-pack.js
 
