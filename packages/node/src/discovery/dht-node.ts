@@ -53,6 +53,60 @@ function normalizeTopicSegment(value: string): string {
 export const ANTSEED_WILDCARD_TOPIC = "antseed:*";
 
 /**
+ * Number of subnet shards used to spread peer announcements across multiple
+ * DHT infohashes. The wildcard topic concentrates *every* peer onto one
+ * infohash, which is stored at the K=8 nodes closest to that infohash.
+ * Once the announcement count exceeds those nodes' per-infohash capacity
+ * (~50–200 entries per node depending on implementation), individual
+ * announcers start aging out and `dht.lookup` returns inconsistent subsets.
+ *
+ * Sharding peers across N subnets keeps each subnet's K-closest set well
+ * under that limit. Buyers fan out N parallel `dht.lookup` calls (one per
+ * subnet) and union the results — total wall-clock cost is unchanged because
+ * the lookups share the routing table and run in parallel.
+ *
+ * 16 is a good balance for the foreseeable network size:
+ *   - up to ~3 200 peers (200/subnet × 16) before the saturation regime
+ *     reappears
+ *   - 16 parallel lookups is trivial for the routing table and bandwidth
+ *   - first byte of an EVM-derived peerId is already pseudo-random, so
+ *     `parseInt(peerId.slice(0, 2), 16) % 16` distributes peers evenly
+ *
+ * Bumping this constant requires a coordinated upgrade: old peers will keep
+ * announcing on a different subnet count, and old buyers will keep querying
+ * a different one. During such a transition we'd announce on multiple Ns
+ * and query both. The wildcard topic is kept as the fallback path until the
+ * subnet announce/query is universal.
+ */
+export const SUBNET_COUNT = 16;
+
+/**
+ * Map a peerId to its subnet index in `[0, SUBNET_COUNT)`. The first byte of
+ * an EVM-derived peerId is uniformly distributed, so `firstByte % N`
+ * spreads peers evenly across subnets.
+ *
+ * Throws no errors — invalid input falls through to subnet 0 so callers
+ * never need to special-case bad peerIds. Real callers always pass a
+ * 40-hex peerId; this only matters for defensive correctness.
+ */
+export function subnetOf(peerId: string, subnetCount: number = SUBNET_COUNT): number {
+  const normalized = peerId.trim().toLowerCase().replace(/^0x/, "");
+  if (normalized.length < 2) return 0;
+  const firstByte = parseInt(normalized.slice(0, 2), 16);
+  if (!Number.isFinite(firstByte)) return 0;
+  return firstByte % subnetCount;
+}
+
+/**
+ * Topic used to enumerate a single subnet. Sellers announce on exactly one
+ * subnet — the one their peerId hashes to via `subnetOf`. Buyers query all
+ * subnets in parallel inside `PeerLookup.findAll()`.
+ */
+export function subnetTopic(index: number): string {
+  return `antseed:subnet:${index}`;
+}
+
+/**
  * Per-peer topic that the announcer registers under so callers can look
  * up a single peer by its peerId without scanning the wildcard. Buyers do
  * `dht.lookup(topicToInfoHash(peerTopic(peerId)))` to get the peer's

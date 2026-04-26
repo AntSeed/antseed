@@ -7,6 +7,8 @@ import {
   serviceSearchTopic,
   capabilityTopic,
   peerTopic,
+  subnetOf,
+  subnetTopic,
   topicToInfoHash,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
@@ -302,11 +304,23 @@ export class PeerAnnouncer {
       }
     }
 
+    // Subnet topic: shards the peer set across SUBNET_COUNT infohashes so no
+    // single one carries every announcer at once. Buyers fan out parallel
+    // lookups across all subnets in `PeerLookup.findAll()`. This is the path
+    // that replaces the wildcard for enumeration.
+    const subnet = subnetOf(this.config.identity.peerId);
+    if (!(await this._tryAnnounceTopic(subnetTopic(subnet)))) failures += 1;
+
+    // Wildcard remains during the transition: it lets older buyers (still on
+    // the single-infohash scan) keep finding this peer. Once subnet-aware
+    // buyers are universal it can be dropped — see SUBNET_COUNT comment in
+    // dht-node.ts. Keeping it costs one extra announce per reannounce cycle.
     if (!(await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC))) failures += 1;
 
     // Per-peer topic: lets buyers do a deterministic lookup-by-peerId without
-    // scanning the (saturated) wildcard. Cheap to publish — one extra announce
-    // per cycle — and dramatically improves "find this exact peer" queries.
+    // scanning the wildcard or any subnet. Cheap to publish — one extra
+    // announce per cycle — and dramatically improves "find this exact peer"
+    // queries.
     if (!(await this._tryAnnounceTopic(peerTopic(this.config.identity.peerId)))) {
       failures += 1;
     }

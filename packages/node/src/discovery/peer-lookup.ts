@@ -6,6 +6,8 @@ import {
   serviceSearchTopic,
   capabilityTopic,
   peerTopic,
+  subnetTopic,
+  SUBNET_COUNT,
   topicToInfoHash,
   normalizeServiceTopicKey,
   normalizeServiceSearchTopicKey,
@@ -55,10 +57,40 @@ export class PeerLookup {
     this.config = config;
   }
 
+  /**
+   * Enumerate every peer on the network.
+   *
+   * Each subnet topic only holds ~total/SUBNET_COUNT announcers, which keeps
+   * us well under the K-closest saturation limit that made the single
+   * wildcard topic return inconsistent subsets. The wildcard lookup is kept
+   * in parallel as a transition fallback so buyers running this build still
+   * see peers on older sellers that haven't started announcing on a subnet
+   * topic yet. `resolveLookupResults` deduplicates by `host:port` before
+   * resolving metadata, so the union has no extra cost beyond the parallel
+   * lookups themselves.
+   *
+   * `Promise.allSettled` (not `Promise.all`) defends against a single
+   * misbehaving subnet lookup taking the whole enumeration down: today
+   * `DHTNode.lookup` swallows timeouts and resolves to `[]`, but that
+   * invariant is one refactor away from breaking, and 17 in-flight lookups
+   * raise the probability of any rejection accordingly. A failed subnet
+   * just contributes zero endpoints; the rest of the network still surfaces.
+   */
   async findAll(): Promise<LookupResult[]> {
-    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-    const peers = await this.config.dht.lookup(infoHash);
-    return this.resolveLookupResults(shuffle(peers));
+    const subnetHashes = Array.from({ length: SUBNET_COUNT }, (_, i) =>
+      topicToInfoHash(subnetTopic(i)),
+    );
+    const wildcardHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
+
+    const settled = await Promise.allSettled(
+      [...subnetHashes, wildcardHash].map((hash) => this.config.dht.lookup(hash)),
+    );
+    const merged: PeerEndpoint[] = [];
+    for (const result of settled) {
+      if (result.status !== "fulfilled") continue;
+      for (const peer of result.value) merged.push(peer);
+    }
+    return this.resolveLookupResults(shuffle(merged));
   }
 
   async findByService(service: string): Promise<LookupResult[]> {
