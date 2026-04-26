@@ -32,8 +32,6 @@ interface IAntseedEmissionsClaim {
 
 interface IAntseedEmissionsClock {
     function currentEpoch() external view returns (uint256);
-    function genesis() external view returns (uint256);
-    function EPOCH_DURATION() external view returns (uint256);
 }
 
 /**
@@ -109,7 +107,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     struct RewardEpoch {
         uint256 revenuePerTokenAtEnd; // USDC reward-per-token checkpoint at epoch close
         uint256 totalPoints; // epoch-local revenue denominator for userPoints shares
-        uint256 antsPot; // ANTS received from AntseedEmissions at close
+        uint256 antsPot; // ANTS received from AntseedEmissions when first claimed
         bool funded; // true once the epoch's ANTS pot has been claimed from AntseedEmissions
     }
 
@@ -122,8 +120,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     IERC20 public immutable ants;
     address public immutable emissions;
     address public immutable antseedStaking;
-    uint256 public immutable emissionGenesis;
-    uint256 public immutable emissionEpochDuration;
     uint32 public immutable firstRewardEpoch;
 
     /// @dev Max distinct users per unstake batch. Caps `claimUnstakeBatch`'s transfer
@@ -278,9 +274,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event Unstaked(address indexed user, uint256 amount);
     event UsdcDistributed(uint256 amount);
     event UsdcPaid(address indexed user, uint256 amount);
-    event RewardEpochClosed(
-        uint32 indexed rewardEpochId, uint256 antsPot, uint256 revenuePerTokenAtEnd, uint256 totalPoints
-    );
+    event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 revenuePerTokenAtEnd, uint256 totalPoints);
     event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot);
     event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
     event AntsClaimed(address indexed user, uint32[] rewardEpochs, uint256 antsAmount);
@@ -335,8 +329,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         ants = IERC20(_ants);
         emissions = _emissions;
         antseedStaking = _antseedStaking;
-        emissionGenesis = IAntseedEmissionsClock(_emissions).genesis();
-        emissionEpochDuration = IAntseedEmissionsClock(_emissions).EPOCH_DURATION();
 
         // Batch 0 is unused so `unlockAt == 0` remains a reliable "not yet
         // flushed" sentinel. Queuing starts at batch 1.
@@ -786,12 +778,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         return _finalizedRewardEpoch();
     }
 
-    /// @notice Compatibility view for callers that only need to know whether
-    ///         an epoch's ANTS pot has been attached to the proxy.
-    function rewardEpochAccounted(uint32 rewardEpoch) external view returns (bool) {
-        return rewardEpochs[rewardEpoch].funded;
-    }
-
     /// @notice Preview ANTS for a single completed reward epoch for `account`.
     ///         Does not mutate state. Returns 0 for the currently-open epoch.
     /// @dev Computes uncaptured points lazily if the user hasn't interacted
@@ -919,7 +905,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             currentEpochRevenuePoints = 0;
 
             syncedRewardEpoch = rewardEpoch + 1;
-            emit RewardEpochClosed(rewardEpoch, re.antsPot, usdcRewardPerTokenStored, re.totalPoints);
+            emit RewardEpochClosed(rewardEpoch, usdcRewardPerTokenStored, re.totalPoints);
         }
         if (syncedRewardEpoch > from) emit RewardEpochsSynced(from, syncedRewardEpoch);
     }

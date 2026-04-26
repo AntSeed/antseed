@@ -836,7 +836,8 @@ contract DiemStakingProxyTest is Test {
         vm.prank(alice);
         proxy.claimAnts(_rewardEpochs(0, 1));
         assertGt(ants.balanceOf(alice) - antsBefore, 0);
-        assertTrue(proxy.rewardEpochAccounted(0), "claimAnts lazily funded epoch");
+        (,,, bool funded) = proxy.rewardEpochs(0);
+        assertTrue(funded, "claimAnts lazily funded epoch");
     }
 
     function test_claimAnts_lazilySyncsUnsyncedFinalizedEpoch() public {
