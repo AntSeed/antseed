@@ -345,11 +345,16 @@ export class BuyerProxy {
       })
     })
 
-    this._node.on('peers:discovered', (peers: PeerInfo[]) => {
-      if (peers.length === 0) return
-      log(`Background discovery found ${peers.length} peer(s)`)
-      this._replacePeers(peers)
-    })
+    const eventNode = this._node as AntseedNode & {
+      on?: (event: 'peers:discovered', listener: (peers: PeerInfo[]) => void) => unknown
+    }
+    if (typeof eventNode.on === 'function') {
+      eventNode.on('peers:discovered', (peers: PeerInfo[]) => {
+        if (peers.length === 0) return
+        log(`Background discovery found ${peers.length} peer(s)`)
+        this._replacePeers(peers)
+      })
+    }
   }
 
   async start(): Promise<void> {
