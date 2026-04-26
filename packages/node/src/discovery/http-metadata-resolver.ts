@@ -3,7 +3,7 @@ import type { PeerMetadata } from './peer-metadata.js';
 import { debugWarn } from '../utils/debug.js';
 
 export interface HttpMetadataResolverConfig {
-  /** Timeout in ms for each metadata fetch. Default: 750 */
+  /** Timeout in ms for each metadata fetch. Default: 1500 */
   timeoutMs?: number;
   /** Port offset from the signaling port to the metadata HTTP port. Default: 0 (same port) */
   metadataPortOffset?: number;
@@ -31,7 +31,7 @@ export class HttpMetadataResolver implements MetadataResolver {
   private readonly waiters: Array<() => void> = [];
 
   constructor(config?: HttpMetadataResolverConfig) {
-    this.timeoutMs = config?.timeoutMs ?? 750;
+    this.timeoutMs = config?.timeoutMs ?? 1500;
     this.metadataPortOffset = config?.metadataPortOffset ?? 0;
     this.failureCooldownMs = Math.max(0, config?.failureCooldownMs ?? 30_000);
     this.maxFailureCooldownMs = Math.max(
