@@ -48,24 +48,53 @@ Every display value is on-chain live except two:
 
 | Source | What |
 |---|---|
-| **On-chain (wagmi `useReadContract` / `useReadContracts`, polled every ~12s)** | Pool TVL (`totalStaked`), distinct stakers (`stakerCount`), USDC distributed all-time (`totalUsdcDistributedEver`), pool cap (`maxTotalStake`), Venice cooldown (`DIEM.cooldownDuration`), user wallet DIEM, user stake, user claimable USDC (`earnedUsdc`), user pending ANTS (`pendingAntsForEpoch` summed), unstake queue state (`currentEpoch` / `oldestUnclaimed` / `epochs(id)` / `epochUserAmount`). |
-| **`getLogs` aggregation** | Last-epoch USDC (for realized APR). Sums `UsdcDistributed` events between the two most-recent `RewardEpochClosed` blocks, capped at a 500k block lookback. Caches for ~60s via tanstack-query. A deployment with a long event tail should replace this with a dedicated indexer. |
-| **Off-chain** | DIEM price from CoinGecko (`useDiemPrice`). Falls back to "—" on miss; APR degrades to 0. |
+| **On-chain (wagmi `useReadContract` / `useReadContracts`, polled every ~12s)** | Pool TVL (`totalStaked`), distinct stakers (`stakerCount`), USDC distributed all-time (`totalUsdcDistributedEver`), pool cap (`maxTotalStake`), reward baseline (`firstRewardEpoch` / `syncedRewardEpoch` / `finalizedRewardEpoch`), Venice cooldown (`DIEM.cooldownDuration`), user wallet DIEM, user stake, user claimable USDC (`earnedUsdc`), user pending ANTS (`pendingAntsForEpoch` summed), per-epoch claim flags (`userEpochClaimed`), unstake queue state (`currentUnstakeBatch` / `oldestUnclaimedUnstakeBatch` / `unstakeBatches(id)` / `unstakeBatchUserAmount`). |
+| **`getLogs` aggregation** | Last-epoch USDC (for realized APR). Reads the most recent `RewardEpochClosed` event's `totalPoints`, capped at a 500k block lookback. Caches for ~60s via tanstack-query. A deployment with a long event tail should replace this with a dedicated indexer. |
+| **Off-chain** | DIEM price from CoinGecko (`useDiemPrice`). Falls back to "—" on miss; APR degrades to 0. The epoch countdown tile uses the Base mainnet `AntseedEmissions` genesis constant in `src/lib/epoch.ts`; authoritative claimability still comes from `finalizedRewardEpoch()` on-chain. |
 
 ## Unstake UX
 
 The proxy's unstake flow is three on-chain steps (`initiateUnstake` → `flush`
-→ `claimEpoch`) but the UI presents one smart action button per user state:
+→ `claimUnstakeBatch`) but the UI presents one smart action button per user state:
 
-- **Queued** — cohort not yet flushed. Button: "Start cooldown" (calls
-  `flush`). Disabled with an explanation when the prior cohort is still
-  unclaimed.
-- **Cooling down** — cohort sent to Venice. No action; live countdown.
+- **Queued** — batch not yet flushed. Button: "Start cooldown" (calls
+  `flush`). Disabled with an explanation when the prior batch is still
+  unclaimed or when the minimum batch-open window has not elapsed.
+- **Cooling down** — batch sent to Venice. No action; live countdown.
 - **Claimable** — ready to withdraw. Button: "Withdraw N $DIEM" (calls
-  `claimEpoch`, pays everyone in the cohort).
+  `claimUnstakeBatch`, pays everyone in the batch).
 
-This is honest — any user in the cohort can advance each step, so users
+This is honest — any user in the batch can advance each step, so users
 often find theirs already moved. No keeper service required.
+
+## ANTS reward epochs
+
+The proxy no longer relies on an operator tick to decide reward boundaries.
+Reward epochs are aligned to `AntseedEmissions.currentEpoch()`:
+
+- `firstRewardEpoch` pins the emissions epoch at proxy deployment.
+- `syncedRewardEpoch` is the next reward epoch that still needs a local
+  `RewardEpochClosed` checkpoint.
+- `finalizedRewardEpoch()` reads the emissions contract's current epoch; epochs
+  below it are finalized and can be synced/claimed.
+- `syncRewardEpochs(maxEpochs)` permissionlessly checkpoints finalized epochs in
+  bounded chunks.
+- `claimAnts(uint32[] rewardEpochs)` accepts explicit epoch ids, lazily syncs a
+  bounded backlog, lazily funds each epoch's ANTS pot from `AntseedEmissions`,
+  and marks zero-payout epochs processed so the user can advance to later
+  epochs.
+
+For ABI consumers migrating from the earlier proxy surface:
+
+| Old | New |
+|---|---|
+| `currentEpoch` | `currentUnstakeBatch` |
+| `oldestUnclaimed` | `oldestUnclaimedUnstakeBatch` |
+| `epochs(id)` | `unstakeBatches(id)` |
+| `epochUserAmount(id, user)` | `unstakeBatchUserAmount(id, user)` |
+| `claimEpoch(id)` | `claimUnstakeBatch(id)` |
+| `setMinEpochOpenSecs(secs)` | `setMinUnstakeBatchOpenSecs(secs)` |
+| `operatorClaimEmissions(epoch)` | `syncRewardEpochs(maxEpochs)` + user `claimAnts(uint32[])` |
 
 ## Site metadata
 

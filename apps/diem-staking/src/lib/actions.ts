@@ -68,15 +68,15 @@ export function useFlush() {
   return { run, isPending, error, reset };
 }
 
-export function useClaimEpoch() {
+export function useClaimUnstakeBatch() {
   const { writeContractAsync, isPending, error, reset } = useWriteContract();
   const run = useCallback(
-    async (epochId: number) => {
+    async (batchId: number) => {
       return writeContractAsync({
         address: DIEM_STAKING_PROXY,
         abi: DIEM_STAKING_PROXY_ABI,
-        functionName: 'claimEpoch',
-        args: [epochId],
+        functionName: 'claimUnstakeBatch',
+        args: [batchId],
       });
     },
     [writeContractAsync],
@@ -96,21 +96,16 @@ export function useClaimUsdc() {
   return { run, isPending, error, reset };
 }
 
-/**
- * Claim ANTS for up to `numEpochs` completed reward epochs. The proxy's
- * `updateRewards` modifier caps the per-tx backlog at `MAX_EPOCHS_PER_CAPTURE`
- * (16), matching `MAX_EPOCHS_PREVIEW` on the read side — so the UI never
- * triggers a BacklogTooLarge revert on the first claim.
- */
+/** Claim ANTS for explicit completed reward epochs. */
 export function useClaimAnts() {
   const { writeContractAsync, isPending, error, reset } = useWriteContract();
   const run = useCallback(
-    async (numEpochs: number) => {
+    async (rewardEpochs: number[]) => {
       return writeContractAsync({
         address: DIEM_STAKING_PROXY,
         abi: DIEM_STAKING_PROXY_ABI,
         functionName: 'claimAnts',
-        args: [numEpochs],
+        args: [rewardEpochs],
       });
     },
     [writeContractAsync],

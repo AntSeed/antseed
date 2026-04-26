@@ -1,5 +1,3 @@
-// The core interactive surface: tabbed Stake / Unstake / Claim card, wired
-// to the live on-chain reads + write hooks. Every displayed number is live.
 
 import { useEffect, useMemo, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -23,7 +21,7 @@ import {
   useStake,
   useInitiateUnstake,
   useFlush,
-  useClaimEpoch,
+  useClaimUnstakeBatch,
   useClaimUsdc,
   useClaimAnts,
 } from '../lib/actions';
@@ -56,16 +54,12 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const pool = usePoolStats();
   const user = useUserStats();
 
-  // Auto-reset default amount when switching tabs so the quick-set buttons
-  // feel fresh each time.
   const onChangeTab = (next: Tab) => {
     setTab(next);
     if (next === 'stake') setAmt('10');
     if (next === 'unstake') setAmt(user.stakedDiem ? fmtDiem(toDiemNumber(user.stakedDiem)) : '0');
   };
 
-  // Projection math — all derived from the live lastEpochUsdc and pool TVL.
-  // If either is null the numbers drop to "—" via fmtUSD.
   const diemValue = parseFloat(amt) || 0;
   const poolDiem = toDiemNumber(pool.totalStaked);
   const usdcPerDiemPerEpoch = poolDiem > 0 && lastEpochUsdc ? toUsdcNumber(lastEpochUsdc) / poolDiem : null;
@@ -136,7 +130,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             stakedDiem={user.stakedDiem}
             amtUsd={amtUsd}
             diemCooldownSecs={pool.diemCooldownSecs}
-            minEpochOpenSecs={pool.minEpochOpenSecs}
+            minUnstakeBatchOpenSecs={pool.minUnstakeBatchOpenSecs}
             flushableAt={pool.flushableAt}
           />
         )}
@@ -146,8 +140,8 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             isConnected={isConnected}
             pendingUsdc={user.pendingUsdc}
             pendingAnts={user.pendingAnts}
-            userLastClaimedEpoch={user.userLastClaimedEpoch}
-            currentRewardEpoch={pool.currentRewardEpoch}
+            claimableAntsEpochs={user.claimableAntsEpochs}
+            hasMoreClaimableAntsEpochs={user.hasMoreClaimableAntsEpochs}
           />
         )}
 
@@ -170,7 +164,6 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   );
 }
 
-// ─── Stake panel ─────────────────────────────────────────────────────────
 
 interface StakePanelProps {
   amt: string;
@@ -303,7 +296,6 @@ function StakePanel(props: StakePanelProps) {
   );
 }
 
-// ─── Unstake panel + queue state machine ─────────────────────────────────
 
 interface UnstakePanelProps {
   amt: string;
@@ -313,17 +305,12 @@ interface UnstakePanelProps {
   stakedDiem: bigint | null;
   amtUsd: number | null;
   diemCooldownSecs: number | null;
-  /** Minimum cohort-open window (seconds). Owner-settable; 0 = disabled. */
-  minEpochOpenSecs: number | null;
-  /** Unix timestamp at which the currently-open cohort can first be flushed. */
+  minUnstakeBatchOpenSecs: number | null;
   flushableAt: number | null;
 }
 
 function UnstakePanel(props: UnstakePanelProps) {
   const initiate = useInitiateUnstake();
-  // Single source of truth for the unstake state machine — read here, passed
-  // down into UnstakeStateView so we don't set up two identical wagmi
-  // subscriptions on the same keys.
   const { state } = useUnstakeState();
 
   const stakedNum = toDiemNumber(props.stakedDiem);
@@ -331,7 +318,6 @@ function UnstakePanel(props: UnstakePanelProps) {
   try {
     parsedAmt = props.amt ? parseEther(props.amt) : 0n;
   } catch {
-    /* invalid */
   }
   const amountTooLarge = props.stakedDiem != null && parsedAmt > props.stakedDiem;
   const disabled = !props.isConnected || parsedAmt === 0n || amountTooLarge || initiate.isPending;
@@ -341,14 +327,14 @@ function UnstakePanel(props: UnstakePanelProps) {
       {/* Always-visible educational note — this is the UX best-practice bit
           that the author's original "1-day cooldown" copy couldn't convey. */}
       <div className="claim-note">
-        <strong>Three-step unstake.</strong> Unstakes are batched into cohorts on-chain.
+        <strong>Three-step unstake.</strong> Unstakes are batched on-chain.
         You'll see <code>queued</code> → <code>cooling down</code> → <code>claimable</code>.
-        Each state advances with a tx that <em>any</em> user in your cohort can trigger,
+        Each state advances with a tx that <em>any</em> user in your batch can trigger,
         so you'll often find yours has moved when you check back. After the first
-        queuer opens a cohort, it stays open for at least the minimum cohort window
-        (currently {props.minEpochOpenSecs != null ? fmtDuration(props.minEpochOpenSecs) : '—'})
+        queuer opens a batch, it stays open for at least the minimum batch window
+        (currently {props.minUnstakeBatchOpenSecs != null ? fmtDuration(props.minUnstakeBatchOpenSecs) : '—'})
         so other stakers get a predictable chance to join before it leaves. Total wait ≈
-        cohort window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
+        batch window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
       </div>
 
       {/* Input only makes sense while the user has no active unstake in flight. */}
@@ -409,11 +395,8 @@ function UnstakeStateView({
   flushableAt: number | null;
 }) {
   const flush = useFlush();
-  const claim = useClaimEpoch();
+  const claim = useClaimUnstakeBatch();
 
-  // Keep countdown ticking for both `cooling` (Venice cooldown) and `queued`
-  // (cohort-open window before flush is allowed). The queued tick is cheap:
-  // it only runs while the user actually has an active unstake.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (state.status !== 'cooling' && state.status !== 'queued') return;
@@ -426,30 +409,26 @@ function UnstakeStateView({
   const amountDiem = fmtDiem(toDiemNumber(state.amount));
 
   if (state.status === 'queued') {
-    // Three sub-states, in priority order:
-    //   1. Waiting for prior cohort to be claimed (protocol serialization).
-    //   2. Waiting for the minimum cohort-open window to elapse.
-    //   3. Ready to flush.
     const waitingForWindow = flushableAt != null && now < flushableAt;
     const windowRemaining = waitingForWindow ? flushableAt! - now : 0;
-    const canFlush = !state.waitingForPriorEpoch && !waitingForWindow;
+    const canFlush = !state.waitingForPriorBatch && !waitingForWindow;
 
     let message: string;
-    if (state.waitingForPriorEpoch) {
+    if (state.waitingForPriorBatch) {
       message =
-        'Waiting for the previous cohort to finish claiming before your cohort can start the cooldown. Anyone in that cohort can click their Claim button to advance it.';
+        'Waiting for the previous batch to finish claiming before your batch can start the cooldown. Anyone in that batch can click their Claim button to advance it.';
     } else if (waitingForWindow) {
       message =
-        'Cohort is still in its open window so other stakers can join before it leaves for Venice. The counter below is the earliest time anyone can flush it — including you.';
+        'Batch is still in its open window so other stakers can join before it leaves for Venice. The counter below is the earliest time anyone can flush it — including you.';
     } else {
       message =
-        'Your cohort is ready to be sent to Venice. Click below to start the cooldown. Anyone in your cohort can do this — pay once for the whole group.';
+        'Your batch is ready to be sent to Venice. Click below to start the cooldown. Anyone in your batch can do this — pay once for the whole group.';
     }
 
     return (
       <div className="yield-box" style={{ marginTop: 8 }}>
         <div className="yield-row hero-row">
-          <span className="lbl">Queued<span className="sub">epoch #{state.epochId}</span></span>
+          <span className="lbl">Queued<span className="sub">batch #{state.batchId}</span></span>
           <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
         </div>
         <div className="yield-row">
@@ -488,7 +467,7 @@ function UnstakeStateView({
     return (
       <div className="yield-box" style={{ marginTop: 8 }}>
         <div className="yield-row hero-row">
-          <span className="lbl">Cooling down<span className="sub">epoch #{state.epochId}</span></span>
+          <span className="lbl">Cooling down<span className="sub">batch #{state.batchId}</span></span>
           <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
         </div>
         <div className="yield-row">
@@ -502,20 +481,19 @@ function UnstakeStateView({
     );
   }
 
-  // claimable
   return (
     <div className="yield-box" style={{ marginTop: 8 }}>
       <div className="yield-row hero-row">
-        <span className="lbl">Ready to withdraw<span className="sub">epoch #{state.epochId}</span></span>
+        <span className="lbl">Ready to withdraw<span className="sub">batch #{state.batchId}</span></span>
         <span className="val">{amountDiem} <span className="unit">$DIEM</span></span>
       </div>
       <p style={{ margin: '12px 0 14px', fontSize: 13, color: 'var(--muted)' }}>
-        Your DIEM is ready. Clicking below finalises the unstake for your whole cohort in one tx — this is cheaper than everyone paying individually.
+        Your DIEM is ready. Clicking below finalises the unstake for your whole batch in one tx — this is cheaper than everyone paying individually.
       </p>
       <button
         className="stake-cta brand-fill"
         disabled={claim.isPending}
-        onClick={() => claim.run(state.epochId)}
+        onClick={() => claim.run(state.batchId)}
       >
         {claim.isPending ? 'Finalising…' : `Withdraw ${amountDiem} $DIEM →`}
       </button>
@@ -526,14 +504,13 @@ function UnstakeStateView({
   );
 }
 
-// ─── Claim panel ─────────────────────────────────────────────────────────
 
 interface ClaimPanelProps {
   isConnected: boolean;
   pendingUsdc: bigint | null;
   pendingAnts: bigint | null;
-  userLastClaimedEpoch: number | null;
-  currentRewardEpoch: number | null;
+  claimableAntsEpochs: number[];
+  hasMoreClaimableAntsEpochs: boolean;
 }
 
 function ClaimPanel(props: ClaimPanelProps) {
@@ -544,12 +521,7 @@ function ClaimPanel(props: ClaimPanelProps) {
   const pendingUsdcNum = toUsdcNumber(props.pendingUsdc);
   const pendingAntsNum = toAntsNumber(props.pendingAnts);
 
-  // Epoch backlog the claimAnts call should cover — read bounds it to
-  // MAX_EPOCHS_PREVIEW (16) so we stay under the contract's tx-size cap.
-  const claimableEpochs =
-    props.currentRewardEpoch != null && props.userLastClaimedEpoch != null
-      ? Math.min(16, Math.max(0, props.currentRewardEpoch - props.userLastClaimedEpoch))
-      : 0;
+  const claimableEpochs = props.claimableAntsEpochs.length;
 
   return (
     <>
@@ -563,7 +535,7 @@ function ClaimPanel(props: ClaimPanelProps) {
           <span className="lbl">Pending $ANTS</span>
           <span className="big">{fmtNum(pendingAntsNum)}</span>
           <span className="sub">
-            {claimableEpochs > 0 ? `across ${claimableEpochs} epoch${claimableEpochs === 1 ? '' : 's'}` : 'no unclaimed epochs'}
+            {claimableEpochs > 0 ? `across ${claimableEpochs} unprocessed epoch${claimableEpochs === 1 ? '' : 's'}` : 'no unprocessed epochs'}
           </span>
         </div>
       </div>
@@ -571,6 +543,18 @@ function ClaimPanel(props: ClaimPanelProps) {
       <div className="claim-note">
         Claim both on-chain here. <strong>Spend your $ANTS inside AntStation</strong> — the AntSeed desktop app lets you use them on any model on the network. Same wallet, auto-synced.
       </div>
+
+      {props.hasMoreClaimableAntsEpochs && (
+        <div className="claim-note">
+          More $ANTS epochs are available. Claim again after this batch.
+        </div>
+      )}
+
+      {claimableEpochs > 0 && props.pendingAnts === 0n && (
+        <div className="claim-note">
+          These epochs have no $ANTS payout for this wallet, but clearing them advances your claim cursor so later epochs can appear.
+        </div>
+      )}
 
       {props.isConnected ? (
         <>
@@ -587,14 +571,14 @@ function ClaimPanel(props: ClaimPanelProps) {
           <button
             className="stake-cta"
             disabled={claimableEpochs === 0 || claimAnts.isPending}
-            onClick={() => claimAnts.run(claimableEpochs)}
+            onClick={() => claimAnts.run(props.claimableAntsEpochs)}
             style={{ marginBottom: 10 }}
           >
             {claimAnts.isPending
               ? 'Claiming $ANTS…'
               : pendingAntsNum > 0
                 ? `Claim ${fmtNum(pendingAntsNum)} $ANTS →`
-                : 'Claim $ANTS →'}
+                : 'Clear 0-$ANTS epochs →'}
           </button>
           <a
             href={antstationHref}
@@ -622,7 +606,6 @@ function ClaimPanel(props: ClaimPanelProps) {
   );
 }
 
-// ─── Small shared subcomponents ──────────────────────────────────────────
 
 function ConnectCta({ label }: { label: string }) {
   return (
@@ -684,7 +667,6 @@ function QuickSet({ options, onSet }: { options: Array<{ label: string; value: s
   );
 }
 
-// ─── Metrics row ─────────────────────────────────────────────────────────
 
 function Metrics(props: {
   apr: number;

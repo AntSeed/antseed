@@ -313,18 +313,18 @@ export function FAQ() {
           <div className="body">
             From Venice's side the proxy is a single staker, so every unstake would reset
             the cooldown for the whole pool. To avoid that we batch: unstakes queue into
-            the currently-open cohort on-chain. You'll see three states in the app:
-            <strong>queued</strong> (your amount is in the open cohort, accrual stopped
-            instantly) → <strong>cooling down</strong> (cohort flushed to Venice in one call,
+            the currently-open unstake batch on-chain. You'll see three states in the app:
+            <strong>queued</strong> (your amount is in the open batch, accrual stopped
+            instantly) → <strong>cooling down</strong> (batch flushed to Venice in one call,
             waiting for Venice's native cooldown) → <strong>claimable</strong> (your DIEM is
-            ready to withdraw). Once the current cohort finishes claiming, a new cohort
-            opens. Each state advances with a tx anyone in the cohort can trigger — so you'll
+            ready to withdraw). Once the current batch finishes claiming, a new batch
+            opens. Each state advances with a tx anyone in the batch can trigger — so you'll
             often find yours has moved already by the time you check back.
             <br /><br />
-            Each cohort also has a minimum open window (24h by default) measured from the
+            Each batch also has a minimum open window (24h by default) measured from the
             first queuer — this stops a single user from queuing and immediately flushing,
             which would push everyone else into a fresh Venice cooldown. The queue state
-            shows a live countdown until the cohort is flushable.
+            shows a live countdown until the batch is flushable.
           </div>
         </details>
         <details className="faq">
@@ -342,11 +342,9 @@ export function FAQ() {
             <strong>USDC streams in real time</strong> — every inference request pays the
             staking contract directly and credits your share in the same transaction.
             There's no epoch wait for USDC; claim to your wallet whenever. <strong>$ANTS</strong>
-            are different: they're distributed per weekly epoch via a time-weighted points
-            system that rewards how long you were staked during the epoch, not just whether
-            you're staked at the moment of distribution. Long-term stakers get a bigger
-            share — and you can still claim $ANTS for epochs you contributed to even after
-            fully unstaking.
+            are distributed per weekly epoch using the same revenue-share math: your epoch
+            share follows the USDC revenue credited to your stake during that epoch. You can
+            still claim $ANTS for epochs you contributed to even after fully unstaking.
           </div>
         </details>
         <details className="faq">
