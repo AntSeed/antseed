@@ -56,27 +56,46 @@ export class PeerLookup {
   /**
    * Enumerate every peer on the network.
    *
-   * Each subnet topic only holds ~total/SUBNET_COUNT announcers, which keeps
-   * us well under the K-closest saturation limit that made the single
-   * wildcard topic return inconsistent subsets. The wildcard lookup is kept
-   * in parallel as a transition fallback so buyers running this build still
-   * see peers on older sellers that haven't started announcing on a subnet
-   * topic yet. `resolveLookupResults` deduplicates by `host:port` before
-   * resolving metadata, so the union has no extra cost beyond the parallel
-   * lookups themselves.
+   * The lookup runs in two stages, sequentially:
    *
-   * `DHTNode.lookupMany` shares a single temporary "peer" listener across
-   * the fan-out so subnet enumeration does not trip EventEmitter's default
-   * listener limit. Failures inside `lookupMany` (per-infohash callback
-   * errors) are absorbed and contribute zero endpoints, so a misbehaving
-   * subnet doesn't black-hole the whole enumeration.
+   *   1. Wildcard topic, alone. Its broad reach pulls many peers and warms
+   *      the local DHT routing table with nodes that already know about
+   *      AntSeed traffic.
+   *   2. Each subnet topic, one at a time, against that hot routing table.
+   *      Each subnet only holds ~total/SUBNET_COUNT announcers, which keeps
+   *      us well under the K-closest saturation limit that made the single
+   *      wildcard topic return inconsistent subsets at scale.
+   *
+   * Why sequential: firing all 17 infohashes through `lookupMany` in one
+   * shot starved each iterative lookup of UDP socket bandwidth and shared
+   * a single 25s budget across the batch. Most subnet lookups never
+   * converged before the timeout, and `findAll()` typically returned only
+   * the one or two subnets nearest the local node ID. Sequential gives
+   * each lookup a full operation timeout and the entire UDP socket — every
+   * iterative lookup converges, and we get a complete picture, at the
+   * cost of higher wall-clock on cold starts.
+   *
+   * `resolveLookupResults` deduplicates by `host:port` before resolving
+   * metadata, so the union still has the same cost as before.
    */
   async findAll(): Promise<LookupResult[]> {
-    const hashes = [
-      ...Array.from({ length: SUBNET_COUNT }, (_, i) => topicToInfoHash(subnetTopic(i))),
+    const merged: PeerEndpoint[] = [];
+
+    // Stage 1: wildcard, on its own. Warms the routing table.
+    const wildcardEndpoints = await this.config.dht.lookup(
       topicToInfoHash(ANTSEED_WILDCARD_TOPIC),
-    ];
-    const merged = await this.config.dht.lookupMany(hashes);
+    );
+    merged.push(...wildcardEndpoints);
+
+    // Stage 2: per-subnet, sequential. Each lookup gets full UDP bandwidth
+    // and a fresh per-lookup timeout.
+    for (let i = 0; i < SUBNET_COUNT; i++) {
+      const subnetEndpoints = await this.config.dht.lookup(
+        topicToInfoHash(subnetTopic(i)),
+      );
+      merged.push(...subnetEndpoints);
+    }
+
     return this.resolveLookupResults(shuffle(merged));
   }
 
