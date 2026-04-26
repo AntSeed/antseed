@@ -435,6 +435,18 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
     }
 
+    function syncBacklog() external view returns (uint32 finalized, uint32 synced, uint32 remaining) {
+        finalized = _finalizedRewardEpoch();
+        synced = syncedRewardEpoch;
+        if (finalized > synced) remaining = finalized - synced;
+    }
+
+    function userPointsBacklog(address account) external view returns (uint32 userEpoch, uint32 synced, uint32 remaining) {
+        userEpoch = userCurrentEpoch[account];
+        synced = syncedRewardEpoch;
+        if (synced > userEpoch) remaining = synced - userEpoch;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
@@ -569,7 +581,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
 
     function _syncFinalizedRewardEpochsForUpdate() internal {
         uint32 finalized = _finalizedRewardEpoch();
-        if (finalized > syncedRewardEpoch && finalized - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) {
+        uint32 synced = syncedRewardEpoch;
+        if (finalized > synced && finalized - synced > MAX_EPOCHS_PER_CAPTURE) {
             revert BacklogTooLarge();
         }
         _syncRewardEpochsUntil(finalized);
