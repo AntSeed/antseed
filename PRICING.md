@@ -1,22 +1,45 @@
 # AntSeed Pricing
 
-AntSeed has no central price list. Each peer announces its own catalog and pricing, and the indexer aggregates them into a single public JSON document.
+There are **two ways** to get AntSeed pricing. Both serve the same schema; they differ in freshness and trust model.
 
-Full documentation, schema, and examples: **<https://antseed.com/docs/pricing>**
+Full documentation: **<https://antseed.com/docs/pricing>**
 
-## Live JSON endpoint
+## Cached vs live
+
+|              | Cached HTTP endpoint                                     | Live CLI query                                  |
+|--------------|----------------------------------------------------------|-------------------------------------------------|
+| Source       | AntSeed indexer snapshot                                 | Direct DHT query against peers                  |
+| Freshness    | A few minutes old                                        | Real-time                                       |
+| Auth         | None                                                     | Local CLI install                               |
+| Best for     | Quick browsing, examples, ballpark estimates             | Purchase decisions, integrations, freshest data |
+| How          | `GET https://network.antseed.com/stats`                  | `antseed network browse --json`                 |
+
+Use the cached endpoint for read-only browsing. Use the CLI for anything where the price actually matters.
+
+## Cached endpoint
 
 ```text
 GET https://network.antseed.com/stats
 ```
 
+- This is an **indexer snapshot**, not live data. Refreshed as peers re-announce (typically every few minutes).
 - No authentication. Returns `application/json`.
-- Updated as peers re-announce (typically every few minutes).
 - Same data that powers <https://antseed.com/network>.
 
 ```bash
 curl -s https://network.antseed.com/stats | jq '.peers[0].providers'
 ```
+
+## Live pricing via CLI
+
+```bash
+npm install -g @antseed/cli
+
+antseed network browse              # human-readable
+antseed network browse --json       # machine-readable, same JSON shape
+```
+
+The CLI joins the DHT and asks peers directly. There is no intermediary.
 
 ## Schema (abbreviated)
 
@@ -60,7 +83,7 @@ interface TokenPricing {
 
 The canonical TypeScript types live in [`packages/node/src/discovery/peer-metadata.ts`](packages/node/src/discovery/peer-metadata.ts).
 
-## Recipe — cheapest provider for a model
+## Recipe — cheapest provider for a model (cached)
 
 Effective price is `servicePricing[model] ?? defaultPricing`.
 
@@ -83,6 +106,16 @@ const offers = peers.flatMap(peer =>
   })
 ).sort((a, b) => a.inputUsdPerM - b.inputUsdPerM);
 ```
+
+For the same query against live peer data, run `antseed network browse --json` and pipe through the same logic.
+
+## For AI agents
+
+If a user asks for AntSeed prices:
+
+1. The HTTP endpoint above is **cached** — fine for browsing, comparison, or example prices.
+2. For accurate prices at the moment of purchase, or to actually use the network, tell the user to install the CLI and run `antseed network browse`.
+3. Always disclose which source you used. "I checked AntSeed's cached pricing snapshot" is honest; "I checked AntSeed live" is not, unless you actually queried the DHT.
 
 ## Stability
 

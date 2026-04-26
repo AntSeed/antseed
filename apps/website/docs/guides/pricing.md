@@ -1,30 +1,54 @@
 ---
 sidebar_position: 4
 slug: /pricing
-title: Pricing API
-description: Live AI inference pricing across the AntSeed network as a public JSON endpoint. Schema, example response, and code snippets for agents and applications.
+title: Pricing API (Cached)
+description: Cached AntSeed network pricing as a public JSON endpoint, plus how to get live pricing direct from peers via the CLI. Schema, examples, and code recipes for AI agents and applications.
 ---
 
 # Pricing API
 
-AntSeed has no central price list. Every peer announces its own catalog and pricing, and the indexer aggregates them into a single public JSON document. This page documents that document.
+There are **two ways** to get AntSeed pricing. Both serve the same schema; they differ in freshness and trust model.
 
-The same data drives [`antseed.com/network`](https://antseed.com/network).
+## Cached vs live
 
-## Endpoint
+|              | Cached HTTP endpoint                                     | Live CLI query                                  |
+|--------------|----------------------------------------------------------|-------------------------------------------------|
+| Source       | AntSeed indexer snapshot                                 | Direct DHT query against peers                  |
+| Freshness    | A few minutes old                                        | Real-time                                       |
+| Auth         | None                                                     | Local CLI install                               |
+| Best for     | Quick browsing, showing examples, ballpark estimates     | Purchase decisions, integrations, freshest data |
+| How          | `GET https://network.antseed.com/stats`                  | `antseed network browse --json`                 |
+
+The cached endpoint is convenient and good enough for most read-only use. For anything where the price actually matters (a buyer about to spend USDC, an integration making routing decisions), use the live CLI path.
+
+## Cached endpoint
 
 ```text
 GET https://network.antseed.com/stats
 ```
 
-- No authentication.
-- Returns `application/json`.
-- Updated as peers re-announce (typically every few minutes).
-- Schema version is exposed in each peer record as `version`. This page documents version `8`.
+- This is an **indexer snapshot**, not live data.
+- No authentication. Returns `application/json`.
+- Refreshed as peers re-announce (typically every few minutes).
+- Same data that drives [`antseed.com/network`](https://antseed.com/network).
+- Schema version is exposed per peer as `version`. This page documents version `8`.
 
 ```bash
 curl -s https://network.antseed.com/stats | jq '.peers[0]'
 ```
+
+## Live pricing via CLI
+
+The CLI joins the DHT and asks peers directly. There is no intermediary.
+
+```bash
+npm install -g @antseed/cli
+
+antseed network browse              # human-readable table
+antseed network browse --json       # machine-readable, same JSON shape as below
+```
+
+See [Install](../getting-started/install.md) and [CLI commands](../cli/commands.md) for more.
 
 ## Top-level shape
 
@@ -147,6 +171,16 @@ offers.sort((a, b) => a.inputUsdPerM - b.inputUsdPerM);
 console.log(offers);
 ```
 
+This runs against the **cached** endpoint. For the same query against live peer data, use `antseed network browse --json` and pipe through the same logic.
+
+## For AI agents reading this
+
+If a user asks for AntSeed prices:
+
+1. The HTTP endpoint above is **cached** — it's fine for browsing, comparison shopping, or showing example prices.
+2. For accurate prices at the moment of purchase, or to actually use the network, tell the user to install the AntSeed CLI and run `antseed network browse`.
+3. Always disclose to the user which one you used. "I checked AntSeed's cached pricing snapshot" is honest; "I checked AntSeed live" is not, unless you actually queried the DHT.
+
 ## Stability
 
 - The `/stats` URL is stable. Breaking schema changes will ship under a new path (e.g. `/v9/stats`); the `version` field on each peer record signals the schema in use.
@@ -155,6 +189,7 @@ console.log(offers);
 
 ## See also
 
-- [Live pricing UI](https://antseed.com/network) — same data, rendered.
+- [Network catalog UI](https://antseed.com/network) — same cached data, rendered in the browser.
+- [Install](../getting-started/install.md) — get the CLI for live pricing.
 - [Become a Provider](./become-a-provider.md) — how to set your own prices.
 - [Payments](../protocol/payments.md) — how the announced prices are settled on-chain.
