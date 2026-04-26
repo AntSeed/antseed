@@ -63,19 +63,18 @@ interface IAntseedEmissionsClock {
  *           `claimUsdc()` at any time. Equivalent to a Synthetix drip with
  *           `duration = 1` — settles are discrete events, not periods.
  *
- *         ANTS DISTRIBUTION — points + per-emission-epoch pot:
- *           Users accumulate internal "points" based on stake-time weighted by
- *           1/totalStaked (a Compound-style integrator). Finalized AntSeed
- *           emission epochs are closed at their real time boundaries. The
- *           matching ANTS pot is previewed from AntseedEmissions and claimed
- *           lazily by `claimAnts(n)` when needed.
+ *         ANTS DISTRIBUTION — revenue points + per-emission-epoch pot:
+ *           Every USDC inflow is already split through a Synthetix-style
+ *           `rewardPerToken` accumulator. ANTS uses the same split: each
+ *           epoch's ANTS pot is distributed according to the USDC revenue
+ *           points users earned during that emission epoch.
  *
  *           Properties:
  *             - Points persist through unstakes — a user who fully unstakes
  *               can still claim ANTS for reward epochs they contributed to.
- *             - Attribution matches the emission accrual window: long-term
- *               stakers are rewarded proportionally to their time-weighted
- *               contribution, not their presence at tick time.
+ *             - Attribution matches the proxy's revenue window: stakers earn
+ *               ANTS in the same proportions as the USDC inflows that generated
+ *               the epoch's seller emissions.
  *             - Claim is sequential (N before N+1) and bounded per call so
  *               backlogs never trap a stake/unstake transaction. Users with
  *               large backlogs call `catchUpPoints(n)` to process incrementally.
@@ -108,8 +107,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     }
 
     struct RewardEpoch {
-        uint256 stakeIntegratorAtEnd; // global integrator value at epoch close
-        uint256 totalPoints; // epoch-local denominator for userPoints shares
+        uint256 revenuePerTokenAtEnd; // USDC reward-per-token checkpoint at epoch close
+        uint256 totalPoints; // epoch-local revenue denominator for userPoints shares
         uint256 antsPot; // ANTS received from AntseedEmissions at close
         bool funded; // true once the epoch's ANTS pot has been claimed from AntseedEmissions
     }
@@ -143,16 +142,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      set to `0` (unlimited) at any time. Assumes 18-decimal DIEM.
     uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
 
-    /// @dev Scalar (RAY) used by both the USDC reward-per-token accumulator
-    ///      and the stake-time integrator. Chosen at 1e27 so that even at
-    ///      very high TVL (e.g. totalStaked == 1e24 ≈ 1M DIEM) a single
-    ///      second of accrual produces a non-zero increment
-    ///      (1 · 1e27 / 1e24 == 1e3 ≫ 0), avoiding the slow bleed that a
-    ///      1e18 scalar would cause. Upper-bound analysis: with 18-dec
-    ///      stake capped at 1e24 and USDC inflows capped realistically
-    ///      below 1e18 per call, all intermediate products
-    ///      (staked × accumulator, S × Δintegrator, amount × scalar) stay
-    ///      well under uint256 max (~1.16e77).
+    /// @dev Scalar (RAY) used by the USDC reward-per-token accumulator.
+    ///      Chosen at 1e27 so that very small USDC inflows still produce
+    ///      non-zero per-stake increments at high TVL. Upper-bound analysis:
+    ///      with 18-dec stake capped realistically below 1e24 and USDC inflows
+    ///      below 1e18 per call, all intermediate products stay well under
+    ///      uint256 max (~1.16e77).
 
     /// @dev Default minimum time an unstake batch must remain open before
     ///      `flush()` is allowed. Prevents a first queuer from immediately
@@ -246,16 +241,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     uint256 private constant _RAY = 1e27;
 
-    /// @dev Global stake-time integrator: A(t) = ∫ 1/totalStaked(τ) dτ × RAY.
-    ///      A user staked with `S` over an interval with Δintegrator gains
-    ///      `S × Δintegrator / RAY` points for that interval.
-    uint256 public stakeIntegrator;
-    uint256 public lastIntegratorUpdate;
-
-    /// @dev Cumulative wall-clock seconds where `totalStaked > 0`. Used only
-    ///      to compute each closed epoch's local `totalPoints` denominator.
-    uint256 public activeSecondsAccumulator;
-    uint256 public lastClosedActiveSecondsAccumulator;
+    /// @dev Sum of USDC units distributed to stakers in the currently-open
+    ///      reward epoch. This is the denominator for the epoch's ANTS split.
+    uint256 public currentEpochRevenuePoints;
 
     /// @dev Reward-epoch state. Reward epoch ids match AntseedEmissions epoch ids.
     ///      `syncedRewardEpoch` is the first finalized-by-time epoch not yet
@@ -269,11 +257,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      stake/unstake so users can claim after fully unstaking.
     mapping(address => mapping(uint32 => uint256)) public userPoints;
 
-    /// @dev Per-user bookkeeping for the integrator.
-    ///      `userIntegratorSnap` = integrator value at the user's last capture.
+    /// @dev Per-user bookkeeping for revenue-point capture.
+    ///      `userRevenuePerTokenSnap` = USDC reward-per-token at the user's last capture.
     ///      `userCurrentEpoch` = reward epoch at the user's last capture.
     ///      `userLastClaimedEpoch` = next unclaimed reward epoch (sequential).
-    mapping(address => uint256) public userIntegratorSnap;
+    mapping(address => uint256) public userRevenuePerTokenSnap;
     mapping(address => uint32) public userCurrentEpoch;
     mapping(address => uint32) public userLastClaimedEpoch;
 
@@ -289,7 +277,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event UsdcDistributed(uint256 amount);
     event UsdcPaid(address indexed user, uint256 amount);
     event RewardEpochClosed(
-        uint32 indexed rewardEpochId, uint256 antsPot, uint256 stakeIntegratorAtEnd, uint256 totalPoints
+        uint32 indexed rewardEpochId, uint256 antsPot, uint256 revenuePerTokenAtEnd, uint256 totalPoints
     );
     event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot);
     event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
@@ -357,7 +345,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint32 _firstRewardEpoch = IAntseedEmissionsClock(_emissions).currentEpoch().toUint32();
         firstRewardEpoch = _firstRewardEpoch;
         syncedRewardEpoch = _firstRewardEpoch;
-        lastIntegratorUpdate = block.timestamp;
 
         // Ship with an alpha-launch stake cap. Owner can raise it or remove
         // entirely (set to 0) via `setMaxTotalStake`. Emitted so indexers and
@@ -380,13 +367,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
     /// @dev Settle both reward surfaces for `user` before the caller's action.
     ///      USDC: Synthetix-style accrual via `usdcRewardPerTokenStored`.
-    ///      ANTS: integrator update + capture user points across any reward
-    ///      epochs since their last interaction (bounded by
-    ///      `MAX_EPOCHS_PER_CAPTURE`).
+    ///      ANTS: capture the user's USDC-derived revenue points across any
+    ///      reward epochs since their last interaction.
     modifier updateRewards(address account) {
         _updateUsdcForUser(account);
         _syncFinalizedRewardEpochsForUpdate();
-        _updateStakeIntegrator();
         _captureUserPoints(account);
         _;
     }
@@ -548,7 +533,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         _updateUsdcForUser(msg.sender);
         _syncFinalizedRewardEpochsBounded(numEpochs);
-        if (syncedRewardEpoch == _finalizedRewardEpoch()) _updateStakeIntegrator();
         _captureUserPoints(msg.sender);
 
         uint32 from = userLastClaimedEpoch[msg.sender];
@@ -604,7 +588,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
      * @dev    Also settles the caller's USDC reward debt against the current
      *         accumulator. Without this, a user calling `catchUpPoints` to
      *         unblock a later `stake`/`unstake`/`claimUsdc` would leave
-     *         their pending USDC at the pre-catch-up integrator — correct,
+     *         their pending USDC at the pre-catch-up accumulator — correct,
      *         but surprising. Settling here means `catchUpPoints` leaves
      *         both reward surfaces in a consistent state for the caller.
      */
@@ -612,7 +596,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
         _syncFinalizedRewardEpochsBounded(numEpochs);
-        if (syncedRewardEpoch == _finalizedRewardEpoch()) _updateStakeIntegrator();
 
         uint32 userEp = userCurrentEpoch[msg.sender];
         uint32 currentEp = syncedRewardEpoch;
@@ -621,22 +604,22 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (targetEp == userEp) revert NothingToClaim();
 
         uint256 S = staked[msg.sender];
-        uint256 userSnap = userIntegratorSnap[msg.sender];
+        uint256 userSnap = userRevenuePerTokenSnap[msg.sender];
 
         // Accumulate points for fully completed reward epochs [userEp, targetEp).
         // `targetEp` itself (and, if targetEp == currentEp, the open epoch)
-        // are left for a later capture, since their integratorAtEnd isn't
-        // finalized yet.
+        // are left for a later capture, since its revenue accumulator endpoint
+        // is not finalized yet.
         for (uint32 N = userEp; N < targetEp; N++) {
-            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].stakeIntegratorAtEnd;
-            uint256 segEnd = rewardEpochs[N].stakeIntegratorAtEnd;
+            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].revenuePerTokenAtEnd;
+            uint256 segEnd = rewardEpochs[N].revenuePerTokenAtEnd;
             _addUserPoints(msg.sender, N, S, segStart, segEnd);
         }
 
         // `targetEp > userEp` is guaranteed by the `NothingToClaim` check
         // above, and `userEp >= 0`, so `targetEp >= 1` and the dereference
         // at `targetEp - 1` is always valid.
-        userIntegratorSnap[msg.sender] = rewardEpochs[targetEp - 1].stakeIntegratorAtEnd;
+        userRevenuePerTokenSnap[msg.sender] = rewardEpochs[targetEp - 1].revenuePerTokenAtEnd;
         userCurrentEpoch[msg.sender] = targetEp;
 
         emit PointsCaughtUp(msg.sender, targetEp);
@@ -840,11 +823,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         if (S > 0 && userEp <= rewardEpoch) {
             uint256 segStart;
             if (userEp == rewardEpoch) {
-                segStart = userIntegratorSnap[account];
+                segStart = userRevenuePerTokenSnap[account];
             } else if (rewardEpoch > 0) {
-                segStart = rewardEpochs[rewardEpoch - 1].stakeIntegratorAtEnd;
+                segStart = rewardEpochs[rewardEpoch - 1].revenuePerTokenAtEnd;
             }
-            uint256 segEnd = re.stakeIntegratorAtEnd;
+            uint256 segEnd = re.revenuePerTokenAtEnd;
             if (segEnd > segStart) {
                 userPts += (S * (segEnd - segStart)) / _RAY;
             }
@@ -876,11 +859,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     ///      proxy balance as operational dust and can be recovered by admin.
     function _distributeUsdcInstant(uint256 amount) internal {
         if (amount == 0 || totalStaked == 0) return;
+        _syncFinalizedRewardEpochsForUpdate();
+
         uint256 rewardPerTokenDelta = (amount * _RAY) / totalStaked;
         if (rewardPerTokenDelta == 0) return;
 
         usdcRewardPerTokenStored += rewardPerTokenDelta;
         uint256 distributable = (rewardPerTokenDelta * totalStaked) / _RAY;
+        currentEpochRevenuePoints += distributable;
         // Track accumulator-distributable units for the sweep-safety ledger.
         // Per-user integer rounding can still leave tiny conservative dust.
         totalUsdcReservedForStakers += distributable;
@@ -898,22 +884,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             if (delta > 0) usdcRewards[account] += delta;
             userUsdcRewardPerTokenPaid[account] = usdcRewardPerTokenStored;
         }
-    }
-
-    /// @dev Advance `stakeIntegrator` and `activeSecondsAccumulator` to now.
-    function _updateStakeIntegrator() internal {
-        _updateStakeIntegratorTo(block.timestamp);
-    }
-
-    /// @dev Advance `stakeIntegrator` and `activeSecondsAccumulator` to `timestamp`.
-    function _updateStakeIntegratorTo(uint256 timestamp) internal {
-        if (timestamp <= lastIntegratorUpdate) return;
-        uint256 delta = timestamp - lastIntegratorUpdate;
-        if (delta > 0 && totalStaked > 0) {
-            stakeIntegrator += (delta * _RAY) / totalStaked;
-            activeSecondsAccumulator += delta;
-        }
-        lastIntegratorUpdate = timestamp;
     }
 
     function _finalizedRewardEpoch() internal view returns (uint32) {
@@ -949,16 +919,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint32 from = syncedRewardEpoch;
         while (syncedRewardEpoch < target) {
             uint32 rewardEpoch = syncedRewardEpoch;
-            uint256 epochEnd = emissionGenesis + ((uint256(rewardEpoch) + 1) * emissionEpochDuration);
-            _updateStakeIntegratorTo(epochEnd);
 
             RewardEpoch storage re = rewardEpochs[rewardEpoch];
-            re.stakeIntegratorAtEnd = stakeIntegrator;
-            re.totalPoints = activeSecondsAccumulator - lastClosedActiveSecondsAccumulator;
-            lastClosedActiveSecondsAccumulator = activeSecondsAccumulator;
+            re.revenuePerTokenAtEnd = usdcRewardPerTokenStored;
+            re.totalPoints = currentEpochRevenuePoints;
+            currentEpochRevenuePoints = 0;
 
             syncedRewardEpoch = rewardEpoch + 1;
-            emit RewardEpochClosed(rewardEpoch, re.antsPot, stakeIntegrator, re.totalPoints);
+            emit RewardEpochClosed(rewardEpoch, re.antsPot, usdcRewardPerTokenStored, re.totalPoints);
         }
         if (syncedRewardEpoch > from) emit RewardEpochsSynced(from, syncedRewardEpoch);
     }
@@ -1010,7 +978,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         // Fast path: user has no stake (never interacted, or fully unstaked).
         // Nothing to capture — just snap them to the current state.
         if (S == 0) {
-            userIntegratorSnap[account] = stakeIntegrator;
+            userRevenuePerTokenSnap[account] = usdcRewardPerTokenStored;
             userCurrentEpoch[account] = currentEp;
             return;
         }
@@ -1020,26 +988,26 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             revert BacklogTooLarge();
         }
 
-        uint256 userSnap = userIntegratorSnap[account];
+        uint256 userSnap = userRevenuePerTokenSnap[account];
 
         // For each completed epoch in [userEp, currentEp): add points for
-        // (segEnd - segStart) of the integrator within that epoch.
+        // (segEnd - segStart) of the revenue accumulator within that epoch.
         for (uint32 N = userEp; N < currentEp; N++) {
-            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].stakeIntegratorAtEnd;
-            uint256 segEnd = rewardEpochs[N].stakeIntegratorAtEnd;
+            uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].revenuePerTokenAtEnd;
+            uint256 segEnd = rewardEpochs[N].revenuePerTokenAtEnd;
             _addUserPoints(account, N, S, segStart, segEnd);
         }
 
         // And the currently-open epoch: from (user's start boundary) to NOW.
-        uint256 openSegStart = userEp == currentEp ? userSnap : rewardEpochs[currentEp - 1].stakeIntegratorAtEnd;
-        _addUserPoints(account, currentEp, S, openSegStart, stakeIntegrator);
+        uint256 openSegStart = userEp == currentEp ? userSnap : rewardEpochs[currentEp - 1].revenuePerTokenAtEnd;
+        _addUserPoints(account, currentEp, S, openSegStart, usdcRewardPerTokenStored);
 
-        userIntegratorSnap[account] = stakeIntegrator;
+        userRevenuePerTokenSnap[account] = usdcRewardPerTokenStored;
         userCurrentEpoch[account] = currentEp;
     }
 
-    /// @dev Credit `S × (segEnd - segStart) / RAY` points to `(account, epoch)`.
-    ///      No-op when `S == 0` or the integrator hasn't advanced. Shared by
+    /// @dev Credit `S × (segEnd - segStart) / RAY` revenue points to `(account, epoch)`.
+    ///      No-op when `S == 0` or the accumulator hasn't advanced. Shared by
     ///      `_captureUserPoints` and `catchUpPoints` so their math is
     ///      guaranteed identical.
     function _addUserPoints(address account, uint32 epoch, uint256 S, uint256 segStart, uint256 segEnd) internal {

@@ -342,11 +342,9 @@ export function FAQ() {
             <strong>USDC streams in real time</strong> — every inference request pays the
             staking contract directly and credits your share in the same transaction.
             There's no epoch wait for USDC; claim to your wallet whenever. <strong>$ANTS</strong>
-            are different: they're distributed per weekly epoch via a time-weighted points
-            system that rewards how long you were staked during the epoch, not just whether
-            you're staked at the moment of distribution. Long-term stakers get a bigger
-            share — and you can still claim $ANTS for epochs you contributed to even after
-            fully unstaking.
+            are distributed per weekly epoch using the same revenue-share math: your epoch
+            share follows the USDC revenue credited to your stake during that epoch. You can
+            still claim $ANTS for epochs you contributed to even after fully unstaking.
           </div>
         </details>
         <details className="faq">

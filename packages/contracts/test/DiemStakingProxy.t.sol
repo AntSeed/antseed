@@ -901,9 +901,9 @@ contract DiemStakingProxyTest is Test {
         assertGt(proxy.earnedUsdc(bob), 0);
     }
 
-    /// @dev Stake-time weighted ANTS: Alice staked twice as long as Bob
-    ///      gets more ANTS than Bob at claim time.
-    function test_antsAttribution_stakeTimeWeighted() public {
+    /// @dev ANTS follows the same revenue-share math as USDC. Alice receives
+    ///      the first settlement alone and half of the second after Bob joins.
+    function test_antsAttribution_matchesUsdcRevenueShare() public {
         _stakeAs(alice, 100e18);
 
         // Drive seller activity so emissions epoch 0 pays out.
@@ -913,6 +913,11 @@ contract DiemStakingProxyTest is Test {
         // Halfway into the emission epoch, Bob joins with the same amount.
         vm.warp(block.timestamp + EPOCH_DURATION / 2);
         _stakeAs(bob, 100e18);
+        _settleViaProxy(channelId, 1000e6);
+
+        uint256 aliceUsdc = proxy.earnedUsdc(alice);
+        uint256 bobUsdc = proxy.earnedUsdc(bob);
+        assertApproxEqAbs(aliceUsdc, bobUsdc * 3, 3, "USDC split is 3:1");
 
         // Finish and close the reward epoch; the ANTS pot is only previewed.
         vm.warp(block.timestamp + EPOCH_DURATION / 2 + 1);
@@ -920,7 +925,8 @@ contract DiemStakingProxyTest is Test {
 
         uint256 aliceAnts = proxy.pendingAntsForEpoch(alice, 0);
         uint256 bobAnts = proxy.pendingAntsForEpoch(bob, 0);
-        assertGt(aliceAnts, bobAnts, "longer staker earns more");
+        assertGt(bobAnts, 0, "bob earns from the second settlement");
+        assertApproxEqAbs(aliceAnts, bobAnts * 3, 3, "ANTS split matches USDC split");
     }
 
     /// @dev ANTS attribution must follow the finalized Antseed emission epoch,
@@ -1516,11 +1522,9 @@ contract DiemStakingProxyTest is Test {
     //                        catchUpPoints coverage
     // ════════════════════════════════════════════════════════════════════
 
-    /// @dev After `catchUpPoints` drains the backlog, the user's contribution
-    ///      to the still-open reward epoch is deferred — then materialised by
-    ///      the next call that fires `updateRewards` (e.g. `initiateUnstake`).
-    ///      The deferred points must match what the user would have accrued
-    ///      if they had been caught up continuously.
+    /// @dev After `catchUpPoints` drains the backlog, revenue in the still-open
+    ///      reward epoch is deferred until the next call that fires
+    ///      `updateRewards` (e.g. `initiateUnstake`).
     function test_catchUpPoints_openEpochDeferredThenCaptured() public {
         _stakeAs(alice, 100e18);
 
@@ -1535,12 +1539,13 @@ contract DiemStakingProxyTest is Test {
         assertEq(openEp, 17);
         assertEq(proxy.userCurrentEpoch(alice), openEp);
 
-        // Stake-time passes in the still-open epoch. `catchUpPoints` does not
-        // touch `userPoints[alice][openEp]` — it's deferred to the next
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(99)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        // Revenue arrived in the still-open epoch. `catchUpPoints` does not
+        // touch `userPoints[alice][openEp]`; capture is deferred to the next
         // `updateRewards` trigger.
         assertEq(proxy.userPoints(alice, openEp), 0, "open-epoch points deferred");
-
-        vm.warp(block.timestamp + 3 days);
 
         // Any interaction that hits updateRewards materialises the deferred
         // points (initiateUnstake is the simplest non-allocating trigger).
@@ -1645,31 +1650,23 @@ contract DiemStakingProxyTest is Test {
     //                        Precision (1e27 scalar)
     // ════════════════════════════════════════════════════════════════════
 
-    /// @dev At high TVL, per-second integrator increments must not round to
-    ///      zero. With the 1e27 (RAY) scalar, even 1 second of accrual on
-    ///      1e24 total stake produces a strictly non-zero increment. Under
-    ///      the legacy 1e18 scalar, the same increment would have been 0.
-    function test_integrator_precisionAtHighTvl() public {
+    /// @dev At high TVL, small USDC inflows must still produce non-zero
+    ///      reward-per-token increments.
+    function test_rewardPerToken_precisionAtHighTvl() public {
         vm.prank(owner);
         proxy.setMaxTotalStake(0);
 
         // Stake 1e24 wei DIEM (≈ 1M DIEM) across Alice and Bob so the
-        // integrator denominator is large.
+        // reward-per-token denominator is large.
         _stakeAs(alice, 5e23);
         _stakeAs(bob, 5e23);
 
-        uint256 before = proxy.stakeIntegrator();
+        uint256 before = proxy.usdcRewardPerTokenStored();
 
-        // Advance one second and trigger an integrator update via a no-op
-        // reward-touching path (catchUpPoints calls _updateStakeIntegrator).
-        vm.warp(block.timestamp + 1);
-        // catchUpPoints requires numEpochs > 0 and at least one finalised
-        // reward epoch to drain; advance one so the call is well-formed.
-        _advanceRewardEpochs(0, 1);
-        vm.prank(alice);
-        proxy.catchUpPoints(1);
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(123)), 1e6, 1e6);
+        _settleViaProxy(channelId, 1e6);
 
-        uint256 afterInt = proxy.stakeIntegrator();
-        assertGt(afterInt, before, "RAY scalar preserves sub-second precision at 1e24 TVL");
+        uint256 afterStored = proxy.usdcRewardPerTokenStored();
+        assertGt(afterStored, before, "RAY scalar preserves small-inflow precision at 1e24 TVL");
     }
 }
