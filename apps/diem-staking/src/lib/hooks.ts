@@ -1,7 +1,3 @@
-// On-chain read hooks (tanstack-backed via wagmi) and a small grab-bag of
-// derived state. Every read is live and polls; there are no hardcoded display
-// values. Hooks return `null` when the proxy isn't deployed yet, so the UI
-// renders clean "—" placeholders without throwing.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAccount, usePublicClient, useReadContract, useReadContracts } from 'wagmi';
@@ -18,13 +14,7 @@ export function useProxyDeployed(): boolean {
   return isAddressSet(DIEM_STAKING_PROXY);
 }
 
-// ─── Off-chain: DIEM market price (CoinGecko) ────────────────────────────
 
-/**
- * Best-effort DIEM/USD price from CoinGecko. Tries a small list of plausible
- * coin ids (DIEM listings vary by aggregator). Returns `null` on all misses,
- * which the UI renders as "—" and disables APR.
- */
 export function useDiemPrice(): number | null {
   const [price, setPrice] = useState<number | null>(null);
   useEffect(() => {
@@ -43,7 +33,6 @@ export function useDiemPrice(): number | null {
             return;
           }
         } catch {
-          /* try next id */
         }
       }
     })();
@@ -54,7 +43,6 @@ export function useDiemPrice(): number | null {
   return price;
 }
 
-// ─── Epoch countdown (wall-clock; no on-chain read) ──────────────────────
 
 export function useEpochClock(): EpochClock {
   const [clock, setClock] = useState<EpochClock>(() => computeEpochClock(Math.floor(Date.now() / 1000)));
@@ -67,32 +55,18 @@ export function useEpochClock(): EpochClock {
   return clock;
 }
 
-// ─── Pool-wide on-chain stats ────────────────────────────────────────────
 
 export interface PoolStats {
-  /** Total DIEM staked across all users (base units). */
   totalStaked: bigint | null;
-  /** Distinct addresses with staked > 0. */
   stakerCount: number | null;
-  /** Lifetime USDC distributed to stakers (base units, USDC has 6 decimals). */
   totalUsdcDistributedEver: bigint | null;
-  /** Owner-set cap on totalStaked (0 = unlimited). */
   maxTotalStake: bigint | null;
-  /** First Antseed emission epoch this proxy can attribute rewards for. */
   firstRewardEpoch: number | null;
-  /** First finalized reward epoch not yet closed in proxy storage. */
   syncedRewardEpoch: number | null;
-  /** First reward epoch not finalized yet by deterministic Antseed emissions time. */
   finalizedRewardEpoch: number | null;
-  /** Venice DIEM unstake cooldown in seconds (read live from the token). */
   diemCooldownSecs: number | null;
-  /** Minimum seconds a batch must stay open before `flush()` is allowed. */
   minUnstakeBatchOpenSecs: number | null;
-  /** Unix timestamp at which the currently-open batch can first be
-   *  flushed. `0` means the batch is empty (no first queuer yet) — in
-   *  that case `flush` is blocked by `NothingToFlush` regardless. */
   flushableAt: number | null;
-  /** True while any of the reads above are in-flight. */
   isLoading: boolean;
 }
 
@@ -130,9 +104,6 @@ export function usePoolStats(): PoolStats {
       isLoading,
     };
   }
-  // `flushableAt()` returns `0` while the batch is empty (no first queuer
-  // yet). We preserve the distinction by mapping `0` → `null` so the UI can
-  // tell "no clock running" apart from "clock running, starting now".
   const flushableAtRaw = data[9]?.result != null ? Number(data[9].result) : null;
   return {
     totalStaked: data[0]?.result ?? null,
@@ -149,31 +120,18 @@ export function usePoolStats(): PoolStats {
   };
 }
 
-// ─── Per-user state: balances, stake, claims, unstake queue ──────────────
 
 export interface UserStats {
-  /** Wallet DIEM balance (base units, 18 dec). */
   walletDiem: bigint | null;
-  /** DIEM actively staked in the proxy. */
   stakedDiem: bigint | null;
-  /** Pending USDC claimable via claimUsdc (base units, 6 dec). */
   pendingUsdc: bigint | null;
-  /** Total ANTS claimable across user's backlog of completed reward epochs. */
   pendingAnts: bigint | null;
-  /** Explicit reward epochs to pass to claimAnts. */
   claimableAntsEpochs: number[];
-  /** True when the preview is capped and another claim batch remains after this one. */
   hasMoreClaimableAntsEpochs: boolean;
-  /** Next reward-epoch index the user hasn't claimed yet. */
   userLastClaimedEpoch: number | null;
-  /** True while any of the reads above are in-flight. */
   isLoading: boolean;
 }
 
-/**
- * Bundles the cheap per-user reads into one multicall. ANTS is then summed
- * in a second hook since its loop size depends on the user's backlog.
- */
 export function useUserStats(): UserStats {
   const { address } = useAccount();
   const deployed = useProxyDeployed();
@@ -222,19 +180,8 @@ export function useUserStats(): UserStats {
   };
 }
 
-/** Maximum number of reward epochs to preview-sum in one call.
- *
- *  MUST stay in lockstep with `DiemStakingProxy.MAX_EPOCHS_PER_CAPTURE`
- *  (see packages/contracts/DiemStakingProxy.sol). If the contract raises
- *  or lowers its bound, update this constant too — otherwise `claimAnts`
- *  calls sized from this preview can revert `BacklogTooLarge` on-chain. */
 const MAX_EPOCHS_PREVIEW = 16;
 
-/**
- * Sum `pendingAntsForEpoch` over the user's claimable range. Uses the same
- * multicall provider the other hooks do, so the cost is one batched RPC
- * regardless of backlog size (bounded by MAX_EPOCHS_PREVIEW).
- */
 function usePendingAnts(
   user: Address | null,
   userLastClaimedEpoch: number | null,
@@ -297,7 +244,6 @@ function usePendingAnts(
   return { pendingAnts, claimableEpochs, hasMoreClaimableEpochs, isLoading: loadingPending || loadingClaimed };
 }
 
-// ─── Unstake queue: derived state machine ────────────────────────────────
 
 export type UnstakeState =
   | { status: 'none' }
@@ -305,18 +251,6 @@ export type UnstakeState =
   | { status: 'cooling'; batchId: number; amount: bigint; unlockAt: number }
   | { status: 'claimable'; batchId: number; amount: bigint };
 
-/**
- * Resolves the user's unstake-queue state by reading:
- *   - `currentUnstakeBatch` (the open-for-queuing batch)
- *   - `oldestUnclaimedUnstakeBatch` (lowest flushed-but-not-yet-claimed)
- *   - user's amount in each batch from `oldestUnclaimedUnstakeBatch..=currentUnstakeBatch`
- *   - `unstakeBatches(id).unlockAt` + `claimed` for the batch the user is in
- *
- * A user can only have queued amount in at most one batch at a time per the
- * contract's semantics (initiateUnstake always adds to `currentUnstakeBatch`, and
- * claimUnstakeBatch removes the mapping entry). We scan up to 4 recent batches to
- * be safe against races between reads.
- */
 export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
   const { address } = useAccount();
   const deployed = useProxyDeployed();
@@ -335,9 +269,6 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
   const currentUnstakeBatch = clockData?.[0]?.result != null ? Number(clockData[0].result) : null;
   const oldestUnclaimedUnstakeBatch = clockData?.[1]?.result != null ? Number(clockData[1].result) : null;
 
-  // batch ids to probe: every in-flight batch [oldestUnclaimedUnstakeBatch, currentUnstakeBatch].
-  // Capped at a small window since MAX_PER_UNSTAKE_BATCH bounds the batch size and
-  // the user can only hold amount in one batch at a time.
   const batchIds = useMemo(() => {
     if (currentUnstakeBatch == null || oldestUnclaimedUnstakeBatch == null) return [];
     const ids: number[] = [];
@@ -389,14 +320,11 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
   const state = useMemo<UnstakeState>(() => {
     if (activeBatchId == null || activeAmount == null || activeAmount === 0n) return { status: 'none' };
     if (!batchDetail) return { status: 'none' };
-    // unstakeBatches(id) returns (uint128 total, uint64 unlockAt, uint32 userCount, bool claimed)
     const [, unlockAtRaw, , claimed] = batchDetail as readonly [bigint, bigint, number, boolean];
     const unlockAt = Number(unlockAtRaw);
     const now = Math.floor(Date.now() / 1000);
 
     if (unlockAt === 0) {
-      // Still queuing: this is the current open batch. Flush is blocked
-      // until the prior batch is claimed (currentUnstakeBatch == oldestUnclaimedUnstakeBatch).
       const waitingForPriorBatch = currentUnstakeBatch != null && oldestUnclaimedUnstakeBatch != null && currentUnstakeBatch !== oldestUnclaimedUnstakeBatch;
       return { status: 'queued', batchId: activeBatchId!, amount: activeAmount!, waitingForPriorBatch };
     }
@@ -406,27 +334,13 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
     if (!claimed && now >= unlockAt) {
       return { status: 'claimable', batchId: activeBatchId!, amount: activeAmount! };
     }
-    // claimed but user still shown as having amount → the mapping entry will
-    // be cleared on next claim batch. Treat as `none` so the UI clears.
     return { status: 'none' };
   }, [activeBatchId, activeAmount, batchDetail, currentUnstakeBatch, oldestUnclaimedUnstakeBatch]);
 
   return { state, isLoading: loadingClock || loadingAmts || loadingBatchDetail };
 }
 
-// ─── Last-epoch USDC: RewardEpochClosed totalPoints lookup ───────────────
 
-/**
- * Read the USDC distributed during the most recently completed reward epoch.
- * The proxy records this in `RewardEpochClosed(..., totalPoints)` at the
- * moment it closes the epoch, where N = syncedRewardEpoch and the last closed
- * epoch is N-1.
- *
- * Provider RPCs cap `eth_getLogs` range differently (10k blocks on public
- * nodes is typical). A fully-indexed deployment can replace this with a
- * dedicated indexer, but while demand is light the in-browser close-event
- * lookup is sufficient and keeps the app self-contained.
- */
 export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
   const client = usePublicClient();
   const deployed = useProxyDeployed();
@@ -445,9 +359,6 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
       );
       if (!closedAbi) return null;
 
-      // Find RewardEpochClosed(rewardEpochId = syncedRewardEpoch - 1) and use
-      // its totalPoints payload. That avoids block-only windows, which are
-      // ambiguous when a close and next-epoch distribution share a block.
       const head = await client.getBlockNumber();
       const lookback = 500_000n;
       const fromBlock = head > lookback ? head - lookback : 0n;
@@ -468,7 +379,6 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
   return { lastEpochUsdc: data ?? null, isLoading };
 }
 
-// ─── DIEM allowance (stake requires ERC-20 approve) ──────────────────────
 
 export function useDiemAllowance(): { allowance: bigint | null; refetch: () => void } {
   const { address } = useAccount();

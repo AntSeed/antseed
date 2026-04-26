@@ -1,5 +1,3 @@
-// The core interactive surface: tabbed Stake / Unstake / Claim card, wired
-// to the live on-chain reads + write hooks. Every displayed number is live.
 
 import { useEffect, useMemo, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -56,16 +54,12 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const pool = usePoolStats();
   const user = useUserStats();
 
-  // Auto-reset default amount when switching tabs so the quick-set buttons
-  // feel fresh each time.
   const onChangeTab = (next: Tab) => {
     setTab(next);
     if (next === 'stake') setAmt('10');
     if (next === 'unstake') setAmt(user.stakedDiem ? fmtDiem(toDiemNumber(user.stakedDiem)) : '0');
   };
 
-  // Projection math — all derived from the live lastEpochUsdc and pool TVL.
-  // If either is null the numbers drop to "—" via fmtUSD.
   const diemValue = parseFloat(amt) || 0;
   const poolDiem = toDiemNumber(pool.totalStaked);
   const usdcPerDiemPerEpoch = poolDiem > 0 && lastEpochUsdc ? toUsdcNumber(lastEpochUsdc) / poolDiem : null;
@@ -170,7 +164,6 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   );
 }
 
-// ─── Stake panel ─────────────────────────────────────────────────────────
 
 interface StakePanelProps {
   amt: string;
@@ -303,7 +296,6 @@ function StakePanel(props: StakePanelProps) {
   );
 }
 
-// ─── Unstake panel + queue state machine ─────────────────────────────────
 
 interface UnstakePanelProps {
   amt: string;
@@ -313,17 +305,12 @@ interface UnstakePanelProps {
   stakedDiem: bigint | null;
   amtUsd: number | null;
   diemCooldownSecs: number | null;
-  /** Minimum batch-open window (seconds). Owner-settable; 0 = disabled. */
   minUnstakeBatchOpenSecs: number | null;
-  /** Unix timestamp at which the currently-open batch can first be flushed. */
   flushableAt: number | null;
 }
 
 function UnstakePanel(props: UnstakePanelProps) {
   const initiate = useInitiateUnstake();
-  // Single source of truth for the unstake state machine — read here, passed
-  // down into UnstakeStateView so we don't set up two identical wagmi
-  // subscriptions on the same keys.
   const { state } = useUnstakeState();
 
   const stakedNum = toDiemNumber(props.stakedDiem);
@@ -331,7 +318,6 @@ function UnstakePanel(props: UnstakePanelProps) {
   try {
     parsedAmt = props.amt ? parseEther(props.amt) : 0n;
   } catch {
-    /* invalid */
   }
   const amountTooLarge = props.stakedDiem != null && parsedAmt > props.stakedDiem;
   const disabled = !props.isConnected || parsedAmt === 0n || amountTooLarge || initiate.isPending;
@@ -411,9 +397,6 @@ function UnstakeStateView({
   const flush = useFlush();
   const claim = useClaimUnstakeBatch();
 
-  // Keep countdown ticking for both `cooling` (Venice cooldown) and `queued`
-  // (batch-open window before flush is allowed). The queued tick is cheap:
-  // it only runs while the user actually has an active unstake.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (state.status !== 'cooling' && state.status !== 'queued') return;
@@ -426,10 +409,6 @@ function UnstakeStateView({
   const amountDiem = fmtDiem(toDiemNumber(state.amount));
 
   if (state.status === 'queued') {
-    // Three sub-states, in priority order:
-    //   1. Waiting for prior batch to be claimed (protocol serialization).
-    //   2. Waiting for the minimum batch-open window to elapse.
-    //   3. Ready to flush.
     const waitingForWindow = flushableAt != null && now < flushableAt;
     const windowRemaining = waitingForWindow ? flushableAt! - now : 0;
     const canFlush = !state.waitingForPriorBatch && !waitingForWindow;
@@ -502,7 +481,6 @@ function UnstakeStateView({
     );
   }
 
-  // claimable
   return (
     <div className="yield-box" style={{ marginTop: 8 }}>
       <div className="yield-row hero-row">
@@ -526,7 +504,6 @@ function UnstakeStateView({
   );
 }
 
-// ─── Claim panel ─────────────────────────────────────────────────────────
 
 interface ClaimPanelProps {
   isConnected: boolean;
@@ -623,7 +600,6 @@ function ClaimPanel(props: ClaimPanelProps) {
   );
 }
 
-// ─── Small shared subcomponents ──────────────────────────────────────────
 
 function ConnectCta({ label }: { label: string }) {
   return (
@@ -685,7 +661,6 @@ function QuickSet({ options, onSet }: { options: Array<{ label: string; value: s
   );
 }
 
-// ─── Metrics row ─────────────────────────────────────────────────────────
 
 function Metrics(props: {
   apr: number;

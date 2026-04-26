@@ -10,7 +10,6 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 
-/// @dev Venice's DIEM ERC20 is also the staking contract (stake / initiateUnstake / unstake live on the token itself).
 interface IDiemStake {
     function stake(uint256 amount) external;
     function initiateUnstake(uint256 amount) external;
@@ -34,68 +33,12 @@ interface IAntseedEmissionsClock {
     function currentEpoch() external view returns (uint256);
 }
 
-/**
- * @title DiemStakingProxy
- * @notice Pooled DIEM staker / AntSeed seller façade.
- *         Holders stake DIEM; the proxy re-stakes into Venice (the DIEM token
- *         itself) for API entitlement and acts as the on-chain seller address
- *         for AntSeed. USDC (revenue) and ANTS (emissions) accrue to stakers.
- *
- *         Channel lifecycle (reserve / topUp / settle / close) is provided by
- *         {AntseedSellerDelegation}. This contract overrides each to wrap the
- *         super call with USDC balance-delta capture and instant distribution.
- *
- *         UNSTAKE FLOW — batch queueing:
- *           1. `initiateUnstake(amount)` queues into `currentUnstakeBatch`. No Venice
- *              call yet. Reward accrual on the queued amount stops immediately.
- *           2. `flush()` (permissionless) sends the batch to Venice in one
- *              shot, stamps `unlockAt = now + venice_cd`, opens a fresh batch.
- *           3. After Venice's cooldown, `claimUnstakeBatch(id)` (permissionless)
- *              drains Venice and pays every user from the explicit per-user
- *              map. Serialization invariant: Venice only holds one batch at a
- *              time.
- *
- *         USDC DISTRIBUTION — instant credit:
- *           Each settle bumps `usdcStream.rewardPerTokenStored` inline; stakers
- *           at the moment of the inflow receive their pro-rata share and can
- *           `claimUsdc()` at any time. Equivalent to a Synthetix drip with
- *           `duration = 1` — settles are discrete events, not periods.
- *
- *         ANTS DISTRIBUTION — revenue points + per-emission-epoch pot:
- *           Every USDC inflow is already split through a Synthetix-style
- *           `rewardPerToken` accumulator. ANTS uses the same split: each
- *           epoch's ANTS pot is distributed according to the USDC revenue
- *           points users earned during that emission epoch.
- *
- *           Properties:
- *             - Points persist through unstakes — a user who fully unstakes
- *               can still claim ANTS for reward epochs they contributed to.
- *             - Attribution matches the proxy's revenue window: stakers earn
- *               ANTS in the same proportions as the USDC inflows that generated
- *               the epoch's seller emissions.
- *             - Claim accepts explicit epoch arrays and is bounded per call so
- *               backlogs never trap a stake/unstake transaction. Users with
- *               large point-capture backlogs call `catchUpPoints(n)` first.
- *
- *         ERC-1271 is keyed on `owner()` (not operators). Venice API-key
- *         onboarding is an admin action, separate from operator channel ops.
- */
 contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
-    /// @dev ERC-1271 magic value for a valid signature. OpenZeppelin's
-    ///      `IERC1271` interface (imported above) intentionally does not
-    ///      export this constant — the spec names it `MAGIC_VALUE` and every
-    ///      implementation hardcodes it. It's `bytes4(keccak256("isValidSignature(bytes32,bytes)"))`
-    ///      per EIP-1271; we duplicate it here rather than shipping an
-    ///      internal helper because both readers of the contract and
-    ///      auditors expect to see the literal at the call-site.
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Structs
-    // ═══════════════════════════════════════════════════════════════════
 
     struct UnstakeBatch {
         uint128 total; // sum of every user's queued amount in this batch
@@ -111,9 +54,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         bool funded; // true once the epoch's ANTS pot has been claimed from AntseedEmissions
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Immutables
-    // ═══════════════════════════════════════════════════════════════════
 
     IERC20 public immutable diem;
     IERC20 public immutable usdc;
@@ -122,149 +62,59 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     address public immutable antseedStaking;
     uint32 public immutable firstRewardEpoch;
 
-    /// @dev Max distinct users per unstake batch. Caps `claimUnstakeBatch`'s transfer
-    ///      loop at ~50 × 50k gas = 2.5M gas, well under the block limit while
-    ///      giving each batch room for a realistic batch of unstakers.
     uint32 public constant MAX_PER_UNSTAKE_BATCH = 50;
 
-    /// @dev Max reward-epoch backlog that `_captureUserPoints` will traverse in
-    ///      a single tx. Beyond this, stake/unstake reverts with `BacklogTooLarge`
-    ///      and the user must call `catchUpPoints` first to process incrementally.
-    ///      16 reward epochs × an expected ~weekly tick = ~4 months of dormancy tolerated.
     uint32 public constant MAX_EPOCHS_PER_CAPTURE = 16;
 
-    /// @dev Alpha-launch cap applied at construction. Caps `totalStaked` at 50
-    ///      DIEM until the owner raises it via `setMaxTotalStake`. Owner may
-    ///      set to `0` (unlimited) at any time. Assumes 18-decimal DIEM.
     uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
 
-    /// @dev Default minimum time an unstake batch must remain open before
-    ///      `flush()` is allowed. Prevents a first queuer from immediately
-    ///      flushing and pushing every other would-be unstaker into the next
-    ///      batch (which would then have to wait a full extra Venice cooldown).
-    ///      The window is measured from the first `initiateUnstake` into the
-    ///      batch, so dry-spell batches still enforce it. 24h gives stakers a
-    ///      predictable joining window without adding noticeable friction on
-    ///      top of Venice's own cooldown.
     uint64 public constant ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS = 1 days;
 
-    /// @dev Upper bound on `setMinUnstakeBatchOpenSecs`. Caps how long the owner can
-    ///      make stakers wait before a batch can leave. 7 days is long
-    ///      enough to absorb any reasonable operational need (e.g. a one-week
-    ///      batch cadence) but short enough that owner misconfiguration
-    ///      can't effectively freeze withdrawals.
     uint64 public constant MAX_MIN_UNSTAKE_BATCH_OPEN_SECS = 7 days;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Storage — Staking
-    // ═══════════════════════════════════════════════════════════════════
 
     uint256 public totalStaked;
     mapping(address => uint256) public staked;
 
-    /// @dev Cap on `totalStaked` in DIEM (token-native units). `0` = unlimited.
-    ///      Owner-settable. Enforced in `stake()`; never in unstake paths
-    ///      (lowering the cap must never trap existing stakers). Existing
-    ///      positions above a newly-lowered cap simply can't be topped up
-    ///      until someone else unstakes enough to bring totalStaked back under.
     uint256 public maxTotalStake;
 
-    /// @dev Live count of distinct addresses with `staked[addr] > 0`.
-    ///      Incremented on the 0→N transition in `stake`, decremented on the
-    ///      N→0 transition in `initiateUnstake` (full exit). Partial stakes /
-    ///      partial unstakes don't touch it. Powers the frontend "Active
-    ///      stakers" tile with a single SLOAD — no event indexer required.
     uint32 public stakerCount;
 
-    /// @dev Unstake-batch state. `currentUnstakeBatch` accepts new queuers;
-    ///      `oldestUnclaimedUnstakeBatch` is the lowest flushed-but-not-yet-claimed batch
-    ///      id. A new batch can only be flushed once the prior one has been
-    ///      claimed — Venice only ever holds one batch at a time.
     mapping(uint32 => UnstakeBatch) public unstakeBatches;
     mapping(uint32 => address[]) public unstakeBatchUsers;
     mapping(uint32 => mapping(address => uint128)) public unstakeBatchUserAmount;
     uint32 public currentUnstakeBatch;
     uint32 public oldestUnclaimedUnstakeBatch;
 
-    /// @dev Timestamp (as uint64) at which the currently-open batch received
-    ///      its first queuer. Zero means the batch is empty. Reset to zero
-    ///      on flush so the next batch's clock restarts fresh on its first
-    ///      `initiateUnstake`.
     uint64 public currentUnstakeBatchOpenedAt;
 
-    /// @dev Minimum wall-clock seconds a batch must stay open before
-    ///      `flush()` will accept it. Owner-settable, bounded by
-    ///      `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS`. `0` disables the gate entirely.
     uint64 public minUnstakeBatchOpenSecs;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Storage — USDC rewards (instant credit)
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Synthetix-style reward-per-token accumulator. Each settle bumps
-    ///      this directly; users' accrued USDC = staked × Δ(accumulator).
     uint256 public usdcRewardPerTokenStored;
 
     mapping(address => uint256) public userUsdcRewardPerTokenPaid;
     mapping(address => uint256) public usdcRewards;
 
-    /// @dev Conservative upper bound on outstanding USDC owed to stakers.
-    ///      Incremented by every successfully-distributed inflow (skipping
-    ///      inflows that arrive when `totalStaked == 0` — those are orphan
-    ///      dust, sweepable). Decremented by every `claimUsdc`. Distribution
-    ///      rounding dust (from the integer division in _distributeUsdcInstant)
-    ///      is included here as a safety margin — so sweep always leaves at
-    ///      least the real liability in the contract.
     uint256 public totalUsdcReservedForStakers;
 
-    /// @dev Monotonic counter of every USDC unit distributed to stakers over
-    ///      the proxy's lifetime. Unlike `totalUsdcReservedForStakers`, this
-    ///      is never decremented on claim — it's a lifetime "USDC distributed
-    ///      · all time" display value. Skips inflows with no stakers (those
-    ///      go to `sweepOrphanUsdc`).
     uint256 public totalUsdcDistributedEver;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Storage — ANTS rewards (points + epoch pots)
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Scalar (RAY) used by the USDC reward-per-token accumulator.
-    ///      Chosen at 1e27 so that very small USDC inflows still produce
-    ///      non-zero per-stake increments at high TVL. Upper-bound analysis:
-    ///      with 18-dec stake capped realistically below 1e24 and USDC inflows
-    ///      below 1e18 per call, all intermediate products stay well under
-    ///      uint256 max (~1.16e77).
     uint256 private constant _RAY = 1e27;
 
-    /// @dev Sum of USDC units distributed to stakers in the currently-open
-    ///      reward epoch. This is the denominator for the epoch's ANTS split.
     uint256 public currentEpochRevenuePoints;
 
-    /// @dev Reward-epoch state. Reward epoch ids match AntseedEmissions epoch ids.
-    ///      `syncedRewardEpoch` is the first finalized-by-time epoch not yet
-    ///      closed in proxy storage; reward epochs are funded lazily when users
-    ///      claim ANTS.
     mapping(uint32 => RewardEpoch) public rewardEpochs;
     uint32 public syncedRewardEpoch;
 
-    /// @dev Per-user points per reward epoch (the "internal points system").
-    ///      Populated lazily on the user's next interaction; persists across
-    ///      stake/unstake so users can claim after fully unstaking.
     mapping(address => mapping(uint32 => uint256)) public userPoints;
 
-    /// @dev Per-user bookkeeping for revenue-point capture.
-    ///      `userRevenuePerTokenSnap` = USDC reward-per-token at the user's last capture.
-    ///      `userCurrentEpoch` = reward epoch at the user's last capture.
-    ///      `userLastClaimedEpoch` = first not-yet-claimed reward epoch used as
-    ///      a cheap UI scan cursor. Users may still claim explicit later epochs.
     mapping(address => uint256) public userRevenuePerTokenSnap;
     mapping(address => uint32) public userCurrentEpoch;
     mapping(address => uint32) public userLastClaimedEpoch;
     mapping(address => mapping(uint32 => bool)) public userEpochClaimed;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Events
-    // ═══════════════════════════════════════════════════════════════════
 
     event Staked(address indexed user, uint256 amount);
     event UnstakeQueued(address indexed user, uint32 indexed batchId, uint256 amount);
@@ -283,9 +133,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     event MaxTotalStakeSet(uint256 newMaxTotalStake);
     event MinUnstakeBatchOpenSecsSet(uint64 newMinUnstakeBatchOpenSecs);
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Custom Errors
-    // ═══════════════════════════════════════════════════════════════════
 
     error InvalidAmount();
     error InsufficientStake();
@@ -302,16 +149,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
     error MinUnstakeBatchOpenSecsTooLarge();
     error RewardEpochNotFinalized();
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Constructor
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @param _diem External Venice DIEM contract (not in AntseedRegistry).
-    /// @param _usdc USDC token used by channels/staking. Kept explicit.
-    /// @param _registry AntSeed address book. `ants`, `emissions`, and
-    ///                  `antseedStaking` are resolved from it at construction
-    ///                  and pinned as immutables for the proxy's lifetime.
-    /// @param _operator Initial authorized operator for channel lifecycle ops.
     constructor(address _diem, address _usdc, address _registry, address _operator)
         AntseedSellerDelegation(_registry, _operator)
     {
@@ -330,8 +168,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emissions = _emissions;
         antseedStaking = _antseedStaking;
 
-        // Batch 0 is unused so `unlockAt == 0` remains a reliable "not yet
-        // flushed" sentinel. Queuing starts at batch 1.
         currentUnstakeBatch = 1;
         oldestUnclaimedUnstakeBatch = 1;
 
@@ -339,29 +175,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         firstRewardEpoch = _firstRewardEpoch;
         syncedRewardEpoch = _firstRewardEpoch;
 
-        // Ship with an alpha-launch stake cap. Owner can raise it or remove
-        // entirely (set to 0) via `setMaxTotalStake`. Emitted so indexers and
-        // the frontend's `maxTotalStake()` read pick up the initial value
-        // consistently with later owner changes.
         maxTotalStake = ALPHA_MAX_TOTAL_STAKE;
         emit MaxTotalStakeSet(ALPHA_MAX_TOTAL_STAKE);
 
-        // Ship with a 24h minimum batch-open window so a first queuer can't
-        // immediately flush and push later unstakers into a fresh Venice
-        // cooldown. Owner can retune via `setMinUnstakeBatchOpenSecs` (capped at
-        // `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS`) or disable by setting `0`.
         minUnstakeBatchOpenSecs = ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS;
         emit MinUnstakeBatchOpenSecsSet(ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        Modifiers
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Settle both reward surfaces for `user` before the caller's action.
-    ///      USDC: Synthetix-style accrual via `usdcRewardPerTokenStored`.
-    ///      ANTS: capture the user's USDC-derived revenue points across any
-    ///      reward epochs since their last interaction.
     modifier updateRewards(address account) {
         _updateUsdcForUser(account);
         _syncFinalizedRewardEpochsForUpdate();
@@ -369,19 +190,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        STAKER OPERATIONS
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Stake DIEM into the proxy. Proxy re-stakes into Venice in the same tx.
     function stake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         uint256 cap = maxTotalStake;
         if (cap != 0 && totalStaked + amount > cap) revert MaxStakeExceeded();
 
-        // Track distinct-staker count on the 0→N transition. `_updateUsdcForUser`
-        // has already fired (via the modifier), so `staked[msg.sender]` here
-        // is the pre-stake value we need.
         if (staked[msg.sender] == 0) stakerCount += 1;
 
         staked[msg.sender] += amount;
@@ -393,11 +207,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit Staked(msg.sender, amount);
     }
 
-    /**
-     * @notice Queue `amount` DIEM for unstaking. Joins the current open batch.
-     *         Reward accrual on the queued amount stops immediately. The
-     *         batch is sent to Venice in one shot via `flush()`.
-     */
     function initiateUnstake(uint256 amount) external nonReentrant updateRewards(msg.sender) {
         if (amount == 0) revert InvalidAmount();
         if (amount > staked[msg.sender]) revert InsufficientStake();
@@ -405,11 +214,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint32 batchId = currentUnstakeBatch;
         UnstakeBatch storage e = unstakeBatches[batchId];
 
-        // First queuer into this batch starts the minimum-open-window
-        // clock. Measuring from the first queue (not from when the batch
-        // slot was created) means a dry-spell batch still enforces the
-        // window on whoever eventually queues first, matching user intent:
-        // "give other stakers a chance to join before the batch leaves".
         if (e.total == 0) currentUnstakeBatchOpenedAt = uint64(block.timestamp);
 
         uint128 existing = unstakeBatchUserAmount[batchId][msg.sender];
@@ -422,9 +226,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         staked[msg.sender] -= amount;
         totalStaked -= amount;
 
-        // Track distinct-staker count on the N→0 (full exit) transition.
-        // Only decrement when the user has no remaining active stake — partial
-        // unstakes leave them counted. Note: `staked` here reflects post-subtract.
         if (staked[msg.sender] == 0) stakerCount -= 1;
 
         uint128 amt128 = amount.toUint128();
@@ -434,11 +235,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeQueued(msg.sender, batchId, amount);
     }
 
-    /**
-     * @notice Send the current unstake batch to Venice and open a fresh one.
-     *         Permissionless. Serialization: a new batch can only be flushed
-     *         after the prior one is claimed.
-     */
     function flush() external nonReentrant {
         if (currentUnstakeBatch != oldestUnclaimedUnstakeBatch) revert PriorUnstakeBatchUnclaimed();
 
@@ -446,11 +242,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         UnstakeBatch storage e = unstakeBatches[batchId];
         if (e.total == 0) revert NothingToFlush();
 
-        // Enforce the minimum open window. `currentUnstakeBatchOpenedAt == 0`
-        // when the batch is empty, which is caught by the NothingToFlush
-        // check above — so by this point `openedAt` is always a real
-        // timestamp. Using `>` (not `>=`) is deliberate: exactly-at-boundary
-        // plays nicely with test warps that land on the exact second.
         uint64 openedAt = currentUnstakeBatchOpenedAt;
         if (block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)) {
             revert UnstakeBatchTooYoung();
@@ -461,7 +252,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         e.unlockAt = unlockAt;
 
         currentUnstakeBatch = batchId + 1;
-        // Next batch starts empty — its clock will set on its first queuer.
         currentUnstakeBatchOpenedAt = 0;
 
         IDiemStake(address(diem)).initiateUnstake(e.total);
@@ -469,11 +259,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeBatchFlushed(batchId, e.total, unlockAt);
     }
 
-    /**
-     * @notice Drain `batchId` from Venice and pay out every user in it.
-     *         Permissionless. Proxy's direct DIEM balance is 0 before and
-     *         after this call.
-     */
     function claimUnstakeBatch(uint32 batchId) external nonReentrant {
         UnstakeBatch storage e = unstakeBatches[batchId];
         if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert UnstakeBatchNotReady();
@@ -497,29 +282,16 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit UnstakeBatchClaimed(batchId, e.total, uint32(count));
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        REWARD CLAIMS
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Claim accrued USDC (instant-credit). O(1).
     function claimUsdc() external nonReentrant updateRewards(msg.sender) {
         uint256 owed = usdcRewards[msg.sender];
         if (owed == 0) revert NothingToClaim();
         usdcRewards[msg.sender] = 0;
-        // Safe subtract: every unit of `owed` was credited via
-        // _updateUsdcForUser, which sources from distributions that bumped
-        // `totalUsdcReservedForStakers`. Rounding dust only inflates the
-        // reservation (safer), never deflates.
         totalUsdcReservedForStakers -= owed;
         usdc.safeTransfer(msg.sender, owed);
         emit UsdcPaid(msg.sender, owed);
     }
 
-    /**
-     * @notice Convert points for completed reward epochs into ANTS.
-     * @dev If the caller has a large backlog that would exceed
-     *      `MAX_EPOCHS_PER_CAPTURE`, call `catchUpPoints` first.
-     */
     function claimAnts(uint32[] calldata rewardEpochIds) external nonReentrant {
         uint256 len = rewardEpochIds.length;
         if (len == 0 || len > MAX_EPOCHS_PER_CAPTURE) revert InvalidAmount();
@@ -551,9 +323,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
             userEpochClaimed[msg.sender][N] = true;
             processed = true;
 
-            // Marking an epoch claimed permanently abandons any userPoints
-            // entry here. For zero-payout paths we delete the slot so no stale
-            // storage lingers.
             uint256 userPts = userPoints[msg.sender][N];
             if (userPts == 0) {
                 continue;
@@ -582,17 +351,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit AntsClaimed(msg.sender, rewardEpochIds, totalAnts);
     }
 
-    /**
-     * @notice Incrementally capture points for a user with a backlog that
-     *         exceeds `MAX_EPOCHS_PER_CAPTURE`. Processes up to `numEpochs`
-     *         of the user's per-epoch point contributions.
-     * @dev    Also settles the caller's USDC reward debt against the current
-     *         accumulator. Without this, a user calling `catchUpPoints` to
-     *         unblock a later `stake`/`unstake`/`claimUsdc` would leave
-     *         their pending USDC at the pre-catch-up accumulator — correct,
-     *         but surprising. Settling here means `catchUpPoints` leaves
-     *         both reward surfaces in a consistent state for the caller.
-     */
     function catchUpPoints(uint32 numEpochs) external nonReentrant {
         if (numEpochs == 0) revert InvalidAmount();
         _updateUsdcForUser(msg.sender);
@@ -607,38 +365,21 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         uint256 S = staked[msg.sender];
         uint256 userSnap = userRevenuePerTokenSnap[msg.sender];
 
-        // Accumulate points for fully completed reward epochs [userEp, targetEp).
-        // `targetEp` itself (and, if targetEp == currentEp, the open epoch)
-        // are left for a later capture, since its revenue accumulator endpoint
-        // is not finalized yet.
         for (uint32 N = userEp; N < targetEp; N++) {
             uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].revenuePerTokenAtEnd;
             uint256 segEnd = rewardEpochs[N].revenuePerTokenAtEnd;
             _addUserPoints(msg.sender, N, S, segStart, segEnd);
         }
 
-        // `targetEp > userEp` is guaranteed by the `NothingToClaim` check
-        // above, and `userEp >= 0`, so `targetEp >= 1` and the dereference
-        // at `targetEp - 1` is always valid.
         userRevenuePerTokenSnap[msg.sender] = rewardEpochs[targetEp - 1].revenuePerTokenAtEnd;
         userCurrentEpoch[msg.sender] = targetEp;
 
         emit PointsCaughtUp(msg.sender, targetEp);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        CHANNEL OVERRIDES (inflow capture)
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev `reserve` has no USDC inflow — base implementation is sufficient.
 
-    // `onlyOperator` lives on the base forwarders (AntseedSellerDelegation)
-    // and still fires here via `super`. `nonReentrant` is applied on each
-    // override so the balance-delta capture + `_distributeUsdcInstant` run
-    // inside the same lock as the super forward — no window between
-    // external call and accumulator update.
 
-    /// @inheritdoc AntseedSellerDelegation
     function topUp(
         bytes32 channelId,
         uint128 cumulativeAmount,
@@ -653,7 +394,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
-    /// @inheritdoc AntseedSellerDelegation
     function settle(bytes32 channelId, uint128 cumulativeAmount, bytes calldata metadata, bytes calldata buyerSig)
         public
         override
@@ -664,7 +404,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
-    /// @inheritdoc AntseedSellerDelegation
     function close(bytes32 channelId, uint128 finalAmount, bytes calldata metadata, bytes calldata buyerSig)
         public
         override
@@ -675,27 +414,14 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        REWARD EPOCHS (ANTS emissions)
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Permissionlessly close finalized reward epochs in bounded chunks.
-    ///         Useful after long dormancy before users call stake/unstake/claim.
     function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
         if (maxEpochs == 0) revert InvalidAmount();
 
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        ADMIN
-    // ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Recover the proxy's seller stake from AntseedStaking.
-     *         AntseedStaking itself enforces "no active channels". Users'
-     *         unclaimed points remain intact and claimable after this.
-     */
     function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
         uint256 beforeBal = usdc.balanceOf(address(this));
@@ -705,18 +431,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit AntseedStakeWithdrawn(recipient, payout);
     }
 
-    /**
-     * @notice Sweep USDC that is provably not owed to any staker.
-     *         Includes:
-     *           - Inflows that arrived while `totalStaked == 0` (skipped by
-     *             `_distributeUsdcInstant`, otherwise trapped).
-     *           - Any accidental direct USDC transfer to the contract.
-     *         Excludes the full `totalUsdcReservedForStakers` ledger — that
-     *         represents outstanding per-user `usdcRewards` (plus distribution
-     *         rounding dust, which we intentionally keep as a safety margin).
-     *         `withdrawAntseedStake` has already transferred the returned seller
-     *         stake to the recipient, so there's no double-count risk.
-     */
     function sweepOrphanUsdc(address recipient) external onlyOwner nonReentrant {
         if (recipient == address(0)) revert InvalidAddress();
         uint256 balance = usdc.balanceOf(address(this));
@@ -727,64 +441,33 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         emit OrphanUsdcSwept(recipient, amount);
     }
 
-    /**
-     * @notice Set the pool's total-stake cap. `0` = unlimited.
-     *         Enforced only on new stakes; never restricts existing stake or
-     *         unstake paths. Lowering the cap below `totalStaked` is allowed
-     *         and simply freezes incoming stake until unstakes bring
-     *         `totalStaked` back under the new cap.
-     */
     function setMaxTotalStake(uint256 newMaxTotalStake) external onlyOwner {
         maxTotalStake = newMaxTotalStake;
         emit MaxTotalStakeSet(newMaxTotalStake);
     }
 
-    /**
-     * @notice Set the minimum batch-open window (seconds). `0` disables the
-     *         gate. Capped at `MAX_MIN_UNSTAKE_BATCH_OPEN_SECS` so owner cannot grief
-     *         stakers with an unreasonably long window.
-     *         Takes effect on the next `flush` check; does not retroactively
-     *         shorten an already-elapsed window.
-     */
     function setMinUnstakeBatchOpenSecs(uint64 newMinUnstakeBatchOpenSecs) external onlyOwner {
         if (newMinUnstakeBatchOpenSecs > MAX_MIN_UNSTAKE_BATCH_OPEN_SECS) revert MinUnstakeBatchOpenSecsTooLarge();
         minUnstakeBatchOpenSecs = newMinUnstakeBatchOpenSecs;
         emit MinUnstakeBatchOpenSecsSet(newMinUnstakeBatchOpenSecs);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        VIEWS
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Unix timestamp at which `flush()` will first be callable for
-    ///         the currently-open batch. Returns `0` if the batch is still
-    ///         empty (no first queuer yet) — in that case `flush` is blocked
-    ///         by `NothingToFlush` regardless of this timestamp.
     function flushableAt() external view returns (uint64) {
         uint64 openedAt = currentUnstakeBatchOpenedAt;
         if (openedAt == 0) return 0;
         return openedAt + minUnstakeBatchOpenSecs;
     }
 
-    /// @notice USDC earned and claimable by `account` right now.
     function earnedUsdc(address account) external view returns (uint256) {
         return usdcRewards[account]
             + (staked[account] * (usdcRewardPerTokenStored - userUsdcRewardPerTokenPaid[account])) / _RAY;
     }
 
-    /// @notice First Antseed emission epoch finalized by wall-clock time.
-    ///         May be ahead of `syncedRewardEpoch` until someone lazily closes
-    ///         finalized epochs.
     function finalizedRewardEpoch() external view returns (uint32) {
         return _finalizedRewardEpoch();
     }
 
-    /// @notice Preview ANTS for a single completed reward epoch for `account`.
-    ///         Does not mutate state. Returns 0 for the currently-open epoch.
-    /// @dev Computes uncaptured points lazily if the user hasn't interacted
-    ///      since before/during the reward epoch, assuming their stake has been
-    ///      constant since their last interaction. (This invariant holds
-    ///      because any stake change would have triggered `updateRewards`.)
     function pendingAntsForEpoch(address account, uint32 rewardEpoch) external view returns (uint256) {
         if (userEpochClaimed[account][rewardEpoch]) return 0;
         if (rewardEpoch >= syncedRewardEpoch) return 0;
@@ -796,8 +479,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         uint256 userPts = userPoints[account][rewardEpoch];
 
-        // Add uncaptured contribution if the user's last capture was at or
-        // before the start of this reward epoch and they're currently staked.
         uint32 userEp = userCurrentEpoch[account];
         uint256 S = staked[account];
         if (S > 0 && userEp <= rewardEpoch) {
@@ -817,26 +498,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         return (antsPot * userPts) / totalPoints;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        ERC-1271 (Venice API-key onboarding)
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice ERC-1271 signature validation. Returns the magic value when
-    ///         the signature recovers to the current `owner()`. Used by
-    ///         Venice to verify off-chain challenges when issuing the proxy's
-    ///         API key.
     function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         address recovered = ECDSA.recover(hash, signature);
         return recovered == owner() ? ERC1271_MAGIC_VALUE : bytes4(0xffffffff);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL
-    // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Instant-credit USDC to stakers at the moment of inflow. Skipped
-    ///      if `totalStaked == 0` (no one to credit); the USDC sits in the
-    ///      proxy balance as operational dust and can be recovered by admin.
     function _distributeUsdcInstant(uint256 amount) internal {
         if (amount == 0 || totalStaked == 0) return;
         _syncFinalizedRewardEpochsForUpdate();
@@ -847,17 +515,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         usdcRewardPerTokenStored += rewardPerTokenDelta;
         uint256 distributable = (rewardPerTokenDelta * totalStaked) / _RAY;
         currentEpochRevenuePoints += distributable;
-        // Track accumulator-distributable units for the sweep-safety ledger.
-        // Per-user integer rounding can still leave tiny conservative dust.
         totalUsdcReservedForStakers += distributable;
-        // Lifetime counter — never decremented, powers the "USDC distributed
-        // · all time" frontend tile with a single SLOAD.
         totalUsdcDistributedEver += distributable;
         emit UsdcDistributed(distributable);
     }
 
-    /// @dev Settle `account`'s USDC reward debt against the current
-    ///      accumulator. Must fire before any `staked[account]` change.
     function _updateUsdcForUser(address account) internal {
         if (account != address(0)) {
             uint256 delta = (staked[account] * (usdcRewardPerTokenStored - userUsdcRewardPerTokenPaid[account])) / _RAY;
@@ -870,9 +532,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         return IAntseedEmissionsClock(emissions).currentEpoch().toUint32();
     }
 
-    /// @dev Normal reward-touching paths only sync a bounded backlog. If the
-    ///      contract has been dormant for longer, users call `syncRewardEpochs`
-    ///      first to close old epochs incrementally.
     function _syncFinalizedRewardEpochsForUpdate() internal {
         uint32 finalized = _finalizedRewardEpoch();
         if (finalized > syncedRewardEpoch && finalized - syncedRewardEpoch > MAX_EPOCHS_PER_CAPTURE) {
@@ -892,9 +551,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         }
     }
 
-    /// @dev Close reward epochs at AntseedEmissions boundaries up to `target`.
-    ///      This keeps ANTS attribution tied to the external emission window,
-    ///      not to the operator's eventual claim transaction timestamp.
     function _syncRewardEpochsUntil(uint32 target) internal {
         uint32 from = syncedRewardEpoch;
         while (syncedRewardEpoch < target) {
@@ -943,19 +599,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         userLastClaimedEpoch[account] = cursor;
     }
 
-    /// @dev Capture `account`'s point contribution across every reward epoch
-    ///      they've spanned since their last interaction, up through the
-    ///      currently-open epoch. Reverts `BacklogTooLarge` if they need more
-    ///      than `MAX_EPOCHS_PER_CAPTURE` iterations — `catchUpPoints` lets
-    ///      them process incrementally.
     function _captureUserPoints(address account) internal {
         if (account == address(0)) return;
 
         uint256 S = staked[account];
         uint32 currentEp = syncedRewardEpoch;
 
-        // Fast path: user has no stake (never interacted, or fully unstaked).
-        // Nothing to capture — just snap them to the current state.
         if (S == 0) {
             userRevenuePerTokenSnap[account] = usdcRewardPerTokenStored;
             userCurrentEpoch[account] = currentEp;
@@ -969,15 +618,12 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
 
         uint256 userSnap = userRevenuePerTokenSnap[account];
 
-        // For each completed epoch in [userEp, currentEp): add points for
-        // (segEnd - segStart) of the revenue accumulator within that epoch.
         for (uint32 N = userEp; N < currentEp; N++) {
             uint256 segStart = N == userEp ? userSnap : rewardEpochs[N - 1].revenuePerTokenAtEnd;
             uint256 segEnd = rewardEpochs[N].revenuePerTokenAtEnd;
             _addUserPoints(account, N, S, segStart, segEnd);
         }
 
-        // And the currently-open epoch: from (user's start boundary) to NOW.
         uint256 openSegStart = userEp == currentEp ? userSnap : rewardEpochs[currentEp - 1].revenuePerTokenAtEnd;
         _addUserPoints(account, currentEp, S, openSegStart, usdcRewardPerTokenStored);
 
@@ -985,10 +631,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271 {
         userCurrentEpoch[account] = currentEp;
     }
 
-    /// @dev Credit `S × (segEnd - segStart) / RAY` revenue points to `(account, epoch)`.
-    ///      No-op when `S == 0` or the accumulator hasn't advanced. Shared by
-    ///      `_captureUserPoints` and `catchUpPoints` so their math is
-    ///      guaranteed identical.
     function _addUserPoints(address account, uint32 epoch, uint256 S, uint256 segStart, uint256 segEnd) internal {
         if (S == 0 || segEnd <= segStart) return;
         userPoints[account][epoch] += (S * (segEnd - segStart)) / _RAY;
