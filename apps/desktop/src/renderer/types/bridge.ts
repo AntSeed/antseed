@@ -172,7 +172,7 @@ export type DesktopBridge = {
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null }) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   apiTryProxyRequest?: (params: {
     port: number;
