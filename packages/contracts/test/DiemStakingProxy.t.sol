@@ -324,6 +324,22 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
+    function test_flush_succeedsImmediatelyWhenBatchFull() public {
+        vm.prank(owner);
+        proxy.setMinUnstakeBatchOpenSecs(6 hours);
+
+        for (uint256 i = 0; i < proxy.MAX_PER_UNSTAKE_BATCH(); i++) {
+            address user = address(uint160(0x1000 + i));
+            _stakeAs(user, 1e18);
+            vm.prank(user);
+            proxy.initiateUnstake(1e18);
+        }
+
+        (,, uint32 userCount,) = proxy.unstakeBatches(proxy.currentUnstakeBatch());
+        assertEq(userCount, proxy.MAX_PER_UNSTAKE_BATCH());
+        proxy.flush();
+    }
+
     function test_flush_windowMeasuredFromFirstQueuer() public {
         vm.prank(owner);
         proxy.setMinUnstakeBatchOpenSecs(6 hours);
@@ -403,6 +419,89 @@ contract DiemStakingProxyTest is Test {
         vm.prank(owner);
         proxy.setMinUnstakeBatchOpenSecs(7 days);
         assertEq(proxy.minUnstakeBatchOpenSecs(), 7 days);
+    }
+
+    function test_pause_onlyOwnerAndUnpauseRestoresStake() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.pause();
+
+        vm.prank(owner);
+        proxy.pause();
+
+        diem.mint(alice, 10e18);
+        vm.startPrank(alice);
+        diem.approve(address(proxy), 10e18);
+        vm.expectRevert();
+        proxy.stake(10e18);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        proxy.unpause();
+
+        vm.prank(alice);
+        proxy.stake(10e18);
+        assertEq(proxy.staked(alice), 10e18);
+    }
+
+    function test_pause_blocksUserFacingFlowsButAllowsExitAndSync() public {
+        _stakeAs(alice, 100e18);
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.prank(alice);
+        proxy.initiateUnstake(50e18);
+        uint32 batchId = proxy.currentUnstakeBatch();
+        proxy.flush();
+
+        vm.prank(owner);
+        proxy.pause();
+
+        diem.mint(bob, 1e18);
+        vm.startPrank(bob);
+        diem.approve(address(proxy), 1e18);
+        vm.expectRevert();
+        proxy.stake(1e18);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.initiateUnstake(1e18);
+
+        vm.expectRevert();
+        proxy.flush();
+
+        bytes memory pausedMetadata = _encodeMetadata(600e6, 0);
+        bytes memory pausedSig = _signSpendingAuth(channelId, 600e6, pausedMetadata);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        proxy.settle(channelId, 600e6, pausedMetadata, pausedSig);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        proxy.close(channelId, 600e6, pausedMetadata, pausedSig);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.claimUsdc();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.claimAnts(_rewardEpochs(0, 1));
+
+        vm.prank(alice);
+        vm.expectRevert();
+        proxy.catchUpPoints(1);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        proxy.syncRewardEpochs(1);
+        assertEq(proxy.syncedRewardEpoch(), 1, "sync remains available while paused");
+
+        vm.warp(block.timestamp + DIEM_COOLDOWN + 1);
+        uint256 before = diem.balanceOf(alice);
+        proxy.claimUnstakeBatch(batchId);
+        assertEq(diem.balanceOf(alice) - before, 50e18, "exits remain available while paused");
     }
 
     function _advanceRewardEpochs(uint256 count) internal {
@@ -594,7 +693,7 @@ contract DiemStakingProxyTest is Test {
         _settleViaProxy(channelId, 500e6);
         uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
 
-        assertEq(inflow, 500e6 - (500e6 * 200) / 10000);
+        assertEq(inflow, 500e6 - (500e6 * 200) / 10000 - ((500e6 - (500e6 * 200) / 10000) * 1000) / 10000);
 
         uint256 storedAfter = proxy.usdcRewardPerTokenStored();
         assertGt(storedAfter, storedBefore);
@@ -610,29 +709,28 @@ contract DiemStakingProxyTest is Test {
         _closeViaProxy(channelId, 400e6);
         uint256 inflow = usdc.balanceOf(address(proxy)) - usdcBefore;
 
-        assertEq(inflow, 400e6 - (400e6 * 200) / 10000);
+        assertEq(inflow, 400e6 - (400e6 * 200) / 10000 - ((400e6 - (400e6 * 200) / 10000) * 1000) / 10000);
         assertEq(proxy.earnedUsdc(alice), inflow);
 
         assertEq(channels.activeChannelCount(address(proxy)), 0);
     }
 
-    function test_operatorFee_takesUsdcCutFromSettlement() public {
+    function test_operatorFee_takesDefaultUsdcCutFromSettlement() public {
         _stakeAs(alice, 100e18);
-
-        vm.prank(owner);
-        proxy.setOperatorFee(500, bob);
 
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
 
-        uint256 recipientBefore = usdc.balanceOf(bob);
+        uint256 recipientBefore = usdc.balanceOf(operator);
         uint256 proxyBefore = usdc.balanceOf(address(proxy));
         _settleViaProxy(channelId, 500e6);
 
         uint256 protocolNetInflow = 500e6 - (500e6 * 200) / 10000;
-        uint256 operatorFee = (protocolNetInflow * 500) / 10000;
+        uint256 operatorFee = (protocolNetInflow * proxy.DEFAULT_OPERATOR_FEE_BPS()) / 10000;
         uint256 stakerNet = protocolNetInflow - operatorFee;
 
-        assertEq(usdc.balanceOf(bob) - recipientBefore, operatorFee);
+        assertEq(proxy.operatorFeeBps(), 1000);
+        assertEq(proxy.operatorFeeRecipient(), operator);
+        assertEq(usdc.balanceOf(operator) - recipientBefore, operatorFee);
         assertEq(usdc.balanceOf(address(proxy)) - proxyBefore, stakerNet);
         assertEq(proxy.earnedUsdc(alice), stakerNet);
         assertEq(proxy.totalUsdcReservedForStakers(), stakerNet);
@@ -650,14 +748,15 @@ contract DiemStakingProxyTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(AntseedSellerDelegation.OperatorFeeTooLarge.selector);
-        proxy.setOperatorFee(501, bob);
+        proxy.setOperatorFee(2001, bob);
+
+        vm.prank(owner);
+        proxy.setOperatorFee(2000, bob);
+        assertEq(proxy.operatorFeeBps(), 2000);
     }
 
     function test_operatorFee_takesAntsCutFromEpochPot() public {
         _stakeAs(alice, 100e18);
-
-        vm.prank(owner);
-        proxy.setOperatorFee(500, bob);
 
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
         _settleViaProxy(channelId, 500e6);
@@ -667,15 +766,15 @@ contract DiemStakingProxyTest is Test {
         uint256[] memory ids = new uint256[](1);
         ids[0] = 0;
         (uint256 pendingSeller,) = emissions.pendingEmissions(address(proxy), ids);
-        uint256 operatorFee = (pendingSeller * 500) / 10000;
+        uint256 operatorFee = (pendingSeller * proxy.DEFAULT_OPERATOR_FEE_BPS()) / 10000;
         uint256 stakerPot = pendingSeller - operatorFee;
 
         uint256 aliceBefore = ants.balanceOf(alice);
-        uint256 recipientBefore = ants.balanceOf(bob);
+        uint256 recipientBefore = ants.balanceOf(operator);
         vm.prank(alice);
         proxy.claimAnts(_rewardEpochs(0, 1));
 
-        assertEq(ants.balanceOf(bob) - recipientBefore, operatorFee);
+        assertEq(ants.balanceOf(operator) - recipientBefore, operatorFee);
         assertEq(ants.balanceOf(alice) - aliceBefore, stakerPot);
         (,, uint256 antsPot,) = proxy.rewardEpochs(0);
         assertEq(antsPot, stakerPot);

@@ -255,7 +255,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         emit UnstakeBatchFlushed(batchId, e.total, unlockAt);
     }
 
-    function claimUnstakeBatch(uint32 batchId) external nonReentrant whenNotPaused {
+    function claimUnstakeBatch(uint32 batchId) external nonReentrant {
         UnstakeBatch storage e = unstakeBatches[batchId];
         if (e.unlockAt == 0 || block.timestamp < e.unlockAt) revert UnstakeBatchNotReady();
         if (e.claimed) revert UnstakeBatchAlreadyClaimed();
@@ -419,7 +419,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     //                        REWARD EPOCHS
     // ═══════════════════════════════════════════════════════════════════
 
-    function syncRewardEpochs(uint32 maxEpochs) external nonReentrant whenNotPaused {
+    function syncRewardEpochs(uint32 maxEpochs) external nonReentrant {
         if (maxEpochs == 0) revert InvalidAmount();
 
         if (_syncFinalizedRewardEpochsBounded(maxEpochs) == 0) revert NothingToSync();
@@ -506,7 +506,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (userEpochClaimed[account][rewardEpoch]) return 0;
         if (rewardEpoch >= syncedRewardEpoch) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
-        uint256 antsPot = re.funded ? re.antsPot : _operatorFeeNetAmount(_pendingRewardEpochPot(rewardEpoch));
+        uint256 antsPot = re.funded ? re.antsPot : _operatorFeeNetAmount(_grossPendingRewardEpochEmissions(rewardEpoch));
         if (antsPot == 0) return 0;
         uint256 totalPoints = re.totalPoints;
         if (totalPoints == 0) return 0;
@@ -620,7 +620,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         emit RewardEpochFunded(rewardEpoch, antsPot);
     }
 
-    function _pendingRewardEpochPot(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
+    function _grossPendingRewardEpochEmissions(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
         pendingSeller = _pendingSellerEmissions(address(this), ids);

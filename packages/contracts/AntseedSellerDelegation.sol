@@ -8,22 +8,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
 import { IAntseedChannels } from "./interfaces/IAntseedChannels.sol";
-
-interface IAntseedEmissionsClaim {
-    function claimSellerEmissions(uint256[] calldata epochs) external;
-    function pendingEmissions(address account, uint256[] calldata epochs)
-        external
-        view
-        returns (uint256 totalSeller, uint256 totalBuyer);
-}
-
-interface IAntseedEmissionsClock {
-    function currentEpoch() external view returns (uint256);
-}
-
-interface IAntseedDepositsToken {
-    function usdc() external view returns (address);
-}
+import { IAntseedDeposits } from "./interfaces/IAntseedDeposits.sol";
+import { IAntseedEmissions } from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedSellerDelegation
@@ -47,7 +33,8 @@ interface IAntseedDepositsToken {
 abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant MAX_OPERATOR_FEE_BPS = 500;
+    uint256 public constant DEFAULT_OPERATOR_FEE_BPS = 1000;
+    uint256 public constant MAX_OPERATOR_FEE_BPS = 2000;
     uint256 internal constant _BPS = 10_000;
 
     /// @notice Central AntSeed address book. Resolves channels / deposits / etc.
@@ -78,6 +65,9 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         if (_registry == address(0)) revert InvalidAddress();
         if (initialOperator == address(0)) revert InvalidAddress();
         registry = IAntseedRegistry(_registry);
+        operatorFeeBps = DEFAULT_OPERATOR_FEE_BPS;
+        operatorFeeRecipient = initialOperator;
+        emit OperatorFeeSet(DEFAULT_OPERATOR_FEE_BPS, initialOperator);
         isOperator[initialOperator] = true;
         emit OperatorSet(initialOperator, true);
     }
@@ -169,18 +159,18 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     }
 
     function _sellerPayoutToken() internal view returns (IERC20) {
-        return IERC20(IAntseedDepositsToken(registry.deposits()).usdc());
+        return IERC20(IAntseedDeposits(registry.deposits()).usdc());
     }
 
     function _currentEmissionsEpoch() internal view returns (uint256) {
-        return IAntseedEmissionsClock(registry.emissions()).currentEpoch();
+        return IAntseedEmissions(registry.emissions()).currentEpoch();
     }
 
     function _claimSellerEmissions(uint256[] memory epochs) internal returns (uint256 netPayout) {
-        IERC20 payoutToken = IERC20(registry.antsToken());
-        uint256 beforeBal = payoutToken.balanceOf(address(this));
-        IAntseedEmissionsClaim(registry.emissions()).claimSellerEmissions(epochs);
-        netPayout = _takeOperatorFee(payoutToken, payoutToken.balanceOf(address(this)) - beforeBal);
+        IERC20 antsToken = IERC20(registry.antsToken());
+        uint256 beforeBal = antsToken.balanceOf(address(this));
+        IAntseedEmissions(registry.emissions()).claimSellerEmissions(epochs);
+        netPayout = _takeOperatorFee(antsToken, antsToken.balanceOf(address(this)) - beforeBal);
     }
 
     function _pendingSellerEmissions(address account, uint256[] memory epochs)
@@ -188,7 +178,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         view
         returns (uint256 pendingSeller)
     {
-        (pendingSeller,) = IAntseedEmissionsClaim(registry.emissions()).pendingEmissions(account, epochs);
+        (pendingSeller,) = IAntseedEmissions(registry.emissions()).pendingEmissions(account, epochs);
     }
 
     function _operatorFeeNetAmount(uint256 grossAmount) internal view returns (uint256 netAmount) {
@@ -201,7 +191,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     function _takeOperatorFee(IERC20 token, uint256 grossAmount) internal returns (uint256 netAmount) {
         netAmount = _operatorFeeNetAmount(grossAmount);
         uint256 fee = grossAmount - netAmount;
-        if (fee == 0) return grossAmount;
+        if (fee == 0) return netAmount;
         address recipient = operatorFeeRecipient;
         token.safeTransfer(recipient, fee);
         emit OperatorFeePaid(address(token), recipient, fee);
