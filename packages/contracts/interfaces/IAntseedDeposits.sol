@@ -2,11 +2,9 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedDeposits {
+    function usdc() external view returns (address);
     function lockForChannel(address buyer, uint256 amount) external;
-    function chargeAndCreditPayouts(
-        address buyer, address seller, uint256 amount,
-        uint256 platformFee
-    ) external;
+    function chargeAndCreditPayouts(address buyer, address seller, uint256 amount, uint256 platformFee) external;
     function releaseLock(address buyer, uint256 amount) external;
     function getOperator(address buyer) external view returns (address);
     function getOperatorNonce(address buyer) external view returns (uint256);
