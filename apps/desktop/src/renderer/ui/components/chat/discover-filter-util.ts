@@ -18,11 +18,11 @@ export const MAX_CHANNELS_SLIDER = 200;
 export const CHANNELS_SLIDER_STEP = 5;
 
 /**
- * Default minimum on-chain channel count for Discover. 20 hides brand-new peers
- * that haven't accumulated a track record while still showing modestly-active ones.
- * Users can lower the slider to 0 to see every peer.
+ * Default minimum on-chain channel count for Discover. Keep this at zero so
+ * Discover is an inventory view by default: every cached/discovered service is
+ * visible unless the user explicitly chooses a reputation/channel filter.
  */
-export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 20;
+export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 0;
 
 export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 
