@@ -29,9 +29,10 @@ interface IAntseedStakingForDiemProxyDeploy {
  *   DIEM_PROXY_OPERATOR    Initial authorized operator and default operator-fee recipient.
  *
  * Optional env:
- *   DIEM_PROXY_AGENT_URI   If set, registers a new ERC-8004 agent and transfers it to the proxy.
- *   DIEM_PROXY_AGENT_ID    Existing ERC-8004 agent id. If deployer owns it, it is transferred to the proxy.
- *   DIEM_PROXY_STAKE_USDC  USDC amount to stake for the proxy seller identity. Defaults to 0.
+ *   DIEM_PROXY_REGISTER_AGENT  If true, registers a new ERC-8004 agent and transfers it to the proxy.
+ *   DIEM_PROXY_AGENT_URI       Agent URI to use when registering. Defaults to empty string.
+ *   DIEM_PROXY_AGENT_ID        Existing ERC-8004 agent id. If deployer owns it, it is transferred to the proxy.
+ *   DIEM_PROXY_STAKE_USDC      USDC amount to stake for the proxy seller identity. Defaults to 0.
  *
  * Usage:
  *   cd packages/contracts
@@ -106,8 +107,9 @@ contract DeployDiemStakingProxy is Script {
         internal
         returns (uint256 agentId)
     {
-        string memory agentUri = vm.envOr("DIEM_PROXY_AGENT_URI", string(""));
-        if (bytes(agentUri).length != 0) {
+        bool registerAgent = vm.envOr("DIEM_PROXY_REGISTER_AGENT", false);
+        if (registerAgent) {
+            string memory agentUri = vm.envOr("DIEM_PROXY_AGENT_URI", string(""));
             agentId = IERC8004RegisterAndTransfer(identityRegistry).register(agentUri);
             IERC8004RegisterAndTransfer(identityRegistry).transferFrom(deployer, proxy, agentId);
             require(_ownerOf(identityRegistry, agentId) == proxy, "registered agent not transferred");

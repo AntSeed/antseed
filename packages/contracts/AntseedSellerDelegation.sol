@@ -11,6 +11,10 @@ import { IAntseedChannels } from "./interfaces/IAntseedChannels.sol";
 import { IAntseedDeposits } from "./interfaces/IAntseedDeposits.sol";
 import { IAntseedEmissions } from "./interfaces/IAntseedEmissions.sol";
 
+interface IAntseedStakingSellerDelegation {
+    function unstake() external;
+}
+
 /**
  * @title AntseedSellerDelegation
  * @notice Base contract for any seller façade that fronts an AntseedChannels
@@ -48,6 +52,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
 
     event OperatorSet(address indexed operator, bool enabled);
     event OperatorFeeSet(uint256 feeBps, address indexed recipient);
+    event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
 
     error InvalidAddress();
     error NotOperator();
@@ -86,6 +91,20 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         operatorFeeBps = feeBps;
         operatorFeeRecipient = recipient;
         emit OperatorFeeSet(feeBps, recipient);
+    }
+
+    /// @notice Withdraw this seller's AntSeed staking deposit to `recipient`.
+    /// @dev Generic to seller delegation contracts: the actual staking contract
+    ///      is resolved through the registry, and the payout token is resolved
+    ///      from AntseedDeposits.
+    function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
+        if (recipient == address(0)) revert InvalidAddress();
+        IERC20 payoutToken = _sellerPayoutToken();
+        uint256 beforeBal = payoutToken.balanceOf(address(this));
+        IAntseedStakingSellerDelegation(registry.staking()).unstake();
+        uint256 payout = payoutToken.balanceOf(address(this)) - beforeBal;
+        if (payout > 0) payoutToken.safeTransfer(recipient, payout);
+        emit AntseedStakeWithdrawn(recipient, payout);
     }
 
     // ═══════════════════════════════════════════════════════════════════

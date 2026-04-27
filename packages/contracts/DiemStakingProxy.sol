@@ -18,10 +18,6 @@ interface IDiemStake {
     function cooldownDuration() external view returns (uint256);
 }
 
-interface IAntseedStakingSeller {
-    function unstake() external;
-}
-
 contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -49,14 +45,13 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     IERC20 public immutable usdc;
     IERC20 public immutable ants;
     address public immutable emissions;
-    address public immutable antseedStaking;
     uint32 public immutable firstRewardEpoch;
 
     uint32 public constant MAX_PER_UNSTAKE_BATCH = 50;
 
     uint32 public constant MAX_EPOCHS_PER_CAPTURE = 16;
 
-    uint256 public constant ALPHA_MAX_TOTAL_STAKE = 50e18;
+    uint256 public constant ALPHA_MAX_TOTAL_STAKE = 10e18;
 
     uint64 public constant ALPHA_MIN_UNSTAKE_BATCH_OPEN_SECS = 1 days;
 
@@ -118,7 +113,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     event RewardEpochsSynced(uint32 fromEpoch, uint32 toEpoch);
     event AntsClaimed(address indexed user, uint32[] rewardEpochs, uint256 antsAmount);
     event PointsCaughtUp(address indexed user, uint32 newCurrentEpoch);
-    event AntseedStakeWithdrawn(address indexed recipient, uint256 amount);
     event OrphanUsdcSwept(address indexed recipient, uint256 amount);
     event MaxTotalStakeSet(uint256 newMaxTotalStake);
     event MinUnstakeBatchOpenSecsSet(uint64 newMinUnstakeBatchOpenSecs);
@@ -156,7 +150,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         usdc = IERC20(_usdc);
         ants = IERC20(_ants);
         emissions = _emissions;
-        antseedStaking = _antseedStaking;
 
         currentUnstakeBatch = 1;
         oldestUnclaimedUnstakeBatch = 1;
@@ -451,15 +444,6 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
 
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    function withdrawAntseedStake(address recipient) external onlyOwner nonReentrant {
-        if (recipient == address(0)) revert InvalidAddress();
-        uint256 beforeBal = usdc.balanceOf(address(this));
-        IAntseedStakingSeller(antseedStaking).unstake();
-        uint256 payout = usdc.balanceOf(address(this)) - beforeBal;
-        if (payout > 0) usdc.safeTransfer(recipient, payout);
-        emit AntseedStakeWithdrawn(recipient, payout);
     }
 
     function sweepOrphanUsdc(address recipient) external onlyOwner nonReentrant {
