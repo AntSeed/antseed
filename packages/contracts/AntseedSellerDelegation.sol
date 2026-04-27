@@ -48,7 +48,6 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
 
     event OperatorSet(address indexed operator, bool enabled);
     event OperatorFeeSet(uint256 feeBps, address indexed recipient);
-    event OperatorFeePaid(address indexed token, address indexed recipient, uint256 amount);
 
     error InvalidAddress();
     error NotOperator();
@@ -193,9 +192,7 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     function _takeOperatorFee(IERC20 token, uint256 grossAmount) internal returns (uint256) {
         uint256 fee = _operatorFeeAmount(grossAmount);
         if (fee == 0) return grossAmount;
-        address recipient = operatorFeeRecipient;
-        token.safeTransfer(recipient, fee);
-        emit OperatorFeePaid(address(token), recipient, fee);
+        token.safeTransfer(operatorFeeRecipient, fee);
         return grossAmount - fee;
     }
 
