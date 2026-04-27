@@ -44,9 +44,7 @@ Requires Node.js 20+. Latest version: `npm view @antseed/cli version`. A global 
 
 ## Chain configuration
 
-Custom `~/.antseed/config.json` is optional. `antseed buyer start` works without one and will use built-in defaults.
-
-Create the file only if you want advanced settings such as pricing caps or a non-default chain:
+Always create `~/.antseed/config.json` with `payments.crypto.chainId` set. Without it, the `antseed buyer deposit` CLI command fails with "No crypto payment configuration found" and the buyer proxy cannot open payment channels.
 
 ```json
 {
@@ -77,10 +75,11 @@ To switch chains later, edit only `chainId` (`base-mainnet` ↔ `base-sepolia`) 
 
 The buyer needs an EVM identity — a 32-byte secp256k1 private key supplied via the `ANTSEED_IDENTITY_HEX` env var (64 hex chars, optional `0x` prefix), or already present in `~/.antseed/identity.key`.
 
-The EVM address derived from that key is your **buyer wallet**. It needs:
+The EVM address derived from that key is your **buyer wallet**. It only needs:
 
-- **USDC on the target chain** — used as payment channel reserves
-- **Native token (ETH on Base)** — used for gas on deposit, operator signing, and withdraw
+- **USDC on the target chain** — used as payment channel reserves, deposited via the payments portal
+
+**The buyer wallet does NOT need ETH or any native token for gas.** All on-chain transactions (channel reserve, settle, close) are initiated by the seller. The buyer only signs off-chain messages.
 
 **Never move `identity.key` off the host that runs the buyer.** The hot wallet stays put. Funding happens via the payments portal running on that host (see next section), not by exporting the key to a wallet app on another machine.
 
@@ -148,6 +147,17 @@ The token rotates on every portal restart. If you've restarted the portal and th
 
 From the portal, the user connects an external wallet (MetaMask, Coinbase Wallet, etc.) and signs the deposit transaction there. USDC flows from the user's cold wallet into the Deposits contract, credited to the buyer address.
 
+### Two addresses — do not confuse them
+
+The portal UI shows the **Deposits contract address** as the USDC destination. This is a smart contract, not the buyer wallet. Do not send ETH or any other token to this address — only USDC.
+
+| Address | What it is | What to send |
+|---------|-----------|--------------|
+| Shown in portal | Deposits contract | USDC only |
+| `antseed buyer balance` → Wallet | Buyer wallet | Nothing — buyer needs no gas |
+
+After depositing, confirm with `antseed buyer balance` — the "Deposits Account → Available" line should reflect your deposit.
+
 ### When Hermes runs on a remote host
 
 If the buyer runs on a remote box, `127.0.0.1:3118` isn't reachable from the user's browser directly. Start the portal on the remote host detached, then SSH-forward the port to the user's laptop.
@@ -187,6 +197,8 @@ antseed buyer connection set --peer <peerId>        # pin it for this session
 
 Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
 
+**The pinned peer is session-only and is cleared when the buyer proxy restarts.** For non-systemd setups (desktop app, background process), re-run `antseed buyer connection set --peer <peerId>` after every restart.
+
 For persistent systemd deployments, put `--peer <peerId>` in the `ExecStart=` line instead — it survives restarts and avoids a stale state file.
 
 ## Wiring Hermes to the buyer proxy
@@ -218,6 +230,24 @@ Notes:
 - `api_mode: chat_completions` is required — the buyer proxy speaks OpenAI chat-completions, not the Responses API.
 - `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `antseed network browse` (or `curl -s http://127.0.0.1:8377/v1/models`) so you don't advertise models no peer serves.
 - `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` pins it to this custom provider.
+
+### Auxiliary calls when using openai-responses models
+
+Some peers (e.g. Dark Signal) serve GPT models via the `openai-responses` protocol, which requires streaming. Hermes auxiliary functions (title generation, context compression, etc.) make non-streaming requests and will fail with `HTTP 400: Stream must be set to true` if they hit an openai-responses model.
+
+Fix: point Hermes auxiliaries at a `chat_completions` model from the same or a different peer. In `~/.hermes/config.yaml`, override the auxiliary providers that make non-streaming calls:
+
+```yaml
+auxiliary:
+  title_generation:
+    provider: antseed
+    model: minimax-m2.7   # chat_completions protocol — no streaming requirement
+  compression:
+    provider: antseed
+    model: minimax-m2.7
+```
+
+Check which protocol a model uses with `antseed network peer <peerId>` — look for `protocols: openai-chat-completions` vs `protocols: openai-responses` in the service listing.
 
 ### Swapping the routed model
 
