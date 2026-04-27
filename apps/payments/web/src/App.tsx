@@ -11,13 +11,14 @@ import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
 import { DashboardView } from './views/DashboardView';
 import { EmissionsView } from './views/EmissionsView';
+import { DiemRewardsView } from './views/DiemRewardsView';
 import { ChannelsView } from './components/ChannelsView';
 import { AuthorizedWalletProvider } from './context/AuthorizedWalletContext';
 import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
 
 export type OverlayPhase = 'deposit' | 'success' | null;
 
-const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions']);
+const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions', 'diem-rewards']);
 
 function parseTabFromUrl(): TabId {
   const raw = new URLSearchParams(window.location.search).get('tab');
@@ -206,6 +207,7 @@ function AppShell({
             {activeTab === 'dashboard' && <DashboardView config={config} />}
             {activeTab === 'channels'  && <ChannelsView  config={config} />}
             {activeTab === 'emissions' && <EmissionsView config={config} />}
+            {activeTab === 'diem-rewards' && <DiemRewardsView config={config} />}
           </main>
         </div>
         <WalletDrawer

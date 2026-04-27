@@ -70,7 +70,7 @@ export function Nav() {
   };
   return (
     <nav className="nav">
-      <a className="brand" href="/">
+      <a className="brand" href={ANTSEED_URL}>
         <span>
           <span className="ant">ANT</span>
           <span className="seed">SEED</span>
@@ -120,17 +120,19 @@ export function ClaimBanner() {
     <div className="claim-banner">
       <div className="claim-banner-inner">
         <div>
-          <span className="eyebrow"><span className="pulse" /> Claim your $ANTS</span>
-          <h2>Your $ANTS claim through the <em>payments portal</em>.</h2>
+          <span className="eyebrow"><span className="pulse" /> AntStation required for $ANTS</span>
+          <h2>Download <em>AntStation</em> to claim your $ANTS.</h2>
           <p>
-            Install AntStation or the AntSeed CLI to open the local payments portal, connect
-            the same wallet you stake with, and claim your $ANTS there. Then spend them in
-            AntStation on any model, or connect Claude Code, Cursor, or any agent via{' '}
-            <code style={{ background: 'rgba(31,216,122,0.12)', color: 'var(--brand)', padding: '1px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>
-              localhost:8377
-            </code>
-            . Provider-cost pricing, more inference per dollar than any subscription.
+            This staking page handles $DIEM and USDC. Your $ANTS claim lives in AntStation —
+            the AntSeed desktop app. Install it, open the Payments portal, connect the same
+            wallet you stake with, and claim your $ANTS there.
           </p>
+          <div className="claim-path" aria-label="How to claim ANTS">
+            <span><strong>1</strong> Install AntStation</span>
+            <span><strong>2</strong> Open Payments</span>
+            <span><strong>3</strong> Connect same wallet</span>
+            <span><strong>4</strong> Claim $ANTS</span>
+          </div>
           <div className="claim-banner-actions">
             {/* Match antseed.com's primary download button: OS icon +
                 "Download for <OS>" when we have a direct installer,
@@ -145,10 +147,10 @@ export function ClaimBanner() {
               {hasDirectInstaller(platform) ? (
                 <>
                   <PlatformIcon platform={platform} />
-                  {platform === 'mac' ? 'Install AntStation for Mac' : 'Install AntStation for Windows'}
+                  {platform === 'mac' ? 'Install AntStation for Mac to claim $ANTS' : 'Install AntStation for Windows to claim $ANTS'}
                 </>
               ) : (
-                <>Install AntStation →</>
+                <>Install AntStation to claim $ANTS →</>
               )}
             </a>
             <a
@@ -165,10 +167,10 @@ export function ClaimBanner() {
           </div>
         </div>
         <div className="claim-mock">
-          <div className="line"><span className="comment"># antstation › payments portal</span></div>
-          <div className="line"><span className="key">connected wallet</span><span className="num">same as here</span></div>
-          <div className="line"><span className="key">$ANTS pending</span><span className="num">auto-synced</span></div>
-          <div className="line"><span className="key">USDC earned</span><span className="num">live stream</span></div>
+          <div className="line"><span className="comment"># AntStation app › Payments</span></div>
+          <div className="line"><span className="key">claim location</span><span className="num">AntStation</span></div>
+          <div className="line"><span className="key">wallet</span><span className="num">same as staking</span></div>
+          <div className="line"><span className="key">$ANTS pending</span><span className="num">ready to claim</span></div>
           <hr />
           <div className="line"><span className="comment"># spend on any model →</span></div>
           <div className="line"><span className="key">claude-sonnet-4.6</span><span className="num">ready</span></div>

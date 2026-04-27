@@ -60,9 +60,8 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const pool = usePoolStats();
   const user = useUserStats();
 
-  const stakeDefaultAmt = useMemo(() => {
-    if (!isConnected) return formatDiemInput(DEFAULT_STAKE_AMOUNT);
-    if (user.walletDiem == null) return '0';
+  const stakeMaxAmount = useMemo(() => {
+    if (!isConnected || user.walletDiem == null) return null;
 
     let maxStakeable = user.walletDiem;
     if (pool.maxTotalStake != null && pool.maxTotalStake !== 0n) {
@@ -70,10 +69,16 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
       const capRemaining = pool.maxTotalStake > poolTotal ? pool.maxTotalStake - poolTotal : 0n;
       maxStakeable = maxStakeable < capRemaining ? maxStakeable : capRemaining;
     }
-
-    const defaultAmount = maxStakeable < DEFAULT_STAKE_AMOUNT ? maxStakeable : DEFAULT_STAKE_AMOUNT;
-    return formatDiemInput(defaultAmount);
+    return maxStakeable;
   }, [isConnected, pool.maxTotalStake, pool.totalStaked, user.walletDiem]);
+
+  const stakeDefaultAmt = useMemo(() => {
+    if (!isConnected) return formatDiemInput(DEFAULT_STAKE_AMOUNT);
+    if (stakeMaxAmount == null) return '0';
+
+    const defaultAmount = stakeMaxAmount < DEFAULT_STAKE_AMOUNT ? stakeMaxAmount : DEFAULT_STAKE_AMOUNT;
+    return formatDiemInput(defaultAmount);
+  }, [isConnected, stakeMaxAmount]);
 
   const setAmtFromUser = (next: string) => {
     setAmtEdited(true);
@@ -103,7 +108,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const quickSet = (v: string) => {
     setAmtEdited(true);
     if (v === 'max') {
-      if (tab === 'stake' && user.walletDiem != null) setAmt(String(toDiemNumber(user.walletDiem)));
+      if (tab === 'stake' && stakeMaxAmount != null) setAmt(formatDiemInput(stakeMaxAmount));
       else if (tab === 'unstake' && user.stakedDiem != null) setAmt(String(toDiemNumber(user.stakedDiem)));
     } else {
       setAmt(v);
@@ -147,6 +152,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             walletDiem={user.walletDiem}
             poolTotalStaked={pool.totalStaked}
             maxTotalStake={pool.maxTotalStake}
+            maxStakeable={stakeMaxAmount}
             usdcPerEpoch={usdcPerEpoch}
             usdcPerMonth={usdcPerMonth}
             usdcPerYear={usdcPerYear}
@@ -207,6 +213,7 @@ interface StakePanelProps {
   walletDiem: bigint | null;
   poolTotalStaked: bigint | null;
   maxTotalStake: bigint | null;
+  maxStakeable: bigint | null;
   usdcPerEpoch: number | null;
   usdcPerMonth: number | null;
   usdcPerYear: number | null;
@@ -237,6 +244,25 @@ function StakePanel(props: StakePanelProps) {
   const insufficientBalance = props.walletDiem != null && parsedAmt > props.walletDiem;
   const needsApproval = allowance != null && parsedAmt > 0n && allowance < parsedAmt;
 
+  const quickOptions = useMemo(() => {
+    const fixed = [
+      { label: '1', value: '1', amount: parseEther('1') },
+      { label: '10', value: '10', amount: parseEther('10') },
+      { label: '100', value: '100', amount: parseEther('100') },
+      { label: '1,000', value: '1000', amount: parseEther('1000') },
+    ];
+    const shouldDisable = (amount: bigint) => {
+      if (!props.isConnected) return false;
+      if (props.maxStakeable == null) return true;
+      return amount > props.maxStakeable;
+    };
+
+    return [
+      ...fixed.map(({ label, value, amount }) => ({ label, value, disabled: shouldDisable(amount) })),
+      { label: 'Max', value: 'max', disabled: props.isConnected && (props.maxStakeable == null || props.maxStakeable === 0n) },
+    ];
+  }, [props.isConnected, props.maxStakeable]);
+
   const disabled =
     !props.isConnected ||
     amtInvalid ||
@@ -247,7 +273,7 @@ function StakePanel(props: StakePanelProps) {
     approve.isPending;
 
   return (
-    <>
+    <div className="panel-v2 stake-panel-v2">
       <InputField
         label="You stake"
         balanceLabel="Wallet"
@@ -256,33 +282,30 @@ function StakePanel(props: StakePanelProps) {
         setAmt={props.setAmt}
         amtUsd={props.amtUsd}
       />
-      <QuickSet
-        options={[
-          { label: '1', value: '1' },
-          { label: '10', value: '10' },
-          { label: '100', value: '100' },
-          { label: '1,000', value: '1000' },
-          { label: 'Max', value: 'max' },
-        ]}
-        onSet={props.setQuick}
-      />
+      <QuickSet options={quickOptions} onSet={props.setQuick} />
 
-      <div className="yield-box">
-        <div className="yield-row hero-row">
-          <span className="lbl">Projected USDC<span className="sub">extrapolated from last 7 days</span></span>
-          <span className="val">{props.usdcPerEpoch != null ? `${fmtUSD(props.usdcPerEpoch)} / week` : '—'}</span>
+      <div className="stake-reward-summary">
+        <div className="reward-summary-head">
+          <span>Projected rewards</span>
+          <strong>Rolling 7d estimate</strong>
         </div>
-        <div className="yield-row">
-          <span className="lbl">Per month</span>
-          <span className="val">{props.usdcPerMonth != null ? fmtUSD(props.usdcPerMonth) : '—'} <span className="unit">USDC</span></span>
-        </div>
-        <div className="yield-row">
-          <span className="lbl">Per year</span>
-          <span className="val">{props.usdcPerYear != null ? fmtUSD(props.usdcPerYear) : '—'} <span className="unit">USDC</span></span>
-        </div>
-        <div className="yield-row">
-          <span className="lbl">USDC APR<span className="sub">rolling 7d · annualized</span></span>
-          <span className="val" style={{ color: 'var(--brand-dark)' }}>{fmtPct(props.apr)}</span>
+        <div className="reward-summary-grid">
+          <div className="reward-summary-card primary">
+            <span>USDC / week</span>
+            <strong>{props.usdcPerEpoch != null ? fmtUSD(props.usdcPerEpoch) : '—'}</strong>
+          </div>
+          <div className="reward-summary-card">
+            <span>Month</span>
+            <strong>{props.usdcPerMonth != null ? fmtUSD(props.usdcPerMonth) : '—'}</strong>
+          </div>
+          <div className="reward-summary-card">
+            <span>Year</span>
+            <strong>{props.usdcPerYear != null ? fmtUSD(props.usdcPerYear) : '—'}</strong>
+          </div>
+          <div className="reward-summary-card accent">
+            <span>USDC APR</span>
+            <strong>{fmtPct(props.apr)}</strong>
+          </div>
         </div>
       </div>
 
@@ -325,7 +348,7 @@ function StakePanel(props: StakePanelProps) {
           {(stake.error ?? approve.error)?.message ?? 'Transaction failed'}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -356,18 +379,25 @@ function UnstakePanel(props: UnstakePanelProps) {
   const disabled = !props.isConnected || parsedAmt === 0n || amountTooLarge || initiate.isPending;
 
   return (
-    <>
-      {/* Always-visible educational note — this is the UX best-practice bit
-          that the author's original "1-day cooldown" copy couldn't convey. */}
-      <div className="claim-note">
-        <strong>Three-step unstake.</strong> Unstakes are batched on-chain.
-        You'll see <code>queued</code> → <code>cooling down</code> → <code>claimable</code>.
-        Each state advances with a tx that <em>any</em> user in your batch can trigger,
-        so you'll often find yours has moved when you check back. After the first
-        queuer opens a batch, it stays open for at least the minimum batch window
-        (currently {props.minUnstakeBatchOpenSecs != null ? fmtDuration(props.minUnstakeBatchOpenSecs) : '—'})
-        so other stakers get a predictable chance to join before it leaves. Total wait ≈
-        batch window + Venice's cooldown ({props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}).
+    <div className="panel-v2 unstake-panel-v2">
+      <div className="unstake-flow-card">
+        <div className="unstake-flow-copy">
+          <span className="panel-kicker">Withdraw $DIEM</span>
+          <h3>Unstake through a shared batch.</h3>
+          <p>
+            Unstakes move through three on-chain states. Anyone in the batch can advance
+            it, so the cost is shared instead of every staker paying alone.
+          </p>
+          <div className="unstake-timing">
+            <span>Batch window · <strong>{props.minUnstakeBatchOpenSecs != null ? fmtDuration(props.minUnstakeBatchOpenSecs) : '—'}</strong></span>
+            <span>Venice cooldown · <strong>{props.diemCooldownSecs != null ? fmtDuration(props.diemCooldownSecs) : '—'}</strong></span>
+          </div>
+        </div>
+        <ol className="unstake-steps" aria-label="Unstake flow">
+          <li><span>01</span><strong>Queued</strong><em>Join the open batch</em></li>
+          <li><span>02</span><strong>Cooling</strong><em>Sent to Venice</em></li>
+          <li><span>03</span><strong>Claimable</strong><em>Withdraw to wallet</em></li>
+        </ol>
       </div>
 
       {/* Input only makes sense while the user has no active unstake in flight. */}
@@ -392,7 +422,7 @@ function UnstakePanel(props: UnstakePanelProps) {
           />
           {props.isConnected ? (
             <button
-              className="stake-cta ghost"
+              className="stake-cta ghost unstake-cta"
               disabled={disabled}
               onClick={async () => {
                 await initiate.run(props.amt);
@@ -416,7 +446,7 @@ function UnstakePanel(props: UnstakePanelProps) {
       {state.status !== 'none' && (
         <UnstakeStateView state={state} flushableAt={props.flushableAt} />
       )}
-    </>
+    </div>
   );
 }
 
@@ -556,75 +586,112 @@ function ClaimPanel(props: ClaimPanelProps) {
   const claimableEpochs = props.claimableAntsEpochs.length;
 
   return (
-    <>
-      <div className="claim-grid">
-        <div className="claim-stat">
-          <span className="lbl">Claimable USDC</span>
-          <span className="big">${pendingUsdcNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <span className="sub">accrues in real time · claim anytime</span>
-        </div>
-        <div className="claim-stat">
-          <span className="lbl">Pending $ANTS</span>
-          <span className="big">{fmtNum(pendingAntsNum)}</span>
-          <span className="sub">
-            {claimableEpochs > 0 ? `across ${claimableEpochs} unprocessed epoch${claimableEpochs === 1 ? '' : 's'}` : 'no unprocessed epochs'}
-          </span>
-        </div>
+    <div className="claim-panel-v2">
+      <div className="claim-intro">
+        <span className="claim-intro-kicker">Rewards destination</span>
+        <h3>Claim USDC here. Claim $ANTS in AntStation.</h3>
+        <p>
+          Your wallet has two reward streams. USDC is paid by the staking contract on this
+          page; $ANTS are claimed from the AntSeed desktop app’s Payments portal.
+        </p>
       </div>
 
-      <div className="claim-note">
-        Claim USDC here. <strong>$ANTS claims live in the AntSeed payments portal</strong> —
-        install AntStation or the CLI, connect the same wallet, and claim from there.
-      </div>
-
-      {props.hasMoreClaimableAntsEpochs && (
-        <div className="claim-note">
-          More $ANTS epochs may be available in the payments portal after this batch.
+      <div className="claim-destination-card usdc-destination">
+        <div className="claim-destination-top">
+          <span className="destination-tag">This page</span>
+          <span className="destination-type">USDC stream</span>
         </div>
-      )}
-
-      {claimableEpochs > 0 && props.pendingAnts === 0n && (
-        <div className="claim-note">
-          Some claimable epochs may have no $ANTS payout, but the payments portal can
-          still clear them so later epochs appear.
+        <div className="destination-main">
+          <div>
+            <span className="destination-label">Claimable USDC</span>
+            <strong>{pendingUsdcNum.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}</strong>
+            <span className="destination-sub">Accrues in real time · claim anytime</span>
+          </div>
+          <div className="mini-route" aria-hidden="true">
+            <span>staking</span>
+            <i />
+            <span>wallet</span>
+          </div>
         </div>
-      )}
-
-      {props.isConnected ? (
-        <>
+        {props.isConnected ? (
           <button
             className="stake-cta brand-fill"
             disabled={props.pendingUsdc == null || props.pendingUsdc === 0n || claimUsdc.isPending}
             onClick={() => claimUsdc.run()}
-            style={{ marginBottom: 10 }}
           >
             {claimUsdc.isPending
               ? 'Claiming USDC…'
               : `Claim ${fmtUSD(pendingUsdcNum)} USDC →`}
           </button>
-          <a
-            href={antstationHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="stake-cta ghost"
-            style={{ display: 'block', textAlign: 'center', textDecoration: 'none', marginBottom: 10 }}
-          >
-            {antstationPlatform === 'mac'
-              ? 'Install AntStation for Mac →'
-              : antstationPlatform === 'win'
-                ? 'Install AntStation for Windows →'
-                : 'Install AntStation to claim $ANTS →'}
-          </a>
-          {claimUsdc.error && (
-            <div className="claim-note" style={{ color: '#c62828' }}>
-              {claimUsdc.error.message}
+        ) : null}
+      </div>
+
+      <div className="claim-destination-card ants-destination">
+        <div className="claim-destination-copy">
+          <div className="claim-destination-top">
+            <span className="destination-tag green">AntStation app</span>
+            <span className="destination-type">$ANTS emissions</span>
+          </div>
+          <div className="destination-main ants-main">
+            <div>
+              <span className="destination-label">Pending $ANTS</span>
+              <strong>{fmtNum(pendingAntsNum)}</strong>
+              <span className="destination-sub">
+                {claimableEpochs > 0 ? `${claimableEpochs} unprocessed epoch${claimableEpochs === 1 ? '' : 's'}` : 'No unprocessed epochs'}
+              </span>
             </div>
-          )}
-        </>
-      ) : (
-        <ConnectCta label="Connect wallet to view claims →" />
+          </div>
+          <ol className="antstation-flow">
+            <li><span>01</span> Install AntStation</li>
+            <li><span>02</span> Open Payments</li>
+            <li><span>03</span> Connect this wallet</li>
+            <li><span>04</span> Claim $ANTS</li>
+          </ol>
+          {props.isConnected ? (
+            <a
+              href={antstationHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="stake-cta ghost ants-download-cta"
+            >
+              {antstationPlatform === 'mac'
+                ? 'Install AntStation for Mac →'
+                : antstationPlatform === 'win'
+                  ? 'Install AntStation for Windows →'
+                  : 'Install AntStation to claim $ANTS →'}
+            </a>
+          ) : null}
+        </div>
+        <div className="antstation-window" aria-hidden="true">
+          <div className="window-bar"><span /><span /><span /></div>
+          <div className="window-title">AntStation · Payments</div>
+          <div className="window-row"><span>wallet</span><strong>same as staking</strong></div>
+          <div className="window-row"><span>$ANTS</span><strong>ready</strong></div>
+          <div className="window-claim">claim emissions →</div>
+        </div>
+      </div>
+
+      {props.hasMoreClaimableAntsEpochs && (
+        <div className="claim-note ants-claim-note">
+          More $ANTS epochs may be available in AntStation after this batch.
+        </div>
       )}
-    </>
+
+      {claimableEpochs > 0 && props.pendingAnts === 0n && (
+        <div className="claim-note ants-claim-note">
+          Some claimable epochs may have no $ANTS payout, but AntStation can still clear
+          them so later epochs appear.
+        </div>
+      )}
+
+      {claimUsdc.error && (
+        <div className="claim-note" style={{ color: '#c62828' }}>
+          {claimUsdc.error.message}
+        </div>
+      )}
+
+      {!props.isConnected && <ConnectCta label="Connect wallet to view claims →" />}
+    </div>
   );
 }
 
@@ -679,11 +746,17 @@ function InputField(props: {
   );
 }
 
-function QuickSet({ options, onSet }: { options: Array<{ label: string; value: string }>; onSet: (v: string) => void }) {
+function QuickSet({
+  options,
+  onSet,
+}: {
+  options: Array<{ label: string; value: string; disabled?: boolean }>;
+  onSet: (v: string) => void;
+}) {
   return (
     <div className="quick-set">
       {options.map((o) => (
-        <button key={o.value} onClick={() => onSet(o.value)}>{o.label}</button>
+        <button key={o.value} disabled={o.disabled} onClick={() => onSet(o.value)}>{o.label}</button>
       ))}
     </div>
   );
