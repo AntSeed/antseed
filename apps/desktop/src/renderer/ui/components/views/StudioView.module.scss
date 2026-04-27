@@ -331,6 +331,11 @@
   cursor: pointer;
 }
 
+.history-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .canvas-preview {
   flex: 1;
   min-height: 0;
@@ -445,6 +450,15 @@
   color: var(--text-muted);
   font-size: 12px;
   padding: 8px 4px;
+}
+
+.attachment-notice {
+  border: 1px solid rgba(248, 181, 69, 0.45);
+  background: rgba(248, 181, 69, 0.1);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 12px;
 }
 
 @media (max-width: 1120px) {

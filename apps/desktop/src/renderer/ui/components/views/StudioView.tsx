@@ -3,12 +3,22 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, ArrowUp02Icon, Folder01Icon, GitBranchIcon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
-import type { RawChatAttachment } from '../../../types/bridge';
+import type { DesktopBridge, StudioIntent, StudioRunReference } from '../../../types/bridge';
+import {
+  buildStudioProxyRequest,
+  buildStudioRunRequest,
+  isStudioServiceCandidate,
+  parseStudioProxyTransportResult,
+  supportsStudioIntent,
+} from '../../../modules/studio-run';
 import styles from './StudioView.module.scss';
 
-type StudioIntent = 'image-edit' | 'image-generate' | 'video-generate';
-
-type StudioAttachment = RawChatAttachment & {
+type StudioAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  base64: string;
   previewUrl: string;
 };
 
@@ -19,24 +29,32 @@ type StudioMediaResult = {
   createdAt: number;
 };
 
-type ServiceSignalEntry = {
-  label: string;
-  description: string;
-  categories: string[];
+type StudioRunHistoryEntry = {
+  id: string;
+  status: string;
+  intent: StudioIntent;
+  serviceLabel: string;
+  prompt: string;
+  createdAt: number;
+  outputs: StudioMediaResult[];
+  error?: string;
+};
+
+type StudioDraft = {
+  intent: StudioIntent;
+  prompt: string;
+  selectedServiceValue: string;
+  showHistory: boolean;
 };
 
 const STUDIO_INTENTS: StudioIntent[] = ['image-edit', 'image-generate', 'video-generate'];
+const STUDIO_DRAFT_STORAGE_KEY = 'antseed:studio-draft-v1';
+const STUDIO_RUN_HISTORY_STORAGE_KEY = 'antseed:studio-runs-v1';
 
 const STUDIO_INTENT_LABELS: Record<StudioIntent, string> = {
   'image-edit': 'Image Edit',
   'image-generate': 'Image Generation',
   'video-generate': 'Video Generation',
-};
-
-const STUDIO_INTENT_HINTS: Record<StudioIntent, string[]> = {
-  'image-edit': ['image-edit', 'image edit', 'edit', 'inpaint', 'img2img', 'multimodal', 'vision', 'image', 'media'],
-  'image-generate': ['image', 'image-generation', 'image generate', 'diffusion', 'flux', 'sdxl', 'gpt-image', 'media'],
-  'video-generate': ['video', 'video-generation', 'video generate', 'animation', 'cinema', 'lipsync', 'motion'],
 };
 
 const STUDIO_INTENT_REFERENCE_REQUIRED: Record<StudioIntent, boolean> = {
@@ -46,10 +64,108 @@ const STUDIO_INTENT_REFERENCE_REQUIRED: Record<StudioIntent, boolean> = {
 };
 
 const MAX_ATTACHMENTS = 8;
+const MAX_STUDIO_RUN_HISTORY = 30;
 const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-const MEDIA_CATEGORY_HINTS = ['image', 'video', 'edit', 'vision', 'media', 'cinema', 'lipsync', 'animation', 'diffusion', 'inpaint'];
-const MEDIA_LABEL_HINT = /(image|video|edit|vision|media|cinema|lipsync|animate|diffusion|inpaint)/i;
-const URL_REGEX = /https?:\/\/[^\s<>"'`]+/g;
+
+const DEFAULT_STUDIO_DRAFT: StudioDraft = {
+  intent: 'image-edit',
+  prompt: '',
+  selectedServiceValue: '',
+  showHistory: false,
+};
+
+function normalizeStudioIntent(value: unknown): StudioIntent {
+  return value === 'image-generate' || value === 'video-generate' ? value : 'image-edit';
+}
+
+function loadStudioDraft(): StudioDraft {
+  try {
+    const raw = localStorage.getItem(STUDIO_DRAFT_STORAGE_KEY);
+    if (!raw) return DEFAULT_STUDIO_DRAFT;
+    const parsed = JSON.parse(raw) as Partial<StudioDraft> | null;
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_STUDIO_DRAFT;
+    return {
+      intent: normalizeStudioIntent(parsed.intent),
+      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
+      selectedServiceValue: typeof parsed.selectedServiceValue === 'string' ? parsed.selectedServiceValue : '',
+      showHistory: parsed.showHistory === true,
+    };
+  } catch {
+    return DEFAULT_STUDIO_DRAFT;
+  }
+}
+
+function persistStudioDraft(draft: StudioDraft): void {
+  try {
+    localStorage.setItem(STUDIO_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Ignore persistence failures in restricted environments.
+  }
+}
+
+function loadStudioRunHistory(): StudioRunHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(STUDIO_RUN_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const runs: StudioRunHistoryEntry[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== 'object') continue;
+      const record = entry as Record<string, unknown>;
+      const id = typeof record.id === 'string' ? record.id : '';
+      const status = typeof record.status === 'string' ? record.status : 'unknown';
+      const intent = normalizeStudioIntent(record.intent);
+      const serviceLabel = typeof record.serviceLabel === 'string' ? record.serviceLabel : 'Unknown service';
+      const prompt = typeof record.prompt === 'string' ? record.prompt : '';
+      const createdAt = typeof record.createdAt === 'number' ? record.createdAt : Date.now();
+      const outputs = Array.isArray(record.outputs)
+        ? record.outputs
+          .map((output, index) => {
+            if (!output || typeof output !== 'object') return null;
+            const outputRecord = output as Record<string, unknown>;
+            const url = typeof outputRecord.url === 'string' ? outputRecord.url : null;
+            if (!url) return null;
+            const kind = outputRecord.kind === 'video' ? 'video' : 'image';
+            const outputCreatedAt = typeof outputRecord.createdAt === 'number' ? outputRecord.createdAt : createdAt;
+            const key = typeof outputRecord.key === 'string' ? outputRecord.key : `${id}:${String(index)}:${url}`;
+            return {
+              key,
+              url,
+              kind,
+              createdAt: outputCreatedAt,
+            } satisfies StudioMediaResult;
+          })
+          .filter((output): output is StudioMediaResult => output !== null)
+        : [];
+      if (!id) continue;
+      runs.push({
+        id,
+        status,
+        intent,
+        serviceLabel,
+        prompt,
+        createdAt,
+        outputs,
+        ...(typeof record.error === 'string' ? { error: record.error } : {}),
+      });
+    }
+    return runs.slice(0, MAX_STUDIO_RUN_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function persistStudioRunHistory(entries: StudioRunHistoryEntry[]): void {
+  try {
+    localStorage.setItem(
+      STUDIO_RUN_HISTORY_STORAGE_KEY,
+      JSON.stringify(entries.slice(0, MAX_STUDIO_RUN_HISTORY)),
+    );
+  } catch {
+    // Ignore localStorage persistence errors.
+  }
+}
 
 function getPathTail(value: string | null | undefined): string {
   const trimmed = String(value || '').trim().replace(/[\\/]+$/, '');
@@ -85,75 +201,6 @@ function readFileAsAttachment(file: File): Promise<StudioAttachment | null> {
   });
 }
 
-function classifyMediaUrl(url: string): 'image' | 'video' | null {
-  const clean = url.split('?')[0]?.toLowerCase() || url.toLowerCase();
-  if (/\.(mp4|mov|webm|m4v|avi|mkv)$/.test(clean)) return 'video';
-  if (/\.(png|jpg|jpeg|webp|gif|bmp|svg)$/.test(clean)) return 'image';
-  return null;
-}
-
-function extractUrlsFromText(text: string): string[] {
-  if (!text) return [];
-  const matches = text.match(URL_REGEX) || [];
-  return matches.map((entry) => entry.replace(/[),.;]+$/, ''));
-}
-
-function extractUrlsFromUnknown(value: unknown): string[] {
-  if (typeof value === 'string') {
-    return extractUrlsFromText(value);
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => extractUrlsFromUnknown(entry));
-  }
-  if (!value || typeof value !== 'object') {
-    return [];
-  }
-  const record = value as Record<string, unknown>;
-  const directKeys = ['url', 'image_url', 'video_url', 'content', 'text', 'output', 'details'];
-  return directKeys.flatMap((key) => extractUrlsFromUnknown(record[key]));
-}
-
-function toServiceSignalText(entry: ServiceSignalEntry): string {
-  const categoryText = entry.categories.join(' ');
-  return `${entry.label} ${entry.description} ${categoryText}`.toLowerCase();
-}
-
-function hasAnyHint(signal: string, hints: string[]): boolean {
-  return hints.some((hint) => signal.includes(hint));
-}
-
-function isStudioServiceCandidate(entry: ServiceSignalEntry): boolean {
-  const categoryHit = entry.categories.some((category) => {
-    const lowered = category.toLowerCase();
-    return MEDIA_CATEGORY_HINTS.some((hint) => lowered.includes(hint));
-  });
-  if (categoryHit) return true;
-  const text = `${entry.label} ${entry.description}`.trim();
-  return MEDIA_LABEL_HINT.test(text);
-}
-
-function supportsStudioIntent(entry: ServiceSignalEntry, intent: StudioIntent): boolean {
-  const signal = toServiceSignalText(entry);
-  return hasAnyHint(signal, STUDIO_INTENT_HINTS[intent]);
-}
-
-function buildStudioPrompt(intent: StudioIntent, prompt: string, imageCount: number): string {
-  const requestedTask = prompt.trim();
-  const fallbackTask =
-    intent === 'image-edit'
-      ? 'Edit the attached reference images and produce a polished variant.'
-      : intent === 'video-generate'
-        ? 'Generate a short cinematic video.'
-        : 'Generate a high-quality image.';
-  return [
-    '[ANTSEED_STUDIO_V1]',
-    `intent=${intent}`,
-    `references=${String(imageCount)}`,
-    `task=${requestedTask || fallbackTask}`,
-    'Return direct media URLs in markdown and list the key generation settings used.',
-  ].join('\n');
-}
-
 function getPromptPlaceholder(intent: StudioIntent): string {
   if (intent === 'image-edit') {
     return 'Describe how you want the references edited (style, lighting, composition, details)...';
@@ -171,23 +218,35 @@ type StudioViewProps = {
 export function StudioView({ active }: StudioViewProps) {
   const snap = useUiSnapshot();
   const actions = useActions();
-  const [intent, setIntent] = useState<StudioIntent>('image-edit');
-  const [prompt, setPrompt] = useState('');
+  const bridge = window.antseedDesktop as DesktopBridge | undefined;
+  const initialDraftRef = useRef<StudioDraft>(loadStudioDraft());
+
+  const [intent, setIntent] = useState<StudioIntent>(initialDraftRef.current.intent);
+  const [prompt, setPrompt] = useState(initialDraftRef.current.prompt);
   const [attachments, setAttachments] = useState<StudioAttachment[]>([]);
-  const [selectedServiceValue, setSelectedServiceValue] = useState('');
+  const [selectedServiceValue, setSelectedServiceValue] = useState(initialDraftRef.current.selectedServiceValue);
   const [selectedResultKey, setSelectedResultKey] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const [showHistory, setShowHistory] = useState(initialDraftRef.current.showHistory);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
+  const [copiedResultUrl, setCopiedResultUrl] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [studioRuns, setStudioRuns] = useState<StudioRunHistoryEntry[]>(() => loadStudioRunHistory());
   const fileInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const studioServiceOptions = useMemo(() => {
-    return snap.chatServiceOptions.filter((entry) => isStudioServiceCandidate(entry));
-  }, [snap.chatServiceOptions]);
+  useEffect(() => {
+    persistStudioRunHistory(studioRuns);
+  }, [studioRuns]);
 
-  const compatibleServiceOptions = useMemo(() => {
-    return studioServiceOptions.filter((entry) => supportsStudioIntent(entry, intent));
-  }, [studioServiceOptions, intent]);
+  const studioServiceOptions = useMemo(() => (
+    snap.chatServiceOptions.filter((entry) => isStudioServiceCandidate(entry))
+  ), [snap.chatServiceOptions]);
+
+  const compatibleServiceOptions = useMemo(() => (
+    studioServiceOptions.filter((entry) => supportsStudioIntent(entry, intent))
+  ), [studioServiceOptions, intent]);
 
   const intentOptionCounts = useMemo<Record<StudioIntent, number>>(
     () => ({
@@ -202,33 +261,29 @@ export function StudioView({ active }: StudioViewProps) {
     if (selectedServiceValue && compatibleServiceOptions.some((entry) => entry.value === selectedServiceValue)) {
       return;
     }
-    const fallbackValue = compatibleServiceOptions[0]?.value || '';
-    setSelectedServiceValue(fallbackValue);
+    setSelectedServiceValue(compatibleServiceOptions[0]?.value || '');
   }, [compatibleServiceOptions, selectedServiceValue]);
 
+  useEffect(() => {
+    persistStudioDraft({
+      intent,
+      prompt,
+      selectedServiceValue,
+      showHistory,
+    });
+  }, [intent, prompt, selectedServiceValue, showHistory]);
+
   const mediaResults = useMemo<StudioMediaResult[]>(() => {
-    const messages = Array.isArray(snap.chatMessages) ? snap.chatMessages : [];
-    const urls: StudioMediaResult[] = [];
-    for (const rawMessage of messages) {
-      if (!rawMessage || typeof rawMessage !== 'object') continue;
-      const message = rawMessage as { role?: unknown; content?: unknown; createdAt?: unknown };
-      if (message.role !== 'assistant') continue;
-      const extracted = extractUrlsFromUnknown(message.content);
-      const createdAt = Number(message.createdAt) || Date.now();
-      for (const url of extracted) {
-        const kind = classifyMediaUrl(url);
-        if (!kind) continue;
-        urls.push({ key: `${url}|${createdAt}`, url, kind, createdAt });
+    const byUrl = new Map<string, StudioMediaResult>();
+    for (const run of studioRuns) {
+      for (const output of run.outputs) {
+        if (!byUrl.has(output.url)) {
+          byUrl.set(output.url, output);
+        }
       }
     }
-    const deduped = new Map<string, StudioMediaResult>();
-    for (const entry of urls.sort((a, b) => b.createdAt - a.createdAt)) {
-      if (!deduped.has(entry.url)) {
-        deduped.set(entry.url, { ...entry, key: `${entry.url}|${entry.createdAt}` });
-      }
-    }
-    return [...deduped.values()];
-  }, [snap.chatMessages]);
+    return [...byUrl.values()].sort((a, b) => b.createdAt - a.createdAt);
+  }, [studioRuns]);
 
   useEffect(() => {
     if (mediaResults.length === 0) {
@@ -249,29 +304,21 @@ export function StudioView({ active }: StudioViewProps) {
   const workspaceLabel = getPathTail(workspacePath);
   const git = snap.chatWorkspaceGitStatus;
   const gitSummary = git.available
-    ? `${git.branch || 'detached'}${git.modifiedFiles + git.stagedFiles + git.untrackedFiles > 0 ? ' • dirty' : ' • clean'}`
+    ? `${git.branch || 'detached'}${git.modifiedFiles + git.stagedFiles + git.untrackedFiles > 0 ? ' - dirty' : ' - clean'}`
     : git.error
       ? 'Git unavailable'
       : 'No git repo';
-
-  const conversationSummaries = useMemo(() => {
-    if (!Array.isArray(snap.chatConversations)) return [] as Array<{ id: string; title: string }>;
-    return (snap.chatConversations as Array<Record<string, unknown>>)
-      .map((entry) => ({
-        id: String(entry.id || ''),
-        title: String(entry.title || 'Untitled Studio Run'),
-      }))
-      .filter((entry) => entry.id.length > 0)
-      .slice(0, 20);
-  }, [snap.chatConversations]);
 
   const selectedService = compatibleServiceOptions.find((entry) => entry.value === selectedServiceValue) || null;
   const selectedServiceTags = selectedService?.categories.slice(0, 4).join(', ') || '';
   const requiresReference = STUDIO_INTENT_REFERENCE_REQUIRED[intent];
 
   const submitDisabledReason = useMemo(() => {
-    if (snap.chatAbortVisible || snap.chatSending) return 'A Studio task is already running.';
+    if (isSubmitting) return 'A Studio task is already running.';
     if (snap.chatInputDisabled) return 'Studio input is temporarily unavailable.';
+    if (!bridge?.apiTryProxyRequest || !bridge?.chatAiGetProxyStatus) {
+      return 'Desktop proxy bridge is unavailable.';
+    }
     if (studioServiceOptions.length === 0) {
       return 'No Studio-ready services found. Add media categories like image, video, edit, or multimodal.';
     }
@@ -288,14 +335,14 @@ export function StudioView({ active }: StudioViewProps) {
     return null;
   }, [
     attachments.length,
+    bridge,
     compatibleServiceOptions.length,
     intent,
+    isSubmitting,
     prompt,
     requiresReference,
     selectedService,
-    snap.chatAbortVisible,
     snap.chatInputDisabled,
-    snap.chatSending,
     studioServiceOptions.length,
   ]);
 
@@ -303,12 +350,38 @@ export function StudioView({ active }: StudioViewProps) {
 
   const upsertFiles = useCallback(async (files: FileList | File[]) => {
     const nextSlots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-    if (nextSlots === 0) return;
-    const selectedFiles = Array.from(files).slice(0, nextSlots);
+    if (nextSlots === 0) {
+      setAttachmentNotice(`Maximum ${MAX_ATTACHMENTS} references reached.`);
+      return;
+    }
+    const incomingFiles = Array.from(files);
+    const overflowCount = Math.max(0, incomingFiles.length - nextSlots);
+    const selectedFiles = incomingFiles.slice(0, nextSlots);
     const parsed = await Promise.all(selectedFiles.map((file) => readFileAsAttachment(file)));
     const valid = parsed.filter((entry): entry is StudioAttachment => Boolean(entry));
-    if (valid.length === 0) return;
+    const unsupportedCount = selectedFiles.length - valid.length;
+    if (valid.length === 0) {
+      if (unsupportedCount > 0 || overflowCount > 0) {
+        setAttachmentNotice(
+          [
+            unsupportedCount > 0 ? `${unsupportedCount} unsupported file(s) skipped (use JPG, PNG, WEBP, or GIF).` : null,
+            overflowCount > 0 ? `${overflowCount} file(s) skipped due to attachment limit.` : null,
+          ].filter(Boolean).join(' '),
+        );
+      }
+      return;
+    }
     setAttachments((prev) => [...prev, ...valid].slice(0, MAX_ATTACHMENTS));
+    if (unsupportedCount > 0 || overflowCount > 0) {
+      setAttachmentNotice(
+        [
+          unsupportedCount > 0 ? `${unsupportedCount} unsupported file(s) skipped (use JPG, PNG, WEBP, or GIF).` : null,
+          overflowCount > 0 ? `${overflowCount} file(s) skipped due to attachment limit.` : null,
+        ].filter(Boolean).join(' '),
+      );
+      return;
+    }
+    setAttachmentNotice(null);
   }, [attachments.length]);
 
   const handleFileInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -343,27 +416,149 @@ export function StudioView({ active }: StudioViewProps) {
     }
   }, [upsertFiles]);
 
-  const handleSubmit = useCallback(() => {
-    if (!canSubmit || !selectedService) return;
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit || !selectedService || !bridge?.apiTryProxyRequest || !bridge?.chatAiGetProxyStatus) return;
 
+    setRunError(null);
+    setIsSubmitting(true);
     actions.handleServiceChange(selectedService.value, selectedService.peerId);
-    const instruction = buildStudioPrompt(intent, prompt, attachments.length);
-    const rawAttachments: RawChatAttachment[] = attachments.map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      mimeType: entry.mimeType,
-      size: entry.size,
-      base64: entry.base64,
-    }));
-    actions.sendMessage(instruction, rawAttachments);
-    setPrompt('');
-  }, [actions, attachments, canSubmit, intent, prompt, selectedService]);
+
+    try {
+      const references: StudioRunReference[] = attachments.map((entry) => ({
+        name: entry.name,
+        mimeType: entry.mimeType,
+        base64: entry.base64,
+      }));
+      const request = buildStudioRunRequest(
+        selectedService.id,
+        intent,
+        prompt.trim(),
+        references,
+      );
+      const proxyStatus = await bridge.chatAiGetProxyStatus();
+      const proxyPort = proxyStatus.ok && proxyStatus.data.running
+        ? proxyStatus.data.port
+        : 0;
+      if (!proxyPort || proxyPort <= 0) {
+        const message = 'Buyer proxy is offline. Start Buyer runtime before running Studio tasks.';
+        setRunError(message);
+        return;
+      }
+
+      const proxyRequest = buildStudioProxyRequest(selectedService, request);
+      const rawResult = await bridge.apiTryProxyRequest({
+        port: proxyPort,
+        path: proxyRequest.path,
+        method: proxyRequest.method,
+        headers: proxyRequest.headers,
+        body: proxyRequest.bodyText,
+      });
+      const parsed = parseStudioProxyTransportResult(rawResult, selectedService.label);
+      const createdAt = Date.now();
+
+      if (!parsed.ok) {
+        setRunError(parsed.message);
+        setStudioRuns((prev) => [
+          {
+            id: `failed-${String(createdAt)}`,
+            status: 'failed',
+            intent,
+            serviceLabel: selectedService.label,
+            prompt: prompt.trim(),
+            createdAt,
+            outputs: [],
+            error: parsed.message,
+          },
+          ...prev,
+        ].slice(0, MAX_STUDIO_RUN_HISTORY));
+        return;
+      }
+
+      const outputItems: StudioMediaResult[] = parsed.data.outputs.map((entry, index) => ({
+        key: `${parsed.data.id}:${String(index)}:${entry.url}`,
+        url: entry.url,
+        kind: entry.kind,
+        createdAt,
+      }));
+
+      setStudioRuns((prev) => [
+        {
+          id: parsed.data.id,
+          status: parsed.data.status,
+          intent,
+          serviceLabel: selectedService.label,
+          prompt: prompt.trim(),
+          createdAt,
+          outputs: outputItems,
+        },
+        ...prev,
+      ].slice(0, MAX_STUDIO_RUN_HISTORY));
+
+      setSelectedResultKey(outputItems[0]?.key || null);
+      setPrompt('');
+      setAttachments([]);
+      setAttachmentNotice(null);
+    } catch (error) {
+      setRunError((error as Error)?.message || 'Unexpected Studio run error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [
+    actions,
+    attachments,
+    bridge,
+    canSubmit,
+    intent,
+    prompt,
+    selectedService,
+  ]);
 
   const handleServiceChange = useCallback((value: string) => {
     setSelectedServiceValue(value);
     const option = compatibleServiceOptions.find((entry) => entry.value === value);
     actions.handleServiceChange(value, option?.peerId);
   }, [actions, compatibleServiceOptions]);
+
+  const handleCopySelectedResultUrl = useCallback(() => {
+    if (!selectedResult) return;
+    void navigator.clipboard.writeText(selectedResult.url).then(() => {
+      setCopiedResultUrl(true);
+    }).catch(() => {
+      setCopiedResultUrl(false);
+    });
+  }, [selectedResult]);
+
+  const handleOpenSelectedResult = useCallback(() => {
+    if (!selectedResult) return;
+    window.open(selectedResult.url, '_blank', 'noopener,noreferrer');
+  }, [selectedResult]);
+
+  const handleDownloadSelectedResult = useCallback(() => {
+    if (!selectedResult) return;
+    const ext = selectedResult.kind === 'video' ? 'mp4' : 'png';
+    const stamp = new Date(selectedResult.createdAt).toISOString().replace(/[:.]/g, '-');
+    const anchor = document.createElement('a');
+    anchor.href = selectedResult.url;
+    anchor.download = `studio-${selectedResult.kind}-${stamp}.${ext}`;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [selectedResult]);
+
+  const handleNewRun = useCallback(() => {
+    setPrompt('');
+    setAttachments([]);
+    setAttachmentNotice(null);
+    setRunError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!copiedResultUrl) return;
+    const timer = window.setTimeout(() => setCopiedResultUrl(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copiedResultUrl]);
 
   const intentPromptPlaceholder = getPromptPlaceholder(intent);
 
@@ -441,7 +636,7 @@ export function StudioView({ active }: StudioViewProps) {
               className={styles.select}
               value={selectedServiceValue}
               onChange={(event) => handleServiceChange(event.target.value)}
-              disabled={compatibleServiceOptions.length === 0 || snap.chatInputDisabled || snap.chatSending}
+              disabled={compatibleServiceOptions.length === 0 || snap.chatInputDisabled || isSubmitting}
             >
               {compatibleServiceOptions.length === 0 ? (
                 <option value="">No compatible services found</option>
@@ -455,7 +650,7 @@ export function StudioView({ active }: StudioViewProps) {
             </select>
             {selectedService && (
               <div className={styles.selectHelp}>
-                {selectedService.label}{selectedServiceTags ? ` • ${selectedServiceTags}` : ''}
+                {selectedService.label}{selectedServiceTags ? ` - ${selectedServiceTags}` : ''}
               </div>
             )}
           </div>
@@ -469,7 +664,13 @@ export function StudioView({ active }: StudioViewProps) {
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onPaste={handlePaste}
-              disabled={snap.chatInputDisabled}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                  event.preventDefault();
+                  void handleSubmit();
+                }
+              }}
+              disabled={snap.chatInputDisabled || isSubmitting}
             />
           </div>
 
@@ -490,7 +691,7 @@ export function StudioView({ active }: StudioViewProps) {
             <button
               className={styles.attachBtn}
               onClick={() => fileInputRef.current?.click()}
-              disabled={attachments.length >= MAX_ATTACHMENTS || snap.chatInputDisabled}
+              disabled={attachments.length >= MAX_ATTACHMENTS || snap.chatInputDisabled || isSubmitting}
             >
               <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
               Add Images
@@ -501,7 +702,10 @@ export function StudioView({ active }: StudioViewProps) {
                   <img src={entry.previewUrl} alt={entry.name} />
                   <button
                     className={styles.referenceRemove}
-                    onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== entry.id))}
+                    onClick={() => {
+                      setAttachments((prev) => prev.filter((item) => item.id !== entry.id));
+                      setAttachmentNotice(null);
+                    }}
                     title="Remove reference"
                   >
                     x
@@ -509,6 +713,7 @@ export function StudioView({ active }: StudioViewProps) {
                 </div>
               ))}
             </div>
+            {attachmentNotice && <div className={styles.attachmentNotice}>{attachmentNotice}</div>}
           </div>
 
           <div className={styles.section}>
@@ -527,11 +732,11 @@ export function StudioView({ active }: StudioViewProps) {
           </div>
 
           {submitDisabledReason && <div className={styles.inputHint}>{submitDisabledReason}</div>}
-          {snap.chatError && <div className={styles.error}>{snap.chatError}</div>}
+          {runError && <div className={styles.error}>{runError}</div>}
 
-          <button className={styles.submitBtn} disabled={!canSubmit} onClick={handleSubmit}>
-            {snap.chatAbortVisible ? 'Running...' : 'Run Studio Task'}
-            {!snap.chatAbortVisible && <HugeiconsIcon icon={ArrowUp02Icon} size={14} strokeWidth={2.5} />}
+          <button className={styles.submitBtn} disabled={!canSubmit} onClick={() => void handleSubmit()}>
+            {isSubmitting ? 'Running...' : 'Run Studio Task'}
+            {!isSubmitting && <HugeiconsIcon icon={ArrowUp02Icon} size={14} strokeWidth={2.5} />}
           </button>
         </aside>
 
@@ -539,10 +744,31 @@ export function StudioView({ active }: StudioViewProps) {
           <div className={styles.canvasHeader}>
             <div className={styles.canvasTitle}>Canvas</div>
             <div className={styles.canvasHeaderActions}>
+              <button
+                className={styles.historyToggle}
+                onClick={handleCopySelectedResultUrl}
+                disabled={!selectedResult}
+              >
+                {copiedResultUrl ? 'Copied URL' : 'Copy URL'}
+              </button>
+              <button
+                className={styles.historyToggle}
+                onClick={handleOpenSelectedResult}
+                disabled={!selectedResult}
+              >
+                Open
+              </button>
+              <button
+                className={styles.historyToggle}
+                onClick={handleDownloadSelectedResult}
+                disabled={!selectedResult}
+              >
+                Download
+              </button>
               <button className={styles.historyToggle} onClick={() => setShowHistory((value) => !value)}>
                 {showHistory ? 'Hide History' : 'Show History'}
               </button>
-              <button className={styles.historyToggle} onClick={() => actions.startNewChat()}>
+              <button className={styles.historyToggle} onClick={handleNewRun}>
                 New Run
               </button>
             </div>
@@ -587,18 +813,26 @@ export function StudioView({ active }: StudioViewProps) {
 
         {showHistory && (
           <aside className={styles.historyPane}>
-            <div className={styles.historyTitle}>Chat History</div>
+            <div className={styles.historyTitle}>Run History</div>
             <div className={styles.historyList}>
-              {conversationSummaries.map((entry) => (
-                <button
-                  key={entry.id}
-                  className={styles.historyItem}
-                  onClick={() => void actions.openConversation(entry.id)}
-                >
-                  {entry.title}
-                </button>
-              ))}
-              {conversationSummaries.length === 0 && (
+              {studioRuns.map((entry) => {
+                const primaryOutput = entry.outputs[0] ?? null;
+                const label = `${new Date(entry.createdAt).toLocaleTimeString()} | ${entry.serviceLabel} | ${STUDIO_INTENT_LABELS[entry.intent]}`;
+                return (
+                  <button
+                    key={entry.id}
+                    className={styles.historyItem}
+                    disabled={!primaryOutput}
+                    onClick={() => {
+                      if (primaryOutput) setSelectedResultKey(primaryOutput.key);
+                    }}
+                    title={entry.error || entry.prompt || label}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+              {studioRuns.length === 0 && (
                 <div className={styles.historyEmpty}>No previous runs yet.</div>
               )}
             </div>

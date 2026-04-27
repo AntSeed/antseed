@@ -65,6 +65,8 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
     case 'openai':
     case 'openai-responses':
       return 'export OPENAI_API_KEY=<key>';
+    case 'open-generative-ai':
+      return 'export OPENAI_API_KEY=<key>';
     case 'claude-oauth':
       return 'configure Claude OAuth credentials for the selected plugin';
     case 'claude-code':

@@ -305,6 +305,22 @@ test('pinned proxy request reports protocol or service mismatch when provider is
   assert.match(res.body, /protocol=openai-responses/)
 })
 
+test('custom studio routes can select an explicit provider when request protocol is unknown', () => {
+  const studioPeer = makePeer('a', ['open-generative-ai'])
+  const fallbackPeer = makePeer('b', ['openai'])
+
+  const result = selectCandidatePeersForRouting(
+    [studioPeer, fallbackPeer],
+    null,
+    'flux-dev',
+    'open-generative-ai',
+  )
+
+  assert.equal(result.candidatePeers.length, 1)
+  assert.equal(result.candidatePeers[0]?.peerId, studioPeer.peerId)
+  assert.equal(result.routePlanByPeerId.get(studioPeer.peerId)?.provider, 'open-generative-ai')
+})
+
 // parsePersistedPeers — hydrates _cachedPeers from buyer.state.json at startup
 // so the first request after launch can route from the warm cache without
 // blocking on DHT discovery.

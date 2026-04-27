@@ -45,7 +45,6 @@ const isMacPlatform = bridge?.platform
   : detectApplePlatformFromNavigator();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
-<<<<<<< HEAD
 // On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
 // the window traffic-light buttons are mirrored to the top-right and would
 // cover the title-bar right-side controls. Flip the padding in that case.
@@ -74,7 +73,6 @@ async function applyMacOsRtlClass(): Promise<void> {
 }
 void applyMacOsRtlClass();
 
-=======
 const EXPERIENCE_MODE_STORAGE_KEY = 'antseed:experience-mode';
 
 function normalizeExperienceMode(value: unknown): ExperienceMode {
@@ -100,9 +98,6 @@ function persistExperienceMode(mode: ExperienceMode): void {
 function applyExperienceModeBodyClass(mode: ExperienceMode): void {
   document.body.classList.toggle('experience-studio', mode === 'studio');
 }
-
-const bridge = window.antseedDesktop as DesktopBridge | undefined;
->>>>>>> ea092c60 (Continue studio mode work)
 const uiState = createInitialUiState();
 uiState.experienceMode = loadExperienceMode();
 applyExperienceModeBodyClass(uiState.experienceMode);

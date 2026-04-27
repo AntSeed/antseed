@@ -37,6 +37,12 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-openai-responses',
   },
   {
+    name: 'open-generative-ai',
+    type: 'provider',
+    description: 'Studio media provider for Open-Generative-AI / MuAPI-style APIs',
+    package: '@antseed/provider-open-generative-ai',
+  },
+  {
     name: 'local-llm',
     type: 'provider',
     description: 'Local LLM provider (Ollama, llama.cpp)',
