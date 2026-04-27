@@ -247,9 +247,8 @@ const PROXY_RUNTIME_API_KEY = 'antseed-local';
 
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
 const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
-const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
-const CHAT_SERVICE_MAX_OPTIONS = 120;
-const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
+const CHAT_SERVICE_MAX_OPTIONS = 1000;
+const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 1000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -551,7 +550,7 @@ async function discoverChatServiceCatalog(
   }
 
   const results: ChatServiceCatalogEntry[] = [];
-  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
+  for (const peer of peers) {
     const peerId = peer.peerId;
     const peerLabel = peer.displayName
       ? `${peer.displayName} (${peerId?.slice(0, 8) ?? ''})`
@@ -764,7 +763,20 @@ async function fetchOnChainEnrichment(
       onChainEnrichmentCache.set(addr, { fetchedAt: now, data });
       out.set(addr, data);
     } catch {
-      // Leave out of the result map; row will be dropped by the caller.
+      // Preserve Discover inventory when staking/channel RPC is unavailable.
+      // Request routing still performs its own eligibility checks; this view
+      // should not hide services merely because enrichment failed.
+      const sentinel: OnChainPeerEnrichment = {
+        agentId: 0,
+        stakeUsdc: '0',
+        stakedAt: 0,
+        onChainActiveChannelCount: 0,
+        onChainGhostCount: 0,
+        onChainTotalVolumeUsdc: '0',
+        onChainLastSettledAt: 0,
+      };
+      onChainEnrichmentCache.set(addr, { fetchedAt: now, data: sentinel });
+      out.set(addr, sentinel);
     }
   }));
 
@@ -793,8 +805,15 @@ async function buildDiscoverRows(
     const peerId = entry.peerId ?? '';
     if (!peerId) continue;
     const evmAddress = '0x' + peerId;
-    const enrichmentRow = enrichment.get(evmAddress);
-    if (!enrichmentRow || enrichmentRow.agentId === 0) continue;
+    const enrichmentRow = enrichment.get(evmAddress) ?? {
+      agentId: 0,
+      stakeUsdc: '0',
+      stakedAt: 0,
+      onChainActiveChannelCount: 0,
+      onChainGhostCount: 0,
+      onChainTotalVolumeUsdc: '0',
+      onChainLastSettledAt: 0,
+    };
 
     const stats = peerStats.get(peerId);
     const peerBlob = buyerStateDiscoveredPeers[peerId];
@@ -2513,16 +2532,14 @@ export function registerPiChatHandlers({
           .filter((a) => a.length === 42)
       ));
       const clients = await loadOnChainClients(configPath);
-      if (!clients) {
-        return { ok: true, data: [] as DiscoverRowEntry[] };
-      }
-      const { stakingClient, channelsClient } = clients;
-      const enrichment = await fetchOnChainEnrichment(
-        uniqueAddresses,
-        stakingClient,
-        channelsClient,
-        buyerStateOnChainStats,
-      );
+      const enrichment = clients
+        ? await fetchOnChainEnrichment(
+          uniqueAddresses,
+          clients.stakingClient,
+          clients.channelsClient,
+          buyerStateOnChainStats,
+        )
+        : new Map<string, OnChainPeerEnrichment>();
 
       // Network-wide stats from @antseed/network-stats. On non-mainnet chains and on any
       // failure this returns an empty map and buildDiscoverRows falls back to local stats.
