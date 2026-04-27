@@ -181,20 +181,21 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         (pendingSeller,) = IAntseedEmissions(registry.emissions()).pendingEmissions(account, epochs);
     }
 
-    function _operatorFeeNetAmount(uint256 grossAmount) internal view returns (uint256 netAmount) {
-        uint256 feeBps = operatorFeeBps;
-        if (grossAmount == 0 || feeBps == 0) return grossAmount;
-        uint256 fee = (grossAmount * feeBps) / _BPS;
-        return grossAmount - fee;
+    function _operatorFeeAmount(uint256 grossAmount) internal view returns (uint256) {
+        return (grossAmount * operatorFeeBps) / _BPS;
     }
 
-    function _takeOperatorFee(IERC20 token, uint256 grossAmount) internal returns (uint256 netAmount) {
-        netAmount = _operatorFeeNetAmount(grossAmount);
-        uint256 fee = grossAmount - netAmount;
-        if (fee == 0) return netAmount;
+    function _operatorFeeNetAmount(uint256 grossAmount) internal view returns (uint256) {
+        return grossAmount - _operatorFeeAmount(grossAmount);
+    }
+
+    function _takeOperatorFee(IERC20 token, uint256 grossAmount) internal returns (uint256) {
+        uint256 fee = _operatorFeeAmount(grossAmount);
+        if (fee == 0) return grossAmount;
         address recipient = operatorFeeRecipient;
         token.safeTransfer(recipient, fee);
         emit OperatorFeePaid(address(token), recipient, fee);
+        return grossAmount - fee;
     }
 
     /// @notice The underlying AntseedChannels contract. Client SDKs treat this
