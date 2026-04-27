@@ -44,7 +44,7 @@ export function App() {
   }, [diemPrice, lastEpochUsdc, pool.totalStaked]);
 
   // Prefer the live on-chain value. Fall back to the constructor-set default
-  // (50 DIEM) when the read hasn't returned yet or the proxy isn't deployed,
+  // (10 DIEM) when the read hasn't returned yet or the proxy isn't deployed,
   // so the AlphaStrip renders the correct cap from the first paint. Only
   // treat an explicit on-chain `0` as "uncapped" (owner raised / removed).
   const maxStakeDisplay = useMemo(() => {

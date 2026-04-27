@@ -1088,7 +1088,7 @@ contract DiemStakingProxyTest is Test {
         uint256 before = usdc.balanceOf(alice);
         vm.prank(owner);
         vm.expectEmit(true, false, false, true);
-        emit DiemStakingProxy.AntseedStakeWithdrawn(alice, PROXY_STAKE);
+        emit AntseedSellerDelegation.AntseedStakeWithdrawn(alice, PROXY_STAKE);
         proxy.withdrawAntseedStake(alice);
         assertEq(usdc.balanceOf(alice) - before, PROXY_STAKE);
     }
@@ -1234,21 +1234,21 @@ contract DiemStakingProxyTest is Test {
         vm.prank(owner);
         DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
         assertEq(fresh.maxTotalStake(), fresh.ALPHA_MAX_TOTAL_STAKE());
-        assertEq(fresh.maxTotalStake(), 50e18);
+        assertEq(fresh.maxTotalStake(), 10e18);
     }
 
     function test_alphaCap_enforcedOnFreshDeploy() public {
         vm.prank(owner);
         DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
 
-        diem.mint(alice, 60e18);
+        diem.mint(alice, 11e18);
         vm.startPrank(alice);
-        diem.approve(address(fresh), 60e18);
+        diem.approve(address(fresh), 11e18);
         vm.expectRevert(DiemStakingProxy.MaxStakeExceeded.selector);
-        fresh.stake(60e18); // over the 50 DIEM alpha cap
-        fresh.stake(50e18);
+        fresh.stake(11e18); // over the 10 DIEM alpha cap
+        fresh.stake(10e18);
         vm.stopPrank();
-        assertEq(fresh.totalStaked(), 50e18);
+        assertEq(fresh.totalStaked(), 10e18);
     }
 
     function test_setMaxTotalStake_onlyOwner() public {

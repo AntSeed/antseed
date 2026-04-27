@@ -27,7 +27,7 @@ createRoot(rootEl).render(
       <RainbowKitProvider
         theme={lightTheme({
           accentColor: '#1FD87A',
-          accentColorForeground: '#0a0e14',
+          accentColorForeground: '#ffffff',
           borderRadius: 'large',
           fontStack: 'system',
         })}

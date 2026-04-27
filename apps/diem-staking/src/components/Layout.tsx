@@ -53,7 +53,7 @@ export function AlphaStrip({ maxStakeDisplay }: { maxStakeDisplay: string | null
   return (
     <div className="alpha-strip">
       <span className="alpha-pill">◆ ALPHA</span>
-      <span className="alpha-msg">Alpha cap: <strong>{maxStakeDisplay}</strong> $DIEM total. Owner-raiseable.</span>
+      <span className="alpha-msg">Alpha cap: <strong>{maxStakeDisplay}</strong> $DIEM total.</span>
     </div>
   );
 }
@@ -70,7 +70,7 @@ export function Nav() {
   };
   return (
     <nav className="nav">
-      <a className="brand" href="/">
+      <a className="brand" href={ANTSEED_URL}>
         <span>
           <span className="ant">ANT</span>
           <span className="seed">SEED</span>
@@ -99,9 +99,9 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
       <span className="eyebrow"><span className="pulse" /> Live on Base mainnet</span>
       <h1 className="hero-title">Your $DIEM, now <em>earning</em> USDC.</h1>
       <p className="hero-sub">
-        Stake $DIEM into the AntSeed pool on Base. USDC from every AI inference request
-        streams directly into the contract in real time; $ANTS emissions land every epoch.
-        No fees on the pool, no lockups, fully on-chain.
+        Stake $DIEM into the AntSeed pool on Base. USDC from AI inference requests
+        streams into the contract in real time; $ANTS emissions land every epoch.
+        No lockups, fully on-chain.
       </p>
       <div className="hero-meta">
         <span className="live-badge">$DIEM ${fmtPrice(diemPrice)}</span>
@@ -109,30 +109,30 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
         <span><strong>{fmtPct(apr)}</strong> <span className="apr-sub">USDC APR · ROLLING 7D</span></span>
         <span className="dot" />
         <span>+ <strong>$ANTS</strong> every epoch</span>
-        <span className="dot" />
-        <span><strong style={{ color: 'var(--brand-dark)' }}>0% fees</strong></span>
       </div>
     </section>
   );
 }
 
 export function ClaimBanner() {
-  const { href, platform, label } = useAntstationDownload();
+  const { href, platform } = useAntstationDownload();
   return (
     <div className="claim-banner">
       <div className="claim-banner-inner">
         <div>
-          <span className="eyebrow"><span className="pulse" /> Claim your $ANTS</span>
-          <h2>Your $ANTS also live inside <em>AntStation</em>.</h2>
+          <span className="eyebrow"><span className="pulse" /> AntStation required for $ANTS</span>
+          <h2>Download <em>AntStation</em> to claim your $ANTS.</h2>
           <p>
-            You can claim $ANTS on-chain here, but AntStation — the AntSeed desktop app — is
-            where you spend them. Use any model in the app, or connect Claude Code, Cursor,
-            or any agent via{' '}
-            <code style={{ background: 'rgba(31,216,122,0.12)', color: 'var(--brand)', padding: '1px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>
-              localhost:8377
-            </code>
-            . Pass-through pricing, more inference per dollar than any subscription.
+            This staking page handles $DIEM and USDC. Your $ANTS claim lives in AntStation —
+            the AntSeed desktop app. Install it, open the Payments portal, connect the same
+            wallet you stake with, and claim your $ANTS there.
           </p>
+          <div className="claim-path" aria-label="How to claim ANTS">
+            <span><strong>1</strong> Install AntStation</span>
+            <span><strong>2</strong> Open Payments</span>
+            <span><strong>3</strong> Connect same wallet</span>
+            <span><strong>4</strong> Claim $ANTS</span>
+          </div>
           <div className="claim-banner-actions">
             {/* Match antseed.com's primary download button: OS icon +
                 "Download for <OS>" when we have a direct installer,
@@ -147,10 +147,10 @@ export function ClaimBanner() {
               {hasDirectInstaller(platform) ? (
                 <>
                   <PlatformIcon platform={platform} />
-                  {label}
+                  {platform === 'mac' ? 'Install AntStation for Mac to claim $ANTS' : 'Install AntStation for Windows to claim $ANTS'}
                 </>
               ) : (
-                <>Download AntStation →</>
+                <>Install AntStation to claim $ANTS →</>
               )}
             </a>
             <a
@@ -167,10 +167,10 @@ export function ClaimBanner() {
           </div>
         </div>
         <div className="claim-mock">
-          <div className="line"><span className="comment"># antstation › staking portal</span></div>
-          <div className="line"><span className="key">connected wallet</span><span className="num">same as here</span></div>
-          <div className="line"><span className="key">$ANTS pending</span><span className="num">auto-synced</span></div>
-          <div className="line"><span className="key">USDC earned</span><span className="num">live stream</span></div>
+          <div className="line"><span className="comment"># AntStation app › Payments</span></div>
+          <div className="line"><span className="key">claim location</span><span className="num">AntStation</span></div>
+          <div className="line"><span className="key">wallet</span><span className="num">same as staking</span></div>
+          <div className="line"><span className="key">$ANTS pending</span><span className="num">ready to claim</span></div>
           <hr />
           <div className="line"><span className="comment"># spend on any model →</span></div>
           <div className="line"><span className="key">claude-sonnet-4.6</span><span className="num">ready</span></div>
@@ -200,17 +200,18 @@ export function HowItWorks() {
         </Step>
         <Step num="02" label="Flow" title="AI demand earns fees">
           Your pooled $DIEM powers AI inference across the AntSeed network. Every request
-          settles a USDC micropayment on-chain, paid directly from the AntSeed payment
-          channel into the staking contract — no middleman, no operator skimming.
+          settles a USDC micropayment on-chain, paid from the AntSeed payment channel
+          into the staking contract.
         </Step>
         <Step num="03" label="USDC" title="USDC streams in real time">
           Your share of every inflow credits to your position the moment it lands. No epoch
           wait, no distribution cycle — just a pro-rata stream. Claim to your wallet whenever.
         </Step>
-        <Step num="04" label="$ANTS" title="Claim $ANTS on-chain, spend in AntStation">
-          $ANTS emissions accrue every epoch. Claim them on-chain here, then{' '}
-          <a href={href} target="_blank" rel="noopener noreferrer">download AntStation</a>{' '}
-          to spend them on any model on the network.
+        <Step num="04" label="$ANTS" title="Claim $ANTS in the payments portal">
+          $ANTS emissions accrue every epoch. Install{' '}
+          <a href={href} target="_blank" rel="noopener noreferrer">AntStation</a>{' '}
+          or the CLI, open the payments portal, and claim them with the same wallet you
+          stake from.
         </Step>
       </div>
 
@@ -234,14 +235,14 @@ function Why() {
     { h: 'Real revenue, not emissions', p: 'USDC yield comes from actual AI requests on the AntSeed network. If demand grows, your yield grows with it.' },
     { h: 'Your $DIEM never leaves Base', p: 'Funds stay in an audited smart contract. No bridges, no centralized custody, no rehypothecation.' },
     { h: 'Two income streams', p: 'USDC for cash yield today. $ANTS for upside in the network tomorrow. Long-term stakers earn a bigger share of both.' },
-    { h: 'Zero fees on the pool', p: 'Stakers capture 100% of the USDC that flows through the pool. No staking fee, no protocol cut, no hidden spread.' },
+    { h: 'Transparent operations', p: 'The operator currently retains 10% for operations; the remaining USDC flows through the pool to stakers pro-rata.' },
   ];
   return (
     <div className="why-block">
       <h3 className="why-subtitle">Yield backed by <em>real demand</em>.</h3>
       <p className="why-lead">
         This isn't farming. It isn't printed rewards. It's USDC that real developers and AI
-        agents pay for inference, flowing straight back to you.
+        agents pay for inference, flowing back to stakers after operations.
       </p>
       <div className="why-grid">
         {items.map((it) => (
@@ -293,9 +294,9 @@ export function FAQ() {
             AntSeed is a peer-to-peer network where developers and AI agents buy inference,
             skills, and other services. Every request settles a USDC micropayment on Base,
             and the AntSeed payment channel pays the staking contract directly — the
-            contract is the seller. No operator holds the funds in between. Your share
-            credits to your position the moment the micropayment lands, 100% pass-through
-            with zero fees taken by the pool.
+            contract is the seller. No operator holds user stake. The operator currently
+            retains 10% for operations; the remaining USDC credits to stakers pro-rata
+            as it reaches the pool.
           </div>
         </details>
         <details className="faq">
@@ -330,10 +331,11 @@ export function FAQ() {
         <details className="faq">
           <summary>How do I claim my $ANTS rewards?</summary>
           <div className="body">
-            $ANTS are distributed every epoch to the same wallet you staked with. You can
-            claim them on-chain from the Claim tab here. $ANTS are best spent inside{' '}
-            <a href={href} target="_blank" rel="noopener noreferrer">AntStation</a>,
-            the AntSeed desktop app — any model on the network accepts them.
+            $ANTS are distributed every epoch to the same wallet you staked with. To claim
+            them, install{' '}
+            <a href={href} target="_blank" rel="noopener noreferrer">AntStation</a>{' '}
+            or the AntSeed CLI and open the local payments portal. Claim from there using
+            the same wallet, then spend $ANTS inside AntStation on any model on the network.
           </div>
         </details>
         <details className="faq">
@@ -348,13 +350,11 @@ export function FAQ() {
           </div>
         </details>
         <details className="faq">
-          <summary>Are there any fees on the pool?</summary>
+          <summary>Are there any operator fees?</summary>
           <div className="body">
-            No. Staking, unstaking, and claiming are all zero-fee from the pool's side.
-            100% of the USDC the pool earns from AI demand flows to stakers pro-rata. The
-            AntSeed channels contract itself takes a protocol fee upstream, so "zero fees"
-            is scoped to the pool. Your only cost is the Base gas for your own transactions
-            (typically a few cents).
+            Yes. The operator currently retains 10% for operations before USDC reaches
+            the staking pool. The remaining USDC flows to stakers pro-rata. Your wallet
+            transactions still require Base gas, typically a few cents.
           </div>
         </details>
       </div>

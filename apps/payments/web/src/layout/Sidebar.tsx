@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type TabId = 'dashboard' | 'channels' | 'emissions';
+export type TabId = 'dashboard' | 'channels' | 'emissions' | 'diem-rewards';
 
 interface SidebarProps {
   activeTab: TabId;
@@ -39,6 +39,20 @@ function AntsTabIcon() {
   return <AntIcon size={18} />;
 }
 
+function DiemTabIcon() {
+  return (
+    <img
+      src="/diem-logo.png"
+      width="18"
+      height="18"
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+      className="dash-sidebar-token-icon"
+    />
+  );
+}
+
 function SunIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2"/><path d="M8 2V3.5M8 12.5V14M2 8H3.5M12.5 8H14M3.8 3.8L4.8 4.8M11.2 11.2L12.2 12.2M3.8 12.2L4.8 11.2M11.2 4.8L12.2 3.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
@@ -73,6 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { id: 'channels',  label: 'Channels',  icon: <ChannelsIcon /> },
   { id: 'emissions', label: '$ANTS', icon: <AntsTabIcon /> },
+  { id: 'diem-rewards', label: '$DIEM $ANTS', icon: <DiemTabIcon /> },
 ];
 
 export function Sidebar({ activeTab, onSelect, isDark, onToggleTheme }: SidebarProps) {
