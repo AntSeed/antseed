@@ -320,7 +320,7 @@ export function initChatModule({
     return options
       .map(
         (e) =>
-          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
+          `${e.id}|${e.label}|${e.provider}|${e.peerId}|${e.peerLabel}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
       )
       .join('\n');
   }
@@ -925,7 +925,12 @@ export function initChatModule({
 
     if (uiState.chatServiceOptions.length > 0) {
       const firstOption = decodeChatServiceSelection(uiState.chatServiceOptions[0].value);
-      if (firstOption.id.length > 0) return firstOption;
+      if (firstOption.id.length > 0) {
+        return {
+          ...firstOption,
+          peerId: firstOption.peerId ?? uiState.chatServiceOptions[0].peerId,
+        };
+      }
     }
 
     return { id: '', provider: null };
@@ -1601,7 +1606,8 @@ export function initChatModule({
     }
 
     try {
-      const result = await bridge.chatAiCreateConversation(selection.id, undefined, uiState.chatSelectedPeerId || undefined);
+      const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
+      const result = await bridge.chatAiCreateConversation(selection.id, selection.provider ?? undefined, peerId);
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
         if (!conversationId) {
@@ -1828,7 +1834,7 @@ export function initChatModule({
           convId,
           content || ' ',
           selection.id || undefined,
-          undefined,
+          selection.provider ?? undefined,
           attachments,
         );
 
@@ -1877,7 +1883,7 @@ export function initChatModule({
               convId,
               content || ' ',
               selection.id || undefined,
-              undefined,
+              selection.provider ?? undefined,
               attachments,
             );
 
