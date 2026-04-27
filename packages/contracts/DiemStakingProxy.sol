@@ -506,7 +506,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (userEpochClaimed[account][rewardEpoch]) return 0;
         if (rewardEpoch >= syncedRewardEpoch) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
-        uint256 antsPot = re.funded ? re.antsPot : _operatorFeeNetAmount(_grossPendingRewardEpochEmissions(rewardEpoch));
+        uint256 antsPot = re.funded ? re.antsPot : _pendingRewardEpochEmissions(rewardEpoch);
         if (antsPot == 0) return 0;
         uint256 totalPoints = re.totalPoints;
         if (totalPoints == 0) return 0;
@@ -620,7 +620,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         emit RewardEpochFunded(rewardEpoch, antsPot);
     }
 
-    function _grossPendingRewardEpochEmissions(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
+    function _pendingRewardEpochEmissions(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
         pendingSeller = _pendingSellerEmissions(address(this), ids);

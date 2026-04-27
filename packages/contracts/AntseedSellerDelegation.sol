@@ -176,9 +176,10 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
     function _pendingSellerEmissions(address account, uint256[] memory epochs)
         internal
         view
-        returns (uint256 pendingSeller)
+        returns (uint256 netPendingSeller)
     {
-        (pendingSeller,) = IAntseedEmissions(registry.emissions()).pendingEmissions(account, epochs);
+        (uint256 grossPendingSeller,) = IAntseedEmissions(registry.emissions()).pendingEmissions(account, epochs);
+        netPendingSeller = _operatorFeeNetAmount(grossPendingSeller);
     }
 
     function _operatorFeeAmount(uint256 grossAmount) internal view returns (uint256) {
