@@ -1,8 +1,7 @@
-
 import { useEffect, useMemo, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount } from 'wagmi';
-import { parseEther } from 'viem';
+import { formatEther, parseEther } from 'viem';
 
 import { DiemLogo } from './icons';
 import { FlowDiagram } from './FlowDiagram';
@@ -23,7 +22,6 @@ import {
   useFlush,
   useClaimUnstakeBatch,
   useClaimUsdc,
-  useClaimAnts,
 } from '../lib/actions';
 import {
   fmtDiem,
@@ -39,6 +37,13 @@ import { EPOCHS_PER_YEAR } from '../lib/epoch';
 
 type Tab = 'stake' | 'unstake' | 'claim';
 
+const DEFAULT_STAKE_AMOUNT = parseEther('10');
+
+function formatDiemInput(value: bigint): string {
+  const formatted = formatEther(value);
+  return formatted.includes('.') ? formatted.replace(/0+$/, '').replace(/\.$/, '') : formatted;
+}
+
 export interface StakeCardProps {
   diemPrice: number | null;
   lastEpochUsdc: bigint | null;
@@ -48,15 +53,42 @@ export interface StakeCardProps {
 export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const [tab, setTab] = useState<Tab>('stake');
   const [amt, setAmt] = useState('10');
+  const [amtEdited, setAmtEdited] = useState(false);
   const { isConnected } = useAccount();
   const { epoch, remainingSecs } = useEpochClock();
 
   const pool = usePoolStats();
   const user = useUserStats();
 
+  const stakeDefaultAmt = useMemo(() => {
+    if (!isConnected) return formatDiemInput(DEFAULT_STAKE_AMOUNT);
+    if (user.walletDiem == null) return '0';
+
+    let maxStakeable = user.walletDiem;
+    if (pool.maxTotalStake != null && pool.maxTotalStake !== 0n) {
+      const poolTotal = pool.totalStaked ?? 0n;
+      const capRemaining = pool.maxTotalStake > poolTotal ? pool.maxTotalStake - poolTotal : 0n;
+      maxStakeable = maxStakeable < capRemaining ? maxStakeable : capRemaining;
+    }
+
+    const defaultAmount = maxStakeable < DEFAULT_STAKE_AMOUNT ? maxStakeable : DEFAULT_STAKE_AMOUNT;
+    return formatDiemInput(defaultAmount);
+  }, [isConnected, pool.maxTotalStake, pool.totalStaked, user.walletDiem]);
+
+  const setAmtFromUser = (next: string) => {
+    setAmtEdited(true);
+    setAmt(next);
+  };
+
+  useEffect(() => {
+    if (tab !== 'stake' || amtEdited) return;
+    setAmt(stakeDefaultAmt);
+  }, [amtEdited, stakeDefaultAmt, tab]);
+
   const onChangeTab = (next: Tab) => {
     setTab(next);
-    if (next === 'stake') setAmt('10');
+    setAmtEdited(false);
+    if (next === 'stake') setAmt(stakeDefaultAmt);
     if (next === 'unstake') setAmt(user.stakedDiem ? fmtDiem(toDiemNumber(user.stakedDiem)) : '0');
   };
 
@@ -69,6 +101,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const amtUsd = diemPrice != null ? diemValue * diemPrice : null;
 
   const quickSet = (v: string) => {
+    setAmtEdited(true);
     if (v === 'max') {
       if (tab === 'stake' && user.walletDiem != null) setAmt(String(toDiemNumber(user.walletDiem)));
       else if (tab === 'unstake' && user.stakedDiem != null) setAmt(String(toDiemNumber(user.stakedDiem)));
@@ -107,7 +140,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
         {tab === 'stake' && (
           <StakePanel
             amt={amt}
-            setAmt={setAmt}
+            setAmt={setAmtFromUser}
             setQuick={quickSet}
             isConnected={isConnected}
             amtUsd={amtUsd}
@@ -124,7 +157,7 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
         {tab === 'unstake' && (
           <UnstakePanel
             amt={amt}
-            setAmt={setAmt}
+            setAmt={setAmtFromUser}
             setQuick={quickSet}
             isConnected={isConnected}
             stakedDiem={user.stakedDiem}
@@ -515,7 +548,6 @@ interface ClaimPanelProps {
 
 function ClaimPanel(props: ClaimPanelProps) {
   const claimUsdc = useClaimUsdc();
-  const claimAnts = useClaimAnts();
   const { href: antstationHref, platform: antstationPlatform } = useAntstationDownload();
 
   const pendingUsdcNum = toUsdcNumber(props.pendingUsdc);
@@ -541,18 +573,20 @@ function ClaimPanel(props: ClaimPanelProps) {
       </div>
 
       <div className="claim-note">
-        Claim both on-chain here. <strong>Spend your $ANTS inside AntStation</strong> — the AntSeed desktop app lets you use them on any model on the network. Same wallet, auto-synced.
+        Claim USDC here. <strong>$ANTS claims live in the AntSeed payments portal</strong> —
+        install AntStation or the CLI, connect the same wallet, and claim from there.
       </div>
 
       {props.hasMoreClaimableAntsEpochs && (
         <div className="claim-note">
-          More $ANTS epochs are available. Claim again after this batch.
+          More $ANTS epochs may be available in the payments portal after this batch.
         </div>
       )}
 
       {claimableEpochs > 0 && props.pendingAnts === 0n && (
         <div className="claim-note">
-          These epochs have no $ANTS payout for this wallet, but clearing them advances your claim cursor so later epochs can appear.
+          Some claimable epochs may have no $ANTS payout, but the payments portal can
+          still clear them so later epochs appear.
         </div>
       )}
 
@@ -568,34 +602,22 @@ function ClaimPanel(props: ClaimPanelProps) {
               ? 'Claiming USDC…'
               : `Claim ${fmtUSD(pendingUsdcNum)} USDC →`}
           </button>
-          <button
-            className="stake-cta"
-            disabled={claimableEpochs === 0 || claimAnts.isPending}
-            onClick={() => claimAnts.run(props.claimableAntsEpochs)}
-            style={{ marginBottom: 10 }}
-          >
-            {claimAnts.isPending
-              ? 'Claiming $ANTS…'
-              : pendingAntsNum > 0
-                ? `Claim ${fmtNum(pendingAntsNum)} $ANTS →`
-                : 'Clear 0-$ANTS epochs →'}
-          </button>
           <a
             href={antstationHref}
             target="_blank"
             rel="noopener noreferrer"
             className="stake-cta ghost"
-            style={{ display: 'block', textAlign: 'center', textDecoration: 'none' }}
+            style={{ display: 'block', textAlign: 'center', textDecoration: 'none', marginBottom: 10 }}
           >
             {antstationPlatform === 'mac'
-              ? 'Download AntStation for Mac →'
+              ? 'Install AntStation for Mac →'
               : antstationPlatform === 'win'
-                ? 'Download AntStation for Windows →'
-                : 'Download AntStation to spend $ANTS →'}
+                ? 'Install AntStation for Windows →'
+                : 'Install AntStation to claim $ANTS →'}
           </a>
-          {(claimUsdc.error || claimAnts.error) && (
+          {claimUsdc.error && (
             <div className="claim-note" style={{ color: '#c62828' }}>
-              {(claimUsdc.error ?? claimAnts.error)?.message}
+              {claimUsdc.error.message}
             </div>
           )}
         </>

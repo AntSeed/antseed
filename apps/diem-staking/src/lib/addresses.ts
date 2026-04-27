@@ -1,9 +1,8 @@
 // Central address book for the DIEM Staking portal. All on-chain reads/writes
 // resolve through these constants.
 //
-// NOTE: `DIEM_STAKING_PROXY` is populated at deploy time. Until deployed the
-// frontend will show "contract not deployed yet" everywhere a read is needed.
-// Override in development via VITE_DIEM_STAKING_PROXY (see below).
+// NOTE: `DIEM_STAKING_PROXY` defaults to the deployed Base mainnet proxy.
+// Override in development or staging via VITE_DIEM_STAKING_PROXY (see below).
 
 import type { Address } from 'viem';
 
@@ -20,14 +19,14 @@ export const ZERO_ADDRESS: Address = '0x0000000000000000000000000000000000000000
  *   - `VITE_DIEM_STAKING_PROXY` in `.env` / `.env.local` for local/staging
  *   - Fallback constant below is updated post-deploy and committed
  *
- * The UI tolerates an unset address: `useProxyDeployed` returns false and
- * every read-hook short-circuits to `null`, so the page renders cleanly with
- * "—" placeholders rather than throwing.
+ * The UI still tolerates an unset/zero override: `useProxyDeployed` returns
+ * false and every read-hook short-circuits to `null`, so the page renders
+ * cleanly with "—" placeholders rather than throwing.
  */
 const envProxy = (import.meta.env.VITE_DIEM_STAKING_PROXY as string | undefined) ?? '';
 export const DIEM_STAKING_PROXY: Address = (envProxy && envProxy.startsWith('0x')
   ? (envProxy as Address)
-  : ZERO_ADDRESS);
+  : '0x1f228613116E2d08014DfdCC198377C8dedf18C9');
 
 export function isAddressSet(a: Address): boolean {
   return a !== ZERO_ADDRESS && a.length === 42;

@@ -13,4 +13,4 @@
  * live read hasn't returned, so the alpha-strip shows the correct cap
  * from page load even in pre-deploy mode.
  */
-export const ALPHA_MAX_TOTAL_STAKE_DIEM_BASE = 50n * 10n ** 18n;
+export const ALPHA_MAX_TOTAL_STAKE_DIEM_BASE = 10n * 10n ** 18n;
