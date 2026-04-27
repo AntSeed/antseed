@@ -1155,6 +1155,7 @@ export class AntseedNode extends EventEmitter {
       requireValidSignature: DEFAULT_LOOKUP_CONFIG.requireValidSignature,
       allowStaleMetadata: DEFAULT_LOOKUP_CONFIG.allowStaleMetadata,
       maxAnnouncementAgeMs: DEFAULT_LOOKUP_CONFIG.maxAnnouncementAgeMs,
+      maxClientServerClockSkewMs: DEFAULT_LOOKUP_CONFIG.maxClientServerClockSkewMs,
       maxResults: DEFAULT_LOOKUP_CONFIG.maxResults,
       maxFindAllDhtDurationMs: DEFAULT_LOOKUP_CONFIG.maxFindAllDhtDurationMs,
     };

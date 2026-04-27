@@ -684,6 +684,7 @@ export class ConnectionManager extends EventEmitter {
       `HTTP/1.1 ${statusLine}\r\n` +
       `Content-Type: application/json\r\n` +
       `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+      `Date: ${new Date().toUTCString()}\r\n` +
       `Connection: close\r\n` +
       `\r\n` +
       body,
