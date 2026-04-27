@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import { loadOrCreateIdentity } from '@antseed/node';
 import { getGlobalOptions } from '../types.js';
-import { openChannelStore } from '../../payment-utils.js';
+import { formatUsdc, openChannelStore } from '../../payment-utils.js';
 
 function short(id: string, len = 10): string {
   return id.length > len ? id.slice(0, len) + '...' : id;
@@ -16,6 +16,15 @@ function statusColor(status: string): string {
     case 'ghost': return chalk.red(status);
     default: return status;
   }
+}
+
+function usdc(baseUnits: string | null | undefined): string {
+  return `${formatUsdc(BigInt(baseUnits ?? '0'))} USDC`;
+}
+
+function subtractBigintFloor(left: string | null | undefined, right: string | null | undefined): string {
+  const result = BigInt(left ?? '0') - BigInt(right ?? '0');
+  return result > 0n ? result.toString() : '0';
 }
 
 export function registerBuyerChannelsCommand(buyerCmd: Command): void {
@@ -64,10 +73,12 @@ export function registerBuyerChannelsCommand(buyerCmd: Command): void {
         console.log(chalk.bold(`Payment Channels (${limited.length} of ${filtered.length}):\n`));
         for (const session of limited) {
           console.log(`  ${chalk.bold(short(session.sessionId, 16))}  ${statusColor(session.status)}  ${chalk.dim(session.role)}`);
+          const unsettled = subtractBigintFloor(session.authMax, session.settledAmount);
           console.log(`    Peer: ${chalk.dim(short(session.peerId, 16))}  Requests: ${session.requestCount}  Tokens: ${session.tokensDelivered}`);
+          console.log(`    Deposit: ${chalk.green(usdc(session.authMax))}  Settled: ${chalk.cyan(usdc(session.settledAmount))}  Unsettled: ${chalk.yellow(usdc(unsettled))}`);
           console.log(`    Created: ${chalk.dim(new Date(session.createdAt).toISOString())}`);
           if (session.settledAt) {
-            console.log(`    Settled: ${chalk.dim(new Date(session.settledAt).toISOString())}  Amount: ${session.settledAmount ?? 'N/A'}`);
+            console.log(`    Settled: ${chalk.dim(new Date(session.settledAt).toISOString())}`);
           }
           console.log('');
         }
