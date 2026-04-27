@@ -612,9 +612,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     function _fundRewardEpoch(uint32 rewardEpoch) internal returns (uint256 antsPot) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
-        uint256 beforeBal = ants.balanceOf(address(this));
-        _claimSellerEmissions(ids);
-        antsPot = _takeOperatorFee(ants, ants.balanceOf(address(this)) - beforeBal);
+        antsPot = _claimSellerEmissions(ids);
 
         rewardEpochs[rewardEpoch].antsPot = antsPot;
         rewardEpochs[rewardEpoch].funded = true;

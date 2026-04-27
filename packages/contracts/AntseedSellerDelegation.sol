@@ -176,8 +176,11 @@ abstract contract AntseedSellerDelegation is Ownable, ReentrancyGuard {
         return IAntseedEmissionsClock(registry.emissions()).currentEpoch();
     }
 
-    function _claimSellerEmissions(uint256[] memory epochs) internal {
+    function _claimSellerEmissions(uint256[] memory epochs) internal returns (uint256 netPayout) {
+        IERC20 payoutToken = IERC20(registry.antsToken());
+        uint256 beforeBal = payoutToken.balanceOf(address(this));
         IAntseedEmissionsClaim(registry.emissions()).claimSellerEmissions(epochs);
+        netPayout = _takeOperatorFee(payoutToken, payoutToken.balanceOf(address(this)) - beforeBal);
     }
 
     function _pendingSellerEmissions(address account, uint256[] memory epochs)
