@@ -3,18 +3,18 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {MockUSDC} from "../MockUSDC.sol";
-import {MockERC8004Registry} from "../MockERC8004Registry.sol";
-import {ANTSToken} from "../ANTSToken.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
-import {AntseedDeposits} from "../AntseedDeposits.sol";
-import {AntseedStaking} from "../AntseedStaking.sol";
-import {AntseedChannels} from "../AntseedChannels.sol";
-import {AntseedEmissions} from "../AntseedEmissions.sol";
-import {DiemStakingProxy} from "../DiemStakingProxy.sol";
-import {AntseedSellerDelegation} from "../AntseedSellerDelegation.sol";
+import { MockUSDC } from "../MockUSDC.sol";
+import { MockERC8004Registry } from "../MockERC8004Registry.sol";
+import { ANTSToken } from "../ANTSToken.sol";
+import { AntseedRegistry } from "../AntseedRegistry.sol";
+import { AntseedDeposits } from "../AntseedDeposits.sol";
+import { AntseedStaking } from "../AntseedStaking.sol";
+import { AntseedChannels } from "../AntseedChannels.sol";
+import { AntseedEmissions } from "../AntseedEmissions.sol";
+import { DiemStakingProxy } from "../DiemStakingProxy.sol";
+import { AntseedSellerDelegation } from "../AntseedSellerDelegation.sol";
 
-import {MockDiem} from "./mocks/MockDiem.sol";
+import { MockDiem } from "./mocks/MockDiem.sol";
 
 contract DiemStakingProxyTest is Test {
     uint256 constant OWNER_PK = 0x0A;
@@ -110,7 +110,6 @@ contract DiemStakingProxyTest is Test {
         proxy.setMinUnstakeBatchOpenSecs(0);
     }
 
-
     function _stakeAs(address user, uint256 amount) internal {
         diem.mint(user, amount);
         vm.startPrank(user);
@@ -118,7 +117,6 @@ contract DiemStakingProxyTest is Test {
         proxy.stake(amount);
         vm.stopPrank();
     }
-
 
     function _setupBuyer(uint256 depositAmount) internal {
         vm.prank(buyer);
@@ -199,7 +197,6 @@ contract DiemStakingProxyTest is Test {
         vm.prank(operator);
         proxy.close(channelId, finalAmount, metadata, sig);
     }
-
 
     function test_stake_success() public {
         _stakeAs(alice, 100e18);
@@ -308,7 +305,6 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
-
     function test_flush_revertsBeforeMinUnstakeBatchOpenSecs() public {
         vm.prank(owner);
         proxy.setMinUnstakeBatchOpenSecs(6 hours);
@@ -408,7 +404,6 @@ contract DiemStakingProxyTest is Test {
         proxy.setMinUnstakeBatchOpenSecs(7 days);
         assertEq(proxy.minUnstakeBatchOpenSecs(), 7 days);
     }
-
 
     function _advanceRewardEpochs(uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
@@ -571,7 +566,6 @@ contract DiemStakingProxyTest is Test {
         assertEq(diem.balanceOf(address(proxy)), 100e18);
     }
 
-
     function test_reserve_forwardsToChannels() public {
         _setupBuyer(200e6);
 
@@ -622,6 +616,71 @@ contract DiemStakingProxyTest is Test {
         assertEq(channels.activeChannelCount(address(proxy)), 0);
     }
 
+    function test_operatorFee_takesUsdcCutFromSettlement() public {
+        _stakeAs(alice, 100e18);
+
+        vm.prank(owner);
+        proxy.setOperatorFee(500, bob);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+
+        uint256 recipientBefore = usdc.balanceOf(bob);
+        uint256 proxyBefore = usdc.balanceOf(address(proxy));
+        _settleViaProxy(channelId, 500e6);
+
+        uint256 protocolNetInflow = 500e6 - (500e6 * 200) / 10000;
+        uint256 operatorFee = (protocolNetInflow * 500) / 10000;
+        uint256 stakerNet = protocolNetInflow - operatorFee;
+
+        assertEq(usdc.balanceOf(bob) - recipientBefore, operatorFee);
+        assertEq(usdc.balanceOf(address(proxy)) - proxyBefore, stakerNet);
+        assertEq(proxy.earnedUsdc(alice), stakerNet);
+        assertEq(proxy.totalUsdcReservedForStakers(), stakerNet);
+    }
+
+    function test_setOperatorFee_enforcesMaxAndRecipient() public {
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit AntseedSellerDelegation.OperatorFeeSet(0, address(0));
+        proxy.setOperatorFee(0, address(0));
+
+        vm.prank(owner);
+        vm.expectRevert(AntseedSellerDelegation.InvalidAddress.selector);
+        proxy.setOperatorFee(1, address(0));
+
+        vm.prank(owner);
+        vm.expectRevert(AntseedSellerDelegation.OperatorFeeTooLarge.selector);
+        proxy.setOperatorFee(501, bob);
+    }
+
+    function test_operatorFee_takesAntsCutFromEpochPot() public {
+        _stakeAs(alice, 100e18);
+
+        vm.prank(owner);
+        proxy.setOperatorFee(500, bob);
+
+        bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 1000e6, 1000e6);
+        _settleViaProxy(channelId, 500e6);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 0;
+        (uint256 pendingSeller,) = emissions.pendingEmissions(address(proxy), ids);
+        uint256 operatorFee = (pendingSeller * 500) / 10000;
+        uint256 stakerPot = pendingSeller - operatorFee;
+
+        uint256 aliceBefore = ants.balanceOf(alice);
+        uint256 recipientBefore = ants.balanceOf(bob);
+        vm.prank(alice);
+        proxy.claimAnts(_rewardEpochs(0, 1));
+
+        assertEq(ants.balanceOf(bob) - recipientBefore, operatorFee);
+        assertEq(ants.balanceOf(alice) - aliceBefore, stakerPot);
+        (,, uint256 antsPot,) = proxy.rewardEpochs(0);
+        assertEq(antsPot, stakerPot);
+    }
+
     function test_topUp_noInflow_noNotify() public {
         _stakeAs(alice, 100e18);
 
@@ -644,7 +703,6 @@ contract DiemStakingProxyTest is Test {
         uint256 storedAfter = proxy.usdcRewardPerTokenStored();
         assertEq(storedAfter, storedBefore, "rewardPerTokenStored must not change");
     }
-
 
     function test_claimAnts_opensAndFundsRewardEpoch() public {
         _stakeAs(alice, 100e18);
@@ -692,7 +750,6 @@ contract DiemStakingProxyTest is Test {
         assertEq(ants.balanceOf(address(proxy)), 0, "no ANTS minted into proxy");
         assertTrue(proxy.userEpochClaimed(alice, 0), "user can advance past empty epoch");
     }
-
 
     function test_claimUsdcAndClaimAnts_paysBothRewards() public {
         _stakeAs(alice, 100e18);
@@ -881,7 +938,6 @@ contract DiemStakingProxyTest is Test {
         assertGt(proxy.pendingAntsForEpoch(alice, 0), 0, "unstaked user retains points");
     }
 
-
     function test_setOperator_onlyOwner_revertsForNonOwner() public {
         vm.prank(alice);
         vm.expectRevert();
@@ -955,7 +1011,6 @@ contract DiemStakingProxyTest is Test {
         assertEq(storedAfter, storedBefore, "stake recovery must not be routed to stakers as a reward");
     }
 
-
     function test_isValidSignature_validOwner() public view {
         bytes32 hash = keccak256("venice-api-key-challenge");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(OWNER_PK, hash);
@@ -991,7 +1046,6 @@ contract DiemStakingProxyTest is Test {
         bytes memory newSig = abi.encodePacked(r2, s2, v2);
         assertEq(proxy.isValidSignature(hash, newSig), bytes4(0x1626ba7e));
     }
-
 
     function test_sweepOrphanUsdc_recoversInflowWithNoStakers() public {
         bytes32 channelId = _reserveViaProxy(bytes32(uint256(1)), 500e6, 500e6);
@@ -1077,7 +1131,6 @@ contract DiemStakingProxyTest is Test {
         proxy.sweepOrphanUsdc(address(0));
     }
 
-
     function test_maxTotalStake_defaultsToAlphaCap_onFreshDeploy() public {
         vm.prank(owner);
         DiemStakingProxy fresh = new DiemStakingProxy(address(diem), address(usdc), address(antseedRegistry), operator);
@@ -1161,7 +1214,6 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.totalStaked(), 1_000_000e18);
     }
 
-
     function test_stakerCount_startsAtZero() public view {
         assertEq(proxy.stakerCount(), 0);
     }
@@ -1207,7 +1259,6 @@ contract DiemStakingProxyTest is Test {
         assertEq(proxy.stakerCount(), 1, "re-entry counts again");
     }
 
-
     function test_totalUsdcDistributedEver_accumulatesAcrossSettles() public {
         _stakeAs(alice, 100e18);
 
@@ -1238,7 +1289,6 @@ contract DiemStakingProxyTest is Test {
         _settleViaProxy(channelId, 400e6);
         assertEq(proxy.totalUsdcDistributedEver(), 0, "no-staker inflow doesn't count as distributed");
     }
-
 
     function test_invariant_usdcClaimsSumToInflows() public {
         _stakeAs(alice, 40e18);
@@ -1315,7 +1365,6 @@ contract DiemStakingProxyTest is Test {
         assertApproxEqAbs(paidOut, antsPot, 2, "rounding dust bounded by #claimants");
     }
 
-
     function test_catchUpPoints_openEpochDeferredThenCaptured() public {
         _stakeAs(alice, 100e18);
 
@@ -1338,7 +1387,6 @@ contract DiemStakingProxyTest is Test {
         proxy.initiateUnstake(1e18);
         assertGt(proxy.userPoints(alice, openEp), 0, "open-epoch points captured on next interaction");
     }
-
 
     function test_churn_stakeSettleUnstakeRestakeSettle() public {
         _stakeAs(alice, 100e18);
@@ -1366,7 +1414,6 @@ contract DiemStakingProxyTest is Test {
         assertGe(usdc.balanceOf(address(proxy)), proxy.totalUsdcReservedForStakers());
     }
 
-
     function test_flush_windowAfterImmediateNextQueue() public {
         vm.prank(owner);
         proxy.setMinUnstakeBatchOpenSecs(6 hours);
@@ -1392,13 +1439,11 @@ contract DiemStakingProxyTest is Test {
         proxy.flush();
     }
 
-
     function test_isValidSignature_malformedSigReturnsInvalid() public {
         bytes32 hash = keccak256("venice-api-key-challenge");
         bytes memory bad = hex"deadbeef"; // 4 bytes, not 65
         assertEq(proxy.isValidSignature(hash, bad), bytes4(0xffffffff));
     }
-
 
     function test_rewardPerToken_precisionAtHighTvl() public {
         vm.prank(owner);

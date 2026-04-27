@@ -4,12 +4,12 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import {AntseedSellerDelegation} from "./AntseedSellerDelegation.sol";
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+import { AntseedSellerDelegation } from "./AntseedSellerDelegation.sol";
+import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
 
 interface IDiemStake {
     function stake(uint256 amount) external;
@@ -20,18 +20,6 @@ interface IDiemStake {
 
 interface IAntseedStakingSeller {
     function unstake() external;
-}
-
-interface IAntseedEmissionsClaim {
-    function claimSellerEmissions(uint256[] calldata epochs) external;
-    function pendingEmissions(address account, uint256[] calldata epochs)
-        external
-        view
-        returns (uint256 totalSeller, uint256 totalBuyer);
-}
-
-interface IAntseedEmissionsClock {
-    function currentEpoch() external view returns (uint256);
 }
 
 contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
@@ -173,7 +161,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         currentUnstakeBatch = 1;
         oldestUnclaimedUnstakeBatch = 1;
 
-        uint32 _firstRewardEpoch = IAntseedEmissionsClock(_emissions).currentEpoch().toUint32();
+        uint32 _firstRewardEpoch = _currentEmissionsEpoch().toUint32();
         firstRewardEpoch = _firstRewardEpoch;
         syncedRewardEpoch = _firstRewardEpoch;
 
@@ -248,7 +236,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (e.total == 0) revert NothingToFlush();
 
         uint64 openedAt = currentUnstakeBatchOpenedAt;
-        if (e.userCount < MAX_PER_UNSTAKE_BATCH && block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)) {
+        if (
+            e.userCount < MAX_PER_UNSTAKE_BATCH
+                && block.timestamp < uint256(openedAt) + uint256(minUnstakeBatchOpenSecs)
+        ) {
             revert UnstakeBatchTooYoung();
         }
 
@@ -397,10 +388,9 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         uint128 newMaxAmount,
         uint256 deadline,
         bytes calldata reserveSig
-    ) public override nonReentrant whenNotPaused {
-        uint256 beforeBal = usdc.balanceOf(address(this));
-        super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
-        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
+    ) public override nonReentrant whenNotPaused returns (uint256 netPayout) {
+        netPayout = super.topUp(channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig);
+        _distributeUsdcInstant(netPayout);
     }
 
     function settle(bytes32 channelId, uint128 cumulativeAmount, bytes calldata metadata, bytes calldata buyerSig)
@@ -408,10 +398,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         override
         nonReentrant
         whenNotPaused
+        returns (uint256 netPayout)
     {
-        uint256 beforeBal = usdc.balanceOf(address(this));
-        super.settle(channelId, cumulativeAmount, metadata, buyerSig);
-        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
+        netPayout = super.settle(channelId, cumulativeAmount, metadata, buyerSig);
+        _distributeUsdcInstant(netPayout);
     }
 
     function close(bytes32 channelId, uint128 finalAmount, bytes calldata metadata, bytes calldata buyerSig)
@@ -419,10 +409,10 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         override
         nonReentrant
         whenNotPaused
+        returns (uint256 netPayout)
     {
-        uint256 beforeBal = usdc.balanceOf(address(this));
-        super.close(channelId, finalAmount, metadata, buyerSig);
-        _distributeUsdcInstant(usdc.balanceOf(address(this)) - beforeBal);
+        netPayout = super.close(channelId, finalAmount, metadata, buyerSig);
+        _distributeUsdcInstant(netPayout);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -441,7 +431,11 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (finalized > synced) remaining = finalized - synced;
     }
 
-    function userPointsBacklog(address account) external view returns (uint32 userEpoch, uint32 synced, uint32 remaining) {
+    function userPointsBacklog(address account)
+        external
+        view
+        returns (uint32 userEpoch, uint32 synced, uint32 remaining)
+    {
         userEpoch = userCurrentEpoch[account];
         synced = syncedRewardEpoch;
         if (synced > userEpoch) remaining = synced - userEpoch;
@@ -512,7 +506,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         if (userEpochClaimed[account][rewardEpoch]) return 0;
         if (rewardEpoch >= syncedRewardEpoch) return 0;
         RewardEpoch memory re = rewardEpochs[rewardEpoch];
-        uint256 antsPot = re.funded ? re.antsPot : _pendingRewardEpochPot(rewardEpoch);
+        uint256 antsPot = re.funded ? re.antsPot : _operatorFeeNetAmount(_pendingRewardEpochPot(rewardEpoch));
         if (antsPot == 0) return 0;
         uint256 totalPoints = re.totalPoints;
         if (totalPoints == 0) return 0;
@@ -576,7 +570,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     }
 
     function _finalizedRewardEpoch() internal view returns (uint32) {
-        return IAntseedEmissionsClock(emissions).currentEpoch().toUint32();
+        return _currentEmissionsEpoch().toUint32();
     }
 
     function _syncFinalizedRewardEpochsForUpdate() internal {
@@ -619,8 +613,8 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
         uint256 beforeBal = ants.balanceOf(address(this));
-        IAntseedEmissionsClaim(emissions).claimSellerEmissions(ids);
-        antsPot = ants.balanceOf(address(this)) - beforeBal;
+        _claimSellerEmissions(ids);
+        antsPot = _takeOperatorFee(ants, ants.balanceOf(address(this)) - beforeBal);
 
         rewardEpochs[rewardEpoch].antsPot = antsPot;
         rewardEpochs[rewardEpoch].funded = true;
@@ -631,7 +625,7 @@ contract DiemStakingProxy is AntseedSellerDelegation, IERC1271, Pausable {
     function _pendingRewardEpochPot(uint32 rewardEpoch) internal view returns (uint256 pendingSeller) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = rewardEpoch;
-        (pendingSeller,) = IAntseedEmissionsClaim(emissions).pendingEmissions(address(this), ids);
+        pendingSeller = _pendingSellerEmissions(address(this), ids);
     }
 
     function _advanceUserClaimCursor(address account) internal {
