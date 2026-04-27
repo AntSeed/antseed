@@ -75,12 +75,21 @@ export class HttpMetadataResolver implements MetadataResolver {
       }
 
       const metadata = (await response.json()) as PeerMetadata;
+      const resolvedAtMs = Date.now();
+      metadata.resolvedAtMs = resolvedAtMs;
+      const serverDateHeader = response.headers.get('date');
+      const serverDateMs = serverDateHeader ? Date.parse(serverDateHeader) : NaN;
+      if (Number.isFinite(serverDateMs)) {
+        metadata.serverDateMs = serverDateMs;
+      }
       this.failedEndpoints.delete(endpointKey);
       debugLog(
         `[MetadataResolver] Resolved ${url}: peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}... `
         + `displayName=${JSON.stringify(metadata.displayName ?? null)} `
         + `providers=${metadata.providers?.length ?? 0} `
-        + `ageMs=${typeof metadata.timestamp === 'number' ? Date.now() - metadata.timestamp : 'unknown'}`,
+        + `ageMs=${typeof metadata.timestamp === 'number' ? resolvedAtMs - metadata.timestamp : 'unknown'} `
+        + `serverAgeMs=${typeof metadata.timestamp === 'number' && metadata.serverDateMs !== undefined ? metadata.serverDateMs - metadata.timestamp : 'unknown'} `
+        + `clientServerSkewMs=${metadata.serverDateMs !== undefined ? resolvedAtMs - metadata.serverDateMs : 'unknown'}`,
       );
       return metadata;
     } catch (err) {

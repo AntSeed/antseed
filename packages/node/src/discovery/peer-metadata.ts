@@ -52,5 +52,17 @@ export interface PeerMetadata {
    * Stored as 40 lowercase hex chars (no `0x` prefix) matching `peerId` format.
    */
   sellerContract?: string;
+  /**
+   * Buyer-local observation time for this metadata fetch. Not signed and not
+   * encoded in metadata; used only for diagnostics/freshness decisions.
+   */
+  resolvedAtMs?: number;
+  /**
+   * Seller HTTP Date header observed during metadata fetch, in Unix ms. Not
+   * signed and not encoded in metadata. When present, buyers can judge the
+   * signed timestamp using the seller's wall clock instead of their own, which
+   * keeps discovery working for users whose local desktop clock is wrong.
+   */
+  serverDateMs?: number;
   signature: string;
 }

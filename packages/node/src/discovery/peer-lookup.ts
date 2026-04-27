@@ -28,6 +28,13 @@ export interface LookupConfig {
   requireValidSignature: boolean;
   allowStaleMetadata: boolean;
   maxAnnouncementAgeMs: number;
+  /**
+   * Maximum tolerated difference between the buyer's wall clock and the HTTP
+   * Date header returned by the seller metadata endpoint. When the skew exceeds
+   * this value, freshness checks use the seller's HTTP Date header instead of
+   * the buyer's local clock so misconfigured desktops can still discover peers.
+   */
+  maxClientServerClockSkewMs: number;
   maxResults: number;
   /**
    * Optional foreground DHT budget for findAll(). Each individual lookup still
@@ -41,6 +48,10 @@ export const DEFAULT_LOOKUP_CONFIG: Omit<LookupConfig, "dht" | "metadataResolver
   requireValidSignature: true,
   allowStaleMetadata: false,
   maxAnnouncementAgeMs: 30 * 60 * 1000,
+  // Some desktops have wall clocks hours ahead/behind real UTC. Metadata HTTP
+  // responses include a seller-side Date header; if buyer-vs-seller clock skew
+  // is larger than this, trust the seller Date for freshness instead.
+  maxClientServerClockSkewMs: 5 * 60 * 1000,
   // Old cap was 50, then 200; with subnet fan-out and larger live networks,
   // keep browse/discovery truncation comfortably above current scale while
   // still bounding downstream enrichment/rendering work.
@@ -316,13 +327,28 @@ export class PeerLookup {
       }
     }
 
-    if (!this.config.allowStaleMetadata && this.isStale(metadata)) {
-      debugWarn(
-        `[PeerLookup] Dropping metadata from ${endpoint}: stale `
-        + `ageMs=${Date.now() - metadata.timestamp} maxAgeMs=${this.config.maxAnnouncementAgeMs} `
-        + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
-      );
-      return null;
+    if (!this.config.allowStaleMetadata) {
+      const freshness = this.getMetadataFreshness(metadata);
+      if (freshness.stale) {
+        debugWarn(
+          `[PeerLookup] Dropping metadata from ${endpoint}: stale `
+          + `ageMs=${freshness.ageMs} maxAgeMs=${this.config.maxAnnouncementAgeMs} `
+          + `reference=${freshness.reference} `
+          + `clientServerSkewMs=${freshness.clientServerSkewMs ?? 'unknown'} `
+          + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
+        );
+        return null;
+      }
+      if (freshness.clockSkewSuspected) {
+        debugWarn(
+          `[PeerLookup] Accepting metadata from ${endpoint} using seller HTTP Date; `
+          + `client clock skew suspected clientAgeMs=${freshness.clientAgeMs} `
+          + `serverAgeMs=${freshness.ageMs} `
+          + `clientServerSkewMs=${freshness.clientServerSkewMs ?? 'unknown'} `
+          + `maxAgeMs=${this.config.maxAnnouncementAgeMs} `
+          + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
+        );
+      }
     }
 
     debugLog(
@@ -339,8 +365,35 @@ export class PeerLookup {
     return verifySignature(metadata.peerId, signature, dataToVerify);
   }
 
+  getMetadataFreshness(metadata: PeerMetadata): {
+    ageMs: number;
+    clientAgeMs: number;
+    clientServerSkewMs?: number;
+    reference: "client" | "server";
+    stale: boolean;
+    clockSkewSuspected: boolean;
+  } {
+    const clientNowMs = metadata.resolvedAtMs ?? Date.now();
+    const clientAgeMs = clientNowMs - metadata.timestamp;
+    const serverDateMs = metadata.serverDateMs;
+    const clientServerSkewMs = serverDateMs !== undefined ? clientNowMs - serverDateMs : undefined;
+    const useServerDate = (
+      serverDateMs !== undefined
+      && clientServerSkewMs !== undefined
+      && Math.abs(clientServerSkewMs) > this.config.maxClientServerClockSkewMs
+    );
+    const ageMs = useServerDate ? serverDateMs - metadata.timestamp : clientAgeMs;
+    return {
+      ageMs,
+      clientAgeMs,
+      ...(clientServerSkewMs !== undefined ? { clientServerSkewMs } : {}),
+      reference: useServerDate ? "server" : "client",
+      stale: ageMs > this.config.maxAnnouncementAgeMs,
+      clockSkewSuspected: useServerDate,
+    };
+  }
+
   isStale(metadata: PeerMetadata): boolean {
-    const age = Date.now() - metadata.timestamp;
-    return age > this.config.maxAnnouncementAgeMs;
+    return this.getMetadataFreshness(metadata).stale;
   }
 }
