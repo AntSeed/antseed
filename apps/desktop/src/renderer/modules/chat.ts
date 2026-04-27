@@ -1978,13 +1978,20 @@ export function initChatModule({
     // depend on chatServiceOptions.value matching the encoded form exactly.
     // Fall back to looking up the option by value for the dropdown case.
     let peerId = explicitPeerId?.trim() ?? '';
+    const selectedOption = uiState.chatServiceOptions.find((o) => o.value === value);
     if (!peerId) {
-      const selectedOption = uiState.chatServiceOptions.find((o) => o.value === value);
       peerId = selectedOption?.peerId || '';
     }
     uiState.chatSelectedPeerId = peerId;
-    if (peerId && bridge?.chatAiSelectPeer) {
-      void bridge.chatAiSelectPeer(peerId).catch(() => undefined);
+    if (activeConversation) {
+      activeConversation.peerId = peerId || undefined;
+      activeConversation.peerLabel = selectedOption?.peerLabel || undefined;
+    }
+    if (bridge?.chatAiSelectPeer) {
+      void bridge.chatAiSelectPeer({
+        conversationId: uiState.chatActiveConversation,
+        peerId: peerId || null,
+      }).catch(() => undefined);
     }
 
     notifyUiStateChanged();
@@ -2006,8 +2013,15 @@ export function initChatModule({
   function clearPinnedPeer(): void {
     uiState.chatSelectedPeerId = '';
     uiState.chatRoutedPeer = '';
+    if (activeConversation) {
+      delete activeConversation.peerId;
+      delete activeConversation.peerLabel;
+    }
     if (bridge?.chatAiSelectPeer) {
-      void bridge.chatAiSelectPeer(null).catch(() => undefined);
+      void bridge.chatAiSelectPeer({
+        conversationId: uiState.chatActiveConversation,
+        peerId: null,
+      }).catch(() => undefined);
     }
     notifyUiStateChanged();
   }

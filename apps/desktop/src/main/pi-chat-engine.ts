@@ -12,6 +12,12 @@ import {
   type ChatStreamStopReason,
 } from './chat-stream-stop.js';
 import {
+  ANTSEED_PEER_CUSTOM_TYPE,
+  normalizeChatPeerSelectionRequest,
+  resolveLatestPeerBinding,
+  type ChatPeerSelectionRequest,
+} from './chat-peer-selection.js';
+import {
   buildAttachmentPromptText,
   extractAttachmentImages,
   prepareChatAttachments,
@@ -1346,21 +1352,12 @@ function extractToolCallFromPartial(
   };
 }
 
-const ANTSEED_PEER_CUSTOM_TYPE = 'antseed:peer';
-
 type AntseedPeerData = { peerId: string; peerLabel?: string };
 
 function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
-  const entries = manager.getEntries();
-  // Walk backwards to find the latest antseed:peer custom entry
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.type === 'custom' && 'customType' in entry && entry.customType === ANTSEED_PEER_CUSTOM_TYPE) {
-      const data = (entry as { data?: unknown }).data as AntseedPeerData | undefined;
-      if (data?.peerId) return data;
-    }
-  }
-  return null;
+  return resolveLatestPeerBinding(
+    manager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>,
+  );
 }
 
 class PiConversationStore {
@@ -1536,6 +1533,12 @@ class PiConversationStore {
     const manager = await this.openSessionManager(id);
     if (!manager) return;
     manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
+  }
+
+  async clearPeer(id: string): Promise<void> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) return;
+    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {});
   }
 
   async delete(id: string): Promise<void> {
@@ -2715,19 +2718,31 @@ export function registerPiChatHandlers({
     return { ok: true };
   });
 
-  ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
-    const normalizedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
-    if (!normalizedPeerId) {
-      preferredPeerByConversationId.clear();
+  ipcMain.handle('chat:ai-select-peer', async (_event, payload: ChatPeerSelectionRequest | string | null) => {
+    const { conversationId, peerId } = normalizeChatPeerSelectionRequest(payload);
+
+    if (conversationId) {
+      if (peerId) {
+        preferredPeerByConversationId.set(conversationId, peerId);
+        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
+        await store.setPeer(conversationId, peerId, peerLabel);
+      } else {
+        preferredPeerByConversationId.delete(conversationId);
+        await store.clearPeer(conversationId);
+      }
+    }
+
+    if (!peerId) {
       return { ok: true };
     }
+
     // Eager connection warmup via buyer proxy
     const proxyPort = await resolveProxyPort(configPath);
     try {
       const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ peerId: normalizedPeerId }),
+        body: JSON.stringify({ peerId }),
       });
       const result = await response.json() as { ok: boolean; error?: string };
       return { ok: result.ok, error: result.error };
