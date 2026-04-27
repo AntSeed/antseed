@@ -1,6 +1,6 @@
 import type { PeerEndpoint, MetadataResolver } from './metadata-resolver.js';
 import type { PeerMetadata } from './peer-metadata.js';
-import { debugWarn } from '../utils/debug.js';
+import { debugLog, debugWarn } from '../utils/debug.js';
 
 export interface HttpMetadataResolverConfig {
   /** Timeout in ms for each metadata fetch. Default: 1500 */
@@ -51,6 +51,11 @@ export class HttpMetadataResolver implements MetadataResolver {
     const failedState = this.failedEndpoints.get(endpointKey);
     if (failedState !== undefined) {
       if (failedState.nextRetryAt > now) {
+        debugLog(
+          `[MetadataResolver] Skipping ${endpointKey}: failure cooldown `
+          + `${failedState.nextRetryAt - now}ms remaining after `
+          + `${failedState.consecutiveFailures} failure(s)`,
+        );
         return null;
       }
     }
@@ -65,11 +70,18 @@ export class HttpMetadataResolver implements MetadataResolver {
 
       if (!response.ok) {
         this.markEndpointFailure(endpointKey);
+        debugWarn(`[MetadataResolver] Failed to resolve ${url}: HTTP ${response.status}`);
         return null;
       }
 
       const metadata = (await response.json()) as PeerMetadata;
       this.failedEndpoints.delete(endpointKey);
+      debugLog(
+        `[MetadataResolver] Resolved ${url}: peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}... `
+        + `displayName=${JSON.stringify(metadata.displayName ?? null)} `
+        + `providers=${metadata.providers?.length ?? 0} `
+        + `ageMs=${typeof metadata.timestamp === 'number' ? Date.now() - metadata.timestamp : 'unknown'}`,
+      );
       return metadata;
     } catch (err) {
       this.markEndpointFailure(endpointKey);

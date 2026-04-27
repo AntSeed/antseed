@@ -11,7 +11,7 @@ import {
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
-import { debugLog } from "../utils/debug.js";
+import { debugLog, debugWarn } from "../utils/debug.js";
 
 function shuffle<T>(arr: T[]): T[] {
   const out = arr.slice();
@@ -271,6 +271,15 @@ export class PeerLookup {
       }
     }
 
+    debugLog(
+      `[PeerLookup] Resolving metadata for ${uniquePeers.length}/${peers.length} unique endpoint(s)`,
+    );
+    if (uniquePeers.length > 0) {
+      debugLog(
+        `[PeerLookup] Metadata endpoints: ${uniquePeers.map((p) => `${p.host}:${p.port}`).join(', ')}`,
+      );
+    }
+
     // Resolve all peers in parallel — bad-port timeouts no longer block good peers
     const settled = await Promise.allSettled(
       uniquePeers.map((peer) => this._resolveSinglePeer(peer)),
@@ -290,6 +299,7 @@ export class PeerLookup {
   }
 
   private async _resolveSinglePeer(peer: PeerEndpoint): Promise<LookupResult | null> {
+    const endpoint = `${peer.host}:${peer.port}`;
     const metadata = await this.config.metadataResolver.resolve(peer);
     if (metadata === null) {
       return null;
@@ -298,14 +308,28 @@ export class PeerLookup {
     if (this.config.requireValidSignature) {
       const valid = await this.verifyMetadataSignature(metadata);
       if (!valid) {
+        debugWarn(
+          `[PeerLookup] Dropping metadata from ${endpoint}: invalid signature `
+          + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
+        );
         return null;
       }
     }
 
     if (!this.config.allowStaleMetadata && this.isStale(metadata)) {
+      debugWarn(
+        `[PeerLookup] Dropping metadata from ${endpoint}: stale `
+        + `ageMs=${Date.now() - metadata.timestamp} maxAgeMs=${this.config.maxAnnouncementAgeMs} `
+        + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
+      );
       return null;
     }
 
+    debugLog(
+      `[PeerLookup] Accepted metadata from ${endpoint}: peerId=${metadata.peerId.slice(0, 12)}... `
+      + `displayName=${JSON.stringify(metadata.displayName ?? null)} `
+      + `providers=${metadata.providers.length}`,
+    );
     return { metadata, host: peer.host, port: peer.port };
   }
 
