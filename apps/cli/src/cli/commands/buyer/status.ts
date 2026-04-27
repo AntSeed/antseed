@@ -4,7 +4,7 @@ import Table from 'cli-table3';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getGlobalOptions } from '../types.js';
-import { createDepositsClient, loadCryptoContext, formatUsdc } from '../../payment-utils.js';
+import { createDepositsClient, loadCryptoContext, formatUsdc, openChannelStore } from '../../payment-utils.js';
 import { loadConfig } from '../../../config/loader.js';
 import { getNodeStatus } from '../../../status/node-status.js';
 
@@ -49,6 +49,19 @@ export function registerBuyerStatusCommand(buyerCmd: Command): void {
           // Non-fatal: show the status view even if chain access is unavailable.
         }
 
+        let activeChannels = nodeStatus.activeChannels;
+        try {
+          const store = openChannelStore(globalOpts.dataDir);
+          try {
+            activeChannels = store.getActiveChannelsByBuyer('buyer', identity.address).length;
+          } finally {
+            store.close();
+          }
+        } catch {
+          // Non-fatal: if the local channel DB does not exist yet, keep the
+          // daemon-reported value (or zero for a buyer proxy with no channels).
+        }
+
         if (options.json) {
           console.log(JSON.stringify({
             connectionState: nodeStatus.state,
@@ -57,7 +70,7 @@ export function registerBuyerStatusCommand(buyerCmd: Command): void {
             pinnedPeerId: buyerState?.pinnedPeerId ?? null,
             depositsAvailable,
             depositsReserved,
-            activeChannels: nodeStatus.activeChannels,
+            activeChannels,
             walletAddress: nodeStatus.walletAddress ?? identity.address,
           }, null, 2));
           return;
@@ -75,7 +88,7 @@ export function registerBuyerStatusCommand(buyerCmd: Command): void {
           ['Pinned peer', buyerState?.pinnedPeerId ? chalk.cyan(buyerState.pinnedPeerId) : chalk.dim('none')],
           ['Deposits available', depositsAvailable ? chalk.green(`${depositsAvailable} USDC`) : chalk.dim('unavailable')],
           ['Deposits reserved', depositsReserved ? chalk.yellow(`${depositsReserved} USDC`) : chalk.dim('unavailable')],
-          ['Active channels', String(nodeStatus.activeChannels)],
+          ['Active channels', String(activeChannels)],
           ['Wallet address', nodeStatus.walletAddress ?? identity.address ?? chalk.dim('not configured')],
         );
 
