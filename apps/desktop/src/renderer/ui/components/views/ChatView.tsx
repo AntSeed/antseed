@@ -277,7 +277,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     [snap.chatServiceOptions, snap.chatSelectedServiceValue],
   );
   const peerDisplayName =
-    snap.chatRoutedPeer || currentServiceOption?.peerLabel || '';
+    snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
 
   const applyServiceChange = useCallback(
     (value: string) => {

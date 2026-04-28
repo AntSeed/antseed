@@ -187,16 +187,19 @@ function groupByPeer(conversations: unknown[]): PeerGroup[] {
     }
 
     let group = groups.get(peerId);
+    const displayName = getPeerDisplayName(peerLabel);
     if (!group) {
-      const displayName = getPeerDisplayName(peerLabel) || peerId.slice(0, 12) + '...';
       group = {
         peerId,
         peerLabel,
-        displayName,
+        displayName: displayName || peerId.slice(0, 12) + '...',
         gradient: getPeerGradient(peerId),
         conversations: [],
       };
       groups.set(peerId, group);
+    } else if (displayName && group.displayName === peerId.slice(0, 12) + '...') {
+      group.peerLabel = peerLabel;
+      group.displayName = displayName;
     }
     group.conversations.push(conv);
   }

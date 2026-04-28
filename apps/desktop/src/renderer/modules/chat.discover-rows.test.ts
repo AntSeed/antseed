@@ -29,3 +29,18 @@ test('projectRowsToChatServiceOptions dedupes by (provider, service, peer)', () 
   const options = projectRowsToChatServiceOptions(rows);
   assert.equal(options.length, 1);
 });
+
+test('projectRowsToChatServiceOptions preserves peer display name for UI labels', () => {
+  const row = normalizeDiscoverRow({
+    peerId: 'abc123',
+    serviceId: 'gpt-5',
+    peerDisplayName: 'Friendly Peer',
+    peerLabel: '0xabc123...',
+    selectionValue: 'openai\u0001gpt-5\u0001abc123',
+  });
+  assert.ok(row);
+
+  const [option] = projectRowsToChatServiceOptions([row!]);
+  assert.equal(option.peerDisplayName, 'Friendly Peer');
+  assert.equal(option.peerLabel, '0xabc123...');
+});
