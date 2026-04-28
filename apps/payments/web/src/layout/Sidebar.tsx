@@ -87,7 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { id: 'channels',  label: 'Channels',  icon: <ChannelsIcon /> },
   { id: 'emissions', label: '$ANTS', icon: <AntsTabIcon /> },
-  { id: 'diem-rewards', label: 'Venice.ai Proxy', icon: <DiemTabIcon /> },
+  { id: 'diem-rewards', label: '$DIEM $ANTS', icon: <DiemTabIcon /> },
 ];
 
 export function Sidebar({ activeTab, onSelect, isDark, onToggleTheme }: SidebarProps) {

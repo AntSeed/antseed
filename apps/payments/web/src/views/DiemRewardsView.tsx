@@ -137,7 +137,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
         hasMore: from + MAX_EPOCHS_PREVIEW < finalizedRewardEpoch,
       });
     } catch (err) {
-      setLoadError(getErrorMessage(err, 'Unable to load Venice.ai Proxy rewards.'));
+      setLoadError(getErrorMessage(err, 'Unable to load DIEM rewards.'));
     } finally {
       setLoading(false);
     }
@@ -189,7 +189,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
         <div className="overview-empty">
           <div className="overview-empty-title">Connect your staking wallet</div>
           <div className="overview-empty-desc">
-            Connect the same wallet you used with Venice.ai Proxy to view and claim $ANTS.
+            Connect the same wallet you used on the DIEM staking portal to view and claim $ANTS.
           </div>
           <div className="diem-rewards-connect"><ConnectButton /></div>
         </div>
@@ -200,7 +200,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
   if (loading && !snapshot) {
     return (
       <div className="diem-rewards-view">
-        <div className="overview-empty"><div className="overview-empty-desc">Loading Venice.ai Proxy rewards…</div></div>
+        <div className="overview-empty"><div className="overview-empty-desc">Loading DIEM rewards…</div></div>
       </div>
     );
   }
@@ -209,7 +209,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     return (
       <div className="diem-rewards-view">
         <div className="overview-empty">
-          <div className="overview-empty-title">Unable to load Venice.ai Proxy rewards</div>
+          <div className="overview-empty-title">Unable to load DIEM rewards</div>
           <div className="overview-empty-desc">{loadError}</div>
         </div>
       </div>
@@ -220,10 +220,10 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     <div className="diem-rewards-view">
       <section className="dashboard-section">
         <header className="dashboard-section-head">
-          <div className="dashboard-section-eyebrow">Venice.ai Proxy</div>
-          <h2 className="dashboard-section-title">Your Venice.ai Proxy $ANTS</h2>
+          <div className="dashboard-section-eyebrow">DIEM staking</div>
+          <h2 className="dashboard-section-title">Your DIEM $ANTS</h2>
           <p className="dashboard-section-sub">
-            Rewards earned through Venice.ai Proxy. Connect the same wallet you used for staking.
+            Rewards earned from staking DIEM through the AntSeed proxy. Connect the same wallet you used for staking.
           </p>
         </header>
 
@@ -254,16 +254,16 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
       <section className="dashboard-section">
         <header className="dashboard-section-head">
           <div className="dashboard-section-eyebrow">History</div>
-          <h2 className="dashboard-section-title">Venice.ai Proxy epochs</h2>
+          <h2 className="dashboard-section-title">Diem proxy epochs</h2>
           <p className="dashboard-section-sub">
-            Claimable epochs are finalized by the Venice.ai Proxy. Current epochs appear after the proxy closes them.
+            Claimable epochs are finalized by the DiemStakingProxy. Current epochs appear after the proxy closes them.
           </p>
         </header>
         <div className="dashboard-chart-card">
           <DiemRewardsTable rows={snapshot?.rows ?? []} />
           {(claimError || claimSuccess) && (
             <div className={`status-msg ${claimError ? 'status-error' : 'status-success'}`}>
-              {claimError ?? 'Venice.ai Proxy $ANTS claim confirmed.'}
+              {claimError ?? 'DIEM $ANTS claim confirmed.'}
             </div>
           )}
           <button
@@ -287,7 +287,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
 
 function DiemRewardsTable({ rows }: { rows: DiemRewardRow[] }) {
   if (rows.length === 0) {
-    return <div className="overview-empty-desc">No finalized Venice.ai Proxy epochs to show.</div>;
+    return <div className="overview-empty-desc">No finalized DIEM proxy epochs to show.</div>;
   }
   return (
     <div className="emissions-table-wrap">
