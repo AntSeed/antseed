@@ -1514,6 +1514,8 @@ class PiConversationStore {
         usage: conversation.usage,
         totalTokens,
         totalEstimatedCostUsd: deriveCost(conversation.messages),
+        ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
+        ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
       });
     }
 
@@ -1532,12 +1534,19 @@ class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(service?: string, provider?: string): Promise<AiConversation> {
+  async create(service?: string, provider?: string, peerId?: string, peerLabel?: string): Promise<AiConversation> {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
     const modelProvider = providerId ?? PROXY_PROVIDER_ID;
     manager.appendModelChange(modelProvider, normalizeServiceId(service));
+    const trimmedPeerId = peerId?.trim() ?? '';
+    if (trimmedPeerId) {
+      manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {
+        peerId: trimmedPeerId,
+        ...(peerLabel ? { peerLabel } : {}),
+      } satisfies AntseedPeerData);
+    }
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
       throw new Error('Failed to create persisted pi session');
@@ -2632,13 +2641,13 @@ export function registerPiChatHandlers({
   });
 
   ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
-    const conversation = await store.create(service, provider);
     const trimmedPeerId = peerId?.trim() ?? '';
+    const peerLabel = trimmedPeerId
+      ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
+      : undefined;
+    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel);
     if (trimmedPeerId) {
       preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
-      // Resolve peer label from service options
-      const peerLabel = lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel;
-      await store.setPeer(conversation.id, trimmedPeerId, peerLabel);
     } else {
       preferredPeerByConversationId.delete(conversation.id);
     }
