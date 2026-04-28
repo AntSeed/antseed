@@ -1,4 +1,3 @@
-import { shell } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -15,15 +14,14 @@ export const browserPreviewTool: ToolDefinition = {
   name: 'open_browser_preview',
   label: 'Browser Preview',
   description:
-    'Open a URL in the user\'s system browser. Call this tool after starting a dev ' +
+    'Open a URL in the in-app browser preview panel. Call this tool after starting a dev ' +
     'server with start_dev_server, when making visible UI changes, or when the user ' +
     'asks to preview their work.',
   parameters: BrowserPreviewParams,
   async execute(_toolCallId, params) {
     const { url } = params as Static<typeof BrowserPreviewParams>;
-    let parsed: URL;
     try {
-      parsed = new URL(url);
+      new URL(url);
     } catch {
       return {
         content: [{ type: 'text', text: `Invalid URL: ${url}` }],
@@ -32,14 +30,10 @@ export const browserPreviewTool: ToolDefinition = {
       };
     }
 
-    const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-    if (isLocal) {
-      await shell.openExternal(url);
-    }
     // The preview panel is opened automatically via browser-preview:open IPC
     // emitted by pi-chat-engine on tool_execution_end
     return {
-      content: [{ type: 'text', text: isLocal ? `Opened ${url} in your browser and preview panel.` : `Opened ${url} in the preview panel.` }],
+      content: [{ type: 'text', text: `Opened ${url} in the preview panel.` }],
       details: { url },
     };
   },
