@@ -12,14 +12,14 @@ const TAB_TITLES: Record<TabId, string> = {
   dashboard: 'Dashboard',
   channels:  'Channels',
   emissions: 'Emissions',
-  'diem-rewards': 'DIEM $ANTS',
+  'diem-rewards': 'Venice.ai Proxy',
 };
 
 const TAB_SUBTITLES: Record<TabId, string> = {
   dashboard: 'Your balance, usage, and network activity at a glance.',
   channels:  'Active and historical payment channels.',
   emissions: 'Earn and claim ANTS rewards from network activity.',
-  'diem-rewards': 'Track and claim ANTS rewards from DIEM staking.',
+  'diem-rewards': 'Track and claim ANTS rewards from Venice.ai Proxy.',
 };
 
 function formatUsd(n: number): string {

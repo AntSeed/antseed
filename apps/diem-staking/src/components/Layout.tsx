@@ -7,6 +7,7 @@
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import type { MouseEvent, ReactNode } from 'react';
+import { useAccount } from 'wagmi';
 
 import { fmtPct, fmtPrice } from '../lib/format';
 import { useAntstationDownload, ANTSTATION_RELEASES_URL, type Platform } from '../lib/antstation';
@@ -59,6 +60,7 @@ export function AlphaStrip({ maxStakeDisplay }: { maxStakeDisplay: string | null
 }
 
 export function Nav() {
+  const { isConnected } = useAccount();
   const scrollTo = (id: string) => (e: MouseEvent) => {
     e.preventDefault();
     const el = document.getElementById(id);
@@ -81,7 +83,7 @@ export function Nav() {
       <div className="nav-links">
         <a href="#how" onClick={scrollTo('how')} className="link hide-sm">How it works</a>
         <a href="#faq" onClick={scrollTo('faq')} className="link hide-sm">FAQ</a>
-        <div className="nav-connect-wrap">
+        <div className={`nav-connect-wrap ${isConnected ? 'is-connected' : 'is-disconnected'}`}>
           <ConnectButton
             accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }}
             chainStatus="none"

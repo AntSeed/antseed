@@ -105,6 +105,12 @@ input { font-family: inherit; }
   box-shadow: none !important;
   text-shadow: none !important;
 }
+.nav-connect-wrap.is-connected [data-rk] button,
+.nav-connect-wrap.is-connected > div > button,
+.nav-connect-wrap.is-connected [data-rk] button *,
+.nav-connect-wrap.is-connected > div > button * {
+  color: var(--ink) !important;
+}
 @media (max-width: 720px) { .nav-links .hide-sm { display: none; } }
 
 /* ---------- LAYOUT ---------- */
