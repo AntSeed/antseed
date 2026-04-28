@@ -25,6 +25,7 @@ import {
 } from '../lib/actions';
 import {
   fmtDiem,
+  fmtDiemPrecise,
   fmtDuration,
   fmtNum,
   fmtPct,
@@ -772,7 +773,7 @@ function Metrics(props: {
     <div className="metrics">
       <div className="metric">
         <div className="lbl">Total staked</div>
-        <div className="val">{props.pool.totalStaked != null ? fmtNum(toDiemNumber(props.pool.totalStaked)) : '—'}</div>
+        <div className="val">{props.pool.totalStaked != null ? fmtDiemPrecise(toDiemNumber(props.pool.totalStaked)) : '—'}</div>
         <div className="delta">$DIEM</div>
       </div>
       <div className="metric">

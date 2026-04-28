@@ -43,6 +43,12 @@ export function fmtDiem(n: number): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
+export function fmtDiemPrecise(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
 export function fmtPrice(p: number | null): string {
   if (p == null || !Number.isFinite(p)) return '—';
   if (p >= 100) return p.toLocaleString('en-US', { maximumFractionDigits: 0 });
