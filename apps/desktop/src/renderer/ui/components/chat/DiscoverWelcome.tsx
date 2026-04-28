@@ -66,15 +66,15 @@ function generateDescription(serviceId: string, categories: string[], provider: 
   const lower = serviceId.toLowerCase();
   const prov = provider || 'a network peer';
 
-  if (lower.includes('claude')) return `Anthropic Claude model served by ${prov}.`;
-  if (lower.includes('gpt') || lower.includes('openai')) return `OpenAI-family model served by ${prov}.`;
-  if (lower.includes('llama')) return `Meta Llama open-weight model hosted by ${prov}.`;
-  if (lower.includes('deepseek')) return `DeepSeek model served by ${prov}.`;
-  if (lower.includes('mistral') || lower.includes('magistral') || lower.includes('ministral')) return `Mistral-family model served by ${prov}.`;
-  if (lower.includes('kimi')) return `Moonshot Kimi model served by ${prov}.`;
-  if (lower.includes('qwen')) return `Alibaba Qwen model served by ${prov}.`;
-  if (lower.includes('gemini') || lower.includes('gemma')) return `Google Gemini/Gemma model served by ${prov}.`;
-  if (lower.includes('flux') || lower.includes('sdxl')) return `Image generation model served by ${prov}.`;
+  if (lower.includes('claude')) return `Access to Anthropic's Claude model. Powered by ${prov}.`;
+  if (lower.includes('gpt') || lower.includes('openai')) return `OpenAI model access through ${prov}.`;
+  if (lower.includes('llama')) return `Meta's Llama open-weight model. Hosted by ${prov}.`;
+  if (lower.includes('deepseek')) return `DeepSeek reasoning model. Served by ${prov}.`;
+  if (lower.includes('mistral')) return `Mistral's flagship model. Strong multilingual and instruction following.`;
+  if (lower.includes('kimi')) return `Moonshot's Kimi reasoning model. High-performance math and code.`;
+  if (lower.includes('qwen')) return `Alibaba's Qwen model series. Multilingual and versatile.`;
+  if (lower.includes('gemini') || lower.includes('gemma')) return `Google's model. Powered by ${prov}.`;
+  if (lower.includes('flux') || lower.includes('sdxl')) return `Image generation model. Served by ${prov}.`;
   if (categories.length > 0) return `${categories.map(formatCategoryLabel).join(' & ')} service powered by ${prov}.`;
   return `AI service powered by ${prov}.`;
 }
