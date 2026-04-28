@@ -701,7 +701,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               amount={snap.chatPaymentApprovalAmount}
               peerInfo={snap.chatPaymentApprovalPeerInfo}
               error={snap.chatPaymentApprovalError}
-              onAddCredits={() => actions.openPaymentsPortal?.()}
+              onAddCredits={() => actions.openPaymentsPortal?.('deposit')}
               onRetry={() => actions.retryAfterPayment()}
               onCancel={() => actions.rejectPaymentSession()}
             />
@@ -714,7 +714,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             <LowBalanceWarning
               visible={snap.chatLowBalanceWarning}
               availableUsdc={snap.creditsAvailableUsdc}
-              onAddCredits={() => actions.openPaymentsPortal?.()}
+              onAddCredits={() => actions.openPaymentsPortal?.('deposit')}
             />
 
             {attachedFiles.length > 0 && (

@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { getGlobalOptions } from './types.js';
 
 export function registerPaymentsCommand(program: Command): void {
   program
@@ -7,11 +8,12 @@ export function registerPaymentsCommand(program: Command): void {
     .option('-p, --port <port>', 'Portal port', '3118')
     .action(async (options: { port: string }) => {
       const port = Number(options.port) > 0 ? Number(options.port) : 3118;
+      const globalOpts = getGlobalOptions(program);
 
       try {
         const { createServer } = await import('@antseed/payments');
         const identityHex = process.env['ANTSEED_IDENTITY_HEX'] || undefined;
-        const server = await createServer({ port, identityHex });
+        const server = await createServer({ port, dataDir: globalOpts.dataDir, identityHex });
         await server.listen({ port, host: '127.0.0.1' });
 
         const token = (server as unknown as { bearerToken?: string }).bearerToken ?? '';
