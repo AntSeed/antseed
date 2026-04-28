@@ -122,6 +122,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [inputValue, setInputValue] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<RawChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
@@ -276,6 +277,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
     [snap.chatServiceOptions, snap.chatSelectedServiceValue],
   );
+  const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
+  const hasAttachedImages = useMemo(
+    () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
+    [attachedFiles],
+  );
   const peerDisplayName =
     snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
 
@@ -349,6 +355,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setInputValue('');
     setAttachedFiles([]);
     setAttachmentError(null);
+    setAttachmentWarning(null);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
       inputRef.current.style.overflowY = 'hidden';
@@ -410,33 +417,61 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     if (incoming.length === 0) return;
     const accepted: File[] = [];
     let totalBytes = attachedFiles.reduce((sum, file) => sum + file.size, 0);
+    let blockedImageCount = 0;
+    let nextError: string | null = null;
 
     for (const file of incoming) {
+      if (!supportsMultimodal && isImageAttachmentLike(file.name, file.type)) {
+        blockedImageCount += 1;
+        nextError = "Selected model doesn't support images. Switch to a multimodal model to attach image files.";
+        continue;
+      }
       if (attachedFiles.length + accepted.length >= MAX_ATTACHMENTS) {
-        setAttachmentError(`Only ${MAX_ATTACHMENTS} attachments are allowed per message.`);
+        nextError = `Only ${MAX_ATTACHMENTS} attachments are allowed per message.`;
         break;
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        setAttachmentError(`${file.name || 'Attachment'} exceeds the 25 MiB per-file limit.`);
+        nextError = `${file.name || 'Attachment'} exceeds the 25 MiB per-file limit.`;
         continue;
       }
       if (totalBytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
-        setAttachmentError('Attachments exceed the 50 MiB per-message limit.');
+        nextError = 'Attachments exceed the 50 MiB per-message limit.';
         continue;
       }
       accepted.push(file);
       totalBytes += file.size;
     }
 
-    if (accepted.length === 0) return;
+    if (blockedImageCount > 0 && accepted.length > 0) {
+      nextError = `${nextError ? `${nextError} ` : ''}${blockedImageCount} image attachment${blockedImageCount === 1 ? '' : 's'} ${blockedImageCount === 1 ? 'was' : 'were'} skipped.`;
+    }
+    if (accepted.length === 0) {
+      setAttachmentError(nextError);
+      return;
+    }
+
     try {
       const raw = await Promise.all(accepted.map(readRawAttachment));
       setAttachedFiles((prev) => [...prev, ...raw].slice(0, MAX_ATTACHMENTS));
-      setAttachmentError(null);
+      setAttachmentError(nextError);
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : String(error));
     }
-  }, [attachedFiles, readRawAttachment]);
+  }, [attachedFiles, readRawAttachment, supportsMultimodal]);
+
+  useEffect(() => {
+    if (supportsMultimodal || !hasAttachedImages) {
+      setAttachmentWarning(null);
+      return;
+    }
+    setAttachmentWarning("Selected model doesn't support images. Attached images will be omitted when you send this message.");
+  }, [supportsMultimodal, hasAttachedImages]);
+
+  useEffect(() => {
+    if (supportsMultimodal && attachmentError?.includes("doesn't support images")) {
+      setAttachmentError(null);
+    }
+  }, [supportsMultimodal, attachmentError]);
 
   const handleFileAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -617,7 +652,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           {isDragOver && (
             <div className={styles.chatDropOverlay}>
               <div className={styles.chatDropOverlayInner}>
-                <span>Drop files here</span>
+                <span>
+                  {supportsMultimodal ? 'Drop files here' : 'Drop files here (images are unavailable for this model)'}
+                </span>
               </div>
             </div>
           )}
@@ -711,6 +748,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
             {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
+            {attachmentWarning && <div className={styles.chatWarning}>{attachmentWarning}</div>}
             <LowBalanceWarning
               visible={snap.chatLowBalanceWarning}
               availableUsdc={snap.creditsAvailableUsdc}
@@ -793,8 +831,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               />
               <div className={styles.chatInputBottom}>
                 <button
-                  className={styles.chatAttachBtn}
-                  title="Attach files"
+                  className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
+                  title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
@@ -892,6 +930,11 @@ function formatAttachmentSize(bytes: number): string {
   if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
   const mb = kb / 1024;
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}
+
+function isImageAttachmentLike(name: string, mimeType: string): boolean {
+  if (mimeType.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|ico|tiff?)$/i.test(name);
 }
 
 function getAttachmentExtension(name: string): string {
