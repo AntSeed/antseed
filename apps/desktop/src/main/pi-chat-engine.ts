@@ -43,6 +43,7 @@ import {
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
 import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
+import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
@@ -294,7 +295,6 @@ const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 
 const DEFAULT_PROXY_PORT = 8377;
 const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
-const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
 
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
@@ -328,14 +328,6 @@ function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
   return value === 'anthropic-messages'
     || value === 'openai-chat-completions'
     || value === 'openai-responses';
-}
-
-function normalizeProviderId(value: unknown): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
 }
 
 function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
@@ -431,8 +423,7 @@ function updateServiceProtocolMap(
 function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
-  const explicit = normalizeProviderId(explicitProvider);
-  return explicit ?? null;
+  return sanitizeProviderHint(explicitProvider);
 }
 
 function normalizePeerId(value: unknown): string | null {
@@ -1211,7 +1202,10 @@ function makeProxyService(
   supportsMultimodal: boolean = false,
 ): Model<any> {
   const headers: Record<string, string> = {};
-  if (providerHint) headers['x-antseed-provider'] = providerHint;
+  // Re-sanitize at the wire boundary: the local proxy sentinel must never
+  // be sent as `x-antseed-provider`, even if a caller forgot to filter it.
+  const sanitizedProviderHint = sanitizeProviderHint(providerHint);
+  if (sanitizedProviderHint) headers['x-antseed-provider'] = sanitizedProviderHint;
   if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
   if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
@@ -1491,7 +1485,7 @@ class PiConversationStore {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
       service: normalizeServiceId(context.model?.modelId),
-      provider: normalizeProviderId(context.model?.provider) ?? undefined,
+      provider: sanitizeProviderHint(context.model?.provider) ?? undefined,
       messages,
       createdAt,
       updatedAt,
@@ -1586,9 +1580,12 @@ class PiConversationStore {
   async create(service?: string, provider?: string, peerId?: string, peerLabel?: string): Promise<AiConversation> {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
-    const providerId = normalizeProviderId(provider);
-    const modelProvider = providerId ?? PROXY_PROVIDER_ID;
-    manager.appendModelChange(modelProvider, normalizeServiceId(service));
+    // Persist '' (not the local proxy sentinel) when no real upstream
+    // provider is known. The sentinel used to leak through to the
+    // `x-antseed-provider` header on send and trip the buyer proxy's
+    // pinned-peer provider check, returning a confusing 502.
+    const providerId = sanitizeProviderHint(provider) ?? '';
+    manager.appendModelChange(providerId, normalizeServiceId(service));
     const trimmedPeerId = peerId?.trim() ?? '';
     if (trimmedPeerId) {
       manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {
