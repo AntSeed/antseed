@@ -1,7 +1,8 @@
 import type { IpcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
@@ -208,6 +209,51 @@ type ChatServiceCatalogEntry = {
   categories?: string[];
   description?: string;
 };
+
+function augmentChatToolPath(): void {
+  const currentPath = process.env['PATH'] ?? '';
+  const segments = currentPath
+    .split(path.delimiter)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  const seen = new Set(segments);
+
+  const add = (segment: string | undefined) => {
+    const normalized = segment?.trim();
+    if (!normalized || seen.has(normalized) || !existsSync(normalized)) return;
+    segments.unshift(normalized);
+    seen.add(normalized);
+  };
+
+  add('/usr/local/bin');
+  add('/opt/homebrew/bin');
+  add('/usr/bin');
+  add('/bin');
+  add(path.join(homedir(), 'Library', 'pnpm'));
+  add(path.join(homedir(), '.volta', 'bin'));
+  add(path.join(homedir(), 'bin'));
+
+  const nvmVersionsDir = path.join(homedir(), '.nvm', 'versions', 'node');
+  if (existsSync(nvmVersionsDir)) {
+    const versionDirs = readdirSync(nvmVersionsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+
+    for (const versionDir of versionDirs) {
+      add(path.join(nvmVersionsDir, versionDir, 'bin'));
+    }
+  }
+
+  process.env['PATH'] = segments.join(path.delimiter);
+
+  if (!process.env['SHELL']) {
+    if (existsSync('/bin/zsh')) process.env['SHELL'] = '/bin/zsh';
+    else if (existsSync('/bin/bash')) process.env['SHELL'] = '/bin/bash';
+  }
+}
+
+augmentChatToolPath();
 
 type DiscoverRowEntry = {
   rowKey: string;
