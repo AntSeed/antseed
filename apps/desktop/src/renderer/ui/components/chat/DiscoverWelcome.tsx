@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import type { CSSProperties } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
@@ -225,13 +226,53 @@ type DiscoverWelcomeProps = {
   onStartChatting: (serviceValue: string, peerId?: string) => void;
 };
 
-const PAGE_SIZE = 9;
+const MIN_CARD_WIDTH_PX = 280;
+const GRID_GAP_PX = 12;
+const CARD_ESTIMATED_HEIGHT_PX = 208;
+const DEFAULT_PAGE_SIZE = 9;
+
+type PaginationToken = number | 'ellipsis';
+
+function estimatePageSize(): number {
+  if (typeof window === 'undefined') return DEFAULT_PAGE_SIZE;
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let columns = 1;
+  if (viewportWidth > 520) columns = 2;
+  if (viewportWidth > 780) {
+    const estimatedColumns = Math.floor((viewportWidth + GRID_GAP_PX) / (MIN_CARD_WIDTH_PX + GRID_GAP_PX));
+    columns = Math.max(3, estimatedColumns);
+  }
+
+  const usableHeight = Math.max(360, viewportHeight - 320);
+  const rows = Math.max(1, Math.floor((usableHeight + GRID_GAP_PX) / (CARD_ESTIMATED_HEIGHT_PX + GRID_GAP_PX)));
+  return Math.max(columns, columns * rows);
+}
+
+function buildPaginationTokens(page: number, totalPages: number): PaginationToken[] {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (page <= 3) {
+    return [1, 2, 3, 'ellipsis', totalPages - 1, totalPages];
+  }
+
+  if (page >= totalPages - 2) {
+    return [1, 2, 'ellipsis', totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [1, 'ellipsis', page - 1, page, page + 1, 'ellipsis', totalPages];
+}
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const snap = useUiSnapshot();
   const rows = snap.discoverRows;
 
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => estimatePageSize());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
 
@@ -244,6 +285,21 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   }, []);
 
   const filterState = useDiscoverFilters(rows);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const updatePageSize = () => {
+      setPageSize((prev) => {
+        const next = estimatePageSize();
+        return prev === next ? prev : next;
+      });
+    };
+
+    updatePageSize();
+    window.addEventListener('resize', updatePageSize);
+    return () => window.removeEventListener('resize', updatePageSize);
+  }, []);
 
   const hasActiveFilters =
     filterState.categorySet.size > 0 ||
@@ -283,10 +339,10 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.sortKey,
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageStart = (currentPage - 1) * pageSize;
+  const paged = filtered.slice(pageStart, pageStart + pageSize);
   const rangeStart = filtered.length === 0 ? 0 : pageStart + 1;
   const rangeEnd = pageStart + paged.length;
   const statusText = `${rangeStart}-${rangeEnd} of ${filtered.length} total service${filtered.length === 1 ? '' : 's'}`;
@@ -369,13 +425,13 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
           <div className={styles.resultsArea}>
             {!hasNetworkData ? (
-              <div className={styles.cardGrid}>
-                {Array.from({ length: 9 }, (_, i) => (
+              <div className={styles.cardGrid} style={{ '--discover-columns': Math.max(1, Math.ceil(Math.sqrt(pageSize))) } as CSSProperties}>
+                {Array.from({ length: pageSize }, (_, i) => (
                   <SkeletonCard key={i} />
                 ))}
               </div>
             ) : filtered.length > 0 ? (
-              <div className={styles.cardGrid}>
+              <div className={styles.cardGrid} style={{ '--discover-columns': Math.max(1, Math.ceil(Math.sqrt(pageSize))) } as CSSProperties}>
                 {paged.map((item) => (
                   <Card
                     key={item.value || item.name}
@@ -441,7 +497,7 @@ function Pagination({
   totalPages: number;
   onPageChange: (p: number) => void;
 }) {
-  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  const tokens = buildPaginationTokens(page, totalPages);
   return (
     <nav className={styles.pagination} aria-label="Pagination">
       <button
@@ -452,16 +508,26 @@ function Pagination({
       >
         ‹
       </button>
-      {pages.map((n) => (
-        <button
-          key={n}
-          className={`${styles.pageBtn}${n === page ? ` ${styles.pageBtnActive}` : ''}`}
-          onClick={() => onPageChange(n)}
-          aria-current={n === page ? 'page' : undefined}
-        >
-          {n}
-        </button>
-      ))}
+      {tokens.map((token, index) => {
+        if (token === 'ellipsis') {
+          return (
+            <span key={`ellipsis-${index}`} className={styles.pageEllipsis} aria-hidden="true">
+              …
+            </span>
+          );
+        }
+
+        return (
+          <button
+            key={token}
+            className={`${styles.pageBtn}${token === page ? ` ${styles.pageBtnActive}` : ''}`}
+            onClick={() => onPageChange(token)}
+            aria-current={token === page ? 'page' : undefined}
+          >
+            {token}
+          </button>
+        );
+      })}
       <button
         className={styles.pageBtn}
         disabled={page === totalPages}
