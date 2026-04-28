@@ -420,12 +420,6 @@ function updateServiceProtocolMap(
   }
 }
 
-function resolveProviderHintForService(
-  explicitProvider?: string,
-): string | null {
-  return sanitizeProviderHint(explicitProvider);
-}
-
 function normalizePeerId(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -1196,16 +1190,15 @@ function makeProxyService(
   serviceId: string,
   port: number,
   protocol: ChatServiceProtocol = 'anthropic-messages',
-  providerHint?: string | null,
   preferredPeerId?: string | null,
   spendingAuth?: string | null,
   supportsMultimodal: boolean = false,
 ): Model<any> {
+  // The buyer proxy resolves the route plan from the pinned peer + the
+  // service ID in the request body, so we don't need to send
+  // `x-antseed-provider`. Stripping it keeps internal labels (e.g. the
+  // local `antseed-proxy` SDK key) out of the wire entirely.
   const headers: Record<string, string> = {};
-  // Re-sanitize at the wire boundary: the local proxy sentinel must never
-  // be sent as `x-antseed-provider`, even if a caller forgot to filter it.
-  const sanitizedProviderHint = sanitizeProviderHint(providerHint);
-  if (sanitizedProviderHint) headers['x-antseed-provider'] = sanitizedProviderHint;
   if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
   if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
@@ -1849,7 +1842,6 @@ export function registerPiChatHandlers({
     conversationId: string,
     userMessage: string,
     serviceOverride?: string,
-    providerOverride?: string,
     attachments?: PreparedChatAttachment[],
     peerOverride?: string,
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
@@ -1914,9 +1906,6 @@ export function registerPiChatHandlers({
         void store.setPeer(conversationId, peerOverrideId, peerLabel);
       }
     }
-    const providerHint = resolveProviderHintForService(
-      providerOverride,
-    );
     const protocol = await resolveProtocolForSend(serviceId);
     // Determine vision support from the catalog entry for this (service, peer)
     // pair. We look for a `multimodal` category tag; sellers announce this via
@@ -1945,7 +1934,6 @@ export function registerPiChatHandlers({
       serviceId,
       proxyPort,
       protocol,
-      providerHint,
       preferredPeerId,
       null,
       supportsMultimodal,
@@ -2776,15 +2764,21 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments, peerId);
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+      // `_provider` is accepted for IPC ABI compatibility with older
+      // renderers but ignored — the buyer proxy resolves the route plan
+      // from the pinned peer + the service ID without a provider hint.
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments, peerId);
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+      // `_provider` is accepted for IPC ABI compatibility with older
+      // renderers but ignored — the buyer proxy resolves the route plan
+      // from the pinned peer + the service ID without a provider hint.
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
     },
   );
 
