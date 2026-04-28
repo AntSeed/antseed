@@ -1781,9 +1781,8 @@ export function initChatModule({
 
       // Multimodal gate — if the user attached image(s) but the current
       // service isn't tagged `multimodal` in the catalog, the main side
-      // would silently drop the images and still send the text, which
-      // confuses the user ("the LLM only saw the files, not the image").
-      // Block the send and explain instead.
+      // drops images while still sending text/docs. Warn, but do not block,
+      // so prompt text is never discarded at send-time.
       const hasReadyImage = preparedAttachments.some(
         (attachment) => attachment.kind === 'image' && attachment.status === 'ready',
       );
@@ -1795,10 +1794,8 @@ export function initChatModule({
         if (!supportsMultimodal) {
           const label = currentOption?.label || 'this service';
           showChatError(
-            `${label} doesn't support images. Remove the image attachment or switch to a multimodal service (look for the “Image Upload” tag in Discover).`,
+            `${label} doesn't support images. Sending without image input for this turn.`,
           );
-          setConversationSending(convId, false);
-          return;
         }
       }
 
