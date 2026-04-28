@@ -28,9 +28,23 @@ function parseTabFromUrl(): TabId {
   return VALID_TABS.has(raw as TabId) ? (raw as TabId) : 'dashboard';
 }
 
+function shouldOpenDepositFromUrl(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const action = params.get('action') ?? params.get('modal');
+  const tab = params.get('tab');
+  return action === 'deposit' || tab === 'deposit' || tab === 'deposits';
+}
+
 function writeTabToUrl(tab: TabId) {
   const url = new URL(window.location.href);
   url.searchParams.set('tab', tab);
+  window.history.replaceState({}, '', url.toString());
+}
+
+function clearDepositActionFromUrl() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('action') === 'deposit') url.searchParams.delete('action');
+  if (url.searchParams.get('modal') === 'deposit') url.searchParams.delete('modal');
   window.history.replaceState({}, '', url.toString());
 }
 
@@ -40,7 +54,7 @@ export function App() {
   const [config, setConfig] = useState<PaymentConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>(() => parseTabFromUrl());
   const [walletDrawerOpen, setWalletDrawerOpen] = useState(false);
-  const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(null);
+  const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(() => shouldOpenDepositFromUrl() ? 'deposit' : null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('antseed-payments-theme');
@@ -84,6 +98,13 @@ export function App() {
     writeTabToUrl(tab);
   }, []);
 
+  const openDeposit = useCallback(() => setActionModal('deposit'), []);
+  const openWithdraw = useCallback(() => setActionModal('withdraw'), []);
+  const closeActionModal = useCallback(() => {
+    setActionModal(null);
+    clearDepositActionFromUrl();
+  }, []);
+
   const buyerEvmAddress = config?.evmAddress ?? balance?.evmAddress ?? null;
 
   return (
@@ -100,9 +121,9 @@ export function App() {
         onOpenWalletDrawer={() => setWalletDrawerOpen(true)}
         onCloseWalletDrawer={() => setWalletDrawerOpen(false)}
         actionModal={actionModal}
-        onOpenDeposit={() => setActionModal('deposit')}
-        onOpenWithdraw={() => setActionModal('withdraw')}
-        onCloseActionModal={() => setActionModal(null)}
+        onOpenDeposit={openDeposit}
+        onOpenWithdraw={openWithdraw}
+        onCloseActionModal={closeActionModal}
         buyerEvmAddress={buyerEvmAddress}
         refreshBalance={refreshBalance}
       />
@@ -201,6 +222,7 @@ function AppShell({
             activeTab={activeTab}
             balance={balance}
             onOpenWallet={onOpenWalletDrawer}
+            onOpenDeposit={onOpenDeposit}
           />
           <AuthorizeWalletAlert />
           <main className="dash-content">
@@ -233,7 +255,8 @@ function AppShell({
         isOpen={actionModal === 'deposit'}
         onClose={onCloseActionModal}
         title="Deposit USDC"
-        subtitle="Add funds to your AntSeed account."
+        subtitle="Add credits to your AntSeed account with a guided two-step flow."
+        variant="deposit"
       >
         <DepositView
           config={config}

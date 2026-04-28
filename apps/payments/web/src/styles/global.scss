@@ -701,21 +701,29 @@ $dash-sidebar-width: 240px;
   &-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
   &-subtitle { font-size: 12px; color: var(--text-muted); }
   &-right { display: flex; align-items: center; gap: 12px; }
+  &-balance-group {
+    display: inline-flex;
+    align-items: stretch;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 13px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  }
   &-wallet {
     display: inline-flex;
     align-items: center;
     gap: 10px;
     padding: 8px 14px 8px 12px;
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    border-radius: 12px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     color: var(--text-secondary);
     cursor: pointer;
     transition: border-color 0.14s, background 0.14s, color 0.14s, transform 0.14s;
     font: inherit;
 
     &:hover {
-      border-color: var(--accent);
       color: var(--text-primary);
       transform: translateY(-1px);
     }
@@ -752,6 +760,24 @@ $dash-sidebar-width: 240px;
     font-variant-numeric: tabular-nums;
     line-height: 1.2;
     color: var(--text-primary);
+  }
+  &-deposit-btn {
+    border: none;
+    border-left: 1px solid var(--card-border);
+    background: var(--accent);
+    color: #06351d;
+    padding: 0 14px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: filter 0.14s, transform 0.14s;
+
+    &:hover {
+      filter: brightness(0.96);
+      transform: translateY(-1px);
+    }
+    &:active { transform: translateY(0); }
   }
 }
 
@@ -1321,7 +1347,7 @@ $dash-sidebar-width: 240px;
 }
 
 .empty-state-card {
-  width: min(460px, 100%);
+  width: min(720px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   overflow-x: hidden;
@@ -1596,6 +1622,10 @@ $dash-sidebar-width: 240px;
     0 20px 60px -20px rgba(10, 14, 22, 0.35);
   animation: empty-state-rise 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
 
+  &--deposit {
+    width: min(560px, 100%);
+  }
+
   /* Flatten the inner DepositView/WithdrawView card so the modal reads as one surface */
   .deposit, .withdraw { width: 100%; min-width: 0; }
   .deposit > .card,
@@ -1619,6 +1649,11 @@ $dash-sidebar-width: 240px;
   gap: 16px;
   padding: 22px 24px 16px;
   border-bottom: 1px solid var(--card-border);
+
+  .action-modal-card--deposit & {
+    padding: 24px;
+    background: var(--page-bg);
+  }
 }
 
 .action-modal-head-text {
@@ -1634,6 +1669,12 @@ $dash-sidebar-width: 240px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
+
+  .action-modal-card--deposit & {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
 }
 
 .action-modal-subtitle {
@@ -1641,7 +1682,29 @@ $dash-sidebar-width: 240px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-muted);
+
+  .action-modal-card--deposit & {
+    max-width: 390px;
+    color: var(--text-secondary);
+  }
 }
+
+.action-modal-deposit-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+
+.action-modal-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--accent-text);
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+}
+
 
 .action-modal-close {
   display: inline-flex;
@@ -1666,6 +1729,10 @@ $dash-sidebar-width: 240px;
 
 .action-modal-body {
   padding: 22px 24px 24px;
+
+  .action-modal-card--deposit & {
+    padding-top: 18px;
+  }
 }
 
 /* ── Authorize wallet: modal, alert, empty-state step, drawer warning ── */

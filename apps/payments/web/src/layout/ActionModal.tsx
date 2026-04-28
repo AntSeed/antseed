@@ -5,6 +5,7 @@ interface ActionModalProps {
   onClose: () => void;
   title: string;
   subtitle?: string;
+  variant?: 'default' | 'deposit';
   children: ReactNode;
 }
 
@@ -16,7 +17,7 @@ function CloseIcon() {
   );
 }
 
-export function ActionModal({ isOpen, onClose, title, subtitle, children }: ActionModalProps) {
+export function ActionModal({ isOpen, onClose, title, subtitle, variant = 'default', children }: ActionModalProps) {
   useEffect(() => {
     if (!isOpen) return;
     function onKey(e: KeyboardEvent) {
@@ -47,12 +48,22 @@ export function ActionModal({ isOpen, onClose, title, subtitle, children }: Acti
       aria-label={title}
       onClick={onClose}
     >
-      <div className="action-modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className={`action-modal-card action-modal-card--${variant}`} onClick={(e) => e.stopPropagation()}>
         <header className="action-modal-head">
-          <div className="action-modal-head-text">
-            <h2 className="action-modal-title">{title}</h2>
-            {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
-          </div>
+          {variant === 'deposit' ? (
+            <div className="action-modal-deposit-hero">
+              <div className="action-modal-head-text">
+                <div className="action-modal-eyebrow">Deposit wizard</div>
+                <h2 className="action-modal-title">{title}</h2>
+                {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
+              </div>
+            </div>
+          ) : (
+            <div className="action-modal-head-text">
+              <h2 className="action-modal-title">{title}</h2>
+              {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
+            </div>
+          )}
           <button
             type="button"
             className="action-modal-close"

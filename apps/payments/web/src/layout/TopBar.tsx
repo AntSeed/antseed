@@ -5,6 +5,7 @@ interface TopBarProps {
   activeTab: TabId;
   balance: BalanceData | null;
   onOpenWallet: () => void;
+  onOpenDeposit: () => void;
 }
 
 const TAB_TITLES: Record<TabId, string> = {
@@ -34,7 +35,7 @@ function SignerIcon() {
   );
 }
 
-export function TopBar({ activeTab, balance, onOpenWallet }: TopBarProps) {
+export function TopBar({ activeTab, balance, onOpenWallet, onOpenDeposit }: TopBarProps) {
   const total = balance ? parseFloat(balance.total) : null;
 
   return (
@@ -44,20 +45,30 @@ export function TopBar({ activeTab, balance, onOpenWallet }: TopBarProps) {
         <div className="dash-topbar-subtitle">{TAB_SUBTITLES[activeTab]}</div>
       </div>
       <div className="dash-topbar-right">
-        <button
-          type="button"
-          className="dash-topbar-wallet"
-          onClick={onOpenWallet}
-          title="Open signer"
-        >
-          <span className="dash-topbar-wallet-icon"><SignerIcon /></span>
-          <span className="dash-topbar-wallet-text">
-            <span className="dash-topbar-wallet-label">AntSeed account</span>
-            <span className="dash-topbar-wallet-value">
-              {total !== null ? `$${formatUsd(total)}` : '—'}
+        <div className="dash-topbar-balance-group" aria-label="AntSeed account balance">
+          <button
+            type="button"
+            className="dash-topbar-wallet"
+            onClick={onOpenWallet}
+            title="Open signer"
+          >
+            <span className="dash-topbar-wallet-icon"><SignerIcon /></span>
+            <span className="dash-topbar-wallet-text">
+              <span className="dash-topbar-wallet-label">AntSeed account</span>
+              <span className="dash-topbar-wallet-value">
+                {total !== null ? `$${formatUsd(total)}` : '—'}
+              </span>
             </span>
-          </span>
-        </button>
+          </button>
+          <button
+            type="button"
+            className="dash-topbar-deposit-btn"
+            onClick={onOpenDeposit}
+            title="Deposit USDC"
+          >
+            Deposit
+          </button>
+        </div>
       </div>
     </header>
   );

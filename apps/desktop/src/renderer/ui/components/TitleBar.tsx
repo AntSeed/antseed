@@ -76,7 +76,7 @@ export function TitleBar() {
 
   const handleAddCredits = useCallback(() => {
     setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.();
+    actions.openPaymentsPortal?.('deposit');
   }, [actions]);
 
   useEffect(() => {

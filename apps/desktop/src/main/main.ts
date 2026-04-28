@@ -331,7 +331,11 @@ ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
     const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
     const params = new URLSearchParams();
     if (token) params.set('token', token);
-    if (tab) params.set('tab', tab);
+    if (tab === 'deposit' || tab === 'deposits') {
+      params.set('action', 'deposit');
+    } else if (tab) {
+      params.set('tab', tab);
+    }
     const qs = params.toString();
     // In dev mode, open the Vite HMR dev server (which proxies /api to the Fastify port).
     // Set ANTSEED_PAYMENTS_DEV_URL to override (default: http://localhost:5175).
