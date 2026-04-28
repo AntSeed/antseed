@@ -248,7 +248,13 @@ function estimatePageSize(): number {
 
   const usableHeight = Math.max(360, viewportHeight - 320);
   const rows = Math.max(1, Math.floor((usableHeight + GRID_GAP_PX) / (CARD_ESTIMATED_HEIGHT_PX + GRID_GAP_PX)));
-  return Math.max(columns, columns * rows);
+  const estimatedPageSize = Math.max(columns, columns * rows);
+
+  if (viewportWidth > 780) {
+    return Math.max(DEFAULT_PAGE_SIZE, estimatedPageSize);
+  }
+
+  return estimatedPageSize;
 }
 
 function buildPaginationTokens(page: number, totalPages: number): PaginationToken[] {
