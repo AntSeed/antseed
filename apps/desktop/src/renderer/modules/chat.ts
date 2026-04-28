@@ -114,6 +114,7 @@ export function initChatModule({
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
   > & {
     peerId: string;
+    peerDisplayName: string | null;
     peerLabel: string;
     inputUsdPerMillion: number | null;
     outputUsdPerMillion: number | null;
@@ -320,7 +321,7 @@ export function initChatModule({
     return options
       .map(
         (e) =>
-          `${e.id}|${e.label}|${e.provider}|${e.peerId}|${e.peerLabel}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
+          `${e.id}|${e.label}|${e.provider}|${e.peerId}|${e.peerDisplayName}|${e.peerLabel}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
       )
       .join('\n');
   }
@@ -586,7 +587,7 @@ export function initChatModule({
     // When a peer is pinned, always show it — don't switch based on response metadata.
     if (uiState.chatSelectedPeerId) {
       const pinnedOption = uiState.chatServiceOptions.find((o) => o.peerId === uiState.chatSelectedPeerId);
-      uiState.chatRoutedPeer = pinnedOption?.peerLabel || uiState.chatSelectedPeerId.slice(0, 8);
+      uiState.chatRoutedPeer = pinnedOption?.peerDisplayName || pinnedOption?.peerLabel || uiState.chatSelectedPeerId.slice(0, 8);
     } else if (lastServingPeerId) {
       const knownPeer = Array.isArray(uiState.lastPeers)
         ? uiState.lastPeers.find((p) => p.peerId === lastServingPeerId)
@@ -907,7 +908,8 @@ export function initChatModule({
       id: normalizeChatServiceId(entry.id),
       label: String(entry.label ?? entry.id),
       provider: normalizeProviderId(entry.provider),
-      value: encodeChatServiceSelection(entry.id, entry.provider),
+      peerId: entry.peerId || undefined,
+      value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
   }
 
@@ -1022,6 +1024,7 @@ export function initChatModule({
       count: entry.count,
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
       peerId: entry.peerId,
+      peerDisplayName: entry.peerDisplayName,
       peerLabel: entry.peerLabel,
       inputUsdPerMillion: entry.inputUsdPerMillion,
       outputUsdPerMillion: entry.outputUsdPerMillion,
@@ -1991,7 +1994,7 @@ export function initChatModule({
     uiState.chatSelectedPeerId = peerId;
     if (activeConversation) {
       activeConversation.peerId = peerId || undefined;
-      activeConversation.peerLabel = selectedOption?.peerLabel || undefined;
+      activeConversation.peerLabel = selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined;
     }
     if (bridge?.chatAiSelectPeer) {
       void bridge.chatAiSelectPeer({

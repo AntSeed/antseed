@@ -64,6 +64,7 @@ export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServic
       count: 1,
       value: row.selectionValue,
       peerId: row.peerId,
+      peerDisplayName: row.peerDisplayName,
       peerLabel: row.peerLabel,
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
