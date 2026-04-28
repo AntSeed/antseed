@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   PROXY_PROVIDER_ID,
   normalizeProviderId,
+  resolveModelProvider,
   sanitizeProviderHint,
 } from './chat-provider-hint.js';
 
@@ -41,4 +42,23 @@ test('sanitizeProviderHint returns null for missing or invalid input', () => {
   assert.equal(sanitizeProviderHint(null), null);
   assert.equal(sanitizeProviderHint(''), null);
   assert.equal(sanitizeProviderHint('   '), null);
+});
+
+test('resolveModelProvider yields the real upstream provider when known', () => {
+  // The pi-coding-agent's `setModel` writes Model.provider into the
+  // session log on every send. Returning the real upstream here means the
+  // persisted conversation provider stays consistent across turns instead
+  // of getting clobbered by the local proxy sentinel.
+  assert.equal(resolveModelProvider('openai'), 'openai');
+  assert.equal(resolveModelProvider(' Anthropic '), 'anthropic');
+  assert.equal(resolveModelProvider('local-llm'), 'local-llm');
+});
+
+test('resolveModelProvider falls back to the local sentinel when no provider', () => {
+  // Used as the auth-storage key for credential lookup, so callers can
+  // register the runtime API key under whichever name we return.
+  assert.equal(resolveModelProvider(undefined), PROXY_PROVIDER_ID);
+  assert.equal(resolveModelProvider(null), PROXY_PROVIDER_ID);
+  assert.equal(resolveModelProvider(''), PROXY_PROVIDER_ID);
+  assert.equal(resolveModelProvider(PROXY_PROVIDER_ID), PROXY_PROVIDER_ID);
 });

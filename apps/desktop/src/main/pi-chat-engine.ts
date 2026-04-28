@@ -43,7 +43,7 @@ import {
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
 import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
-import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
+import { normalizeProviderId, resolveModelProvider, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
@@ -1218,10 +1218,16 @@ function makeProxyService(
   // return errors like "Multimodal is not supported for model" for text-only
   // LLMs even when the provider catalog lists vision-capable siblings).
   const inputModalities: ('text' | 'image')[] = supportsMultimodal ? ['text', 'image'] : ['text'];
+  // Use the real upstream provider (when known) as `model.provider`.
+  // pi-coding-agent's `setModel` writes this field into the session log
+  // on every send via `appendModelChange`; using the real provider here
+  // means the persisted conversation provider stays consistent across
+  // turns instead of being clobbered by the local sentinel.
+  const runtimeProvider = resolveModelProvider(providerHint);
   const base = {
     id: serviceId,
     name: serviceId,
-    provider: PROXY_PROVIDER_ID,
+    provider: runtimeProvider,
     baseUrl: needsV1 ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`,
     reasoning: true,
     input: inputModalities,
@@ -1914,9 +1920,6 @@ export function registerPiChatHandlers({
         void store.setPeer(conversationId, peerOverrideId, peerLabel);
       }
     }
-    const providerHint = resolveProviderHintForService(
-      providerOverride,
-    );
     const protocol = await resolveProtocolForSend(serviceId);
     // Determine vision support from the catalog entry for this (service, peer)
     // pair. We look for a `multimodal` category tag; sellers announce this via
@@ -1931,6 +1934,13 @@ export function registerPiChatHandlers({
     )) ?? lastServiceCatalogEntries.find((entry) => (
       entry.id.trim().toLowerCase() === normalizedServiceForCatalog
     ));
+    // Backfill the provider hint from the live catalog when the renderer
+    // didn't supply one — happens for legacy conversations whose
+    // persisted provider was the local sentinel and got sanitized to
+    // null on read. Using the catalog's provider here heals the session
+    // log on next turn (setModel writes the real provider).
+    const providerHint = resolveProviderHintForService(providerOverride)
+      ?? sanitizeProviderHint(catalogEntry?.provider);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
     if (droppedImageCount > 0) {
@@ -1951,8 +1961,11 @@ export function registerPiChatHandlers({
       supportsMultimodal,
     );
 
+    // Register the runtime API key under the same provider name we set on
+    // proxyModel.provider — pi-ai looks credentials up by that field.
+    const runtimeProviderKey = resolveModelProvider(providerHint);
     const authStorage = AuthStorage.inMemory();
-    authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
+    authStorage.setRuntimeApiKey(runtimeProviderKey, PROXY_RUNTIME_API_KEY);
     const modelRegistry = ModelRegistry.inMemory(authStorage);
 
     // Pass the system prompt via resourceLoader so it is applied on every turn.

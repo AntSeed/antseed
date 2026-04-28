@@ -1624,11 +1624,22 @@ export function initChatModule({
       return null;
     }
 
+    // Refuse to open a conversation without a known upstream provider.
+    // Without one, the buyer proxy cannot match a peer's advertised
+    // providers and every send returns a 502; the session is unusable.
+    // Force the user back to Discover to pick a fully resolved service.
+    if (!selection.provider) {
+      showChatError(
+        'Selected service has no upstream provider. Pick a service from Discover or refresh.',
+      );
+      return null;
+    }
+
     try {
       const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
       const result = await bridge.chatAiCreateConversation(
         selection.id,
-        selection.provider ?? undefined,
+        selection.provider,
         peerId,
       );
       if (result.ok && result.data) {

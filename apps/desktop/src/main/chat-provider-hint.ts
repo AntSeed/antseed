@@ -28,3 +28,18 @@ export function sanitizeProviderHint(value: unknown): string | null {
   if (normalized === PROXY_PROVIDER_ID) return null;
   return normalized;
 }
+
+/**
+ * Resolve the `provider` field for the pi-ai `Model<any>` we hand to the
+ * local buyer proxy. `pi-coding-agent`'s `AgentSession.setModel` calls
+ * `sessionManager.appendModelChange(model.provider, model.id)` on every
+ * turn, so whatever we put here is what gets persisted into the
+ * conversation log. Use the real upstream provider when known so the
+ * persisted provider matches what the buyer proxy will actually pin
+ * the request to. Fall back to the local sentinel only when no upstream
+ * is known; the runtime API key must always be registered under the
+ * same name so credential lookup still works.
+ */
+export function resolveModelProvider(providerHint: unknown): string {
+  return sanitizeProviderHint(providerHint) ?? PROXY_PROVIDER_ID;
+}
