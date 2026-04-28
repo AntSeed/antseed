@@ -13,6 +13,12 @@ export type DashboardNetworkPeer = {
   capacityMsgPerHour: number;
   reputation: number;
   lastSeen: number;
+  /**
+   * Last successful transport-level contact with the peer. This can be fresher
+   * than the DHT announcement timestamp when discovery temporarily misses a
+   * peer but requests are still succeeding.
+   */
+  lastReachedAt: number | null;
   source: 'dht' | 'daemon';
   online: boolean;
 };
@@ -125,12 +131,17 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
     reputation: 100,
     lastSeen: Number(pr.lastSeen) || Date.now(),
+    lastReachedAt: Number(pr.lastReachedAt) || null,
     source: 'dht',
     online: true,
   };
 }
 
-/** Refresh peer cache from buyer.state.json — derive online status from lastSeen. */
+function peerFreshnessAnchor(peer: Pick<DashboardNetworkPeer, 'lastSeen' | 'lastReachedAt'>): number {
+  return Math.max(Number(peer.lastSeen) || 0, Number(peer.lastReachedAt) || 0);
+}
+
+/** Refresh peer cache from buyer.state.json — derive online status from lastSeen / lastReachedAt. */
 export async function refreshPeerCache(): Promise<void> {
   const now = Date.now();
   // Use a shorter debounce until we've found at least one peer (startup phase).
@@ -161,9 +172,14 @@ export async function refreshPeerCache(): Promise<void> {
         peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
         peer.lastSeen = Math.max(peer.lastSeen, existing.lastSeen);
+        peer.lastReachedAt = Math.max(peer.lastReachedAt ?? 0, existing.lastReachedAt ?? 0) || null;
       }
-      // Derive online from lastSeen — peer is online if seen within the TTL window.
-      peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
+      // Derive online from the freshest known liveness signal. `lastSeen` is
+      // the DHT announcement timestamp; `lastReachedAt` is updated after a
+      // successful transport/request. If discovery misses all peers for a bit,
+      // using only lastSeen makes the desktop paint everything offline even
+      // though recently-used peers are still reachable.
+      peer.online = now - peerFreshnessAnchor(peer) < PEER_ONLINE_TTL_MS;
       peerCache.set(peer.peerId, peer);
     }
 
@@ -173,9 +189,9 @@ export async function refreshPeerCache(): Promise<void> {
   }
 
   // Re-derive online for every cached peer so evicted / un-filed peers
-  // also transition to offline once their lastSeen TTL expires.
+  // also transition to offline once both liveness timestamps expire.
   for (const peer of peerCache.values()) {
-    peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
+    peer.online = now - peerFreshnessAnchor(peer) < PEER_ONLINE_TTL_MS;
   }
 
   emitIfChanged();
@@ -202,7 +218,9 @@ export function getNetworkSnapshot(): DashboardNetworkResult {
 export function touchPeer(peerId: string): boolean {
   const peer = peerCache.get(peerId);
   if (peer) {
-    peer.lastSeen = Date.now();
+    const now = Date.now();
+    peer.lastSeen = now;
+    peer.lastReachedAt = now;
     peer.online = true;
     return true;
   }

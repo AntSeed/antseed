@@ -36,6 +36,7 @@ export type PeerEntry = {
   capacityMsgPerHour: number;
   reputation: number;
   lastSeen: number;
+  lastReachedAt: number | null;
   source: string;
   online: boolean;
 };

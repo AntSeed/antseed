@@ -1571,7 +1571,13 @@ export class AntseedNode extends EventEmitter {
     return {
       peerId: result.metadata.peerId,
       displayName: result.metadata.displayName,
-      lastSeen: result.metadata.timestamp,
+      // `metadata.timestamp` is signed by the seller and can reflect the
+      // seller's wall clock, not this buyer's. Freshness validation in
+      // PeerLookup already handles seller/buyer clock skew using the HTTP Date
+      // header. After acceptance, store the buyer-local observation time so
+      // downstream cache TTLs (buyer.state.json hydration, desktop online
+      // badges, carry-forward windows) compare timestamps from the same clock.
+      lastSeen: result.metadata.resolvedAtMs ?? Date.now(),
       metadata: result.metadata,
       providers,
       publicAddress: this._resolvePublicAddress(result),

@@ -74,6 +74,7 @@ function normalizeNetworkData(
       capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
       reputation: safeNumber(peer.reputation, 0),
       lastSeen: safeNumber(peer.lastSeen, 0),
+      lastReachedAt: safeNumber(peer.lastReachedAt, 0) || null,
       source: safeString(peer.source, 'dht'),
       online: Boolean(peer.online),
     });
@@ -95,6 +96,7 @@ function normalizeNetworkData(
       capacityMsgPerHour: 0,
       reputation: 0,
       lastSeen: 0,
+      lastReachedAt: null,
       source: 'daemon',
       online: false,
     };

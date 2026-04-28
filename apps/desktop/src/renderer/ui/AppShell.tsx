@@ -15,25 +15,47 @@ export function AppShell() {
   const [activeView, setActiveView] = useState<ViewName>('discover');
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [setupVisible, setSetupVisible] = useState(false);
+  const [setupDismissed, setSetupDismissed] = useState(false);
 
   const hasServices = snap.chatServiceOptions.length > 0;
 
-  // Show setup screen while needed; hide once plugin installed and services are available.
-  // Gate on appSetupStatusKnown so we don't briefly flash the normal app shell before
-  // the IPC round-trip resolves and reveals that setup is actually required.
+  // Show setup during first-run plugin/runtime bootstrapping, but never re-open it
+  // just because the service catalog is temporarily empty. Service discovery is
+  // refreshed periodically and can briefly return zero rows (peer/DHT/RPC timing,
+  // signature/payment probe failures, etc.); treating that as setup-required
+  // yanks active desktop users back to SetupScreen.
+  //
+  // Gate on appSetupStatusKnown so we don't briefly flash the normal app shell
+  // before the IPC round-trip resolves and reveals that setup is actually needed.
   useEffect(() => {
     if (!snap.appSetupStatusKnown) return;
     if (!snap.appSetupNeeded) {
       setSetupVisible(false);
+      setSetupDismissed(true);
       return;
     }
-    if (!snap.appSetupComplete || !hasServices) {
+    if (setupDismissed) {
+      setSetupVisible(false);
+      return;
+    }
+    if (!snap.appSetupComplete) {
       setSetupVisible(true);
-    } else {
-      const timer = setTimeout(() => setSetupVisible(false), 900);
+      return;
+    }
+
+    // If setup completed before the renderer observed it, keep the setup screen
+    // only until the first service catalog arrives. Once hidden, latch it hidden
+    // for the rest of the renderer session.
+    if (hasServices) {
+      const timer = setTimeout(() => {
+        setSetupVisible(false);
+        setSetupDismissed(true);
+      }, 900);
       return () => clearTimeout(timer);
     }
-  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasServices]);
+
+    setSetupVisible(true);
+  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasServices, setupDismissed]);
 
   const showSetup = setupVisible;
 
