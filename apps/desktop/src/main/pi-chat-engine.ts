@@ -440,7 +440,10 @@ function normalizePeerId(value: unknown): string | null {
     return null;
   }
   const peerId = value.trim().toLowerCase();
-  return /^[0-9a-f]{64}$/i.test(peerId) ? peerId : null;
+  // AntSeed currently uses 20-byte EVM-address peer IDs in the buyer catalog,
+  // while some older/local router paths can surface 32-byte IDs. Accept both
+  // so response metadata never silently fails to bind a conversation.
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(peerId) ? peerId : null;
 }
 
 function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry | null {
@@ -1851,6 +1854,7 @@ export function registerPiChatHandlers({
     serviceOverride?: string,
     providerOverride?: string,
     attachments?: PreparedChatAttachment[],
+    peerOverride?: string,
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
     const attachmentPromptText = buildAttachmentPromptText(attachments);
@@ -1903,7 +1907,16 @@ export function registerPiChatHandlers({
     const context = sessionManager.buildSessionContext();
 
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
-    const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
+    const persistedPeer = extractPeerFromEntries(sessionManager);
+    const peerOverrideId = normalizePeerId(peerOverride) ?? null;
+    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPeer?.peerId ?? null;
+    if (preferredPeerId) {
+      preferredPeerByConversationId.set(conversationId, preferredPeerId);
+      if (peerOverrideId && persistedPeer?.peerId !== peerOverrideId) {
+        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerOverrideId)?.peerLabel;
+        void store.setPeer(conversationId, peerOverrideId, peerLabel);
+      }
+    }
     const providerHint = resolveProviderHintForService(
       providerOverride,
     );
@@ -2766,15 +2779,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments, peerId);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, attachments, peerId);
     },
   );
 

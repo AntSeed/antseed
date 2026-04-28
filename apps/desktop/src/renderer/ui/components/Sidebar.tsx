@@ -395,7 +395,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     [chatSendingConversationIds],
   );
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [expandedPeerId, setExpandedPeerId] = useState<string | null>(null);
+  const [expandedPeerIds, setExpandedPeerIds] = useState<Set<string>>(() => new Set());
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
@@ -412,12 +412,25 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     ) as ConvRecord | undefined;
     const peerId = activeConv ? String(activeConv.peerId || '').trim() : '';
     if (peerId) {
-      setExpandedPeerId(peerId);
+      setExpandedPeerIds((prev) => {
+        if (prev.has(peerId)) return prev;
+        const next = new Set(prev);
+        next.add(peerId);
+        return next;
+      });
     }
   }, [chatActiveConversation, conversations]);
 
   const handleTogglePeer = useCallback((peerId: string) => {
-    setExpandedPeerId((prev) => (prev === peerId ? null : peerId));
+    setExpandedPeerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(peerId)) {
+        next.delete(peerId);
+      } else {
+        next.add(peerId);
+      }
+      return next;
+    });
   }, []);
 
   const handleSelectConv = useCallback((id: string) => {
@@ -426,6 +439,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   }, [actions, onSelectView]);
 
   const handleNewChat = useCallback((peerId: string) => {
+    actions.startNewChat();
     if (peerId) {
       // Pin the new chat to this peer and pre-select a service it offers.
       // Prefer a service matching the most recent conversation with the peer
@@ -445,7 +459,6 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
         actions.handleServiceChange(match.value, peerId);
       }
     }
-    actions.startNewChat();
     onSelectView('chat');
   }, [actions, onSelectView, peerGroups, chatServiceOptions]);
 
@@ -466,7 +479,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
               <PeerGroupSection
                 key={key}
                 group={group}
-                expanded={expandedPeerId === key}
+                expanded={expandedPeerIds.has(key)}
                 onToggle={() => handleTogglePeer(key)}
                 activeConvId={chatActiveConversation}
                 sendingConvIds={sendingConvIds}

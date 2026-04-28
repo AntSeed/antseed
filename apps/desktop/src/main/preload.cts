@@ -227,11 +227,11 @@ const api = {
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
   },
-  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[]): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments);
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments, peerId);
   },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);

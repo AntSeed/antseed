@@ -149,6 +149,7 @@ export function initChatModule({
   const streamStartedAtByConversation = new Map<string, number>();
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
+  let newChatDraftVersion = 0;
 
   // ---------------------------------------------------------------------------
   // Payment approval helpers
@@ -584,8 +585,14 @@ export function initChatModule({
     parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
     uiState.chatThreadMeta = parts.join(' · ');
-    // When a peer is pinned, always show it — don't switch based on response metadata.
-    if (uiState.chatSelectedPeerId) {
+    // Show the conversation-bound peer first. The global selector can move while
+    // a thread is open, but the thread header must keep displaying the peer this
+    // conversation is actually pinned to.
+    const conversationPeerId = conv.peerId?.trim() ?? '';
+    if (conversationPeerId) {
+      const pinnedOption = uiState.chatServiceOptions.find((o) => o.peerId === conversationPeerId);
+      uiState.chatRoutedPeer = pinnedOption?.peerDisplayName || pinnedOption?.peerLabel || conversationPeerId.slice(0, 8);
+    } else if (uiState.chatSelectedPeerId) {
       const pinnedOption = uiState.chatServiceOptions.find((o) => o.peerId === uiState.chatSelectedPeerId);
       uiState.chatRoutedPeer = pinnedOption?.peerDisplayName || pinnedOption?.peerLabel || uiState.chatSelectedPeerId.slice(0, 8);
     } else if (lastServingPeerId) {
@@ -619,9 +626,9 @@ export function initChatModule({
 
   function resolveConversationPeerId(conv: ChatConversation | null): string {
     if (!conv) return '';
-    if (uiState.chatSelectedPeerId) return uiState.chatSelectedPeerId;
     const convPeerId = conv.peerId?.trim() ?? '';
     if (convPeerId) return convPeerId;
+    if (uiState.chatSelectedPeerId) return uiState.chatSelectedPeerId;
     // Fallback: resolve from service options (the service maps to a peer)
     const serviceOption = uiState.chatServiceOptions.find(
       (o) => o.value === uiState.chatSelectedServiceValue || o.id === conv.service,
@@ -914,16 +921,22 @@ export function initChatModule({
   }
 
   function getSelectedChatServiceSelection(): ChatServiceSelection {
-    const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
-    if (selectedValue.id.length > 0) return selectedValue;
-
+    // Active conversations are immutable unless the user explicitly switches
+    // service/peer. Always prefer the conversation's persisted model+peer over
+    // the global dropdown value, because the dropdown can be refreshed/re-sorted
+    // by Discover while a thread is open.
     const conversationModel = normalizeChatServiceId(activeConversation?.service);
     if (conversationModel.length > 0) {
+      const conversationPeerId = activeConversation?.peerId?.trim() || uiState.chatSelectedPeerId || undefined;
       return {
         id: conversationModel,
         provider: normalizeProviderId(activeConversation?.provider),
+        ...(conversationPeerId ? { peerId: conversationPeerId } : {}),
       };
     }
+
+    const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
+    if (selectedValue.id.length > 0) return selectedValue;
 
     if (uiState.chatServiceOptions.length > 0) {
       const firstOption = decodeChatServiceSelection(uiState.chatServiceOptions[0].value);
@@ -1407,6 +1420,7 @@ export function initChatModule({
   }
 
   function startNewChat(): void {
+    newChatDraftVersion += 1;
     uiState.chatActiveConversation = null;
     uiState.chatMessages = [];
     setStreamingMessage(null);
@@ -1597,34 +1611,47 @@ export function initChatModule({
     setLocalConversationMessages(convId, [...existingMessages, assistantMessage]);
   }
 
-  async function createNewConversation(): Promise<void> {
-    if (!bridge || !bridge.chatAiCreateConversation) return;
+  async function createConversationForSelection(
+    selection: ChatServiceSelection,
+    options: { activate: boolean } = { activate: true },
+  ): Promise<string | null> {
+    if (!bridge || !bridge.chatAiCreateConversation) return null;
 
-    const selection = getSelectedChatServiceSelection();
     if (selection.id.length === 0) {
       showChatError(
         'No service is currently available. Start Buyer runtime and refresh services.',
       );
-      return;
+      return null;
     }
 
     try {
       const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
-      const result = await bridge.chatAiCreateConversation(selection.id, selection.provider ?? undefined, peerId);
+      const result = await bridge.chatAiCreateConversation(
+        selection.id,
+        selection.provider ?? undefined,
+        peerId,
+      );
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
         if (!conversationId) {
           throw new Error('Conversation created but ID is missing');
         }
         await refreshChatConversations();
-        await openConversation(conversationId);
+        if (options.activate) {
+          await openConversation(conversationId);
+        }
         clearChatError();
-      } else {
-        reportChatError(result.error, 'Failed to create conversation');
+        return conversationId;
       }
+      reportChatError(result.error, 'Failed to create conversation');
     } catch (err) {
       reportChatError(err, 'Failed to create conversation');
     }
+    return null;
+  }
+
+  async function createNewConversation(): Promise<void> {
+    await createConversationForSelection(getSelectedChatServiceSelection(), { activate: true });
   }
 
   async function deleteConversation(targetId?: string): Promise<void> {
@@ -1736,28 +1763,43 @@ export function initChatModule({
     const content = text.trim();
     if (content.length === 0 && !rawAttachments?.length) return;
 
-    // If no active conversation, create one first then send
+    // If no active conversation, create one first then send. Capture the
+    // draft's service/peer now: the user may immediately go back to Discover
+    // and choose another peer before this conversation finishes creating.
     if (!uiState.chatActiveConversation) {
+      const draftVersion = newChatDraftVersion;
+      const selection = getSelectedChatServiceSelection();
       setChatSending(true);
       void (async () => {
-        await createNewConversation();
-        if (uiState.chatActiveConversation) {
-          setChatSending(false);
-          sendMessage(text, rawAttachments);
+        const convId = await createConversationForSelection(selection, { activate: false });
+        setChatSending(false);
+        if (convId) {
+          if (draftVersion === newChatDraftVersion) {
+            await openConversation(convId);
+          }
+          sendMessageToConversation(convId, text, rawAttachments, selection);
         } else {
-          setChatSending(false);
           showChatError('Failed to create a conversation. Please try again.');
         }
       })();
       return;
     }
 
-    const convId = uiState.chatActiveConversation;
+    sendMessageToConversation(uiState.chatActiveConversation, text, rawAttachments);
+  }
+
+  function sendMessageToConversation(
+    convId: string,
+    text: string,
+    rawAttachments?: RawChatAttachment[],
+    selectionOverride?: ChatServiceSelection,
+  ): void {
     if (isConversationSending(convId)) {
       showChatError('This conversation already has a request in progress.');
       return;
     }
 
+    const content = text.trim();
     // Build message content — multipart with prepared attachments, or plain string
     uiState.chatError = null;
     setConversationSending(convId, true);
@@ -1800,17 +1842,25 @@ export function initChatModule({
       }
 
       const messageContent = buildUserMessageContent(content, preparedAttachments);
-      uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
-      setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
-      if (activeConversation) {
-        activeConversation.messages = uiState.chatMessages as ChatMessage[];
+      const localMessages = getLocalConversationMessages(convId) ?? (
+        convId === uiState.chatActiveConversation
+          ? (uiState.chatMessages as ChatMessage[])
+          : []
+      );
+      const nextMessages = [...localMessages, { role: 'user' as const, content: messageContent, createdAt: Date.now() }];
+      setLocalConversationMessages(convId, nextMessages);
+      if (convId === uiState.chatActiveConversation) {
+        uiState.chatMessages = nextMessages;
+      }
+      if (activeConversation && activeConversation.id === convId) {
+        activeConversation.messages = nextMessages;
         activeConversation.updatedAt = Date.now();
         updateThreadMeta(activeConversation);
       }
       notifyUiStateChanged();
 
       void refreshWorkspaceGitStatus();
-      dispatchChatRequest(convId, content, preparedAttachments);
+      dispatchChatRequest(convId, content, preparedAttachments, selectionOverride);
     })();
   }
 
@@ -1823,10 +1873,17 @@ export function initChatModule({
     convId: string,
     content: string,
     attachments?: PreparedChatAttachment[],
+    selectionOverride?: ChatServiceSelection,
   ): void {
     if (!bridge) return;
 
-    const selection = getSelectedChatServiceSelection();
+    const selection = selectionOverride ?? getSelectedChatServiceSelection();
+
+    if (!selection.id) {
+      reportChatError('No service is selected for this conversation.', 'Request failed');
+      setConversationSending(convId, false);
+      return;
+    }
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
@@ -1836,6 +1893,7 @@ export function initChatModule({
           selection.id || undefined,
           selection.provider ?? undefined,
           attachments,
+          selection.peerId,
         );
 
       void (async () => {
@@ -1885,6 +1943,7 @@ export function initChatModule({
               selection.id || undefined,
               selection.provider ?? undefined,
               attachments,
+              selection.peerId,
             );
 
           let result = await sendRequest();
@@ -2409,7 +2468,7 @@ export function initChatModule({
     }
 
     // Expose API for triggering browser preview programmatically (dev/testing only)
-    if (import.meta.env.DEV) {
+    if (import.meta.env?.DEV) {
       (window as unknown as Record<string, unknown>).__antseedOpenPreview = (url: string) => {
         uiState.browserPreviewUrl = url;
         uiState.browserPreviewRequestId += 1;

@@ -80,8 +80,8 @@ export function AppShell() {
 
   const handleStartChatting = useCallback(
     (serviceValue: string, peerId?: string) => {
-      actions.handleServiceChange(serviceValue, peerId);
       actions.startNewChat();
+      actions.handleServiceChange(serviceValue, peerId);
       setOnboardingDismissed(true);
       setActiveView('chat');
     },

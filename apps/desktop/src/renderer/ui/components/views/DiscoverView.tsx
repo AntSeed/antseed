@@ -15,8 +15,11 @@ export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
 
   const handleStartChatting = useCallback(
     (serviceValue: string, peerId?: string) => {
-      actions.handleServiceChange(serviceValue, peerId);
+      // Reset the visible draft first, then pin the service chosen on Discover.
+      // Doing this in the opposite order briefly clears the selected peer and can
+      // leave the new chat dropdown showing the previous/wrong peer.
       actions.startNewChat();
+      actions.handleServiceChange(serviceValue, peerId);
       onSelectView('chat');
     },
     [actions, onSelectView],
