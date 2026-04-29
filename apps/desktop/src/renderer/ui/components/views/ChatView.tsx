@@ -918,9 +918,6 @@ function compactTokensFromFormatted(formatted: string): string {
 function compactUsd(raw: string): string {
   const n = Number(raw);
   if (!Number.isFinite(n)) return `$${raw}`;
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  if (n < 1) return `$${n.toFixed(3)}`;
   return `$${n.toFixed(2)}`;
 }
 
@@ -959,6 +956,7 @@ function ChatSessionStats({
 }) {
   const hasSession = Boolean(sessionCost || sessionTokens);
   const sessionCostLabel = sessionCost ? compactUsd(sessionCost) : '$0.00';
+  const lifetimeCostLabel = lifetimeCost ? compactUsd(lifetimeCost) : '$0.00';
   const sessionTokenLabel = sessionTokens ? compactTokensFromFormatted(sessionTokens) : '0';
   const reservedMaxNum = Number(reserved);
   const sessionCostNum = Number(sessionCost);
@@ -991,7 +989,7 @@ function ChatSessionStats({
           <div className={styles.sessionStatsGroupLabel}>Current payment channel</div>
           <div className={styles.sessionStatsRow}>
             <span>Cost</span>
-            <span>{sessionCost ? `$${sessionCost}` : '—'}</span>
+            <span>{sessionCost ? sessionCostLabel : '—'}</span>
           </div>
           <div className={styles.sessionStatsRow}>
             <span>Tokens</span>
@@ -1002,7 +1000,7 @@ function ChatSessionStats({
           <div className={styles.sessionStatsGroupLabel}>All-time with peer</div>
           <div className={styles.sessionStatsRow}>
             <span>Cost</span>
-            <span>{lifetimeCost ? `$${lifetimeCost}` : '—'}</span>
+            <span>{lifetimeCost ? lifetimeCostLabel : '—'}</span>
           </div>
           <div className={styles.sessionStatsRow}>
             <span>Tokens</span>
