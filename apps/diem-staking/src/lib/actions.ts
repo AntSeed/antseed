@@ -1,7 +1,3 @@
-// Write-action hooks — wrap wagmi's useWriteContract for each on-chain call.
-// Each hook returns a `run(args)` function the UI invokes on button click,
-// plus `isPending` for spinner state and `error` for inline display.
-
 import { useCallback } from 'react';
 import { useWriteContract } from 'wagmi';
 import { parseEther, maxUint256 } from 'viem';
@@ -96,7 +92,6 @@ export function useClaimUsdc() {
   return { run, isPending, error, reset };
 }
 
-/** Claim ANTS for explicit completed reward epochs. */
 export function useClaimAnts() {
   const { writeContractAsync, isPending, error, reset } = useWriteContract();
   const run = useCallback(

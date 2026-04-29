@@ -9,15 +9,12 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import type { MouseEvent, ReactNode } from 'react';
 import { useAccount } from 'wagmi';
 
-import { fmtPct, fmtPrice } from '../lib/format';
+import { fmtPct, fmtUSD } from '../lib/format';
 import { useAntstationDownload, ANTSTATION_RELEASES_URL, type Platform } from '../lib/antstation';
 
 const ANTSEED_URL = 'https://antseed.com';
 const CONTRACT_URL_BASE = 'https://basescan.org/address';
 
-// OS glyph for the primary download button. Matches the mark used in
-// apps/website/src/lib/DesktopDownloadIcon.tsx so the two properties feel
-// identical across hosts.
 function PlatformIcon({ platform, size = 16 }: { platform: Platform; size?: number }) {
   if (platform === 'win') {
     return (
@@ -36,8 +33,6 @@ function PlatformIcon({ platform, size = 16 }: { platform: Platform; size?: numb
   return null;
 }
 
-// Platforms where we show the OS-specific label + icon. Other platforms
-// (Linux / mobile / unknown) keep the brand-generic "Download AntStation →".
 function hasDirectInstaller(platform: Platform): platform is 'mac' | 'win' {
   return platform === 'mac' || platform === 'win';
 }
@@ -95,7 +90,20 @@ export function Nav() {
   );
 }
 
-export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number }) {
+export function Hero({
+  apr,
+  veniceCapacityTotalUsd,
+  veniceCapacityLeftUsd,
+  veniceResetCountdown,
+  nextAntsDistributionCountdown,
+}: {
+  diemPrice: number | null;
+  apr: number;
+  veniceCapacityTotalUsd: number | null;
+  veniceCapacityLeftUsd: number | null;
+  veniceResetCountdown: string;
+  nextAntsDistributionCountdown: string;
+}) {
   return (
     <section className="hero" id="stake">
       <span className="eyebrow"><span className="pulse" /> Live on Base mainnet</span>
@@ -105,12 +113,33 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
         streams into the contract in real time; $ANTS emissions land every epoch.
         No lockups, fully on-chain.
       </p>
-      <div className="hero-meta">
-        <span className="live-badge">$DIEM ${fmtPrice(diemPrice)}</span>
-        <span className="dot" />
-        <span><strong>{fmtPct(apr)}</strong> <span className="apr-sub">USDC APR · ROLLING 7D</span></span>
-        <span className="dot" />
-        <span>+ <strong>$ANTS</strong> every epoch</span>
+      <div className="ants-distribution-strip">
+        <span>Next $ANTS distribution</span>
+        <strong>{nextAntsDistributionCountdown}</strong>
+        <span>· USDC streams live</span>
+      </div>
+
+      <div className="hero-meta venice-hero-meta">
+        <div className="venice-stat-card venice-stat-card-primary">
+          <span className="venice-stat-label">Capacity / Left</span>
+          <strong className="venice-stat-value">
+            {veniceCapacityTotalUsd != null && veniceCapacityLeftUsd != null
+              ? `${fmtUSD(veniceCapacityTotalUsd)} / ${fmtUSD(veniceCapacityLeftUsd)}`
+              : '—'}
+          </strong>
+        </div>
+
+        <div className="venice-stat-card">
+          <span className="venice-stat-label">USDC APR (7d)</span>
+          <strong className="venice-stat-value">{fmtPct(apr)}</strong>
+          <span className="venice-stat-sub">you can also claim $ANTS</span>
+        </div>
+
+        <div className="venice-stat-card">
+          <span className="venice-stat-label">Reset</span>
+          <strong className="venice-stat-value">{veniceResetCountdown}</strong>
+          <span className="venice-stat-sub">time until 00:00 UTC reset</span>
+        </div>
       </div>
     </section>
   );
@@ -136,9 +165,6 @@ export function ClaimBanner() {
             <span><strong>4</strong> Claim $ANTS</span>
           </div>
           <div className="claim-banner-actions">
-            {/* Match antseed.com's primary download button: OS icon +
-                "Download for <OS>" when we have a direct installer,
-                brand-generic fallback otherwise. */}
             <a
               href={href}
               className="btn-primary"

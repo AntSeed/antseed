@@ -1,14 +1,9 @@
-// Pure formatting helpers. All inputs are `number | bigint | null`; returns
-// are always strings so the UI never has to guard against NaN/undefined.
-
 import { formatUnits } from 'viem';
 
 const USDC_DECIMALS = 6;
 const DIEM_DECIMALS = 18;
 const ANTS_DECIMALS = 18;
 
-/** Convert a base-unit bigint to a number. Safe only for display; loses
- *  precision on values > 2^53. For USDC/DIEM/ANTS dashboards this is fine. */
 export function toDisplayNumber(value: bigint, decimals: number): number {
   return Number(formatUnits(value, decimals));
 }
@@ -61,7 +56,6 @@ export function fmtPct(p: number): string {
   return p >= 100 ? Math.round(p) + '%' : p.toFixed(1) + '%';
 }
 
-/** Format a cooldown duration in seconds → "1d 4h", "4h 12m", "12m 30s". */
 export function fmtDuration(totalSeconds: number): string {
   if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0s';
   const d = Math.floor(totalSeconds / 86400);
