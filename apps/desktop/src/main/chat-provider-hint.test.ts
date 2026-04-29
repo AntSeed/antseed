@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   PROXY_PROVIDER_ID,
   normalizeProviderId,
+  providersForServiceMetadata,
   sanitizeProviderHint,
 } from './chat-provider-hint.js';
 
@@ -41,4 +42,46 @@ test('sanitizeProviderHint returns null for missing or invalid input', () => {
   assert.equal(sanitizeProviderHint(null), null);
   assert.equal(sanitizeProviderHint(''), null);
   assert.equal(sanitizeProviderHint('   '), null);
+});
+
+test('providersForServiceMetadata resolves MiniMax to openai instead of openai-responses', () => {
+  const providers = providersForServiceMetadata(
+    ['openai-responses', 'openai'],
+    {
+      providerServiceApiProtocols: {
+        'openai-responses': {
+          services: {
+            'gpt-5.5': ['openai-responses'],
+          },
+        },
+        openai: {
+          services: {
+            'minimax-m2.7-highspeed': ['openai-chat-completions'],
+          },
+        },
+      },
+      providerPricing: {
+        'openai-responses': {
+          services: {
+            'gpt-5.5': {},
+          },
+        },
+        openai: {
+          services: {
+            'minimax-m2.7-highspeed': {},
+          },
+        },
+      },
+    },
+    'minimax-m2.7-highspeed',
+  );
+
+  assert.deepEqual(providers, ['openai']);
+});
+
+test('providersForServiceMetadata falls back to first provider without per-service metadata', () => {
+  assert.deepEqual(
+    providersForServiceMetadata(['openai-responses', 'openai'], {}, 'legacy-service'),
+    ['openai-responses'],
+  );
 });

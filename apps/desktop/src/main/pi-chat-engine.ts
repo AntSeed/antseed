@@ -43,7 +43,12 @@ import {
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
 import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
-import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
+import {
+  PROXY_PROVIDER_ID,
+  normalizeProviderId,
+  providersForServiceMetadata,
+  sanitizeProviderHint,
+} from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
@@ -351,19 +356,19 @@ const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
  * Resolve protocol for a service from the peer's announced providerServiceApiProtocols metadata.
  * Returns the first recognized chat protocol, or null if not found.
  */
-function resolveServiceProtocol(
+function resolveServiceProtocolForProvider(
   apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
+  provider: string,
   serviceId: string,
 ): ChatServiceProtocol | null {
-  if (!apiProtocols) return null;
-  for (const providerEntry of Object.values(apiProtocols)) {
-    const protocols = providerEntry?.services?.[serviceId];
-    if (Array.isArray(protocols)) {
-      for (const p of protocols) {
-        if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
-          return p as ChatServiceProtocol;
-        }
-      }
+  const protocols = apiProtocols?.[provider]?.services?.[serviceId];
+  if (!Array.isArray(protocols)) {
+    return null;
+  }
+
+  for (const p of protocols) {
+    if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
+      return p as ChatServiceProtocol;
     }
   }
   return null;
@@ -605,30 +610,42 @@ async function discoverChatServiceCatalog(
     const defaultOutput = peer.defaultOutputUsdPerMillion;
 
     if (serviceList.length > 0) {
-      // Use explicit service names when available.
+      // Use explicit service names when available. A peer can advertise multiple
+      // providers (for example `openai-responses` for GPT and `openai` for
+      // MiniMax). Bind each service to the provider that actually advertises
+      // metadata for it; otherwise Desktop can choose the wrong SDK protocol
+      // and route MiniMax through /v1/responses.
       for (const serviceId of serviceList) {
-        const provider = providerList[0] ?? 'unknown';
-        // Resolve protocol: first check peer metadata, then fall back to inference from provider name.
-        const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
-        if (!protocol) continue;
+        for (const provider of providersForServiceMetadata(
+          providerList,
+          {
+            providerServiceApiProtocols: apiProtocols,
+            providerPricing: pricingMap,
+            providerServiceCategories: categoriesMap,
+          },
+          serviceId,
+        )) {
+          const protocol = resolveServiceProtocolForProvider(apiProtocols, provider, serviceId) ?? inferProviderProtocol(provider);
+          if (!protocol) continue;
 
-        const providerPricing = pricingMap?.[provider]?.services?.[serviceId] as Record<string, unknown> | undefined;
-        const inputUsd = (providerPricing?.inputUsdPerMillion as number | undefined) ?? (providerPricing?.input as number | undefined) ?? defaultInput;
-        const outputUsd = (providerPricing?.outputUsdPerMillion as number | undefined) ?? (providerPricing?.output as number | undefined) ?? defaultOutput;
-        const categories = categoriesMap?.[provider]?.services?.[serviceId];
+          const providerPricing = pricingMap?.[provider]?.services?.[serviceId] as Record<string, unknown> | undefined;
+          const inputUsd = (providerPricing?.inputUsdPerMillion as number | undefined) ?? (providerPricing?.input as number | undefined) ?? defaultInput;
+          const outputUsd = (providerPricing?.outputUsdPerMillion as number | undefined) ?? (providerPricing?.output as number | undefined) ?? defaultOutput;
+          const categories = categoriesMap?.[provider]?.services?.[serviceId];
 
-        results.push({
-          id: serviceId,
-          label: serviceId,
-          provider,
-          protocol,
-          count: 1,
-          peerId,
-          peerLabel,
-          ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
-          ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
-          ...(categories?.length ? { categories } : {}),
-        });
+          results.push({
+            id: serviceId,
+            label: serviceId,
+            provider,
+            protocol,
+            count: 1,
+            peerId,
+            peerLabel,
+            ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
+            ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
+            ...(categories?.length ? { categories } : {}),
+          });
+        }
       }
     } else if (providerList.length > 0) {
       // No services listed — create one entry per provider as a fallback.
@@ -1906,7 +1923,7 @@ export function registerPiChatHandlers({
         void store.setPeer(conversationId, peerOverrideId, peerLabel);
       }
     }
-    const protocol = await resolveProtocolForSend(serviceId);
+    const protocol = await resolveProtocolForSend(serviceId, preferredPeerId);
     // Determine vision support from the catalog entry for this (service, peer)
     // pair. We look for a `multimodal` category tag; sellers announce this via
     // serviceCategories in their peer metadata. Absent catalog info, we fall
@@ -2439,15 +2456,33 @@ export function registerPiChatHandlers({
     return serviceCatalogRefreshPromise;
   };
 
-  const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
+  const resolveProtocolForSend = async (serviceId: string, peerId?: string | null): Promise<ChatServiceProtocol> => {
     const normalizedServiceId = serviceId.trim().toLowerCase();
+    const normalizedPeerId = peerId?.trim().toLowerCase() ?? '';
+
+    const findCatalogMatch = (entries: ChatServiceCatalogEntry[]): ChatServiceProtocol | null => {
+      const peerMatch = normalizedPeerId
+        ? entries.find((entry) => (
+            entry.id.trim().toLowerCase() === normalizedServiceId
+            && entry.peerId?.trim().toLowerCase() === normalizedPeerId
+          ))
+        : null;
+      if (peerMatch) return peerMatch.protocol;
+      return entries.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? null;
+    };
+
+    const existingCatalogMatch = findCatalogMatch(lastServiceCatalogEntries);
+    if (existingCatalogMatch) {
+      return existingCatalogMatch;
+    }
+
     const existing = serviceProtocolMap.get(normalizedServiceId);
-    if (existing) {
+    if (existing && !normalizedPeerId) {
       return existing;
     }
 
     const refreshed = await refreshServiceCatalogFromNetwork();
-    return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
+    return findCatalogMatch(refreshed) ?? existing ?? 'anthropic-messages';
   };
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
