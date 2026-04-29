@@ -25,6 +25,18 @@ test('classifyChatStreamFailure detects timeout failures', () => {
   assert.equal(reason.retryable, true);
 });
 
+test('classifyChatStreamFailure detects AntSeed network reachability failures', () => {
+  const reason = classifyChatStreamFailure({
+    error: new Error('502 P2P request failed: Connection to 1d90f467689daa11bb22cc33dd44ee55ff667788 failed'),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'network_error');
+  assert.equal(reason.source, 'transport');
+  assert.equal(reason.retryable, true);
+  assert.match(reason.message, /could not reach a provider/i);
+});
+
 test('classifyChatStreamFailure detects transport disconnects', () => {
   const reason = classifyChatStreamFailure({
     error: { message: 'socket hang up', code: 'ECONNRESET' },

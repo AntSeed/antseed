@@ -1326,6 +1326,53 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
   });
 }
 
+type BuyerProxyStatusPayload = {
+  ok?: boolean;
+  peerCache?: { count?: unknown; stale?: unknown };
+  discovery?: {
+    refreshInProgress?: unknown;
+    lastPeerCount?: unknown;
+    lastError?: unknown;
+  };
+};
+
+function summarizeBuyerProxyStatus(status: BuyerProxyStatusPayload | null): string {
+  if (!status) {
+    return 'Buyer proxy is online, but AntStation could not read network discovery status.';
+  }
+
+  const peerCount = Number(status.peerCache?.count ?? 0) || 0;
+  const refreshInProgress = status.discovery?.refreshInProgress === true;
+  const lastError = typeof status.discovery?.lastError === 'string' && status.discovery.lastError.trim().length > 0
+    ? status.discovery.lastError.trim()
+    : null;
+
+  if (peerCount > 0) {
+    return `Buyer proxy has ${String(peerCount)} cached peer(s), but no compatible chat services were found.`;
+  }
+  if (lastError) {
+    return `AntSeed peer discovery failed: ${lastError}`;
+  }
+  if (refreshInProgress) {
+    return 'AntSeed peer discovery is still running. No providers have been found yet.';
+  }
+  return 'No AntSeed providers were discovered. Check internet/VPN/firewall, wait for providers to announce, or try Scan Network.';
+}
+
+async function fetchBuyerProxyStatus(port: number, timeoutMs = 1500): Promise<BuyerProxyStatusPayload | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/_antseed/status`, { signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json() as BuyerProxyStatusPayload;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function resolveProxyPort(configPath: string): Promise<number> {
   try {
     const raw = await stat(configPath);
@@ -2616,6 +2663,18 @@ export function registerPiChatHandlers({
       })();
 
       const rows = await buildDiscoverRows(entries, statsMap, enrichment, discoveredPeersMap, networkStats);
+      if (rows.length === 0) {
+        const proxyOnline = await isProxyAvailable(buyerPort);
+        if (!proxyOnline) {
+          return {
+            ok: false,
+            data: rows,
+            error: `Buyer proxy is not reachable on port ${String(buyerPort)}. Start Buyer runtime or check buyer.proxyPort in config.`,
+          };
+        }
+        const status = await fetchBuyerProxyStatus(buyerPort);
+        return { ok: false, data: rows, error: summarizeBuyerProxyStatus(status) };
+      }
       return { ok: true, data: rows };
     } catch (error) {
       return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };
