@@ -19,6 +19,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 const DESKTOP_DEV_MODE_KEY = 'antseed.desktop.devMode';
+const DESKTOP_SHOW_THINKING_KEY = 'antseed.desktop.showThinking';
 
 function loadDesktopDevMode(): boolean {
   try {
@@ -36,6 +37,23 @@ function persistDesktopDevMode(value: boolean): void {
   }
 }
 
+function loadDesktopShowThinking(): boolean {
+  try {
+    // Default to true when unset so existing users keep seeing thinking.
+    return window.localStorage.getItem(DESKTOP_SHOW_THINKING_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function persistDesktopShowThinking(value: boolean): void {
+  try {
+    window.localStorage.setItem(DESKTOP_SHOW_THINKING_KEY, value ? 'true' : 'false');
+  } catch {
+    // Ignore storage errors and continue with in-memory state.
+  }
+}
+
 export function initSettingsModule({
   uiState,
   getDashboardData,
@@ -44,10 +62,12 @@ export function initSettingsModule({
 }: SettingsModuleOptions) {
   let configFormPopulated = false;
   uiState.devMode = loadDesktopDevMode();
+  uiState.showThinking = loadDesktopShowThinking();
   void setDebugLogs(uiState.devMode);
 
   function applyConfigFormData(formData: ConfigFormData): void {
     uiState.devMode = formData.devMode;
+    uiState.showThinking = formData.showThinking;
     uiState.configFormData = { ...formData };
   }
 
@@ -70,6 +90,7 @@ export function initSettingsModule({
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,
+      showThinking: uiState.showThinking,
       cryptoChainId: safeString(crypto.chainId, 'base-mainnet'),
     });
     notifyUiStateChanged();
@@ -78,6 +99,7 @@ export function initSettingsModule({
   async function saveConfig(formData: ConfigFormData): Promise<void> {
     uiState.configSaving = true;
     persistDesktopDevMode(formData.devMode);
+    persistDesktopShowThinking(formData.showThinking);
     void setDebugLogs(formData.devMode);
     applyConfigFormData(formData);
     notifyUiStateChanged();
