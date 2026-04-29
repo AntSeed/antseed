@@ -125,6 +125,28 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
+test('status control endpoint reports cached discovery state without refreshing', async () => {
+  const peer = makePeer('a', ['anthropic'])
+  const proxy = makeBuyerProxyWithPeers([peer])
+  let refreshCalled = false
+  ;(proxy as any)._refreshPeersNow = async () => {
+    refreshCalled = true
+    return [peer]
+  }
+  ;(proxy as any)._cachedPeers = [peer]
+  ;(proxy as any)._lastDiscoveryPeerCount = 1
+
+  const req = makeProxyRequest({ path: '/_antseed/status' })
+  ;(req as typeof req & { method: string }).method = 'GET'
+  const res = await invokeProxy(proxy, req)
+  const body = JSON.parse(res.body) as { peerCache: { count: number }; discovery: { lastPeerCount: number } }
+
+  assert.equal(refreshCalled, false)
+  assert.equal(res.statusCode, 200)
+  assert.equal(body.peerCache.count, 1)
+  assert.equal(body.discovery.lastPeerCount, 1)
+})
+
 test('peer refresh control endpoint triggers immediate refresh', async () => {
   const refreshedPeer = makePeer('a', ['anthropic'])
   const proxy = makeBuyerProxyWithPeers([], [refreshedPeer])
@@ -243,6 +265,22 @@ test('selectCandidatePeersForRouting can still include peers without service pro
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
 })
 
+test('pinned proxy request reports when no sellers are discovered', async () => {
+  const proxy = makeBuyerProxyWithPeers([])
+  ;(proxy as any)._lastDiscoveryError = null
+  const req = makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': 'a'.repeat(40),
+    },
+  })
+
+  const res = await invokeProxy(proxy, req)
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /no_sellers_available/)
+  assert.match(res.body, /No AntSeed providers were discovered/)
+})
+
 test('pinned proxy request reports when the pinned peer is not discoverable', async () => {
   const pinnedPeerId = 'a'.repeat(40)
   const otherPeer = makePeer('b', ['openai'])
@@ -256,8 +294,9 @@ test('pinned proxy request reports when the pinned peer is not discoverable', as
   const res = await invokeProxy(proxy, req)
 
   assert.equal(res.statusCode, 502)
+  assert.match(res.body, /pinned_peer_not_discoverable/)
   assert.match(res.body, /is not reachable right now/)
-  assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
+  assert.match(res.body, /network\/NAT\/firewall/)
 })
 
 test('pinned proxy request reports explicit provider mismatch separately', async () => {
@@ -273,9 +312,9 @@ test('pinned proxy request reports explicit provider mismatch separately', async
   const res = await invokeProxy(proxy, req)
 
   assert.equal(res.statusCode, 502)
+  assert.match(res.body, /pinned_peer_provider_mismatch/)
   assert.match(res.body, /does not offer provider=openai/)
   assert.match(res.body, /Available providers: local-llm/)
-  assert.match(res.body, /x-antseed-provider header/)
 })
 
 test('pinned proxy request reports protocol or service mismatch when provider is available', async () => {
@@ -300,6 +339,7 @@ test('pinned proxy request reports protocol or service mismatch when provider is
   const res = await invokeProxy(proxy, req)
 
   assert.equal(res.statusCode, 502)
+  assert.match(res.body, /pinned_peer_service_mismatch/)
   assert.match(res.body, /does not support this request/)
   assert.match(res.body, /provider=local-llm/)
   assert.match(res.body, /protocol=openai-responses/)
