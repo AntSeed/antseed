@@ -1906,13 +1906,18 @@ export function registerPiChatHandlers({
         void store.setPeer(conversationId, peerOverrideId, peerLabel);
       }
     }
-    const protocol = await resolveProtocolForSend(serviceId);
-    // Determine vision support from the catalog entry for this (service, peer)
-    // pair. We look for a `multimodal` category tag; sellers announce this via
-    // serviceCategories in their peer metadata. Absent catalog info, we fall
-    // back to text-only so we never blindly forward images to a model whose
-    // upstream will reject them (DeepInfra, for example, returns
-    // "Multimodal is not supported for model: …" for text-only LLMs).
+    // Catalog entry for this (service, peer) pair drives both the API
+    // protocol (so we hit /v1/chat/completions vs /v1/responses vs
+    // /v1/messages on the right peer) and vision-capability info. Look
+    // up the peer-specific row first, then fall back to any row
+    // matching the service alone if the user has no peer pinned.
+    //
+    // We look for a `multimodal` category tag; sellers announce this
+    // via serviceCategories in their peer metadata. Absent catalog
+    // info, we fall back to text-only so we never blindly forward
+    // images to a model whose upstream will reject them (DeepInfra,
+    // for example, returns "Multimodal is not supported for model: …"
+    // for text-only LLMs).
     const normalizedServiceForCatalog = serviceId.trim().toLowerCase();
     const catalogEntry = lastServiceCatalogEntries.find((entry) => (
       entry.id.trim().toLowerCase() === normalizedServiceForCatalog
@@ -1920,6 +1925,13 @@ export function registerPiChatHandlers({
     )) ?? lastServiceCatalogEntries.find((entry) => (
       entry.id.trim().toLowerCase() === normalizedServiceForCatalog
     ));
+    // Prefer the peer-aware protocol from the catalog entry. The global
+    // serviceProtocolMap is first-write-wins per serviceId across all
+    // peers, so when one peer offers a service via openai-chat-completions
+    // and another via openai-responses, the map can return the wrong
+    // protocol for the peer we're actually pinned to. Fall back to the
+    // map only when we have no catalog row to read from.
+    const protocol = catalogEntry?.protocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
     if (droppedImageCount > 0) {
