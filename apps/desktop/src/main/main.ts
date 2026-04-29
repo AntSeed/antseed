@@ -55,6 +55,7 @@ import { createWindow, createApplicationMenu, getMainWindow } from './window.js'
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
+import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -445,10 +446,12 @@ ipcMain.handle(
 );
 
 ipcMain.handle('desktop:pick-directory', async () => {
+  const currentWorkspaceDir = await getWorkspacePickerDefaultDir();
   const dialogOptions: OpenDialogOptions = {
     properties: ['openDirectory'],
     title: 'Select Workspace Folder',
     buttonLabel: 'Use Folder',
+    defaultPath: currentWorkspaceDir,
   };
   const win = getMainWindow();
   const result = win

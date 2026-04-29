@@ -10,6 +10,14 @@ export const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
 export const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 export const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_WORKSPACE_STATE_FILE = path.join(CHAT_DATA_DIR, 'workspace.json');
+const WORKSPACE_PICKER_TOOLING_DIRS = new Set([
+  '.claude',
+  '.codex',
+  '.git',
+  '.github',
+  '.vscode',
+  '.agents',
+]);
 
 export type ChatWorkspaceGitStatus = {
   available: boolean;
@@ -28,6 +36,20 @@ const execFileAsync = promisify(execFileCallback);
 
 let currentChatWorkspaceDir = CHAT_WORKSPACE_DIR;
 
+function resolveExistingDirectory(startPath: string): string | null {
+  let current = path.resolve(startPath);
+  for (;;) {
+    if (existsSync(current)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
 export function getCurrentChatWorkspaceDir(): string {
   return currentChatWorkspaceDir;
 }
@@ -44,6 +66,21 @@ export async function loadChatWorkspaceDir(): Promise<string> {
     // Keep default workspace dir.
   }
   return currentChatWorkspaceDir;
+}
+
+export async function getWorkspacePickerDefaultDir(): Promise<string> {
+  const workspaceDir = await loadChatWorkspaceDir();
+  const existingWorkspaceDir = resolveExistingDirectory(workspaceDir)
+    ?? resolveExistingDirectory(CHAT_WORKSPACE_DIR)
+    ?? homedir();
+  const baseName = path.basename(existingWorkspaceDir).toLowerCase();
+
+  if (WORKSPACE_PICKER_TOOLING_DIRS.has(baseName)) {
+    const parentDir = path.dirname(existingWorkspaceDir);
+    return parentDir;
+  }
+
+  return existingWorkspaceDir;
 }
 
 export async function persistChatWorkspaceDir(workspaceDir: string): Promise<string> {
