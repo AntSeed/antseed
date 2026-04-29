@@ -1,19 +1,17 @@
-
 import { useEffect, useMemo, useState } from 'react';
 import { useAccount, usePublicClient, useReadContract, useReadContracts } from 'wagmi';
 import { useQuery } from '@tanstack/react-query';
 import type { Address } from 'viem';
 
-import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
+import { ANTSEED_CHANNELS, DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
-import { computeEpochClock, type EpochClock } from './epoch';
+import { computeDailyResetClock, computeEpochClock, type DailyResetClock, type EpochClock } from './epoch';
 
-const POLL_MS = 12_000; // a bit above Base's 2s block time × a few blocks
+const POLL_MS = 60_000;
 
 export function useProxyDeployed(): boolean {
   return isAddressSet(DIEM_STAKING_PROXY);
 }
-
 
 export function useDiemPrice(): number | null {
   const [price, setPrice] = useState<number | null>(null);
@@ -43,7 +41,6 @@ export function useDiemPrice(): number | null {
   return price;
 }
 
-
 export function useEpochClock(): EpochClock {
   const [clock, setClock] = useState<EpochClock>(() => computeEpochClock(Math.floor(Date.now() / 1000)));
   useEffect(() => {
@@ -55,6 +52,16 @@ export function useEpochClock(): EpochClock {
   return clock;
 }
 
+export function useDailyResetClock(): DailyResetClock {
+  const [clock, setClock] = useState<DailyResetClock>(() => computeDailyResetClock(Math.floor(Date.now() / 1000)));
+  useEffect(() => {
+    const id = setInterval(() => {
+      setClock(computeDailyResetClock(Math.floor(Date.now() / 1000)));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return clock;
+}
 
 export interface PoolStats {
   totalStaked: bigint | null;
@@ -67,6 +74,9 @@ export interface PoolStats {
   diemCooldownSecs: number | null;
   minUnstakeBatchOpenSecs: number | null;
   flushableAt: number | null;
+  veniceCapacityUsed24hUsd: number | null;
+  veniceCapacityTotalUsd: number | null;
+  veniceCapacityLeftUsd: number | null;
   isLoading: boolean;
 }
 
@@ -89,6 +99,14 @@ export function usePoolStats(): PoolStats {
     query: { enabled: deployed, refetchInterval: POLL_MS },
   });
 
+  const totalStaked = data?.[0]?.result ?? null;
+  const maxTotalStake = data?.[3]?.result ?? null;
+  // Venice daily capacity is based on live DIEM actually staked in the proxy,
+  // not the owner-set staking cap: capacity USD = totalStaked DIEM × $0.50.
+  const veniceCapacityTotalUsd = totalStaked != null ? Number(totalStaked) / 1e18 * 0.5 : null;
+  const { usedUsd24h, leftUsd } = useVeniceCapacityUsage24h();
+  const veniceCapacityLeftUsd = leftUsd ?? veniceCapacityTotalUsd;
+
   if (!deployed || !data) {
     return {
       totalStaked: null,
@@ -101,25 +119,143 @@ export function usePoolStats(): PoolStats {
       diemCooldownSecs: null,
       minUnstakeBatchOpenSecs: null,
       flushableAt: null,
+      veniceCapacityUsed24hUsd: usedUsd24h,
+      veniceCapacityTotalUsd: null,
+      veniceCapacityLeftUsd: null,
       isLoading,
     };
   }
   const flushableAtRaw = data[9]?.result != null ? Number(data[9].result) : null;
   return {
-    totalStaked: data[0]?.result ?? null,
+    totalStaked,
     stakerCount: data[1]?.result != null ? Number(data[1].result) : null,
     totalUsdcDistributedEver: data[2]?.result ?? null,
-    maxTotalStake: data[3]?.result ?? null,
+    maxTotalStake,
     firstRewardEpoch: data[4]?.result != null ? Number(data[4].result) : null,
     syncedRewardEpoch: data[5]?.result != null ? Number(data[5].result) : null,
     finalizedRewardEpoch: data[6]?.result != null ? Number(data[6].result) : null,
     diemCooldownSecs: data[7]?.result != null ? Number(data[7].result) : null,
     minUnstakeBatchOpenSecs: data[8]?.result != null ? Number(data[8].result) : null,
     flushableAt: flushableAtRaw && flushableAtRaw > 0 ? flushableAtRaw : null,
+    veniceCapacityUsed24hUsd: usedUsd24h,
+    veniceCapacityTotalUsd,
+    veniceCapacityLeftUsd,
     isLoading,
   };
 }
 
+function useVeniceCapacityUsage24h(): { usedUsd24h: number | null; leftUsd: number | null; isLoading: boolean } {
+  const client = usePublicClient();
+  const deployed = useProxyDeployed();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['veniceCapacityUsage24h', DIEM_STAKING_PROXY],
+    enabled: !!client && deployed,
+    staleTime: POLL_MS,
+    refetchInterval: POLL_MS,
+    queryFn: async (): Promise<{ spentSinceResetUsd: number; leftUsd: number } | null> => {
+      if (!client) return null;
+
+      const head = await client.getBlockNumber();
+      const headBlock = await client.getBlock({ blockNumber: head });
+      const headTimestamp = Number(headBlock.timestamp);
+      const resetStart = Math.floor(headTimestamp / 86400) * 86400;
+
+      // Find the first Base block at/after the Venice daily reset (00:00 UTC).
+      // Capacity is not a single static number for the day: users can stake
+      // during the day, so capacity that arrived after an earlier settlement
+      // must not be retroactively consumed by that earlier spend. We replay the
+      // reset-day timeline instead:
+      //   initial left = current capacity - same-day capacity additions
+      //   stake event   => left += amount * 0.5
+      //   settlement    => left -= delta
+      // clamped at zero after each spend.
+      let low = 0n;
+      let high = head;
+      while (low < high) {
+        const mid = (low + high) / 2n;
+        const block = await client.getBlock({ blockNumber: mid });
+        if (Number(block.timestamp) >= resetStart) high = mid;
+        else low = mid + 1n;
+      }
+      const fromBlock = low;
+
+      const stakeEvent = DIEM_STAKING_PROXY_ABI.find(
+        (e) => e.type === 'event' && e.name === 'Staked',
+      );
+      if (!stakeEvent) return null;
+
+      const [totalStakedNow, stakeLogs, settlementLogs] = await Promise.all([
+        client.readContract({
+          address: DIEM_STAKING_PROXY,
+          abi: DIEM_STAKING_PROXY_ABI,
+          functionName: 'totalStaked',
+        }),
+        client.getLogs({
+          address: DIEM_STAKING_PROXY,
+          event: stakeEvent,
+          fromBlock,
+          toBlock: head,
+        }),
+        client.getLogs({
+          address: ANTSEED_CHANNELS,
+          event: {
+            type: 'event',
+            name: 'ChannelSettled',
+            inputs: [
+              { type: 'bytes32', name: 'channelId', indexed: true },
+              { type: 'address', name: 'buyer', indexed: true },
+              { type: 'address', name: 'seller', indexed: true },
+              { type: 'uint128', name: 'cumulativeAmount', indexed: false },
+              { type: 'uint128', name: 'delta', indexed: false },
+              { type: 'uint128', name: 'totalSettled', indexed: false },
+              { type: 'uint256', name: 'platformFee', indexed: false },
+              { type: 'bytes', name: 'metadata', indexed: false },
+            ],
+          },
+          args: { seller: DIEM_STAKING_PROXY },
+          fromBlock,
+          toBlock: head,
+        }),
+      ]);
+
+      type TimelineEvent = { blockNumber: bigint; logIndex: number; kind: 'stake' | 'spend'; usd: number };
+      const events: TimelineEvent[] = [];
+      let sameDayCapacityAddedUsd = 0;
+      let spentSinceResetUsd = 0;
+
+      for (const log of stakeLogs) {
+        const amount = (log.args as { amount?: bigint }).amount;
+        if (typeof amount !== 'bigint') continue;
+        const usd = Number(amount) / 1e18 * 0.5;
+        sameDayCapacityAddedUsd += usd;
+        events.push({ blockNumber: log.blockNumber, logIndex: log.logIndex, kind: 'stake', usd });
+      }
+      for (const log of settlementLogs) {
+        const delta = log.args.delta;
+        if (typeof delta !== 'bigint') continue;
+        const usd = Number(delta) / 1e6;
+        spentSinceResetUsd += usd;
+        events.push({ blockNumber: log.blockNumber, logIndex: log.logIndex, kind: 'spend', usd });
+      }
+
+      events.sort((a, b) => {
+        if (a.blockNumber !== b.blockNumber) return a.blockNumber < b.blockNumber ? -1 : 1;
+        return a.logIndex - b.logIndex;
+      });
+
+      let leftUsd = Math.max(0, Number(totalStakedNow) / 1e18 * 0.5 - sameDayCapacityAddedUsd);
+      for (const event of events) {
+        if (event.kind === 'stake') leftUsd += event.usd;
+        else leftUsd = Math.max(0, leftUsd - event.usd);
+      }
+
+      return { spentSinceResetUsd, leftUsd };
+    },
+  });
+
+  return { usedUsd24h: data?.spentSinceResetUsd ?? null, leftUsd: data?.leftUsd ?? null, isLoading };
+}
 
 export interface UserStats {
   walletDiem: bigint | null;
@@ -244,7 +380,6 @@ function usePendingAnts(
   return { pendingAnts, claimableEpochs, hasMoreClaimableEpochs, isLoading: loadingPending || loadingClaimed };
 }
 
-
 export type UnstakeState =
   | { status: 'none' }
   | { status: 'queued'; batchId: number; amount: bigint; waitingForPriorBatch: boolean }
@@ -326,20 +461,19 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
 
     if (unlockAt === 0) {
       const waitingForPriorBatch = currentUnstakeBatch != null && oldestUnclaimedUnstakeBatch != null && currentUnstakeBatch !== oldestUnclaimedUnstakeBatch;
-      return { status: 'queued', batchId: activeBatchId!, amount: activeAmount!, waitingForPriorBatch };
+      return { status: 'queued', batchId: activeBatchId, amount: activeAmount, waitingForPriorBatch };
     }
     if (!claimed && now < unlockAt) {
-      return { status: 'cooling', batchId: activeBatchId!, amount: activeAmount!, unlockAt };
+      return { status: 'cooling', batchId: activeBatchId, amount: activeAmount, unlockAt };
     }
     if (!claimed && now >= unlockAt) {
-      return { status: 'claimable', batchId: activeBatchId!, amount: activeAmount! };
+      return { status: 'claimable', batchId: activeBatchId, amount: activeAmount };
     }
     return { status: 'none' };
   }, [activeBatchId, activeAmount, batchDetail, currentUnstakeBatch, oldestUnclaimedUnstakeBatch]);
 
   return { state, isLoading: loadingClock || loadingAmts || loadingBatchDetail };
 }
-
 
 export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
   const client = usePublicClient();
@@ -378,7 +512,6 @@ export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: b
 
   return { lastEpochUsdc: data ?? null, isLoading };
 }
-
 
 export function useDiemAllowance(): { allowance: bigint | null; refetch: () => void } {
   const { address } = useAccount();

@@ -19,13 +19,19 @@ export const EMISSIONS_GENESIS_UNIX = 1_775_728_461;
 /** Epochs per year for APR annualization. */
 export const EPOCHS_PER_YEAR = 52;
 
+/** Venice DIEM resets at 00:00 UTC every day. */
+export const VENICE_DAILY_RESET_SECS = 24 * 60 * 60;
+
 export interface EpochClock {
-  /** Current emission epoch index (0-based; floor of elapsed / EPOCH_DURATION). */
   epoch: number;
-  /** Seconds remaining until the next epoch boundary. */
   remainingSecs: number;
-  /** Unix timestamp of the current epoch's end. */
   epochEndUnix: number;
+}
+
+export interface DailyResetClock {
+  day: number;
+  remainingSecs: number;
+  resetAtUnix: number;
 }
 
 export function computeEpochClock(nowUnixSecs: number): EpochClock {
@@ -34,4 +40,11 @@ export function computeEpochClock(nowUnixSecs: number): EpochClock {
   const epochEndUnix = EMISSIONS_GENESIS_UNIX + (epoch + 1) * EPOCH_DURATION_SECS;
   const remainingSecs = Math.max(0, epochEndUnix - nowUnixSecs);
   return { epoch, remainingSecs, epochEndUnix };
+}
+
+export function computeDailyResetClock(nowUnixSecs: number): DailyResetClock {
+  const day = Math.floor(nowUnixSecs / VENICE_DAILY_RESET_SECS);
+  const resetAtUnix = (day + 1) * VENICE_DAILY_RESET_SECS;
+  const remainingSecs = Math.max(0, resetAtUnix - nowUnixSecs);
+  return { day, remainingSecs, resetAtUnix };
 }

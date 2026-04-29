@@ -12,6 +12,7 @@ import {
   usePoolStats,
   useUserStats,
   useEpochClock,
+  useDailyResetClock,
   useUnstakeState,
   type UnstakeState,
 } from '../lib/hooks';
@@ -25,7 +26,6 @@ import {
 } from '../lib/actions';
 import {
   fmtDiem,
-  fmtDiemPrecise,
   fmtDuration,
   fmtNum,
   fmtPct,
@@ -56,7 +56,8 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
   const [amt, setAmt] = useState('10');
   const [amtEdited, setAmtEdited] = useState(false);
   const { isConnected } = useAccount();
-  const { epoch, remainingSecs } = useEpochClock();
+  useEpochClock();
+  useDailyResetClock();
 
   const pool = usePoolStats();
   const user = useUserStats();
@@ -116,7 +117,6 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
     }
   };
 
-  const countdown = fmtDuration(remainingSecs);
 
   return (
     <div className="stake-wrap">
@@ -126,15 +126,6 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
           <div className="pool">
             Pool TVL · <strong>{pool.totalStaked != null ? fmtNum(poolDiem) : '—'} $DIEM</strong>
           </div>
-        </div>
-
-        <div className="epoch-ribbon">
-          <div className="er-dot" />
-          <div className="er-text">
-            <span className="er-lbl">Next $ANTS distribution · USDC streams live</span>
-            <span className="er-val">{countdown}</span>
-          </div>
-          <div className="er-epoch">Epoch <strong>#{epoch}</strong></div>
         </div>
 
         <div className="stake-tabs">
@@ -236,7 +227,7 @@ function StakePanel(props: StakePanelProps) {
 
   const capRemaining = useMemo(() => {
     if (props.maxTotalStake == null) return null;
-    if (props.maxTotalStake === 0n) return null; // unlimited
+    if (props.maxTotalStake === 0n) return null;
     const pool = props.poolTotalStaked ?? 0n;
     return props.maxTotalStake > pool ? props.maxTotalStake - pool : 0n;
   }, [props.maxTotalStake, props.poolTotalStaked]);
@@ -401,7 +392,6 @@ function UnstakePanel(props: UnstakePanelProps) {
         </ol>
       </div>
 
-      {/* Input only makes sense while the user has no active unstake in flight. */}
       {state.status === 'none' && (
         <>
           <InputField
@@ -443,7 +433,6 @@ function UnstakePanel(props: UnstakePanelProps) {
         </>
       )}
 
-      {/* Active state machine */}
       {state.status !== 'none' && (
         <UnstakeStateView state={state} flushableAt={props.flushableAt} />
       )}
@@ -474,7 +463,7 @@ function UnstakeStateView({
 
   if (state.status === 'queued') {
     const waitingForWindow = flushableAt != null && now < flushableAt;
-    const windowRemaining = waitingForWindow ? flushableAt! - now : 0;
+    const windowRemaining = waitingForWindow ? flushableAt - now : 0;
     const canFlush = !state.waitingForPriorBatch && !waitingForWindow;
 
     let message: string;
@@ -773,7 +762,7 @@ function Metrics(props: {
     <div className="metrics">
       <div className="metric">
         <div className="lbl">Total staked</div>
-        <div className="val">{props.pool.totalStaked != null ? fmtDiemPrecise(toDiemNumber(props.pool.totalStaked)) : '—'}</div>
+        <div className="val">{props.pool.totalStaked != null ? fmtNum(toDiemNumber(props.pool.totalStaked), 4) : '—'}</div>
         <div className="delta">$DIEM</div>
       </div>
       <div className="metric">

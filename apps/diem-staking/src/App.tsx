@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 
 import {
   useDiemPrice,
+  useEpochClock,
   useLastEpochUsdc,
   usePoolStats,
 } from './lib/hooks';
@@ -22,8 +23,8 @@ import {
   Nav,
 } from './components/Layout';
 import { StakeCard } from './components/StakeCard';
-import { fmtNum, toDiemNumber, toUsdcNumber } from './lib/format';
-import { EPOCHS_PER_YEAR } from './lib/epoch';
+import { fmtDuration, fmtNum, toDiemNumber, toUsdcNumber } from './lib/format';
+import { computeDailyResetClock, EPOCHS_PER_YEAR } from './lib/epoch';
 import { DIEM_STAKING_PROXY, isAddressSet } from './lib/addresses';
 import { ALPHA_MAX_TOTAL_STAKE_DIEM_BASE } from './lib/protocol';
 
@@ -31,6 +32,7 @@ export function App() {
   const diemPrice = useDiemPrice();
   const { lastEpochUsdc } = useLastEpochUsdc();
   const pool = usePoolStats();
+  const epochClock = useEpochClock();
 
   // APR = (USDC distributed last epoch per DIEM × epochs/yr) / DIEM price
   const apr = useMemo(() => {
@@ -60,7 +62,14 @@ export function App() {
       <AlphaStrip maxStakeDisplay={maxStakeDisplay} />
       <Nav />
       <main>
-        <Hero diemPrice={diemPrice} apr={apr} />
+        <Hero
+          diemPrice={diemPrice}
+          apr={apr}
+          veniceCapacityTotalUsd={pool.veniceCapacityTotalUsd}
+          veniceCapacityLeftUsd={pool.veniceCapacityLeftUsd}
+          veniceResetCountdown={fmtDuration(computeDailyResetClock(Math.floor(Date.now() / 1000)).remainingSecs)}
+          nextAntsDistributionCountdown={fmtDuration(epochClock.remainingSecs)}
+        />
         <StakeCard diemPrice={diemPrice} lastEpochUsdc={lastEpochUsdc} apr={apr} />
         <ClaimBanner />
         <HowItWorks />
