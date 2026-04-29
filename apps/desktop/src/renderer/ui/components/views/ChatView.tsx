@@ -74,6 +74,18 @@ function getPathTail(value: string | null | undefined): string {
   return parts[parts.length - 1] || trimmed;
 }
 
+function getPathEnding(value: string | null | undefined): string {
+  const trimmed = String(value || '').trim().replace(/[\\/]+$/, '');
+  if (!trimmed) {
+    return 'No workspace';
+  }
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= 1) {
+    return parts[0] || trimmed;
+  }
+  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+}
+
 function getGitChangeCount(status: ChatWorkspaceGitStatus): number {
   return status.stagedFiles + status.modifiedFiles + status.untrackedFiles;
 }
@@ -84,11 +96,11 @@ function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
   }
 
   const parts: string[] = [];
-  if (status.ahead > 0) parts.push(`+${status.ahead}`);
-  if (status.behind > 0) parts.push(`-${status.behind}`);
+  if (status.ahead > 0) parts.push(`\u2191${status.ahead}`);
+  if (status.behind > 0) parts.push(`\u2193${status.behind}`);
 
   const changes = getGitChangeCount(status);
-  parts.push(changes > 0 ? `${changes} dirty` : 'clean');
+  parts.push(changes > 0 ? `${changes} changes` : 'clean');
   return parts.join(' ');
 }
 
@@ -560,9 +572,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     !snap.chatStreamingMessage;
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
-  const workspaceLabel = workspacePath
-    ? workspacePath.split('/').pop() || workspacePath
-    : 'No workspace';
+  const workspaceLabel = getPathEnding(workspacePath);
   const gitStatus = snap.chatWorkspaceGitStatus;
   const gitStatusSummary = getGitStatusSummary(gitStatus);
   const gitStatusBranch = gitStatus.available
@@ -856,10 +866,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 title={gitStatusTitle}
               >
                 <HugeiconsIcon icon={GitBranchIcon} size={14} strokeWidth={1.5} />
-                {/* <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span> */}
+                <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span>
                 <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
               </button>
               <button
+                type="button"
                 className={styles.workspaceButton}
                 onClick={() => void actions.chooseWorkspace()}
                 title={workspacePath || 'Choose workspace'}
