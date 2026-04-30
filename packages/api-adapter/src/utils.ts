@@ -74,40 +74,34 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
     }
   }
 
+  const hasPromptTokens = usage.prompt_tokens !== undefined && usage.prompt_tokens !== null;
   const totalInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
-  // Cache hits — supports both shapes:
-  //   - OpenAI Chat:      usage.prompt_tokens_details.cached_tokens
-  //   - OpenAI Responses: usage.input_tokens_details.cached_tokens
-  // Both express the cached portion as a *subset* of the total input count.
+  // Cache hits arrive in two competing shapes:
+  //   - Subset shape (OpenAI Chat/Responses): cached_tokens is a subset of the
+  //     total input count, found under prompt_tokens_details or
+  //     input_tokens_details. fresh = total - cached.
+  //   - Separate shape (Anthropic): cache_read_input_tokens is reported
+  //     alongside input_tokens, where input_tokens is already fresh-only.
+  //     fresh = total.
+  // Some providers (e.g. Venice) emit BOTH fields for the same cache hit.
+  // Discriminate by the input field, not the cache field: prompt_tokens or
+  // input_tokens_details.cached_tokens always implies subset semantics.
   const promptDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
     ? (usage.prompt_tokens_details as Record<string, unknown>)
     : {};
   const inputDetails = usage.input_tokens_details && typeof usage.input_tokens_details === 'object'
     ? (usage.input_tokens_details as Record<string, unknown>)
     : {};
-  const openaiCached = toNonNegativeInt(promptDetails.cached_tokens ?? inputDetails.cached_tokens);
+  const subsetCached = toNonNegativeInt(promptDetails.cached_tokens ?? inputDetails.cached_tokens);
+  const separateCached = toNonNegativeInt(usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
 
-  // Anthropic: cache_read_input_tokens is separate from input_tokens (which is fresh-only)
-  const anthropicCached = toNonNegativeInt(usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
-
-  let freshInputTokens: number;
-  let cachedInputTokens: number;
-
-  if (anthropicCached > 0) {
-    // Anthropic style: input_tokens is already fresh-only
-    freshInputTokens = totalInput;
-    cachedInputTokens = anthropicCached;
-  } else if (openaiCached > 0) {
-    // OpenAI style: prompt_tokens includes cached subset
-    freshInputTokens = Math.max(0, totalInput - openaiCached);
-    cachedInputTokens = openaiCached;
-  } else {
-    // No cache info — all tokens are fresh
-    freshInputTokens = totalInput;
-    cachedInputTokens = 0;
-  }
+  const isSubsetShape = hasPromptTokens || inputDetails.cached_tokens !== undefined;
+  const cachedInputTokens = Math.max(subsetCached, separateCached);
+  const freshInputTokens = isSubsetShape
+    ? Math.max(0, totalInput - cachedInputTokens)
+    : totalInput;
 
   return { inputTokens: totalInput, outputTokens, freshInputTokens, cachedInputTokens };
 }
