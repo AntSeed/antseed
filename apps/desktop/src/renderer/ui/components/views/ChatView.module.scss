@@ -358,6 +358,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  max-width: 280px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -373,6 +374,8 @@
   white-space: nowrap;
   font-size: 12px;
   font-family: var(--font-mono, monospace);
+  direction: rtl;
+  text-align: left;
 }
 
 
@@ -381,7 +384,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  max-width: 100%;
+  max-width: 320px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-card);
@@ -404,7 +407,9 @@
 } */
 
 .git-status-branch {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -414,9 +419,13 @@
 }
 
 .git-status-summary {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 
