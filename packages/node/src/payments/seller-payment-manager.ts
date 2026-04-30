@@ -85,6 +85,18 @@ export class SellerPaymentManager {
   /** channelId -> total USDC spent so far (sum of recordSpend calls) */
   private readonly _spent = new Map<string, bigint>();
 
+  /**
+   * channelId -> EMA of recent max per-request cost. Used by getHeadroomEstimate
+   * to size the pre-buy on each NeedAuth so the buyer's signed cumulative stays
+   * ahead of the seller's spent in growing-context chats (where each turn costs
+   * more than the previous one). Ratchets up immediately, decays smoothly.
+   */
+  private readonly _costMaxEma = new Map<string, bigint>();
+  private static readonly COST_EMA_DECAY_NUM = 85n;
+  private static readonly COST_EMA_DECAY_DEN = 100n;
+  private static readonly HEADROOM_PAD_NUM = 125n;
+  private static readonly HEADROOM_PAD_DEN = 100n;
+
   /** channelId -> on-chain reserveMaxAmount (budget ceiling from ReserveAuth) */
   private readonly _reserveMax = new Map<string, bigint>();
 
@@ -225,6 +237,7 @@ export class SellerPaymentManager {
     this._channelStore.updateChannelStatus(channelId, status);
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
+    this._costMaxEma.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
@@ -762,8 +775,26 @@ export class SellerPaymentManager {
     const newSpent = current + costUsdc;
     this._spent.set(sessionId, newSpent);
 
+    const prevEma = this._costMaxEma.get(sessionId) ?? 0n;
+    const decayed = (prevEma * SellerPaymentManager.COST_EMA_DECAY_NUM)
+                  / SellerPaymentManager.COST_EMA_DECAY_DEN;
+    this._costMaxEma.set(sessionId, costUsdc > decayed ? costUsdc : decayed);
+
     // Persist spent amount to ChannelStore (using tokensDelivered field)
     this._channelStore.updateTokensDelivered(sessionId, newSpent.toString(), 0);
+  }
+
+  /**
+   * Pre-buy headroom for the next request. Tracks an EMA of recent max cost so
+   * the buffer keeps up with growing-context chats (where each turn costs more
+   * than the last) without being held hostage by a single past spike after
+   * costs have settled. Pads by HEADROOM_PAD for token-count uncertainty.
+   */
+  getHeadroomEstimate(sessionId: string, currentCost: bigint): bigint {
+    const ema = this._costMaxEma.get(sessionId) ?? currentCost;
+    const base = ema > currentCost ? ema : currentCost;
+    return (base * SellerPaymentManager.HEADROOM_PAD_NUM)
+         / SellerPaymentManager.HEADROOM_PAD_DEN;
   }
 
   // ── Settlement ──────────────────────────────────────────────
@@ -873,6 +904,7 @@ export class SellerPaymentManager {
     // Clean up maps after successful close, zero-cumulative deferral, or exhausted retries
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
+    this._costMaxEma.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
@@ -1038,6 +1070,7 @@ export class SellerPaymentManager {
     // Clean up in-memory state
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
+    this._costMaxEma.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);

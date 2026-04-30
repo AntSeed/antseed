@@ -366,7 +366,8 @@ export class SellerRequestHandler {
             debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`);
 
             const accepted = spm.getAcceptedCumulative(session.sessionId);
-            const requiredAmount = cumulativeSpend + costUsdc;
+            const headroom = spm.getHeadroomEstimate(session.sessionId, costUsdc);
+            const requiredAmount = cumulativeSpend + headroom;
             debugLog(`[SellerHandler] Sending NeedAuth: cost=${costUsdc} cumulative=${cumulativeSpend} required=${requiredAmount}`);
             paymentMux.sendNeedAuth({
               channelId: session.sessionId,

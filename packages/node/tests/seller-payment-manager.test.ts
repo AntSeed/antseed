@@ -384,6 +384,35 @@ describe('SellerPaymentManager', () => {
     expect(manager.getCumulativeSpend(channelId)).toBe(80_000n);
   });
 
+  it('getHeadroomEstimate: ratchets up with growing costs and decays after a spike', async () => {
+    const channelId = makeChannelId(7);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+
+    // Fresh channel: estimate falls back to currentCost × 1.25
+    expect(manager.getHeadroomEstimate(channelId, 100n)).toBe(125n);
+
+    // Steady cost — EMA tracks the cost exactly each tick, headroom = cost × 1.25
+    manager.recordSpend(channelId, 1_000n);
+    expect(manager.getHeadroomEstimate(channelId, 1_000n)).toBe(1_250n);
+    manager.recordSpend(channelId, 1_000n);
+    expect(manager.getHeadroomEstimate(channelId, 1_000n)).toBe(1_250n);
+
+    // Growing chat — each turn ratchets headroom up immediately
+    manager.recordSpend(channelId, 4_000n);
+    expect(manager.getHeadroomEstimate(channelId, 4_000n)).toBe(5_000n);
+    manager.recordSpend(channelId, 8_000n);
+    expect(manager.getHeadroomEstimate(channelId, 8_000n)).toBe(10_000n);
+
+    // Spike then settle — EMA decays at 0.85/tick, doesn't cliff to the new low
+    manager.recordSpend(channelId, 100_000n);          // EMA → 100_000
+    expect(manager.getHeadroomEstimate(channelId, 100n)).toBe(125_000n);
+    manager.recordSpend(channelId, 100n);              // EMA → 85_000
+    expect(manager.getHeadroomEstimate(channelId, 100n)).toBe(106_250n);
+    manager.recordSpend(channelId, 100n);              // EMA → 72_250
+    expect(manager.getHeadroomEstimate(channelId, 100n)).toBe(90_312n);
+  });
+
   it('test_getChannelByPeer: returns active channel', async () => {
 
     const channelId = makeChannelId(4);
