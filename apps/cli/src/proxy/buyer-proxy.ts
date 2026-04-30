@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type {
   AntseedNode,
   PeerInfo,
+  PeerMetadata,
   RequestStreamResponseMetadata,
   Router,
   SerializedHttpRequest,
@@ -283,6 +284,15 @@ export function parsePersistedPeers(
     }
     if (typeof entry.onChainStatsFetchedAt === 'number' && Number.isFinite(entry.onChainStatsFetchedAt)) {
       peer.onChainStatsFetchedAt = entry.onChainStatsFetchedAt
+    }
+    // Carry sellerContract through the persistence layer so the buyer's
+    // SellerAddressResolver can return the facade address for facade-fronted
+    // peers (e.g. DiemStakingProxy). Without this, the resolver falls back to
+    // peerIdToAddress(peerId), the buyer signs channelId derived from the peer
+    // wallet, and `reserve()` reverts on-chain with InvalidSignature() because
+    // the contract derives channelId from msg.sender (the facade).
+    if (typeof entry.sellerContract === 'string' && entry.sellerContract.length > 0) {
+      peer.metadata = { sellerContract: entry.sellerContract } as PeerMetadata
     }
     peers.push(peer)
   }
@@ -580,6 +590,9 @@ export class BuyerProxy {
         onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
+        // Persisted so cold-started buyers can still resolve the facade address
+        // for channelId derivation. See parsePersistedPeers for the round-trip.
+        sellerContract: p.metadata?.sellerContract ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
