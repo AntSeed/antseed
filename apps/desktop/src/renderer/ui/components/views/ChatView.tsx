@@ -169,6 +169,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
+  const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
+  const wasActiveRef = useRef<boolean>(active);
   const isUserScrolledUp = useRef(false);
   const isDragging = useRef(false);
   const visibleMessages = useMemo(() => {
@@ -197,6 +199,35 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
+  const scrollChatToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    isUserScrolledUp.current = false;
+  }, []);
+
+  // Opening/reopening a conversation should land on the latest message, not the
+  // last scroll offset from a previous visit. Keep manual scrollback behavior
+  // during the current visit by only forcing bottom on conversation/view entry.
+  useEffect(() => {
+    const previousConversationId = lastConversationIdRef.current;
+    const wasActive = wasActiveRef.current;
+    const conversationChanged = previousConversationId !== snap.chatActiveConversation;
+    const becameActive = active && !wasActive;
+
+    lastConversationIdRef.current = snap.chatActiveConversation;
+    wasActiveRef.current = active;
+
+    if (!active || (!conversationChanged && !becameActive)) {
+      return;
+    }
+
+    isUserScrolledUp.current = false;
+    scrollChatToBottom();
+    const frame = requestAnimationFrame(scrollChatToBottom);
+    return () => cancelAnimationFrame(frame);
+  }, [active, snap.chatActiveConversation, scrollChatToBottom]);
+
   // Keep the view pinned to the bottom while the user is already at the bottom.
   useEffect(() => {
     const el = scrollRef.current;
@@ -204,11 +235,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       return;
     }
 
-    const scrollToBottom = (): void => {
-      el.scrollTop = el.scrollHeight;
-    };
-
-    scrollToBottom();
+    scrollChatToBottom();
 
     if (typeof ResizeObserver === 'undefined') {
       return;
@@ -216,7 +243,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
     const observer = new ResizeObserver(() => {
       if (!isUserScrolledUp.current) {
-        scrollToBottom();
+        scrollChatToBottom();
       }
     });
 
@@ -224,7 +251,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     Array.from(el.children).forEach((child) => observer.observe(child));
 
     return () => observer.disconnect();
-  }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending]);
+  }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending, scrollChatToBottom]);
 
   // Re-focus the input when it transitions from disabled → enabled, and if a
   // draft is queued, ship the head of the queue as its own turn. Each draft
