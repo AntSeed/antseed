@@ -127,18 +127,42 @@ describe('extractUsage', () => {
     });
   });
 
-  it('prefers Anthropic cache field over OpenAI when both present', () => {
-    // Anthropic cache_read_input_tokens takes priority since it's checked first
+  it('handles Venice hybrid shape (prompt_tokens + duplicate cache_read_input_tokens)', () => {
+    // Venice's /v1/chat/completions emits both shapes for the same cache hit:
+    //   prompt_tokens (total, includes cached)
+    //   prompt_tokens_details.cached_tokens (subset)
+    //   cache_read_input_tokens (duplicate of the subset)
+    // Treating cache_read_input_tokens as an Anthropic-style separate count
+    // would double-bill the cached portion at the full input rate.
     const result = extractUsage({
       usage: {
-        input_tokens: 200,
-        output_tokens: 50,
-        cache_read_input_tokens: 500,
-        prompt_tokens_details: { cached_tokens: 300 },
+        prompt_tokens: 15926,
+        completion_tokens: 6,
+        total_tokens: 15932,
+        prompt_tokens_details: { cached_tokens: 15616 },
+        cache_read_input_tokens: 15616,
       },
     });
-    // Anthropic style: input_tokens is fresh-only
-    expect(result.freshInputTokens).toBe(200);
-    expect(result.cachedInputTokens).toBe(500);
+    expect(result).toEqual({
+      inputTokens: 15926,
+      outputTokens: 6,
+      freshInputTokens: 310,    // 15926 - 15616, NOT 15926
+      cachedInputTokens: 15616,
+    });
+  });
+
+  it('takes the larger cached count when subset and separate disagree', () => {
+    // Defensive: if a provider reports mismatched values, prefer the larger one
+    // and still apply subset semantics (since prompt_tokens is present).
+    const result = extractUsage({
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 50,
+        prompt_tokens_details: { cached_tokens: 600 },
+        cache_read_input_tokens: 800,
+      },
+    });
+    expect(result.freshInputTokens).toBe(200);   // 1000 - 800
+    expect(result.cachedInputTokens).toBe(800);
   });
 });
