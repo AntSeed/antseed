@@ -748,16 +748,23 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
   }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId]);
 
+  const isUserMessage = message.role === 'user';
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (
       <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
   return (
-    <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
-      {bubbleMeta}
-      <div>{content}</div>
-      {message.role !== 'user' && !isStreamingBubble ? (
+    <div className={`${styles.chatBubble} ${isUserMessage ? styles.own : styles.other}`}>
+      {isUserMessage ? bubbleMeta : (
+        <div className={styles.assistantHeader} aria-label="Assistant response">
+          <span className={styles.assistantAvatar} aria-hidden="true">A</span>
+          <span className={styles.assistantTitle}>Assistant</span>
+          {bubbleMeta}
+        </div>
+      )}
+      <div className={styles.chatBubbleBody}>{content}</div>
+      {!isUserMessage && !isStreamingBubble ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
         </div>
