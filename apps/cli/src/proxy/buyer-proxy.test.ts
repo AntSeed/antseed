@@ -470,6 +470,47 @@ test('parsePersistedPeers preserves provider metadata so routing filters still w
   assert.equal(result.routePlanByPeerId.get(validPeerId)?.provider, 'claude-oauth')
 })
 
+test('parsePersistedPeers restores sellerContract into peer.metadata', () => {
+  // Regression: dropping sellerContract through the persistence layer caused
+  // SellerAddressResolver to fall back to peerIdToAddress, so the buyer signed
+  // channelId derived from the peer wallet instead of the facade address.
+  // On-chain reserve() then reverted with InvalidSignature() because the
+  // contract derives channelId from msg.sender (the facade).
+  const facade = '1f228613116e2d08014dfdcc198377c8dedf18c9'
+  const [peer] = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - 1_000,
+          sellerContract: facade,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.ok(peer)
+  assert.equal(peer!.metadata?.sellerContract, facade)
+})
+
+test('parsePersistedPeers leaves metadata undefined when sellerContract is absent', () => {
+  const [peer] = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - 1_000,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.ok(peer)
+  assert.equal(peer!.metadata, undefined)
+})
+
 test('parsePersistedPeers filters non-string entries out of providers', () => {
   const result = parsePersistedPeers(
     {
