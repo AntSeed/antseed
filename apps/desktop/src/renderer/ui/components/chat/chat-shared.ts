@@ -326,10 +326,10 @@ export function formatCompactNumber(value: unknown): string {
   return Math.floor(num).toLocaleString();
 }
 
-export function formatUsd(value: unknown, maxFractionDigits = 6): string {
+export function formatUsd(value: unknown, fractionDigits = 2): string {
   const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return '0';
-  return num.toLocaleString([], { minimumFractionDigits: 0, maximumFractionDigits: maxFractionDigits });
+  if (!Number.isFinite(num) || num <= 0) return (0).toFixed(fractionDigits);
+  return num.toLocaleString([], { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits });
 }
 
 export function getMyrmecochoryLabel(indexBase = 0): string {
