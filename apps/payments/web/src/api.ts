@@ -162,10 +162,11 @@ export async function getBuyerUsage(): Promise<BuyerUsageTotals> {
 
 export interface NetworkStatsTotals {
   activePeers: number;
-  totalRequests: string;        // sum across peers, bigint as string
+  totalRequests: string;        // bigint as string
   totalInputTokens: string;
   totalOutputTokens: string;
   totalSettlements: number;
+  sellerCount?: number;
 }
 
 export interface NetworkStatsResponse {
@@ -179,8 +180,9 @@ export interface NetworkStatsResponse {
 }
 
 /**
- * Calls the network-stats `/stats` endpoint and aggregates per-peer totals
- * into a single network-wide snapshot.
+ * Calls the network-stats `/stats` endpoint. Newer network-stats servers expose
+ * top-level aggregate totals that include inactive historical sellers; fall back
+ * to aggregating active peers for compatibility with older deployments.
  */
 export async function getNetworkStats(networkStatsUrl: string): Promise<NetworkStatsResponse> {
   const url = `${networkStatsUrl.replace(/\/$/, '')}/stats`;
@@ -197,10 +199,31 @@ export async function getNetworkStats(networkStatsUrl: string): Promise<NetworkS
         settlementCount?: number;
       } | null;
     }>;
+    totals?: {
+      totalRequests?: string;
+      totalInputTokens?: string;
+      totalOutputTokens?: string;
+      settlementCount?: number;
+      sellerCount?: number;
+    };
     indexer?: NetworkStatsResponse['indexer'];
   };
   const peers = Array.isArray(body.peers) ? body.peers : [];
-  let activePeers = 0;
+  const activePeers = peers.filter((peer) => peer.onChainStats).length;
+
+  if (body.totals) {
+    return {
+      totals: {
+        activePeers,
+        totalRequests: body.totals.totalRequests ?? '0',
+        totalInputTokens: body.totals.totalInputTokens ?? '0',
+        totalOutputTokens: body.totals.totalOutputTokens ?? '0',
+        totalSettlements: Number(body.totals.settlementCount ?? 0),
+        ...(typeof body.totals.sellerCount === 'number' ? { sellerCount: body.totals.sellerCount } : {}),
+      },
+      indexer: body.indexer,
+    };
+  }
   let totalRequests = 0n;
   let totalInputTokens = 0n;
   let totalOutputTokens = 0n;
@@ -208,7 +231,6 @@ export async function getNetworkStats(networkStatsUrl: string): Promise<NetworkS
   for (const peer of peers) {
     const s = peer.onChainStats;
     if (!s) continue;
-    activePeers += 1;
     try {
       totalRequests += BigInt(s.totalRequests ?? '0');
       totalInputTokens += BigInt(s.totalInputTokens ?? '0');

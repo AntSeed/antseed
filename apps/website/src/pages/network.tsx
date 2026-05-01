@@ -52,9 +52,19 @@ interface PeerMetadata {
   onChainStats?: OnChainStats;
 }
 
+interface NetworkTotals {
+  totalRequests: string;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  settlementCount: number;
+  sellerCount: number;
+  lastUpdatedAt: number | null;
+}
+
 interface StatsResponse {
   peers: PeerMetadata[];
   updatedAt: string;
+  totals?: NetworkTotals;
 }
 
 /* ── Static model enrichment (logos, context, tags) ───────────────── */
@@ -235,6 +245,7 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [networkTotals, setNetworkTotals] = useState<NetworkTotals | null>(null);
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
@@ -252,6 +263,7 @@ export default function PricingPage() {
           const data = (await res.json()) as StatsResponse;
           setPeers(data.peers);
           setUpdatedAt(data.updatedAt);
+          setNetworkTotals(data.totals ?? null);
           setLoading(false);
           setError(false);
           return;
@@ -272,7 +284,12 @@ export default function PricingPage() {
   const uniqueServiceCount = useMemo(() => models.map(m => m.serviceId).length, [models]);
 
   // Totals and bounds for stats bar + sliders
-  const totalTokens = useMemo(() => peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalInputTokens ?? '0', 10) + parseInt(p.onChainStats?.totalOutputTokens ?? '0', 10), 0), [peers]);
+  const totalTokens = useMemo(() => {
+    if (networkTotals) {
+      return parseInt(networkTotals.totalInputTokens, 10) + parseInt(networkTotals.totalOutputTokens, 10);
+    }
+    return peers.reduce((s, p) => s + parseInt(p.onChainStats?.totalInputTokens ?? '0', 10) + parseInt(p.onChainStats?.totalOutputTokens ?? '0', 10), 0);
+  }, [networkTotals, peers]);
 
   const bounds = useMemo(() => ({
     maxInput: Math.max(...models.map(m => m.inputPrice), 1),
@@ -295,7 +312,7 @@ export default function PricingPage() {
     const q = query.toLowerCase();
     let list = models.filter(m => {
       if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
-      if (providerFilter && !m.peerNames.includes(providerFilter)) return false;
+      if (providerFilter && m.peerName !== providerFilter) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
       // Price sliders: 100=Any, lower=stricter
       if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;

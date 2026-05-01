@@ -144,6 +144,13 @@ describe('createServer — enriched: agent with totals', () => {
           lastUpdatedAt: number;
         } | null;
       }>;
+      totals: {
+        totalRequests: string;
+        totalInputTokens: string;
+        totalOutputTokens: string;
+        settlementCount: number;
+        sellerCount: number;
+      };
     };
     assert.equal(body.peers.length, 1);
     const stats = body.peers[0]!.onChainStats;
@@ -160,6 +167,11 @@ describe('createServer — enriched: agent with totals', () => {
     assert.equal(stats!.avgRequestsPerBuyer, 5);
     assert.equal(stats!.avgRequestsPerChannel, 5);
     assert.equal(typeof stats!.lastUpdatedAt, 'number');
+    assert.equal(body.totals.totalRequests, '5');
+    assert.equal(body.totals.totalInputTokens, '100');
+    assert.equal(body.totals.totalOutputTokens, '200');
+    assert.equal(body.totals.settlementCount, 1);
+    assert.equal(body.totals.sellerCount, 1);
   });
 });
 
@@ -201,7 +213,43 @@ describe('createServer — enriched: contract-backed peer uses sellerContract', 
   });
 });
 
-// ── Test 4: Enriched — agent with no events ───────────────────────────────────
+// ── Test 4: Enriched — network totals include inactive sellers ────────────────
+
+describe('createServer — enriched: network totals include inactive sellers', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 88n, blockNumber: 102, inputTokens: 10n, outputTokens: 20n, requestCount: 1n }),
+    makeEvent({ agentId: 99n, blockNumber: 103, inputTokens: 30n, outputTokens: 40n, requestCount: 2n }),
+  ], 1);
+  const peers = [fakePeer('active', '0xactive')];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 88);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => { __resetAgentIdCacheForTests(); });
+
+  it('returns aggregate totals across all indexed sellers, not just active peers', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      peers: Array<{ onChainStats: { agentId: number; totalInputTokens: string; totalOutputTokens: string } | null }>;
+      totals: { totalRequests: string; totalInputTokens: string; totalOutputTokens: string; settlementCount: number; sellerCount: number };
+    };
+
+    assert.equal(body.peers[0]!.onChainStats?.agentId, 88);
+    assert.equal(body.peers[0]!.onChainStats?.totalInputTokens, '10');
+    assert.equal(body.peers[0]!.onChainStats?.totalOutputTokens, '20');
+    assert.equal(body.totals.totalRequests, '3');
+    assert.equal(body.totals.totalInputTokens, '40');
+    assert.equal(body.totals.totalOutputTokens, '60');
+    assert.equal(body.totals.settlementCount, 2);
+    assert.equal(body.totals.sellerCount, 2);
+  });
+});
+
+// ── Test 5: Enriched — agent with no events ───────────────────────────────────
 
 describe('createServer — enriched: agent with no events in store', () => {
   const PORT = nextPort();
@@ -222,7 +270,7 @@ describe('createServer — enriched: agent with no events in store', () => {
   });
 });
 
-// ── Test 4: Enriched — unstaked peer (agentId = 0) ────────────────────────────
+// ── Test 6: Enriched — unstaked peer (agentId = 0) ────────────────────────────
 
 describe('createServer — enriched: unstaked peer returns agentId 0', () => {
   const PORT = nextPort();
@@ -243,7 +291,7 @@ describe('createServer — enriched: unstaked peer returns agentId 0', () => {
   });
 });
 
-// ── Test 5: Enriched — missing peerId ─────────────────────────────────
+// ── Test 7: Enriched — missing peerId ────────────────────────────────────────
 
 describe('createServer — enriched: peer missing peerId', () => {
   const PORT = nextPort();
@@ -269,7 +317,7 @@ describe('createServer — enriched: peer missing peerId', () => {
   });
 });
 
-// ── Test 6: Cache is reused ───────────────────────────────────────────────────
+// ── Test 8: Cache is reused ───────────────────────────────────────────────────
 
 describe('createServer — enriched: cache reused across requests', () => {
   const PORT = nextPort();
@@ -303,7 +351,7 @@ describe('createServer — enriched: cache reused across requests', () => {
   });
 });
 
-// ── Test 7: Staking RPC failure — no cache, recovers on retry ────────────────
+// ── Test 9: Staking RPC failure — no cache, recovers on retry ────────────────
 
 describe('createServer — enriched: RPC failure does not cache', () => {
   const PORT = nextPort();
@@ -346,7 +394,7 @@ describe('createServer — enriched: RPC failure does not cache', () => {
   });
 });
 
-// ── Test 8: BigInt round-trip ─────────────────────────────────────────────────
+// ── Test 10: BigInt round-trip ────────────────────────────────────────────────
 
 describe('createServer — enriched: BigInt round-trip for large numbers', () => {
   const PORT = nextPort();

@@ -17,6 +17,15 @@ export interface SellerTotals {
   lastUpdatedAt: number;
 }
 
+export interface NetworkTotals {
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+  sellerCount: number;
+  lastUpdatedAt: number | null;
+}
+
 interface SellerRow {
   total_input_tokens: string;
   total_output_tokens: string;
@@ -62,6 +71,7 @@ export class SqliteStore {
   private _selectChannel!: Database.Statement<[number, string], BuyerOrChannelRow & { buyer: string }>;
   private _upsertChannel!: Database.Statement<[number, string, string, string, string, string, number, number, number]>;
   private _selectSellerTotals!: Database.Statement<[number], SellerTotalsRow>;
+  private _selectAllSellerTotals!: Database.Statement<[], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
 
@@ -167,6 +177,10 @@ export class SqliteStore {
 
     this._selectSellerTotals = this.db.prepare(
       'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, first_seen_at, last_seen_at, last_updated_at FROM seller_metadata_totals WHERE agent_id = ?',
+    );
+
+    this._selectAllSellerTotals = this.db.prepare(
+      'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, first_seen_at, last_seen_at, last_updated_at FROM seller_metadata_totals',
     );
 
     this._countBuyers = this.db.prepare(
@@ -333,6 +347,34 @@ export class SqliteStore {
       avgRequestsPerChannel,
       avgRequestsPerBuyer,
       lastUpdatedAt: row.last_updated_at,
+    };
+  }
+
+  /** Returns cumulative totals across all indexed sellers, including sellers not currently online. */
+  getNetworkTotals(): NetworkTotals {
+    let totalRequests = 0n;
+    let totalInputTokens = 0n;
+    let totalOutputTokens = 0n;
+    let settlementCount = 0;
+    let sellerCount = 0;
+    let lastUpdatedAt: number | null = null;
+
+    for (const row of this._selectAllSellerTotals.all()) {
+      totalRequests += BigInt(row.total_request_count);
+      totalInputTokens += BigInt(row.total_input_tokens);
+      totalOutputTokens += BigInt(row.total_output_tokens);
+      settlementCount += row.settlement_count;
+      sellerCount += 1;
+      lastUpdatedAt = Math.max(lastUpdatedAt ?? 0, row.last_updated_at);
+    }
+
+    return {
+      totalRequests,
+      totalInputTokens,
+      totalOutputTokens,
+      settlementCount,
+      sellerCount,
+      lastUpdatedAt,
     };
   }
 
