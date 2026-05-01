@@ -312,7 +312,7 @@ export default function PricingPage() {
     const q = query.toLowerCase();
     let list = models.filter(m => {
       if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
-      if (providerFilter && !m.peerNames.includes(providerFilter)) return false;
+      if (providerFilter && m.peerName !== providerFilter) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
       // Price sliders: 100=Any, lower=stricter
       if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;
