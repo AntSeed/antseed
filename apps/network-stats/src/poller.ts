@@ -12,12 +12,10 @@ import { randomBytes } from 'node:crypto';
 import {
   DHTNode,
   DEFAULT_DHT_CONFIG,
-  topicToInfoHash,
-  ANTSEED_WILDCARD_TOPIC,
-  SUBNET_COUNT,
-  subnetTopic,
+  DEFAULT_LOOKUP_CONFIG,
   HttpMetadataResolver,
   OFFICIAL_BOOTSTRAP_NODES,
+  PeerLookup,
   toBootstrapConfig,
 } from '@antseed/node/discovery';
 import { toPeerId } from '@antseed/node';
@@ -99,37 +97,25 @@ export class NetworkPoller {
       await dht.start();
 
       const metadataResolver = new HttpMetadataResolver();
+      const peerLookup = new PeerLookup({
+        dht,
+        metadataResolver,
+        requireValidSignature: DEFAULT_LOOKUP_CONFIG.requireValidSignature,
+        allowStaleMetadata: DEFAULT_LOOKUP_CONFIG.allowStaleMetadata,
+        maxAnnouncementAgeMs: DEFAULT_LOOKUP_CONFIG.maxAnnouncementAgeMs,
+        maxClientServerClockSkewMs: DEFAULT_LOOKUP_CONFIG.maxClientServerClockSkewMs,
+        maxResults: DEFAULT_LOOKUP_CONFIG.maxResults,
+      });
+
+      // Use the SDK's latest whole-network discovery flow instead of manually
+      // fanning out DHT lookups. PeerLookup warms the routing table via the
+      // wildcard topic, then walks subnet shards sequentially so each shard gets
+      // a full lookup slot; it also validates metadata signatures and freshness.
+      const results = await peerLookup.findAllExhaustive();
       const discoveredPeers = new Map<string, PeerMetadata>();
-
-      // Fan out across every subnet (and the wildcard, kept as a transition
-      // fallback for sellers still on the single-topic build) so we don't
-      // hit the K-closest saturation problem the wildcard alone suffers
-      // from at scale. See SUBNET_COUNT in @antseed/node discovery.
-      const subnetHashes = Array.from({ length: SUBNET_COUNT }, (_, i) =>
-        topicToInfoHash(subnetTopic(i)),
-      );
-      const wildcardHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
-      const rawEndpoints = await dht.lookupMany([...subnetHashes, wildcardHash]);
-      const seenEndpoints = new Set<string>();
-      const endpoints: Array<{ host: string; port: number }> = [];
-      for (const ep of rawEndpoints) {
-        const key = `${ep.host.toLowerCase()}:${ep.port}`;
-        if (seenEndpoints.has(key)) continue;
-        seenEndpoints.add(key);
-        endpoints.push(ep);
+      for (const result of results) {
+        discoveredPeers.set(result.metadata.peerId, result.metadata);
       }
-
-      await Promise.allSettled(
-        endpoints.map(async (ep: { host: string; port: number }) => {
-          try {
-            const metadata: PeerMetadata | null = await metadataResolver.resolve(ep);
-            if (!metadata?.peerId) return;
-            discoveredPeers.set(metadata.peerId, metadata);
-          } catch {
-            // unreachable peer — skip
-          }
-        }),
-      );
 
       this.snapshot = {
         peers: [...discoveredPeers.values()],
