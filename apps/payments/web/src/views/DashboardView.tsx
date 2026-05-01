@@ -69,6 +69,7 @@ export function DashboardView({ config }: DashboardViewProps) {
     bigintFromString(networkStats?.totals.totalOutputTokens);
   const networkSettlements = networkStats?.totals.totalSettlements ?? 0;
   const networkPeers = networkStats?.totals.activePeers ?? 0;
+  const networkSellers = networkStats?.totals.sellerCount;
 
   return (
     <div className="dashboard-view">
@@ -85,7 +86,11 @@ export function DashboardView({ config }: DashboardViewProps) {
           <div className="stat-card">
             <div className="stat-card-label">Active peers</div>
             <div className="stat-card-value">{formatNumber(networkPeers)}</div>
-            <div className="stat-card-hint">Sellers with on-chain activity</div>
+            <div className="stat-card-hint">
+              {networkSellers != null
+                ? `${formatNumber(networkSellers)} sellers with lifetime activity`
+                : 'Sellers currently online with on-chain activity'}
+            </div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Network requests</div>

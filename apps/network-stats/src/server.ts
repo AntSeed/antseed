@@ -143,9 +143,19 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
         }
       : null;
 
+    const networkTotals = store.getNetworkTotals();
+
     res.json({
       ...snapshot,
       peers: enrichedPeers,
+      totals: {
+        totalRequests: networkTotals.totalRequests.toString(),
+        totalInputTokens: networkTotals.totalInputTokens.toString(),
+        totalOutputTokens: networkTotals.totalOutputTokens.toString(),
+        settlementCount: networkTotals.settlementCount,
+        sellerCount: networkTotals.sellerCount,
+        lastUpdatedAt: networkTotals.lastUpdatedAt,
+      },
       ...(indexerPayload ? { indexer: indexerPayload } : {}),
     });
   });
