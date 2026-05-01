@@ -34,7 +34,6 @@ export const DIEM_STAKING_PROXY_ABI = parseAbi([
   'function claimAnts(uint32[] rewardEpochs)',
   'function syncRewardEpochs(uint32 maxEpochs)',
 
-  'event Staked(address indexed user, uint256 amount)',
   'event UsdcDistributed(uint256 amount)',
   'event RewardEpochClosed(uint32 indexed rewardEpochId, uint256 revenuePerTokenAtEnd, uint256 totalPoints)',
   'event RewardEpochFunded(uint32 indexed rewardEpochId, uint256 antsPot)',

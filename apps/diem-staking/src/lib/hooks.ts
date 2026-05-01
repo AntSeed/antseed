@@ -1,12 +1,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
-import { useAccount, usePublicClient, useReadContract, useReadContracts } from 'wagmi';
-import { useQuery } from '@tanstack/react-query';
+import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import type { Address } from 'viem';
 
 import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
-import { computeEpochClock, EMISSIONS_GENESIS_UNIX, EPOCH_DURATION_SECS, type EpochClock } from './epoch';
+import { computeEpochClock, type EpochClock } from './epoch';
+
+// First Staked event on the deployed proxy: tx
+// 0x02dd13f8d519d7ac81eceaacd40c3e485f76b2a7f584b094fb7e816b44f822a4
+// at block 45265606, Apr-27-2026 20:09:19 UTC. Hardcoded so the page does not
+// need a separate eth_getLogs round-trip just to learn the pool's birth date.
+const POOL_GENESIS_UNIX = 1_777_320_559;
 
 const POLL_MS = 12_000; // a bit above Base's 2s block time × a few blocks
 
@@ -342,57 +347,14 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
 
 
 export function usePoolAgeDays(): { poolAgeDays: number | null; isLoading: boolean } {
-  const client = usePublicClient();
-  const deployed = useProxyDeployed();
-  const { firstRewardEpoch } = usePoolStats();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['poolAgeDays', DIEM_STAKING_PROXY, firstRewardEpoch],
-    enabled: !!client && deployed && firstRewardEpoch != null,
-    staleTime: POLL_MS,
-    refetchInterval: POLL_MS * 5,
-    queryFn: async (): Promise<number | null> => {
-      if (!client || firstRewardEpoch == null) return null;
-
-      const latest = await client.getBlock();
-      let poolStartedAt: number | null = null;
-
-      const stakedAbi = DIEM_STAKING_PROXY_ABI.find(
-        (e) => e.type === 'event' && e.name === 'Staked',
-      );
-      if (stakedAbi) {
-        const head = latest.number;
-        const lookback = 500_000n;
-        const fromBlock = head > lookback ? head - lookback : 0n;
-        const stakedLogs = await client.getLogs({
-          address: DIEM_STAKING_PROXY,
-          event: stakedAbi,
-          fromBlock,
-          toBlock: head,
-        });
-
-        const firstStakeBlock = stakedLogs[0]?.blockNumber;
-        if (firstStakeBlock != null) {
-          const firstStake = await client.getBlock({ blockNumber: firstStakeBlock });
-          poolStartedAt = Number(firstStake.timestamp);
-        }
-      }
-
-      // Fallback for RPCs with a truncated log window: the proxy pins
-      // `firstRewardEpoch` to AntseedEmissions.currentEpoch() at deployment, so
-      // this is a conservative start-of-epoch approximation of when the pool
-      // came into existence.
-      if (poolStartedAt == null) {
-        poolStartedAt = EMISSIONS_GENESIS_UNIX + firstRewardEpoch * EPOCH_DURATION_SECS;
-      }
-
-      const elapsedSecs = Number(latest.timestamp) - poolStartedAt;
-      if (!Number.isFinite(elapsedSecs) || elapsedSecs <= 0) return null;
-      return Math.max(elapsedSecs / 86_400, 1 / 24);
-    },
-  });
-
-  return { poolAgeDays: data ?? null, isLoading };
+  const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const elapsedSecs = nowSecs - POOL_GENESIS_UNIX;
+  if (elapsedSecs <= 0) return { poolAgeDays: null, isLoading: false };
+  return { poolAgeDays: Math.max(elapsedSecs / 86_400, 1 / 24), isLoading: false };
 }
 
 export function useDiemAllowance(): { allowance: bigint | null; refetch: () => void } {
