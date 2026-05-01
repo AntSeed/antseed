@@ -49,8 +49,7 @@ Every display value is on-chain live except two:
 | Source | What |
 |---|---|
 | **On-chain (wagmi `useReadContract` / `useReadContracts`, polled every ~12s)** | Pool TVL (`totalStaked`), distinct stakers (`stakerCount`), USDC distributed all-time (`totalUsdcDistributedEver`), pool cap (`maxTotalStake`), reward baseline (`firstRewardEpoch` / `syncedRewardEpoch` / `finalizedRewardEpoch`), Venice cooldown (`DIEM.cooldownDuration`), user wallet DIEM, user stake, user claimable USDC (`earnedUsdc`), user pending ANTS (`pendingAntsForEpoch` summed), per-epoch claim flags (`userEpochClaimed`), unstake queue state (`currentUnstakeBatch` / `oldestUnclaimedUnstakeBatch` / `unstakeBatches(id)` / `unstakeBatchUserAmount`). |
-| **`getLogs` aggregation** | Last-epoch USDC (for realized APR). Reads the most recent `RewardEpochClosed` event's `totalPoints`, capped at a 500k block lookback. Caches for ~60s via tanstack-query. A deployment with a long event tail should replace this with a dedicated indexer. |
-| **Off-chain** | DIEM price from CoinGecko (`useDiemPrice`). Falls back to "—" on miss; APR degrades to 0. The epoch countdown tile uses the Base mainnet `AntseedEmissions` genesis constant in `src/lib/epoch.ts`; authoritative claimability still comes from `finalizedRewardEpoch()` on-chain. |
+| **Off-chain** | DIEM price from CoinGecko (`useDiemPrice`). Falls back to "—" on miss; APY degrades to 0. APY uses all-time distributed USDC divided by pool age in days, annualized by 365, then divided by live pool TVL; TVL is current staked $DIEM valued at the live $DIEM price. Pool age is computed from the `POOL_GENESIS_UNIX` constant in `src/lib/hooks.ts` (the timestamp of the first `Staked` event on the deployed proxy) — no log query needed at runtime. Authoritative claimability still comes from `finalizedRewardEpoch()` on-chain. |
 
 ## Unstake UX
 

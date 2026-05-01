@@ -34,7 +34,7 @@ import {
   toDiemNumber,
   toUsdcNumber,
 } from '../lib/format';
-import { EPOCHS_PER_YEAR } from '../lib/epoch';
+import { DAYS_PER_YEAR } from '../lib/epoch';
 
 type Tab = 'stake' | 'unstake' | 'claim';
 
@@ -47,11 +47,11 @@ function formatDiemInput(value: bigint): string {
 
 export interface StakeCardProps {
   diemPrice: number | null;
-  lastEpochUsdc: bigint | null;
-  apr: number;
+  poolAgeDays: number | null;
+  apy: number;
 }
 
-export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
+export function StakeCard({ diemPrice, poolAgeDays, apy }: StakeCardProps) {
   const [tab, setTab] = useState<Tab>('stake');
   const [amt, setAmt] = useState('10');
   const [amtEdited, setAmtEdited] = useState(false);
@@ -100,9 +100,12 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
 
   const diemValue = parseFloat(amt) || 0;
   const poolDiem = toDiemNumber(pool.totalStaked);
-  const usdcPerDiemPerEpoch = poolDiem > 0 && lastEpochUsdc ? toUsdcNumber(lastEpochUsdc) / poolDiem : null;
-  const usdcPerEpoch = usdcPerDiemPerEpoch != null ? diemValue * usdcPerDiemPerEpoch : null;
-  const usdcPerYear = usdcPerEpoch != null ? usdcPerEpoch * EPOCHS_PER_YEAR : null;
+  const usdcPerDiemPerDay =
+    poolDiem > 0 && poolAgeDays != null && poolAgeDays > 0 && pool.totalUsdcDistributedEver != null
+      ? toUsdcNumber(pool.totalUsdcDistributedEver) / poolAgeDays / poolDiem
+      : null;
+  const usdcPerWeek = usdcPerDiemPerDay != null ? diemValue * usdcPerDiemPerDay * 7 : null;
+  const usdcPerYear = usdcPerDiemPerDay != null ? diemValue * usdcPerDiemPerDay * DAYS_PER_YEAR : null;
   const usdcPerMonth = usdcPerYear != null ? usdcPerYear / 12 : null;
   const amtUsd = diemPrice != null ? diemValue * diemPrice : null;
 
@@ -154,10 +157,10 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
             poolTotalStaked={pool.totalStaked}
             maxTotalStake={pool.maxTotalStake}
             maxStakeable={stakeMaxAmount}
-            usdcPerEpoch={usdcPerEpoch}
+            usdcPerWeek={usdcPerWeek}
             usdcPerMonth={usdcPerMonth}
             usdcPerYear={usdcPerYear}
-            apr={apr}
+            apy={apy}
           />
         )}
 
@@ -194,9 +197,9 @@ export function StakeCard({ diemPrice, lastEpochUsdc, apr }: StakeCardProps) {
       </div>
 
       <Metrics
-        apr={apr}
+        apy={apy}
         pool={pool}
-        lastEpochUsdc={lastEpochUsdc}
+        poolAgeDays={poolAgeDays}
       />
 
       <FlowDiagram />
@@ -215,10 +218,10 @@ interface StakePanelProps {
   poolTotalStaked: bigint | null;
   maxTotalStake: bigint | null;
   maxStakeable: bigint | null;
-  usdcPerEpoch: number | null;
+  usdcPerWeek: number | null;
   usdcPerMonth: number | null;
   usdcPerYear: number | null;
-  apr: number;
+  apy: number;
 }
 
 function StakePanel(props: StakePanelProps) {
@@ -288,12 +291,12 @@ function StakePanel(props: StakePanelProps) {
       <div className="stake-reward-summary">
         <div className="reward-summary-head">
           <span>Projected rewards</span>
-          <strong>Rolling 7d estimate</strong>
+          <strong>All-time daily avg</strong>
         </div>
         <div className="reward-summary-grid">
           <div className="reward-summary-card primary">
             <span>USDC / week</span>
-            <strong>{props.usdcPerEpoch != null ? fmtUSD(props.usdcPerEpoch) : '—'}</strong>
+            <strong>{props.usdcPerWeek != null ? fmtUSD(props.usdcPerWeek) : '—'}</strong>
           </div>
           <div className="reward-summary-card">
             <span>Month</span>
@@ -304,8 +307,8 @@ function StakePanel(props: StakePanelProps) {
             <strong>{props.usdcPerYear != null ? fmtUSD(props.usdcPerYear) : '—'}</strong>
           </div>
           <div className="reward-summary-card accent">
-            <span>USDC APR</span>
-            <strong>{fmtPct(props.apr)}</strong>
+            <span>USDC APY</span>
+            <strong>{fmtPct(props.apy)}</strong>
           </div>
         </div>
       </div>
@@ -765,9 +768,9 @@ function QuickSet({
 
 
 function Metrics(props: {
-  apr: number;
+  apy: number;
   pool: ReturnType<typeof usePoolStats>;
-  lastEpochUsdc: bigint | null;
+  poolAgeDays: number | null;
 }) {
   return (
     <div className="metrics">
@@ -786,10 +789,10 @@ function Metrics(props: {
         <div className="delta">all time</div>
       </div>
       <div className="metric">
-        <div className="lbl">USDC APR</div>
-        <div className="val" style={{ color: 'var(--brand-dark)' }}>{fmtPct(props.apr)}</div>
+        <div className="lbl">USDC APY</div>
+        <div className="val" style={{ color: 'var(--brand-dark)' }}>{fmtPct(props.apy)}</div>
         <div className="delta">
-          {props.lastEpochUsdc != null ? `Rolling 7d · annualized` : 'Warming up'}
+          {props.poolAgeDays != null ? `All-time avg · ${fmtNum(props.poolAgeDays, 1)}d` : 'Warming up'}
         </div>
       </div>
       <div className="metric">

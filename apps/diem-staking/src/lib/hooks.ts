@@ -1,12 +1,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
-import { useAccount, usePublicClient, useReadContract, useReadContracts } from 'wagmi';
-import { useQuery } from '@tanstack/react-query';
+import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import type { Address } from 'viem';
 
 import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
 import { computeEpochClock, type EpochClock } from './epoch';
+
+// First Staked event on the deployed proxy: tx
+// 0x02dd13f8d519d7ac81eceaacd40c3e485f76b2a7f584b094fb7e816b44f822a4
+// at block 45265606, Apr-27-2026 20:09:19 UTC. Hardcoded so the page does not
+// need a separate eth_getLogs round-trip just to learn the pool's birth date.
+const POOL_GENESIS_UNIX = 1_777_320_559;
 
 const POLL_MS = 12_000; // a bit above Base's 2s block time × a few blocks
 
@@ -341,44 +346,16 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
 }
 
 
-export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
-  const client = usePublicClient();
-  const deployed = useProxyDeployed();
-  const { syncedRewardEpoch } = usePoolStats();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['lastEpochUsdc', DIEM_STAKING_PROXY, syncedRewardEpoch],
-    enabled: !!client && deployed && syncedRewardEpoch != null && syncedRewardEpoch >= 1,
-    staleTime: POLL_MS,
-    refetchInterval: POLL_MS * 5,
-    queryFn: async (): Promise<bigint | null> => {
-      if (!client || syncedRewardEpoch == null || syncedRewardEpoch < 1) return null;
-
-      const closedAbi = DIEM_STAKING_PROXY_ABI.find(
-        (e) => e.type === 'event' && e.name === 'RewardEpochClosed',
-      );
-      if (!closedAbi) return null;
-
-      const head = await client.getBlockNumber();
-      const lookback = 500_000n;
-      const fromBlock = head > lookback ? head - lookback : 0n;
-
-      const closedLogs = await client.getLogs({
-        address: DIEM_STAKING_PROXY,
-        event: closedAbi,
-        args: { rewardEpochId: syncedRewardEpoch - 1 },
-        fromBlock,
-        toBlock: head,
-      });
-      if (closedLogs.length === 0) return null;
-      const totalPoints = (closedLogs[closedLogs.length - 1]!.args as { totalPoints?: bigint }).totalPoints;
-      return typeof totalPoints === 'bigint' ? totalPoints : null;
-    },
-  });
-
-  return { lastEpochUsdc: data ?? null, isLoading };
+export function usePoolAgeDays(): { poolAgeDays: number | null; isLoading: boolean } {
+  const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const elapsedSecs = nowSecs - POOL_GENESIS_UNIX;
+  if (elapsedSecs <= 0) return { poolAgeDays: null, isLoading: false };
+  return { poolAgeDays: Math.max(elapsedSecs / 86_400, 1 / 24), isLoading: false };
 }
-
 
 export function useDiemAllowance(): { allowance: bigint | null; refetch: () => void } {
   const { address } = useAccount();
