@@ -163,7 +163,45 @@ describe('createServer — enriched: agent with totals', () => {
   });
 });
 
-// ── Test 3: Enriched — agent with no events ───────────────────────────────────
+// ── Test 3: Enriched — contract-backed peer uses sellerContract ───────────────
+
+describe('createServer — enriched: contract-backed peer uses sellerContract', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 77n, blockNumber: 101, inputTokens: 123n, outputTokens: 456n, requestCount: 7n }),
+  ], 1);
+  const peer = fakePeer('contract', '0xoperator');
+  peer.sellerContract = '1f228613116e2d08014dfdcc198377c8dedf18c9';
+  const peers = [peer];
+  const poller = makePoller(peers);
+  const seen: string[] = [];
+  const stakingClient = makeStakingClient((addr) => {
+    seen.push(addr);
+    return addr === '0x1f228613116e2d08014dfdcc198377c8dedf18c9' ? 77 : 0;
+  });
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => {
+    __resetAgentIdCacheForTests();
+    seen.length = 0;
+  });
+
+  it('resolves stats by sellerContract instead of operator peerId', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as { peers: Array<{ onChainStats: { agentId: number; totalInputTokens: string; totalOutputTokens: string } | null }> };
+    assert.deepEqual(seen, ['0x1f228613116e2d08014dfdcc198377c8dedf18c9']);
+    const stats = body.peers[0]!.onChainStats;
+    assert.ok(stats !== null, 'onChainStats should not be null');
+    assert.equal(stats!.agentId, 77);
+    assert.equal(stats!.totalInputTokens, '123');
+    assert.equal(stats!.totalOutputTokens, '456');
+  });
+});
+
+// ── Test 4: Enriched — agent with no events ───────────────────────────────────
 
 describe('createServer — enriched: agent with no events in store', () => {
   const PORT = nextPort();
