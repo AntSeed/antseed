@@ -1,6 +1,6 @@
 // Static layout sections: Nav, Hero, AlphaStrip, ClaimBanner, HowItWorks, FAQ,
 // DualCards, Footer. These don't depend on on-chain state (ClaimBanner and
-// Hero take a couple of computed values as props so they can show live APR /
+// Hero take a couple of computed values as props so they can show live APY /
 // pool TVL). Every AntStation download link flows through `useAntstationDownload`
 // so Mac + Windows visitors get a direct installer href — same behaviour as
 // antseed.com.
@@ -95,7 +95,7 @@ export function Nav() {
   );
 }
 
-export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number }) {
+export function Hero({ diemPrice, apy }: { diemPrice: number | null; apy: number }) {
   return (
     <section className="hero" id="stake">
       <span className="eyebrow"><span className="pulse" /> Live on Base mainnet</span>
@@ -108,7 +108,7 @@ export function Hero({ diemPrice, apr }: { diemPrice: number | null; apr: number
       <div className="hero-meta">
         <span className="live-badge">$DIEM ${fmtPrice(diemPrice)}</span>
         <span className="dot" />
-        <span><strong>{fmtPct(apr)}</strong> <span className="apr-sub">USDC APR · ROLLING 7D</span></span>
+        <span><strong>{fmtPct(apy)}</strong> <span className="apr-sub">USDC APY · ALL-TIME AVG</span></span>
         <span className="dot" />
         <span>+ <strong>$ANTS</strong> every epoch</span>
       </div>
@@ -302,13 +302,15 @@ export function FAQ() {
           </div>
         </details>
         <details className="faq">
-          <summary>How is the current APR calculated?</summary>
+          <summary>How is the current APY calculated?</summary>
           <div className="body">
-            The APR shown is realized, not projected. We sum the USDC that streamed into
-            the pool over the last 7 days, divide by the pool TVL, and annualize (× 52).
-            It's backward-looking. Real yield tracks actual AI demand on the network, which
-            varies week to week. The contract only ever pays out what it actually received.
-            Effective APR is denominated in USDC. $ANTS are extra on top.
+            The APY shown is realized, not projected. We take all USDC that has flowed into
+            the pool so far, divide by the number of days the pool has existed, annualize
+            that daily average (× 365), then divide by live pool TVL. TVL is the current
+            amount of staked $DIEM valued at the live $DIEM price. It's backward-looking:
+            real yield tracks actual AI demand on the network. The contract only ever pays
+            out what it actually received. Effective APY is denominated in USDC. $ANTS are
+            extra on top.
           </div>
         </details>
         <details className="faq">

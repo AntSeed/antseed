@@ -16,8 +16,8 @@ export const EPOCH_DURATION_SECS = 7 * 24 * 60 * 60;
 // remains aligned with the contract clock.
 export const EMISSIONS_GENESIS_UNIX = 1_775_728_461;
 
-/** Epochs per year for APR annualization. */
-export const EPOCHS_PER_YEAR = 52;
+/** Calendar days per year for all-time APY annualization. */
+export const DAYS_PER_YEAR = 365;
 
 export interface EpochClock {
   /** Current emission epoch index (0-based; floor of elapsed / EPOCH_DURATION). */

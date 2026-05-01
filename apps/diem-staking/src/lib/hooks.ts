@@ -6,7 +6,7 @@ import type { Address } from 'viem';
 
 import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
-import { computeEpochClock, type EpochClock } from './epoch';
+import { computeEpochClock, EMISSIONS_GENESIS_UNIX, EPOCH_DURATION_SECS, type EpochClock } from './epoch';
 
 const POLL_MS = 12_000; // a bit above Base's 2s block time × a few blocks
 
@@ -341,44 +341,59 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
 }
 
 
-export function useLastEpochUsdc(): { lastEpochUsdc: bigint | null; isLoading: boolean } {
+export function usePoolAgeDays(): { poolAgeDays: number | null; isLoading: boolean } {
   const client = usePublicClient();
   const deployed = useProxyDeployed();
-  const { syncedRewardEpoch } = usePoolStats();
+  const { firstRewardEpoch } = usePoolStats();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['lastEpochUsdc', DIEM_STAKING_PROXY, syncedRewardEpoch],
-    enabled: !!client && deployed && syncedRewardEpoch != null && syncedRewardEpoch >= 1,
+    queryKey: ['poolAgeDays', DIEM_STAKING_PROXY, firstRewardEpoch],
+    enabled: !!client && deployed && firstRewardEpoch != null,
     staleTime: POLL_MS,
     refetchInterval: POLL_MS * 5,
-    queryFn: async (): Promise<bigint | null> => {
-      if (!client || syncedRewardEpoch == null || syncedRewardEpoch < 1) return null;
+    queryFn: async (): Promise<number | null> => {
+      if (!client || firstRewardEpoch == null) return null;
 
-      const closedAbi = DIEM_STAKING_PROXY_ABI.find(
-        (e) => e.type === 'event' && e.name === 'RewardEpochClosed',
+      const latest = await client.getBlock();
+      let poolStartedAt: number | null = null;
+
+      const stakedAbi = DIEM_STAKING_PROXY_ABI.find(
+        (e) => e.type === 'event' && e.name === 'Staked',
       );
-      if (!closedAbi) return null;
+      if (stakedAbi) {
+        const head = latest.number;
+        const lookback = 500_000n;
+        const fromBlock = head > lookback ? head - lookback : 0n;
+        const stakedLogs = await client.getLogs({
+          address: DIEM_STAKING_PROXY,
+          event: stakedAbi,
+          fromBlock,
+          toBlock: head,
+        });
 
-      const head = await client.getBlockNumber();
-      const lookback = 500_000n;
-      const fromBlock = head > lookback ? head - lookback : 0n;
+        const firstStakeBlock = stakedLogs[0]?.blockNumber;
+        if (firstStakeBlock != null) {
+          const firstStake = await client.getBlock({ blockNumber: firstStakeBlock });
+          poolStartedAt = Number(firstStake.timestamp);
+        }
+      }
 
-      const closedLogs = await client.getLogs({
-        address: DIEM_STAKING_PROXY,
-        event: closedAbi,
-        args: { rewardEpochId: syncedRewardEpoch - 1 },
-        fromBlock,
-        toBlock: head,
-      });
-      if (closedLogs.length === 0) return null;
-      const totalPoints = (closedLogs[closedLogs.length - 1]!.args as { totalPoints?: bigint }).totalPoints;
-      return typeof totalPoints === 'bigint' ? totalPoints : null;
+      // Fallback for RPCs with a truncated log window: the proxy pins
+      // `firstRewardEpoch` to AntseedEmissions.currentEpoch() at deployment, so
+      // this is a conservative start-of-epoch approximation of when the pool
+      // came into existence.
+      if (poolStartedAt == null) {
+        poolStartedAt = EMISSIONS_GENESIS_UNIX + firstRewardEpoch * EPOCH_DURATION_SECS;
+      }
+
+      const elapsedSecs = Number(latest.timestamp) - poolStartedAt;
+      if (!Number.isFinite(elapsedSecs) || elapsedSecs <= 0) return null;
+      return Math.max(elapsedSecs / 86_400, 1 / 24);
     },
   });
 
-  return { lastEpochUsdc: data ?? null, isLoading };
+  return { poolAgeDays: data ?? null, isLoading };
 }
-
 
 export function useDiemAllowance(): { allowance: bigint | null; refetch: () => void } {
   const { address } = useAccount();
