@@ -33,12 +33,18 @@ interface CacheEntry {
 }
 const agentIdCache = new Map<string, CacheEntry>();
 
+function normalizeAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  return lower.startsWith('0x') ? lower : `0x${lower}`;
+}
+
 async function resolveAgentId(
   client: StakingClient,
   address: string | null | undefined,
 ): Promise<number | null> {
-  if (!address) return null;
-  const key = address.toLowerCase();
+  const key = normalizeAddress(address);
+  if (!key) return null;
   const cached = agentIdCache.get(key);
   if (cached !== undefined && cached.expiresAt > Date.now()) {
     return cached.agentId;
@@ -81,9 +87,11 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
 
     const enrichedPeers = await Promise.all(
       snapshot.peers.map(async (peer) => {
-        // peerId is the lowercased seller EVM address without the 0x prefix.
-        const peerId = (peer as { peerId?: string }).peerId;
-        const address = peerId ? `0x${peerId}` : null;
+        // peerId is the lowercased seller/operator EVM address without the 0x prefix.
+        // Contract-backed sellers (for example Venice's proxy) announce the
+        // settlement address separately; use that for on-chain volume lookup.
+        const { peerId, sellerContract } = peer as { peerId?: string; sellerContract?: string };
+        const address = normalizeAddress(sellerContract) ?? normalizeAddress(peerId);
         const agentId = await resolveAgentId(stakingClient, address);
         if (agentId === null || agentId === 0) {
           return { ...peer, onChainStats: null };

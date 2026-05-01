@@ -245,7 +245,10 @@ export default function PricingPage() {
 
   useEffect(() => {
     const refresh = async () => {
-      for (const url of [STATS_URL, DEV_STATS_URL]) {
+      const statsUrls = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+        ? [DEV_STATS_URL, STATS_URL]
+        : [STATS_URL, DEV_STATS_URL];
+      for (const url of statsUrls) {
         try {
           const res = await fetch(url, {signal: AbortSignal.timeout(5000)});
           if (!res.ok) continue;
@@ -295,7 +298,7 @@ export default function PricingPage() {
     const q = query.toLowerCase();
     let list = models.filter(m => {
       if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
-      if (providerFilter && !m.peerNames.includes(providerFilter)) return false;
+      if (providerFilter && m.peerName !== providerFilter) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
       // Price sliders: 100=Any, lower=stricter
       if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;
