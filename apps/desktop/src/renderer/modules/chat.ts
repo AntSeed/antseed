@@ -811,27 +811,6 @@ export function initChatModule({
     updateStreamingIndicator();
   }
 
-  // ---------------------------------------------------------------------------
-  // Scroll helper
-  // ---------------------------------------------------------------------------
-
-  function scrollChatToBottom(): void {
-    const container = document.querySelector<HTMLElement>('[data-chat-scroll]');
-    if (!container) return;
-    const threshold = 100;
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom < threshold) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }
-
-  function queueScrollChatToBottom(): void {
-    requestAnimationFrame(() => {
-      scrollChatToBottom();
-    });
-  }
-
   function cloneStreamingMessage(message: ChatMessage): ChatMessage {
     return {
       ...message,
@@ -858,7 +837,6 @@ export function initChatModule({
   function setStreamingMessage(message: ChatMessage | null): void {
     uiState.chatStreamingMessage = message ? cloneStreamingMessage(message) : null;
     notifyUiStateChangedSync();
-    if (message) queueScrollChatToBottom();
   }
 
   function getConversationStreamingMessage(convId: string): ChatMessage | null {

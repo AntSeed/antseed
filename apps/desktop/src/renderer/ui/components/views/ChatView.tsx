@@ -172,6 +172,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
   const wasActiveRef = useRef<boolean>(active);
   const isUserScrolledUp = useRef(false);
+  const streamingAnchorSeenRef = useRef<string | null>(null);
+  const responseStartAnchoredRef = useRef(false);
   const isDragging = useRef(false);
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
@@ -194,6 +196,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const handleScroll = () => {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       isUserScrolledUp.current = !atBottom;
+      if (atBottom) {
+        responseStartAnchoredRef.current = false;
+      }
     };
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
@@ -223,15 +228,55 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
 
     isUserScrolledUp.current = false;
+    streamingAnchorSeenRef.current = null;
+    responseStartAnchoredRef.current = false;
     scrollChatToBottom();
     const frame = requestAnimationFrame(scrollChatToBottom);
     return () => cancelAnimationFrame(frame);
   }, [active, snap.chatActiveConversation, scrollChatToBottom]);
 
-  // Keep the view pinned to the bottom while the user is already at the bottom.
+  // When a new assistant response starts, anchor the top of that card in view
+  // instead of jumping straight to the newest token. This keeps the user's
+  // prompt and the beginning of the answer easy to find while long responses
+  // stream. If the user scrolls away afterward, keep respecting manual scroll.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || isUserScrolledUp.current) {
+    const streamingMessage = snap.chatStreamingMessage as ChatMessage | null;
+    if (!el || !streamingMessage) {
+      if (!streamingMessage) streamingAnchorSeenRef.current = null;
+      return;
+    }
+
+    const routeRequestId =
+      typeof streamingMessage.meta?.routeRequestId === 'string' ? streamingMessage.meta.routeRequestId : '';
+    const createdAt = Number(streamingMessage.createdAt) || 0;
+    const anchorKey = `${snap.chatActiveConversation || 'new'}:${routeRequestId || createdAt || visibleMessages.length}`;
+    if (streamingAnchorSeenRef.current === anchorKey || isUserScrolledUp.current) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      const anchor = el.querySelector<HTMLElement>('[data-chat-streaming-response="true"]');
+      if (!anchor) return;
+      const topPadding = 12;
+      const containerRect = el.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      el.scrollTop = Math.max(0, el.scrollTop + anchorRect.top - containerRect.top - topPadding);
+      streamingAnchorSeenRef.current = anchorKey;
+      responseStartAnchoredRef.current = true;
+      isUserScrolledUp.current = false;
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [snap.chatStreamingMessage, visibleMessages.length, snap.chatActiveConversation]);
+
+  // Keep the view pinned to the bottom while the user is already at the bottom,
+  // but do not override the response-start anchor. If the user intentionally
+  // scrolls back to the bottom, the scroll handler clears that anchor and live
+  // token following resumes.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || isUserScrolledUp.current || responseStartAnchoredRef.current) {
       return;
     }
 
@@ -718,6 +763,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 key={`streaming:${snap.chatActiveConversation || 'new'}`}
                 message={snap.chatStreamingMessage as ChatMessage}
                 streaming
+                streamingAnchor
                 onOpenPreview={handleOpenPreview}
                 conversationId={snap.chatActiveConversation || undefined}
               />

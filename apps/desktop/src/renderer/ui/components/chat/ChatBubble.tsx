@@ -704,13 +704,20 @@ function CopyResponseButton({ content }: { content: unknown }) {
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
+  streamingAnchor?: boolean;
   onOpenPreview?: (url: string) => void;
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
+export function ChatBubble({
+  message,
+  streaming = false,
+  streamingAnchor = false,
+  onOpenPreview,
+  conversationId,
+}: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -748,16 +755,31 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
   }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId]);
 
+  const isUserMessage = message.role === 'user';
+  const responseLabel = message.role === 'assistant' ? 'Assistant' : 'System';
+  const responseInitial = responseLabel.charAt(0);
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (
       <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
   return (
-    <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
-      {bubbleMeta}
-      <div>{content}</div>
-      {message.role !== 'user' && !isStreamingBubble ? (
+    <div
+      className={`${styles.chatBubble} ${isUserMessage ? styles.own : styles.other}`}
+      data-chat-streaming-response={!isUserMessage && streamingAnchor ? 'true' : undefined}
+    >
+      {isUserMessage ? bubbleMeta : (
+        <div
+          className={styles.assistantHeader}
+          aria-label={isStreamingBubble ? `${responseLabel} response is streaming` : `${responseLabel} response`}
+        >
+          <span className={styles.assistantAvatar} aria-hidden="true">{responseInitial}</span>
+          <span className={styles.assistantTitle}>{responseLabel}</span>
+          {bubbleMeta}
+        </div>
+      )}
+      <div className={styles.chatBubbleBody}>{content}</div>
+      {!isUserMessage && !isStreamingBubble ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
         </div>
