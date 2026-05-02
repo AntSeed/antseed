@@ -1352,6 +1352,7 @@ $dash-sidebar-width: 240px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
+  position: relative;
   flex-direction: column;
   gap: 20px;
   padding: 26px 26px 22px;
@@ -1375,6 +1376,29 @@ $dash-sidebar-width: 240px;
   /* Drop redundant header text — the modal header and signer block already cover it */
   .deposit .card-section-title { display: none; }
   .deposit .wallet-role-hint { display: none; }
+}
+
+.empty-state-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s, border-color 0.14s;
+
+  &:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: var(--card-hover, rgba(148, 163, 184, 0.08));
+  }
 }
 
 .empty-state-header {

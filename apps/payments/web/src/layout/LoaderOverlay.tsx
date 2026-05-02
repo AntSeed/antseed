@@ -1,18 +1,11 @@
-import { useEffect } from 'react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 interface LoaderOverlayProps {
   isVisible: boolean;
 }
 
 export function LoaderOverlay({ isVisible }: LoaderOverlayProps) {
-  useEffect(() => {
-    if (!isVisible) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isVisible]);
+  useBodyScrollLock(isVisible);
 
   if (!isVisible) return null;
 

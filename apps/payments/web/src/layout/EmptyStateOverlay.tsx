@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import type { BalanceData, PaymentConfig } from '../types';
 import { DepositView } from '../components/DepositView';
 import type { OverlayPhase } from '../App';
@@ -10,6 +11,7 @@ interface EmptyStateOverlayProps {
   buyerAddress: string | null;
   onDeposited: () => void;
   onContinue: () => void;
+  onDismissDeposit?: () => void;
 }
 
 function CopyIcon() {
@@ -25,6 +27,14 @@ function CheckIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path d="M3.5 8.5L6.5 11.5L12.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }
@@ -45,19 +55,13 @@ export function EmptyStateOverlay({
   buyerAddress,
   onDeposited,
   onContinue,
+  onDismissDeposit,
 }: EmptyStateOverlayProps) {
   const [copied, setCopied] = useState(false);
 
   const isVisible = phase !== null;
 
-  useEffect(() => {
-    if (!isVisible) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isVisible]);
+  useBodyScrollLock(isVisible);
 
   if (!isVisible) return null;
 
@@ -77,6 +81,16 @@ export function EmptyStateOverlay({
       <div className="empty-state-card">
         {phase === 'deposit' ? (
           <>
+            {onDismissDeposit && (
+              <button
+                type="button"
+                className="empty-state-close"
+                onClick={onDismissDeposit}
+                aria-label="Close deposit prompt"
+              >
+                <CloseIcon />
+              </button>
+            )}
             <div className="empty-state-header">
               <div className="empty-state-eyebrow">Welcome to AntSeed</div>
               <h2 className="empty-state-title">Fund your AntSeed account</h2>

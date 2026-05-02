@@ -186,6 +186,7 @@ function AppShell({
   refreshBalance,
 }: AppShellProps) {
   const [justDeposited, setJustDeposited] = useState(false);
+  const [depositPromptDismissed, setDepositPromptDismissed] = useState(false);
 
   const isLoading = !balanceLoaded;
   const isEmptyBuyer =
@@ -196,7 +197,7 @@ function AppShell({
 
   let overlayPhase: OverlayPhase = null;
   if (justDeposited) overlayPhase = 'success';
-  else if (isEmptyBuyer) overlayPhase = 'deposit';
+  else if (isEmptyBuyer && !depositPromptDismissed) overlayPhase = 'deposit';
 
   const shellBlurred = isLoading || overlayPhase !== null;
 
@@ -207,6 +208,7 @@ function AppShell({
   }, [refreshBalance, onCloseActionModal]);
 
   const dismissSuccess = useCallback(() => setJustDeposited(false), []);
+  const dismissDepositPrompt = useCallback(() => setDepositPromptDismissed(true), []);
 
   return (
     <>
@@ -250,6 +252,7 @@ function AppShell({
         buyerAddress={buyerEvmAddress}
         onDeposited={handleDeposited}
         onContinue={dismissSuccess}
+        onDismissDeposit={dismissDepositPrompt}
       />
       <ActionModal
         isOpen={actionModal === 'deposit'}

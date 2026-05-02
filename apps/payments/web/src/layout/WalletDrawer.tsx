@@ -6,6 +6,7 @@ import { useSetOperator, useTransferOperator } from '../hooks/useSetOperator';
 import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import { Button } from '../components/Button';
 import { InfoHint } from '../components/InfoHint';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 interface WalletDrawerProps {
   isOpen: boolean;
@@ -104,14 +105,7 @@ export function WalletDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isOpen]);
+  useBodyScrollLock(isOpen);
 
   const hasOperator = Boolean(
     onChainOperator && onChainOperator.toLowerCase() !== ZERO_ADDR,
