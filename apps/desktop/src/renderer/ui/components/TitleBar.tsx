@@ -74,7 +74,12 @@ export function TitleBar() {
     ? `$${parseFloat(creditsAvailableUsdc).toFixed(2)}`
     : '$0.00';
 
-  const handleAddCredits = useCallback(() => {
+  const handleManageCredits = useCallback(() => {
+    setCreditsDropdownOpen(false);
+    actions.openPaymentsPortal?.();
+  }, [actions]);
+
+  const handleDepositCredits = useCallback(() => {
     setCreditsDropdownOpen(false);
     actions.openPaymentsPortal?.('deposit');
   }, [actions]);
@@ -164,8 +169,11 @@ export function TitleBar() {
                 )}
               </div>
               <div className={styles.creditsDropdownActions}>
-                <button className={styles.creditsDropdownAddBtn} onClick={handleAddCredits}>
+                <button className={styles.creditsDropdownManageBtn} onClick={handleManageCredits}>
                   Manage
+                </button>
+                <button className={styles.creditsDropdownAddBtn} onClick={handleDepositCredits}>
+                  Deposit
                 </button>
               </div>
             </div>
