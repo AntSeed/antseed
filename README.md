@@ -28,14 +28,6 @@ If you want to monetize an AI service without locking it into a SaaS marketplace
   <a href="docs/protocol/README.md">Protocol Spec</a>
 </p>
 
-## Product Preview
-
-<p align="center">
-  <video src="brand/product-overview.mp4" width="800" controls muted></video>
-</p>
-
-> If the video doesn't render in your viewer, open [`brand/product-overview.mp4`](brand/product-overview.mp4) directly.
-
 ## How It Works
 
 **Providers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenAI-compatible APIs, local Ollama, etc.) and announce capacity on the DHT network.
@@ -127,61 +119,17 @@ docs/protocol/        Protocol specification
 
 ## Architecture
 
-```mermaid
-flowchart TB
-  config["~/.antseed/config.json<br/>providers · services · pricing"]
-  identity["ANTSEED_IDENTITY_HEX<br/>peer identity"]
-  dht["BitTorrent DHT<br/>peer discovery"]
-  chain["Base L2<br/>USDC channels + staking"]
-
-  subgraph Buyer["Buyer (router)"]
-    rcli["antseed buyer start"]
-    rcore["router-core<br/>peer scoring + metrics"]
-    rlocal["router-local<br/>HTTP proxy on localhost"]
-    bapps["Claude Code · Aider · Continue.dev<br/>or any OPENAI/ANTHROPIC_BASE_URL client"]
-  end
-
-  subgraph Seller["Seller (provider)"]
-    scli["antseed seller start"]
-    pcore["provider-core<br/>HTTP relay + auth"]
-    plug["provider-anthropic · provider-openai<br/>provider-openai-responses · provider-local-llm<br/>provider-claude-code · provider-claude-oauth"]
-    upstream["Upstream LLM APIs<br/>or local Ollama / llama.cpp"]
-  end
-
-  subgraph Core["@antseed/node (core SDK)"]
-    p2p["P2P transport<br/>WebRTC data channels"]
-    metering["Metering + receipts<br/>SQLite"]
-    pay["Payment channels<br/>ReserveAuth + SpendingAuth"]
-  end
-
-  config --> rcli
-  config --> scli
-  identity --> p2p
-
-  bapps -. "ANTHROPIC_BASE_URL /<br/>OPENAI_BASE_URL" .-> rlocal
-  rlocal --> rcore
-  rcore --> p2p
-  scli --> pcore
-  pcore --> plug
-  plug --> upstream
-
-  p2p <--> dht
-  p2p <--> metering
-  metering --> pay
-  pay <--> chain
 ```
-
-Build tiers (each tier depends only on earlier tiers):
-
-```
-tier0  api-adapter, node                       (no internal deps)
-tier1  provider-core, router-core, ant-agent   (peer: node)
-tier2  plugins/*                               (extend provider-core / router-core)
-tier3  payments                                (depends: node)
-tier4  cli, desktop                            (cli depends: node + api-adapter +
-                                                ant-agent + payments;
-                                                desktop wraps cli)
-stand  website, diem-staking                   (no internal deps)
+@antseed/node (core SDK)
+  ├── provider-core
+  │     └── provider-anthropic, provider-claude-code, provider-claude-oauth,
+  │         provider-openai, provider-local-llm
+  ├── router-core
+  │     └── router-local
+  ├── payments (peer: node)
+  │     └── cli (depends: node + payments)
+  │           └── desktop (Electron wrapper)
+  └── website (standalone)
 ```
 
 ## Building a Plugin
