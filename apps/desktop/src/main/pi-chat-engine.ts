@@ -45,6 +45,13 @@ import {
 import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
+import {
+  buildChatServiceCatalogFromPeers,
+  sortChatServiceCatalogEntries,
+  type ChatServiceCatalogEntry,
+  type ChatServiceProtocol,
+  type NetworkPeerAddress,
+} from './chat-service-catalog.js';
 import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
 import {
   AuthStorage,
@@ -181,36 +188,6 @@ type ActiveRun = {
   unsubscribe: () => void;
 };
 
-type NetworkPeerAddress = {
-  peerId?: string;
-  displayName?: string;
-  host: string;
-  port: number;
-  providers?: string[];
-  services?: string[];
-  providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
-  providerPricing?: Record<string, { services: Record<string, { input: number; output: number }> }>;
-  providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
-  defaultInputUsdPerMillion?: number;
-  defaultOutputUsdPerMillion?: number;
-};
-
-type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
-
-type ChatServiceCatalogEntry = {
-  id: string;
-  label: string;
-  provider: string;
-  protocol: ChatServiceProtocol;
-  count: number;
-  peerId?: string;
-  peerLabel?: string;
-  inputUsdPerMillion?: number;
-  outputUsdPerMillion?: number;
-  categories?: string[];
-  description?: string;
-};
-
 function augmentChatToolPath(): void {
   const currentPath = process.env['PATH'] ?? '';
   const segments = currentPath
@@ -330,45 +307,6 @@ function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
     || value === 'openai-responses';
 }
 
-function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
-  if (provider === 'openai-responses') {
-    return 'openai-responses';
-  }
-  if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
-    return 'openai-chat-completions';
-  }
-  if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
-    return 'anthropic-messages';
-  }
-  return null;
-}
-
-const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
-  'anthropic-messages', 'openai-chat-completions', 'openai-responses',
-]);
-
-/**
- * Resolve protocol for a service from the peer's announced providerServiceApiProtocols metadata.
- * Returns the first recognized chat protocol, or null if not found.
- */
-function resolveServiceProtocol(
-  apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
-  serviceId: string,
-): ChatServiceProtocol | null {
-  if (!apiProtocols) return null;
-  for (const providerEntry of Object.values(apiProtocols)) {
-    const protocols = providerEntry?.services?.[serviceId];
-    if (Array.isArray(protocols)) {
-      for (const p of protocols) {
-        if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
-          return p as ChatServiceProtocol;
-        }
-      }
-    }
-  }
-  return null;
-}
-
 function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -486,29 +424,6 @@ function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceC
   return sortChatServiceCatalogEntries([...deduped.values()]);
 }
 
-function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
-  const protocolRank = (protocol: ChatServiceProtocol): number => (
-    protocol === 'anthropic-messages'
-      ? 0
-      : protocol === 'openai-chat-completions'
-        ? 1
-        : 2
-  );
-
-  return entries.sort((a, b) => {
-    if (b.count !== a.count) {
-      return b.count - a.count;
-    }
-    if (protocolRank(a.protocol) !== protocolRank(b.protocol)) {
-      return protocolRank(a.protocol) - protocolRank(b.protocol);
-    }
-    if (a.provider !== b.provider) {
-      return a.provider.localeCompare(b.provider);
-    }
-    return a.id.localeCompare(b.id);
-  });
-}
-
 function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   if (entries.length <= CHAT_SERVICE_MAX_OPTIONS) {
     return entries;
@@ -589,69 +504,7 @@ async function discoverChatServiceCatalog(
     }
   }
 
-  const results: ChatServiceCatalogEntry[] = [];
-  for (const peer of peers) {
-    const peerId = peer.peerId;
-    const peerLabel = peer.displayName
-      ? `${peer.displayName} (${peerId?.slice(0, 8) ?? ''})`
-      : peerId ? peerId.slice(0, 12) + '...' : undefined;
-
-    const providerList = peer.providers ?? [];
-    const serviceList = peer.services ?? [];
-    const apiProtocols = peer.providerServiceApiProtocols;
-    const pricingMap = peer.providerPricing;
-    const categoriesMap = peer.providerServiceCategories;
-    const defaultInput = peer.defaultInputUsdPerMillion;
-    const defaultOutput = peer.defaultOutputUsdPerMillion;
-
-    if (serviceList.length > 0) {
-      // Use explicit service names when available.
-      for (const serviceId of serviceList) {
-        const provider = providerList[0] ?? 'unknown';
-        // Resolve protocol: first check peer metadata, then fall back to inference from provider name.
-        const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
-        if (!protocol) continue;
-
-        const providerPricing = pricingMap?.[provider]?.services?.[serviceId] as Record<string, unknown> | undefined;
-        const inputUsd = (providerPricing?.inputUsdPerMillion as number | undefined) ?? (providerPricing?.input as number | undefined) ?? defaultInput;
-        const outputUsd = (providerPricing?.outputUsdPerMillion as number | undefined) ?? (providerPricing?.output as number | undefined) ?? defaultOutput;
-        const categories = categoriesMap?.[provider]?.services?.[serviceId];
-
-        results.push({
-          id: serviceId,
-          label: serviceId,
-          provider,
-          protocol,
-          count: 1,
-          peerId,
-          peerLabel,
-          ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
-          ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
-          ...(categories?.length ? { categories } : {}),
-        });
-      }
-    } else if (providerList.length > 0) {
-      // No services listed — create one entry per provider as a fallback.
-      for (const provider of providerList) {
-        const protocol = inferProviderProtocol(provider);
-        if (!protocol) continue;
-
-        results.push({
-          id: provider,
-          label: provider,
-          provider,
-          protocol,
-          count: 1,
-          peerId,
-          peerLabel,
-          ...(defaultInput != null ? { inputUsdPerMillion: defaultInput } : {}),
-          ...(defaultOutput != null ? { outputUsdPerMillion: defaultOutput } : {}),
-        });
-      }
-    }
-  }
-
-  return sortChatServiceCatalogEntries(results);
+  return buildChatServiceCatalogFromPeers(peers);
 }
 
 type OnChainPeerEnrichment = {
