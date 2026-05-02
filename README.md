@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-alpha-ffb13d?style=for-the-badge&labelColor=0a0e14" alt="Alpha status">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL_v3-3dffa2?style=for-the-badge&labelColor=0a0e14" alt="GPL-3.0 License"></a>
-  <img src="https://img.shields.io/badge/Node-20+-3dffa2?style=for-the-badge&labelColor=0a0e14&logo=node.js&logoColor=3dffa2" alt="Node 20+">
-  <img src="https://img.shields.io/badge/TypeScript-strict-3dffa2?style=for-the-badge&labelColor=0a0e14&logo=typescript&logoColor=3dffa2" alt="TypeScript strict">
-  <img src="https://img.shields.io/badge/pnpm-workspaces-3dffa2?style=for-the-badge&labelColor=0a0e14&logo=pnpm&logoColor=3dffa2" alt="pnpm workspaces">
+  <img src="https://img.shields.io/badge/status-alpha-141a22?style=for-the-badge&labelColor=0a0e14" alt="Alpha status">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL_v3-141a22?style=for-the-badge&labelColor=0a0e14" alt="GPL-3.0 License"></a>
+  <img src="https://img.shields.io/badge/Node-20+-141a22?style=for-the-badge&labelColor=0a0e14&logo=node.js&logoColor=3dffa2" alt="Node 20+">
+  <img src="https://img.shields.io/badge/TypeScript-strict-141a22?style=for-the-badge&labelColor=0a0e14&logo=typescript&logoColor=3dffa2" alt="TypeScript strict">
+  <img src="https://img.shields.io/badge/pnpm-workspaces-141a22?style=for-the-badge&labelColor=0a0e14&logo=pnpm&logoColor=3dffa2" alt="pnpm workspaces">
 </p>
 
 **AntSeed** is a _peer-to-peer AI services network_. Providers offer differentiated AI services — TEE-backed inference, agent skills, fine-tuned models, managed products — and buyers discover providers via DHT, score them on price/latency/reputation, and route requests through encrypted P2P connections.
