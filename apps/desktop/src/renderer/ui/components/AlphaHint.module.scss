@@ -1,0 +1,196 @@
+.alpha-hint-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.alpha-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(var(--accent-green-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-green-rgb), 0.42);
+  color: #0a8a4a;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: rgba(var(--accent-green-rgb), 0.18);
+    border-color: rgba(var(--accent-green-rgb), 0.55);
+  }
+
+  &:focus-visible {
+    outline: 1px solid rgba(var(--accent-green-rgb), 0.5);
+    outline-offset: 2px;
+  }
+
+  :global(body.dark-theme) & {
+    background: rgba(var(--accent-green-rgb), 0.08);
+    border-color: rgba(var(--accent-green-rgb), 0.3);
+    color: var(--accent-green);
+    font-weight: 500;
+
+    &:hover {
+      background: rgba(var(--accent-green-rgb), 0.14);
+      border-color: rgba(var(--accent-green-rgb), 0.42);
+    }
+  }
+}
+
+.alpha-hint-active {
+  background: rgba(var(--accent-green-rgb), 0.2);
+  border-color: rgba(var(--accent-green-rgb), 0.6);
+
+  :global(body.dark-theme) & {
+    background: rgba(var(--accent-green-rgb), 0.16);
+    border-color: rgba(var(--accent-green-rgb), 0.46);
+  }
+}
+
+.alpha-hint-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #0a8a4a;
+  flex-shrink: 0;
+  opacity: 0.95;
+
+  :global(body.dark-theme) & {
+    background: var(--accent-green);
+    opacity: 0.85;
+  }
+}
+
+.alpha-hint-label {
+  line-height: 1;
+}
+
+.alpha-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 288px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.10),
+    0 24px 48px -16px rgba(var(--accent-green-rgb), 0.18);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transform-origin: top left;
+  animation: alphaPopoverIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 64px;
+    border-radius: 14px 14px 0 0;
+    background: linear-gradient(
+      180deg,
+      rgba(var(--accent-green-rgb), 0.07) 0%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+
+  :global(body.dark-theme) & {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      0 24px 56px -16px rgba(var(--accent-green-rgb), 0.28);
+  }
+
+  > * {
+    position: relative;
+  }
+}
+
+@keyframes alphaPopoverIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.alpha-popover-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alpha-popover-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(var(--accent-green-rgb), 0.14);
+  flex-shrink: 0;
+}
+
+.alpha-popover-eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+  line-height: 1;
+}
+
+.alpha-popover-lede {
+  margin: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+
+.alpha-popover-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alpha-popover-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.alpha-popover-item-mark {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(var(--accent-green-rgb), 0.6);
+  flex-shrink: 0;
+  margin-top: 7px;
+}
+
+.alpha-popover-item-text {
+  flex: 1;
+}
