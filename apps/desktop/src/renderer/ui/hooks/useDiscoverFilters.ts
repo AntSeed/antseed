@@ -34,6 +34,7 @@ export type DiscoverFilterState = {
 
   setSearch: (v: string) => void;
   toggleCategory: (cat: string) => void;
+  clearCategories: () => void;
   togglePeer: (peerId: string) => void;
   setMaxInputPrice: (v: number) => void;
   setMaxOutputPrice: (v: number) => void;
@@ -67,6 +68,10 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       else next.add(key);
       return next;
     });
+  }, []);
+
+  const clearCategories = useCallback(() => {
+    setCategorySet(new Set());
   }, []);
 
   const togglePeer = useCallback((peerId: string) => {
@@ -155,6 +160,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
 
     setSearch,
     toggleCategory,
+    clearCategories,
     togglePeer,
     setMaxInputPrice,
     setMaxOutputPrice,
