@@ -7,6 +7,7 @@ import {
   matchesMinChannels, rowChannelCount,
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
+  PRICE_PRESETS, matchPricePreset,
 } from './discover-filter-util';
 import type { DiscoverRow } from '../../../core/state';
 
@@ -169,4 +170,34 @@ test('paginate returns the right slice and totalPagesFor rounds up', () => {
   assert.deepEqual(paginate(items, 3, 10), [20, 21, 22]);
   assert.equal(totalPagesFor(23, 10), 3);
   assert.equal(totalPagesFor(0, 10), 1);
+});
+
+test('PRICE_PRESETS lists the four buckets in expected order', () => {
+  assert.deepEqual(
+    PRICE_PRESETS.map((p) => p.id),
+    ['any', 'free', 'p10', 'p100'],
+  );
+  // 'any' must equal the slider max so default state matches.
+  assert.equal(PRICE_PRESETS[0]!.cap, MAX_INPUT_PRICE_SLIDER_USD);
+  assert.equal(PRICE_PRESETS[1]!.cap, 0);
+  assert.equal(PRICE_PRESETS[2]!.cap, 0.10);
+  assert.equal(PRICE_PRESETS[3]!.cap, 1.00);
+});
+
+test('matchPricePreset returns matching preset id when both prices equal a cap', () => {
+  assert.equal(matchPricePreset(MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD), 'any');
+  assert.equal(matchPricePreset(0, 0), 'free');
+  assert.equal(matchPricePreset(0.10, 0.10), 'p10');
+  assert.equal(matchPricePreset(1.00, 1.00), 'p100');
+});
+
+test('matchPricePreset tolerates float epsilon (≤ 0.001)', () => {
+  assert.equal(matchPricePreset(0.1 + 1e-9, 0.1 - 1e-9), 'p10');
+  assert.equal(matchPricePreset(1.0009, 1.0), 'p100');
+});
+
+test('matchPricePreset returns "custom" when input/output diverge or do not match a cap', () => {
+  assert.equal(matchPricePreset(0.5, 0.5), 'custom');                 // no preset at 0.5
+  assert.equal(matchPricePreset(0.10, 1.00), 'custom');                // input/output diverge
+  assert.equal(matchPricePreset(0, MAX_OUTPUT_PRICE_SLIDER_USD), 'custom');
 });

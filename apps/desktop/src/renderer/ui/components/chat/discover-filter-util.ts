@@ -224,3 +224,38 @@ export function paginate<T>(items: T[], page: number, pageSize: number): T[] {
 export function totalPagesFor(totalResults: number, pageSize: number): number {
   return Math.max(1, Math.ceil(totalResults / pageSize));
 }
+
+/* ── Price preset buckets (used by inline Price filter dropdown) ──────── */
+
+/**
+ * Common price ceilings users can pick inline without opening the drawer.
+ * Each preset's `cap` is applied to BOTH `maxInputPrice` and `maxOutputPrice`
+ * — a row passes only if both sides are at or below the cap.
+ *
+ * The 'any' preset's cap equals the slider max so default state (no filtering)
+ * round-trips cleanly through `matchPricePreset`. If the input and output
+ * slider maxes ever diverge, replace the single `cap` with separate
+ * `inputCap` / `outputCap` and update `matchPricePreset` accordingly.
+ */
+export const PRICE_PRESETS = [
+  { id: 'any',  label: 'Any',           cap: MAX_INPUT_PRICE_SLIDER_USD },
+  { id: 'free', label: 'Free only',     cap: 0 },
+  { id: 'p10',  label: 'Under $0.10/M', cap: 0.10 },
+  { id: 'p100', label: 'Under $1/M',    cap: 1.00 },
+] as const;
+
+export type PricePresetId = typeof PRICE_PRESETS[number]['id'];
+
+const PRICE_EPSILON = 0.001;
+
+export function matchPricePreset(
+  input: number,
+  output: number,
+): PricePresetId | 'custom' {
+  for (const p of PRICE_PRESETS) {
+    if (Math.abs(input - p.cap) < PRICE_EPSILON && Math.abs(output - p.cap) < PRICE_EPSILON) {
+      return p.id;
+    }
+  }
+  return 'custom';
+}
