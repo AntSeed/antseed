@@ -1,0 +1,129 @@
+/* DiscoverInlineCategoryFilter — trigger pill + chip popover (multi-select) */
+
+.wrapper {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.12s, background-color 0.12s, opacity 0.12s;
+
+  &:hover:not(:disabled) { background-color: var(--bg-hover); }
+  &:focus-visible { border-color: var(--accent); }
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.trigger-active {
+  border-color: var(--text-primary);
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.12s;
+}
+
+.chevron-open {
+  transform: rotate(180deg);
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 240px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.popover-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 6px 8px 0;
+  min-height: 14px;
+}
+
+.clear-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s;
+
+  &:hover { color: var(--text-primary); }
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 2px;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  text-transform: capitalize;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  user-select: none;
+
+  &:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+}
+
+.chip-active {
+  background: var(--text-primary);
+  color: var(--bg-card);
+  border-color: var(--text-primary);
+
+  &:hover {
+    background: var(--text-primary);
+    color: var(--bg-card);
+    border-color: var(--text-primary);
+  }
+}
