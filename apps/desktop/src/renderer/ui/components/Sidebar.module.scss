@@ -1,11 +1,72 @@
 .sidebar {
   width: var(--sidebar-width);
-  background: var(--bg-primary);
-  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   padding: 8px 0;
+}
+
+.sidebar-traffic-zone {
+  flex-shrink: 0;
+  height: 0;
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  overflow: hidden;
+
+  :global(body.platform-macos) & {
+    height: 44px;
+  }
+}
+
+.update-btn {
+  -webkit-app-region: no-drag;
+  position: relative;
+  overflow: hidden;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  background: var(--accent-green);
+  color: #062213;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+.update-btn-downloading {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: default;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.update-btn-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--accent-green);
+  opacity: 0.35;
+  transition: width 0.2s ease;
+  pointer-events: none;
+}
+
+.update-btn-label {
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar-header {
@@ -79,9 +140,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px 8px;
-  border-top: 1px solid var(--border);
+  padding: 4px 8px 0;
   flex-shrink: 0;
 }
 
@@ -89,30 +148,23 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 10px 0 10px;
-  border-radius: 9px;
-  background: var(--bg-card-alt);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
+  gap: 12px;
+  padding: 9px 8px;
+  border-radius: var(--radius-sm);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-align: left;
-  white-space: nowrap;
-  box-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.03);
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 
   &:hover {
-    background: var(--bg-card);
-    border-color: var(--border-strong);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    background: var(--bg-hover);
+    color: var(--text-primary);
 
-    .sidebar-footer-btn-icon {
-      color: var(--text-primary);
-    }
     .sidebar-footer-btn-chevron {
       color: var(--text-secondary);
     }
@@ -120,20 +172,15 @@
 
   &:focus-visible {
     outline: none;
-    border-color: color-mix(in srgb, var(--accent-green) 32%, var(--border-strong));
-    box-shadow: 0 0 0 3px rgba(var(--accent-green-rgb), 0.14);
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 }
 
 .sidebar-footer-btn-open {
-  background: var(--bg-card);
+  background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--border-strong);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 
-  .sidebar-footer-btn-icon {
-    color: var(--text-primary);
-  }
   .sidebar-footer-btn-chevron {
     color: var(--text-secondary);
     transform: rotate(180deg);
@@ -142,27 +189,15 @@
 
 .sidebar-footer-btn-iconwrap {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.sidebar-footer-btn:hover .sidebar-footer-btn-iconwrap {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
+  color: inherit;
 }
 
 .sidebar-footer-btn-icon {
   color: inherit;
   flex-shrink: 0;
-  transition: color 0.15s ease;
 }
 
 .sidebar-footer-btn-content {
@@ -188,7 +223,7 @@
 
 .sidebar-footer-btn-credits {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
   line-height: 14px;
   font-variant-numeric: tabular-nums;
@@ -203,12 +238,17 @@
   transition: transform 160ms ease, color 160ms ease;
 }
 
+.account-menu-wrap {
+  position: relative;
+  width: 100%;
+}
+
 .account-popover {
   position: absolute;
-  left: 8px;
+  left: 0;
   right: auto;
-  width: min(330px, calc(100vw - 32px));
-  bottom: calc(100% - 4px);
+  width: min(310px, calc(100vw - 32px));
+  bottom: calc(100% + 6px);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -329,6 +369,8 @@
   flex-direction: column;
   flex: 2;
   overflow-y: auto;
+  mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
 }
 
 .chat-sidebar-label {
@@ -345,6 +387,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-bottom: 48px;
 }
 
 /* ── Peer group ────────────────────────────────────────────────────── */
@@ -360,7 +403,7 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: var(--bg-primary);
+    background: var(--bg-surface);
   }
 }
 

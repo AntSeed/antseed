@@ -532,10 +532,6 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
   return (
     <section className={`view view-api ${styles.view}${active ? ' active' : ''}`} role="tabpanel">
       <div className={`page-header ${styles.pageHeader}`}>
-        <div className={styles.pageHeadingGroup}>
-          <span className={styles.eyebrow}>Developer</span>
-          <h2>API</h2>
-        </div>
       </div>
 
       <div className={styles.content}>
@@ -667,7 +663,7 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
                   </>
                 )}
               </button>
-              {!isOnline && <span className={styles.tryHint}>Proxy is offline — start the buyer runtime from Network.</span>}
+              {!isOnline && <span className={styles.tryHint}>Start the buyer runtime from Network to send a request.</span>}
               <div className={`${styles.proxyBadge} ${isOnline ? styles.proxyOnline : styles.proxyOffline}`}>
                 <span className={styles.proxyBadgeDot} />
                 <span className={styles.proxyBadgeText}>
@@ -700,27 +696,12 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
                 <div className={styles.responseHeadLeft}>
                   <span className={styles.respIndicator} aria-hidden="true" />
                   {tryState.kind === 'result' ? (
-                    <>
-                      <span className={styles.respStatusCode}>{tryState.status}</span>
-                      <span className={styles.respStatusText}>{statusText(tryState.status)}</span>
-                    </>
-                  ) : tryState.kind === 'error' ? (
-                    <>
-                      <span className={styles.respStatusCode}>—</span>
-                      <span className={styles.respStatusText}>error</span>
-                    </>
-                  ) : tryState.kind === 'loading' ? (
-                    <>
-                      <span className={styles.respStatusCode}>···</span>
-                      <span className={styles.respStatusText}>routing</span>
-                    </>
+                    <span className={styles.respStatusCode}>{tryState.status}</span>
                   ) : (
-                    <>
-                      <span className={styles.respStatusCode}>—</span>
-                      <span className={styles.respStatusText}>idle</span>
-                    </>
+                    <span className={styles.respStatusText}>
+                      {tryState.kind === 'error' ? 'Error' : tryState.kind === 'loading' ? 'Routing' : 'Idle'}
+                    </span>
                   )}
-                  <span className={styles.respDot} aria-hidden="true">/</span>
                   <span className={styles.respEndpoint}>
                     <span className={styles.respMethod}>{request.method}</span>
                     <span className={styles.respPath}>{request.path}</span>
@@ -765,24 +746,16 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
               <div className={styles.responseBodyWrap}>
                 {tryState.kind === 'idle' && (
                   <div className={styles.responsePlaceholder}>
-                    <div className={styles.placeholderGlyph} aria-hidden="true">
-                      <span className={styles.placeholderRing} />
-                      <span className={styles.placeholderCore} />
-                    </div>
-                    <span className={styles.placeholderTitle}>awaiting response</span>
+                    <span className={styles.placeholderTitle}>No response yet</span>
                     <span className={styles.placeholderHint}>
-                      send the request to inspect a live exchange
+                      Send the request to inspect the routed exchange.
                     </span>
                   </div>
                 )}
                 {tryState.kind === 'loading' && (
                   <div className={styles.responsePlaceholder}>
-                    <div className={styles.placeholderGlyph} aria-hidden="true">
-                      <span className={`${styles.placeholderRing} ${styles.placeholderRingActive}`} />
-                      <span className={`${styles.placeholderCore} ${styles.placeholderCoreActive}`} />
-                    </div>
-                    <span className={styles.placeholderTitle}>routing through the network</span>
-                    <span className={styles.placeholderHint}>negotiating with peer…</span>
+                    <span className={styles.placeholderTitle}>Routing</span>
+                    <span className={styles.placeholderHint}>Negotiating with the selected peer…</span>
                   </div>
                 )}
                 {tryState.kind === 'error' && (

@@ -575,59 +575,118 @@ function SidebarFooter() {
 
   return (
     <div className={styles.sidebarFooter} ref={wrapRef}>
-      {open && (
-        <div className={styles.accountPopover} role="menu">
-          <div className={styles.accountPopoverWallet}>
-            <WalletPanel onAction={close} />
-          </div>
-          <div className={styles.accountPopoverDivider} aria-hidden="true" />
-          <button
-            type="button"
-            className={styles.accountPopoverItem}
-            role="menuitem"
-            onClick={() => setIsDark((d) => !d)}
-          >
-            <HugeiconsIcon
-              icon={isDark ? Sun02Icon : Moon02Icon}
-              size={16}
-              strokeWidth={1.5}
-            />
-            {isDark ? 'Light mode' : 'Dark mode'}
-          </button>
-        </div>
-      )}
-
-      <button
-        type="button"
-        className={`${styles.sidebarFooterBtn}${open ? ` ${styles.sidebarFooterBtnOpen}` : ''}`}
-        aria-haspopup="menu"
-        aria-expanded={open ? 'true' : 'false'}
-        aria-label={`${accountLabel}, ${creditsLabel} available`}
-        title={`${creditsLabel} available`}
-        onClick={() => setOpen((prev) => !prev)}
-      >
-        <span className={styles.sidebarFooterBtnIconwrap} aria-hidden="true">
-          <HugeiconsIcon
-            icon={Wallet02Icon}
-            size={14}
-            strokeWidth={1.75}
-            className={styles.sidebarFooterBtnIcon}
-          />
-        </span>
-        <span className={styles.sidebarFooterBtnContent}>
-          <span className={styles.sidebarFooterBtnLabel}>{accountLabel}</span>
-          <span className={styles.sidebarFooterBtnCredits}>{creditsLabel} available</span>
-        </span>
-        <HugeiconsIcon
-          icon={ArrowDown01Icon}
-          size={12}
-          strokeWidth={1.75}
-          className={styles.sidebarFooterBtnChevron}
-        />
-      </button>
-
       <StreamingIndicator />
+
+      <div className={styles.accountMenuWrap}>
+        {open && (
+          <div className={styles.accountPopover} role="menu">
+            <div className={styles.accountPopoverWallet}>
+              <WalletPanel onAction={close} />
+            </div>
+            <div className={styles.accountPopoverDivider} aria-hidden="true" />
+            <button
+              type="button"
+              className={styles.accountPopoverItem}
+              role="menuitem"
+              onClick={() => setIsDark((d) => !d)}
+            >
+              <HugeiconsIcon
+                icon={isDark ? Sun02Icon : Moon02Icon}
+                size={16}
+                strokeWidth={1.5}
+              />
+              {isDark ? 'Light mode' : 'Dark mode'}
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          className={`${styles.sidebarFooterBtn}${open ? ` ${styles.sidebarFooterBtnOpen}` : ''}`}
+          aria-haspopup="menu"
+          aria-expanded={open ? 'true' : 'false'}
+          aria-label={`${accountLabel}, ${creditsLabel} available`}
+          title={`${creditsLabel} available`}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <span className={styles.sidebarFooterBtnIconwrap} aria-hidden="true">
+            <HugeiconsIcon
+              icon={Wallet02Icon}
+              size={18}
+              strokeWidth={1.5}
+              className={styles.sidebarFooterBtnIcon}
+            />
+          </span>
+          <span className={styles.sidebarFooterBtnContent}>
+            <span className={styles.sidebarFooterBtnLabel}>{accountLabel}</span>
+            <span className={styles.sidebarFooterBtnCredits}>{creditsLabel} available</span>
+          </span>
+          <HugeiconsIcon
+            icon={ArrowDown01Icon}
+            size={12}
+            strokeWidth={1.75}
+            className={styles.sidebarFooterBtnChevron}
+          />
+        </button>
+      </div>
     </div>
+  );
+}
+
+type UpdateState =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | null;
+
+function UpdateBadge() {
+  const [updateState, setUpdateState] = useState<UpdateState>(null);
+
+  useEffect(() => {
+    const bridge = (window as unknown as { antseedDesktop?: { onUpdateStatus?: (h: (d: { status: string; version: string; percent?: number }) => void) => () => void } }).antseedDesktop;
+    if (!bridge?.onUpdateStatus) return;
+    return bridge.onUpdateStatus((data) => {
+      if (data.status === 'ready') {
+        setUpdateState({ status: 'ready', version: data.version });
+      } else if (data.status === 'downloading') {
+        const percent = typeof data.percent === 'number' ? data.percent : 0;
+        setUpdateState((prev) => {
+          if (prev?.status === 'ready') return prev;
+          return { status: 'downloading', version: data.version, percent };
+        });
+      }
+    });
+  }, []);
+
+  const handleUpdate = useCallback(() => {
+    const bridge = (window as unknown as { antseedDesktop?: { installUpdate?: () => Promise<void> } }).antseedDesktop;
+    void bridge?.installUpdate?.();
+  }, []);
+
+  if (!updateState) return null;
+
+  if (updateState.status === 'ready') {
+    return (
+      <button
+        className={styles.updateBtn}
+        onClick={handleUpdate}
+        aria-label={`Install v${updateState.version} and restart`}
+        title={`Install v${updateState.version} and restart`}
+      >
+        Update to v{updateState.version}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      className={`${styles.updateBtn} ${styles.updateBtnDownloading}`}
+      disabled
+      aria-label={`Downloading v${updateState.version} ${updateState.percent}%`}
+      title={`Downloading v${updateState.version} — ${updateState.percent}%`}
+    >
+      <span className={styles.updateBtnFill} style={{ width: `${updateState.percent}%` }} aria-hidden="true" />
+      <span className={styles.updateBtnLabel}>Downloading {updateState.percent}%</span>
+    </button>
   );
 }
 
@@ -636,6 +695,9 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
 
   return (
     <aside className={styles.sidebar}>
+      <div className={styles.sidebarTrafficZone}>
+        <UpdateBadge />
+      </div>
       <div className={styles.sidebarHeader}>
         <AntStationLogo height={28} className={styles.sidebarLogo} />
         <AlphaHint />

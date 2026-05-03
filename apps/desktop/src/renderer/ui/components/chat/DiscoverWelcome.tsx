@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import { HugeiconsIcon } from '@hugeicons/react';
@@ -318,7 +318,22 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     }, 200);
   }, []);
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
   const filterState = useDiscoverFilters(rows);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -415,6 +430,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
                 <path d="M11 11L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
               <input
+                ref={searchInputRef}
                 type="text"
                 className={styles.searchInput}
                 value={filterState.search}
@@ -422,6 +438,9 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
                 placeholder="Search services, peers, categories…"
                 aria-label="Search services"
               />
+              <span className={styles.searchKbd} aria-hidden="true">
+                {isMac ? '⌘K' : 'Ctrl K'}
+              </span>
             </div>
             <button
               type="button"
@@ -644,7 +663,7 @@ function Card({
 
       <div className={styles.cardPricing}>
         {isFree ? (
-          <span className={`${styles.pricingValue} ${styles.pricingValueFree}`}>Free</span>
+          <span className={`${styles.pricingValue} ${styles.pricingValueFree}`}>Free for use</span>
         ) : (hasInput || hasOutput) ? (
           <>
             {hasInput && (
@@ -668,7 +687,7 @@ function Card({
       <footer className={styles.cardFooter}>
         <div className={styles.cardAttribution}>
           <span className={styles.cardAttributionText}>
-            powered by <ProviderAvatar name={providerName} gradient={item.gradient} /> <strong>{providerName}</strong>
+            powered by <strong>{providerName}</strong>
             {item.providerCount > 1 && (
               <span className={styles.cardProviderCount}> · {item.providerCount} peers</span>
             )}

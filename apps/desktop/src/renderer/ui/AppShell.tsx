@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
 import { SetupScreen } from './components/SetupScreen';
@@ -108,14 +107,11 @@ export function AppShell() {
   } */
 
   return (
-    <>
-      <TitleBar />
-      <div className="app-container">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} />
-        <main className="main-content">
-          <ViewHost activeView={activeView} onSelectView={setActiveView} />
-        </main>
-      </div>
-    </>
+    <div className="app-container">
+      <Sidebar activeView={activeView} onSelectView={setActiveView} />
+      <main className="main-content">
+        <ViewHost activeView={activeView} onSelectView={setActiveView} />
+      </main>
+    </div>
   );
 }

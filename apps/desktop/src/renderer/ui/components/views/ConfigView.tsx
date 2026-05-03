@@ -167,7 +167,6 @@ export function ConfigView({ active }: ConfigViewProps) {
     <section className={`view${active ? ' active' : ''} ${styles.page}`} role="tabpanel">
       <div className={styles.shell}>
           <header className={styles.intro}>
-            <span className={styles.eyebrow}>Preferences</span>
             <h2 className={styles.title}>Settings</h2>
             <p className={styles.subtitle}>
               Tune how your node discovers peers, prices token streams, and settles payments on-chain.
