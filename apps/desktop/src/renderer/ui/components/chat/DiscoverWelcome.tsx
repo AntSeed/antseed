@@ -13,6 +13,8 @@ import {
   formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
+import { DiscoverInlineCategoryFilter } from './DiscoverInlineCategoryFilter';
+import { DiscoverInlinePriceFilter } from './DiscoverInlinePriceFilter';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
 
@@ -412,6 +414,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
               </svg>
               {hasActiveFilters && <span className={styles.filterTriggerDot} aria-hidden="true" />}
             </button>
+            <DiscoverInlineCategoryFilter filters={filterState} />
+            <DiscoverInlinePriceFilter filters={filterState} />
             <select
               className={styles.sortSelect}
               value={filterState.sortKey}
