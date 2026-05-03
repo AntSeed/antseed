@@ -7,6 +7,7 @@ import { DiscoverView } from './views/DiscoverView';
 import { ExternalClientsView } from './views/ExternalClientsView';
 import { OverviewView } from './views/OverviewView';
 import { PeersView } from './views/PeersView';
+import { StudioView } from './views/StudioView';
 
 type ViewHostProps = {
   activeView: ViewName;
@@ -19,6 +20,7 @@ export function ViewHost({ activeView, onSelectView }: ViewHostProps) {
       <OverviewView active={activeView === 'overview'} />
       <PeersView active={activeView === 'peers'} />
       <ChatView active={activeView === 'chat'} onSelectView={onSelectView} />
+      <StudioView active={activeView === 'studio'} />
       <ConnectionView active={activeView === 'connection'} />
       <ConfigView active={activeView === 'config'} />
       <DesktopView active={activeView === 'desktop'} />

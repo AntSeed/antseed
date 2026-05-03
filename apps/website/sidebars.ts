@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/using-the-api',
         'guides/become-a-provider',
+        'guides/antstation-studio',
         'guides/payments',
         'guides/pricing',
       ],

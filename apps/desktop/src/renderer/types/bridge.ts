@@ -107,6 +107,35 @@ export type RawChatAttachment = {
   base64: string;
 };
 
+export type StudioIntent = 'image-edit' | 'image-generate' | 'video-generate';
+
+export type StudioRunReference = {
+  name?: string;
+  mimeType?: string;
+  base64?: string;
+  url?: string;
+};
+
+export type StudioRunRequest = {
+  model: string;
+  intent: StudioIntent;
+  prompt: string;
+  references: StudioRunReference[];
+  options?: Record<string, unknown>;
+};
+
+export type StudioRunOutput = {
+  url: string;
+  kind: 'image' | 'video';
+};
+
+export type StudioRunResponse = {
+  id: string;
+  status: string;
+  outputs: StudioRunOutput[];
+  meta?: Record<string, unknown>;
+};
+
 export type PreparedChatAttachment = {
   id: string;
   /** Stable server-generated ID for the on-disk copy; used by the

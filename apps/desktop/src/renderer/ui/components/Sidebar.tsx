@@ -31,6 +31,7 @@ type NavEntry = {
 
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
+  { label: 'Studio', view: 'studio', icon: DiscoverCircleIcon },
   { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
 ];
 
