@@ -705,12 +705,19 @@ type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
   onOpenPreview?: (url: string) => void;
+  hideActions?: boolean;
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
+export function ChatBubble({
+  message,
+  streaming = false,
+  onOpenPreview,
+  hideActions = false,
+  conversationId,
+}: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -757,7 +764,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
       <div>{content}</div>
-      {message.role !== 'user' && !isStreamingBubble ? (
+      {message.role !== 'user' && !isStreamingBubble && !hideActions ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
         </div>

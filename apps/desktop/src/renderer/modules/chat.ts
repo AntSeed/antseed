@@ -150,15 +150,27 @@ export function initChatModule({
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
   let newChatDraftVersion = 0;
+  let paymentApprovalConversationId: string | null = null;
 
   // ---------------------------------------------------------------------------
   // Payment approval helpers
   // ---------------------------------------------------------------------------
 
-  async function fetchPeerInfo(peerId: string): Promise<void> {
+  function clearPaymentApprovalState(): void {
+    paymentApprovalConversationId = null;
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+  }
+
+  async function fetchPeerInfo(peerId: string, conversationId: string): Promise<void> {
     if (!bridge?.paymentsGetPeerInfo) return;
     try {
       const result = await bridge.paymentsGetPeerInfo(peerId);
+      if (paymentApprovalConversationId !== conversationId) return;
       if (result.ok && result.data) {
         const now = Date.now() / 1000;
         const timestamp = result.data.timestamp || now;
@@ -194,13 +206,14 @@ export function initChatModule({
    * Show the payment approval card with peer context from the currently
    * selected service, and kick off a fetchPeerInfo call for reputation data.
    */
-  function showPaymentApprovalCard(amountBaseUnits: string): void {
+  function showPaymentApprovalCard(amountBaseUnits: string, conversationId: string): void {
+    paymentApprovalConversationId = conversationId;
     const { peerId } = primePaymentApprovalState(amountBaseUnits);
     uiState.chatPaymentApprovalVisible = true;
     notifyUiStateChanged();
     onPaymentCardShown?.();
     if (peerId) {
-      void fetchPeerInfo(peerId);
+      void fetchPeerInfo(peerId, conversationId);
     }
   }
 
@@ -229,26 +242,25 @@ export function initChatModule({
     }
   }
 
-  async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
+  async function handlePaymentRequired(amountBaseUnits: string, conversationId: string): Promise<void> {
+    if (conversationId !== getActiveConversationId()) return;
+
     const required = Number(amountBaseUnits) / 1_000_000;
     const available = await refreshAvailableCreditsUsdc();
+    if (conversationId !== getActiveConversationId()) return;
 
     if (
       Number.isFinite(required)
       && required > 0
       && available >= required
     ) {
-      uiState.chatPaymentApprovalVisible = false;
-      uiState.chatPaymentApprovalPeerId = null;
-      uiState.chatPaymentApprovalPeerName = null;
-      uiState.chatPaymentApprovalPeerInfo = null;
-      uiState.chatPaymentApprovalError = null;
+      clearPaymentApprovalState();
       showChatError('Payment setup failed. Retry the request.');
       notifyUiStateChanged();
       return;
     }
 
-    showPaymentApprovalCard(amountBaseUnits);
+    showPaymentApprovalCard(amountBaseUnits, conversationId);
   }
 
   // ---------------------------------------------------------------------------
@@ -1424,6 +1436,7 @@ export function initChatModule({
     uiState.chatActiveConversation = null;
     uiState.chatMessages = [];
     setStreamingMessage(null);
+    clearPaymentApprovalState();
     activeConversation = null;
     uiState.chatDeleteVisible = false;
     uiState.chatInputDisabled = false;
@@ -1916,7 +1929,7 @@ export function initChatModule({
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch) {
               setConversationSending(convId, false);
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], convId);
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: the stream-error handler has already
               // finalized the partial message. Don't overwrite with an error.
@@ -1981,12 +1994,7 @@ export function initChatModule({
     if (!bridge) return;
 
     // Dismiss payment card
-    uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
-    uiState.chatPaymentApprovalPeerName = null;
-    uiState.chatPaymentApprovalPeerInfo = null;
-    uiState.chatPaymentApprovalLoading = false;
-    uiState.chatPaymentApprovalError = null;
+    clearPaymentApprovalState();
     uiState.chatError = null;
     notifyUiStateChanged();
 
@@ -2570,7 +2578,7 @@ export function initChatModule({
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], data.conversationId);
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
             } else {
               showChatError(stopReason?.message ?? data.error);

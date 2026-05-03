@@ -626,58 +626,30 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     ? { flex: `0 0 ${previewFraction * 100}%`, minWidth: PREVIEW_MIN_WIDTH }
     : undefined;
 
-  return (
-    <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeaderLeft}>
-          {peerDisplayName && (
-            <>
-              <span className={styles.peerName}>{peerDisplayName}</span>
-            </>
-          )}
-          {peerServiceOptions.length > 0 ? (
-            <div className={styles.serviceSwitcherAnchor}>
-              <ServiceDropdown
-                options={peerServiceOptions}
-                value={snap.chatSelectedServiceValue}
-                disabled={snap.chatInputDisabled || snap.chatSending}
-                onChange={handleServiceSwitch}
-              />
-              {!tooltipDismissed && peerServiceOptions.length >= 2 && (
-                <ServiceSwitchTooltip
-                  modelCount={peerServiceOptions.length}
-                  onDismiss={handleDismissTooltip}
-                />
-              )}
-            </div>
-          ) : (
-            <span className={styles.serviceLabel}>
-              {currentServiceOption?.label || 'No peer selected'}
-            </span>
-          )}
-        </div>
-        {snap.chatActiveConversation && (
-          <ChatSessionStats
-            sessionCost={snap.chatSessionAccumulatedCostUsd}
-            sessionTokens={snap.chatSessionTotalTokens}
-            lifetimeCost={snap.chatLifetimeSpentUsdc}
-            lifetimeTokens={snap.chatLifetimeTotalTokens}
-            reserved={snap.chatSessionReservedUsdc}
-            started={snap.chatSessionStarted}
+  const routingPanel =
+    peerServiceOptions.length > 0 ? (
+      <div className={styles.serviceSwitcherAnchor}>
+        <ServiceDropdown
+          options={peerServiceOptions}
+          value={snap.chatSelectedServiceValue}
+          disabled={snap.chatInputDisabled || snap.chatSending}
+          onChange={handleServiceSwitch}
+        />
+        {!tooltipDismissed && peerServiceOptions.length >= 2 && (
+          <ServiceSwitchTooltip
+            modelCount={peerServiceOptions.length}
+            onDismiss={handleDismissTooltip}
           />
         )}
       </div>
+    ) : (
+      <span className={styles.serviceLabel}>
+        {currentServiceOption?.label || 'No peer selected'}
+      </span>
+    );
 
-      {showWelcome && (
-        <button
-          className={styles.chatExternalHint}
-          onClick={() => onSelectView?.('external-clients')}
-        >
-          <span>Works with Claude Code, Codex, OpenCode, and any OpenAI-compatible tool</span>
-          <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.5} />
-        </button>
-      )}
-
+  return (
+    <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.chatContainer} ref={containerRef}>
         <div
           className={styles.chatMain}
@@ -695,12 +667,50 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             </div>
           )}
+          {!showWelcome && peerServiceOptions.length > 0 && (
+            <div className={styles.chatTopBar}>
+              <div className={styles.chatTopBarLeft}>
+                {routingPanel}
+              </div>
+              {snap.chatActiveConversation && (
+                <ChatSessionStats
+                  sessionCost={snap.chatSessionAccumulatedCostUsd}
+                  sessionTokens={snap.chatSessionTotalTokens}
+                  lifetimeCost={snap.chatLifetimeSpentUsdc}
+                  lifetimeTokens={snap.chatLifetimeTotalTokens}
+                  reserved={snap.chatSessionReservedUsdc}
+                  started={snap.chatSessionStarted}
+                />
+              )}
+            </div>
+          )}
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
-                <AntStationStackedLogo height={72} />
-                <div className={styles.chatWelcomeSubtitle}>
-                  Start typing. Best provider auto-selected by reputation.
+                <div className={styles.welcomeBrand}>
+                  <AntStationStackedLogo height={72} />
+                  <p className={styles.chatWelcomeSubtitle}>
+                    Start typing. Best provider auto-selected by reputation.
+                  </p>
+                </div>
+                <div className={styles.welcomeRoute}>
+                  <div className={styles.welcomeRouteLabel}>
+                    <span>{peerDisplayName ? 'Routing to' : 'Awaiting peer'}</span>
+                  </div>
+                  <div className={styles.welcomeService}>
+                    {routingPanel}
+                    <button
+                      className={styles.chatExternalHint}
+                      onClick={() => onSelectView?.('external-clients')}
+                      title="Works with Claude Code, Codex, OpenCode, and any OpenAI-compatible tool"
+                    >
+                      <span className={styles.chatExternalHintIcon} aria-hidden="true">
+                        <HugeiconsIcon icon={BrowserIcon} size={13} strokeWidth={1.8} />
+                      </span>
+                      <span className={styles.chatExternalHintLabel}>External clients</span>
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={2} />
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -709,6 +719,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                   key={getMessageKey(msg, i)}
                   message={msg}
                   onOpenPreview={handleOpenPreview}
+                  hideActions={snap.chatPaymentApprovalVisible && i === visibleMessages.length - 1}
                   conversationId={snap.chatActiveConversation || undefined}
                 />
               ))
@@ -1006,13 +1017,11 @@ function ChatSessionStats({
     : 0;
   return (
     <div className={styles.sessionStats} tabIndex={0} aria-label="Usage stats">
-      <svg
-        className={styles.sessionStatsIcon}
-        width="12" height="12" viewBox="0 0 16 16" fill="none"
-        aria-hidden="true"
-      >
-        <path d="M2.5 13.5V10M6.5 13.5V6M10.5 13.5V8M14 13.5V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-      </svg>
+      <span className={styles.sessionStatsIcon} aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M3 13V9.5M7.5 13V5.5M12 13V3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        </svg>
+      </span>
       <span className={styles.sessionStatsSummary}>
         {hasSession ? (
           <>

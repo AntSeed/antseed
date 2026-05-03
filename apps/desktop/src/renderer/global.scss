@@ -29,7 +29,8 @@
   --danger-rgb: 239, 68, 68;
   --font-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
-  --sidebar-width: 220px;
+  --title-bar-height: 48px;
+  --sidebar-width: 240px;
   --radius: 16px;
   --radius-sm: 8px;
   --shadow: 0px 16px 60px rgba(0, 0, 0, 0.16);
@@ -58,7 +59,7 @@ body.dark-theme {
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
   --text-muted: #8b949e;
-  --text-faint: #30363d;
+  --text-faint: #6e7681;
   --accent: #1fd87a;
   --accent-green: #1fd87a;
   --accent-blue: #58a6ff;
@@ -73,8 +74,8 @@ body.dark-theme {
   --danger-rgb: 255, 123, 114;
   --shadow: 0px 8px 40px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0px 1px 3px rgba(0, 0, 0, 0.3);
-  --chat-user-bubble: rgba(255, 255, 255, 0.06);
-  --chat-user-bubble-border: rgba(255, 255, 255, 0.08);
+  --chat-user-bubble: rgba(255, 255, 255, 0.08);
+  --chat-user-bubble-border: rgba(255, 255, 255, 0.14);
   --chat-input-bg: #2a2a2c;
   --chat-header-bg: #252527;
   --chat-area-bg: #1c1c1e;
@@ -121,7 +122,8 @@ textarea {
 
 .app-container {
   display: flex;
-  height: calc(100vh - 64px);
+  width: 100%;
+  height: calc(100vh - var(--title-bar-height));
 }
 
 /* ===================================================================

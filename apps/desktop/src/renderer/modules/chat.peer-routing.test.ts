@@ -378,3 +378,138 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
   }
   await waitFor(() => uiState.chatSendingConversationIds.length === 0);
 });
+
+test('startNewChat clears payment approval state', () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatPaymentApprovalVisible = true;
+  uiState.chatPaymentApprovalPeerId = 'peer-a';
+  uiState.chatPaymentApprovalPeerName = 'Peer A';
+  uiState.chatPaymentApprovalPeerInfo = {
+    reputation: 100,
+    channelCount: 1,
+    disputeCount: 0,
+    networkAgeDays: 2,
+    evmAddress: '0xabc',
+  };
+  uiState.chatPaymentApprovalLoading = true;
+  uiState.chatPaymentApprovalError = 'previous error';
+
+  const api = initChatModule({
+    uiState,
+    appendSystemLog: () => undefined,
+  });
+
+  api.startNewChat();
+
+  assert.equal(uiState.chatActiveConversation, null);
+  assert.equal(uiState.chatPaymentApprovalVisible, false);
+  assert.equal(uiState.chatPaymentApprovalPeerId, null);
+  assert.equal(uiState.chatPaymentApprovalPeerName, null);
+  assert.equal(uiState.chatPaymentApprovalPeerInfo, null);
+  assert.equal(uiState.chatPaymentApprovalLoading, false);
+  assert.equal(uiState.chatPaymentApprovalError, null);
+});
+
+test('late payment_required from previous conversation does not reappear on new chat', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [
+    {
+      id: 'model-a', label: 'Model A', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
+      value: `openai${SEP}model-a${SEP}peer-a`, peerId: 'peer-a', peerDisplayName: 'Peer A', peerLabel: 'Peer A',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+    },
+  ];
+  uiState.chatSelectedServiceValue = `openai${SEP}model-a${SEP}peer-a`;
+  uiState.chatSelectedPeerId = 'peer-a';
+
+  const conversation: Conversation = {
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+  const sends: string[] = [];
+  let resolveSend: ((value: { ok: false; error: string }) => void) | null = null;
+
+  const bridge: DesktopBridge = {
+    chatAiCreateConversation: async () => ({ ok: true, data: conversation }),
+    chatAiListConversations: async () => ({ ok: true, data: [conversation] }),
+    chatAiGetConversation: async () => ({ ok: true, data: { ...conversation, messages: [] } }),
+    chatPrepareAttachments: async () => ({ ok: true, data: [] }),
+    chatAiSendStream: async (conversationId) => {
+      sends.push(conversationId);
+      return await new Promise<{ ok: false; error: string }>((resolve) => {
+        resolveSend = resolve;
+      });
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  api.sendMessage('needs payment');
+  await waitFor(() => sends.length === 1);
+  assert.equal(uiState.chatActiveConversation, 'conv-a');
+
+  api.startNewChat();
+  resolveSend?.({ ok: false, error: 'payment_required:1000000' });
+
+  await waitFor(() => uiState.chatSendingConversationIds.length === 0);
+  assert.equal(uiState.chatActiveConversation, null);
+  assert.equal(uiState.chatPaymentApprovalVisible, false);
+  assert.deepEqual(uiState.chatMessages, []);
+});
+
+test('payment_required for active conversation still shows approval card', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [
+    {
+      id: 'model-a', label: 'Model A', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
+      value: `openai${SEP}model-a${SEP}peer-a`, peerId: 'peer-a', peerDisplayName: 'Peer A', peerLabel: 'Peer A',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+    },
+  ];
+  uiState.chatSelectedServiceValue = `openai${SEP}model-a${SEP}peer-a`;
+  uiState.chatSelectedPeerId = 'peer-a';
+
+  const conversation: Conversation = {
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+
+  const bridge: DesktopBridge = {
+    chatAiCreateConversation: async () => ({ ok: true, data: conversation }),
+    chatAiListConversations: async () => ({ ok: true, data: [conversation] }),
+    chatAiGetConversation: async () => ({ ok: true, data: { ...conversation, messages: [] } }),
+    chatPrepareAttachments: async () => ({ ok: true, data: [] }),
+    chatAiSendStream: async () => ({ ok: false, error: 'payment_required:1000000' }),
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  api.sendMessage('needs payment');
+  await waitFor(() => uiState.chatPaymentApprovalVisible);
+
+  assert.equal(uiState.chatActiveConversation, 'conv-a');
+  assert.equal(uiState.chatPaymentApprovalPeerId, 'peer-a');
+  assert.equal(uiState.chatPaymentApprovalPeerName, 'Peer A');
+  assert.equal(uiState.chatPaymentApprovalAmount, '1.00');
+});

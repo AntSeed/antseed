@@ -10,11 +10,11 @@
   height: 18px;
   padding: 0 7px;
   border-radius: 999px;
-  background: rgba(var(--accent-green-rgb), 0.08);
-  border: 1px solid rgba(var(--accent-green-rgb), 0.3);
-  color: var(--accent-green);
+  background: rgba(var(--accent-green-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-green-rgb), 0.42);
+  color: #0a8a4a;
   font-size: 9px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -24,28 +24,50 @@
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 
   &:hover {
-    background: rgba(var(--accent-green-rgb), 0.14);
-    border-color: rgba(var(--accent-green-rgb), 0.42);
+    background: rgba(var(--accent-green-rgb), 0.18);
+    border-color: rgba(var(--accent-green-rgb), 0.55);
   }
 
   &:focus-visible {
     outline: 1px solid rgba(var(--accent-green-rgb), 0.5);
     outline-offset: 2px;
   }
+
+  :global(body.dark-theme) & {
+    background: rgba(var(--accent-green-rgb), 0.08);
+    border-color: rgba(var(--accent-green-rgb), 0.3);
+    color: var(--accent-green);
+    font-weight: 500;
+
+    &:hover {
+      background: rgba(var(--accent-green-rgb), 0.14);
+      border-color: rgba(var(--accent-green-rgb), 0.42);
+    }
+  }
 }
 
 .alpha-hint-active {
-  background: rgba(var(--accent-green-rgb), 0.16);
-  border-color: rgba(var(--accent-green-rgb), 0.46);
+  background: rgba(var(--accent-green-rgb), 0.2);
+  border-color: rgba(var(--accent-green-rgb), 0.6);
+
+  :global(body.dark-theme) & {
+    background: rgba(var(--accent-green-rgb), 0.16);
+    border-color: rgba(var(--accent-green-rgb), 0.46);
+  }
 }
 
 .alpha-hint-dot {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--accent-green);
+  background: #0a8a4a;
   flex-shrink: 0;
-  opacity: 0.85;
+  opacity: 0.95;
+
+  :global(body.dark-theme) & {
+    background: var(--accent-green);
+    opacity: 0.85;
+  }
 }
 
 .alpha-hint-label {

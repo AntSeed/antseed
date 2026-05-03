@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { StreamingIndicator } from './components/StreamingIndicator';
 import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
@@ -104,7 +103,6 @@ export function AppShell() {
             />
           </main>
         </div>
-        <StreamingIndicator />
       </>
     );
   } */
@@ -118,7 +116,6 @@ export function AppShell() {
           <ViewHost activeView={activeView} onSelectView={setActiveView} />
         </main>
       </div>
-      <StreamingIndicator />
     </>
   );
 }

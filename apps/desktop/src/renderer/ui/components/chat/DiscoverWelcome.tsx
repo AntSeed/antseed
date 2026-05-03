@@ -191,6 +191,10 @@ function SkeletonCard() {
     <div className={styles.card}>
       <div className={styles.cardBody}>
         <Skeleton width="60%" height={18} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <p className={styles.cardDesc}>
+          <Skeleton width="92%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width="70%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        </p>
         <div className={styles.cardChips}>
           <Skeleton width={56} height={20} borderRadius={999} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
           <Skeleton width={64} height={20} borderRadius={999} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
@@ -202,8 +206,9 @@ function SkeletonCard() {
       </div>
       <footer className={styles.cardFooter}>
         <div className={styles.cardAttribution}>
+          <Skeleton width={68} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
           <Skeleton width={18} height={18} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-          <Skeleton width={90} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width={74} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
         </div>
         <Skeleton width={90} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
       </footer>
@@ -233,6 +238,18 @@ const MIN_CARD_WIDTH_PX = 320;
 const GRID_GAP_PX = 12;
 const CARD_ESTIMATED_HEIGHT_PX = 208;
 const DEFAULT_PAGE_SIZE = 9;
+
+type ViewMode = 'cards' | 'table';
+const VIEW_MODE_STORAGE_KEY = 'antseed:discover:viewMode';
+
+function readInitialViewMode(): ViewMode {
+  if (typeof window === 'undefined') return 'cards';
+  try {
+    return window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'table' ? 'table' : 'cards';
+  } catch {
+    return 'cards';
+  }
+}
 
 type PaginationToken = number | 'ellipsis';
 
@@ -284,6 +301,14 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   const [pageSize, setPageSize] = useState(() => estimatePageSize());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(readInitialViewMode);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch { /* storage may be disabled or full */ }
+  }, [viewMode]);
 
   const closeDrawer = useCallback(() => {
     setDrawerClosing(true);
@@ -418,6 +443,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
             <DiscoverInlineCategoryFilter filters={filterState} />
             <DiscoverInlinePriceFilter filters={filterState} />
             <DiscoverInlineSortFilter filters={filterState} />
+            <ViewToggle mode={viewMode} onChange={setViewMode} />
           </div>
           {!hasNetworkData && (
             <div className={styles.loadingHint}>
@@ -427,21 +453,29 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
           <div className={styles.resultsArea}>
             {!hasNetworkData ? (
-              <div className={styles.cardGrid}>
-                {Array.from({ length: pageSize }, (_, i) => (
-                  <SkeletonCard key={i} />
-                ))}
-              </div>
+              viewMode === 'cards' ? (
+                <div className={styles.cardGrid}>
+                  {Array.from({ length: pageSize }, (_, i) => (
+                    <SkeletonCard key={i} />
+                  ))}
+                </div>
+              ) : (
+                <SkeletonTable rows={pageSize} />
+              )
             ) : filtered.length > 0 ? (
-              <div className={styles.cardGrid}>
-                {paged.map((item) => (
-                  <Card
-                    key={item.value || item.name}
-                    item={item}
-                    onClick={handleClick}
-                  />
-                ))}
-              </div>
+              viewMode === 'cards' ? (
+                <div className={styles.cardGrid}>
+                  {paged.map((item) => (
+                    <Card
+                      key={item.value || item.name}
+                      item={item}
+                      onClick={handleClick}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Table items={paged} onClick={handleClick} />
+              )
             ) : (
               <EmptyState
                 search={filterState.search}
@@ -633,9 +667,8 @@ function Card({
 
       <footer className={styles.cardFooter}>
         <div className={styles.cardAttribution}>
-          <ProviderAvatar name={providerName} gradient={item.gradient} />
           <span className={styles.cardAttributionText}>
-            by <strong>{providerName}</strong>
+            powered by <ProviderAvatar name={providerName} gradient={item.gradient} /> <strong>{providerName}</strong>
             {item.providerCount > 1 && (
               <span className={styles.cardProviderCount}> · {item.providerCount} peers</span>
             )}
@@ -655,6 +688,248 @@ function Card({
           </span>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/* ── View toggle (segmented control: cards / table) ──────────────────── */
+
+function ViewToggle({
+  mode,
+  onChange,
+}: {
+  mode: ViewMode;
+  onChange: (mode: ViewMode) => void;
+}) {
+  return (
+    <div className={styles.viewToggle} role="group" aria-label="View mode">
+      <button
+        type="button"
+        className={`${styles.viewToggleBtn}${mode === 'cards' ? ` ${styles.viewToggleBtnActive}` : ''}`}
+        onClick={() => onChange('cards')}
+        aria-pressed={mode === 'cards'}
+        aria-label="Cards view"
+        title="Cards view"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="1.25" y="1.25" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="7.75" y="1.25" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="1.25" y="7.75" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="7.75" y="7.75" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className={`${styles.viewToggleBtn}${mode === 'table' ? ` ${styles.viewToggleBtnActive}` : ''}`}
+        onClick={() => onChange('table')}
+        aria-pressed={mode === 'table'}
+        aria-label="Table view"
+        title="Table view"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="1.25" y="2" width="11.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+          <line x1="1.5" y1="5.5" x2="12.5" y2="5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          <line x1="1.5" y1="8.75" x2="12.5" y2="8.75" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+/* ── Table view ──────────────────────────────────────────────────────── */
+
+function Table({
+  items,
+  onClick,
+}: {
+  items: CardItem[];
+  onClick: (v: string, peerId: string) => void;
+}) {
+  return (
+    <div className={styles.tableWrap}>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th className={styles.tdNameCell}>Service</th>
+            <th className={styles.colProvider}>Provider</th>
+            <th className={styles.colTags}>Categories</th>
+            <th className={`${styles.thNumeric}`}>Input</th>
+            <th className={`${styles.thNumeric}`}>Output</th>
+            <th className={`${styles.thNumeric} ${styles.colChannels}`}>Channels</th>
+            <th className={`${styles.thNumeric} ${styles.colRequests}`}>Requests</th>
+            <th className={`${styles.thNumeric} ${styles.colTokens}`}>Tokens</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <TableRow key={item.value || item.name} item={item} onClick={onClick} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TableRow({
+  item,
+  onClick,
+}: {
+  item: CardItem;
+  onClick: (v: string, peerId: string) => void;
+}) {
+  const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
+  const hasInput = item.inputUsdPerMillion != null;
+  const hasOutput = item.outputUsdPerMillion != null;
+  const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
+  const capabilityTags = item.tags.filter((t) => !ACCENT_TAGS.has(t.toLowerCase()));
+  const visibleTags = capabilityTags.slice(0, 2);
+  const overflowTags = capabilityTags.slice(2);
+
+  return (
+    <tr
+      onClick={() => onClick(item.value, item.peerId)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick(item.value, item.peerId);
+        }
+      }}
+    >
+      <td className={styles.tdNameCell}>
+        <div className={styles.tdName}>
+          <ProviderLogo modelName={item.name} className={styles.modelLogo} />
+          <span className={styles.tdNameText}>{item.displayName}</span>
+        </div>
+      </td>
+      <td className={styles.colProvider}>
+        <div className={styles.tdProvider}>
+          <ProviderAvatar name={providerName} gradient={item.gradient} />
+          <span className={styles.tdProviderName}>{providerName}</span>
+          {item.providerCount > 1 && (
+            <span className={styles.tdProviderCount}>·{item.providerCount}</span>
+          )}
+        </div>
+      </td>
+      <td className={styles.colTags}>
+        {capabilityTags.length > 0 ? (
+          <div className={styles.rowChips}>
+            {visibleTags.map((t) => (
+              <span key={t} className={styles.chip}>
+                <HugeiconsIcon
+                  icon={getCategoryIcon(t)}
+                  size={10}
+                  strokeWidth={1.6}
+                  className={styles.chipIcon}
+                />
+                {formatCategoryLabel(t)}
+              </span>
+            ))}
+            {overflowTags.length > 0 && (
+              <span
+                className={styles.chipMore}
+                title={overflowTags.map(formatCategoryLabel).join(', ')}
+                aria-label={`${overflowTags.length} more categories: ${overflowTags.map(formatCategoryLabel).join(', ')}`}
+              >
+                +{overflowTags.length}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className={styles.tdMuted}>—</span>
+        )}
+      </td>
+      <td className={styles.tdNumeric}>
+        {isFree ? (
+          <span className={styles.numericFree}>Free</span>
+        ) : hasInput ? (
+          <span className={styles.numeric}>
+            {formatPerMillionPrice(item.inputUsdPerMillion!)}
+            <span className={styles.numericSuffix}>/M</span>
+          </span>
+        ) : (
+          <span className={styles.tdMuted}>—</span>
+        )}
+      </td>
+      <td className={styles.tdNumeric}>
+        {isFree ? (
+          <span className={styles.tdMuted}>—</span>
+        ) : hasOutput ? (
+          <span className={styles.numeric}>
+            {formatPerMillionPrice(item.outputUsdPerMillion!)}
+            <span className={styles.numericSuffix}>/M</span>
+          </span>
+        ) : (
+          <span className={styles.tdMuted}>—</span>
+        )}
+      </td>
+      <td className={`${styles.tdNumeric} ${styles.colChannels}`}>
+        <span className={styles.numericMuted}>{formatCompact(item.channelCount)}</span>
+      </td>
+      <td className={`${styles.tdNumeric} ${styles.colRequests}`}>
+        <span className={styles.numericMuted}>{formatCompact(item.lifetimeRequests)}</span>
+      </td>
+      <td className={`${styles.tdNumeric} ${styles.colTokens}`}>
+        <span className={styles.numericMuted}>{formatCompact(item.lifetimeTokens)}</span>
+      </td>
+    </tr>
+  );
+}
+
+function SkeletonTable({ rows }: { rows: number }) {
+  return (
+    <div className={styles.tableWrap}>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th className={styles.tdNameCell}>Service</th>
+            <th className={styles.colProvider}>Provider</th>
+            <th className={styles.colTags}>Categories</th>
+            <th className={styles.thNumeric}>Input</th>
+            <th className={styles.thNumeric}>Output</th>
+            <th className={`${styles.thNumeric} ${styles.colChannels}`}>Channels</th>
+            <th className={`${styles.thNumeric} ${styles.colRequests}`}>Requests</th>
+            <th className={`${styles.thNumeric} ${styles.colTokens}`}>Tokens</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }, (_, i) => (
+            <tr key={i}>
+              <td className={styles.tdNameCell}>
+                <div className={styles.tdName}>
+                  <Skeleton width={21} height={21} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+                  <Skeleton width={140} height={14} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+                </div>
+              </td>
+              <td className={styles.colProvider}>
+                <div className={styles.tdProvider}>
+                  <Skeleton width={18} height={18} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+                  <Skeleton width={84} height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+                </div>
+              </td>
+              <td className={styles.colTags}>
+                <Skeleton width={120} height={18} borderRadius={999} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+              <td className={styles.tdNumeric}>
+                <Skeleton width={56} height={14} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+              <td className={styles.tdNumeric}>
+                <Skeleton width={56} height={14} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+              <td className={`${styles.tdNumeric} ${styles.colChannels}`}>
+                <Skeleton width={28} height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+              <td className={`${styles.tdNumeric} ${styles.colRequests}`}>
+                <Skeleton width={36} height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+              <td className={`${styles.tdNumeric} ${styles.colTokens}`}>
+                <Skeleton width={36} height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

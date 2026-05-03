@@ -1,5 +1,5 @@
 .title-bar {
-  height: 48px;
+  height: var(--title-bar-height, 48px);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -88,106 +88,6 @@
 .title-bar-update-label {
   position: relative;
   z-index: 1;
-}
-
-.title-bar-theme-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: #ffffff;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 0;
-  transition: all 0.15s ease;
-
-  :global(body.dark-theme) & {
-    background: var(--bg-hover);
-  }
-
-  &:hover {
-    background: #f0f0f0;
-    color: var(--text-primary);
-    border-color: var(--border-strong);
-
-    :global(body.dark-theme) & {
-      background: var(--bg-surface);
-    }
-  }
-}
-
-.title-bar-credits-wrapper {
-  position: relative;
-}
-
-.title-bar-credits-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px 0 8px;
-  border-radius: 8px;
-  background: #ffffff;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-
-  :global(body.dark-theme) & {
-    background: var(--bg-hover);
-  }
-
-  &:hover {
-    background: #f0f0f0;
-    color: var(--text-primary);
-    border-color: var(--border-strong);
-
-    :global(body.dark-theme) & {
-      background: var(--bg-surface);
-    }
-
-    .title-bar-credits-icon {
-      color: var(--text-primary);
-    }
-  }
-}
-
-.title-bar-credits-icon {
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  transition: color 0.15s ease;
-}
-
-.title-bar-credits-amount {
-  font-variant-numeric: tabular-nums;
-}
-
-.title-bar-credits-dropdown {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 280px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.04);
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-
-  :global(body.dark-theme) & {
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
-  }
 }
 
 .credits-dropdown-balance-section {

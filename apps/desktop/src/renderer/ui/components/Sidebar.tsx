@@ -10,12 +10,17 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import { Wallet02Icon } from '@hugeicons/core-free-icons';
+import { Sun02Icon } from '@hugeicons/core-free-icons';
+import { Moon02Icon } from '@hugeicons/core-free-icons';
+import { WalletPanel } from './WalletPanel';
 import { getPeerGradient, getPeerDisplayName } from '../../core/peer-utils';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
 import { AntStationLogo } from './AntStationLogo';
 import { AlphaHint } from './AlphaHint';
+import { StreamingIndicator } from './StreamingIndicator';
 import { getModelLogo } from './chat/model-logos';
 import styles from './Sidebar.module.scss';
 
@@ -35,9 +40,6 @@ type NavEntry = {
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
-];
-
-const configEntries: NavEntry[] = [
   { label: 'Settings', view: 'config', icon: Settings02Icon },
 ];
 
@@ -522,9 +524,115 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   );
 }
 
+const THEME_STORAGE_KEY = 'antseed:theme';
+
+function SidebarFooter() {
+  const { creditsAvailableUsdc, creditsEvmAddress } = useUiSnapshot();
+  const [open, setOpen] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved !== null) return saved === 'dark';
+    return document.body.classList.contains('dark-theme');
+  });
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isDark) {
+      document.body.classList.add('dark-theme');
+    } else {
+      document.body.classList.remove('dark-theme');
+    }
+    localStorage.setItem(THEME_STORAGE_KEY, isDark ? 'dark' : 'light');
+  }, [isDark]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
+  const close = useCallback(() => setOpen(false), []);
+
+  const accountLabel = creditsEvmAddress
+    ? `${creditsEvmAddress.slice(0, 6)}…${creditsEvmAddress.slice(-4)}`
+    : 'Account';
+  const creditsValue = Number.parseFloat(creditsAvailableUsdc);
+  const creditsLabel = Number.isFinite(creditsValue) && creditsValue > 0
+    ? `$${creditsValue.toFixed(2)}`
+    : '$0.00';
+
+  return (
+    <div className={styles.sidebarFooter} ref={wrapRef}>
+      {open && (
+        <div className={styles.accountPopover} role="menu">
+          <div className={styles.accountPopoverWallet}>
+            <WalletPanel onAction={close} />
+          </div>
+          <div className={styles.accountPopoverDivider} aria-hidden="true" />
+          <button
+            type="button"
+            className={styles.accountPopoverItem}
+            role="menuitem"
+            onClick={() => setIsDark((d) => !d)}
+          >
+            <HugeiconsIcon
+              icon={isDark ? Sun02Icon : Moon02Icon}
+              size={16}
+              strokeWidth={1.5}
+            />
+            {isDark ? 'Light mode' : 'Dark mode'}
+          </button>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className={`${styles.sidebarFooterBtn}${open ? ` ${styles.sidebarFooterBtnOpen}` : ''}`}
+        aria-haspopup="menu"
+        aria-expanded={open ? 'true' : 'false'}
+        aria-label={`${accountLabel}, ${creditsLabel} available`}
+        title={`${creditsLabel} available`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className={styles.sidebarFooterBtnIconwrap} aria-hidden="true">
+          <HugeiconsIcon
+            icon={Wallet02Icon}
+            size={14}
+            strokeWidth={1.75}
+            className={styles.sidebarFooterBtnIcon}
+          />
+        </span>
+        <span className={styles.sidebarFooterBtnContent}>
+          <span className={styles.sidebarFooterBtnLabel}>{accountLabel}</span>
+          <span className={styles.sidebarFooterBtnCredits}>{creditsLabel} available</span>
+        </span>
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          size={12}
+          strokeWidth={1.75}
+          className={styles.sidebarFooterBtnChevron}
+        />
+      </button>
+
+      <StreamingIndicator />
+    </div>
+  );
+}
+
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const { devMode } = useUiSnapshot();
-  const navEntries = [...baseEntries, ...configEntries];
 
   return (
     <aside className={styles.sidebar}>
@@ -536,7 +644,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
       <SidebarWarning />
 
       <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
-        {navEntries.map(({ label, view, icon }) => {
+        {baseEntries.map(({ label, view, icon }) => {
           const isActive = activeView === view;
           return (
             <li key={view}>
@@ -581,6 +689,8 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
       )}
 
       <ChatSidebar onSelectView={onSelectView} />
+
+      <SidebarFooter />
 
     </aside>
   );

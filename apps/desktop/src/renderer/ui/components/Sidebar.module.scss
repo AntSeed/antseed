@@ -76,8 +76,192 @@
 }
 
 .sidebar-footer {
-  padding: 12px 8px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sidebar-footer-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 10px 0 10px;
+  border-radius: 9px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.03);
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+
+  &:hover {
+    background: var(--bg-card);
+    border-color: var(--border-strong);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+    .sidebar-footer-btn-icon {
+      color: var(--text-primary);
+    }
+    .sidebar-footer-btn-chevron {
+      color: var(--text-secondary);
+    }
+  }
+
+  &:focus-visible {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent-green) 32%, var(--border-strong));
+    box-shadow: 0 0 0 3px rgba(var(--accent-green-rgb), 0.14);
+  }
+}
+
+.sidebar-footer-btn-open {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+  .sidebar-footer-btn-icon {
+    color: var(--text-primary);
+  }
+  .sidebar-footer-btn-chevron {
+    color: var(--text-secondary);
+    transform: rotate(180deg);
+  }
+}
+
+.sidebar-footer-btn-iconwrap {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.sidebar-footer-btn:hover .sidebar-footer-btn-iconwrap {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.sidebar-footer-btn-icon {
+  color: inherit;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.sidebar-footer-btn-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  justify-content: center;
+}
+
+.sidebar-footer-btn-label {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer-btn-credits {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer-btn-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.account-popover {
+  position: absolute;
+  left: 8px;
+  right: auto;
+  width: min(330px, calc(100vw - 32px));
+  bottom: calc(100% - 4px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.04);
+  padding: 10px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  :global(body.dark-theme) & {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
+
+.account-popover-wallet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 10px 6px;
+}
+
+.account-popover-divider {
+  height: 1px;
+  margin: 6px 10px;
+  background: var(--border);
+}
+
+.account-popover-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &:focus-visible {
+    outline: none;
+    background: var(--bg-hover);
+  }
 }
 
 .dev-section {
