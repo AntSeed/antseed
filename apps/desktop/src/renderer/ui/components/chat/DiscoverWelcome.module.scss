@@ -158,7 +158,10 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(var(--discover-columns, 3), minmax(0, 1fr));
+  /* auto-fill + minmax: cards naturally reflow when the viewport narrows so
+   * each card stays at least as wide as the pricing row needs. The earlier
+   * fixed N-column layout let cards shrink to ~240px which crushed pricing. */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   grid-auto-rows: min-content;
   align-content: flex-start;
   gap: 12px;
@@ -169,14 +172,11 @@
   .cards-inner {
     padding-inline: 12px;
   }
-
-  .card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
 }
 
 @media (max-width: 520px) {
   .card-grid {
+    /* Below 520px the 320px minmax would overflow; collapse to 1 column. */
     grid-template-columns: 1fr !important;
   }
 
@@ -301,38 +301,31 @@
   }
 }
 
-/* Header: provider attribution + privacy badge */
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 16px 0;
-  min-width: 0;
-}
+/*
+ * Editorial-quiet card layout. Three logical zones with strong hierarchy:
+ *   1. body      → model name (hero) + categories (whisper meta)
+ *   2. pricing   → tabular numerals, the visual anchor
+ *   3. footer    → attribution left, usage stats right (single low-key row)
+ *
+ * Generous breathing room, no internal hairlines. Hierarchy comes from
+ * type weight, color, and whitespace — not chrome.
+ */
 
-.card-header-text {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-
-/* Body: name, description, tags */
 .card-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 16px 14px;
+  gap: 7px;
+  padding: 18px 18px 4px;
   flex: 1;
+  min-width: 0;
 }
 
 .card-name {
-  font-size: 16.5px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
-  line-height: 1.25;
-  letter-spacing: -0.012em;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
   margin: 0;
   display: flex;
   align-items: center;
@@ -349,13 +342,60 @@
 }
 
 .model-logo {
-  width: 18px;
-  height: 18px;
+  width: 21px;
+  height: 21px;
   flex-shrink: 0;
   color: var(--text-primary);
   opacity: 0.92;
 }
 
+/* Category chips — same visual vocabulary as the Categories filter dropdown
+ * (icon + outlined pill). Slightly more compact for the card density. */
+.card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+  text-transform: capitalize;
+  letter-spacing: 0.005em;
+}
+
+.chip-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.chip-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+/* Description (kept for richer detail rendering elsewhere — not used on cards). */
 .card-desc {
   font-size: 12.5px;
   font-weight: 400;
@@ -368,84 +408,116 @@
   overflow: hidden;
 }
 
-/* Pricing — sits inside the body as a quiet inline row, not a banded strip. */
+/* Pricing — the visual anchor. The "/M" suffix on each value carries the
+ * per-million unit, so we don't need a trailing caption. Single skeleton works
+ * for paid (in/out columns) and free (one value) so cards line up regardless. */
 .card-pricing {
   display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 16px 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.pricing-col {
-  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: 6px 16px;
+  padding: 14px 18px 14px;
+  font-variant-numeric: tabular-nums;
   min-width: 0;
 }
 
-.pricing-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  letter-spacing: 0.01em;
-  line-height: 1;
+.pricing-col {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
 }
 
 .pricing-value {
-  font-size: 13.5px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-primary);
-  line-height: 1.1;
-  letter-spacing: -0.012em;
+  line-height: 1;
+  letter-spacing: -0.018em;
+  white-space: nowrap;
 }
 
-.pricing-free-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex: 1;
-}
-
-.pricing-free {
-  font-size: 14px;
-  font-weight: 600;
+.pricing-value-free {
   color: var(--accent-green, #10b981);
-  letter-spacing: -0.012em;
+}
+
+.pricing-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   line-height: 1;
 }
 
 .pricing-meta {
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-muted);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
   line-height: 1;
 }
 
-/* Stats footer — whisper-quiet meta line. No top border; uses spacing only. */
-.card-stats {
+/* Footer — single row containing attribution (left) and usage stats (right).
+ * Subtle top hairline gives a clean caesura without feeling boxy. */
+.card-footer {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 16px 14px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px 12px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  min-width: 0;
 }
 
-.stat-item {
+.card-attribution {
   display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.card-attribution-text {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
   min-width: 0;
 
   strong {
     font-weight: 600;
     color: var(--text-secondary);
-    letter-spacing: -0.01em;
+    letter-spacing: -0.005em;
+  }
+}
+
+.card-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stat-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  letter-spacing: 0.02em;
+
+  strong {
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: -0.005em;
   }
 }
 
@@ -453,71 +525,28 @@
   width: 2px;
   height: 2px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.22);
+  background: currentColor;
   flex-shrink: 0;
-  opacity: 0.6;
+  opacity: 0.4;
 }
 
-/* ── Tags (soft pills, single style) ────────────────────────────────── */
-
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 2px;
-}
-
-.tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 21px;
-  padding: 0 9px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  text-transform: capitalize;
-  background: rgba(0, 0, 0, 0.035);
-  color: var(--text-secondary);
-  letter-spacing: 0.005em;
-}
-
-.tag-more {
-  background: transparent;
-  color: var(--text-muted);
-  padding: 0 4px;
-}
-
-/* ── Provider header bits ───────────────────────────────────────────── */
+/* ── Provider attribution bits ───────────────────────────────────────── */
 
 .provider-avatar {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: #fff;
   line-height: 1;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.18),
     0 0 0 1px rgba(0, 0, 0, 0.04);
-}
-
-.card-provider-name {
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0.01em;
 }
 
 .card-provider-count {
@@ -527,29 +556,6 @@
   line-height: 1.2;
   white-space: nowrap;
   flex-shrink: 0;
-}
-
-/* Privacy / anonymity badge — reserved subtle accent */
-.anon-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  height: 20px;
-  padding: 0 8px 0 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: rgba(var(--accent-rgb), 0.92);
-  background: rgba(var(--accent-rgb), 0.08);
-  line-height: 1;
-
-  svg {
-    flex-shrink: 0;
-    opacity: 0.85;
-  }
 }
 
 /* ── Loading / empty states ─────────────────────────────────────────── */
@@ -581,44 +587,18 @@
 .empty-state > *:nth-child(3) { animation-delay: 0.16s; }
 .empty-state > *:nth-child(4) { animation-delay: 0.24s; }
 
-.empty-mark {
-  width: 96px;
-  height: 96px;
+.empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
   margin-bottom: 22px;
-  color: var(--text-secondary);
-  position: relative;
-
-  svg {
-    display: block;
-    overflow: visible;
-  }
-}
-
-.empty-mark-ring {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.empty-mark-pulse {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.25;
-  transform-origin: 48px 48px;
-  transform-box: fill-box;
-  animation: empty-pulse 2.4s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
-}
-
-.empty-mark-dot {
-  fill: var(--accent);
-  filter: drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.55));
-}
-
-.empty-mark-peer {
-  fill: var(--text-muted);
-  opacity: 0;
-  animation: empty-peer-blink 4s ease-in-out infinite;
+  border-radius: 50%;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .empty-title {
@@ -626,8 +606,16 @@
   font-weight: 600;
   letter-spacing: -0.35px;
   color: var(--text-primary);
-  margin: 0 0 22px 0;
+  margin: 0 0 6px 0;
   line-height: 1.25;
+}
+
+.empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0 0 22px 0;
+  max-width: 320px;
 }
 
 .empty-chips {
@@ -701,23 +689,39 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
-  padding: 0 14px;
-  font-size: 12px;
+  height: 34px;
+  padding: 0 14px 0 12px;
+  font-size: 13px;
   font-weight: 500;
+  letter-spacing: -0.003em;
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-card);
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
   outline: none;
-  transition: border-color 0.12s, background-color 0.12s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 
-  svg { color: var(--text-muted); }
+  svg {
+    color: var(--text-muted);
+    transition: color 0.12s ease;
+  }
 
-  &:hover { background-color: var(--bg-hover); }
-  &:focus-visible { border-color: var(--accent); }
+  &:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
+
+    svg {
+      color: var(--accent-green);
+    }
+  }
+
+  &:focus-visible {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 0 2px rgba(var(--accent-green-rgb), 0.2);
+  }
 }
 
 .empty-links {
@@ -763,27 +767,10 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes empty-pulse {
-  0%   { transform: scale(0.18); opacity: 0.55; }
-  70%  { transform: scale(1);    opacity: 0;    }
-  100% { transform: scale(1);    opacity: 0;    }
-}
-
-@keyframes empty-peer-blink {
-  0%, 100%   { opacity: 0.15; }
-  20%, 60%   { opacity: 0.55; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .empty-state > * {
     animation: none;
   }
-  .empty-mark-pulse,
-  .empty-mark-peer {
-    animation: none;
-  }
-  .empty-mark-pulse { opacity: 0; }
-  .empty-mark-peer  { opacity: 0.4; }
 }
 
 /* ── Drawer (fixed-position, overlays sidebar) ──────────────────────── */
@@ -874,28 +861,19 @@
     }
   }
 
-  .stats-dot {
-    background: rgba(255, 255, 255, 0.28);
-  }
-
-  .stat-item strong {
+  .stat-item strong,
+  .card-attribution-text strong {
     color: var(--text-primary);
   }
 
-  .tag {
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary);
+  .card-footer {
+    border-top-color: rgba(255, 255, 255, 0.06);
   }
 
   .provider-avatar {
     box-shadow:
       inset 0 0 0 1px rgba(255, 255, 255, 0.14),
       0 0 0 1px rgba(0, 0, 0, 0.25);
-  }
-
-  .anon-badge {
-    color: rgba(var(--accent-rgb), 1);
-    background: rgba(var(--accent-rgb), 0.10);
   }
 
   .filter-trigger {

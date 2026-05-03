@@ -143,6 +143,14 @@
   padding: 4px 0 0;
 }
 
+.endpoint-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .endpoint-row {
   display: inline-flex;
   align-items: stretch;
@@ -180,6 +188,28 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.endpoint-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  &.copied {
+    color: var(--accent-green);
+  }
 }
 
 .hero-desc {
@@ -266,18 +296,7 @@
   white-space: nowrap;
 }
 
-/* ── Divider & Docs CTA ── */
-
-.divider {
-  height: 1px;
-  background: var(--border-light);
-  width: 100%;
-}
-
-.docs-row {
-  display: flex;
-  align-items: center;
-}
+/* ── Docs CTA ── */
 
 .docs-cta {
   display: inline-flex;
@@ -724,6 +743,10 @@
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+
+  .proxy-badge {
+    margin-left: auto;
+  }
 }
 
 .try-hint {

@@ -251,6 +251,27 @@ function CopyChip({ value, label = 'Copy' }: { value: string; label?: string }) 
   );
 }
 
+function EndpointCopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [value]);
+  return (
+    <button
+      type="button"
+      className={`${styles.endpointCopy}${copied ? ` ${styles.copied}` : ''}`}
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied' : 'Copy endpoint'}
+      title={copied ? 'Copied' : 'Copy endpoint'}
+    >
+      <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.6} />
+    </button>
+  );
+}
+
 function CodeBlock({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
@@ -514,18 +535,6 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
           <span className={styles.eyebrow}>Developer</span>
           <h2>API</h2>
         </div>
-        <div className={`${styles.proxyBadge} ${isOnline ? styles.proxyOnline : styles.proxyOffline}`}>
-          <span className={styles.proxyBadgeDot} />
-          <span className={styles.proxyBadgeText}>
-            {isOnline ? 'Proxy active' : 'Proxy offline'}
-          </span>
-          {isOnline && (
-            <>
-              <span className={styles.proxyBadgeSep} />
-              <span className={styles.proxyBadgePort}>:{chatProxyPort}</span>
-            </>
-          )}
-        </div>
       </div>
 
       <div className={styles.content}>
@@ -534,9 +543,17 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
           <div className={styles.leftCol}>
             <div className={styles.heroBlock}>
               <span className={styles.eyebrow}>Local endpoint</span>
-              <div className={styles.endpointRow}>
-                <span className={styles.endpointMethod}>HTTP</span>
-                <code className={styles.endpointUrl}>http://localhost:{displayPort}</code>
+              <div className={styles.endpointHead}>
+                <div className={styles.endpointRow}>
+                  <span className={styles.endpointMethod}>HTTP</span>
+                  <code className={styles.endpointUrl}>http://localhost:{displayPort}</code>
+                  <EndpointCopyButton value={`http://localhost:${displayPort}`} />
+                </div>
+                <button className={styles.docsCta} onClick={openDocs}>
+                  <HugeiconsIcon icon={BookOpen01Icon} size={14} strokeWidth={1.6} />
+                  <span>Read the API docs</span>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={13} strokeWidth={1.6} className={styles.docsCtaArrow} />
+                </button>
               </div>
               <p className={styles.heroDesc}>
                 AntSeed runs a local HTTP proxy that routes your requests to peers on the network.
@@ -563,16 +580,6 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
                 </li>
               ))}
             </ol>
-
-            <div className={styles.divider} />
-
-            <div className={styles.docsRow}>
-              <button className={styles.docsCta} onClick={openDocs}>
-                <HugeiconsIcon icon={BookOpen01Icon} size={14} strokeWidth={1.6} />
-                <span>Read the API docs</span>
-                <HugeiconsIcon icon={ArrowRight01Icon} size={13} strokeWidth={1.6} className={styles.docsCtaArrow} />
-              </button>
-            </div>
 
             <div className={styles.clientLinks}>
               <span className={styles.sectionLabel}>External clients</span>
@@ -653,6 +660,18 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
                 )}
               </button>
               {!isOnline && <span className={styles.tryHint}>Proxy is offline — start the buyer runtime from Network.</span>}
+              <div className={`${styles.proxyBadge} ${isOnline ? styles.proxyOnline : styles.proxyOffline}`}>
+                <span className={styles.proxyBadgeDot} />
+                <span className={styles.proxyBadgeText}>
+                  {isOnline ? 'Proxy active' : 'Proxy offline'}
+                </span>
+                {isOnline && (
+                  <>
+                    <span className={styles.proxyBadgeSep} />
+                    <span className={styles.proxyBadgePort}>:{chatProxyPort}</span>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className={styles.responseWindow}>

@@ -117,7 +117,7 @@ type ConfigViewProps = {
 };
 
 export function ConfigView({ active }: ConfigViewProps) {
-  const { configFormData, configSaving, devMode, configMessage } = useUiSnapshot();
+  const { configFormData, configSaving, devMode } = useUiSnapshot();
   const actions = useActions();
 
   // Local form state — initialized from config, edited locally, saved on button click
@@ -167,31 +167,11 @@ export function ConfigView({ active }: ConfigViewProps) {
     <section className={`view${active ? ' active' : ''} ${styles.page}`} role="tabpanel">
       <div className={styles.shell}>
           <header className={styles.intro}>
-            <div className={styles.introMain}>
-              <span className={styles.eyebrow}>Preferences</span>
-              <h2 className={styles.title}>Settings</h2>
-              <p className={styles.subtitle}>
-                Tune how your node discovers peers, prices token streams, and settles payments on-chain.
-              </p>
-            </div>
-            {configMessage && (
-              <span
-                key={configMessage.text}
-                className={`${styles.statusChip} ${
-                  configMessage.type === 'success'
-                    ? styles.statusChipSuccess
-                    : configMessage.type === 'error'
-                      ? styles.statusChipError
-                      : styles.statusChipInfo
-                }`}
-                role="status"
-                aria-live="polite"
-                title={configMessage.text}
-              >
-                <span className={styles.statusDot} aria-hidden="true" />
-                <span className={styles.statusText}>{configMessage.text}</span>
-              </span>
-            )}
+            <span className={styles.eyebrow}>Preferences</span>
+            <h2 className={styles.title}>Settings</h2>
+            <p className={styles.subtitle}>
+              Tune how your node discovers peers, prices token streams, and settles payments on-chain.
+            </p>
           </header>
 
           {/* ─── Buyer Settings ─── */}

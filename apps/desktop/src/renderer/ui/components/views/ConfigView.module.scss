@@ -23,109 +23,10 @@
 
 .intro {
   display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 4px 4px;
-}
-
-.introMain {
-  display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px 4px 4px;
   min-width: 0;
-}
-
-/* ── Header status chip ────────────────────────────────────────────── */
-
-.statusChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex-shrink: 0;
-  /* Align baseline with the eyebrow row */
-  margin-top: 1px;
-  padding: 5px 11px 5px 9px;
-  max-width: 280px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  animation: status-chip-in 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) both;
-  transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease;
-}
-
-.statusDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.statusText {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.statusChipInfo {
-  .statusDot {
-    background: var(--accent-green);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
-    animation: status-dot-pulse 2.4s ease-in-out infinite;
-  }
-}
-
-.statusChipSuccess {
-  background: rgba(var(--accent-rgb), 0.07);
-  border-color: rgba(var(--accent-rgb), 0.22);
-  color: var(--accent-green);
-
-  .statusDot {
-    background: var(--accent-green);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
-  }
-}
-
-.statusChipError {
-  background: rgba(var(--danger-rgb), 0.07);
-  border-color: rgba(var(--danger-rgb), 0.22);
-  color: var(--danger);
-
-  .statusDot {
-    background: var(--danger);
-    box-shadow: 0 0 0 3px rgba(var(--danger-rgb), 0.18);
-  }
-}
-
-@keyframes status-chip-in {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes status-dot-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0.04);
-  }
 }
 
 .eyebrow {
@@ -694,14 +595,6 @@
 @media (max-width: 760px) {
   .scroll {
     padding: 8px 16px 96px;
-  }
-
-  .intro {
-    flex-wrap: wrap;
-  }
-
-  .statusChip {
-    max-width: 100%;
   }
 
   .row {

@@ -1,7 +1,8 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import type { CSSProperties } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Search01Icon, FilterResetIcon } from '@hugeicons/core-free-icons';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useDiscoverFilters, type DiscoverFilterState } from '../../hooks/useDiscoverFilters';
@@ -16,7 +17,8 @@ import { DiscoverInlineCategoryFilter } from './DiscoverInlineCategoryFilter';
 import { DiscoverInlinePriceFilter } from './DiscoverInlinePriceFilter';
 import { DiscoverInlineSortFilter } from './DiscoverInlineSortFilter';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
-import { getModelLogo } from './model-logos';
+import { getCategoryIcon } from './discover-category-icons';
+import { ProviderLogo } from './ProviderLogo';
 import styles from './DiscoverWelcome.module.scss';
 
 /**
@@ -187,25 +189,23 @@ const skeletonHighlightColor = 'rgba(0,0,0,0.07)';
 function SkeletonCard() {
   return (
     <div className={styles.card}>
-      <header className={styles.cardHeader}>
-        <Skeleton width={20} height={20} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width={80} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-      </header>
       <div className={styles.cardBody}>
         <Skeleton width="60%" height={18} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width="92%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width="70%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <div className={styles.cardTags}>
-          <Skeleton width={48} height={20} borderRadius={6} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-          <Skeleton width={56} height={20} borderRadius={6} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <div className={styles.cardChips}>
+          <Skeleton width={56} height={20} borderRadius={999} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width={64} height={20} borderRadius={999} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
         </div>
       </div>
       <div className={styles.cardPricing}>
-        <Skeleton width={70} height={28} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width={70} height={28} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width={80} height={18} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width={80} height={18} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
       </div>
-      <footer className={styles.cardStats}>
-        <Skeleton width="80%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      <footer className={styles.cardFooter}>
+        <div className={styles.cardAttribution}>
+          <Skeleton width={18} height={18} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width={90} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        </div>
+        <Skeleton width={90} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
       </footer>
     </div>
   );
@@ -229,7 +229,7 @@ type DiscoverWelcomeProps = {
   onStartChatting: (serviceValue: string, peerId?: string) => void;
 };
 
-const MIN_CARD_WIDTH_PX = 280;
+const MIN_CARD_WIDTH_PX = 320;
 const GRID_GAP_PX = 12;
 const CARD_ESTIMATED_HEIGHT_PX = 208;
 const DEFAULT_PAGE_SIZE = 9;
@@ -427,13 +427,13 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
           <div className={styles.resultsArea}>
             {!hasNetworkData ? (
-              <div className={styles.cardGrid} style={{ '--discover-columns': Math.max(1, Math.ceil(Math.sqrt(pageSize))) } as CSSProperties}>
+              <div className={styles.cardGrid}>
                 {Array.from({ length: pageSize }, (_, i) => (
                   <SkeletonCard key={i} />
                 ))}
               </div>
             ) : filtered.length > 0 ? (
-              <div className={styles.cardGrid} style={{ '--discover-columns': Math.max(1, Math.ceil(Math.sqrt(pageSize))) } as CSSProperties}>
+              <div className={styles.cardGrid}>
                 {paged.map((item) => (
                   <Card
                     key={item.value || item.name}
@@ -559,13 +559,10 @@ function Card({
   const hasInput = item.inputUsdPerMillion != null;
   const hasOutput = item.outputUsdPerMillion != null;
   const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
-  const ModelLogo = getModelLogo(item.name);
-
-  // Capabilities = tags minus "anon" (which is rendered as a separate accent badge).
+  // Capabilities = tags minus "anon" (which is implicit, not surfaced as a pill).
   const capabilityTags = item.tags.filter((t) => !ACCENT_TAGS.has(t.toLowerCase()));
   const visibleTags = capabilityTags.slice(0, MAX_VISIBLE_CARD_TAGS);
   const overflowTags = capabilityTags.slice(MAX_VISIBLE_CARD_TAGS);
-  const isAnon = item.tags.some((t) => t.toLowerCase() === 'anon');
 
   return (
     <div
@@ -575,68 +572,58 @@ function Card({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value, item.peerId); } }}
     >
-      <header className={styles.cardHeader}>
-        <ProviderAvatar name={providerName} gradient={item.gradient} />
-        <div className={styles.cardHeaderText}>
-          <span className={styles.cardProviderName}>{providerName}</span>
-          {item.providerCount > 1 && (
-            <span className={styles.cardProviderCount}>
-              · {item.providerCount} peers
-            </span>
-          )}
-        </div>
-        {isAnon && (
-          <span className={styles.anonBadge} title="Anonymous — no account or identity required">
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 1L2 4v4c0 3.5 2.5 6.5 6 7 3.5-.5 6-3.5 6-7V4L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-            </svg>
-            Anon
-          </span>
-        )}
-      </header>
-
       <div className={styles.cardBody}>
         <h3 className={styles.cardName}>
-          {ModelLogo && <ModelLogo className={styles.modelLogo} />}
+          <ProviderLogo modelName={item.name} className={styles.modelLogo} />
           <span className={styles.cardNameText}>{item.displayName}</span>
         </h3>
-        <p className={styles.cardDesc}>{item.description}</p>
 
-        <div className={styles.cardTags}>
-          {visibleTags.map((t) => (
-            <span key={t} className={styles.tag}>{formatCategoryLabel(t)}</span>
-          ))}
-          {overflowTags.length > 0 && (
-            <span
-              className={`${styles.tag} ${styles.tagMore}`}
-              title={overflowTags.map(formatCategoryLabel).join(', ')}
-              aria-label={`${overflowTags.length} more categories: ${overflowTags.map(formatCategoryLabel).join(', ')}`}
-            >
-              +{overflowTags.length}
-            </span>
-          )}
-        </div>
+        {item.description && (
+          <p className={styles.cardDesc}>{item.description}</p>
+        )}
+
+        {capabilityTags.length > 0 && (
+          <div className={styles.cardChips}>
+            {visibleTags.map((t) => (
+              <span key={t} className={styles.chip}>
+                <HugeiconsIcon
+                  icon={getCategoryIcon(t)}
+                  size={11}
+                  strokeWidth={1.6}
+                  className={styles.chipIcon}
+                />
+                {formatCategoryLabel(t)}
+              </span>
+            ))}
+            {overflowTags.length > 0 && (
+              <span
+                className={styles.chipMore}
+                title={overflowTags.map(formatCategoryLabel).join(', ')}
+                aria-label={`${overflowTags.length} more categories: ${overflowTags.map(formatCategoryLabel).join(', ')}`}
+              >
+                +{overflowTags.length}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className={styles.cardPricing}>
         {isFree ? (
-          <div className={styles.pricingFreeRow}>
-            <span className={styles.pricingFree}>Free</span>
-            <span className={styles.pricingMeta}>per million tokens</span>
-          </div>
+          <span className={`${styles.pricingValue} ${styles.pricingValueFree}`}>Free</span>
         ) : (hasInput || hasOutput) ? (
           <>
             {hasInput && (
-              <div className={styles.pricingCol}>
-                <span className={styles.pricingLabel}>Input</span>
+              <span className={styles.pricingCol}>
                 <span className={styles.pricingValue}>{formatPerMillionPrice(item.inputUsdPerMillion!)}</span>
-              </div>
+                <span className={styles.pricingLabel}>in</span>
+              </span>
             )}
             {hasOutput && (
-              <div className={styles.pricingCol}>
-                <span className={styles.pricingLabel}>Output</span>
+              <span className={styles.pricingCol}>
                 <span className={styles.pricingValue}>{formatPerMillionPrice(item.outputUsdPerMillion!)}</span>
-              </div>
+                <span className={styles.pricingLabel}>out</span>
+              </span>
             )}
           </>
         ) : (
@@ -644,18 +631,29 @@ function Card({
         )}
       </div>
 
-      <footer className={styles.cardStats}>
-        <span className={styles.statItem}>
-          <strong>{formatCompact(item.channelCount)}</strong> {item.channelCount === 1 ? 'channel' : 'channels'}
-        </span>
-        <span className={styles.statsDot} aria-hidden="true" />
-        <span className={styles.statItem}>
-          <strong>{formatCompact(item.lifetimeRequests)}</strong> req
-        </span>
-        <span className={styles.statsDot} aria-hidden="true" />
-        <span className={styles.statItem}>
-          <strong>{formatCompact(item.lifetimeTokens)}</strong> tok
-        </span>
+      <footer className={styles.cardFooter}>
+        <div className={styles.cardAttribution}>
+          <ProviderAvatar name={providerName} gradient={item.gradient} />
+          <span className={styles.cardAttributionText}>
+            by <strong>{providerName}</strong>
+            {item.providerCount > 1 && (
+              <span className={styles.cardProviderCount}> · {item.providerCount} peers</span>
+            )}
+          </span>
+        </div>
+        <div className={styles.cardStats}>
+          <span className={styles.statItem}>
+            <strong>{formatCompact(item.channelCount)}</strong> ch
+          </span>
+          <span className={styles.statsDot} aria-hidden="true" />
+          <span className={styles.statItem}>
+            <strong>{formatCompact(item.lifetimeRequests)}</strong> req
+          </span>
+          <span className={styles.statsDot} aria-hidden="true" />
+          <span className={styles.statItem}>
+            <strong>{formatCompact(item.lifetimeTokens)}</strong> tok
+          </span>
+        </div>
       </footer>
     </div>
   );
@@ -765,22 +763,12 @@ function EmptyState({
 
   return (
     <div className={styles.emptyState} role="status" aria-live="polite">
-      <div className={styles.emptyMark} aria-hidden="true">
-        <svg width="96" height="96" viewBox="0 0 96 96">
-          <circle cx="48" cy="48" r="44" className={styles.emptyMarkRing} style={{ opacity: 0.1 }} />
-          <circle cx="48" cy="48" r="32" className={styles.emptyMarkRing} style={{ opacity: 0.2 }} />
-          <circle cx="48" cy="48" r="20" className={styles.emptyMarkRing} style={{ opacity: 0.3 }} />
-          <circle cx="48" cy="48" r="20" className={styles.emptyMarkPulse} />
-          <circle cx="48" cy="48" r="3.25" className={styles.emptyMarkDot} />
-          {/* offset peer-dots: hint of network beyond the empty match */}
-          <circle cx="14" cy="20" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '0.4s' }} />
-          <circle cx="82" cy="28" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '0.8s' }} />
-          <circle cx="78" cy="76" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '1.2s' }} />
-          <circle cx="20" cy="78" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '1.6s' }} />
-        </svg>
+      <div className={styles.emptyIcon} aria-hidden="true">
+        <HugeiconsIcon icon={Search01Icon} size={28} strokeWidth={1.5} />
       </div>
 
       <h2 className={styles.emptyTitle}>No matches in the network</h2>
+      <p className={styles.emptyText}>Try a broader search or different filters</p>
 
       {chips.length > 0 && (
         <div className={styles.emptyChips}>
@@ -809,17 +797,8 @@ function EmptyState({
             className={styles.emptyPrimary}
             onClick={() => filterState.resetAll()}
           >
+            <HugeiconsIcon icon={FilterResetIcon} size={14} strokeWidth={1.5} />
             Show all services
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path
-                d="M2 6h7m-2.5-3L9.5 6 6.5 9"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-            </svg>
           </button>
 
           {hasSearch && hasActiveFilters && (

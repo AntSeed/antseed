@@ -10,12 +10,13 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
-import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
+import { getPeerGradient, getPeerDisplayName } from '../../core/peer-utils';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
 import { AntStationLogo } from './AntStationLogo';
 import { AlphaHint } from './AlphaHint';
+import { getModelLogo } from './chat/model-logos';
 import styles from './Sidebar.module.scss';
 
 type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
@@ -302,11 +303,12 @@ function PeerGroupSection({
             const isActive = id === activeConvId;
             const isRunning = sendingConvIds.has(id);
             const title = String(conv.title || '');
-            const serviceLabel = shortServiceName(conv.service);
+            const serviceRaw = String(conv.service || '');
+            const ModelLogo = getModelLogo(serviceRaw);
             const totalCost = Number(conv.totalEstimatedCostUsd) || 0;
             const totalTokens = Number(conv.totalTokens) || 0;
             const costLabel = totalTokens > 0
-              ? `$${formatUsdc(totalCost)}/${formatCompactTokens(totalTokens)}`
+              ? `$${formatUsdc(totalCost)}`
               : '';
             const convPeerId = String(conv.peerId || '').trim();
             const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
@@ -319,6 +321,17 @@ function PeerGroupSection({
                 onClick={() => onSelectConv(id)}
               >
                 <div className={styles.chatConvTop}>
+                  <span
+                    className={styles.chatConvLogo}
+                    title={shortServiceName(serviceRaw) || undefined}
+                    aria-hidden
+                  >
+                    {ModelLogo ? (
+                      <ModelLogo width={14} height={14} />
+                    ) : (
+                      <span className={styles.chatConvLogoFallback} />
+                    )}
+                  </span>
                   <div className={styles.chatConvPeer}>{title}</div>
                   {isRunning && (
                     <span
@@ -328,26 +341,20 @@ function PeerGroupSection({
                       title="Request in progress"
                     />
                   )}
-                  <div className={styles.chatConvRight}>
-                    <button
-                      className={styles.chatConvMenuBtn}
-                      ref={(el) => { if (el) menuBtnRefs.current?.set(id, el); else menuBtnRefs.current?.delete(id); }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpenId(menuOpenId === id ? null : id);
-                      }}
-                    >
-                      <HugeiconsIcon icon={MoreVerticalIcon} size={14} strokeWidth={1.5} />
-                    </button>
-                  </div>
+                  {!isRunning && costLabel && (
+                    <span className={styles.chatConvCost}>{costLabel}</span>
+                  )}
+                  <button
+                    className={styles.chatConvMenuBtn}
+                    ref={(el) => { if (el) menuBtnRefs.current?.set(id, el); else menuBtnRefs.current?.delete(id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(menuOpenId === id ? null : id);
+                    }}
+                  >
+                    <HugeiconsIcon icon={MoreVerticalIcon} size={14} strokeWidth={1.5} />
+                  </button>
                 </div>
-                {(serviceLabel || costLabel) && (
-                  <div className={styles.chatConvPreview}>
-                    {serviceLabel}
-                    {serviceLabel && costLabel && <span className={styles.chatConvPreviewSep} />}
-                    {costLabel && <span className={styles.chatConvCost}>{costLabel}</span>}
-                  </div>
-                )}
                 {session && (
                   <div className={styles.chatConvSession}>
                     <span className={styles.chatConvSessionInfo}>
@@ -473,7 +480,21 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
       <div className={styles.chatSidebarLabel}>Peers</div>
       <div className={styles.chatConversationList}>
         {conversations.length === 0 ? (
-          <div className={styles.chatEmpty}>No conversations yet</div>
+          <div className={styles.chatEmpty}>
+            <div className={styles.chatEmptyIcon} aria-hidden>
+              <HugeiconsIcon icon={PeerToPeer02Icon} size={26} strokeWidth={1.4} />
+            </div>
+            <div className={styles.chatEmptyTitle}>No conversations yet</div>
+            <div className={styles.chatEmptyText}>Find a peer to start chatting</div>
+            <button
+              type="button"
+              className={styles.chatEmptyCta}
+              onClick={() => onSelectView('discover')}
+            >
+              <HugeiconsIcon icon={DiscoverCircleIcon} size={13} strokeWidth={1.5} />
+              Discover peers
+            </button>
+          </div>
         ) : (
           peerGroups.map((group) => {
             const key = group.peerId || '__other';
