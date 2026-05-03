@@ -47,6 +47,7 @@ const CATEGORY_ALIAS: Record<string, StudioCategory | null> = {
   img2img: 'edit',
 
   multimodal: 'multimodal',
+  studio: 'multimodal',
 };
 
 const CATEGORY_INTENT_MAP: Record<StudioIntent, StudioCategory[]> = {

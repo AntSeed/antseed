@@ -49,6 +49,48 @@
   -webkit-app-region: no-drag;
 }
 
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  -webkit-app-region: no-drag;
+
+  :global(body.dark-theme) & {
+    background: var(--bg-hover);
+  }
+}
+
+.mode-toggle-btn {
+  min-width: 84px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.05);
+
+    :global(body.dark-theme) & {
+      background: rgba(255, 255, 255, 0.06);
+    }
+  }
+}
+
+.mode-toggle-btn-active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
 .title-bar-update-btn {
   padding: 4px 10px;
   border-radius: 6px;

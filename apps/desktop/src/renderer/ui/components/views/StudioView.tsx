@@ -240,13 +240,23 @@ export function StudioView({ active }: StudioViewProps) {
     persistStudioRunHistory(studioRuns);
   }, [studioRuns]);
 
+  const allServiceOptions = useMemo(() => snap.chatServiceOptions, [snap.chatServiceOptions]);
+
   const studioServiceOptions = useMemo(() => (
-    snap.chatServiceOptions.filter((entry) => isStudioServiceCandidate(entry))
-  ), [snap.chatServiceOptions]);
+    allServiceOptions.filter((entry) => isStudioServiceCandidate(entry))
+  ), [allServiceOptions]);
 
   const compatibleServiceOptions = useMemo(() => (
-    studioServiceOptions.filter((entry) => supportsStudioIntent(entry, intent))
-  ), [studioServiceOptions, intent]);
+    allServiceOptions.filter((entry) => supportsStudioIntent(entry, intent))
+  ), [allServiceOptions, intent]);
+
+  const selectableServiceOptions = useMemo(() => {
+    const compatibleValues = new Set(compatibleServiceOptions.map((entry) => entry.value));
+    return [
+      ...compatibleServiceOptions,
+      ...allServiceOptions.filter((entry) => !compatibleValues.has(entry.value)),
+    ];
+  }, [allServiceOptions, compatibleServiceOptions]);
 
   const intentOptionCounts = useMemo<Record<StudioIntent, number>>(
     () => ({
@@ -258,11 +268,11 @@ export function StudioView({ active }: StudioViewProps) {
   );
 
   useEffect(() => {
-    if (selectedServiceValue && compatibleServiceOptions.some((entry) => entry.value === selectedServiceValue)) {
+    if (selectedServiceValue && selectableServiceOptions.some((entry) => entry.value === selectedServiceValue)) {
       return;
     }
-    setSelectedServiceValue(compatibleServiceOptions[0]?.value || '');
-  }, [compatibleServiceOptions, selectedServiceValue]);
+    setSelectedServiceValue(selectableServiceOptions[0]?.value || '');
+  }, [selectableServiceOptions, selectedServiceValue]);
 
   useEffect(() => {
     persistStudioDraft({
@@ -309,8 +319,9 @@ export function StudioView({ active }: StudioViewProps) {
       ? 'Git unavailable'
       : 'No git repo';
 
-  const selectedService = compatibleServiceOptions.find((entry) => entry.value === selectedServiceValue) || null;
+  const selectedService = selectableServiceOptions.find((entry) => entry.value === selectedServiceValue) || null;
   const selectedServiceTags = selectedService?.categories.slice(0, 4).join(', ') || '';
+  const selectedServiceAdvertisesIntent = selectedService ? supportsStudioIntent(selectedService, intent) : false;
   const requiresReference = STUDIO_INTENT_REFERENCE_REQUIRED[intent];
 
   const submitDisabledReason = useMemo(() => {
@@ -319,13 +330,10 @@ export function StudioView({ active }: StudioViewProps) {
     if (!bridge?.apiTryProxyRequest || !bridge?.chatAiGetProxyStatus) {
       return 'Desktop proxy bridge is unavailable.';
     }
-    if (studioServiceOptions.length === 0) {
-      return 'No Studio-ready services found. Add media categories like image, video, edit, or multimodal.';
+    if (allServiceOptions.length === 0) {
+      return 'No services found yet. Start the buyer runtime or refresh discovery.';
     }
-    if (compatibleServiceOptions.length === 0) {
-      return `No services currently advertise support for ${STUDIO_INTENT_LABELS[intent]}.`;
-    }
-    if (!selectedService) return 'Select a compatible model service.';
+    if (!selectedService) return 'Select a model service.';
     if (requiresReference && attachments.length === 0) {
       return 'Image Edit requires at least one reference image.';
     }
@@ -336,14 +344,12 @@ export function StudioView({ active }: StudioViewProps) {
   }, [
     attachments.length,
     bridge,
-    compatibleServiceOptions.length,
-    intent,
+    allServiceOptions.length,
     isSubmitting,
     prompt,
     requiresReference,
     selectedService,
     snap.chatInputDisabled,
-    studioServiceOptions.length,
   ]);
 
   const canSubmit = submitDisabledReason === null;
@@ -515,9 +521,9 @@ export function StudioView({ active }: StudioViewProps) {
 
   const handleServiceChange = useCallback((value: string) => {
     setSelectedServiceValue(value);
-    const option = compatibleServiceOptions.find((entry) => entry.value === value);
+    const option = selectableServiceOptions.find((entry) => entry.value === value);
     actions.handleServiceChange(value, option?.peerId);
-  }, [actions, compatibleServiceOptions]);
+  }, [actions, selectableServiceOptions]);
 
   const handleCopySelectedResultUrl = useCallback(() => {
     if (!selectedResult) return;
@@ -604,11 +610,11 @@ export function StudioView({ active }: StudioViewProps) {
             </div>
           </div>
 
-          {studioServiceOptions.length === 0 ? (
+          {allServiceOptions.length === 0 ? (
             <div className={`${styles.supportBanner} ${styles.supportBannerWarn}`}>
-              <div className={styles.supportTitle}>No Studio-compatible services</div>
+              <div className={styles.supportTitle}>No services discovered</div>
               <div className={styles.supportText}>
-                Studio needs models tagged for media tasks (for example: image, video, edit, multimodal).
+                Start the buyer runtime or refresh discovery to populate Studio.
               </div>
               <button className={styles.supportAction} onClick={() => actions.refreshPlugins()}>
                 Refresh Plugins
@@ -616,15 +622,22 @@ export function StudioView({ active }: StudioViewProps) {
             </div>
           ) : compatibleServiceOptions.length === 0 ? (
             <div className={`${styles.supportBanner} ${styles.supportBannerWarn}`}>
-              <div className={styles.supportTitle}>Intent Not Supported</div>
+              <div className={styles.supportTitle}>Experimental mode</div>
               <div className={styles.supportText}>
-                No discovered service currently advertises {STUDIO_INTENT_LABELS[intent]} support.
+                No service advertises {STUDIO_INTENT_LABELS[intent]} support, but Studio will let you try any model. Providers without /v1/studio/run will return a clear error.
+              </div>
+            </div>
+          ) : selectedService && !selectedServiceAdvertisesIntent ? (
+            <div className={`${styles.supportBanner} ${styles.supportBannerWarn}`}>
+              <div className={styles.supportTitle}>Unadvertised capability</div>
+              <div className={styles.supportText}>
+                {selectedService.label} does not advertise {STUDIO_INTENT_LABELS[intent]}, but you can still try it.
               </div>
             </div>
           ) : (
             <div className={`${styles.supportBanner} ${styles.supportBannerInfo}`}>
               <div className={styles.supportText}>
-                Studio is filtering to services that advertise {STUDIO_INTENT_LABELS[intent]} capability.
+                Studio found {compatibleServiceOptions.length} service{compatibleServiceOptions.length === 1 ? '' : 's'} advertising {STUDIO_INTENT_LABELS[intent]} support. Other models remain available below.
               </div>
             </div>
           )}
@@ -636,21 +649,24 @@ export function StudioView({ active }: StudioViewProps) {
               className={styles.select}
               value={selectedServiceValue}
               onChange={(event) => handleServiceChange(event.target.value)}
-              disabled={compatibleServiceOptions.length === 0 || snap.chatInputDisabled || isSubmitting}
+              disabled={selectableServiceOptions.length === 0 || snap.chatInputDisabled || isSubmitting}
             >
-              {compatibleServiceOptions.length === 0 ? (
-                <option value="">No compatible services found</option>
+              {selectableServiceOptions.length === 0 ? (
+                <option value="">No services found</option>
               ) : (
-                compatibleServiceOptions.map((entry) => (
-                  <option key={entry.value} value={entry.value}>
-                    {entry.label}
-                  </option>
-                ))
+                selectableServiceOptions.map((entry) => {
+                  const advertised = supportsStudioIntent(entry, intent);
+                  return (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}{advertised ? '' : ' (try anyway)'}
+                    </option>
+                  );
+                })
               )}
             </select>
             {selectedService && (
               <div className={styles.selectHelp}>
-                {selectedService.label}{selectedServiceTags ? ` - ${selectedServiceTags}` : ''}
+                {selectedService.label}{selectedServiceTags ? ` - ${selectedServiceTags}` : ''}{selectedServiceAdvertisesIntent ? '' : ' - not advertised for this intent'}
               </div>
             )}
           </div>
@@ -786,9 +802,9 @@ export function StudioView({ active }: StudioViewProps) {
             <div className={styles.emptyCanvas}>
               <div className={styles.emptyTitle}>No generated media yet</div>
               <div className={styles.emptyHint}>
-                {compatibleServiceOptions.length > 0
+                {allServiceOptions.length > 0
                   ? 'Run a Studio task to start building image/video outputs.'
-                  : `No ${STUDIO_INTENT_LABELS[intent]} services are currently available.`}
+                  : 'No services are currently available.'}
               </div>
             </div>
           )}

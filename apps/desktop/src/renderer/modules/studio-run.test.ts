@@ -18,6 +18,13 @@ test('strict category matching gates Studio candidate + intent support', () => {
   assert.equal(supportsStudioIntent(service, 'video-generate'), false);
 });
 
+test('generic studio category opts services into Studio candidate discovery', () => {
+  const service = { categories: ['studio'] };
+  assert.equal(isStudioServiceCandidate(service), true);
+  assert.equal(supportsStudioIntent(service, 'image-generate'), true);
+  assert.equal(supportsStudioIntent(service, 'image-edit'), true);
+});
+
 test('buildStudioProxyRequest includes routing headers and studio payload', () => {
   const request = buildStudioRunRequest(
     'flux-dev',

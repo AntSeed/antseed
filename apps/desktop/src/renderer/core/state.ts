@@ -6,6 +6,10 @@ import type {
 } from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
 
+export const EXPERIENCE_MODES = ['code', 'studio'] as const;
+
+export type ExperienceMode = (typeof EXPERIENCE_MODES)[number];
+
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
 export type BadgeState = {
@@ -133,6 +137,7 @@ export type RendererUiState = {
   processes: RuntimeProcessState[];
   refreshing: boolean;
   daemonState: DaemonStateSnapshot | null;
+  experienceMode: ExperienceMode;
 
   // --- Runtime display ---
   connectState: string;
@@ -283,6 +288,7 @@ export function createInitialUiState(): RendererUiState {
     processes: [],
     refreshing: false,
     daemonState: null,
+    experienceMode: 'code',
 
     // Runtime display
     connectState: '',

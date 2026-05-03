@@ -1,4 +1,4 @@
-import type { ConfigFormData } from '../core/state';
+import type { ConfigFormData, ExperienceMode } from '../core/state';
 import type { RawChatAttachment } from '../types/bridge';
 
 export type AppActions = {
@@ -30,6 +30,7 @@ export type AppActions = {
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
+  setExperienceMode: (mode: ExperienceMode) => void;
   openPaymentsPortal?: (tab?: string) => void;
 };
 

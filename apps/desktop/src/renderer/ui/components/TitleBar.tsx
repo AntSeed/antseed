@@ -5,6 +5,7 @@ import { Moon02Icon } from '@hugeicons/core-free-icons';
 import { AntStationLogo } from './AntStationLogo';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
+import type { ExperienceMode } from '../../core/state';
 import styles from './TitleBar.module.scss';
 
 const THEME_STORAGE_KEY = 'antseed:theme';
@@ -63,6 +64,7 @@ export function TitleBar() {
     creditsOperatorAddress,
     creditsEvmAddress,
     configFormData,
+    experienceMode,
   } = useUiSnapshot();
   const actions = useActions();
   const [creditsDropdownOpen, setCreditsDropdownOpen] = useState(false);
@@ -82,6 +84,10 @@ export function TitleBar() {
   const handleDepositCredits = useCallback(() => {
     setCreditsDropdownOpen(false);
     actions.openPaymentsPortal?.('deposit');
+  }, [actions]);
+
+  const handleSetExperienceMode = useCallback((mode: ExperienceMode) => {
+    actions.setExperienceMode(mode);
   }, [actions]);
 
   useEffect(() => {
@@ -124,6 +130,22 @@ export function TitleBar() {
             </button>
           )
         )}
+        <div className={styles.modeToggle} role="group" aria-label="Experience mode">
+          <button
+            className={`${styles.modeToggleBtn}${experienceMode === 'code' ? ` ${styles.modeToggleBtnActive}` : ''}`}
+            onClick={() => handleSetExperienceMode('code')}
+            aria-pressed={experienceMode === 'code'}
+          >
+            Code Mode
+          </button>
+          <button
+            className={`${styles.modeToggleBtn}${experienceMode === 'studio' ? ` ${styles.modeToggleBtnActive}` : ''}`}
+            onClick={() => handleSetExperienceMode('studio')}
+            aria-pressed={experienceMode === 'studio'}
+          >
+            Studio Mode
+          </button>
+        </div>
         <div className={styles.alphaHint}>
           Alpha Version
         </div>
