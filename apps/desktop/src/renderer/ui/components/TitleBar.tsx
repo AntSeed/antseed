@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
-import { AntStationLogo } from './AntStationLogo';
+import { Wallet02Icon } from '@hugeicons/core-free-icons';
+import { Copy01Icon } from '@hugeicons/core-free-icons';
+import { Tick02Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
 import styles from './TitleBar.module.scss';
@@ -14,6 +17,36 @@ const CHAIN_LABELS: Record<string, string> = {
   'base-mainnet': 'Base Mainnet',
   'base-local': 'Local',
 };
+
+function CopyAddressButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // clipboard write can fail in restricted contexts; fail silently
+    }
+  }, [value]);
+
+  return (
+    <button
+      type="button"
+      className={styles.creditsDropdownCopyBtn}
+      onClick={handleCopy}
+      aria-label={copied ? `${label} address copied` : `Copy ${label} address`}
+      title={copied ? 'Copied' : 'Copy address'}
+    >
+      <HugeiconsIcon
+        icon={copied ? Tick02Icon : Copy01Icon}
+        size={12}
+        strokeWidth={2}
+      />
+    </button>
+  );
+}
 
 export function TitleBar() {
   const [isDark, setIsDark] = useState(() => {
@@ -84,6 +117,11 @@ export function TitleBar() {
     actions.openPaymentsPortal?.('deposit');
   }, [actions]);
 
+  const handleConnectWallet = useCallback(() => {
+    setCreditsDropdownOpen(false);
+    actions.openPaymentsPortal?.();
+  }, [actions]);
+
   useEffect(() => {
     if (!creditsDropdownOpen) return;
     const handler = (e: MouseEvent) => {
@@ -98,9 +136,7 @@ export function TitleBar() {
 
   return (
     <header className={styles.titleBar}>
-      <div className={styles.titleBarLeft}>
-        <AntStationLogo height={20} className={styles.titleBarLogo} />
-      </div>
+      <div className={styles.titleBarLeft} />
       <div className={styles.titleBarRight}>
         {updateState && (
           updateState.status === 'ready' ? (
@@ -124,55 +160,93 @@ export function TitleBar() {
             </button>
           )
         )}
-        <div className={styles.alphaHint}>
-          Alpha Version
-        </div>
         <div className={styles.titleBarCreditsWrapper}>
           <button
             className={styles.titleBarCreditsBtn}
             onClick={() => setCreditsDropdownOpen((prev) => !prev)}
-            aria-label={`Credits: ${creditsDisplay}`}
-            title="Credits balance"
+            aria-label={`Wallet balance: ${creditsDisplay}`}
+            title="Wallet balance"
           >
-            {creditsDisplay}
+            <HugeiconsIcon
+              icon={Wallet02Icon}
+              size={14}
+              strokeWidth={1.75}
+              className={styles.titleBarCreditsIcon}
+            />
+            <span className={styles.titleBarCreditsAmount}>{creditsDisplay}</span>
           </button>
           {creditsDropdownOpen && (
-            <div className={styles.titleBarCreditsDropdown}>
-              <div className={styles.creditsDropdownSection}>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Available</span>
-                  <span className={styles.creditsDropdownValue}>{creditsDisplay}</span>
+            <div className={styles.titleBarCreditsDropdown} role="menu">
+              <div className={styles.creditsDropdownBalanceSection}>
+                <div className={styles.creditsDropdownHero}>
+                  <span className={styles.creditsDropdownHeroAmount}>{creditsDisplay}</span>
+                  <span className={styles.creditsDropdownHeroUnit}>USDC available</span>
                 </div>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Reserved</span>
-                  <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsReservedUsdc).toFixed(2)}</span>
+                <div className={styles.creditsDropdownReservedRow}>
+                  <span className={styles.creditsDropdownReservedLabel}>Reserved</span>
+                  <span className={styles.creditsDropdownReservedValue}>
+                    ${parseFloat(creditsReservedUsdc).toFixed(2)}
+                  </span>
                 </div>
               </div>
-              <div className={styles.creditsDropdownSection}>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Your Wallet</span>
-                  {creditsOperatorAddress ? (
-                    <span className={styles.creditsDropdownValueGreen}>
-                      {creditsOperatorAddress.slice(0, 6)}...{creditsOperatorAddress.slice(-4)}
+
+              <div className={styles.creditsDropdownDivider} aria-hidden="true" />
+
+              <div className={styles.creditsDropdownIdentitySection}>
+                {creditsOperatorAddress ? (
+                  <div className={styles.creditsDropdownIdentityRow}>
+                    <span className={styles.creditsDropdownIdentityLabel}>Wallet</span>
+                    <span className={styles.creditsDropdownAddressGroup}>
+                      <span className={styles.creditsDropdownAddressChip}>
+                        {creditsOperatorAddress.slice(0, 6)}…{creditsOperatorAddress.slice(-4)}
+                      </span>
+                      <CopyAddressButton value={creditsOperatorAddress} label="Wallet" />
                     </span>
-                  ) : (
-                    <span className={styles.creditsDropdownValueWarn}>Not set</span>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.creditsDropdownConnectCta}
+                    onClick={handleConnectWallet}
+                  >
+                    <span className={styles.creditsDropdownConnectIcon} aria-hidden="true">
+                      <HugeiconsIcon icon={Wallet02Icon} size={14} strokeWidth={1.75} />
+                    </span>
+                    <span className={styles.creditsDropdownConnectText}>
+                      <span className={styles.creditsDropdownConnectTitle}>Connect a wallet</span>
+                      <span className={styles.creditsDropdownConnectSubtitle}>Link an address to deposit USDC</span>
+                    </span>
+                    <span className={styles.creditsDropdownConnectArrow} aria-hidden="true">
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
+                    </span>
+                  </button>
+                )}
                 {creditsEvmAddress && (
-                  <div className={styles.creditsDropdownRow}>
-                    <span className={styles.creditsDropdownLabel}>Your Signer</span>
-                    <span className={styles.creditsDropdownValueMuted}>
-                      {creditsEvmAddress.slice(0, 6)}...{creditsEvmAddress.slice(-4)}
+                  <div className={styles.creditsDropdownIdentityRow}>
+                    <span className={styles.creditsDropdownIdentityLabel}>Signer</span>
+                    <span className={styles.creditsDropdownAddressGroup}>
+                      <span className={styles.creditsDropdownAddressChipMuted}>
+                        {creditsEvmAddress.slice(0, 6)}…{creditsEvmAddress.slice(-4)}
+                      </span>
+                      <CopyAddressButton value={creditsEvmAddress} label="Signer" />
                     </span>
                   </div>
                 )}
               </div>
+
               <div className={styles.creditsDropdownActions}>
-                <button className={styles.creditsDropdownManageBtn} onClick={handleManageCredits}>
+                <button
+                  className={styles.creditsDropdownManageBtn}
+                  onClick={handleManageCredits}
+                  type="button"
+                >
                   Manage
                 </button>
-                <button className={styles.creditsDropdownAddBtn} onClick={handleDepositCredits}>
+                <button
+                  className={styles.creditsDropdownAddBtn}
+                  onClick={handleDepositCredits}
+                  type="button"
+                >
                   Deposit
                 </button>
               </div>

@@ -4,9 +4,8 @@ import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
-import { useDiscoverFilters } from '../../hooks/useDiscoverFilters';
+import { useDiscoverFilters, type DiscoverFilterState } from '../../hooks/useDiscoverFilters';
 import {
-  type DiscoverSortKey,
   MAX_INPUT_PRICE_SLIDER_USD,
   MAX_OUTPUT_PRICE_SLIDER_USD,
   DEFAULT_MIN_ON_CHAIN_CHANNELS,
@@ -15,7 +14,9 @@ import {
 import { DiscoverFilters } from './DiscoverFilters';
 import { DiscoverInlineCategoryFilter } from './DiscoverInlineCategoryFilter';
 import { DiscoverInlinePriceFilter } from './DiscoverInlinePriceFilter';
-import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
+import { DiscoverInlineSortFilter } from './DiscoverInlineSortFilter';
+import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
+import { getModelLogo } from './model-logos';
 import styles from './DiscoverWelcome.module.scss';
 
 /**
@@ -24,18 +25,10 @@ import styles from './DiscoverWelcome.module.scss';
  * reasoning + multimodal). Overflow is shown as a single “+N” pill whose
  * tooltip lists the hidden tags.
  */
-const MAX_VISIBLE_CARD_TAGS = 4;
+const MAX_VISIBLE_CARD_TAGS = 3;
 
-const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
-  { key: 'channelsDesc',    label: 'Most channels' },
-  { key: 'recentlyUsed',    label: 'Recently used' },
-  { key: 'serviceAsc',      label: 'Name A–Z' },
-  { key: 'serviceDesc',     label: 'Name Z–A' },
-  { key: 'priceAsc',        label: 'Price low to high' },
-  { key: 'priceDesc',       label: 'Price high to low' },
-  { key: 'stakeDesc',       label: 'Most staked' },
-  { key: 'lastSettledDesc', label: 'Recently settled' },
-];
+/** Tag rendered with a special accent (privacy property, not a capability). */
+const ACCENT_TAGS = new Set(['anon']);
 
 /* ── Card data type ──────────────────────────────────────────────────── */
 
@@ -194,18 +187,26 @@ const skeletonHighlightColor = 'rgba(0,0,0,0.07)';
 function SkeletonCard() {
   return (
     <div className={styles.card}>
+      <header className={styles.cardHeader}>
+        <Skeleton width={20} height={20} circle baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width={80} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      </header>
       <div className={styles.cardBody}>
+        <Skeleton width="60%" height={18} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width="92%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width="70%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
         <div className={styles.cardTags}>
-          <Skeleton width={52} height={18} borderRadius={24} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-          <Skeleton width={42} height={18} borderRadius={24} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width={48} height={20} borderRadius={6} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width={56} height={20} borderRadius={6} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
         </div>
-        <Skeleton width="65%" height={16} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width="90%" height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
-        <Skeleton width="55%" height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
       </div>
-      <div className={styles.cardFooter}>
-        <Skeleton width={90} height={12} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      <div className={styles.cardPricing}>
+        <Skeleton width={70} height={28} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width={70} height={28} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
       </div>
+      <footer className={styles.cardStats}>
+        <Skeleton width="80%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      </footer>
     </div>
   );
 }
@@ -416,16 +417,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
             </button>
             <DiscoverInlineCategoryFilter filters={filterState} />
             <DiscoverInlinePriceFilter filters={filterState} />
-            <select
-              className={styles.sortSelect}
-              value={filterState.sortKey}
-              onChange={(e) => filterState.setSortKey(e.target.value as DiscoverSortKey)}
-              aria-label="Sort services"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.key} value={o.key}>{o.label}</option>
-              ))}
-            </select>
+            <DiscoverInlineSortFilter filters={filterState} />
           </div>
           {!hasNetworkData && (
             <div className={styles.loadingHint}>
@@ -451,7 +443,11 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
                 ))}
               </div>
             ) : (
-              <div className={styles.emptyFilter}>No services match this filter.</div>
+              <EmptyState
+                search={filterState.search}
+                hasActiveFilters={hasActiveFilters}
+                filterState={filterState}
+              />
             )}
             {hasNetworkData && filtered.length > 0 && (
               <div className={styles.paginationBar}>
@@ -563,6 +559,13 @@ function Card({
   const hasInput = item.inputUsdPerMillion != null;
   const hasOutput = item.outputUsdPerMillion != null;
   const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
+  const ModelLogo = getModelLogo(item.name);
+
+  // Capabilities = tags minus "anon" (which is rendered as a separate accent badge).
+  const capabilityTags = item.tags.filter((t) => !ACCENT_TAGS.has(t.toLowerCase()));
+  const visibleTags = capabilityTags.slice(0, MAX_VISIBLE_CARD_TAGS);
+  const overflowTags = capabilityTags.slice(MAX_VISIBLE_CARD_TAGS);
+  const isAnon = item.tags.some((t) => t.toLowerCase() === 'anon');
 
   return (
     <div
@@ -572,62 +575,266 @@ function Card({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value, item.peerId); } }}
     >
-      <div className={styles.cardBody}>
-        <div className={styles.cardTags}>
-          {item.tags.slice(0, MAX_VISIBLE_CARD_TAGS).map((t) => (
-            <span key={t} className={styles.tag} style={getTagTint(t)}>{formatCategoryLabel(t)}</span>
-          ))}
-          {item.tags.length > MAX_VISIBLE_CARD_TAGS && (
-            <span
-              className={styles.tag}
-              title={item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
-              aria-label={`${item.tags.length - MAX_VISIBLE_CARD_TAGS} more categories: `
-                + item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
-            >
-              +{item.tags.length - MAX_VISIBLE_CARD_TAGS}
+      <header className={styles.cardHeader}>
+        <ProviderAvatar name={providerName} gradient={item.gradient} />
+        <div className={styles.cardHeaderText}>
+          <span className={styles.cardProviderName}>{providerName}</span>
+          {item.providerCount > 1 && (
+            <span className={styles.cardProviderCount}>
+              · {item.providerCount} peers
             </span>
           )}
         </div>
-        <div className={styles.cardName}>{item.displayName}</div>
-        <div className={styles.cardDesc}>{item.description}</div>
-        <div className={styles.cardPricing}>
-          {isFree ? (
-            <span className={styles.pricingFree}>Free</span>
-          ) : hasInput && hasOutput ? (
-            <>
-              <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
-              <span className={styles.pricingDot} />
-              <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
-            </>
-          ) : hasInput ? (
-            <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
-          ) : hasOutput ? (
-            <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
-          ) : null}
+        {isAnon && (
+          <span className={styles.anonBadge} title="Anonymous — no account or identity required">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 1L2 4v4c0 3.5 2.5 6.5 6 7 3.5-.5 6-3.5 6-7V4L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+            </svg>
+            Anon
+          </span>
+        )}
+      </header>
+
+      <div className={styles.cardBody}>
+        <h3 className={styles.cardName}>
+          {ModelLogo && <ModelLogo className={styles.modelLogo} />}
+          <span className={styles.cardNameText}>{item.displayName}</span>
+        </h3>
+        <p className={styles.cardDesc}>{item.description}</p>
+
+        <div className={styles.cardTags}>
+          {visibleTags.map((t) => (
+            <span key={t} className={styles.tag}>{formatCategoryLabel(t)}</span>
+          ))}
+          {overflowTags.length > 0 && (
+            <span
+              className={`${styles.tag} ${styles.tagMore}`}
+              title={overflowTags.map(formatCategoryLabel).join(', ')}
+              aria-label={`${overflowTags.length} more categories: ${overflowTags.map(formatCategoryLabel).join(', ')}`}
+            >
+              +{overflowTags.length}
+            </span>
+          )}
         </div>
       </div>
 
-      <div className={styles.cardFooter}>
-        <div className={styles.cardFooterTop}>
-          <div className={styles.cardProvider}>
-            <span className={styles.cardProviderBy}>By</span>
-            <ProviderAvatar name={providerName} gradient={item.gradient} />
-            <span className={styles.cardProviderName}>{providerName}</span>
+      <div className={styles.cardPricing}>
+        {isFree ? (
+          <div className={styles.pricingFreeRow}>
+            <span className={styles.pricingFree}>Free</span>
+            <span className={styles.pricingMeta}>per million tokens</span>
           </div>
-          {item.providerCount > 1 && (
-            <span className={styles.cardProviderCount}>
-              {item.providerCount} providers
-            </span>
+        ) : (hasInput || hasOutput) ? (
+          <>
+            {hasInput && (
+              <div className={styles.pricingCol}>
+                <span className={styles.pricingLabel}>Input</span>
+                <span className={styles.pricingValue}>{formatPerMillionPrice(item.inputUsdPerMillion!)}</span>
+              </div>
+            )}
+            {hasOutput && (
+              <div className={styles.pricingCol}>
+                <span className={styles.pricingLabel}>Output</span>
+                <span className={styles.pricingValue}>{formatPerMillionPrice(item.outputUsdPerMillion!)}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <span className={styles.pricingMeta}>Pricing on request</span>
+        )}
+      </div>
+
+      <footer className={styles.cardStats}>
+        <span className={styles.statItem}>
+          <strong>{formatCompact(item.channelCount)}</strong> {item.channelCount === 1 ? 'channel' : 'channels'}
+        </span>
+        <span className={styles.statsDot} aria-hidden="true" />
+        <span className={styles.statItem}>
+          <strong>{formatCompact(item.lifetimeRequests)}</strong> req
+        </span>
+        <span className={styles.statsDot} aria-hidden="true" />
+        <span className={styles.statItem}>
+          <strong>{formatCompact(item.lifetimeTokens)}</strong> tok
+        </span>
+      </footer>
+    </div>
+  );
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+
+const TIME_WINDOW_LABELS: Record<string, string> = {
+  today: 'Last 24 h',
+  week: 'Last 7 days',
+  month: 'Last 30 days',
+};
+
+type FilterChip = { key: string; label: string; onClear: () => void };
+
+function buildFilterChips(filterState: DiscoverFilterState): FilterChip[] {
+  const chips: FilterChip[] = [];
+
+  filterState.categorySet.forEach((cat) => {
+    chips.push({
+      key: `cat-${cat}`,
+      label: formatCategoryLabel(cat),
+      onClear: () => filterState.toggleCategory(cat),
+    });
+  });
+
+  filterState.peerSet.forEach((peerId) => {
+    const peer = filterState.availablePeers.find((p) => p.peerId === peerId);
+    chips.push({
+      key: `peer-${peerId}`,
+      label: peer?.label ?? peerId,
+      onClear: () => filterState.togglePeer(peerId),
+    });
+  });
+
+  if (filterState.maxInputPrice < MAX_INPUT_PRICE_SLIDER_USD) {
+    chips.push({
+      key: 'max-input',
+      label: `Input ≤ $${filterState.maxInputPrice.toFixed(filterState.maxInputPrice < 1 ? 2 : 1)}`,
+      onClear: () => filterState.setMaxInputPrice(MAX_INPUT_PRICE_SLIDER_USD),
+    });
+  }
+
+  if (filterState.maxOutputPrice < MAX_OUTPUT_PRICE_SLIDER_USD) {
+    chips.push({
+      key: 'max-output',
+      label: `Output ≤ $${filterState.maxOutputPrice.toFixed(filterState.maxOutputPrice < 1 ? 2 : 1)}`,
+      onClear: () => filterState.setMaxOutputPrice(MAX_OUTPUT_PRICE_SLIDER_USD),
+    });
+  }
+
+  if (filterState.chattedOnly) {
+    chips.push({
+      key: 'chatted-only',
+      label: 'Chatted before',
+      onClear: () => filterState.setChattedOnly(false),
+    });
+  }
+
+  if (filterState.minStakeUsdc > 0) {
+    chips.push({
+      key: 'min-stake',
+      label: `Stake ≥ $${filterState.minStakeUsdc}`,
+      onClear: () => filterState.setMinStakeUsdc(0),
+    });
+  }
+
+  if (filterState.lastSeenWindow !== 'any') {
+    chips.push({
+      key: 'last-seen',
+      label: `Seen · ${TIME_WINDOW_LABELS[filterState.lastSeenWindow] ?? filterState.lastSeenWindow}`,
+      onClear: () => filterState.setLastSeenWindow('any'),
+    });
+  }
+
+  if (filterState.lastSettledWindow !== 'any') {
+    chips.push({
+      key: 'last-settled',
+      label: `Settled · ${TIME_WINDOW_LABELS[filterState.lastSettledWindow] ?? filterState.lastSettledWindow}`,
+      onClear: () => filterState.setLastSettledWindow('any'),
+    });
+  }
+
+  if (filterState.minOnChainChannels !== DEFAULT_MIN_ON_CHAIN_CHANNELS) {
+    chips.push({
+      key: 'min-channels',
+      label: `≥ ${filterState.minOnChainChannels} channels`,
+      onClear: () => filterState.setMinOnChainChannels(DEFAULT_MIN_ON_CHAIN_CHANNELS),
+    });
+  }
+
+  return chips;
+}
+
+function EmptyState({
+  search,
+  hasActiveFilters,
+  filterState,
+}: {
+  search: string;
+  hasActiveFilters: boolean;
+  filterState: DiscoverFilterState;
+}) {
+  const hasSearch = search.trim().length > 0;
+  const canReset = hasSearch || hasActiveFilters;
+  const chips = hasActiveFilters ? buildFilterChips(filterState) : [];
+
+  return (
+    <div className={styles.emptyState} role="status" aria-live="polite">
+      <div className={styles.emptyMark} aria-hidden="true">
+        <svg width="96" height="96" viewBox="0 0 96 96">
+          <circle cx="48" cy="48" r="44" className={styles.emptyMarkRing} style={{ opacity: 0.1 }} />
+          <circle cx="48" cy="48" r="32" className={styles.emptyMarkRing} style={{ opacity: 0.2 }} />
+          <circle cx="48" cy="48" r="20" className={styles.emptyMarkRing} style={{ opacity: 0.3 }} />
+          <circle cx="48" cy="48" r="20" className={styles.emptyMarkPulse} />
+          <circle cx="48" cy="48" r="3.25" className={styles.emptyMarkDot} />
+          {/* offset peer-dots: hint of network beyond the empty match */}
+          <circle cx="14" cy="20" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '0.4s' }} />
+          <circle cx="82" cy="28" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '0.8s' }} />
+          <circle cx="78" cy="76" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '1.2s' }} />
+          <circle cx="20" cy="78" r="1.5" className={styles.emptyMarkPeer} style={{ animationDelay: '1.6s' }} />
+        </svg>
+      </div>
+
+      <h2 className={styles.emptyTitle}>No matches in the network</h2>
+
+      {chips.length > 0 && (
+        <div className={styles.emptyChips}>
+          {chips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              className={styles.emptyChip}
+              onClick={chip.onClear}
+              aria-label={`Remove filter: ${chip.label}`}
+              title={`Remove “${chip.label}”`}
+            >
+              <span className={styles.emptyChipLabel}>{chip.label}</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {canReset && (
+        <div className={styles.emptyActions}>
+          <button
+            type="button"
+            className={styles.emptyPrimary}
+            onClick={() => filterState.resetAll()}
+          >
+            Show all services
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path
+                d="M2 6h7m-2.5-3L9.5 6 6.5 9"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+            </svg>
+          </button>
+
+          {hasSearch && hasActiveFilters && (
+            <div className={styles.emptyLinks}>
+              <button
+                type="button"
+                className={styles.emptyLink}
+                onClick={() => filterState.setSearch('')}
+              >
+                Clear search only
+              </button>
+            </div>
           )}
         </div>
-        <div className={styles.cardStats}>
-          <span>{item.channelCount} channel{item.channelCount === 1 ? '' : 's'}</span>
-          <span className={styles.statsDot} />
-          <span>{formatCompact(item.lifetimeRequests)} request{item.lifetimeRequests === 1 ? '' : 's'}</span>
-          <span className={styles.statsDot} />
-          <span>{formatCompact(item.lifetimeTokens)} token{item.lifetimeTokens === 1 ? '' : 's'}</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

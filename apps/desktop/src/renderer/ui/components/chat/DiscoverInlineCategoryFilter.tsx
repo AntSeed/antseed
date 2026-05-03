@@ -1,9 +1,36 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
 import { formatCategoryLabel } from './discover-filter-util';
+import { getCategoryIcon } from './discover-category-icons';
 import styles from './DiscoverInlineCategoryFilter.module.scss';
 
 type Props = { filters: DiscoverFilterState };
+
+/**
+ * Curated top categories that surface first whenever they're available in the
+ * peer-announced set. Order matters — these render left-to-right before any
+ * remaining categories. Picks cover general (chat) + dev (coding) + hard
+ * problems (reasoning) + multimodal (vision) + AntSeed's privacy story (anon).
+ */
+const TOP_CATEGORIES = ['chat', 'coding', 'reasoning', 'vision', 'anon'] as const;
+const TOP_LIMIT = 5;
+
+function reorderCategories(available: string[]): string[] {
+  const byKey = new Map<string, string>();
+  for (const c of available) byKey.set(c.toLowerCase(), c);
+  const head: string[] = [];
+  const used = new Set<string>();
+  for (const key of TOP_CATEGORIES) {
+    const original = byKey.get(key);
+    if (original) {
+      head.push(original);
+      used.add(original);
+    }
+  }
+  const tail = available.filter((c) => !used.has(c));
+  return [...head, ...tail];
+}
 
 function triggerLabel(filters: DiscoverFilterState): string {
   const size = filters.categorySet.size;
@@ -17,10 +44,29 @@ function triggerLabel(filters: DiscoverFilterState): string {
 
 export function DiscoverInlineCategoryFilter({ filters }: Props) {
   const [open, setOpen] = useState(false);
+  const [userExpanded, setUserExpanded] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
   const isActive = filters.categorySet.size > 0;
   const isEmpty = filters.availableCategories.length === 0;
+
+  const ordered = useMemo(
+    () => reorderCategories(filters.availableCategories),
+    [filters.availableCategories],
+  );
+
+  // Auto-expand if the user has selected anything that lives outside the
+  // initial top slice — otherwise selections would be invisible behind the
+  // collapse.
+  const hasHiddenSelection = useMemo(() => {
+    if (ordered.length <= TOP_LIMIT) return false;
+    return ordered.slice(TOP_LIMIT).some((c) => filters.categorySet.has(c.toLowerCase()));
+  }, [ordered, filters.categorySet]);
+
+  const expanded = userExpanded || hasHiddenSelection;
+  const canExpand = ordered.length > TOP_LIMIT;
+  const visible = expanded || !canExpand ? ordered : ordered.slice(0, TOP_LIMIT);
+  const hiddenCount = ordered.length - TOP_LIMIT;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -78,7 +124,7 @@ export function DiscoverInlineCategoryFilter({ filters }: Props) {
             )}
           </div>
           <div className={styles.chipList}>
-            {filters.availableCategories.map((c) => {
+            {visible.map((c) => {
               const active = filters.categorySet.has(c.toLowerCase());
               return (
                 <button
@@ -89,10 +135,33 @@ export function DiscoverInlineCategoryFilter({ filters }: Props) {
                   className={`${styles.chip}${active ? ` ${styles.chipActive}` : ''}`}
                   onClick={() => filters.toggleCategory(c)}
                 >
+                  <HugeiconsIcon
+                    icon={getCategoryIcon(c)}
+                    size={12}
+                    strokeWidth={1.5}
+                    className={styles.chipIcon}
+                  />
                   {formatCategoryLabel(c)}
                 </button>
               );
             })}
+            {canExpand && (
+              <button
+                type="button"
+                className={styles.showMore}
+                onClick={() => setUserExpanded((v) => !v)}
+                aria-expanded={expanded}
+              >
+                <span>{expanded ? 'Show less' : `+${hiddenCount} more`}</span>
+                <svg
+                  className={`${styles.showMoreChevron}${expanded ? ` ${styles.showMoreChevronOpen}` : ''}`}
+                  width="9" height="6" viewBox="0 0 10 6" fill="none"
+                  aria-hidden="true"
+                >
+                  <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       )}

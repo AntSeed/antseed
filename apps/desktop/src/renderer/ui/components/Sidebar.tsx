@@ -14,6 +14,8 @@ import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
+import { AntStationLogo } from './AntStationLogo';
+import { AlphaHint } from './AlphaHint';
 import styles from './Sidebar.module.scss';
 
 type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
@@ -505,6 +507,11 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
 
   return (
     <aside className={styles.sidebar}>
+      <div className={styles.sidebarHeader}>
+        <AntStationLogo height={28} className={styles.sidebarLogo} />
+        <AlphaHint />
+      </div>
+
       <SidebarWarning />
 
       <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">

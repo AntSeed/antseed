@@ -96,7 +96,8 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  padding: 3px 9px;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
   font-size: 11px;
   font-family: inherit;
   font-weight: 500;
@@ -116,6 +117,16 @@
   }
 }
 
+.chip-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.12s;
+}
+
+.chip:hover .chip-icon {
+  color: var(--text-secondary);
+}
+
 .chip-active {
   background: var(--text-primary);
   color: var(--bg-card);
@@ -126,4 +137,48 @@
     color: var(--bg-card);
     border-color: var(--text-primary);
   }
+
+  .chip-icon {
+    color: var(--bg-card);
+  }
+}
+
+.chip-active:hover .chip-icon {
+  color: var(--bg-card);
+}
+
+/* Show more / show less toggle — chip-shaped to flow with the list, but
+   visually quieter so it reads as a control rather than a category. */
+.show-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  user-select: none;
+
+  &:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+    border-style: solid;
+  }
+}
+
+.show-more-chevron {
+  flex-shrink: 0;
+  color: currentColor;
+  transition: transform 0.14s ease;
+}
+
+.show-more-chevron-open {
+  transform: rotate(180deg);
 }

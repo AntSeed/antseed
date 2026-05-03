@@ -246,6 +246,19 @@ export const PRICE_PRESETS = [
 
 export type PricePresetId = typeof PRICE_PRESETS[number]['id'];
 
+/* ── Sort options (single source of truth for sort dropdown) ─────────── */
+
+export const SORT_OPTIONS: ReadonlyArray<{ key: DiscoverSortKey; label: string }> = [
+  { key: 'channelsDesc',    label: 'Most channels' },
+  { key: 'recentlyUsed',    label: 'Recently used' },
+  { key: 'serviceAsc',      label: 'Name A–Z' },
+  { key: 'serviceDesc',     label: 'Name Z–A' },
+  { key: 'priceAsc',        label: 'Price low to high' },
+  { key: 'priceDesc',       label: 'Price high to low' },
+  { key: 'stakeDesc',       label: 'Most staked' },
+  { key: 'lastSettledDesc', label: 'Recently settled' },
+];
+
 const PRICE_EPSILON = 0.001;
 
 export function matchPricePreset(

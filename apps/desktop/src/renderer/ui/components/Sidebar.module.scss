@@ -8,6 +8,21 @@
   padding: 8px 0;
 }
 
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 16px;
+}
+
+.sidebar-logo {
+  height: 28px;
+  width: auto;
+  display: block;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
 .sidebar-warning {
   margin: 8px;
   padding: 8px 10px;
