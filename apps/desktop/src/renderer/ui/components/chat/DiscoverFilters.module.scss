@@ -48,7 +48,8 @@
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 3px 9px;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
   font-size: 11px;
   font-family: inherit;
   font-weight: 500;
@@ -65,7 +66,15 @@
   &:hover {
     border-color: var(--border-strong);
     color: var(--text-primary);
+
+    .tag-icon { color: var(--text-secondary); }
   }
+}
+
+.tag-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.12s ease;
 }
 
 .tag-active {
@@ -73,10 +82,14 @@
   color: var(--bg-card);
   border-color: var(--text-primary);
 
+  .tag-icon { color: var(--bg-card); }
+
   &:hover {
     background: var(--text-primary);
     color: var(--bg-card);
     border-color: var(--text-primary);
+
+    .tag-icon { color: var(--bg-card); }
   }
 }
 
@@ -337,48 +350,165 @@
   flex-shrink: 0;
 }
 
-/* ── Select ─────────────────────────────────────────────────────────── */
+/* ── Time-window custom select ──────────────────────────────────────── */
 
-.select {
+.tw-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.tw-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   height: 30px;
-  padding: 0 28px 0 10px;
+  padding: 0 10px 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  background: var(--bg-card);
+  color: var(--text-primary);
   font-size: 12px;
   font-family: inherit;
-  color: var(--text-primary);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  outline: none;
+  font-weight: 500;
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1L5 5L9 1' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  transition: border-color 0.12s ease;
+  outline: none;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
 
-  &:hover { border-color: var(--border-strong); }
-  &:focus { border-color: var(--text-primary); }
+  &:hover { background-color: var(--bg-hover); }
+  &:focus-visible { border-color: var(--accent); }
+}
+
+.tw-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+
+.tw-chevron-open {
+  transform: rotate(180deg);
+}
+
+.tw-popover {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tw-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  width: 100%;
+  padding: 0 10px 0 6px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.tw-option-active {
+  color: var(--text-primary);
+}
+
+.tw-check-slot {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* ── Custom checkbox row ────────────────────────────────────────────── */
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 2px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+  transition: color 0.12s ease;
+  user-select: none;
+
+  &:hover {
+    color: var(--text-primary);
+
+    .check-box { border-color: var(--border-strong); }
+  }
+}
+
+.check-box {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.check-box-active {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-card);
 }
 
 /* ── Reset ──────────────────────────────────────────────────────────── */
 
 .reset-btn {
-  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
   background: transparent;
-  border: none;
-  padding: 2px 0 0 0;
-  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
   font-weight: 500;
   font-family: inherit;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
   flex-shrink: 0;
 
   &:hover {
-    color: var(--text-primary);
-    background: transparent;
+    color: var(--danger);
+    border-color: rgba(var(--danger-rgb), 0.3);
+    background-color: rgba(var(--danger-rgb), 0.06);
   }
 }

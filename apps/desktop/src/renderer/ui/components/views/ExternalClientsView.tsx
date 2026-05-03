@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, type ReactNode } from 'react';
+import { useState, useCallback, useMemo, useEffect, type CSSProperties, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   PlayIcon,
@@ -107,22 +107,26 @@ const DOCS_URL = 'https://antseed.com/docs/guides/using-the-api';
 
 const STEPS = [
   {
+    tag: 'desktop',
     title: 'AntStation runs it for you',
     text: 'While AntStation is open, the proxy stays online in the background. Quit AntStation and it shuts down.',
   },
   {
+    tag: 'cli',
     title: 'Or run it yourself',
     text: 'Prefer headless or server use? Install the CLI and run',
     code: 'antseed buyer start',
     textAfter: '— the proxy listens on the same port.',
   },
   {
+    tag: 'header',
     title: 'Pin a service or let AntSeed route',
     text: 'Send',
     code: 'x-antseed-pin-peer',
     textAfter: 'to lock onto a peer, or omit it and let the proxy pick the best match by price and reputation.',
   },
   {
+    tag: 'docs',
     title: 'For developers going deeper',
     text: 'This page is a quick jumping-off point. Full protocol reference, headers, and streaming semantics live in the docs.',
   },
@@ -558,22 +562,39 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
               </p>
             </div>
 
-            <ol className={styles.steps}>
+            <ol className={styles.flow}>
               {STEPS.map((step, i) => (
-                <li key={i} className={styles.step}>
-                  <span className={styles.stepNum}>{String(i + 1).padStart(2, '0')}</span>
-                  <div className={styles.stepBody}>
-                    <span className={styles.stepTitle}>{step.title}</span>
-                    <span className={styles.stepText}>
-                      {step.text}
-                      {step.code && (
-                        <>
-                          {' '}<code className={styles.inlineCode}>{step.code}</code>
-                          {step.textAfter ? ` ${step.textAfter}` : ''}
-                        </>
-                      )}
+                <li
+                  key={i}
+                  className={styles.flowItem}
+                  style={{ ['--flow-idx' as string]: i } as CSSProperties}
+                >
+                  <article className={styles.flowCard}>
+                    <div className={styles.flowRail}>
+                      <span className={styles.flowNum}>{String(i + 1).padStart(2, '0')}</span>
+                    </div>
+                    <div className={styles.flowBody}>
+                      <div className={styles.flowHead}>
+                        <span className={styles.flowTitle}>{step.title}</span>
+                        <span className={styles.flowTag}>{step.tag}</span>
+                      </div>
+                      <p className={styles.flowText}>
+                        {step.text}
+                        {step.code && (
+                          <>
+                            {' '}<code className={styles.inlineCode}>{step.code}</code>
+                            {step.textAfter ? ` ${step.textAfter}` : ''}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </article>
+                  {i < STEPS.length - 1 && (
+                    <span className={styles.flowJoin} aria-hidden="true">
+                      <span className={styles.flowJoinLine} />
+                      <span className={styles.flowJoinTip} />
                     </span>
-                  </div>
+                  )}
                 </li>
               ))}
             </ol>

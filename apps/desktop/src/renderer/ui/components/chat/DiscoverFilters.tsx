@@ -1,6 +1,9 @@
-import { memo } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { FilterResetIcon } from '@hugeicons/core-free-icons';
 import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
-import { getTagOutlineTint } from '../../../core/peer-utils';
+import { getCategoryIcon } from './discover-category-icons';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
@@ -31,6 +34,104 @@ const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> =
   { value: 'week', label: 'This week' },
   { value: 'month', label: 'This month' },
 ];
+
+const POPOVER_EST_HEIGHT = 148;
+
+function TimeWindowSelect({
+  value,
+  onChange,
+}: {
+  value: TimeWindow;
+  onChange: (v: TimeWindow) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const current = TIME_WINDOW_OPTIONS.find((o) => o.value === value) ?? TIME_WINDOW_OPTIONS[0];
+
+  const handleToggle = () => {
+    if (!open && triggerRef.current) {
+      setTriggerRect(triggerRef.current.getBoundingClientRect());
+    }
+    setOpen((v) => !v);
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const popoverStyle: React.CSSProperties = triggerRect
+    ? (() => {
+        const spaceBelow = window.innerHeight - triggerRect.bottom;
+        const base = { left: triggerRect.left, width: triggerRect.width };
+        return spaceBelow >= POPOVER_EST_HEIGHT + 8
+          ? { ...base, top: triggerRect.bottom + 4 }
+          : { ...base, bottom: window.innerHeight - triggerRect.top + 4 };
+      })()
+    : {};
+
+  return (
+    <div className={styles.twWrapper}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={styles.twTrigger}
+        onClick={handleToggle}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{current.label}</span>
+        <svg
+          className={`${styles.twChevron}${open ? ` ${styles.twChevronOpen}` : ''}`}
+          width="10" height="6" viewBox="0 0 10 6" fill="none"
+          aria-hidden="true"
+        >
+          <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && triggerRect && createPortal(
+        <div className={styles.twPopover} style={popoverStyle} role="listbox">
+          {TIME_WINDOW_OPTIONS.map((opt) => {
+            const active = opt.value === value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`${styles.twOption}${active ? ` ${styles.twOptionActive}` : ''}`}
+                onClick={() => { onChange(opt.value); setOpen(false); }}
+              >
+                <span className={styles.twCheckSlot} aria-hidden="true">
+                  {active && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2 6.5L4.75 9L10 3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </span>
+                <span>{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
 
 export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props) {
   return (
@@ -92,9 +193,14 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
                   key={c}
                   type="button"
                   className={`${styles.tag} ${active ? styles.tagActive : ''}`}
-                  style={active ? undefined : getTagOutlineTint(c)}
                   onClick={() => filters.toggleCategory(c)}
                 >
+                  <HugeiconsIcon
+                    icon={getCategoryIcon(c)}
+                    size={12}
+                    strokeWidth={1.5}
+                    className={styles.tagIcon}
+                  />
                   {formatCategoryLabel(c)}
                 </button>
               );
@@ -145,7 +251,7 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
         </div>
       </div>
 
-      {/* On-chain channel count: simple proxy for whether a peer has a track record. */}
+      {/* On-chain channel count */}
       <div className={styles.field}>
         <div className={styles.sliderHeader}>
           <span className={styles.label}>channels</span>
@@ -167,42 +273,39 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
       {/* Last seen window */}
       <div className={styles.field}>
         <div className={styles.label}>Last seen</div>
-        <select
-          className={styles.select}
+        <TimeWindowSelect
           value={filters.lastSeenWindow}
-          onChange={(e) => filters.setLastSeenWindow(e.target.value as TimeWindow)}
-        >
-          {TIME_WINDOW_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          onChange={filters.setLastSeenWindow}
+        />
       </div>
 
       {/* Last settled window */}
       <div className={styles.field}>
         <div className={styles.label}>Last settled</div>
-        <select
-          className={styles.select}
+        <TimeWindowSelect
           value={filters.lastSettledWindow}
-          onChange={(e) => filters.setLastSettledWindow(e.target.value as TimeWindow)}
-        >
-          {TIME_WINDOW_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          onChange={filters.setLastSettledWindow}
+        />
       </div>
 
-      <label className={styles.listItem}>
-        <input
-          type="checkbox"
-          checked={filters.chattedOnly}
-          onChange={(e) => filters.setChattedOnly(e.target.checked)}
-        />
+      <button
+        type="button"
+        className={styles.checkRow}
+        onClick={() => filters.setChattedOnly(!filters.chattedOnly)}
+        aria-pressed={filters.chattedOnly}
+      >
+        <span className={`${styles.checkBox} ${filters.chattedOnly ? styles.checkBoxActive : ''}`}>
+          {filters.chattedOnly && (
+            <svg width="9" height="7" viewBox="0 0 9 7" fill="none" aria-hidden="true">
+              <path d="M1 3.5L3.5 6L8 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
         <span>Previously used</span>
-      </label>
+      </button>
 
-      {/* Reset */}
       <button type="button" className={styles.resetBtn} onClick={filters.resetAll}>
+        <HugeiconsIcon icon={FilterResetIcon} size={12} strokeWidth={1.5} />
         Reset all
       </button>
     </aside>

@@ -42,12 +42,13 @@
   font-weight: 500;
   padding: 5px 8px 5px 7px;
   border-radius: 999px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
   letter-spacing: 0.02em;
   white-space: nowrap;
   align-self: center;
   line-height: 1;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.52) inset;
 }
 
 .proxy-badge-dot {
@@ -55,6 +56,7 @@
   height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
+  background: var(--text-muted);
 }
 
 .proxy-badge-text {
@@ -75,30 +77,18 @@
 }
 
 .proxy-online {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.2)),
-    color-mix(in srgb, var(--accent-green) 7%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--accent-green) 22%, var(--border));
-  color: color-mix(in srgb, var(--accent-green) 62%, var(--text-primary));
-
   .proxy-badge-dot {
     background: var(--accent-green);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 18%, transparent);
-    animation: dotPulse 2.4s ease-in-out infinite;
   }
 }
 
 .proxy-offline {
-  background: var(--bg-surface);
-  border-color: var(--border);
   color: var(--text-muted);
-
-  .proxy-badge-dot { background: var(--text-muted); }
 }
 
 @keyframes dotPulse {
-  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 18%, transparent); }
-  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent-green) 8%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-yellow) 18%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent-yellow) 8%, transparent); }
 }
 
 /* ── Layout ── */
@@ -226,68 +216,156 @@
   max-width: 56ch;
 }
 
-/* ── Numbered steps ── */
+/* ── Connected flow cards ── */
 
-.steps {
+.flow {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  position: relative;
 }
 
-.step {
+.flow-item {
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(4px);
+  animation: flowIn 0.42s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: calc(var(--flow-idx, 0) * 70ms);
+}
+
+@keyframes flowIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.flow-card {
   display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 14px;
-  align-items: start;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px 14px 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
   position: relative;
-}
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
 
-.step-num {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  padding-top: 2px;
-  text-align: right;
-  position: relative;
+  &:hover {
+    border-color: color-mix(in srgb, var(--accent-green) 35%, var(--border-strong));
+    background: color-mix(in srgb, var(--accent-green) 3%, var(--bg-card));
+    transform: translateX(1px);
+    box-shadow: var(--shadow-sm);
 
-  &::after {
-    content: '';
-    position: absolute;
-    right: -7px;
-    top: 7px;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--accent-green) 70%, transparent);
+    .flow-num {
+      color: color-mix(in srgb, var(--accent-green) 78%, var(--text-primary));
+      border-color: color-mix(in srgb, var(--accent-green) 38%, var(--border-strong));
+      background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-surface));
+    }
   }
 }
 
-.step-body {
+.flow-rail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 1px;
+}
+
+.flow-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.flow-body {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
 
-.step-title {
+.flow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.flow-title {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.005em;
-  line-height: 1.35;
+  line-height: 1.3;
+  min-width: 0;
 }
 
-.step-text {
+.flow-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.flow-text {
+  margin: 0;
   font-size: 12.5px;
   color: var(--text-secondary);
   line-height: 1.55;
   letter-spacing: -0.003em;
+}
+
+.flow-join {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-left: 29px; /* card padding (10px) + half of rail column (19px) → centers on the chip */
+  height: 22px;
+  pointer-events: none;
+}
+
+.flow-join-line {
+  width: 1px;
+  flex: 1;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--border) 90%, transparent),
+    color-mix(in srgb, var(--accent-green) 35%, transparent)
+  );
+}
+
+.flow-join-tip {
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid color-mix(in srgb, var(--accent-green) 55%, var(--border-strong));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-green) 55%, var(--border-strong));
+  transform: rotate(45deg);
+  margin-top: -3px;
+  margin-left: -2px; /* offsets the 5px tip so its center sits on the 1px line above */
 }
 
 .inline-code {
@@ -644,53 +722,35 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent-green) 78%, #fff) 0%,
-      color-mix(in srgb, var(--accent-green) 92%, #0f2a1a) 100%);
-  color: #052011;
-  border: none;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   border-radius: 999px;
   min-height: 32px;
   min-width: 74px;
   padding: 0 13px 0 11px;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.01em;
   cursor: pointer;
   font-family: inherit;
   flex-shrink: 0;
   white-space: nowrap;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent-green) 60%, #000) inset,
-    0 1px 0 rgba(255, 255, 255, 0.42) inset,
-    0 1px 1.5px rgba(8, 32, 20, 0.18),
-    0 6px 18px -10px color-mix(in srgb, var(--accent-green) 62%, transparent);
-  transition: filter 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 
   &:hover:not(:disabled) {
-    filter: brightness(1.05);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--accent-green) 60%, #000) inset,
-      0 1px 0 rgba(255, 255, 255, 0.28) inset,
-      0 1px 1.5px rgba(8, 32, 20, 0.18),
-      0 6px 16px -4px color-mix(in srgb, var(--accent-green) 55%, transparent);
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface)));
+    border-color: var(--border-strong);
   }
 
   &:active:not(:disabled) {
     transform: translateY(0.5px);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--accent-green) 60%, #000) inset,
-      0 1px 0 rgba(255, 255, 255, 0.18) inset,
-      0 1px 1px rgba(8, 32, 20, 0.18);
   }
 
   &:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
-    background: var(--bg-surface);
     color: var(--text-muted);
-    box-shadow: 0 0 0 1px var(--border) inset;
   }
 }
 
@@ -1151,19 +1211,12 @@
 }
 
 :global(body.dark-theme) {
-  .proxy-badge,
   .try-block,
   .code-window,
   .response-window {
     box-shadow:
       0 1px 0 rgba(255, 255, 255, 0.04) inset,
       0 14px 32px -26px rgba(0, 0, 0, 0.72);
-  }
-
-  .proxy-online {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0)),
-      color-mix(in srgb, var(--accent-green) 9%, var(--bg-card));
   }
 
   .code-window {
