@@ -1,9 +1,15 @@
-import type { ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchStats, type Peer } from './api';
+import { fetchStats, getPeerServices, type Peer, type ProviderAnnouncement } from './api';
+import { SearchGlyph } from './components/icons';
+import { Modal } from './components/Modal';
 import {
+  formatAbsolute,
+  formatNumberFull,
+  formatPrefixedAddress,
   formatLargeNumber,
   formatRelative,
+  formatRelativeSeconds,
   formatUsd,
   parseUpdatedAt,
   shortPeerId,
@@ -13,33 +19,8 @@ import {
 } from './utils';
 
 const REFETCH_INTERVAL_MS = 30_000;
-
-function formatNumberFull(value: string | number | null | undefined): string {
-  if (value == null || value === '') return '—';
-  const n = typeof value === 'string' ? Number(value) : value;
-  if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString();
-}
-
-function formatTimestampSeconds(s: number | null, now: number): string {
-  if (s == null || !Number.isFinite(s) || s === 0) return '—';
-  return formatRelative(s * 1000, now);
-}
-
-function formatAbsoluteSeconds(s: number | null): string {
-  if (s == null || !Number.isFinite(s) || s === 0) return '—';
-  return new Date(s * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
-}
-
-function formatAbsoluteMs(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms) || ms === 0) return '—';
-  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
-}
-
-function formatPrefixedAddress(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return value.startsWith('0x') ? value : `0x${value}`;
-}
+const SERVICES_PREVIEW_LIMIT = 18;
+const PROVIDER_GROUP_PREVIEW_LIMIT = 10;
 
 export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => void }) {
   const { data, isLoading, error } = useQuery({
@@ -54,10 +35,6 @@ export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => voi
 
   return (
     <main className="dash-content fade-in">
-      <button type="button" className="back-link" onClick={onBack} aria-label="Back to swarm">
-        <span aria-hidden>←</span> Back to the swarm
-      </button>
-
       {isLoading && <div className="status-banner">Loading peer…</div>}
       {error && (
         <div className="status-banner status-banner--error">
@@ -77,18 +54,18 @@ export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => voi
         </div>
       )}
 
-      {peer && <PeerDetail peer={peer} now={now} />}
+      {peer && <PeerDetail peer={peer} chainId={data?.indexer?.chainId} now={now} />}
     </main>
   );
 }
 
-function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
+function PeerDetail({ peer, chainId, now }: { peer: Peer; chainId?: string; now: number }) {
   const id = shortPeerId(peer.peerId);
   const stats = peer.onChainStats;
-  const services = peer.services ?? [];
+  const services = getPeerServices(peer);
   const endpoints = peer.endpoints ?? [];
   const providers = peer.providers ?? [];
-  const announceMs = peer.timestamp ? peer.timestamp * 1000 : null;
+  const announceMs = peer.timestamp ?? null;
 
   const sellerContractFmt = formatPrefixedAddress(peer.sellerContract);
   const publicAddressFmt = formatPrefixedAddress(peer.publicAddress);
@@ -96,7 +73,6 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
   return (
     <>
       <header className="peer-page-head">
-        <span className="dashboard-section-eyebrow">Peer</span>
         <h2 className="peer-page-title">
           {peer.displayName ? (
             <>
@@ -125,7 +101,7 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
         </h2>
         <code className="peer-page-fullid">{peer.peerId}</code>
         <div className="peer-page-meta">
-          {peer.region && <span className="peer-page-meta-pill">{peer.region}</span>}
+          {chainId && <span className="peer-page-meta-pill">{chainId}</span>}
           {peer.version != null && (
             <span className="peer-page-meta-pill">v{peer.version}</span>
           )}
@@ -144,8 +120,7 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
 
       <section className="dashboard-section">
         <SectionHead
-          eyebrow="Activity"
-          title="On-chain accounting"
+          title="Activity"
           sub="Cumulative settlements recorded for this seller across every payment channel."
         />
         {stats ? (
@@ -204,8 +179,7 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
 
       <section className="dashboard-section">
         <SectionHead
-          eyebrow="Identity"
-          title="Who they say they are"
+          title="Identity"
           sub="Self-announced metadata pulled from the DHT plus on-chain bindings."
         />
         <div className="card peer-kv">
@@ -235,7 +209,7 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
           {peer.version != null && <KV label="Metadata version">{peer.version}</KV>}
           {announceMs && (
             <KV label="Last announce">
-              {formatRelative(announceMs, now)} <span className="dim">({formatAbsoluteMs(announceMs)})</span>
+              {formatRelative(announceMs, now)} <span className="dim">({formatAbsolute(announceMs)})</span>
             </KV>
           )}
         </div>
@@ -243,55 +217,15 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
 
       <section className="dashboard-section">
         <SectionHead
-          eyebrow="Offerings"
           title="Services"
           sub="What this peer advertises to buyers."
         />
-        {services.length === 0 && providers.length === 0 ? (
-          <div className="card empty-cell">No services announced.</div>
-        ) : (
-          <div className="card">
-            {services.length > 0 && (
-              <div className="peer-services-block">
-                <span className="peer-services-label">Services</span>
-                <span className="svc-tags">
-                  {services.map((s) => (
-                    <span key={s} className="svc-tag">
-                      {s}
-                    </span>
-                  ))}
-                </span>
-              </div>
-            )}
-            {providers.length > 0 && (
-              <div className="peer-services-block">
-                <span className="peer-services-label">Providers</span>
-                <ul className="peer-providers">
-                  {providers.map((p, i) => (
-                    <li key={p.providerId ?? i}>
-                      <code className="mono">{p.providerId ?? `#${i}`}</code>
-                      {p.services && p.services.length > 0 && (
-                        <span className="svc-tags">
-                          {p.services.map((s) => (
-                            <span key={s} className="svc-tag">
-                              {s}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
+        <ServicesPanel services={services} providers={providers} />
       </section>
 
       {endpoints.length > 0 && (
         <section className="dashboard-section">
           <SectionHead
-            eyebrow="Network"
             title="Endpoints"
             sub="Where buyers reach this peer."
           />
@@ -310,8 +244,7 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
       {stats && (
         <section className="dashboard-section">
           <SectionHead
-            eyebrow="Timeline"
-            title="On-chain footprint"
+            title="On-chain history"
             sub="When this peer first appeared on-chain and when we last heard from them."
           />
           <div className="card peer-kv">
@@ -326,19 +259,19 @@ function PeerDetail({ peer, now }: { peer: Peer; now: number }) {
                 : '—'}
             </KV>
             <KV label="First seen">
-              {formatTimestampSeconds(stats.firstSeenAt, now)}
+              {formatRelativeSeconds(stats.firstSeenAt, now)}
               {stats.firstSeenAt && (
-                <span className="dim"> ({formatAbsoluteSeconds(stats.firstSeenAt)})</span>
+                <span className="dim"> ({formatAbsolute(stats.firstSeenAt * 1000)})</span>
               )}
             </KV>
             <KV label="Last seen">
-              {formatTimestampSeconds(stats.lastSeenAt, now)}
+              {formatRelativeSeconds(stats.lastSeenAt, now)}
               {stats.lastSeenAt && (
-                <span className="dim"> ({formatAbsoluteSeconds(stats.lastSeenAt)})</span>
+                <span className="dim"> ({formatAbsolute(stats.lastSeenAt * 1000)})</span>
               )}
             </KV>
             <KV label="Indexer last touched">
-              {formatTimestampSeconds(stats.lastUpdatedAt, now)}
+              {formatRelativeSeconds(stats.lastUpdatedAt, now)}
             </KV>
           </div>
         </section>
@@ -353,5 +286,278 @@ function KV({ label, children }: { label: string; children: ReactNode }) {
       <span className="peer-kv-label">{label}</span>
       <span className="peer-kv-value">{children}</span>
     </div>
+  );
+}
+
+/* ── Services panel ────────────────────────────────────────────────
+   Renders peer-announced capabilities and provider manifests. Model IDs
+   are grouped by family so long service names stay readable. */
+
+function parseService(s: string): { family: string; version: string | null } {
+  const idx = s.lastIndexOf('-');
+  if (idx > 0 && /^\d/.test(s.slice(idx + 1))) {
+    return { family: s.slice(0, idx), version: s.slice(idx + 1) };
+  }
+  return { family: s, version: null };
+}
+
+interface ServiceGroup {
+  family: string;
+  versions: string[];
+}
+
+function groupByFamily(services: string[]): ServiceGroup[] {
+  const map = new Map<string, ServiceGroup>();
+  const order: string[] = [];
+  for (const s of services) {
+    const { family, version } = parseService(s);
+    let group = map.get(family);
+    if (!group) {
+      group = { family, versions: [] };
+      map.set(family, group);
+      order.push(family);
+    }
+    if (version) group.versions.push(version);
+  }
+  return order.map((k) => map.get(k)!);
+}
+
+function ServicesPanel({
+  services,
+  providers,
+}: {
+  services: string[];
+  providers: ProviderAnnouncement[];
+}) {
+  const [modal, setModal] = useState<{ title: string; meta: string; services: string[] } | null>(
+    null,
+  );
+
+  if (services.length === 0 && providers.length === 0) {
+    return <div className="card empty-cell">No services announced.</div>;
+  }
+  const totalModels = providers.reduce(
+    (sum, p) => sum + (p.services?.length ?? 0),
+    0,
+  );
+  const visibleServices = services.slice(0, SERVICES_PREVIEW_LIMIT);
+  const hiddenServices = Math.max(0, services.length - SERVICES_PREVIEW_LIMIT);
+
+  return (
+    <>
+      <div className="card services-card">
+        {services.length > 0 && (
+          <div className="services-block">
+            <ServicesBlockHead
+              title="Capabilities"
+              meta={`${services.length} ${services.length === 1 ? 'service' : 'services'}`}
+            />
+            <div className="services-capabilities services-capabilities--preview">
+              {visibleServices.map((s) => (
+                <span key={s} className="capability-chip">{s}</span>
+              ))}
+              {hiddenServices > 0 && (
+                <button
+                  type="button"
+                  className="services-more"
+                  onClick={() => setModal({
+                    title: 'Capabilities',
+                    meta: `${services.length} ${services.length === 1 ? 'service' : 'services'}`,
+                    services,
+                  })}
+                >
+                  View all {services.length}
+                </button>
+              )}
+            </div>
+          </div>
+      )}
+      {providers.length > 0 && (
+        <div className="services-block">
+          <ServicesBlockHead
+            title="Providers"
+            meta={[
+              `${providers.length} ${providers.length === 1 ? 'provider' : 'providers'}`,
+              totalModels > 0 ? `${totalModels} ${totalModels === 1 ? 'model' : 'models'}` : null,
+            ].filter(Boolean).join(' · ')}
+          />
+          <div className="services-providers">
+            {providers.map((p, i) => (
+              <ProviderManifest
+                key={p.providerId ?? p.provider ?? `idx-${i}`}
+                provider={p}
+                index={i}
+                onViewAll={(title, providerServices) => setModal({
+                  title,
+                  meta: `${providerServices.length} ${providerServices.length === 1 ? 'model' : 'models'}`,
+                  services: providerServices,
+                })}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      </div>
+      {modal && (
+        <ServicesModal
+          title={modal.title}
+          meta={modal.meta}
+          services={modal.services}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function ServicesBlockHead({ title, meta }: { title: string; meta?: string }) {
+  return (
+    <div className="services-block-head">
+      <h3 className="services-block-title">{title}</h3>
+      {meta && <span className="services-block-meta">{meta}</span>}
+    </div>
+  );
+}
+
+function ProviderManifest({
+  provider,
+  index,
+  onViewAll,
+}: {
+  provider: ProviderAnnouncement;
+  index: number;
+  onViewAll: (title: string, services: string[]) => void;
+}) {
+  const services = provider.services ?? [];
+  const providerName = provider.provider ?? provider.providerId ?? `provider ${index + 1}`;
+  const groups = groupByFamily(services);
+  const visibleGroups = groups.slice(0, PROVIDER_GROUP_PREVIEW_LIMIT);
+  const hiddenGroups = Math.max(0, groups.length - PROVIDER_GROUP_PREVIEW_LIMIT);
+  const hasVersions = groups.some((g) => g.versions.length > 0);
+
+  return (
+    <div className="provider-manifest">
+      <div className="provider-manifest-head">
+        <code className="mono">{providerName}</code>
+        <span>
+          {services.length} {services.length === 1 ? 'model' : 'models'}
+        </span>
+      </div>
+      {services.length > 0 && (
+        hasVersions ? (
+          <ul className="model-rows">
+            {visibleGroups.map((g) => (
+              <li key={g.family} className="model-row">
+                <span className="model-row-family">{g.family}</span>
+                <span className="model-row-versions">
+                  {g.versions.length === 0 ? (
+                    <span className="model-version model-version--none">No version</span>
+                  ) : g.versions.join(', ')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="provider-manifest-pills">
+            {services.slice(0, SERVICES_PREVIEW_LIMIT).map((s) => (
+              <span key={s} className="capability-chip">{s}</span>
+            ))}
+          </div>
+        )
+      )}
+      {(hiddenGroups > 0 || services.length > SERVICES_PREVIEW_LIMIT) && (
+        <button
+          type="button"
+          className="provider-manifest-more"
+          onClick={() => onViewAll(providerName, services)}
+        >
+          View all {services.length} models
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ServicesModal({
+  title,
+  meta,
+  services,
+  onClose,
+}: {
+  title: string;
+  meta: string;
+  services: string[];
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const showSearch = services.length > 12;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return services;
+    return services.filter((s) => s.toLowerCase().includes(q));
+  }, [query, services]);
+
+  return (
+    <Modal
+      variant="services"
+      titleId="services-modal-title"
+      eyebrow="Catalogue"
+      title={title}
+      sub={meta}
+      onClose={onClose}
+    >
+      {showSearch && (
+        <div className="services-modal-search">
+          <SearchGlyph />
+          <input
+            type="text"
+            placeholder="Filter services…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+            aria-label="Filter services"
+          />
+          {query && (
+            <button
+              type="button"
+              className="services-modal-search-clear"
+              onClick={() => setQuery('')}
+              aria-label="Clear filter"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="services-modal-body">
+        {filtered.length === 0 ? (
+          <div className="services-modal-empty">
+            No services match <code className="mono">{query}</code>.
+          </div>
+        ) : (
+          filtered.map((service) => (
+            <span key={service} className="capability-chip">{service}</span>
+          ))
+        )}
+      </div>
+
+      <footer className="services-modal-foot">
+        <span className="services-modal-foot-count">
+          {query ? (
+            <>
+              <strong>{filtered.length}</strong> of {services.length}
+            </>
+          ) : (
+            <>
+              <strong>{services.length}</strong>{' '}
+              {services.length === 1 ? 'service' : 'services'}
+            </>
+          )}
+        </span>
+        <span className="services-modal-foot-hint">esc to close</span>
+      </footer>
+    </Modal>
   );
 }

@@ -28,17 +28,12 @@ export interface CreateServerDeps {
   port?: number;
 }
 
-// module-scoped cache, key: lowercased address. Staked peers are cached
-// indefinitely (agentId assignments don't change). Unstaked peers (agentId=0)
-// are cached with a short TTL so a peer that stakes shortly after being
-// observed picks up its real agentId on the next request instead of being
-// permanently pinned to `onChainStats: null`.
 const UNSTAKED_TTL_MS = 5 * 60 * 1000;
+const AGENT_ID_LOOKUP_CONCURRENCY = 8;
 interface CacheEntry {
   agentId: number;
   expiresAt: number; // Infinity for staked (never expires)
 }
-const agentIdCache = new Map<string, CacheEntry>();
 
 function normalizeAddress(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -48,17 +43,18 @@ function normalizeAddress(value: string | null | undefined): string | null {
 
 async function resolveAgentId(
   client: StakingClient,
+  cache: Map<string, CacheEntry>,
   address: string | null | undefined,
 ): Promise<number | null> {
   const key = normalizeAddress(address);
   if (!key) return null;
-  const cached = agentIdCache.get(key);
+  const cached = cache.get(key);
   if (cached !== undefined && cached.expiresAt > Date.now()) {
     return cached.agentId;
   }
   try {
     const agentId = await client.getAgentId(key);
-    agentIdCache.set(key, {
+    cache.set(key, {
       agentId,
       expiresAt: agentId === 0 ? Date.now() + UNSTAKED_TTL_MS : Infinity,
     });
@@ -69,13 +65,57 @@ async function resolveAgentId(
   }
 }
 
-export function __resetAgentIdCacheForTests(): void {
-  agentIdCache.clear();
+function getPeerLookupAddress(peer: { peerId?: string; sellerContract?: string }): string | null {
+  // peerId is the lowercased seller/operator EVM address without the 0x prefix.
+  // Contract-backed sellers announce the settlement address separately; use that
+  // for on-chain volume lookup when present.
+  return normalizeAddress(peer.sellerContract) ?? normalizeAddress(peer.peerId);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index]!);
+    }
+  }));
+
+  return results;
+}
+
+async function resolveAgentIds(
+  client: StakingClient,
+  cache: Map<string, CacheEntry>,
+  addresses: readonly (string | null)[],
+): Promise<Map<string, number | null>> {
+  const uniqueAddresses = [...new Set(addresses.filter((a): a is string => a !== null))];
+  const entries = await mapWithConcurrency(
+    uniqueAddresses,
+    AGENT_ID_LOOKUP_CONCURRENCY,
+    async (address) => [address, await resolveAgentId(client, cache, address)] as const,
+  );
+  return new Map(entries);
 }
 
 export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
   const { poller, store, stakingClient, indexer, chainId, contractAddress, port = 4000 } = deps;
   const app = express();
+  // Per-server cache, key: lowercased address. Staked peers are cached
+  // indefinitely (agentId assignments don't change). Unstaked peers (agentId=0)
+  // use a short TTL so a newly-staked peer is picked up soon after. This is
+  // intentionally per createServer() call to keep tests and colocated servers
+  // isolated; the address universe here is bounded by recently observed peers.
+  const agentIdCache = new Map<string, CacheEntry>();
 
   app.use((_req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -95,42 +135,41 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
       return;
     }
 
-    const enrichedPeers = await Promise.all(
-      snapshot.peers.map(async (peer) => {
-        // peerId is the lowercased seller/operator EVM address without the 0x prefix.
-        // Contract-backed sellers (for example Venice's proxy) announce the
-        // settlement address separately; use that for on-chain volume lookup.
-        const { peerId, sellerContract } = peer as { peerId?: string; sellerContract?: string };
-        const address = normalizeAddress(sellerContract) ?? normalizeAddress(peerId);
-        const agentId = await resolveAgentId(stakingClient, address);
-        if (agentId === null || agentId === 0) {
-          return { ...peer, onChainStats: null };
-        }
-        const totals = store.getSellerTotals(agentId);
-        if (!totals) {
-          return { ...peer, onChainStats: null };
-        }
-        return {
-          ...peer,
-          onChainStats: {
-            agentId,
-            totalRequests: totals.totalRequests.toString(),
-            totalInputTokens: totals.totalInputTokens.toString(),
-            totalOutputTokens: totals.totalOutputTokens.toString(),
-            settlementCount: totals.settlementCount,
-            uniqueBuyers: totals.uniqueBuyers,
-            uniqueChannels: totals.uniqueChannels,
-            firstSettledBlock: totals.firstSettledBlock,
-            lastSettledBlock: totals.lastSettledBlock,
-            firstSeenAt: totals.firstSeenAt,
-            lastSeenAt: totals.lastSeenAt,
-            avgRequestsPerChannel: totals.avgRequestsPerChannel,
-            avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
-            lastUpdatedAt: totals.lastUpdatedAt,
-          },
-        };
-      }),
+    const peerLookupAddresses = snapshot.peers.map((peer) =>
+      getPeerLookupAddress(peer as { peerId?: string; sellerContract?: string }),
     );
+    const agentIdsByAddress = await resolveAgentIds(stakingClient, agentIdCache, peerLookupAddresses);
+
+    const enrichedPeers = snapshot.peers.map((peer, index) => {
+      const address = peerLookupAddresses[index] ?? null;
+      const agentId = address ? agentIdsByAddress.get(address) ?? null : null;
+      if (agentId === null || agentId === 0) {
+        return { ...peer, onChainStats: null };
+      }
+      const totals = store.getSellerTotals(agentId);
+      if (!totals) {
+        return { ...peer, onChainStats: null };
+      }
+      return {
+        ...peer,
+        onChainStats: {
+          agentId,
+          totalRequests: totals.totalRequests.toString(),
+          totalInputTokens: totals.totalInputTokens.toString(),
+          totalOutputTokens: totals.totalOutputTokens.toString(),
+          settlementCount: totals.settlementCount,
+          uniqueBuyers: totals.uniqueBuyers,
+          uniqueChannels: totals.uniqueChannels,
+          firstSettledBlock: totals.firstSettledBlock,
+          lastSettledBlock: totals.lastSettledBlock,
+          firstSeenAt: totals.firstSeenAt,
+          lastSeenAt: totals.lastSeenAt,
+          avgRequestsPerChannel: totals.avgRequestsPerChannel,
+          avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
+          lastUpdatedAt: totals.lastUpdatedAt,
+        },
+      };
+    });
 
     const indexerInfo =
       chainId && contractAddress
@@ -141,17 +180,22 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     // tick. `synced` is true when the checkpoint has caught up to (latest − reorg
     // buffer), i.e. there's nothing else the indexer could have processed.
     const chainHead = indexer?.getChainHead();
-    const indexerPayload = indexerInfo
-      ? {
-          ...indexerInfo,
-          ...(chainHead?.latestBlock != null
-            ? {
-                latestBlock: chainHead.latestBlock,
-                synced: indexerInfo.lastBlock >= chainHead.latestBlock - chainHead.reorgSafetyBlocks,
-              }
-            : {}),
-        }
-      : null;
+    const health = indexer?.getHealth();
+    const indexerPayload =
+      indexerInfo && chainId && contractAddress
+        ? {
+            chainId,
+            contractAddress,
+            ...indexerInfo,
+            ...(chainHead?.latestBlock != null
+              ? {
+                  latestBlock: chainHead.latestBlock,
+                  synced: indexerInfo.lastBlock >= chainHead.latestBlock - chainHead.reorgSafetyBlocks,
+                }
+              : {}),
+            ...(health ?? {}),
+          }
+        : null;
 
     const networkTotals = store.getNetworkTotals();
 

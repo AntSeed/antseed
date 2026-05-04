@@ -11,7 +11,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createServer, __resetAgentIdCacheForTests } from './server.js';
+import { createServer } from './server.js';
 import { SqliteStore } from './store.js';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient, DecodedMetadataRecorded } from '@antseed/node';
@@ -93,8 +93,6 @@ describe('createServer — legacy path (no store/stakingClient)', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('GET /stats returns snapshot shape without onChainStats', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     assert.equal(res.status, 200);
@@ -123,8 +121,6 @@ describe('createServer — enriched: agent with totals', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats with correct values including analytics', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as {
@@ -197,7 +193,6 @@ describe('createServer — enriched: contract-backed peer uses sellerContract', 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     seen.length = 0;
   });
 
@@ -229,8 +224,6 @@ describe('createServer — enriched: network totals include inactive sellers', (
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('returns aggregate totals across all indexed sellers, not just active peers', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as {
@@ -261,8 +254,6 @@ describe('createServer — enriched: agent with no events in store', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats: null when store has no row', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: unknown }> };
@@ -282,8 +273,6 @@ describe('createServer — enriched: unstaked peer returns agentId 0', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats: null when agentId is 0', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: unknown }> };
@@ -305,7 +294,6 @@ describe('createServer — enriched: peer missing peerId', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
   });
 
@@ -336,7 +324,6 @@ describe('createServer — enriched: cache reused across requests', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
   });
 
@@ -348,6 +335,75 @@ describe('createServer — enriched: cache reused across requests', () => {
     // Second request: all 3 addresses are cached
     await fetch(`http://localhost:${PORT}/stats`);
     assert.equal(counter.calls, 3, 'second request should not call getAgentId again (cache hit)');
+  });
+});
+
+// ── Test 8a: Cache is scoped per server instance ─────────────────────────────
+
+describe('createServer — enriched: cache isolation', () => {
+  it('does not share agentId cache entries across createServer calls', async () => {
+    const port1 = nextPort();
+    const port2 = nextPort();
+    const peers = [fakePeer('shared', '0xshared')];
+    const poller = makePoller(peers);
+    const store1 = makeStore();
+    const store2 = makeStore();
+    const counter1 = { calls: 0 };
+    const counter2 = { calls: 0 };
+    const handle1 = createServer({
+      poller,
+      store: store1,
+      stakingClient: makeStakingClient(() => 0, counter1),
+      port: port1,
+    });
+    const handle2 = createServer({
+      poller,
+      store: store2,
+      stakingClient: makeStakingClient(() => 0, counter2),
+      port: port2,
+    });
+
+    await handle1.start();
+    await handle2.start();
+    try {
+      await fetch(`http://localhost:${port1}/stats`);
+      await fetch(`http://localhost:${port2}/stats`);
+
+      assert.equal(counter1.calls, 1);
+      assert.equal(counter2.calls, 1);
+    } finally {
+      handle1.stop();
+      handle2.stop();
+      store1.close();
+      store2.close();
+    }
+  });
+});
+
+// ── Test 8b: Duplicate addresses are resolved once ──────────────────────────────
+
+describe('createServer — enriched: duplicate addresses are deduped per request', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const peers = [
+    fakePeer('dup1', '0xduplicated'),
+    fakePeer('dup2', '0xduplicated'),
+  ];
+  const poller = makePoller(peers);
+  const counter = { calls: 0 };
+  const stakingClient = makeStakingClient(() => 0, counter);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => {
+    counter.calls = 0;
+  });
+
+  it('calls getAgentId once for peers sharing the same lookup address', async () => {
+    await fetch(`http://localhost:${PORT}/stats`);
+
+    assert.equal(counter.calls, 1);
   });
 });
 
@@ -370,7 +426,6 @@ describe('createServer — enriched: RPC failure does not cache', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
     shouldFail = true;
   });
@@ -411,8 +466,6 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('large bigint values survive JSON serialization as strings', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: { totalRequests: string; totalInputTokens: string; totalOutputTokens: string } | null }> };
@@ -489,8 +542,6 @@ describe('createServer — network aggregates: enriched path', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('enriched response includes network alongside peers and totals', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as {
@@ -505,4 +556,3 @@ describe('createServer — network aggregates: enriched path', () => {
     assert.ok(body.totals, 'totals must still be present in enriched path');
   });
 });
-

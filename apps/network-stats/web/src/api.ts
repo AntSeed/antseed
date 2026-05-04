@@ -16,6 +16,7 @@ export interface OnChainStats {
 }
 
 export interface ProviderAnnouncement {
+  provider?: string;
   providerId?: string;
   services?: string[];
   [key: string]: unknown;
@@ -60,6 +61,9 @@ export interface IndexerInfo {
   latestBlock?: number;
   synced?: boolean;
   reorgSafetyBlocks?: number;
+  lastSuccessAt?: number | null;
+  lastErrorAt?: number | null;
+  lastErrorMessage?: string | null;
 }
 
 export interface NetworkAggregates {
@@ -94,4 +98,20 @@ export async function fetchStats(): Promise<StatsResponse> {
   const res = await fetch('/stats');
   if (!res.ok) throw new Error(`GET /stats → ${res.status}`);
   return res.json();
+}
+
+export function getPeerServices(peer: Peer): string[] {
+  const services = new Set<string>();
+
+  for (const service of peer.services ?? []) {
+    services.add(service);
+  }
+
+  for (const provider of peer.providers ?? []) {
+    for (const service of provider.services ?? []) {
+      services.add(service);
+    }
+  }
+
+  return [...services];
 }

@@ -34,6 +34,9 @@ export class MetadataIndexer {
   private _timer: ReturnType<typeof setInterval> | undefined;
   private _running = false;
   private _latestBlock: number | null = null;
+  private _lastSuccessAt: number | null = null;
+  private _lastErrorAt: number | null = null;
+  private _lastErrorMessage: string | null = null;
 
   constructor(options: MetadataIndexerOptions) {
     if (options.deployBlock < 0) {
@@ -78,6 +81,25 @@ export class MetadataIndexer {
   }
 
   /**
+   * Per-tick health, used by /stats to surface flaky RPC behavior. A tick that
+   * runs with no thrown error counts as a success — even when the range was
+   * empty or the chain was inside the reorg-safety window — because the indexer
+   * itself is healthy in those cases. `lastErrorAt > lastSuccessAt` (or
+   * lastSuccessAt == null) means the most recent tick failed.
+   */
+  getHealth(): {
+    lastSuccessAt: number | null;
+    lastErrorAt: number | null;
+    lastErrorMessage: string | null;
+  } {
+    return {
+      lastSuccessAt: this._lastSuccessAt,
+      lastErrorAt: this._lastErrorAt,
+      lastErrorMessage: this._lastErrorMessage,
+    };
+  }
+
+  /**
    * Exposed for tests — runs one iteration end-to-end. Never throws out.
    *
    * Re-entrancy guard: if a prior tick is still in flight (slow RPC), the next
@@ -88,6 +110,7 @@ export class MetadataIndexer {
   async tick(): Promise<void> {
     if (this._running) return;
     this._running = true;
+    let errored = false;
     try {
       const latest = await this._statsClient.getBlockNumber();
       this._latestBlock = latest;
@@ -147,8 +170,12 @@ export class MetadataIndexer {
 
       console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
     } catch (err) {
+      errored = true;
+      this._lastErrorAt = Date.now();
+      this._lastErrorMessage = err instanceof Error ? err.message : String(err);
       console.error('[indexer] tick error:', err);
     } finally {
+      if (!errored) this._lastSuccessAt = Date.now();
       this._running = false;
     }
   }

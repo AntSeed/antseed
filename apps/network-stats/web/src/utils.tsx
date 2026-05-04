@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 export function formatLargeNumber(value: string | number): string {
   const n = typeof value === 'string' ? Number(value) : value;
@@ -20,7 +20,17 @@ export function formatSeconds(s: number): string {
   if (m < 60) return r === 0 ? `${m}m` : `${m}m ${r}s`;
   const h = Math.floor(m / 60);
   const rm = m % 60;
-  return rm === 0 ? `${h}h` : `${h}h ${rm}m`;
+  if (h < 24) return rm === 0 ? `${h}h` : `${h}h ${rm}m`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh === 0 ? `${d}d` : `${d}d ${rh}h`;
+}
+
+export function formatNumberFull(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—';
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString();
 }
 
 export function formatRelative(ms: number | null, now: number): string {
@@ -29,6 +39,27 @@ export function formatRelative(ms: number | null, now: number): string {
   if (diff < 5) return 'just now';
   if (diff < 60) return `${diff}s ago`;
   return `${formatSeconds(diff)} ago`;
+}
+
+export function formatRelativeSeconds(seconds: number | null, now: number): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds === 0) return '—';
+  return formatRelative(seconds * 1000, now);
+}
+
+export function formatAbsolute(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms === 0) return '—';
+  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+}
+
+export function formatAbsoluteLocalTime(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms === 0) return '—';
+  return new Date(ms).toLocaleString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  });
 }
 
 export function parseUpdatedAt(value: string | number | null | undefined): number | null {
@@ -41,6 +72,63 @@ export function parseUpdatedAt(value: string | number | null | undefined): numbe
 export function shortPeerId(id: string): { head: string; tail: string } {
   if (id.length <= 14) return { head: id, tail: '' };
   return { head: id.slice(0, 8), tail: id.slice(-6) };
+}
+
+export function shortAddress(addr: string): string {
+  if (!addr || addr.length < 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+export function formatBlock(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return n.toLocaleString();
+}
+
+export function formatPrefixedAddress(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value.startsWith('0x') ? value : `0x${value}`;
+}
+
+/**
+ * A miniature 5x5 mirrored sigil derived from the peer id. Each peer gets a
+ * unique geometric mark + soft pastel hue, giving table rows a visual identity
+ * that varies with the peer's most stable property (its id).
+ */
+export function PeerSigil({ id, size = 28 }: { id: string; size?: number }) {
+  const { cells, hue } = useMemo(() => {
+    const hex = id.replace(/[^0-9a-f]/gi, '').toLowerCase() || '0';
+
+    // Stable djb2-style hash for hue selection.
+    let h = 5381;
+    for (let i = 0; i < id.length; i++) {
+      h = ((h << 5) + h + id.charCodeAt(i)) >>> 0;
+    }
+
+    // 5×5, mirrored on the vertical axis: 3 unique cols → 15 bits needed.
+    const rows: boolean[][] = [];
+    let bit = 0;
+    for (let r = 0; r < 5; r++) {
+      const left: boolean[] = [];
+      for (let c = 0; c < 3; c++) {
+        const ch = hex[bit % hex.length] ?? '0';
+        left.push(parseInt(ch, 16) >= 8);
+        bit++;
+      }
+      rows.push([left[0], left[1], left[2], left[1], left[0]]);
+    }
+
+    return { cells: rows.flat(), hue: h % 360 };
+  }, [id]);
+
+  const style = { '--sigil-hue': String(hue), '--sigil-size': `${size}px` } as CSSProperties;
+
+  return (
+    <span className="peer-sigil" aria-hidden style={style}>
+      {cells.map((on, i) => (
+        <span key={i} className={`peer-sigil-cell${on ? ' is-on' : ''}`} />
+      ))}
+    </span>
+  );
 }
 
 export function useTick(intervalMs: number): number {
@@ -114,17 +202,14 @@ export function StatCard({
 }
 
 export function SectionHead({
-  eyebrow,
   title,
   sub,
 }: {
-  eyebrow: string;
   title: string;
   sub: string;
 }) {
   return (
     <div className="dashboard-section-head">
-      <span className="dashboard-section-eyebrow">{eyebrow}</span>
       <h2 className="dashboard-section-title">{title}</h2>
       <p className="dashboard-section-sub">{sub}</p>
     </div>
