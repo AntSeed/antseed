@@ -424,3 +424,85 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
   });
 });
 
+// ── Test 11: Network aggregates — legacy fast path ────────────────────────────
+
+// fakePeer() sets version='v1' (string) which the aggregator skips. These
+// tests need real-shaped values to exercise the aggregate logic, so they
+// override the noisy fields directly on the fixture.
+type AggPeer = Record<string, unknown>;
+function aggregatePeer(address: string, overrides: Partial<AggPeer>): AggPeer {
+  return { ...fakePeer('agg', address), ...overrides };
+}
+
+describe('createServer — network aggregates: legacy fast path', () => {
+  const PORT = nextPort();
+  const peers = [
+    aggregatePeer('0xaaa', {}),
+    aggregatePeer('0xbbb', {}),
+    aggregatePeer('0xccc', {}),
+  ];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('GET /stats returns a network block alongside peers/updatedAt', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      peers: unknown[];
+      updatedAt: string;
+      network: {
+        peerCount: number;
+        serviceCounts: Record<string, number>;
+        serviceCategoryCounts: Record<string, number>;
+        stake: unknown;
+        freshness: { medianAgeSeconds: number } | null;
+        peersWithSellerContract: number;
+        peersWithDisplayName: number;
+      };
+    };
+    assert.ok(body.network, 'network block must be present in legacy path');
+    assert.equal(body.network.peerCount, 3);
+    assert.deepEqual(body.network.serviceCounts, {});           // no providers in fixture
+    assert.deepEqual(body.network.serviceCategoryCounts, {});
+    assert.equal(body.network.stake, null);                     // no stake in fixture
+    assert.equal(body.network.peersWithSellerContract, 0);
+    assert.equal(body.network.peersWithDisplayName, 0);
+    assert.ok(body.network.freshness, 'freshness present when peers carry timestamps');
+  });
+});
+
+// ── Test 12: Network aggregates — enriched path ───────────────────────────────
+
+describe('createServer — network aggregates: enriched path', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const peers = [
+    aggregatePeer('0xabc', {}),
+    aggregatePeer('0xdef', {}),
+  ];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 0); // both unstaked
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => { __resetAgentIdCacheForTests(); });
+
+  it('enriched response includes network alongside peers and totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      peers: unknown[];
+      network: {
+        peerCount: number;
+      };
+      totals: { sellerCount: number };
+    };
+    assert.ok(body.network, 'network block must be present in enriched path');
+    assert.equal(body.network.peerCount, 2);
+    assert.ok(body.totals, 'totals must still be present in enriched path');
+  });
+});
+

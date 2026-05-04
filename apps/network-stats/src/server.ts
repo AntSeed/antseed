@@ -14,6 +14,7 @@ import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
+import { computeNetworkAggregates } from './aggregates.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -84,10 +85,13 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
 
   app.get('/stats', async (_req, res) => {
     const snapshot = poller.getSnapshot();
+    const network = computeNetworkAggregates(snapshot.peers);
 
-    // Fast path: no indexer configured. Return snapshot byte-compatibly with the old shape.
+    // Fast path: no indexer configured. Same shape as before, plus the new
+    // network-aggregates block. Adding a new key is backward-compatible —
+    // older clients that only read `peers`/`updatedAt` keep working.
     if (!store || !stakingClient) {
-      res.json(snapshot);
+      res.json({ ...snapshot, network });
       return;
     }
 
@@ -154,6 +158,7 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     res.json({
       ...snapshot,
       peers: enrichedPeers,
+      network,
       totals: {
         totalRequests: networkTotals.totalRequests.toString(),
         totalInputTokens: networkTotals.totalInputTokens.toString(),

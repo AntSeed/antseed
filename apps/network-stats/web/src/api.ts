@@ -15,11 +15,30 @@ export interface OnChainStats {
   lastUpdatedAt: number | null;
 }
 
+export interface ProviderAnnouncement {
+  providerId?: string;
+  services?: string[];
+  [key: string]: unknown;
+}
+
 export interface Peer {
   peerId: string;
+  version?: number;
+  displayName?: string;
+  publicAddress?: string;
+  sellerContract?: string;
+  region?: string;
   services?: string[];
   endpoints?: string[];
+  providers?: ProviderAnnouncement[];
+  offerings?: unknown[];
   timestamp?: number;
+  resolvedAtMs?: number;
+  serverDateMs?: number;
+  stakeAmountUSDC?: number;
+  trustScore?: number;
+  onChainChannelCount?: number;
+  onChainGhostCount?: number;
   onChainStats?: OnChainStats | null;
   [key: string]: unknown;
 }
@@ -43,9 +62,30 @@ export interface IndexerInfo {
   reorgSafetyBlocks?: number;
 }
 
+export interface NetworkAggregates {
+  peerCount: number;
+  serviceCounts: Record<string, number>;
+  serviceCategoryCounts: Record<string, number>;
+  stake: {
+    totalUsdc: number;
+    medianUsdc: number;
+    p95Usdc: number;
+    peersWithStake: number;
+  } | null;
+  freshness: {
+    medianAgeSeconds: number;
+    p95AgeSeconds: number;
+    oldestAgeSeconds: number;
+    newestAgeSeconds: number;
+  } | null;
+  peersWithSellerContract: number;
+  peersWithDisplayName: number;
+}
+
 export interface StatsResponse {
   peers: Peer[];
   updatedAt: string;
+  network?: NetworkAggregates;
   totals?: NetworkTotals;
   indexer?: IndexerInfo;
 }
