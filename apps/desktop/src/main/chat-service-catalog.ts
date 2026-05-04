@@ -7,6 +7,7 @@ export type NetworkPeerAddress = {
   port: number;
   providers?: string[];
   services?: string[];
+  sellerContract?: string;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
   providerPricing?: Record<string, {
     defaults?: {

@@ -242,6 +242,7 @@ type DiscoverRowEntry = {
   protocol: ChatServiceProtocol;
   peerId: string;
   peerEvmAddress: string;
+  sellerEvmAddress: string;
   peerDisplayName: string | null;
   peerLabel: string;
   inputUsdPerMillion: number | null;
@@ -481,6 +482,7 @@ async function discoverChatServiceCatalog(
         port: 0,
         providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
         services: Array.isArray(p.services) ? p.services.map(String) : [],
+        sellerContract: typeof p.sellerContract === 'string' ? p.sellerContract : undefined,
         providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
           ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
           : undefined,
@@ -689,6 +691,7 @@ async function buildDiscoverRows(
   enrichment: Map<string, OnChainPeerEnrichment>,
   buyerStateDiscoveredPeers: Record<string, {
     onChainChannelCount: number | null;
+    sellerContract?: string;
     providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
   }>,
   networkStats: Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>,
@@ -697,8 +700,11 @@ async function buildDiscoverRows(
   for (const entry of catalog) {
     const peerId = entry.peerId ?? '';
     if (!peerId) continue;
-    const evmAddress = '0x' + peerId;
-    const enrichmentRow = enrichment.get(evmAddress) ?? {
+    const peerEvmAddress = '0x' + peerId;
+    const peerBlob = buyerStateDiscoveredPeers[peerId];
+    const sellerHex = typeof peerBlob?.sellerContract === 'string' ? peerBlob.sellerContract.trim().toLowerCase().replace(/^0x/, '') : '';
+    const sellerEvmAddress = /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : peerEvmAddress;
+    const enrichmentRow = enrichment.get(sellerEvmAddress) ?? {
       agentId: 0,
       stakeUsdc: '0',
       stakedAt: 0,
@@ -709,7 +715,6 @@ async function buildDiscoverRows(
     };
 
     const stats = peerStats.get(peerId);
-    const peerBlob = buyerStateDiscoveredPeers[peerId];
     const cachedPricingEntry = peerBlob?.providerPricing?.[entry.provider]?.services?.[entry.id];
     const cachedInputUsdPerMillion = Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
       ? cachedPricingEntry!.cachedInputUsdPerMillion!
@@ -730,7 +735,8 @@ async function buildDiscoverRows(
       provider: entry.provider,
       protocol: entry.protocol,
       peerId,
-      peerEvmAddress: evmAddress,
+      peerEvmAddress,
+      sellerEvmAddress,
       peerDisplayName: entry.peerLabel?.split(' (')[0] ?? null,
       peerLabel: entry.peerLabel ?? peerId.slice(0, 12) + '...',
       inputUsdPerMillion: entry.inputUsdPerMillion ?? null,
@@ -2395,6 +2401,7 @@ export function registerPiChatHandlers({
       // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, {
         onChainChannelCount: number | null;
+        sellerContract?: string;
         providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
       }> = {};
       const buyerStateOnChainStats = new Map<string, BuyerStateOnChainStats>();
@@ -2408,6 +2415,7 @@ export function registerPiChatHandlers({
             const peerId = rec.peerId as string;
             discoveredPeersMap[peerId] = {
               onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,
+              sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               providerPricing: rec.providerPricing as Record<string, {
                 services?: Record<string, { cachedInputUsdPerMillion?: number }>
               }> | undefined,
@@ -2443,7 +2451,12 @@ export function registerPiChatHandlers({
 
       const uniqueAddresses = Array.from(new Set(
         entries
-          .map((e) => (e.peerId ? '0x' + e.peerId : ''))
+          .map((e) => {
+            const peerId = e.peerId?.trim().toLowerCase() ?? '';
+            if (!/^[0-9a-f]{40}$/.test(peerId)) return '';
+            const sellerHex = discoveredPeersMap[peerId]?.sellerContract?.trim().toLowerCase().replace(/^0x/, '') ?? '';
+            return /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : `0x${peerId}`;
+          })
           .filter((a) => a.length === 42)
       ));
       const clients = await loadOnChainClients(configPath);
