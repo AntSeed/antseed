@@ -23,7 +23,7 @@ Available tools:
 - find: Find files by glob pattern (respects .gitignore)
 - ls: List directory contents
 - web_fetch: Fetch a public HTTP/HTTPS URL and return page content as readable text
-- open_browser_preview: Open a URL for user to preview in browser or preview panel
+- open_browser_preview: Open a URL for user to preview in the in-app preview panel
 - start_dev_server: Start a dev server as a background process that survives tool timeouts
 
 In addition to the tools above, you may have access to other custom tools depending on the peer's offering.
