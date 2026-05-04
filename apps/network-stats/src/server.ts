@@ -5,11 +5,17 @@
  * GET /health →  { ok: true }
  */
 
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface CreateServerDeps {
   poller: NetworkPoller;
@@ -164,13 +170,19 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     res.json({ ok: true });
   });
 
+  // Serve the built SPA in production. Skipped in dev — Vite serves on its own port.
+  const webDir = resolve(__dirname, 'web');
+  if (existsSync(webDir)) {
+    app.use(express.static(webDir));
+  }
+
   let server: ReturnType<typeof app.listen> | null = null;
 
   return {
     start: () =>
       new Promise((resolve) => {
         server = app.listen(port, '0.0.0.0', () => {
-          console.log(`[network-stats] HTTP server listening on port ${port}`);
+          console.log(`[network-stats] HTTP server listening at http://localhost:${port}`);
           resolve();
         });
       }),

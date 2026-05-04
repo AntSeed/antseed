@@ -25,6 +25,10 @@ coverage/
 # Antseed data
 .antseed/
 
+# network-stats runtime artifacts
+apps/network-stats/cache/
+apps/network-stats/data/
+
 # Runtime native module markers
 .runtime-native-meta.json
 
