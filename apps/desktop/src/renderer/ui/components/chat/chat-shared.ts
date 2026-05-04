@@ -451,13 +451,16 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
   if (msg.createdAt && Number(msg.createdAt) > 0) parts.push(formatChatTime(msg.createdAt));
 
   const blocks = Array.isArray(msg.content) ? (msg.content as ContentBlock[]) : null;
-  const stats = blocks ? countBlocks(blocks) : null;
   const assistantMeta = normalizeAssistantMeta(msg);
 
-  if (stats && msg.role === 'assistant') {
-    if (stats.toolUse > 0) parts.push(`${stats.toolUse} tool${stats.toolUse === 1 ? '' : 's'}`);
-    if (stats.thinking > 0) parts.push(`${stats.thinking} reasoning`);
-    if (stats.text > 0) parts.push(`${stats.text} text block${stats.text === 1 ? '' : 's'}`);
+  if (blocks && msg.role === 'assistant') {
+    const contentParts = splitAssistantMessageContent(msg);
+    const responseStats = countBlocks(contentParts.responseBlocks);
+    const processStats = countBlocks(contentParts.processBlocks);
+
+    if (processStats.toolUse > 0) parts.push(`${processStats.toolUse} tool${processStats.toolUse === 1 ? '' : 's'}`);
+    if (processStats.thinking > 0) parts.push(`${processStats.thinking} reasoning`);
+    if (responseStats.text > 0) parts.push(`${responseStats.text} text block${responseStats.text === 1 ? '' : 's'}`);
   }
 
   if (assistantMeta) {
@@ -528,6 +531,53 @@ function asContentBlocks(content: unknown): ContentBlock[] {
     return [{ type: 'text', text: content }];
   }
   return [];
+}
+
+export type AssistantMessageContentParts = {
+  /** Blocks that represent the assistant-facing answer content for the main chat. */
+  responseBlocks: ContentBlock[];
+  /** Blocks that represent the assistant's background process, tools, and reasoning. */
+  processBlocks: ContentBlock[];
+};
+
+export function isAssistantProcessBlock(block: ContentBlock): boolean {
+  return block.type === 'thinking' || block.type === 'tool_use' || block.type === 'tool_result';
+}
+
+export function isAssistantResponseBlock(block: ContentBlock): boolean {
+  // Safe fallback: unknown/new block types stay with the response path until
+  // they are intentionally routed into the background-process path here.
+  return !isAssistantProcessBlock(block);
+}
+
+export function splitAssistantContentBlocks(content: unknown): AssistantMessageContentParts {
+  const responseBlocks: ContentBlock[] = [];
+  const processBlocks: ContentBlock[] = [];
+
+  for (const block of asContentBlocks(content)) {
+    if (isAssistantProcessBlock(block)) {
+      processBlocks.push(block);
+    } else {
+      responseBlocks.push(block);
+    }
+  }
+
+  return { responseBlocks, processBlocks };
+}
+
+export function splitAssistantMessageContent(message: ChatMessage): AssistantMessageContentParts {
+  if (message.role !== 'assistant') {
+    return { responseBlocks: asContentBlocks(message.content), processBlocks: [] };
+  }
+  return splitAssistantContentBlocks(message.content);
+}
+
+export function hasAssistantProcessContent(message: ChatMessage): boolean {
+  return message.role === 'assistant' && splitAssistantMessageContent(message).processBlocks.length > 0;
+}
+
+export function hasAssistantResponseContent(message: ChatMessage): boolean {
+  return splitAssistantMessageContent(message).responseBlocks.length > 0;
 }
 
 function mergeAssistantMessages(base: ChatMessage, next: ChatMessage): ChatMessage {
