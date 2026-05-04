@@ -955,10 +955,7 @@ function compactTokensFromFormatted(formatted: string): string {
 
 function compactUsd(raw: string): string {
   const n = Number(raw);
-  if (!Number.isFinite(n)) return `$${raw}`;
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  if (n < 1) return `$${n.toFixed(3)}`;
+  if (!Number.isFinite(n)) return '$0.00';
   return `$${n.toFixed(2)}`;
 }
 
@@ -1029,7 +1026,7 @@ function ChatSessionStats({
           <div className={styles.sessionStatsGroupLabel}>Current payment channel</div>
           <div className={styles.sessionStatsRow}>
             <span>Cost</span>
-            <span>{sessionCost ? `$${sessionCost}` : '—'}</span>
+            <span>{sessionCost ? compactUsd(sessionCost) : '—'}</span>
           </div>
           <div className={styles.sessionStatsRow}>
             <span>Tokens</span>
@@ -1040,7 +1037,7 @@ function ChatSessionStats({
           <div className={styles.sessionStatsGroupLabel}>All-time with peer</div>
           <div className={styles.sessionStatsRow}>
             <span>Cost</span>
-            <span>{lifetimeCost ? `$${lifetimeCost}` : '—'}</span>
+            <span>{lifetimeCost ? compactUsd(lifetimeCost) : '—'}</span>
           </div>
           <div className={styles.sessionStatsRow}>
             <span>Tokens</span>
