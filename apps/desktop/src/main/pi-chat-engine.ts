@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
-import { browserPreviewTool, startDevServerTool } from './chat-dev-tools.js';
+import { createBrowserPreviewTool, createStartDevServerTool } from './chat-dev-tools.js';
 import {
   classifyChatStreamFailure,
   formatChatStreamStopForLog,
@@ -1967,7 +1967,11 @@ export function registerPiChatHandlers({
       authStorage,
       modelRegistry,
       model: proxyModel,
-      customTools: [webFetchTool, browserPreviewTool, startDevServerTool],
+      customTools: [
+        webFetchTool,
+        createBrowserPreviewTool(sendToRenderer),
+        createStartDevServerTool(sendToRenderer),
+      ],
       resourceLoader,
     });
 
@@ -2147,16 +2151,6 @@ export function registerPiChatHandlers({
           details,
         });
 
-        // Auto-open browser preview panel when a preview tool completes successfully
-        if (
-          !event.isError &&
-          (event.toolName === 'open_browser_preview' || event.toolName === 'start_dev_server')
-        ) {
-          const url = typeof details?.url === 'string' ? details.url : undefined;
-          if (url) {
-            sendToRenderer('browser-preview:open', { url });
-          }
-        }
         return;
       }
 
