@@ -391,7 +391,7 @@ export default function AntsToken(): JSX.Element {
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>03</div>
             <h3>Claim each epoch</h3>
-            <p>At epoch end, call claim with the epoch numbers you participated in. ANTS are minted directly to your wallet. Unclaimed emissions flow to the protocol reserve.</p>
+            <p>At epoch end, call claim with the epoch numbers you participated in. ANTS are minted directly to your wallet. Unclaimed emissions remain claimable.</p>
           </div>
         </div>
       </section>
@@ -427,7 +427,7 @@ export default function AntsToken(): JSX.Element {
           {[
             {pct: '50%', label: 'Sellers', desc: 'Pro-rata by USDC volume settled. Capped at 50% of seller pool per seller per epoch.', accent: true},
             {pct: '20%', label: 'Buyers', desc: 'Pro-rata by USDC spent. Rewards active usage and seller diversity.', accent: false},
-            {pct: '15%', label: 'Protocol Reserve', desc: 'Unclaimed allocations and seller cap overages flow here. Funds ecosystem growth.', accent: false},
+            {pct: '15%', label: 'Protocol Reserve', desc: 'The protocol reserve allocation and seller cap overages flow here. Funds ecosystem growth.', accent: false},
             {pct: '15%', label: 'Team', desc: 'Vested to core contributors. Aligned with long-term network health.', accent: false},
           ].map(s => (
             <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
