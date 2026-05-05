@@ -162,7 +162,7 @@ export class ProxyMux {
       payload,
     });
 
-    this._connection.send(frame);
+    this._safeSendFrame(frame, 'response', response.requestId);
   }
 
   /** Seller side: send a proxy response chunk. */
@@ -178,7 +178,7 @@ export class ProxyMux {
       payload,
     });
 
-    this._connection.send(frame);
+    this._safeSendFrame(frame, chunk.done ? 'response-end' : 'response-chunk', chunk.requestId);
   }
 
   /** Route an incoming frame to the correct handler based on message type. */
@@ -395,6 +395,16 @@ export class ProxyMux {
       headers: { 'content-type': 'text/plain' },
       body: new TextEncoder().encode(reason),
     });
+  }
+
+  private _safeSendFrame(frame: Uint8Array, kind: 'response' | 'response-chunk' | 'response-end', requestId: string): void {
+    try {
+      this._connection.send(frame);
+    } catch (err) {
+      debugLog(
+        `[ProxyMux] drop ${kind} reqId=${requestId.slice(0, 8)} because connection closed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   private _nextMessageId(): number {

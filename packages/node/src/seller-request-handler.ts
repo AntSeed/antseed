@@ -244,13 +244,13 @@ export class SellerRequestHandler {
             // Auto-sign catch-up via NeedAuth so a transient underfund recovers
             // without the 402 round-tripping to the user.
             if (!isFullyExhausted) {
-              paymentMux.sendNeedAuth({
+              this._sendNeedAuthBestEffort(paymentMux, {
                 channelId: session.sessionId,
                 requiredCumulativeAmount: target.toString(),
                 currentAcceptedCumulative: accepted.toString(),
                 deposit: session.authMax ?? '0',
                 requestId: request.requestId,
-              });
+              }, buyerPeerId, 'budget-catch-up');
             }
             return;
           }
@@ -368,7 +368,7 @@ export class SellerRequestHandler {
             const accepted = spm.getAcceptedCumulative(session.sessionId);
             const requiredAmount = cumulativeSpend + costUsdc;
             debugLog(`[SellerHandler] Sending NeedAuth: cost=${costUsdc} cumulative=${cumulativeSpend} required=${requiredAmount}`);
-            paymentMux.sendNeedAuth({
+            this._sendNeedAuthBestEffort(paymentMux, {
               channelId: session.sessionId,
               requiredCumulativeAmount: requiredAmount.toString(),
               currentAcceptedCumulative: accepted.toString(),
@@ -380,7 +380,7 @@ export class SellerRequestHandler {
               cachedInputTokens: String(usage.cachedInputTokens),
               freshInputTokens: String(usage.freshInputTokens),
               service: this._extractRequestedService(request) ?? undefined,
-            });
+            }, buyerPeerId, 'post-response');
           }
         }
       } finally {
@@ -540,6 +540,21 @@ export class SellerRequestHandler {
       return provider.handleRequestStream(request, streamCallbacks);
     }
     return provider.handleRequest(request);
+  }
+
+  private _sendNeedAuthBestEffort(
+    paymentMux: PaymentMux,
+    payload: Parameters<PaymentMux['sendNeedAuth']>[0],
+    buyerPeerId: string,
+    phase: 'budget-catch-up' | 'post-response',
+  ): void {
+    try {
+      paymentMux.sendNeedAuth(payload);
+    } catch (err) {
+      debugWarn(
+        `[SellerHandler] NeedAuth send skipped (${phase}) for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   private _scheduleMetadataRefresh(): void {
