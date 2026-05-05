@@ -38,6 +38,10 @@ Environment variables:
 |--------------|---------|------------------------------------|
 | `PORT`       | `4000`  | HTTP port to listen on             |
 | `CACHE_PATH` | `cache/network.json` | Path to write JSON cache |
+| `NETWORK_STATS_RPC_URL` | resolved per chain | Override the JSON-RPC endpoint used by the on-chain indexer + backfill |
+
+A gitignored `.env.local` in this directory is auto-loaded on startup, so
+local dev can keep an Alchemy/QuickNode URL out of the shell.
 
 ## Development
 

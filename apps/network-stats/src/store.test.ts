@@ -7,7 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SqliteStore } from './store.js';
+import { SqliteStore, bucketHistoryRows, ACTIVE_PEERS_UNKNOWN } from './store.js';
 import type { DecodedMetadataRecorded } from '@antseed/node';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -48,6 +48,7 @@ describe('SqliteStore', () => {
 
     assert.deepEqual(tables, [
       'indexer_checkpoint',
+      'network_history',
       'seller_buyer_totals',
       'seller_channel_totals',
       'seller_metadata_totals',
@@ -261,6 +262,242 @@ describe('SqliteStore', () => {
     assert.equal(after2.firstSettledBlock, 500);
     assert.equal(after2.lastSettledBlock, 750);
     assert.equal(after2.settlementCount, 2);
+    store.close();
+  });
+
+  // ── network_history ────────────────────────────────────────────────────────
+
+  it('recordHistorySample + getHistory: 1d range buckets hourly with deltas + last-gauge', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const HOUR = 3600;
+    // Anchor `now` exactly on an hour boundary so ts arithmetic below lands
+    // each sample in the bucket we expect without surprise rounding.
+    const now = Math.floor(1_700_000_000 / HOUR) * HOUR;
+
+    // Two samples in the bucket [now-2h, now-1h), then two samples in
+    // [now-1h, now). Cumulative grows monotonically; gauge fluctuates.
+    store.recordHistorySample({
+      ts: now - 90 * 60,      // 1.5 h ago — bucket A
+      activePeers: 8,
+      sellerCount: 2,
+      totalRequests: 100n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 10,
+    });
+    store.recordHistorySample({
+      ts: now - 75 * 60,      // 1.25 h ago — bucket A
+      activePeers: 9,
+      sellerCount: 2,
+      totalRequests: 130n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 13,
+    });
+    store.recordHistorySample({
+      ts: now - 45 * 60,      // 0.75 h ago — bucket B
+      activePeers: 12,
+      sellerCount: 3,
+      totalRequests: 160n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 17,
+    });
+    store.recordHistorySample({
+      ts: now - 15 * 60,      // 0.25 h ago — bucket B
+      activePeers: 11,
+      sellerCount: 3,
+      totalRequests: 180n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 20,
+    });
+
+    const history = store.getHistory('1d', now);
+    assert.equal(history.range, '1d');
+    assert.equal(history.bucketSeconds, HOUR);
+    assert.equal(history.points.length, 2);
+
+    // Bucket A: baseline = own first (no prior bucket) → 130-100=30, 13-10=3;
+    // gauge = last sample in bucket = 9.
+    assert.equal(history.points[0]!.activePeers, 9);
+    assert.equal(history.points[0]!.requests, 30);
+    assert.equal(history.points[0]!.settlements, 3);
+
+    // Bucket B: baseline = previous bucket's last cumulative (130, 13).
+    // → 180-130=50; 20-13=7; gauge = last = 11.
+    assert.equal(history.points[1]!.activePeers, 11);
+    assert.equal(history.points[1]!.requests, 50);
+    assert.equal(history.points[1]!.settlements, 7);
+
+    store.close();
+  });
+
+  it('getHistory: 7d range buckets daily and excludes samples outside the window', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const now = 1_700_000_000;
+    const DAY = 86400;
+
+    // Sample 10 days ago — should be filtered out (outside 7d window).
+    store.recordHistorySample({
+      ts: now - 10 * DAY,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 1n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 1,
+    });
+    // Sample 3 days ago.
+    store.recordHistorySample({
+      ts: now - 3 * DAY,
+      activePeers: 5,
+      sellerCount: 2,
+      totalRequests: 100n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 10,
+    });
+    // Sample 2 days ago.
+    store.recordHistorySample({
+      ts: now - 2 * DAY,
+      activePeers: 6,
+      sellerCount: 2,
+      totalRequests: 150n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 15,
+    });
+
+    const history = store.getHistory('7d', now);
+    assert.equal(history.bucketSeconds, DAY);
+    // Two day-buckets, one each.
+    assert.equal(history.points.length, 2);
+    // First in-range bucket uses its own value as baseline → 0 delta.
+    assert.equal(history.points[0]!.requests, 0);
+    assert.equal(history.points[0]!.settlements, 0);
+    // Second bucket: 150-100=50, 15-10=5.
+    assert.equal(history.points[1]!.requests, 50);
+    assert.equal(history.points[1]!.settlements, 5);
+    store.close();
+  });
+
+  it('recordHistorySample is idempotent on duplicate ts (INSERT OR IGNORE)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const sample = {
+      ts: 1_700_000_000,
+      activePeers: 5,
+      sellerCount: 1,
+      totalRequests: 10n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 1,
+    };
+
+    assert.doesNotThrow(() => {
+      store.recordHistorySample(sample);
+      // Same ts, different peer count — must NOT throw and must NOT overwrite.
+      store.recordHistorySample({ ...sample, activePeers: 99 });
+    });
+
+    const history = store.getHistory('1d', sample.ts);
+    assert.equal(history.points.length, 1);
+    assert.equal(history.points[0]!.activePeers, 5); // first write wins
+    store.close();
+  });
+
+  it('bucketHistoryRows clamps negative deltas to zero', () => {
+    // Pathological: cumulative counter goes DOWN (e.g. DB reset).
+    // We clamp instead of letting a negative number reach the chart.
+    const points = bucketHistoryRows(
+      [
+        { ts: 0,      active_peers: 1, seller_count: 1, total_requests: '500', total_input_tokens: '1000', total_output_tokens: '500', settlement_count: 50 },
+        { ts: 86400,  active_peers: 1, seller_count: 1, total_requests: '100', total_input_tokens: '0',    total_output_tokens: '0',   settlement_count: 10 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    assert.equal(points[1]!.requests, 0);
+    assert.equal(points[1]!.settlements, 0);
+    assert.equal(points[1]!.tokens, 0);
+  });
+
+  it('bucketHistoryRows computes tokens delta as input+output across buckets', () => {
+    // Two day-buckets. Tokens combine input + output cumulatively, and the
+    // per-bucket delta is the change in that combined cumulative.
+    const points = bucketHistoryRows(
+      [
+        // bucket 0: cumulative input=100, output=50 → tokens=150
+        { ts: 0,       active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '100',  total_output_tokens: '50',  settlement_count: 0 },
+        { ts: 3600,    active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '300',  total_output_tokens: '150', settlement_count: 0 },
+        // bucket 1 (next day): cumulative input=1000, output=400 → tokens=1400
+        { ts: 86400,   active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '1000', total_output_tokens: '400', settlement_count: 0 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    // First bucket: baseline = own first sample (150) → 450 - 150 = 300
+    assert.equal(points[0]!.tokens, 300);
+    // Second bucket: baseline = previous bucket's last (450) → 1400 - 450 = 950
+    assert.equal(points[1]!.tokens, 950);
+  });
+
+  it('bucketHistoryRows: ACTIVE_PEERS_UNKNOWN sentinel becomes null on the way out', () => {
+    const points = bucketHistoryRows(
+      [
+        // Backfilled bucket — only chain data, no DHT info.
+        { ts: 0,      active_peers: ACTIVE_PEERS_UNKNOWN, seller_count: 1, total_requests: '50',  total_input_tokens: '0', total_output_tokens: '0', settlement_count: 5 },
+        // Forward-sampled bucket with a real peer count.
+        { ts: 86400,  active_peers: 7,                    seller_count: 2, total_requests: '120', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 12 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    assert.equal(points[0]!.activePeers, null, 'backfilled bucket emits null peers');
+    assert.equal(points[1]!.activePeers, 7);
+    // Real samples take precedence within a single bucket — last-sample wins.
+    const mixed = bucketHistoryRows(
+      [
+        { ts: 0, active_peers: ACTIVE_PEERS_UNKNOWN, seller_count: 1, total_requests: '0', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 0 },
+        { ts: 1, active_peers: 5,                    seller_count: 1, total_requests: '0', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 0 },
+      ],
+      86400,
+    );
+    assert.equal(mixed[0]!.activePeers, 5, 'real peer sample later in bucket overrides earlier sentinel');
+  });
+
+  it('getEarliestHistoryTs returns null on empty table, then min(ts) once populated', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    assert.equal(store.getEarliestHistoryTs(), null);
+
+    store.recordHistorySample({
+      ts: 200,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 0n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 0,
+    });
+    store.recordHistorySample({
+      ts: 100,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 0n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 0,
+    });
+
+    assert.equal(store.getEarliestHistoryTs(), 100);
     store.close();
   });
 

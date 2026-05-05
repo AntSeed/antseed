@@ -57,7 +57,7 @@ export interface IndexerInfo {
   chainId: string;
   contractAddress: string;
   lastBlock: number;
-  lastUpdatedAt: number;
+  lastBlockTimestamp: number | null;
   latestBlock?: number;
   synced?: boolean;
   reorgSafetyBlocks?: number;
@@ -86,17 +86,52 @@ export interface NetworkAggregates {
   peersWithDisplayName: number;
 }
 
+export interface BackfillStatus {
+  state: 'idle' | 'running' | 'done' | 'failed' | 'skipped';
+  startedAt: number | null;
+  finishedAt: number | null;
+  scannedBlocks: number;
+  totalBlocks: number;
+  events: number;
+  rowsWritten: number;
+  phase: 'scanning' | 'resolving-timestamps' | 'done' | null;
+  errorMessage: string | null;
+}
+
 export interface StatsResponse {
   peers: Peer[];
   updatedAt: string;
   network?: NetworkAggregates;
   totals?: NetworkTotals;
   indexer?: IndexerInfo;
+  backfill?: BackfillStatus;
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
   const res = await fetch('/stats');
   if (!res.ok) throw new Error(`GET /stats → ${res.status}`);
+  return res.json();
+}
+
+export type HistoryRange = '1d' | '7d' | '30d';
+
+export interface HistoryPoint {
+  ts: number;                  // unix seconds (start of bucket)
+  activePeers: number | null;  // null for buckets reconstructed from chain history (DHT data unknown)
+  requests: number;
+  settlements: number;
+  tokens: number;              // input + output tokens served within the bucket
+}
+
+export interface HistoryResponse {
+  range: HistoryRange;
+  bucketSeconds: number;
+  points: HistoryPoint[];
+}
+
+export async function fetchHistory(range: HistoryRange): Promise<HistoryResponse> {
+  const res = await fetch(`/history?range=${range}`);
+  if (!res.ok) throw new Error(`GET /history → ${res.status}`);
   return res.json();
 }
 

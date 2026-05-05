@@ -26,6 +26,40 @@ export interface NetworkTotals {
   lastUpdatedAt: number | null;
 }
 
+export interface HistorySample {
+  ts: number;                    // unix seconds
+  activePeers: number;
+  sellerCount: number;
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+}
+
+export type HistoryRange = '1d' | '7d' | '30d';
+
+export interface HistoryPoint {
+  ts: number;                  // unix seconds, bucket boundary (start of bucket)
+  activePeers: number | null;  // last gauge sample in bucket; null when only chain-backfilled rows are present (we have no DHT history for the past)
+  requests: number;            // delta of cumulative within the bucket
+  settlements: number;         // delta of cumulative within the bucket
+  tokens: number;              // delta of cumulative input+output tokens within the bucket
+}
+
+export interface HistoryResponse {
+  range: HistoryRange;
+  bucketSeconds: number;
+  points: HistoryPoint[];
+}
+
+/**
+ * Sentinel written into `network_history.active_peers` by the chain backfill
+ * since we genuinely don't know how many peers were online at past timestamps.
+ * `bucketHistoryRows` translates -1 into a null on the way out so the chart
+ * skips the peers line for those buckets without needing a schema change.
+ */
+export const ACTIVE_PEERS_UNKNOWN = -1;
+
 interface SellerRow {
   total_input_tokens: string;
   total_output_tokens: string;
@@ -56,6 +90,16 @@ interface SellerTotalsRow {
   last_updated_at: number;
 }
 
+interface HistoryRow {
+  ts: number;
+  active_peers: number;
+  seller_count: number;
+  total_requests: string;
+  total_input_tokens: string;
+  total_output_tokens: string;
+  settlement_count: number;
+}
+
 export class SqliteStore {
   private db: Database.Database;
 
@@ -74,6 +118,9 @@ export class SqliteStore {
   private _selectAllSellerTotals!: Database.Statement<[], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
+  private _insertHistory!: Database.Statement<[number, number, number, string, string, string, number]>;
+  private _selectHistorySince!: Database.Statement<[number], HistoryRow>;
+  private _selectEarliestHistoryTs!: Database.Statement<[], { ts: number | null }>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -126,6 +173,16 @@ export class SqliteStore {
         last_block INTEGER NOT NULL,
         last_block_timestamp INTEGER,
         PRIMARY KEY (chain_id, contract_address)
+      );
+
+      CREATE TABLE IF NOT EXISTS network_history (
+        ts INTEGER PRIMARY KEY,
+        active_peers INTEGER NOT NULL,
+        seller_count INTEGER NOT NULL,
+        total_requests TEXT NOT NULL,
+        total_input_tokens TEXT NOT NULL,
+        total_output_tokens TEXT NOT NULL,
+        settlement_count INTEGER NOT NULL
       );
     `);
 
@@ -190,6 +247,36 @@ export class SqliteStore {
     this._countChannels = this.db.prepare(
       'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
     );
+
+    this._insertHistory = this.db.prepare(
+      `INSERT OR IGNORE INTO network_history
+         (ts, active_peers, seller_count, total_requests,
+          total_input_tokens, total_output_tokens, settlement_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectHistorySince = this.db.prepare(
+      `SELECT ts, active_peers, seller_count, total_requests,
+              total_input_tokens, total_output_tokens, settlement_count
+         FROM network_history
+        WHERE ts >= ?
+        ORDER BY ts ASC`,
+    );
+
+    this._selectEarliestHistoryTs = this.db.prepare(
+      'SELECT MIN(ts) AS ts FROM network_history',
+    );
+  }
+
+  /**
+   * Earliest history sample timestamp (unix seconds), or null if the table is
+   * empty. Used by the backfill driver to decide whether to re-fetch chain
+   * events: if we already have history reaching back further than the cutoff,
+   * skip the backfill.
+   */
+  getEarliestHistoryTs(): number | null {
+    const row = this._selectEarliestHistoryTs.get();
+    return row?.ts ?? null;
   }
 
   /** Returns last indexed block for (chainId, contractAddress), or null if no checkpoint. */
@@ -378,8 +465,125 @@ export class SqliteStore {
     };
   }
 
+  /**
+   * Append one history sample. INSERT OR IGNORE — if two writes land in the
+   * same second (poll retry, clock jitter), the first wins and the second is
+   * silently dropped. The poller cadence is 15 minutes, so collisions are rare
+   * enough that overwrite-vs-keep doesn't change any chart.
+   */
+  recordHistorySample(sample: HistorySample): void {
+    this._insertHistory.run(
+      sample.ts,
+      sample.activePeers,
+      sample.sellerCount,
+      sample.totalRequests.toString(),
+      sample.totalInputTokens.toString(),
+      sample.totalOutputTokens.toString(),
+      sample.settlementCount,
+    );
+  }
+
+  /**
+   * Bucketed history for the dashboard chart.
+   *
+   * - 1d  → 1h buckets
+   * - 7d  → 1d buckets
+   * - 30d → 1d buckets
+   *
+   * activePeers is a gauge — we report the LAST sample in each bucket
+   * ("what was it at close-of-bucket"). requests/settlements are cumulative
+   * counters, so per-bucket values are computed as deltas: the bucket's last
+   * cumulative minus the previous bucket's last cumulative. The first bucket
+   * uses its own first sample as the baseline (so it shows "growth within
+   * the bucket"), which under-counts only the first bucket of the range and
+   * is the simplest behavior that doesn't require fetching pre-range data.
+   */
+  getHistory(range: HistoryRange, nowSeconds: number = Math.floor(Date.now() / 1000)): HistoryResponse {
+    const bucketSeconds = range === '1d' ? 3600 : 86400;
+    const rangeSeconds = range === '1d' ? 86400 : range === '7d' ? 86400 * 7 : 86400 * 30;
+    const since = nowSeconds - rangeSeconds;
+
+    const rows = this._selectHistorySince.all(since);
+    const buckets = bucketHistoryRows(rows, bucketSeconds);
+
+    return { range, bucketSeconds, points: buckets };
+  }
+
   /** Closes the underlying DB handle. */
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * Pure bucketing — exported for unit tests. Groups rows by floor(ts/bucket),
+ * then for each bucket emits:
+ *   - activePeers: last sample's gauge value
+ *   - requests:    last cumulative − previous bucket's last cumulative
+ *   - settlements: same, for settlement_count
+ *
+ * For the very first bucket there's no previous bucket; we use the bucket's
+ * own first sample as the baseline.
+ */
+export function bucketHistoryRows(rows: HistoryRow[], bucketSeconds: number): HistoryPoint[] {
+  if (rows.length === 0) return [];
+
+  interface Acc {
+    bucketTs: number;
+    firstRequests: bigint;
+    firstSettlements: number;
+    firstTokens: bigint;
+    lastRequests: bigint;
+    lastSettlements: number;
+    lastTokens: bigint;
+    lastActivePeers: number;
+  }
+
+  const grouped: Acc[] = [];
+  for (const row of rows) {
+    const bucketTs = Math.floor(row.ts / bucketSeconds) * bucketSeconds;
+    const rowTokens = BigInt(row.total_input_tokens) + BigInt(row.total_output_tokens);
+    const tail = grouped[grouped.length - 1];
+    if (tail && tail.bucketTs === bucketTs) {
+      tail.lastRequests = BigInt(row.total_requests);
+      tail.lastSettlements = row.settlement_count;
+      tail.lastTokens = rowTokens;
+      tail.lastActivePeers = row.active_peers;
+    } else {
+      grouped.push({
+        bucketTs,
+        firstRequests: BigInt(row.total_requests),
+        firstSettlements: row.settlement_count,
+        firstTokens: rowTokens,
+        lastRequests: BigInt(row.total_requests),
+        lastSettlements: row.settlement_count,
+        lastTokens: rowTokens,
+        lastActivePeers: row.active_peers,
+      });
+    }
+  }
+
+  const points: HistoryPoint[] = [];
+  for (let i = 0; i < grouped.length; i++) {
+    const cur = grouped[i]!;
+    const prev = i === 0 ? null : grouped[i - 1]!;
+    const baselineRequests = prev ? prev.lastRequests : cur.firstRequests;
+    const baselineSettlements = prev ? prev.lastSettlements : cur.firstSettlements;
+    const baselineTokens = prev ? prev.lastTokens : cur.firstTokens;
+    const requestsDelta = cur.lastRequests - baselineRequests;
+    const settlementsDelta = cur.lastSettlements - baselineSettlements;
+    const tokensDelta = cur.lastTokens - baselineTokens;
+    points.push({
+      ts: cur.bucketTs,
+      // -1 is the backfill sentinel — emit null so the chart skips drawing
+      // the peers line for buckets that contain only chain-reconstructed data.
+      activePeers: cur.lastActivePeers === ACTIVE_PEERS_UNKNOWN ? null : cur.lastActivePeers,
+      // Cumulative counters are monotonic, so deltas should be ≥ 0. Clamp to
+      // guard against pathological cases (DB reset, manual edit).
+      requests: Number(requestsDelta < 0n ? 0n : requestsDelta),
+      settlements: settlementsDelta < 0 ? 0 : settlementsDelta,
+      tokens: Number(tokensDelta < 0n ? 0n : tokensDelta),
+    });
+  }
+  return points;
 }

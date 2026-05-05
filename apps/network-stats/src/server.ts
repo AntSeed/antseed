@@ -12,11 +12,33 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
-import type { SqliteStore } from './store.js';
+import type { SqliteStore, HistoryRange } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
 import { computeNetworkAggregates } from './aggregates.js';
 
+const HISTORY_RANGES: readonly HistoryRange[] = ['1d', '7d', '30d'] as const;
+function isHistoryRange(value: unknown): value is HistoryRange {
+  return typeof value === 'string' && (HISTORY_RANGES as readonly string[]).includes(value);
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Snapshot of the one-shot chain backfill, polled every /stats request. The
+ * shape mirrors apps/network-stats/src/index.ts BackfillStatus 1:1; we keep
+ * the type structural here to avoid cross-importing back into index.ts.
+ */
+export interface BackfillStatusPayload {
+  state: 'idle' | 'running' | 'done' | 'failed' | 'skipped';
+  startedAt: number | null;
+  finishedAt: number | null;
+  scannedBlocks: number;
+  totalBlocks: number;
+  events: number;
+  rowsWritten: number;
+  phase: 'scanning' | 'resolving-timestamps' | 'done' | null;
+  errorMessage: string | null;
+}
 
 export interface CreateServerDeps {
   poller: NetworkPoller;
@@ -25,6 +47,7 @@ export interface CreateServerDeps {
   indexer?: MetadataIndexer;      // source of chain head + reorg buffer for sync status
   chainId?: string;               // used to look up the indexer checkpoint
   contractAddress?: string;       // contract whose checkpoint to expose
+  getBackfillStatus?: () => BackfillStatusPayload;
   port?: number;
 }
 
@@ -108,7 +131,7 @@ async function resolveAgentIds(
 }
 
 export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
-  const { poller, store, stakingClient, indexer, chainId, contractAddress, port = 4000 } = deps;
+  const { poller, store, stakingClient, indexer, chainId, contractAddress, getBackfillStatus, port = 4000 } = deps;
   const app = express();
   // Per-server cache, key: lowercased address. Staked peers are cached
   // indefinitely (agentId assignments don't change). Unstaked peers (agentId=0)
@@ -199,6 +222,8 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
 
     const networkTotals = store.getNetworkTotals();
 
+    const backfillPayload = getBackfillStatus?.() ?? null;
+
     res.json({
       ...snapshot,
       peers: enrichedPeers,
@@ -212,7 +237,24 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
         lastUpdatedAt: networkTotals.lastUpdatedAt,
       },
       ...(indexerPayload ? { indexer: indexerPayload } : {}),
+      ...(backfillPayload ? { backfill: backfillPayload } : {}),
     });
+  });
+
+  app.get('/history', (req, res) => {
+    if (!store) {
+      // No store means the indexer is disabled — there's no history to serve.
+      // Return an empty payload (default range 1d) so the client can render
+      // an "empty chart" state without distinguishing 404 from 200.
+      res.json({ range: '1d', bucketSeconds: 3600, points: [] });
+      return;
+    }
+    const rangeParam = typeof req.query['range'] === 'string' ? req.query['range'] : '1d';
+    if (!isHistoryRange(rangeParam)) {
+      res.status(400).json({ error: `invalid range; expected one of ${HISTORY_RANGES.join(',')}` });
+      return;
+    }
+    res.json(store.getHistory(rangeParam));
   });
 
   app.get('/health', (_req, res) => {

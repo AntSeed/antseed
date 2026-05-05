@@ -18,6 +18,7 @@ export default defineConfig({
     port: 5180,
     proxy: {
       '/stats': `http://127.0.0.1:${SERVER_PORT}`,
+      '/history': `http://127.0.0.1:${SERVER_PORT}`,
       '/health': `http://127.0.0.1:${SERVER_PORT}`,
     },
   },

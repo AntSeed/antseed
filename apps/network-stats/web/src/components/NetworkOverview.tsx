@@ -1,4 +1,5 @@
-import type { StatsResponse } from '../api';
+import { useState } from 'react';
+import type { HistoryRange, StatsResponse } from '../api';
 import {
   formatAbsoluteLocalTime,
   formatLargeNumber,
@@ -9,7 +10,9 @@ import {
   StatCard,
 } from '../utils';
 import { ChainSyncCard } from './ChainSyncCard';
+import { HistoryChart } from './HistoryChart';
 import { Histogram } from './Histogram';
+import { TokensChart } from './TokensChart';
 
 export function NetworkOverview({
   data,
@@ -24,6 +27,10 @@ export function NetworkOverview({
   hasUpdate: boolean;
   indexerDegraded: boolean;
 }) {
+  // Shared range so the two charts stay in sync; react-query dedupes the
+  // ['history', range] key, so a single fetch covers both.
+  const [historyRange, setHistoryRange] = useState<HistoryRange>('7d');
+
   return (
     <>
       <section className="dashboard-section">
@@ -54,6 +61,32 @@ export function NetworkOverview({
             hint={hasUpdate ? formatAbsoluteLocalTime(updatedAtMs) : 'No poll yet'}
           />
         </div>
+      </section>
+
+      <section className="dashboard-section">
+        <SectionHead
+          title="Activity Peers"
+          sub="Active peers (live network gauge) alongside requests served per bucket."
+        />
+        <HistoryChart
+          range={historyRange}
+          onRangeChange={setHistoryRange}
+          backfill={data.backfill ?? null}
+          now={now}
+        />
+      </section>
+
+      <section className="dashboard-section">
+        <SectionHead
+          title="Tokens served"
+          sub="Total tokens (input + output) flowing through the network per bucket."
+        />
+        <TokensChart
+          range={historyRange}
+          onRangeChange={setHistoryRange}
+          backfill={data.backfill ?? null}
+          now={now}
+        />
       </section>
 
       {data.totals && (

@@ -556,3 +556,87 @@ describe('createServer — network aggregates: enriched path', () => {
     assert.ok(body.totals, 'totals must still be present in enriched path');
   });
 });
+
+// ── Test 13: /history endpoint ────────────────────────────────────────────────
+
+describe('createServer — GET /history', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  // Seed a couple of samples a few hours apart so 1d bucketing has data.
+  const nowSec = Math.floor(Date.now() / 1000);
+  store.recordHistorySample({
+    ts: nowSec - 3600 * 3,
+    activePeers: 5,
+    sellerCount: 2,
+    totalRequests: 100n,
+    totalInputTokens: 0n,
+    totalOutputTokens: 0n,
+    settlementCount: 10,
+  });
+  store.recordHistorySample({
+    ts: nowSec - 60,
+    activePeers: 8,
+    sellerCount: 3,
+    totalRequests: 150n,
+    totalInputTokens: 0n,
+    totalOutputTokens: 0n,
+    settlementCount: 14,
+  });
+
+  const poller = makePoller([fakePeer('a', '0xabc')]);
+  const stakingClient = makeStakingClient(() => 0);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('GET /history?range=1d returns hourly buckets with delta + last-gauge fields', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<{ ts: number; activePeers: number; requests: number; settlements: number }>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2, 'expected at least 2 points');
+    const last = body.points[body.points.length - 1]!;
+    assert.equal(last.activePeers, 8);
+    // Last bucket's request delta uses the previous bucket's last cumulative
+    // as baseline → 150 - 100 = 50.
+    assert.equal(last.requests, 50);
+    assert.equal(last.settlements, 4);
+  });
+
+  it('GET /history with no range defaults to 1d', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string };
+    assert.equal(body.range, '1d');
+  });
+
+  it('GET /history?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history?range=bogus`);
+    assert.equal(res.status, 400);
+  });
+});
+
+// ── Test 14: /history with no store ───────────────────────────────────────────
+
+describe('createServer — GET /history without store', () => {
+  const PORT = nextPort();
+  const poller = makePoller([fakePeer('a', undefined)]);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; points: unknown[] };
+    assert.equal(body.range, '1d');
+    assert.deepEqual(body.points, []);
+  });
+});
