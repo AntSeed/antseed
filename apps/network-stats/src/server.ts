@@ -5,24 +5,35 @@
  * GET /health →  { ok: true }
  */
 
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
 import type { SqliteStore, HistoryRange } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
-import { computeNetworkAggregates } from './aggregates.js';
-import { mapWithConcurrency, normalizeAddress } from './utils.js';
+import { computeNetworkMetrics } from './metrics.js';
+import { computeInsights, type NetworkInsights } from './insights.js';
+import { getPeerLookupAddress, mapWithConcurrency, normalizeAddress } from './utils.js';
+
+// Velocity needs at least 2× the longest window so growth-pct denominators
+// have somewhere to land — we expose a 7d window, so request 14d of history.
+const INSIGHTS_HISTORY_WINDOW_SECONDS = 14 * 86400;
+// Stability/movers compare prices across this window; matches the constant
+// in insights.ts (PRICE_STABILITY_WINDOW_SECONDS) so the SQL filter and the
+// computed-window-seconds field stay in sync.
+const INSIGHTS_PRICE_WINDOW_SECONDS = 30 * 86400;
+// Trending compares last 24h vs prior 7d, so we need 8d of seller activity.
+const INSIGHTS_ACTIVITY_WINDOW_SECONDS = 8 * 86400;
+// /insights re-runs SQL across all sellers + sorts on every hit. The web
+// client polls at 30s while on the relevant routes, so a short TTL memo is
+// pure win — the freshness budget for these derivations is well above 15s
+// (they're driven by the indexer's per-tick state, which advances at minute
+// cadence at best).
+const INSIGHTS_CACHE_TTL_MS = 15_000;
 
 const HISTORY_RANGES: readonly HistoryRange[] = ['1d', '7d', '30d'] as const;
 function isHistoryRange(value: unknown): value is HistoryRange {
   return typeof value === 'string' && (HISTORY_RANGES as readonly string[]).includes(value);
 }
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Snapshot of the one-shot chain backfill, polled every /stats request. The
@@ -83,13 +94,6 @@ async function resolveAgentId(
   }
 }
 
-function getPeerLookupAddress(peer: { peerId?: string; sellerContract?: string }): string | null {
-  // peerId is the lowercased seller/operator EVM address without the 0x prefix.
-  // Contract-backed sellers announce the settlement address separately; use that
-  // for on-chain volume lookup when present.
-  return normalizeAddress(peer.sellerContract) ?? normalizeAddress(peer.peerId);
-}
-
 async function resolveAgentIds(
   client: StakingClient,
   cache: Map<string, CacheEntry>,
@@ -122,10 +126,10 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
 
   app.get('/stats', async (_req, res) => {
     const snapshot = poller.getSnapshot();
-    const network = computeNetworkAggregates(snapshot.peers);
+    const network = computeNetworkMetrics(snapshot.peers);
 
     // Fast path: no indexer configured. Same shape as before, plus the new
-    // network-aggregates block. Adding a new key is backward-compatible —
+    // network metrics block. Adding a new key is backward-compatible —
     // older clients that only read `peers`/`updatedAt` keep working.
     if (!store || !stakingClient) {
       res.json({ ...snapshot, network });
@@ -215,6 +219,59 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     });
   });
 
+  // Per-server cache of the latest /insights response. Keyed implicitly by
+  // "this server instance" — the payload is fully derivable from store +
+  // poller snapshot, both of which are server-instance-scoped.
+  let insightsCache: { computedAt: number; payload: NetworkInsights } | null = null;
+
+  app.get('/insights', async (_req, res) => {
+    if (insightsCache && Date.now() - insightsCache.computedAt < INSIGHTS_CACHE_TTL_MS) {
+      res.json(insightsCache.payload);
+      return;
+    }
+    const snapshot = poller.getSnapshot();
+
+    // Without the indexer + staking client we can still answer the DHT-only
+    // sections (pricing, services, regions, mostStaked, mostDiverse). Pass
+    // empty arrays / map for everything chain-derived so the same handler
+    // works on chains where the indexer is disabled.
+    if (!store || !stakingClient) {
+      const payload = computeInsights({
+        peers: snapshot.peers,
+        sellerTotals: [],
+        agentIdByPeerAddress: new Map(),
+        history: [],
+        priceVolatility: [],
+        sellerActivity: [],
+      });
+      insightsCache = { computedAt: Date.now(), payload };
+      res.json(payload);
+      return;
+    }
+
+    const peerLookupAddresses = snapshot.peers.map((peer) =>
+      getPeerLookupAddress(peer as { peerId?: string; sellerContract?: string }),
+    );
+    const agentIdByPeerAddress = await resolveAgentIds(stakingClient, agentIdCache, peerLookupAddresses);
+
+    const sellerTotals = store.getAllSellerTotalsWithIds();
+    const history = store.getHistorySince(INSIGHTS_HISTORY_WINDOW_SECONDS);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const priceVolatility = store.getPriceVolatility(nowSec - INSIGHTS_PRICE_WINDOW_SECONDS);
+    const sellerActivity = store.getSellerActivityForTrending(nowSec - INSIGHTS_ACTIVITY_WINDOW_SECONDS);
+
+    const payload = computeInsights({
+      peers: snapshot.peers,
+      sellerTotals,
+      agentIdByPeerAddress,
+      history,
+      priceVolatility,
+      sellerActivity,
+    });
+    insightsCache = { computedAt: Date.now(), payload };
+    res.json(payload);
+  });
+
   app.get('/history', (req, res) => {
     if (!store) {
       // No store means the indexer is disabled — there's no history to serve.
@@ -234,12 +291,6 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
-
-  // Serve the built SPA in production. Skipped in dev — Vite serves on its own port.
-  const webDir = resolve(__dirname, 'web');
-  if (existsSync(webDir)) {
-    app.use(express.static(webDir));
-  }
 
   let server: ReturnType<typeof app.listen> | null = null;
 

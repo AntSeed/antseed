@@ -2865,3 +2865,185 @@ button {
     transparent 7px
   );
 }
+
+/* ── leaderboards ─────────────────────────────────────────── */
+
+.leaderboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 18px;
+}
+
+.leaderboard-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaderboard-head {
+  padding: 14px 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.leaderboard-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.leaderboard-caption {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.leaderboard-empty {
+  padding: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  padding: 10px 16px;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.leaderboard-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.leaderboard-table tbody td {
+  border-bottom: 1px solid var(--card-border);
+  color: var(--text-secondary);
+}
+
+.leaderboard-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.leaderboard-table .num {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.leaderboard-rank {
+  width: 28px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  text-align: right;
+}
+
+.leaderboard-row.is-clickable {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.leaderboard-row.is-clickable:hover td {
+  background: var(--card-hover);
+}
+
+/* ── velocity cards ──────────────────────────────────────── */
+
+.velocity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.velocity-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.velocity-card-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.velocity-card-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.velocity-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.velocity-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.velocity-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.velocity-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.velocity-stat-aside {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── pricing table ───────────────────────────────────────── */
+
+.pricing-table .pricing-peer code {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* ── price movers ────────────────────────────────────────── */
+
+/* Price drops are coloured with the positive accent (cheaper for buyers); */
+/* hikes use --danger so the table reads correctly at a glance. */
+.price-mover-pct.is-drop {
+  color: var(--accent);
+}
+
+.price-mover-pct.is-hike {
+  color: var(--danger);
+}

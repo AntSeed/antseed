@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchStats, type Peer } from './api';
-import { AntSeedMark, NetworkIcon, PeersIcon } from './components/icons';
+import { fetchInsights, fetchStats, type Peer } from './api';
+import {
+  AntSeedMark,
+  InsightsIcon,
+  LeaderboardsIcon,
+  NetworkIcon,
+  PeersIcon,
+} from './components/icons';
+import { Insights } from './components/Insights';
+import { Leaderboards } from './components/Leaderboards';
 import { NetworkOverview } from './components/NetworkOverview';
 import { PeersTable } from './components/PeersTable';
 import { PeerServicesModal } from './components/PeerServicesModal';
@@ -23,7 +31,7 @@ import {
 const REFETCH_INTERVAL_MS = 30_000;
 const SERVER_POLL_INTERVAL_MS = 15 * 60 * 1000;
 
-type Route = 'network' | 'peers';
+type Route = 'network' | 'peers' | 'leaderboards' | 'insights';
 const PEER_HASH_PREFIX = '#/peer/';
 
 interface HashRoute {
@@ -39,6 +47,8 @@ function readHashRoute(): HashRoute {
     return id.length > 0 ? { route: 'peers', peerId: id } : { route: 'peers', peerId: null };
   }
   if (h === '#/peers') return { route: 'peers', peerId: null };
+  if (h === '#/leaderboards') return { route: 'leaderboards', peerId: null };
+  if (h === '#/insights') return { route: 'insights', peerId: null };
   return { route: 'network', peerId: null };
 }
 
@@ -56,9 +66,16 @@ function navigateToPeer(peerId: string): void {
   window.location.hash = `${PEER_HASH_PREFIX}${encodeURIComponent(peerId)}`;
 }
 
+const ROUTE_HASH: Record<Route, string> = {
+  network: '#/',
+  peers: '#/peers',
+  leaderboards: '#/leaderboards',
+  insights: '#/insights',
+};
+
 function navigateToTab(route: Route): void {
   if (typeof window === 'undefined') return;
-  window.location.hash = route === 'peers' ? '#/peers' : '#/';
+  window.location.hash = ROUTE_HASH[route];
 }
 
 export function App() {
@@ -70,6 +87,14 @@ export function App() {
   const now = useTick(1000);
   const [theme, toggleTheme] = useTheme();
   const { route, peerId: hashPeerId } = useHashRoute();
+  const insightsQuery = useQuery({
+    queryKey: ['insights'],
+    queryFn: fetchInsights,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    // /insights is heavier than /stats and only matters on its own routes —
+    // skip the poll until the user actually navigates there.
+    enabled: route === 'insights' || route === 'leaderboards',
+  });
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   const [servicesModal, setServicesModal] = useState<{ peer: Peer; services: string[] } | null>(
     null,
@@ -118,6 +143,22 @@ export function App() {
             {data && (
               <span className="sidebar-nav-badge">{data.peers.length}</span>
             )}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-nav-item${activeRoute === 'leaderboards' ? ' is-active' : ''}`}
+            onClick={() => navigateToTab('leaderboards')}
+          >
+            <LeaderboardsIcon />
+            <span>Leaderboards</span>
+          </button>
+          <button
+            type="button"
+            className={`sidebar-nav-item${activeRoute === 'insights' ? ' is-active' : ''}`}
+            onClick={() => navigateToTab('insights')}
+          >
+            <InsightsIcon />
+            <span>Insights</span>
           </button>
         </nav>
         <div className="sidebar-foot">
@@ -244,6 +285,43 @@ export function App() {
               )}
             </section>
 
+          </>
+        )}
+
+        {route === 'leaderboards' && (
+          <section className="dashboard-section">
+            <SectionHead
+              title="Leaderboards"
+              sub="Top-ranked peers across activity, settlements, buyer reach, stake, breadth, and tenure."
+            />
+            {insightsQuery.isLoading && (
+              <div className="status-banner">Loading leaderboards…</div>
+            )}
+            {insightsQuery.error && (
+              <div className="status-banner status-banner--error">
+                Error: {(insightsQuery.error as Error).message}
+              </div>
+            )}
+            {insightsQuery.data && (
+              <Leaderboards
+                data={insightsQuery.data.leaderboards}
+                onNavigatePeer={navigateToPeer}
+              />
+            )}
+          </section>
+        )}
+
+        {route === 'insights' && (
+          <>
+            {insightsQuery.isLoading && (
+              <div className="status-banner">Loading insights…</div>
+            )}
+            {insightsQuery.error && (
+              <div className="status-banner status-banner--error">
+                Error: {(insightsQuery.error as Error).message}
+              </div>
+            )}
+            {insightsQuery.data && <Insights data={insightsQuery.data} />}
           </>
         )}
       </main>

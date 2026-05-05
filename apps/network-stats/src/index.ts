@@ -11,7 +11,7 @@ if (existsSync(envFile)) {
   process.loadEnvFile(envFile);
 }
 
-import { NetworkPoller } from './poller.js';
+import { NetworkPoller, type NetworkSnapshot } from './poller.js';
 import { createServer } from './server.js';
 import { ACTIVE_PEERS_UNKNOWN, SqliteStore } from './store.js';
 import { MetadataIndexer } from './indexer.js';
@@ -101,10 +101,29 @@ if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 
 //     between polls so the chart populates quickly after a new deploy).
 // Both write the same shape; INSERT OR IGNORE on the ts PK protects against
 // the rare case where both fire in the same second.
+//
+// Both writers MUST wait for the chain backfill to settle. Backfill writes
+// rows with backdated timestamps (one per UTC day in chain history); if a
+// "ts=now" row lands first while backfill is still scanning, the table ends
+// up non-monotonic in time order (past rows have larger cumulative totals
+// than future ones), which breaks /insights velocity windows. The
+// `backfillResolved` flag is flipped true once the backfill promise has
+// settled (success, failure, or skipped) — see the backfill block below.
 let historySampleTimer: ReturnType<typeof setInterval> | null = null;
 let pollHasCompleted = false;
+let backfillResolved = false;
+// In-memory dedup cache for seller activity samples. Avoids issuing a
+// SELECT+INSERT against seller_activity_history every minute for sellers
+// whose totals haven't changed since the last sample. Bounded by the active
+// seller set (we filter dormant sellers before this map), so unbounded
+// growth is not a concern.
+const lastActivitySigByAgent = new Map<number, string>();
+const SELLER_ACTIVITY_WINDOW_SECONDS = 8 * 86400;
+
 function recordHistorySampleNow(): void {
   if (!store) return;
+  if (!backfillResolved) return;
+  const tsSec = Math.floor(Date.now() / 1000);
   try {
     const snapshot = poller.getSnapshot();
     const totals = store.getNetworkTotals();
@@ -113,7 +132,7 @@ function recordHistorySampleNow(): void {
     // the sentinel so the chart renders null instead of a misleading zero.
     const activePeers = pollHasCompleted ? snapshot.peers.length : ACTIVE_PEERS_UNKNOWN;
     store.recordHistorySample({
-      ts: Math.floor(Date.now() / 1000),
+      ts: tsSec,
       activePeers,
       sellerCount: totals.sellerCount,
       totalRequests: totals.totalRequests,
@@ -126,15 +145,87 @@ function recordHistorySampleNow(): void {
     // disk pressure) tear down the timer or, worse, the process.
     console.error('[network-stats] recordHistorySample failed:', err);
   }
+
+  // Per-seller activity samples. Two filters before the SQL fires:
+  //   1. Skip sellers dormant past the trending window — trending only ever
+  //      diffs the last 8 days, so a no-op row past that is wasted work.
+  //   2. Skip sellers whose totals match the last signature we recorded —
+  //      avoids a SELECT+(no-op-INSERT) per idle seller per minute.
+  try {
+    const activeCutoff = tsSec - SELLER_ACTIVITY_WINDOW_SECONDS;
+    for (const seller of store.getAllSellerTotalsWithIds()) {
+      if (seller.lastSeenAt === null || seller.lastSeenAt < activeCutoff) continue;
+      const sig = `${seller.totalRequests}|${seller.totalInputTokens}|${seller.totalOutputTokens}|${seller.settlementCount}`;
+      if (lastActivitySigByAgent.get(seller.agentId) === sig) continue;
+      store.recordSellerActivitySample({
+        agentId: seller.agentId,
+        ts: tsSec,
+        totalRequests: seller.totalRequests,
+        totalInputTokens: seller.totalInputTokens,
+        totalOutputTokens: seller.totalOutputTokens,
+        settlementCount: seller.settlementCount,
+      });
+      lastActivitySigByAgent.set(seller.agentId, sig);
+    }
+  } catch (err) {
+    console.error('[network-stats] recordSellerActivitySample failed:', err);
+  }
 }
+
+/**
+ * After every successful poll, walk the snapshot and record one price sample
+ * per (peer, provider, service) the seller announced. The store dedups on
+ * equal prices, so this is cheap when nothing changes — only actual price
+ * movements end up as new rows.
+ */
+function recordPriceSamplesForSnapshot(snapshot: NetworkSnapshot): void {
+  if (!store) return;
+  const tsSec = Math.floor(Date.now() / 1000);
+  try {
+    for (const peer of snapshot.peers) {
+      // peerId is already 40 hex lowercased without 0x — the canonical form.
+      const peerId = typeof peer.peerId === 'string' ? peer.peerId : null;
+      if (!peerId) continue;
+      for (const provider of peer.providers) {
+        for (const service of provider.services) {
+          const specific = provider.servicePricing?.[service];
+          const pricing = specific ?? provider.defaultPricing;
+          if (!pricing) continue;
+          const inputUsd = pricing.inputUsdPerMillion;
+          const outputUsd = pricing.outputUsdPerMillion;
+          if (typeof inputUsd !== 'number' || typeof outputUsd !== 'number') continue;
+          store.recordPriceSample({
+            peerId,
+            provider: provider.provider,
+            service,
+            ts: tsSec,
+            inputUsdPerMillion: inputUsd,
+            outputUsdPerMillion: outputUsd,
+            cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion ?? null,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[network-stats] recordPriceSample failed:', err);
+  }
+}
+
 if (store) {
-  poller.onPollComplete = () => {
+  poller.onPollComplete = (snapshot) => {
     pollHasCompleted = true;
+    // recordHistorySampleNow self-gates on backfillResolved. Price samples
+    // are keyed by (peer, provider, service) and don't depend on cumulative
+    // counters, so they're safe to record any time.
     recordHistorySampleNow();
+    recordPriceSamplesForSnapshot(snapshot);
   };
-  // Write one sample at startup so the chart isn't empty before the first
-  // tick fires, then keep sampling on the configured cadence.
-  recordHistorySampleNow();
+  // Periodic sampling on the configured cadence. We deliberately do NOT write
+  // an immediate startup sample here: on a fresh DB, getNetworkTotals() is
+  // 0 before backfill applies any events, so an immediate sample would land a
+  // ts=now/cum=0 row that gets sandwiched after the backdated backfill rows
+  // once they're written. The first interval fire (60s in by default) is
+  // enough lead time for the backfill to have touched at least one chunk.
   historySampleTimer = setInterval(recordHistorySampleNow, HISTORY_SAMPLE_INTERVAL_MS);
 }
 
@@ -183,14 +274,15 @@ const server = createServer({
 
 await server.start();
 await poller.start();
-indexer?.start();
 
 // One-shot historical backfill from chain. We re-fetch all settlement events
-// from the contract's deploy block and write one synthetic `network_history`
-// row per UTC day so the 7d/30d charts can render meaningful data on day one
-// instead of waiting for forward sampling to fill them in. Only run when we
-// don't already have history reaching back far enough — re-running is a no-op
-// thanks to PK on ts + INSERT OR IGNORE, but it costs RPC calls for nothing.
+// from the contract's deploy block (or the existing checkpoint, if resuming)
+// and apply them through `store.applyBatch`, recording one network_history
+// row per UTC day from `getNetworkTotals()`. Backfill and the live indexer
+// share the same applyBatch path so cumulative counters match — we therefore
+// can't run them concurrently (no event-level dedup → double counting). The
+// indexer is started AFTER backfill resolves; until then it sits idle while
+// the backfill advances seller_totals + checkpoint to (head − reorgSafety).
 const BACKFILL_REFRESH_THRESHOLD_SEC = 6 * 3600; // skip if we already have ≥6h of history
 if (
   store
@@ -206,12 +298,16 @@ if (
     backfillStatus.startedAt = nowSec;
     // Background — don't await. Failures are logged but never fatal; the
     // forward sampler keeps running, and the user can always restart to retry.
+    // The indexer is started in `.finally` so it runs whether backfill
+    // succeeded, failed, or did nothing.
     void backfillNetworkHistory({
       store,
       statsClient,
       // Reuse the StatsClient's provider so any FallbackProvider failover
       // configured for normal indexing also covers the backfill.
       provider: statsClient.provider,
+      chainId: CHAIN_ID,
+      contractAddress: chainConfig.statsContractAddress,
       deployBlock: chainConfig.statsDeployBlock,
       reorgSafetyBlocks: REORG_SAFETY_BLOCKS,
       maxBlocksPerChunk: BACKFILL_BLOCKS_PER_CHUNK,
@@ -232,11 +328,23 @@ if (
       backfillStatus.state = 'failed';
       backfillStatus.finishedAt = Math.floor(Date.now() / 1000);
       backfillStatus.errorMessage = err instanceof Error ? err.message : String(err);
+    }).finally(() => {
+      // Unblock the live history sampler — it's safe to write "ts=now" rows
+      // now that backfill is no longer racing us with backdated writes.
+      backfillResolved = true;
+      indexer?.start();
     });
   } else {
     backfillStatus.state = 'skipped';
     console.log(`[network-stats] history already extends back ${nowSec - earliest}s — skipping chain backfill`);
+    backfillResolved = true;
+    indexer?.start();
   }
+} else {
+  // No store / no stats contract — indexer is null anyway, but guard for clarity.
+  // No backfill ran, so the sampler can fire freely.
+  backfillResolved = true;
+  indexer?.start();
 }
 
 process.on('SIGINT', shutdown);

@@ -477,7 +477,7 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
   });
 });
 
-// ── Test 11: Network aggregates — legacy fast path ────────────────────────────
+// ── Test 11: Network metrics — legacy fast path ───────────────────────────────
 
 // fakePeer() sets version='v1' (string) which the aggregator skips. These
 // tests need real-shaped values to exercise the aggregate logic, so they
@@ -487,7 +487,7 @@ function aggregatePeer(address: string, overrides: Partial<AggPeer>): AggPeer {
   return { ...fakePeer('agg', address), ...overrides };
 }
 
-describe('createServer — network aggregates: legacy fast path', () => {
+describe('createServer — network metrics: legacy fast path', () => {
   const PORT = nextPort();
   const peers = [
     aggregatePeer('0xaaa', {}),
@@ -527,9 +527,9 @@ describe('createServer — network aggregates: legacy fast path', () => {
   });
 });
 
-// ── Test 12: Network aggregates — enriched path ───────────────────────────────
+// ── Test 12: Network metrics — enriched path ──────────────────────────────────
 
-describe('createServer — network aggregates: enriched path', () => {
+describe('createServer — network metrics: enriched path', () => {
   const PORT = nextPort();
   const store = makeStore();
   const peers = [
@@ -638,5 +638,85 @@ describe('createServer — GET /history without store', () => {
     const body = await res.json() as { range: string; points: unknown[] };
     assert.equal(body.range, '1d');
     assert.deepEqual(body.points, []);
+  });
+});
+
+// ── Test 15: /insights endpoint ───────────────────────────────────────────────
+
+describe('createServer — GET /insights (enriched)', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  // Seed a single seller's totals so the leaderboards have something to rank.
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 7n, blockNumber: 100, inputTokens: 1000n, outputTokens: 2000n, requestCount: 50n }),
+  ], 1);
+  // Seed two history samples to drive a non-null 24h velocity window.
+  const nowSec = Math.floor(Date.now() / 1000);
+  store.recordHistorySample({
+    ts: nowSec - 86400 - 60,
+    activePeers: 1, sellerCount: 1,
+    totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+  });
+  store.recordHistorySample({
+    ts: nowSec - 60,
+    activePeers: 2, sellerCount: 1,
+    totalRequests: 60n, totalInputTokens: 1100n, totalOutputTokens: 2200n, settlementCount: 5,
+  });
+
+  const peers = [fakePeer('a', '0xabc1234')];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 7);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('returns leaderboards + pricing + concentration + velocity + activity', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      leaderboards: { mostActive: Array<{ agentId: number; metric: string }> };
+      pricing: { byService: Record<string, unknown> };
+      services: { topServices: unknown[]; topCategories: unknown[] };
+      regions: unknown[];
+      concentration: { sellerCount: number };
+      velocity: { last24h: { requestsDelta: string } | null };
+      activity: { peersOnline: number; totalSellersIndexed: number };
+    };
+    assert.ok(Array.isArray(body.leaderboards.mostActive));
+    assert.equal(body.leaderboards.mostActive.length, 1);
+    assert.equal(body.leaderboards.mostActive[0]!.agentId, 7);
+    assert.equal(body.leaderboards.mostActive[0]!.metric, '50');
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.activity.totalSellersIndexed, 1);
+    assert.equal(body.concentration.sellerCount, 1);
+    assert.ok(body.velocity.last24h !== null);
+    assert.equal(body.velocity.last24h!.requestsDelta, '50');
+  });
+});
+
+// ── Test 16: /insights without store returns DHT-only payload ─────────────────
+
+describe('createServer — GET /insights without store', () => {
+  const PORT = nextPort();
+  const peers = [fakePeer('a', undefined)];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('still returns the DHT-only sections', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      leaderboards: { mostActive: unknown[] };
+      activity: { peersOnline: number; totalSellersIndexed: number };
+      velocity: { last24h: unknown };
+    };
+    assert.deepEqual(body.leaderboards.mostActive, []);
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.activity.totalSellersIndexed, 0);
+    assert.equal(body.velocity.last24h, null);
   });
 });

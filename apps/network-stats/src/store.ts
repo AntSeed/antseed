@@ -17,6 +17,16 @@ export interface SellerTotals {
   lastUpdatedAt: number;
 }
 
+/**
+ * Per-seller totals row keyed by agentId — the same shape consumers see in
+ * /stats per peer, but enumerated across the whole indexed set so the
+ * insights endpoint can build leaderboards without N+1 round trips. Returned
+ * by `getAllSellerTotalsWithIds` and consumed by `insights.ts`.
+ */
+export interface SellerTotalsWithId extends SellerTotals {
+  agentId: number;
+}
+
 export interface NetworkTotals {
   totalRequests: bigint;
   totalInputTokens: bigint;
@@ -60,6 +70,56 @@ export interface HistoryResponse {
  */
 export const ACTIVE_PEERS_UNKNOWN = -1;
 
+export interface PriceSampleInput {
+  peerId: string;        // 40 hex chars (no 0x), normalized lowercase
+  provider: string;
+  service: string;
+  ts: number;            // unix seconds
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number | null;
+}
+
+const PRICE_SAMPLE_HEARTBEAT_SECONDS = 86_400;
+
+/**
+ * Per-(peer, service) pricing volatility rollup over a window. Drives the
+ * "most stable / most volatile" insight leaderboards. `changeCount` is the
+ * number of distinct price tuples observed in the window; stable peers remain
+ * visible because unchanged announcements are persisted as daily heartbeats.
+ */
+export interface PriceVolatilityRow {
+  peerId: string;
+  provider: string;
+  service: string;
+  sampleCount: number;
+  changeCount: number;       // distinct (input, output) tuples in the window
+  firstTs: number;
+  lastTs: number;
+  firstInputUsdPerMillion: number;
+  firstOutputUsdPerMillion: number;
+  latestInputUsdPerMillion: number;
+  latestOutputUsdPerMillion: number;
+}
+
+export interface SellerActivityRow {
+  agentId: number;
+  ts: number;
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+}
+
+export interface SellerActivitySnapshotInput {
+  agentId: number;
+  ts: number;
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+}
+
 interface SellerRow {
   total_input_tokens: string;
   total_output_tokens: string;
@@ -100,6 +160,26 @@ interface HistoryRow {
   settlement_count: number;
 }
 
+interface SellerActivityDbRow {
+  agent_id: number;
+  ts: number;
+  total_requests: string;
+  total_input_tokens: string;
+  total_output_tokens: string;
+  settlement_count: number;
+}
+
+function toSellerActivityRow(row: SellerActivityDbRow): SellerActivityRow {
+  return {
+    agentId: row.agent_id,
+    ts: row.ts,
+    totalRequests: BigInt(row.total_requests),
+    totalInputTokens: BigInt(row.total_input_tokens),
+    totalOutputTokens: BigInt(row.total_output_tokens),
+    settlementCount: row.settlement_count,
+  };
+}
+
 export class SqliteStore {
   private db: Database.Database;
 
@@ -116,11 +196,34 @@ export class SqliteStore {
   private _upsertChannel!: Database.Statement<[number, string, string, string, string, string, number, number, number]>;
   private _selectSellerTotals!: Database.Statement<[number], SellerTotalsRow>;
   private _selectAllSellerTotals!: Database.Statement<[], SellerTotalsRow>;
+  private _selectAllSellerTotalsWithIds!: Database.Statement<[], SellerTotalsRow & { agent_id: number }>;
+  private _countBuyersAll!: Database.Statement<[], { agent_id: number; c: number }>;
+  private _countChannelsAll!: Database.Statement<[], { agent_id: number; c: number }>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
   private _insertHistory!: Database.Statement<[number, number, number, string, string, string, number]>;
   private _selectHistorySince!: Database.Statement<[number], HistoryRow>;
   private _selectEarliestHistoryTs!: Database.Statement<[], { ts: number | null }>;
+  private _selectLatestHistoryAtOrBefore!: Database.Statement<[number], Pick<HistoryRow, 'total_requests' | 'total_input_tokens' | 'total_output_tokens' | 'settlement_count'>>;
+  private _selectLatestPriceSample!: Database.Statement<[string, string, string], { ts: number; input_usd_per_million: number; output_usd_per_million: number; cached_input_usd_per_million: number | null }>;
+  private _insertPriceSample!: Database.Statement<[string, string, string, number, number, number, number | null]>;
+  private _selectPriceVolatility!: Database.Statement<[number, number, number], {
+    peer_id: string;
+    provider: string;
+    service: string;
+    sample_count: number;
+    change_count: number;
+    first_ts: number;
+    last_ts: number;
+    first_input: number;
+    first_output: number;
+    latest_input: number;
+    latest_output: number;
+  }>;
+  private _selectLatestSellerActivity!: Database.Statement<[number], Omit<SellerActivityDbRow, 'agent_id'>>;
+  private _selectLatestSellerActivityAtOrBefore!: Database.Statement<[number, number], SellerActivityDbRow>;
+  private _insertSellerActivity!: Database.Statement<[number, number, string, string, string, number]>;
+  private _selectSellerActivitySince!: Database.Statement<[number], SellerActivityDbRow>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -184,6 +287,33 @@ export class SqliteStore {
         total_output_tokens TEXT NOT NULL,
         settlement_count INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS peer_pricing_history (
+        peer_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        service TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        input_usd_per_million REAL NOT NULL,
+        output_usd_per_million REAL NOT NULL,
+        cached_input_usd_per_million REAL,
+        PRIMARY KEY (peer_id, provider, service, ts)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_peer_pricing_history_ts
+        ON peer_pricing_history (ts);
+
+      CREATE TABLE IF NOT EXISTS seller_activity_history (
+        agent_id INTEGER NOT NULL,
+        ts INTEGER NOT NULL,
+        total_requests TEXT NOT NULL,
+        total_input_tokens TEXT NOT NULL,
+        total_output_tokens TEXT NOT NULL,
+        settlement_count INTEGER NOT NULL,
+        PRIMARY KEY (agent_id, ts)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_seller_activity_history_ts
+        ON seller_activity_history (ts);
     `);
 
     this._selectCheckpoint = this.db.prepare(
@@ -240,6 +370,18 @@ export class SqliteStore {
       'SELECT total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, first_seen_at, last_seen_at, last_updated_at FROM seller_metadata_totals',
     );
 
+    this._selectAllSellerTotalsWithIds = this.db.prepare(
+      'SELECT agent_id, total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_settled_block, last_settled_block, first_seen_at, last_seen_at, last_updated_at FROM seller_metadata_totals',
+    );
+
+    this._countBuyersAll = this.db.prepare(
+      'SELECT agent_id, COUNT(*) AS c FROM seller_buyer_totals GROUP BY agent_id',
+    );
+
+    this._countChannelsAll = this.db.prepare(
+      'SELECT agent_id, COUNT(*) AS c FROM seller_channel_totals GROUP BY agent_id',
+    );
+
     this._countBuyers = this.db.prepare(
       'SELECT COUNT(*) AS c FROM seller_buyer_totals WHERE agent_id = ?',
     );
@@ -265,6 +407,96 @@ export class SqliteStore {
 
     this._selectEarliestHistoryTs = this.db.prepare(
       'SELECT MIN(ts) AS ts FROM network_history',
+    );
+
+    this._selectLatestHistoryAtOrBefore = this.db.prepare(
+      `SELECT total_requests, total_input_tokens, total_output_tokens, settlement_count
+         FROM network_history
+        WHERE ts <= ?
+        ORDER BY ts DESC
+        LIMIT 1`,
+    );
+
+    this._selectLatestPriceSample = this.db.prepare(
+      `SELECT ts, input_usd_per_million, output_usd_per_million, cached_input_usd_per_million
+         FROM peer_pricing_history
+        WHERE peer_id = ? AND provider = ? AND service = ?
+        ORDER BY ts DESC
+        LIMIT 1`,
+    );
+
+    this._insertPriceSample = this.db.prepare(
+      `INSERT OR IGNORE INTO peer_pricing_history
+         (peer_id, provider, service, ts, input_usd_per_million,
+          output_usd_per_million, cached_input_usd_per_million)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    // Per-(peer, provider, service) rollup: count of distinct price tuples
+    // (changeCount), total samples in the window, and the first + latest
+    // input/output prices observed. Distinctness is computed by counting
+    // distinct (input, output) pairs — a peer that posted (1, 2) (1, 2)
+    // (3, 4) (3, 4) over the window has changeCount=2.
+    this._selectPriceVolatility = this.db.prepare(
+      `SELECT
+         peer_id,
+         provider,
+         service,
+         COUNT(*) AS sample_count,
+         COUNT(DISTINCT input_usd_per_million || '|' || output_usd_per_million) AS change_count,
+         MIN(ts) AS first_ts,
+         MAX(ts) AS last_ts,
+         (SELECT input_usd_per_million FROM peer_pricing_history p2
+            WHERE p2.peer_id = p1.peer_id AND p2.provider = p1.provider
+              AND p2.service = p1.service AND p2.ts >= ?
+            ORDER BY ts ASC LIMIT 1) AS first_input,
+         (SELECT output_usd_per_million FROM peer_pricing_history p2
+            WHERE p2.peer_id = p1.peer_id AND p2.provider = p1.provider
+              AND p2.service = p1.service AND p2.ts >= ?
+            ORDER BY ts ASC LIMIT 1) AS first_output,
+         (SELECT input_usd_per_million FROM peer_pricing_history p2
+            WHERE p2.peer_id = p1.peer_id AND p2.provider = p1.provider
+              AND p2.service = p1.service
+            ORDER BY ts DESC LIMIT 1) AS latest_input,
+         (SELECT output_usd_per_million FROM peer_pricing_history p2
+            WHERE p2.peer_id = p1.peer_id AND p2.provider = p1.provider
+              AND p2.service = p1.service
+            ORDER BY ts DESC LIMIT 1) AS latest_output
+       FROM peer_pricing_history p1
+       WHERE ts >= ?
+       GROUP BY peer_id, provider, service`,
+    );
+
+    this._selectLatestSellerActivity = this.db.prepare(
+      `SELECT ts, total_requests, total_input_tokens, total_output_tokens, settlement_count
+         FROM seller_activity_history
+        WHERE agent_id = ?
+        ORDER BY ts DESC
+        LIMIT 1`,
+    );
+
+    this._selectLatestSellerActivityAtOrBefore = this.db.prepare(
+      `SELECT agent_id, ts, total_requests, total_input_tokens,
+              total_output_tokens, settlement_count
+         FROM seller_activity_history
+        WHERE agent_id = ? AND ts <= ?
+        ORDER BY ts DESC
+        LIMIT 1`,
+    );
+
+    this._insertSellerActivity = this.db.prepare(
+      `INSERT OR IGNORE INTO seller_activity_history
+         (agent_id, ts, total_requests, total_input_tokens,
+          total_output_tokens, settlement_count)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectSellerActivitySince = this.db.prepare(
+      `SELECT agent_id, ts, total_requests, total_input_tokens,
+              total_output_tokens, settlement_count
+         FROM seller_activity_history
+        WHERE ts >= ?
+        ORDER BY agent_id ASC, ts ASC`,
     );
   }
 
@@ -437,6 +669,68 @@ export class SqliteStore {
     };
   }
 
+  /**
+   * Returns one row per indexed seller, keyed by agentId, including the same
+   * derived fields exposed via `getSellerTotals` (uniqueBuyers/Channels and
+   * avgRequestsPerBuyer/Channel). Two GROUP BY queries pre-fetch the buyer/
+   * channel counts so the per-row work is O(1) lookups instead of N+1 SELECTs.
+   *
+   * Used by the insights endpoint to build cross-network leaderboards (most
+   * active, most settlements, biggest customer base, etc.) in a single pass.
+   */
+  getAllSellerTotalsWithIds(): SellerTotalsWithId[] {
+    const buyerCounts = new Map<number, number>();
+    for (const row of this._countBuyersAll.all()) buyerCounts.set(row.agent_id, row.c);
+    const channelCounts = new Map<number, number>();
+    for (const row of this._countChannelsAll.all()) channelCounts.set(row.agent_id, row.c);
+
+    const out: SellerTotalsWithId[] = [];
+    for (const row of this._selectAllSellerTotalsWithIds.all()) {
+      const totalRequests = BigInt(row.total_request_count);
+      const uniqueBuyers = buyerCounts.get(row.agent_id) ?? 0;
+      const uniqueChannels = channelCounts.get(row.agent_id) ?? 0;
+      const avgRequestsPerBuyer =
+        uniqueBuyers === 0 ? 0 : Number(totalRequests / BigInt(uniqueBuyers));
+      const avgRequestsPerChannel =
+        uniqueChannels === 0 ? 0 : Number(totalRequests / BigInt(uniqueChannels));
+      out.push({
+        agentId: row.agent_id,
+        totalRequests,
+        totalInputTokens: BigInt(row.total_input_tokens),
+        totalOutputTokens: BigInt(row.total_output_tokens),
+        settlementCount: row.settlement_count,
+        firstSettledBlock: row.first_settled_block ?? 0,
+        lastSettledBlock: row.last_settled_block ?? 0,
+        firstSeenAt: row.first_seen_at,
+        lastSeenAt: row.last_seen_at,
+        uniqueBuyers,
+        uniqueChannels,
+        avgRequestsPerBuyer,
+        avgRequestsPerChannel,
+        lastUpdatedAt: row.last_updated_at,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Raw `network_history` rows from the last `secondsAgo` seconds, ordered
+   * ascending by ts. Used by the insights endpoint to compute network velocity
+   * (24h / 7d deltas) without re-implementing the bucketing logic.
+   */
+  getHistorySince(secondsAgo: number, nowSeconds: number = Math.floor(Date.now() / 1000)): HistorySample[] {
+    const since = nowSeconds - secondsAgo;
+    return this._selectHistorySince.all(since).map((row) => ({
+      ts: row.ts,
+      activePeers: row.active_peers,
+      sellerCount: row.seller_count,
+      totalRequests: BigInt(row.total_requests),
+      totalInputTokens: BigInt(row.total_input_tokens),
+      totalOutputTokens: BigInt(row.total_output_tokens),
+      settlementCount: row.settlement_count,
+    }));
+  }
+
   /** Returns cumulative totals across all indexed sellers, including sellers not currently online. */
   getNetworkTotals(): NetworkTotals {
     let totalRequests = 0n;
@@ -470,8 +764,30 @@ export class SqliteStore {
    * same second (poll retry, clock jitter), the first wins and the second is
    * silently dropped. The poller cadence is 15 minutes, so collisions are rare
    * enough that overwrite-vs-keep doesn't change any chart.
+   *
+   * Monotonicity guard: cumulative totals (requests/tokens/settlements) only
+   * ever go up — settlements are append-only on-chain. If a new sample's cum
+   * is below the most recent stored row's cum, the writer is reading from a
+   * temporarily-behind source (e.g. live sampler reading getNetworkTotals while
+   * the indexer is still catching up to the backfill's coverage). Dropping the
+   * write keeps the table monotonic-by-ts so velocity windows can't compute
+   * negative deltas. Returns true if the row was written, false if dropped.
    */
-  recordHistorySample(sample: HistorySample): void {
+  recordHistorySample(sample: HistorySample): { written: boolean } {
+    const prior = this._selectLatestHistoryAtOrBefore.get(sample.ts);
+    if (prior) {
+      const priorRequests = BigInt(prior.total_requests);
+      const priorInputTokens = BigInt(prior.total_input_tokens);
+      const priorOutputTokens = BigInt(prior.total_output_tokens);
+      if (
+        sample.totalRequests < priorRequests
+        || sample.totalInputTokens < priorInputTokens
+        || sample.totalOutputTokens < priorOutputTokens
+        || sample.settlementCount < prior.settlement_count
+      ) {
+        return { written: false };
+      }
+    }
     this._insertHistory.run(
       sample.ts,
       sample.activePeers,
@@ -481,6 +797,7 @@ export class SqliteStore {
       sample.totalOutputTokens.toString(),
       sample.settlementCount,
     );
+    return { written: true };
   }
 
   /**
@@ -507,6 +824,126 @@ export class SqliteStore {
     const buckets = bucketHistoryRows(rows, bucketSeconds);
 
     return { range, bucketSeconds, points: buckets };
+  }
+
+  /**
+   * Append a price sample for (peer, provider, service) — but only if it
+   * differs from the most recent stored sample for the same key, or if the
+   * latest identical row is older than the daily heartbeat interval. The point
+   * is to keep `peer_pricing_history` mostly event-shaped while still proving
+   * that a stable price was observed inside later insight windows.
+   *
+   * Uses INSERT OR IGNORE for the rare case that two writes land in the same
+   * second — first wins, second is silently dropped. The ts PK component
+   * makes accidental duplicates a no-op rather than a constraint error.
+   */
+  recordPriceSample(input: PriceSampleInput): void {
+    const latest = this._selectLatestPriceSample.get(input.peerId, input.provider, input.service);
+    if (latest) {
+      const sameInput = latest.input_usd_per_million === input.inputUsdPerMillion;
+      const sameOutput = latest.output_usd_per_million === input.outputUsdPerMillion;
+      const sameCached = (latest.cached_input_usd_per_million ?? null) === (input.cachedInputUsdPerMillion ?? null);
+      if (
+        sameInput
+        && sameOutput
+        && sameCached
+        && input.ts - latest.ts < PRICE_SAMPLE_HEARTBEAT_SECONDS
+      ) {
+        return;
+      }
+    }
+    this._insertPriceSample.run(
+      input.peerId,
+      input.provider,
+      input.service,
+      input.ts,
+      input.inputUsdPerMillion,
+      input.outputUsdPerMillion,
+      input.cachedInputUsdPerMillion ?? null,
+    );
+  }
+
+  /**
+   * Append a per-seller activity snapshot — but only if cumulative totals
+   * differ from the most recent stored sample for the agent. Idle sellers
+   * therefore never inflate the table; active sellers get a row whenever a
+   * new settlement lands. Trending derivations diff snapshots across windows.
+   */
+  recordSellerActivitySample(input: SellerActivitySnapshotInput): void {
+    const latest = this._selectLatestSellerActivity.get(input.agentId);
+    if (latest) {
+      const sameRequests = latest.total_requests === input.totalRequests.toString();
+      const sameInput = latest.total_input_tokens === input.totalInputTokens.toString();
+      const sameOutput = latest.total_output_tokens === input.totalOutputTokens.toString();
+      const sameSettlements = latest.settlement_count === input.settlementCount;
+      if (sameRequests && sameInput && sameOutput && sameSettlements) return;
+    }
+    this._insertSellerActivity.run(
+      input.agentId,
+      input.ts,
+      input.totalRequests.toString(),
+      input.totalInputTokens.toString(),
+      input.totalOutputTokens.toString(),
+      input.settlementCount,
+    );
+  }
+
+  /**
+   * One row per (peer, provider, service) summarising pricing volatility over
+   * `[since, now]`. Returned `changeCount` counts distinct (input, output)
+   * tuples; `firstInput/Output` is the earliest sample inside the window
+   * (so % change vs window-start is computable client-side); `latestInput/
+   * Output` is always the most recent sample (which may be older than the
+   * window if no changes happened inside it — that's the point: stable
+   * pricing should still surface in the rollup).
+   */
+  getPriceVolatility(sinceSec: number): PriceVolatilityRow[] {
+    return this._selectPriceVolatility.all(sinceSec, sinceSec, sinceSec).map((row) => ({
+      peerId: row.peer_id,
+      provider: row.provider,
+      service: row.service,
+      sampleCount: row.sample_count,
+      changeCount: row.change_count,
+      firstTs: row.first_ts,
+      lastTs: row.last_ts,
+      firstInputUsdPerMillion: row.first_input,
+      firstOutputUsdPerMillion: row.first_output,
+      latestInputUsdPerMillion: row.latest_input,
+      latestOutputUsdPerMillion: row.latest_output,
+    }));
+  }
+
+  /**
+   * All seller activity snapshots since `sinceSec`, sorted by (agentId, ts)
+   * ascending — the shape the trending computation wants. Callers group by
+   * agentId in JS to avoid building a window function per agent in SQL.
+   */
+  getSellerActivitySince(sinceSec: number): SellerActivityRow[] {
+    return this._selectSellerActivitySince.all(sinceSec).map(toSellerActivityRow);
+  }
+
+  /**
+   * Activity rows for trend windows: all rows inside the current 8d window,
+   * plus the latest pre-window baseline per agent. `computeTrending` needs
+   * "at or before 8d ago"; a plain `WHERE ts >= cutoff` almost never includes
+   * an exact boundary sample, so trending boards would otherwise be empty.
+   */
+  getSellerActivityForTrending(cutoffSec: number): SellerActivityRow[] {
+    const recent = this._selectSellerActivitySince.all(cutoffSec);
+    const byKey = new Map<string, SellerActivityDbRow>();
+    for (const row of recent) {
+      byKey.set(`${row.agent_id}:${row.ts}`, row);
+    }
+
+    const agentIds = new Set(recent.map((row) => row.agent_id));
+    for (const agentId of agentIds) {
+      const baseline = this._selectLatestSellerActivityAtOrBefore.get(agentId, cutoffSec);
+      if (baseline) byKey.set(`${baseline.agent_id}:${baseline.ts}`, baseline);
+    }
+
+    return [...byKey.values()]
+      .sort((a, b) => a.agent_id - b.agent_id || a.ts - b.ts)
+      .map(toSellerActivityRow);
   }
 
   /** Closes the underlying DB handle. */

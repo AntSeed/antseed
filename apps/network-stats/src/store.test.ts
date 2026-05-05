@@ -49,6 +49,8 @@ describe('SqliteStore', () => {
     assert.deepEqual(tables, [
       'indexer_checkpoint',
       'network_history',
+      'peer_pricing_history',
+      'seller_activity_history',
       'seller_buyer_totals',
       'seller_channel_totals',
       'seller_metadata_totals',
@@ -519,5 +521,113 @@ describe('SqliteStore', () => {
 
     store.close();
   });
-});
 
+  // ── pricing history ──────────────────────────────────────────────────────
+
+  it('recordPriceSample dedups when prices match the latest stored row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const baseSample = {
+      peerId: 'aa', provider: 'p', service: 's',
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    };
+    store.recordPriceSample({ ...baseSample, ts: 100 });
+    // Identical price at a later ts → no new row.
+    store.recordPriceSample({ ...baseSample, ts: 200 });
+    // Changed price → new row.
+    store.recordPriceSample({ ...baseSample, ts: 300, inputUsdPerMillion: 5 });
+
+    const rollup = store.getPriceVolatility(0);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 2);
+    assert.equal(rollup[0]!.changeCount, 2);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 1);
+    assert.equal(rollup[0]!.latestInputUsdPerMillion, 5);
+    store.close();
+  });
+
+  it('recordPriceSample writes daily heartbeats for unchanged prices', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const DAY = 86400;
+    const baseSample = {
+      peerId: 'aa', provider: 'p', service: 's',
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    };
+    store.recordPriceSample({ ...baseSample, ts: 100 });
+    store.recordPriceSample({ ...baseSample, ts: 100 + DAY - 1 });
+    store.recordPriceSample({ ...baseSample, ts: 100 + DAY });
+
+    const rollup = store.getPriceVolatility(100 + 3600);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 1);
+    assert.equal(rollup[0]!.changeCount, 1);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 1);
+    assert.equal(rollup[0]!.latestInputUsdPerMillion, 1);
+    store.close();
+  });
+
+  it('getPriceVolatility window excludes samples before sinceSec', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordPriceSample({ peerId: 'aa', provider: 'p', service: 's', ts: 100, inputUsdPerMillion: 1, outputUsdPerMillion: 1 });
+    store.recordPriceSample({ peerId: 'aa', provider: 'p', service: 's', ts: 500, inputUsdPerMillion: 2, outputUsdPerMillion: 2 });
+    const rollup = store.getPriceVolatility(400);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 1);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 2);
+    store.close();
+  });
+
+  // ── seller activity history ──────────────────────────────────────────────
+
+  it('recordSellerActivitySample dedups when totals match the latest stored row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 100, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    // No change → not stored.
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 200, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    // New settlement → stored.
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 300, totalRequests: 15n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 4,
+    });
+    const rows = store.getSellerActivitySince(0);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.ts, 100);
+    assert.equal(rows[1]!.ts, 300);
+    assert.equal(rows[1]!.totalRequests, 15n);
+    store.close();
+  });
+
+  it('getSellerActivityForTrending includes the latest pre-window baseline per active agent', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 100, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+    });
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 250, totalRequests: 20n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 2,
+    });
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 300, totalRequests: 30n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    store.recordSellerActivitySample({
+      agentId: 2, ts: 150, totalRequests: 99n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+    });
+
+    const rows = store.getSellerActivityForTrending(200);
+    assert.deepEqual(
+      rows.map((row) => [row.agentId, row.ts, row.totalRequests.toString()]),
+      [
+        [1, 100, '10'],
+        [1, 250, '20'],
+        [1, 300, '30'],
+      ],
+    );
+    store.close();
+  });
+});

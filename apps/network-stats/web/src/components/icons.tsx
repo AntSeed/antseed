@@ -22,6 +22,25 @@ export function PeersIcon() {
   );
 }
 
+export function LeaderboardsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="4" y="11" width="4" height="9" rx="1" />
+      <rect x="10" y="6" width="4" height="14" rx="1" />
+      <rect x="16" y="14" width="4" height="6" rx="1" />
+    </svg>
+  );
+}
+
+export function InsightsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 17l5-5 4 4 7-8" />
+      <path d="M14 8h5v5" />
+    </svg>
+  );
+}
+
 export function AntSeedMark() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

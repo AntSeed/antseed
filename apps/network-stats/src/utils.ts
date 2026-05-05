@@ -2,8 +2,10 @@
  * Shared utility helpers for the network-stats backend. Lives at the
  * bottom of the dependency graph — must not import from any other
  * file in this package, so anything in here can be used freely from
- * aggregates.ts, server.ts, store.ts, etc.
+ * metrics.ts, server.ts, store.ts, etc.
  */
+
+import type { PeerMetadata } from '@antseed/node';
 
 /** Increment a string-keyed counter map in place. */
 export function bump(counts: Record<string, number>, key: string): void {
@@ -20,6 +22,139 @@ export function asc(a: number, b: number): number {
   return a - b;
 }
 
+/** Ascending bigint comparator — `Array#sort` rejects the obvious `a - b` form. */
+export function bigintAsc(a: bigint, b: bigint): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Descending bigint comparator. */
+export function bigintDesc(a: bigint, b: bigint): number {
+  return a < b ? 1 : a > b ? -1 : 0;
+}
+
+/**
+ * Last item with `item.ts <= tsCutoff` in an array sorted ascending by `ts`,
+ * or null if no such item exists. Linear scan; callers use this on bounded
+ * windows (insight history slices), so the simpler implementation beats a
+ * binary search.
+ */
+export function lastAtOrBefore<T extends { ts: number }>(
+  items: readonly T[],
+  tsCutoff: number,
+): T | null {
+  let latest: T | null = null;
+  for (const item of items) {
+    if (item.ts <= tsCutoff) latest = item;
+    else break;
+  }
+  return latest;
+}
+
+/**
+ * Per-peer dedup of services / categories / protocols / providers across the
+ * peer's provider entries. A peer that announces the same service through two
+ * providers should still count once per peer; this helper centralises that
+ * pattern so metrics + insights stay consistent.
+ */
+export interface PeerSets {
+  services: Set<string>;
+  categories: Set<string>;
+  protocols: Set<string>;
+  providers: Set<string>;
+}
+
+export function collectPeerSets(peer: PeerMetadata): PeerSets {
+  const services = new Set<string>();
+  const categories = new Set<string>();
+  const protocols = new Set<string>();
+  const providers = new Set<string>();
+  for (const provider of peer.providers) {
+    providers.add(provider.provider);
+    for (const svc of provider.services) services.add(svc);
+    for (const cats of Object.values(provider.serviceCategories ?? {})) {
+      for (const cat of cats) categories.add(cat);
+    }
+    for (const protos of Object.values(provider.serviceApiProtocols ?? {})) {
+      for (const proto of protos) protocols.add(proto);
+    }
+  }
+  return { services, categories, protocols, providers };
+}
+
+/** Compact summary distribution used wherever we expose per-metric percentiles. */
+export interface NumericDistribution {
+  count: number;
+  min: number;
+  p25: number;
+  median: number;
+  p75: number;
+  max: number;
+  mean: number;
+}
+
+export function distribution(values: readonly number[]): NumericDistribution {
+  // Caller usually passes non-empty arrays, but return a stable zeroed shape
+  // so future callers don't accidentally divide by zero.
+  if (values.length === 0) {
+    return { count: 0, min: 0, p25: 0, median: 0, p75: 0, max: 0, mean: 0 };
+  }
+  const sorted = [...values].sort(asc);
+  const sum = sorted.reduce((acc, x) => acc + x, 0);
+  return {
+    count: sorted.length,
+    min: sorted[0]!,
+    p25: pct(sorted, 0.25),
+    median: pct(sorted, 0.5),
+    p75: pct(sorted, 0.75),
+    max: sorted[sorted.length - 1]!,
+    mean: sum / sorted.length,
+  };
+}
+
+/**
+ * Lorenz-curve Gini on a non-negative bigint array. Null for n<2; 0 when
+ * total is 0.
+ */
+export function gini(values: readonly bigint[]): number | null {
+  if (values.length < 2) return null;
+  const sorted = [...values].sort(bigintAsc);
+  let total = 0n;
+  for (const v of sorted) total += v;
+  if (total === 0n) return 0;
+  // G = (2 * sum(i * x_i) - (n + 1) * sum) / (n * sum), 1-indexed.
+  let weightedSum = 0n;
+  for (let i = 0; i < sorted.length; i++) {
+    weightedSum += BigInt(i + 1) * sorted[i]!;
+  }
+  const n = BigInt(sorted.length);
+  const numerator = 2n * weightedSum - (n + 1n) * total;
+  const denominator = n * total;
+  return Number(numerator) / Number(denominator);
+}
+
+export function herfindahl(values: readonly bigint[]): number | null {
+  let total = 0n;
+  for (const v of values) total += v;
+  if (total === 0n) return null;
+  let h = 0;
+  const totalNum = Number(total);
+  for (const v of values) {
+    const share = Number(v) / totalNum;
+    h += share * share;
+  }
+  return h;
+}
+
+export function topShare(values: readonly bigint[], k: number): number | null {
+  let total = 0n;
+  for (const v of values) total += v;
+  if (total === 0n) return null;
+  const sorted = [...values].sort(bigintDesc);
+  let head = 0n;
+  for (let i = 0; i < Math.min(k, sorted.length); i++) head += sorted[i]!;
+  return Number(head) / Number(total);
+}
+
 /**
  * Lowercase an EVM address and ensure it has a `0x` prefix. Returns null
  * for null/undefined/empty input so callers can pipeline this through
@@ -29,6 +164,12 @@ export function normalizeAddress(value: string | null | undefined): string | nul
   if (!value) return null;
   const lower = value.toLowerCase();
   return lower.startsWith('0x') ? lower : `0x${lower}`;
+}
+
+export function getPeerLookupAddress(peer: { peerId?: string | null; sellerContract?: string | null }): string | null {
+  // Contract-backed sellers announce the settlement address separately; use
+  // that for on-chain volume lookup when present.
+  return normalizeAddress(peer.sellerContract) ?? normalizeAddress(peer.peerId);
 }
 
 /**

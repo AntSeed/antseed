@@ -1,13 +1,13 @@
 /**
- * Aggregates derived from the latest DHT snapshot. Pure function — the
+ * Metrics derived from the latest DHT snapshot. Pure function — the
  * server recomputes per /stats request from the in-memory peer list.
  */
 
 import type { PeerMetadata } from '@antseed/node';
 
-import { asc, bump, pct } from './utils.js';
+import { asc, bump, collectPeerSets, pct } from './utils.js';
 
-export interface NetworkAggregates {
+export interface NetworkMetrics {
   peerCount: number;
   serviceCounts: Record<string, number>;          // peer-deduped
   serviceCategoryCounts: Record<string, number>;  // peer-deduped (coding, tee, ...)
@@ -27,10 +27,10 @@ export interface NetworkAggregates {
   peersWithDisplayName: number;
 }
 
-export function computeNetworkAggregates(
+export function computeNetworkMetrics(
   peers: readonly PeerMetadata[],
   nowMs: number = Date.now(),
-): NetworkAggregates {
+): NetworkMetrics {
   const services: Record<string, number> = {};
   const categories: Record<string, number> = {};
   const stakes: number[] = [];
@@ -40,17 +40,10 @@ export function computeNetworkAggregates(
 
   for (const peer of peers) {
     // A peer that exposes the same service through two provider entries
-    // should still increment the bucket once — hence the per-peer Sets.
-    const peerServices = new Set<string>();
-    const peerCategories = new Set<string>();
-    for (const provider of peer.providers) {
-      for (const svc of provider.services) peerServices.add(svc);
-      for (const cats of Object.values(provider.serviceCategories ?? {})) {
-        for (const cat of cats) peerCategories.add(cat);
-      }
-    }
-    for (const svc of peerServices) bump(services, svc);
-    for (const cat of peerCategories) bump(categories, cat);
+    // should still increment the bucket once — collectPeerSets dedups per peer.
+    const sets = collectPeerSets(peer);
+    for (const svc of sets.services) bump(services, svc);
+    for (const cat of sets.categories) bump(categories, cat);
 
     if (peer.stakeAmountUSDC) stakes.push(peer.stakeAmountUSDC);
     if (peer.timestamp) {
