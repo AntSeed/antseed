@@ -187,6 +187,16 @@ export function getPeerLookupAddress(peer: PeerLookupShape): string | null {
 }
 
 /**
+ * The poller stamps each snapshot with an ISO `updatedAt` string. Routes use
+ * this as the `sourceUpdatedAt` for their cache envelopes (which expects ms).
+ * Falls back to `Date.now()` if parsing fails so we never write NaN into a
+ * cache header.
+ */
+export function snapshotUpdatedAtMs(snapshot: { updatedAt: string }): number {
+  return Date.parse(snapshot.updatedAt) || Date.now();
+}
+
+/**
  * Run `fn` over `items` with at most `concurrency` calls in flight at once,
  * preserving input order in the result array. Workers pull from a shared
  * cursor — uniform tail latency even when individual calls vary widely.

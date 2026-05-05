@@ -17,6 +17,12 @@ import { SqliteStore } from './store.js';
 import { MetadataIndexer } from './indexer.js';
 import { backfillNetworkHistory, type BackfillProgress } from './backfill.js';
 import { HistorySampler } from './sampler.js';
+import {
+  INSIGHTS_CACHE_KEY,
+  STATS_NETWORK_CACHE_KEY,
+  STATS_PEERS_CACHE_KEY,
+  historyCacheKey,
+} from './http/cacheKeys.js';
 import type { BackfillStatusPayload } from './http/types.js';
 
 // ── env-driven config ──────────────────────────────────────────────────────
@@ -220,14 +226,6 @@ const sampler = chain
   ? new HistorySampler(chain.store, () => poller.getSnapshot().peers.length, HISTORY_SAMPLE_INTERVAL_MS)
   : null;
 
-if (chain && sampler) {
-  // recordHistorySampleNow self-gates on backfillResolved. Price samples are
-  // keyed by (peer, provider, service) and don't depend on cumulative
-  // counters, so they're safe to record any time.
-  poller.onPollComplete = (snapshot) => sampler.onPollComplete(snapshot);
-  sampler.start();
-}
-
 const server = createServer({
   poller,
   ...(chain ? { store: chain.store } : {}),
@@ -237,6 +235,49 @@ const server = createServer({
   getBackfillStatus: () => backfillTracker.snapshot(),
   port: PORT,
 });
+
+// Wire background-writer hooks. Each producer (poller/indexer/sampler) calls
+// its own listener after a successful write; this file is the one place that
+// maps producers → cache slots so the relationships are grep-able.
+//
+// The poller's onPollComplete also delivers price/peer-count samples to the
+// sampler — the assignment below is the merged behavior, not just cache
+// invalidation, which is why it's a single function not a composed chain.
+poller.onPollComplete = (snapshot) => {
+  sampler?.onPollComplete(snapshot);
+  // Peer set + region/provider mix changed → both /stats slots and the
+  // services/regions/concentration sections of /insights are stale.
+  server.cache.invalidate(STATS_NETWORK_CACHE_KEY);
+  server.cache.invalidate(STATS_PEERS_CACHE_KEY);
+  server.cache.invalidate(INSIGHTS_CACHE_KEY);
+};
+
+if (chain) {
+  chain.indexer.onTickComplete = ({ eventCount }) => {
+    // Every tick — even empty — advances indexer health (lastSuccessAt,
+    // latestBlock, synced) which /stats/network surfaces.
+    server.cache.invalidate(STATS_NETWORK_CACHE_KEY);
+    // Totals-driven slots only need bumping when the tick actually wrote
+    // events. Skipping no-op invalidations keeps a fully-caught-up indexer
+    // from churning the cache once a minute.
+    if (eventCount > 0) {
+      server.cache.invalidate(STATS_PEERS_CACHE_KEY);
+      server.cache.invalidate(INSIGHTS_CACHE_KEY);
+    }
+  };
+}
+
+if (sampler) {
+  sampler.onSampleComplete = () => {
+    // New history bucket → all three range slots advance, and insights
+    // (velocity/activity windows) reads the same history source.
+    server.cache.invalidate(historyCacheKey('1d'));
+    server.cache.invalidate(historyCacheKey('7d'));
+    server.cache.invalidate(historyCacheKey('30d'));
+    server.cache.invalidate(INSIGHTS_CACHE_KEY);
+  };
+  sampler.start();
+}
 
 await server.start();
 await poller.start();

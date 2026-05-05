@@ -26,6 +26,7 @@ import type { NetworkPoller } from './poller.js';
 import type { SqliteStore } from './store.js';
 import { AgentIdCache } from './http/agentIdCache.js';
 import { corsMiddleware, errorHandler } from './http/middleware.js';
+import { InProcessResponseCache, type ResponseCache } from './http/responseCache.js';
 import { registerHealthRoutes } from './http/routes/health.js';
 import { registerHistoryRoutes } from './http/routes/history.js';
 import { registerInsightsRoutes } from './http/routes/insights.js';
@@ -45,7 +46,18 @@ export interface CreateServerDeps {
   port?: number;
 }
 
-export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
+export interface ServerHandle {
+  start(): Promise<void>;
+  stop(): void;
+  /**
+   * Materialized read-model cache, exposed so the bootstrap layer can wire
+   * writer-event invalidation (poller / indexer / sampler) without coupling
+   * those modules to the cache directly.
+   */
+  cache: ResponseCache;
+}
+
+export function createServer(deps: CreateServerDeps): ServerHandle {
   const { poller, store, stakingClient, indexer, chainId, contractAddress, getBackfillStatus, port = 4000 } = deps;
   const app = express();
 
@@ -53,6 +65,11 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
   // resolution serves both endpoints. Per-instance by design — keeps tests
   // and colocated servers isolated.
   const agentIds = stakingClient ? new AgentIdCache(stakingClient) : undefined;
+  // Materialized read-model cache. One slot per route family (currently only
+  // /insights/*; stats/history migrate next). Per-instance by design so
+  // colocated test servers don't share state. Becomes a Redis-backed impl
+  // (same `ResponseCache` interface) when this service goes multi-instance.
+  const responseCache = new InProcessResponseCache();
 
   app.use(corsMiddleware);
 
@@ -65,14 +82,17 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     ...(chainId ? { chainId } : {}),
     ...(contractAddress ? { contractAddress } : {}),
     ...(getBackfillStatus ? { getBackfillStatus } : {}),
+    cache: responseCache,
   });
   registerInsightsRoutes(app, {
     poller,
     ...(store ? { store } : {}),
     ...(agentIds ? { agentIds } : {}),
+    cache: responseCache,
   });
   registerHistoryRoutes(app, {
     ...(store ? { store } : {}),
+    cache: responseCache,
   });
 
   app.use(errorHandler);
@@ -80,6 +100,7 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
   let server: ReturnType<typeof app.listen> | null = null;
 
   return {
+    cache: responseCache,
     start: () =>
       new Promise((resolve) => {
         server = app.listen(port, '0.0.0.0', () => {

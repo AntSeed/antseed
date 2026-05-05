@@ -49,6 +49,14 @@ export class MetadataIndexer {
   private lastErrorAt: number | null = null;
   private lastErrorMessage: string | null = null;
 
+  /**
+   * Optional listener fired after every successful tick. The bootstrap layer
+   * wires this to cache invalidation — kept as an opaque callback so the
+   * indexer stays decoupled from the HTTP cache. `eventCount` lets listeners
+   * skip work on no-op ticks (no events ⇒ no totals/insights changes).
+   */
+  onTickComplete: ((info: { eventCount: number }) => void) | null = null;
+
   constructor(options: MetadataIndexerOptions) {
     if (options.deployBlock < 0) throw new Error('deployBlock must be >= 0');
     if (options.tickIntervalMs <= 0) throw new Error('tickIntervalMs must be > 0');
@@ -114,8 +122,15 @@ export class MetadataIndexer {
     if (this.running) return;
     this.running = true;
     try {
-      await this.runOnce();
+      const eventCount = await this.runOnce();
       this.lastSuccessAt = Date.now();
+      // Fire-and-forget — listener failures must not flip the tick into the
+      // error path (the writes already landed, the indexer itself is healthy).
+      try {
+        this.onTickComplete?.({ eventCount });
+      } catch (err) {
+        console.error('[indexer] onTickComplete listener threw:', err);
+      }
     } catch (err) {
       this.lastErrorAt = Date.now();
       this.lastErrorMessage = err instanceof Error ? err.message : String(err);
@@ -125,15 +140,15 @@ export class MetadataIndexer {
     }
   }
 
-  private async runOnce(): Promise<void> {
+  private async runOnce(): Promise<number> {
     const latest = await this.statsClient.getBlockNumber();
     this.latestBlock = latest;
     const safeTo = latest - this.reorgSafetyBlocks;
-    if (safeTo < this.deployBlock) return;
+    if (safeTo < this.deployBlock) return 0;
 
     const checkpoint = this.store.getCheckpoint(this.chainId, this.contractAddress);
     const fromBlock = checkpoint === null ? this.deployBlock : checkpoint + 1;
-    if (fromBlock > safeTo) return;
+    if (fromBlock > safeTo) return 0;
 
     const toBlock = Math.min(safeTo, fromBlock + this.maxBlocksPerTick - 1);
     const events = await this.statsClient.getMetadataRecordedEvents({ fromBlock, toBlock });
@@ -162,6 +177,7 @@ export class MetadataIndexer {
     );
 
     console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
+    return events.length;
   }
 }
 

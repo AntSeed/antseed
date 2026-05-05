@@ -36,6 +36,14 @@ export class HistorySampler {
   // map), so unbounded growth is not a concern.
   private readonly lastActivitySigByAgent = new Map<number, string>();
 
+  /**
+   * Optional listener fired after every recordNow that actually wrote a
+   * sample (i.e. backfill has resolved). The bootstrap layer uses this to
+   * invalidate history-shaped cache slots — kept opaque so the sampler stays
+   * unaware of the HTTP cache.
+   */
+  onSampleComplete: (() => void) | null = null;
+
   constructor(
     private readonly store: SqliteStore,
     private readonly getPeerCount: () => number,
@@ -104,6 +112,12 @@ export class HistorySampler {
     }
 
     this.recordSellerActivitySamples(tsSec);
+
+    try {
+      this.onSampleComplete?.();
+    } catch (err) {
+      console.error('[network-stats] onSampleComplete listener threw:', err);
+    }
   }
 
   /**

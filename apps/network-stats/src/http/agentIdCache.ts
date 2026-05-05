@@ -51,15 +51,22 @@ export class AgentIdCache {
 
   /**
    * Resolve a batch of addresses, deduped, with bounded concurrency. Returns a
-   * Map keyed by the *normalized* address (lowercase, 0x-prefixed).
+   * Map keyed by the *normalized* address (lowercase, 0x-prefixed) plus a
+   * `hadFailure` flag — true if any RPC lookup failed (yielded null). Callers
+   * use the flag to mark cache slots non-storable (`cacheable: false`) so a
+   * partial result doesn't poison the slot until the next refresh.
    */
-  async resolveMany(addresses: readonly (string | null)[]): Promise<Map<string, number | null>> {
+  async resolveMany(
+    addresses: readonly (string | null)[],
+  ): Promise<{ map: Map<string, number | null>; hadFailure: boolean }> {
     const unique = [...new Set(addresses.filter((a): a is string => a !== null))];
     const entries = await mapWithConcurrency(
       unique,
       AGENT_ID_LOOKUP_CONCURRENCY,
       async (address) => [address, await this.resolve(address)] as const,
     );
-    return new Map(entries);
+    const map = new Map(entries);
+    const hadFailure = entries.some(([, agentId]) => agentId === null);
+    return { map, hadFailure };
   }
 }
