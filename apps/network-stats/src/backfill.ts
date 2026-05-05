@@ -16,11 +16,12 @@
 
 import type { StatsClient, DecodedMetadataRecorded } from '@antseed/node';
 import { ACTIVE_PEERS_UNKNOWN, type SqliteStore } from './store.js';
-
-/** Minimal slice of ethers.AbstractProvider we need — just block timestamps. */
-interface BlockProvider {
-  getBlock(blockNumber: number): Promise<{ timestamp: number } | null>;
-}
+import {
+  createProgressReporter,
+  defaultLog,
+  resolveBlockTimestamps,
+  type BlockProvider,
+} from './utils.js';
 
 export interface BackfillProgress {
   /** What the routine is doing right now. UI uses this to pick a label. */
@@ -78,7 +79,7 @@ export async function backfillNetworkHistory(opts: BackfillOptions): Promise<Bac
     reorgSafetyBlocks,
     maxBlocksPerChunk = 2_000,
     chunkDelayMs = 0,
-    log = (msg) => console.log(msg),
+    log = defaultLog,
   } = opts;
 
   const onProgress = opts.onProgress;
@@ -93,6 +94,8 @@ export async function backfillNetworkHistory(opts: BackfillOptions): Promise<Bac
   const totalBlocks = safeTo - deployBlock + 1;
   log(`[backfill] scanning blocks ${deployBlock}..${safeTo} (chunkSize=${maxBlocksPerChunk})`);
 
+  const progress = createProgressReporter({ prefix: '[backfill]', totalBlocks, log });
+
   // 1. Pull events in chunks, accumulate.
   const allEvents: DecodedMetadataRecorded[] = [];
   let scannedSoFar = 0;
@@ -100,10 +103,10 @@ export async function backfillNetworkHistory(opts: BackfillOptions): Promise<Bac
     const to = Math.min(safeTo, from + maxBlocksPerChunk - 1);
     const events = await statsClient.getMetadataRecordedEvents({ fromBlock: from, toBlock: to });
     if (events.length > 0) {
-      log(`[backfill] ${from}..${to} events=${events.length}`);
       allEvents.push(...events);
     }
     scannedSoFar = to - deployBlock + 1;
+    progress.draw(scannedSoFar, allEvents.length);
     onProgress?.({
       phase: 'scanning',
       scannedBlocks: scannedSoFar,
@@ -115,6 +118,10 @@ export async function backfillNetworkHistory(opts: BackfillOptions): Promise<Bac
       await new Promise((r) => setTimeout(r, chunkDelayMs));
     }
   }
+  // Always paint the final 100% state, then commit the in-place line so the
+  // next phase's log() starts on a new row.
+  progress.draw(scannedSoFar, allEvents.length, true);
+  progress.finish();
 
   if (allEvents.length === 0) {
     log('[backfill] no events found — nothing to write');
@@ -140,25 +147,8 @@ export async function backfillNetworkHistory(opts: BackfillOptions): Promise<Bac
     events: allEvents.length,
     rowsWritten: 0,
   });
-  const blockTimestamps = new Map<number, number>();
-  // Fetch in small parallel batches — public RPCs throttle at ~10 concurrent
-  // calls. Use Promise.allSettled so a transient failure on one block doesn't
-  // throw away the rest of the batch; events whose block timestamp is missing
-  // are skipped at write time with a warning.
-  const BATCH = 8;
-  let failedBlocks = 0;
-  for (let i = 0; i < uniqueBlocks.length; i += BATCH) {
-    const slice = uniqueBlocks.slice(i, i + BATCH);
-    const settled = await Promise.allSettled(slice.map((b) => provider.getBlock(b)));
-    for (let j = 0; j < slice.length; j++) {
-      const result = settled[j]!;
-      if (result.status === 'fulfilled' && result.value) {
-        blockTimestamps.set(slice[j]!, result.value.timestamp);
-      } else {
-        failedBlocks++;
-      }
-    }
-  }
+  const { timestamps: blockTimestamps, failedCount: failedBlocks } =
+    await resolveBlockTimestamps(provider, uniqueBlocks);
   if (failedBlocks > 0) {
     log(`[backfill] WARN: ${failedBlocks} block timestamp lookup(s) failed — those events will be skipped`);
   }

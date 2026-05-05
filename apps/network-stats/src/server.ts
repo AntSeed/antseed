@@ -15,6 +15,7 @@ import type { StakingClient } from '@antseed/node';
 import type { SqliteStore, HistoryRange } from './store.js';
 import type { MetadataIndexer } from './indexer.js';
 import { computeNetworkAggregates } from './aggregates.js';
+import { mapWithConcurrency, normalizeAddress } from './utils.js';
 
 const HISTORY_RANGES: readonly HistoryRange[] = ['1d', '7d', '30d'] as const;
 function isHistoryRange(value: unknown): value is HistoryRange {
@@ -58,12 +59,6 @@ interface CacheEntry {
   expiresAt: number; // Infinity for staked (never expires)
 }
 
-function normalizeAddress(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const lower = value.toLowerCase();
-  return lower.startsWith('0x') ? lower : `0x${lower}`;
-}
-
 async function resolveAgentId(
   client: StakingClient,
   cache: Map<string, CacheEntry>,
@@ -93,27 +88,6 @@ function getPeerLookupAddress(peer: { peerId?: string; sellerContract?: string }
   // Contract-backed sellers announce the settlement address separately; use that
   // for on-chain volume lookup when present.
   return normalizeAddress(peer.sellerContract) ?? normalizeAddress(peer.peerId);
-}
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(concurrency, items.length);
-
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (true) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) return;
-      results[index] = await fn(items[index]!);
-    }
-  }));
-
-  return results;
 }
 
 async function resolveAgentIds(

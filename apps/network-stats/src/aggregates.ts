@@ -5,6 +5,8 @@
 
 import type { PeerMetadata } from '@antseed/node';
 
+import { asc, bump, pct } from './utils.js';
+
 export interface NetworkAggregates {
   peerCount: number;
   serviceCounts: Record<string, number>;          // peer-deduped
@@ -85,17 +87,4 @@ export function computeNetworkAggregates(
     peersWithSellerContract,
     peersWithDisplayName,
   };
-}
-
-function bump(counts: Record<string, number>, key: string): void {
-  counts[key] = (counts[key] ?? 0) + 1;
-}
-
-// Nearest-rank percentile. Caller must pass a non-empty sorted array.
-function pct(sorted: number[], p: number): number {
-  return sorted[Math.ceil(p * sorted.length) - 1]!;
-}
-
-function asc(a: number, b: number): number {
-  return a - b;
 }
