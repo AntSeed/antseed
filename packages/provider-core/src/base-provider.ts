@@ -57,7 +57,9 @@ export class BaseProvider implements Provider {
     const isStreamingStart = response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1';
     if (isStreamingStart) {
       entry.responseStart = response;
-      entry.streamCallbacks?.onResponseStart(response);
+      this._invokeStreamCallback(requestId, 'response-start', () => {
+        entry.streamCallbacks?.onResponseStart(response);
+      });
       return;
     }
 
@@ -69,7 +71,9 @@ export class BaseProvider implements Provider {
     const entry = this._pending.get(chunk.requestId);
     if (!entry) return;
 
-    entry.streamCallbacks?.onResponseChunk(chunk);
+    this._invokeStreamCallback(chunk.requestId, chunk.done ? 'response-end' : 'response-chunk', () => {
+      entry.streamCallbacks?.onResponseChunk(chunk);
+    });
 
     if (chunk.data.length > 0) {
       entry.streamChunks.push(chunk.data);
@@ -103,6 +107,21 @@ export class BaseProvider implements Provider {
       ...response,
       headers,
     };
+  }
+
+  private _invokeStreamCallback(requestId: string, phase: string, callback: () => void): void {
+    try {
+      callback();
+    } catch (err) {
+      // Stream callbacks usually send frames back to the buyer. If the buyer has
+      // already disconnected, that send can throw (for example, "Cannot send in
+      // state closed"). Do not let a downstream delivery failure bubble into the
+      // upstream relay, where it would be misreported as a provider/Anthropic
+      // error and can cause the seller connection handler to unwind.
+      console.warn(
+        `[BaseProvider] stream callback skipped phase=${phase} reqId=${requestId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   async init(): Promise<void> {
