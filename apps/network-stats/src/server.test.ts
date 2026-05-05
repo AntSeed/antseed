@@ -620,6 +620,50 @@ describe('createServer — GET /history', () => {
     const res = await fetch(`http://localhost:${PORT}/history?range=bogus`);
     assert.equal(res.status, 400);
   });
+
+  it('GET /history/peers projects only peer-activity fields', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<Record<string, unknown>>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2);
+    const last = body.points[body.points.length - 1]!;
+    assert.deepEqual(Object.keys(last).sort(), ['activePeers', 'requests', 'settlements', 'ts']);
+    assert.equal(last['activePeers'], 8);
+    assert.equal(last['requests'], 50);
+    assert.equal(last['settlements'], 4);
+  });
+
+  it('GET /history/tokens projects only the tokens field', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<Record<string, unknown>>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2);
+    const last = body.points[body.points.length - 1]!;
+    assert.deepEqual(Object.keys(last).sort(), ['tokens', 'ts']);
+    assert.equal(typeof last['tokens'], 'number');
+  });
+
+  it('GET /history/peers?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=bogus`);
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /history/tokens?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens?range=bogus`);
+    assert.equal(res.status, 400);
+  });
 });
 
 // ── Test 14: /history with no store ───────────────────────────────────────────
@@ -634,6 +678,23 @@ describe('createServer — GET /history without store', () => {
 
   it('returns empty payload when no store is configured', async () => {
     const res = await fetch(`http://localhost:${PORT}/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; points: unknown[] };
+    assert.equal(body.range, '1d');
+    assert.deepEqual(body.points, []);
+  });
+
+  it('GET /history/peers returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=7d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; bucketSeconds: number; points: unknown[] };
+    assert.equal(body.range, '7d');
+    assert.equal(body.bucketSeconds, 86400);
+    assert.deepEqual(body.points, []);
+  });
+
+  it('GET /history/tokens returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens`);
     assert.equal(res.status, 200);
     const body = await res.json() as { range: string; points: unknown[] };
     assert.equal(body.range, '1d');
@@ -693,6 +754,55 @@ describe('createServer — GET /insights (enriched)', () => {
     assert.ok(body.velocity.last24h !== null);
     assert.equal(body.velocity.last24h!.requestsDelta, '50');
   });
+
+  it('GET /insights/leaderboards projects only generatedAt + leaderboards', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/leaderboards`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      leaderboards: { mostActive: Array<{ agentId: number }> };
+    };
+    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'leaderboards']);
+    assert.ok(Array.isArray(body.leaderboards.mostActive));
+    assert.equal(body.leaderboards.mostActive[0]!.agentId, 7);
+  });
+
+  it('GET /insights/pricing projects pricing + stability + movers', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/pricing`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['generatedAt', 'priceMovers', 'priceStability', 'pricing'],
+    );
+  });
+
+  it('GET /insights/services projects services + regions + concentration', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/services`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      concentration: { sellerCount: number };
+    };
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['concentration', 'generatedAt', 'regions', 'services'],
+    );
+    assert.equal(body.concentration.sellerCount, 1);
+  });
+
+  it('GET /insights/activity projects velocity + activity', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/activity`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      activity: { peersOnline: number };
+      velocity: { last24h: { requestsDelta: string } | null };
+    };
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['activity', 'generatedAt', 'velocity'],
+    );
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.velocity.last24h!.requestsDelta, '50');
+  });
 });
 
 // ── Test 16: /insights without store returns DHT-only payload ─────────────────
@@ -718,5 +828,103 @@ describe('createServer — GET /insights without store', () => {
     assert.equal(body.activity.peersOnline, 1);
     assert.equal(body.activity.totalSellersIndexed, 0);
     assert.equal(body.velocity.last24h, null);
+  });
+
+  it('GET /insights/leaderboards still returns DHT-only payload without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/leaderboards`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      leaderboards: { mostActive: unknown[] };
+    };
+    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'leaderboards']);
+    assert.deepEqual(body.leaderboards.mostActive, []);
+  });
+
+  it('GET /insights/activity still returns DHT-only payload without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/activity`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { activity: { peersOnline: number }; velocity: { last24h: unknown } };
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.velocity.last24h, null);
+  });
+});
+
+// ── Test 17: /stats sub-routes (network + peers split) ────────────────────────
+
+describe('createServer — GET /stats/network and /stats/peers (enriched)', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 42n, blockNumber: 100, inputTokens: 100n, outputTokens: 200n, requestCount: 5n }),
+  ], 1);
+  const peers = [fakePeer('a', '0xabc1234')];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 42);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('GET /stats/network excludes peers but keeps network/totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/network`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      updatedAt: string;
+      network: { peerCount: number };
+      totals: { sellerCount: number; totalRequests: string };
+    };
+    assert.equal(Object.hasOwn(body, 'peers'), false, '/stats/network must not include peers');
+    assert.equal(typeof body.updatedAt, 'string');
+    assert.equal(body.network.peerCount, 1);
+    assert.equal(body.totals.sellerCount, 1);
+    assert.equal(body.totals.totalRequests, '5');
+  });
+
+  it('GET /stats/peers returns enriched peers but no network/totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/peers`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      updatedAt: string;
+      peers: Array<{ onChainStats: { agentId: number; totalRequests: string } | null }>;
+    };
+    assert.equal(typeof body.updatedAt, 'string');
+    assert.equal(body.peers.length, 1);
+    assert.equal(body.peers[0]!.onChainStats!.agentId, 42);
+    assert.equal(body.peers[0]!.onChainStats!.totalRequests, '5');
+    assert.equal(Object.hasOwn(body, 'network'), false, '/stats/peers must not include network');
+    assert.equal(Object.hasOwn(body, 'totals'), false, '/stats/peers must not include totals');
+  });
+});
+
+describe('createServer — GET /stats/network and /stats/peers (legacy/no store)', () => {
+  const PORT = nextPort();
+  const peers = [fakePeer('a', undefined), fakePeer('b', undefined)];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('GET /stats/network returns just network + updatedAt without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/network`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      network: { peerCount: number };
+    };
+    assert.equal(body.network.peerCount, 2);
+    assert.equal(Object.hasOwn(body, 'totals'), false);
+    assert.equal(Object.hasOwn(body, 'indexer'), false);
+    assert.equal(Object.hasOwn(body, 'backfill'), false);
+    assert.equal(Object.hasOwn(body, 'peers'), false);
+  });
+
+  it('GET /stats/peers returns unenriched peers without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/peers`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { peers: Record<string, unknown>[] };
+    assert.equal(body.peers.length, 2);
+    for (const peer of body.peers) {
+      assert.equal(Object.hasOwn(peer, 'onChainStats'), false, 'no-store path must not add onChainStats key');
+    }
   });
 });

@@ -2,10 +2,13 @@ import { useMemo, useState } from 'react';
 import type {
   Activity,
   ConcentrationStats,
-  InsightsResponse,
+  InsightsActivityResponse,
+  InsightsPricingResponse,
+  InsightsServicesResponse,
   RegionDistributionEntry,
   ServicePricingMarket,
   ServiceRanking,
+  ServiceRankings,
   Velocity,
   VelocityWindow,
 } from '../api';
@@ -221,7 +224,7 @@ function regionsToHistogramData(regions: RegionDistributionEntry[]): Record<stri
   return out;
 }
 
-function ServicesSection({ services }: { services: InsightsResponse['services'] }) {
+function ServicesSection({ services }: { services: ServiceRankings }) {
   return (
     <section className="dashboard-section">
       <SectionHead
@@ -266,16 +269,24 @@ function RegionsSection({ regions }: { regions: RegionDistributionEntry[] }) {
   );
 }
 
-export function Insights({ data }: { data: InsightsResponse }) {
+export function Insights({
+  activity,
+  pricing,
+  services,
+}: {
+  activity: InsightsActivityResponse;
+  pricing: InsightsPricingResponse;
+  services: InsightsServicesResponse;
+}) {
   return (
     <>
-      <ActivitySection activity={data.activity} />
-      <VelocitySection velocity={data.velocity} />
-      <ConcentrationSection data={data.concentration} />
-      <PricingSection byService={data.pricing.byService} />
-      <PriceMovements stability={data.priceStability} movers={data.priceMovers} />
-      <ServicesSection services={data.services} />
-      <RegionsSection regions={data.regions} />
+      <ActivitySection activity={activity.activity} />
+      <VelocitySection velocity={activity.velocity} />
+      <ConcentrationSection data={services.concentration} />
+      <PricingSection byService={pricing.pricing.byService} />
+      <PriceMovements stability={pricing.priceStability} movers={pricing.priceMovers} />
+      <ServicesSection services={services.services} />
+      <RegionsSection regions={services.regions} />
     </>
   );
 }

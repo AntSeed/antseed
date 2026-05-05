@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { HistoryRange, StatsResponse } from '../api';
+import type { HistoryRange, StatsNetworkResponse } from '../api';
 import {
   formatAbsoluteLocalTime,
   formatLargeNumber,
@@ -21,7 +21,7 @@ export function NetworkOverview({
   hasUpdate,
   indexerDegraded,
 }: {
-  data: StatsResponse;
+  data: StatsNetworkResponse;
   now: number;
   updatedAtMs: number | null;
   hasUpdate: boolean;
@@ -41,7 +41,7 @@ export function NetworkOverview({
         <div className="stat-grid">
           <StatCard
             label="Active peers"
-            value={data.peers.length}
+            value={data.network.peerCount}
             hint="Nodes currently announced in the DHT."
             accent
           />

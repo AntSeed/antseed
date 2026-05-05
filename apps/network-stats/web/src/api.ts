@@ -113,25 +113,63 @@ export async function fetchStats(): Promise<StatsResponse> {
   return res.json();
 }
 
+export interface StatsNetworkResponse {
+  updatedAt: string;
+  network: NetworkMetrics;
+  totals?: NetworkTotals;
+  indexer?: IndexerInfo;
+  backfill?: BackfillStatus;
+}
+
+export interface StatsPeersResponse {
+  updatedAt: string;
+  peers: Peer[];
+}
+
+export async function fetchStatsNetwork(): Promise<StatsNetworkResponse> {
+  const res = await fetch('/stats/network');
+  if (!res.ok) throw new Error(`GET /stats/network → ${res.status}`);
+  return res.json();
+}
+
+export async function fetchStatsPeers(): Promise<StatsPeersResponse> {
+  const res = await fetch('/stats/peers');
+  if (!res.ok) throw new Error(`GET /stats/peers → ${res.status}`);
+  return res.json();
+}
+
 export type HistoryRange = '1d' | '7d' | '30d';
 
-export interface HistoryPoint {
+export interface PeersHistoryPoint {
   ts: number;                  // unix seconds (start of bucket)
   activePeers: number | null;  // null for buckets reconstructed from chain history (DHT data unknown)
   requests: number;
   settlements: number;
+}
+
+export interface TokensHistoryPoint {
+  ts: number;                  // unix seconds (start of bucket)
   tokens: number;              // input + output tokens served within the bucket
 }
 
-export interface HistoryResponse {
+export interface HistorySeries<P> {
   range: HistoryRange;
   bucketSeconds: number;
-  points: HistoryPoint[];
+  points: P[];
 }
 
-export async function fetchHistory(range: HistoryRange): Promise<HistoryResponse> {
-  const res = await fetch(`/history?range=${range}`);
-  if (!res.ok) throw new Error(`GET /history → ${res.status}`);
+export type PeersHistoryResponse = HistorySeries<PeersHistoryPoint>;
+export type TokensHistoryResponse = HistorySeries<TokensHistoryPoint>;
+
+export async function fetchPeersHistory(range: HistoryRange): Promise<PeersHistoryResponse> {
+  const res = await fetch(`/history/peers?range=${range}`);
+  if (!res.ok) throw new Error(`GET /history/peers → ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTokensHistory(range: HistoryRange): Promise<TokensHistoryResponse> {
+  const res = await fetch(`/history/tokens?range=${range}`);
+  if (!res.ok) throw new Error(`GET /history/tokens → ${res.status}`);
   return res.json();
 }
 
@@ -258,16 +296,18 @@ export interface PriceMovers {
   biggestHikes: PriceMoverEntry[];
 }
 
+export interface ServiceRankings {
+  topServices: ServiceRanking[];
+  topCategories: ServiceRanking[];
+  topProtocols: ServiceRanking[];
+  topProviders: ServiceRanking[];
+}
+
 export interface InsightsResponse {
   generatedAt: string;
   leaderboards: Leaderboards;
   pricing: { byService: Record<string, ServicePricingMarket> };
-  services: {
-    topServices: ServiceRanking[];
-    topCategories: ServiceRanking[];
-    topProtocols: ServiceRanking[];
-    topProviders: ServiceRanking[];
-  };
+  services: ServiceRankings;
   regions: RegionDistributionEntry[];
   concentration: ConcentrationStats;
   velocity: Velocity;
@@ -279,6 +319,55 @@ export interface InsightsResponse {
 export async function fetchInsights(): Promise<InsightsResponse> {
   const res = await fetch('/insights');
   if (!res.ok) throw new Error(`GET /insights → ${res.status}`);
+  return res.json();
+}
+
+export interface InsightsLeaderboardsResponse {
+  generatedAt: string;
+  leaderboards: Leaderboards;
+}
+
+export interface InsightsPricingResponse {
+  generatedAt: string;
+  pricing: { byService: Record<string, ServicePricingMarket> };
+  priceStability: PriceStability;
+  priceMovers: PriceMovers;
+}
+
+export interface InsightsServicesResponse {
+  generatedAt: string;
+  services: ServiceRankings;
+  regions: RegionDistributionEntry[];
+  concentration: ConcentrationStats;
+}
+
+export interface InsightsActivityResponse {
+  generatedAt: string;
+  velocity: Velocity;
+  activity: Activity;
+}
+
+export async function fetchInsightsLeaderboards(): Promise<InsightsLeaderboardsResponse> {
+  const res = await fetch('/insights/leaderboards');
+  if (!res.ok) throw new Error(`GET /insights/leaderboards → ${res.status}`);
+  return res.json();
+}
+
+export async function fetchInsightsPricing(): Promise<InsightsPricingResponse> {
+  const res = await fetch('/insights/pricing');
+  if (!res.ok) throw new Error(`GET /insights/pricing → ${res.status}`);
+  return res.json();
+}
+
+export async function fetchInsightsServices(): Promise<InsightsServicesResponse> {
+  const res = await fetch('/insights/services');
+  if (!res.ok) throw new Error(`GET /insights/services → ${res.status}`);
+  return res.json();
+}
+
+export async function fetchInsightsActivity(): Promise<InsightsActivityResponse> {
+  const res = await fetch('/insights/activity');
+  if (!res.ok) throw new Error(`GET /insights/activity → ${res.status}`);
   return res.json();
 }
 

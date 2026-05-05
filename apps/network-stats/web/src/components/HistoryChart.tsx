@@ -7,7 +7,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BackfillStatus, HistoryRange } from '../api';
+import { fetchPeersHistory, type BackfillStatus, type HistoryRange } from '../api';
 import { formatTick, formatTooltipLabel, HistoryChartFrame } from './HistoryChartFrame';
 
 export function HistoryChart({
@@ -28,6 +28,8 @@ export function HistoryChart({
       ariaLabel="History range"
       backfill={backfill}
       now={now}
+      fetcher={fetchPeersHistory}
+      queryKey="history/peers"
       renderChart={(points, bucketSeconds) => {
         const requestsLabel = bucketSeconds < 86_400 ? 'Requests / hour' : 'Requests / day';
         return (

@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchInsights, fetchStats, type Peer } from './api';
+import {
+  fetchInsightsActivity,
+  fetchInsightsLeaderboards,
+  fetchInsightsPricing,
+  fetchInsightsServices,
+  fetchStatsNetwork,
+  fetchStatsPeers,
+  type Peer,
+} from './api';
 import {
   AntSeedMark,
   InsightsIcon,
@@ -79,35 +87,73 @@ function navigateToTab(route: Route): void {
 }
 
 export function App() {
-  const { data, isLoading, error, isFetching } = useQuery({
-    queryKey: ['stats'],
-    queryFn: fetchStats,
+  // Sidebar badge + telemetry strip need network/indexer/updatedAt always —
+  // /stats/network is cheap (no per-peer fan-out), so it polls everywhere.
+  // /stats/peers is the heavy enrichment loop and only fires on routes that
+  // actually render the peer list (or a single-peer detail page).
+  const networkStatsQuery = useQuery({
+    queryKey: ['stats', 'network'],
+    queryFn: fetchStatsNetwork,
     refetchInterval: REFETCH_INTERVAL_MS,
   });
+  const networkData = networkStatsQuery.data;
+  const isLoading = networkStatsQuery.isLoading;
+  const error = networkStatsQuery.error;
+  const isFetching = networkStatsQuery.isFetching;
   const now = useTick(1000);
   const [theme, toggleTheme] = useTheme();
   const { route, peerId: hashPeerId } = useHashRoute();
-  const insightsQuery = useQuery({
-    queryKey: ['insights'],
-    queryFn: fetchInsights,
+  // Each insights sub-route has its own query; the server's shared TtlCache
+  // means three parallel requests on first paint of the Insights page resolve
+  // from one underlying compute. Leaderboards has its own page, so it polls
+  // independently — the others stay disabled until /insights is visible.
+  const onInsights = route === 'insights';
+  const leaderboardsQuery = useQuery({
+    queryKey: ['insights', 'leaderboards'],
+    queryFn: fetchInsightsLeaderboards,
     refetchInterval: REFETCH_INTERVAL_MS,
-    // /insights is heavier than /stats and only matters on its own routes —
-    // skip the poll until the user actually navigates there.
-    enabled: route === 'insights' || route === 'leaderboards',
+    enabled: route === 'leaderboards' || onInsights,
+  });
+  const insightsActivityQuery = useQuery({
+    queryKey: ['insights', 'activity'],
+    queryFn: fetchInsightsActivity,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: onInsights,
+  });
+  const insightsPricingQuery = useQuery({
+    queryKey: ['insights', 'pricing'],
+    queryFn: fetchInsightsPricing,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: onInsights,
+  });
+  const insightsServicesQuery = useQuery({
+    queryKey: ['insights', 'services'],
+    queryFn: fetchInsightsServices,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: onInsights,
+  });
+  // Heavy peer enrichment — only fetched when the user is actually looking at
+  // the peer list or a single peer's detail page. Deduped with PeerPage's own
+  // query via the shared key.
+  const peersStatsQuery = useQuery({
+    queryKey: ['stats', 'peers'],
+    queryFn: fetchStatsPeers,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: route === 'peers' || hashPeerId != null,
   });
   const [telemetryOpen, setTelemetryOpen] = useState(false);
   const [servicesModal, setServicesModal] = useState<{ peer: Peer; services: string[] } | null>(
     null,
   );
 
-  const updatedAtMs = data ? parseUpdatedAt(data.updatedAt) : null;
+  const updatedAtMs = networkData ? parseUpdatedAt(networkData.updatedAt) : null;
   const hasUpdate = updatedAtMs != null;
   const activeRoute: Route = route;
 
   // Indexer is "degraded" when its most recent tick threw — typically a flaky
   // public Base RPC timing out on eth_getLogs. The next tick replays the same
   // checkpoint, so this is a soft signal: data isn't lost, it's just stalled.
-  const indexer = data?.indexer;
+  const indexer = networkData?.indexer;
   const indexerDegraded =
     indexer != null
     && indexer.lastErrorAt != null
@@ -140,8 +186,8 @@ export function App() {
           >
             <PeersIcon />
             <span>Peers</span>
-            {data && (
-              <span className="sidebar-nav-badge">{data.peers.length}</span>
+            {networkData && (
+              <span className="sidebar-nav-badge">{networkData.network.peerCount}</span>
             )}
           </button>
           <button
@@ -254,9 +300,9 @@ export function App() {
           </div>
         )}
 
-        {data && route === 'network' && (
+        {networkData && route === 'network' && (
           <NetworkOverview
-            data={data}
+            data={networkData}
             now={now}
             updatedAtMs={updatedAtMs}
             hasUpdate={hasUpdate}
@@ -264,28 +310,35 @@ export function App() {
           />
         )}
 
-        {data && route === 'peers' && (
-          <>
-            <section className="dashboard-section">
-              <SectionHead
-                title="Peers"
-                sub="Every node we have heard from in the latest poll, with its on-chain accounting attached."
-              />
-              {data.peers.length === 0 ? (
+        {route === 'peers' && (
+          <section className="dashboard-section">
+            <SectionHead
+              title="Peers"
+              sub="Every node we have heard from in the latest poll, with its on-chain accounting attached."
+            />
+            {peersStatsQuery.isLoading && (
+              <div className="status-banner">Loading peers…</div>
+            )}
+            {peersStatsQuery.error && (
+              <div className="status-banner status-banner--error">
+                Error: {(peersStatsQuery.error as Error).message}
+              </div>
+            )}
+            {peersStatsQuery.data && (
+              peersStatsQuery.data.peers.length === 0 ? (
                 <div className="card empty-cell">
                   No peers discovered yet — the DHT poll runs every 15 minutes after a 15s
                   warmup. Sit tight.
                 </div>
               ) : (
                 <PeersTable
-                  peers={data.peers}
+                  peers={peersStatsQuery.data.peers}
                   onNavigatePeer={navigateToPeer}
                   onOpenServices={(peer, services) => setServicesModal({ peer, services })}
                 />
-              )}
-            </section>
-
-          </>
+              )
+            )}
+          </section>
         )}
 
         {route === 'leaderboards' && (
@@ -294,36 +347,56 @@ export function App() {
               title="Leaderboards"
               sub="Top-ranked peers across activity, settlements, buyer reach, stake, breadth, and tenure."
             />
-            {insightsQuery.isLoading && (
+            {leaderboardsQuery.isLoading && (
               <div className="status-banner">Loading leaderboards…</div>
             )}
-            {insightsQuery.error && (
+            {leaderboardsQuery.error && (
               <div className="status-banner status-banner--error">
-                Error: {(insightsQuery.error as Error).message}
+                Error: {(leaderboardsQuery.error as Error).message}
               </div>
             )}
-            {insightsQuery.data && (
+            {leaderboardsQuery.data && (
               <Leaderboards
-                data={insightsQuery.data.leaderboards}
+                data={leaderboardsQuery.data.leaderboards}
                 onNavigatePeer={navigateToPeer}
               />
             )}
           </section>
         )}
 
-        {route === 'insights' && (
-          <>
-            {insightsQuery.isLoading && (
-              <div className="status-banner">Loading insights…</div>
-            )}
-            {insightsQuery.error && (
-              <div className="status-banner status-banner--error">
-                Error: {(insightsQuery.error as Error).message}
-              </div>
-            )}
-            {insightsQuery.data && <Insights data={insightsQuery.data} />}
-          </>
-        )}
+        {route === 'insights' && (() => {
+          const anyLoading =
+            insightsActivityQuery.isLoading
+            || insightsPricingQuery.isLoading
+            || insightsServicesQuery.isLoading;
+          const firstError =
+            insightsActivityQuery.error
+            ?? insightsPricingQuery.error
+            ?? insightsServicesQuery.error;
+          const ready =
+            insightsActivityQuery.data
+            && insightsPricingQuery.data
+            && insightsServicesQuery.data;
+          return (
+            <>
+              {anyLoading && !ready && (
+                <div className="status-banner">Loading insights…</div>
+              )}
+              {firstError && (
+                <div className="status-banner status-banner--error">
+                  Error: {(firstError as Error).message}
+                </div>
+              )}
+              {ready && (
+                <Insights
+                  activity={insightsActivityQuery.data!}
+                  pricing={insightsPricingQuery.data!}
+                  services={insightsServicesQuery.data!}
+                />
+              )}
+            </>
+          );
+        })()}
       </main>
       )}
       </div>

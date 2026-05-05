@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import type { StatsClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
+import { resolveBlockTimestamps } from './utils.js';
 
 export interface MetadataIndexerOptions {
   store: SqliteStore;
@@ -17,166 +18,153 @@ export interface MetadataIndexerOptions {
   rpcUrl?: string;
 }
 
-function logError(err: unknown): void {
-  console.error('[indexer] error:', err);
+const DEFAULT_MAX_BLOCKS_PER_TICK = 2_000;
+
+export interface IndexerHealth {
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastErrorMessage: string | null;
+}
+
+export interface ChainHead {
+  latestBlock: number | null;
+  reorgSafetyBlocks: number;
 }
 
 export class MetadataIndexer {
-  private readonly _store: SqliteStore;
-  private readonly _statsClient: Pick<StatsClient, 'getMetadataRecordedEvents' | 'getBlockNumber'>;
-  private readonly _chainId: string;
-  private readonly _contractAddress: string;
-  private readonly _deployBlock: number;
-  private readonly _tickIntervalMs: number;
-  private readonly _reorgSafetyBlocks: number;
-  private readonly _maxBlocksPerTick: number;
-  private readonly _provider: ethers.JsonRpcProvider | undefined;
-  private _timer: ReturnType<typeof setInterval> | undefined;
-  private _running = false;
-  private _latestBlock: number | null = null;
-  private _lastSuccessAt: number | null = null;
-  private _lastErrorAt: number | null = null;
-  private _lastErrorMessage: string | null = null;
+  private readonly store: SqliteStore;
+  private readonly statsClient: Pick<StatsClient, 'getMetadataRecordedEvents' | 'getBlockNumber'>;
+  private readonly chainId: string;
+  private readonly contractAddress: string;
+  private readonly deployBlock: number;
+  private readonly tickIntervalMs: number;
+  private readonly reorgSafetyBlocks: number;
+  private readonly maxBlocksPerTick: number;
+  private readonly provider: ethers.JsonRpcProvider | undefined;
+
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private running = false;
+  private latestBlock: number | null = null;
+  private lastSuccessAt: number | null = null;
+  private lastErrorAt: number | null = null;
+  private lastErrorMessage: string | null = null;
 
   constructor(options: MetadataIndexerOptions) {
-    if (options.deployBlock < 0) {
-      throw new Error('deployBlock must be >= 0');
-    }
-    if (options.tickIntervalMs <= 0) {
-      throw new Error('tickIntervalMs must be > 0');
-    }
+    if (options.deployBlock < 0) throw new Error('deployBlock must be >= 0');
+    if (options.tickIntervalMs <= 0) throw new Error('tickIntervalMs must be > 0');
 
-    this._store = options.store;
-    this._statsClient = options.statsClient;
-    this._chainId = options.chainId;
-    this._contractAddress = options.contractAddress;
-    this._deployBlock = options.deployBlock;
-    this._tickIntervalMs = options.tickIntervalMs;
-    this._reorgSafetyBlocks = options.reorgSafetyBlocks;
-
-    const provided = options.maxBlocksPerTick;
-    this._maxBlocksPerTick = (provided !== undefined && provided > 0) ? provided : 2_000;
-
-    this._provider = options.rpcUrl ? new ethers.JsonRpcProvider(options.rpcUrl) : undefined;
+    this.store = options.store;
+    this.statsClient = options.statsClient;
+    this.chainId = options.chainId;
+    this.contractAddress = options.contractAddress;
+    this.deployBlock = options.deployBlock;
+    this.tickIntervalMs = options.tickIntervalMs;
+    this.reorgSafetyBlocks = options.reorgSafetyBlocks;
+    this.maxBlocksPerTick = (options.maxBlocksPerTick ?? 0) > 0
+      ? options.maxBlocksPerTick!
+      : DEFAULT_MAX_BLOCKS_PER_TICK;
+    this.provider = options.rpcUrl ? new ethers.JsonRpcProvider(options.rpcUrl) : undefined;
   }
 
   start(): void {
-    // Run one tick immediately (defensive catch — tick already catches internally)
+    // tick() never throws out, but the .catch is a defensive belt-and-braces
+    // for any pre-tick (`this.running` flip) crash that might bypass the
+    // internal try/catch.
     void this.tick().catch(logError);
-
-    this._timer = setInterval(() => void this.tick().catch(logError), this._tickIntervalMs);
+    this.timer = setInterval(() => void this.tick().catch(logError), this.tickIntervalMs);
   }
 
   stop(): void {
-    clearInterval(this._timer);
+    clearInterval(this.timer);
   }
 
   /**
-   * Returns the chain head observed on the most recent tick plus the
-   * indexer's reorg safety buffer. Null latestBlock means no tick has run
-   * yet (process just started and the first eth_blockNumber is still in flight).
+   * Returns the chain head observed on the most recent tick plus the indexer's
+   * reorg safety buffer. Null latestBlock means no tick has run yet (process
+   * just started and the first eth_blockNumber is still in flight).
    */
-  getChainHead(): { latestBlock: number | null; reorgSafetyBlocks: number } {
-    return { latestBlock: this._latestBlock, reorgSafetyBlocks: this._reorgSafetyBlocks };
+  getChainHead(): ChainHead {
+    return { latestBlock: this.latestBlock, reorgSafetyBlocks: this.reorgSafetyBlocks };
   }
 
   /**
    * Per-tick health, used by /stats to surface flaky RPC behavior. A tick that
    * runs with no thrown error counts as a success — even when the range was
-   * empty or the chain was inside the reorg-safety window — because the indexer
-   * itself is healthy in those cases. `lastErrorAt > lastSuccessAt` (or
-   * lastSuccessAt == null) means the most recent tick failed.
+   * empty or the chain was inside the reorg-safety window — because the
+   * indexer itself is healthy in those cases. `lastErrorAt > lastSuccessAt`
+   * (or `lastSuccessAt == null`) means the most recent tick failed.
    */
-  getHealth(): {
-    lastSuccessAt: number | null;
-    lastErrorAt: number | null;
-    lastErrorMessage: string | null;
-  } {
+  getHealth(): IndexerHealth {
     return {
-      lastSuccessAt: this._lastSuccessAt,
-      lastErrorAt: this._lastErrorAt,
-      lastErrorMessage: this._lastErrorMessage,
+      lastSuccessAt: this.lastSuccessAt,
+      lastErrorAt: this.lastErrorAt,
+      lastErrorMessage: this.lastErrorMessage,
     };
   }
 
   /**
-   * Exposed for tests — runs one iteration end-to-end. Never throws out.
+   * One iteration end-to-end. Never throws — failures land in `getHealth`.
    *
-   * Re-entrancy guard: if a prior tick is still in flight (slow RPC), the next
-   * interval fire short-circuits. Without this, two concurrent ticks would read
-   * the same checkpoint, fetch the same block range, and both apply deltas —
-   * permanently doubling every affected agent's cumulative totals.
+   * Re-entrancy guard: if a prior tick is still in flight (slow RPC), the
+   * next interval fire short-circuits. Without this, two concurrent ticks
+   * would read the same checkpoint, fetch the same block range, and both
+   * apply deltas — permanently doubling every affected agent's totals.
    */
   async tick(): Promise<void> {
-    if (this._running) return;
-    this._running = true;
-    let errored = false;
+    if (this.running) return;
+    this.running = true;
     try {
-      const latest = await this._statsClient.getBlockNumber();
-      this._latestBlock = latest;
-      const safeTo = latest - this._reorgSafetyBlocks;
-
-      if (safeTo < this._deployBlock) {
-        return;
-      }
-
-      const checkpoint = this._store.getCheckpoint(this._chainId, this._contractAddress);
-      const fromBlock = checkpoint === null ? this._deployBlock : checkpoint + 1;
-
-      if (fromBlock > safeTo) {
-        return;
-      }
-
-      const toBlock = Math.min(safeTo, fromBlock + this._maxBlocksPerTick - 1);
-
-      const events = await this._statsClient.getMetadataRecordedEvents({ fromBlock, toBlock });
-
-      // Fetch block timestamps for each distinct block that carried an event,
-      // so applyBatch can stamp first_seen_at with on-chain wall clock. Only
-      // distinct blocks matter — a block with N events costs one getBlock call.
-      let blockTimestamps: Map<number, number> | undefined;
-      if (this._provider && events.length > 0) {
-        const uniqueBlocks = Array.from(new Set(events.map((e) => e.blockNumber)));
-        const blocks = await Promise.all(uniqueBlocks.map((b) => this._provider!.getBlock(b)));
-        blockTimestamps = new Map();
-        for (let i = 0; i < uniqueBlocks.length; i++) {
-          const block = blocks[i];
-          if (block) blockTimestamps.set(uniqueBlocks[i]!, block.timestamp);
-        }
-      }
-
-      // Always capture the checkpoint block's wall-clock so /stats can show
-      // how fresh the indexer is. Reuse the timestamp from the event-block
-      // fetch above if toBlock happened to carry an event, otherwise one
-      // extra getBlock call.
-      let newCheckpointTimestamp: number | null = null;
-      if (this._provider) {
-        if (blockTimestamps?.has(toBlock)) {
-          newCheckpointTimestamp = blockTimestamps.get(toBlock)!;
-        } else {
-          const block = await this._provider.getBlock(toBlock);
-          newCheckpointTimestamp = block?.timestamp ?? null;
-        }
-      }
-
-      this._store.applyBatch(
-        this._chainId,
-        this._contractAddress,
-        events,
-        toBlock,
-        blockTimestamps,
-        newCheckpointTimestamp,
-      );
-
-      console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
+      await this.runOnce();
+      this.lastSuccessAt = Date.now();
     } catch (err) {
-      errored = true;
-      this._lastErrorAt = Date.now();
-      this._lastErrorMessage = err instanceof Error ? err.message : String(err);
+      this.lastErrorAt = Date.now();
+      this.lastErrorMessage = err instanceof Error ? err.message : String(err);
       console.error('[indexer] tick error:', err);
     } finally {
-      if (!errored) this._lastSuccessAt = Date.now();
-      this._running = false;
+      this.running = false;
     }
   }
+
+  private async runOnce(): Promise<void> {
+    const latest = await this.statsClient.getBlockNumber();
+    this.latestBlock = latest;
+    const safeTo = latest - this.reorgSafetyBlocks;
+    if (safeTo < this.deployBlock) return;
+
+    const checkpoint = this.store.getCheckpoint(this.chainId, this.contractAddress);
+    const fromBlock = checkpoint === null ? this.deployBlock : checkpoint + 1;
+    if (fromBlock > safeTo) return;
+
+    const toBlock = Math.min(safeTo, fromBlock + this.maxBlocksPerTick - 1);
+    const events = await this.statsClient.getMetadataRecordedEvents({ fromBlock, toBlock });
+
+    // Distinct event blocks + the checkpoint block — one getBlock call covers
+    // both first_seen_at stamping and the indexer's freshness reporting.
+    const blocksToResolve = new Set<number>();
+    for (const ev of events) blocksToResolve.add(ev.blockNumber);
+    if (this.provider) blocksToResolve.add(toBlock);
+
+    let blockTimestamps: Map<number, number> | undefined;
+    let newCheckpointTimestamp: number | null = null;
+    if (this.provider && blocksToResolve.size > 0) {
+      const { timestamps } = await resolveBlockTimestamps(this.provider, [...blocksToResolve]);
+      blockTimestamps = events.length > 0 ? timestamps : undefined;
+      newCheckpointTimestamp = timestamps.get(toBlock) ?? null;
+    }
+
+    this.store.applyBatch(
+      this.chainId,
+      this.contractAddress,
+      events,
+      toBlock,
+      blockTimestamps,
+      newCheckpointTimestamp,
+    );
+
+    console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
+  }
+}
+
+function logError(err: unknown): void {
+  console.error('[indexer] error:', err);
 }

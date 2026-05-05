@@ -228,7 +228,7 @@ export interface ComputeInsightsInput {
   nowMs?: number;
 }
 
-// ── small helpers ──────────────────────────────────────────────────────────
+// ── leaderboard plumbing ───────────────────────────────────────────────────
 
 function peerByAgentId(
   peers: readonly PeerMetadata[],
@@ -239,13 +239,10 @@ function peerByAgentId(
     const addr = getPeerLookupAddress(peer);
     if (!addr) continue;
     const agentId = agentIdByPeerAddress.get(addr) ?? null;
-    if (agentId !== null && agentId !== 0) {
-      // First-write-wins: if two peers share an agentId (shouldn't happen but
-      // is at least theoretically possible during an in-flight key rotation),
-      // we'll surface whichever was discovered first rather than silently
-      // overwriting and showing both as the same on-chain identity.
-      if (!out.has(agentId)) out.set(agentId, peer);
-    }
+    // First-write-wins: if two peers share an agentId (shouldn't happen, but
+    // possible during in-flight key rotation), surface whichever was discovered
+    // first instead of silently overwriting.
+    if (agentId !== null && agentId !== 0 && !out.has(agentId)) out.set(agentId, peer);
   }
   return out;
 }
@@ -281,6 +278,20 @@ function entryForPeer(
   };
 }
 
+/**
+ * Sort `items` by `compare`, take the first LEADERBOARD_LIMIT, project each
+ * to a result entry. The ubiquitous `[...arr].filter().sort().slice().map()`
+ * idiom in this file collapses into one call.
+ */
+function topByDesc<T, R>(
+  items: readonly T[],
+  predicate: (item: T) => boolean,
+  compare: (a: T, b: T) => number,
+  toEntry: (item: T) => R,
+): R[] {
+  return items.filter(predicate).sort(compare).slice(0, LEADERBOARD_LIMIT).map(toEntry);
+}
+
 // ── leaderboards ───────────────────────────────────────────────────────────
 
 function computeLeaderboards(
@@ -288,68 +299,83 @@ function computeLeaderboards(
   peerByAgent: ReadonlyMap<number, PeerMetadata>,
 ): Leaderboards {
   const { peers, sellerTotals } = input;
+  const peerOf = (s: SellerTotalsWithId) => peerByAgent.get(s.agentId);
 
-  // ── on-chain leaderboards: rank against the full indexed set, then attach
-  // the live peer when one matches ────────────────────────────────────────
-  const byRequests = [...sellerTotals]
-    .filter((s) => s.totalRequests > 0n)
-    .sort((a, b) => bigintDesc(a.totalRequests, b.totalRequests))
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((s) => entryForSeller(s, peerByAgent.get(s.agentId), s.totalRequests, s.settlementCount));
+  const mostActive = topByDesc(
+    sellerTotals,
+    (s) => s.totalRequests > 0n,
+    (a, b) => bigintDesc(a.totalRequests, b.totalRequests),
+    (s) => entryForSeller(s, peerOf(s), s.totalRequests, s.settlementCount),
+  );
 
-  const bySettlements = [...sellerTotals]
-    .filter((s) => s.settlementCount > 0)
-    .sort((a, b) => b.settlementCount - a.settlementCount)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((s) => entryForSeller(s, peerByAgent.get(s.agentId), s.settlementCount, Number(s.totalRequests)));
+  const mostSettlements = topByDesc(
+    sellerTotals,
+    (s) => s.settlementCount > 0,
+    (a, b) => b.settlementCount - a.settlementCount,
+    (s) => entryForSeller(s, peerOf(s), s.settlementCount, Number(s.totalRequests)),
+  );
 
-  const byBuyers = [...sellerTotals]
-    .filter((s) => s.uniqueBuyers > 0)
-    .sort((a, b) => b.uniqueBuyers - a.uniqueBuyers)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((s) => entryForSeller(s, peerByAgent.get(s.agentId), s.uniqueBuyers, Number(s.totalRequests)));
+  const mostBuyers = topByDesc(
+    sellerTotals,
+    (s) => s.uniqueBuyers > 0,
+    (a, b) => b.uniqueBuyers - a.uniqueBuyers,
+    (s) => entryForSeller(s, peerOf(s), s.uniqueBuyers, Number(s.totalRequests)),
+  );
 
   // newest / oldest by firstSeenAt — skip rows with no timestamp (early
   // backfill rows that were resolved before timestamp lookups landed).
-  const seenSellers = sellerTotals.filter((s): s is SellerTotalsWithId & { firstSeenAt: number } => s.firstSeenAt !== null);
-  const newest = [...seenSellers]
-    .sort((a, b) => b.firstSeenAt - a.firstSeenAt)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((s) => entryForSeller(s, peerByAgent.get(s.agentId), s.firstSeenAt, Number(s.totalRequests)));
-  const oldest = [...seenSellers]
-    .sort((a, b) => a.firstSeenAt - b.firstSeenAt)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((s) => entryForSeller(s, peerByAgent.get(s.agentId), s.firstSeenAt, Number(s.totalRequests)));
+  type SellerWithSeenAt = SellerTotalsWithId & { firstSeenAt: number };
+  const seenSellers: SellerWithSeenAt[] = sellerTotals.filter(
+    (s): s is SellerWithSeenAt => s.firstSeenAt !== null,
+  );
+  const newest = topByDesc(
+    seenSellers,
+    () => true,
+    (a, b) => b.firstSeenAt - a.firstSeenAt,
+    (s) => entryForSeller(s, peerOf(s), s.firstSeenAt, Number(s.totalRequests)),
+  );
+  const oldest = topByDesc(
+    seenSellers,
+    () => true,
+    (a, b) => a.firstSeenAt - b.firstSeenAt,
+    (s) => entryForSeller(s, peerOf(s), s.firstSeenAt, Number(s.totalRequests)),
+  );
 
   // ── DHT-only leaderboards: stake and service breadth come from the
   // metadata announcement, not from the chain ─────────────────────────────
-  const stakeRanked = [...peers]
-    .filter((p): p is PeerMetadata & { stakeAmountUSDC: number } => typeof p.stakeAmountUSDC === 'number' && p.stakeAmountUSDC > 0)
-    .sort((a, b) => b.stakeAmountUSDC - a.stakeAmountUSDC)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((p) => entryForPeer(p, p.stakeAmountUSDC));
+  type PeerWithStake = PeerMetadata & { stakeAmountUSDC: number };
+  const stakedPeers: PeerWithStake[] = peers.filter(
+    (p): p is PeerWithStake => typeof p.stakeAmountUSDC === 'number' && p.stakeAmountUSDC > 0,
+  );
+  const mostStaked = topByDesc(
+    stakedPeers,
+    () => true,
+    (a, b) => b.stakeAmountUSDC - a.stakeAmountUSDC,
+    (p) => entryForPeer(p, p.stakeAmountUSDC),
+  );
 
-  const diversityRanked = peers
-    .map((p) => {
-      const { services, categories } = collectPeerSets(p);
-      return { peer: p, breadth: services.size + categories.size, services: services.size };
-    })
-    .filter((x) => x.breadth > 0)
-    .sort((a, b) => b.breadth - a.breadth)
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((x) => entryForPeer(x.peer, x.breadth, x.services));
+  const diversity = peers.map((peer) => {
+    const { services, categories } = collectPeerSets(peer);
+    return { peer, breadth: services.size + categories.size, services: services.size };
+  });
+  const mostDiverse = topByDesc(
+    diversity,
+    (d) => d.breadth > 0,
+    (a, b) => b.breadth - a.breadth,
+    (d) => entryForPeer(d.peer, d.breadth, d.services),
+  );
 
   return {
-    mostActive: byRequests,
-    mostSettlements: bySettlements,
-    mostBuyers: byBuyers,
-    mostStaked: stakeRanked,
-    mostDiverse: diversityRanked,
+    mostActive,
+    mostSettlements,
+    mostBuyers,
+    mostStaked,
+    mostDiverse,
     newest,
     oldest,
-    // Trending boards are filled in by computeInsights — kept on the same
-    // object so the public type stays cohesive (one Leaderboards type, one
-    // shape regardless of which input data drove which entries).
+    // Trending boards filled in by computeInsights — kept on the same object
+    // so the public type stays cohesive (one Leaderboards type, one shape
+    // regardless of which input data drove which entries).
     trendingUp: [],
     trendingDown: [],
   };
@@ -357,41 +383,46 @@ function computeLeaderboards(
 
 // ── pricing market ─────────────────────────────────────────────────────────
 
-function computePricingByService(peers: readonly PeerMetadata[]): Record<string, ServicePricingMarket> {
-  // For each (peer, service), pick the most specific price the peer announced
-  // for that service. servicePricing[service] beats defaultPricing — same
-  // resolution buyers do at request time.
-  interface PeerServicePrice {
-    peerId: string;
-    inputUsdPerMillion: number;
-    outputUsdPerMillion: number;
-  }
-  const byService = new Map<string, PeerServicePrice[]>();
+interface PeerServicePrice {
+  peerId: string;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+}
 
-  for (const peer of peers) {
-    // A peer can announce the same service through several providers (e.g.
-    // primary + fallback). De-dup on (peer, service) and keep the cheapest
-    // input price among the providers — that's what a buyer would route to.
-    const seenForPeer = new Map<string, PeerServicePrice>();
-    for (const provider of peer.providers) {
-      for (const svc of provider.services) {
-        const specific = provider.servicePricing?.[svc];
-        const pricing = specific ?? provider.defaultPricing;
-        if (!pricing || typeof pricing.inputUsdPerMillion !== 'number' || typeof pricing.outputUsdPerMillion !== 'number') {
-          continue;
-        }
-        const candidate: PeerServicePrice = {
-          peerId: peer.peerId,
-          inputUsdPerMillion: pricing.inputUsdPerMillion,
-          outputUsdPerMillion: pricing.outputUsdPerMillion,
-        };
-        const existing = seenForPeer.get(svc);
-        if (!existing || candidate.inputUsdPerMillion < existing.inputUsdPerMillion) {
-          seenForPeer.set(svc, candidate);
-        }
+/**
+ * For one peer, return the cheapest announced (input price) per service across
+ * all of that peer's providers. A peer that exposes the same service through
+ * primary + fallback providers should be counted once, at the price a buyer
+ * would actually route to.
+ */
+function cheapestPriceByServiceForPeer(peer: PeerMetadata): Map<string, PeerServicePrice> {
+  const out = new Map<string, PeerServicePrice>();
+  for (const provider of peer.providers) {
+    for (const svc of provider.services) {
+      const pricing = provider.servicePricing?.[svc] ?? provider.defaultPricing;
+      if (
+        !pricing
+        || typeof pricing.inputUsdPerMillion !== 'number'
+        || typeof pricing.outputUsdPerMillion !== 'number'
+      ) continue;
+      const candidate: PeerServicePrice = {
+        peerId: peer.peerId,
+        inputUsdPerMillion: pricing.inputUsdPerMillion,
+        outputUsdPerMillion: pricing.outputUsdPerMillion,
+      };
+      const existing = out.get(svc);
+      if (!existing || candidate.inputUsdPerMillion < existing.inputUsdPerMillion) {
+        out.set(svc, candidate);
       }
     }
-    for (const [svc, price] of seenForPeer) {
+  }
+  return out;
+}
+
+function computePricingByService(peers: readonly PeerMetadata[]): Record<string, ServicePricingMarket> {
+  const byService = new Map<string, PeerServicePrice[]>();
+  for (const peer of peers) {
+    for (const [svc, price] of cheapestPriceByServiceForPeer(peer)) {
       const list = byService.get(svc);
       if (list) list.push(price);
       else byService.set(svc, [price]);
@@ -401,19 +432,17 @@ function computePricingByService(peers: readonly PeerMetadata[]): Record<string,
   const out: Record<string, ServicePricingMarket> = {};
   for (const [service, prices] of byService) {
     if (prices.length < PRICE_MARKET_MIN_PEERS) continue;
-    const inputs = prices.map((p) => p.inputUsdPerMillion);
-    const outputs = prices.map((p) => p.outputUsdPerMillion);
-    // "Cheapest" = lowest input price; ties broken by output price so we
-    // surface a single deterministic peer per service rather than randomly
-    // picking among equally-cheap providers.
-    const cheapest = [...prices].sort((a, b) => {
-      if (a.inputUsdPerMillion !== b.inputUsdPerMillion) return a.inputUsdPerMillion - b.inputUsdPerMillion;
-      return a.outputUsdPerMillion - b.outputUsdPerMillion;
-    })[0]!;
+    // Cheapest = lowest input; ties broken by output so we surface a single
+    // deterministic peer per service rather than randomly picking among
+    // equally-cheap providers.
+    const cheapest = [...prices].sort((a, b) =>
+      a.inputUsdPerMillion - b.inputUsdPerMillion
+      || a.outputUsdPerMillion - b.outputUsdPerMillion
+    )[0]!;
     out[service] = {
       peerCount: prices.length,
-      input: distribution(inputs),
-      output: distribution(outputs),
+      input: distribution(prices.map((p) => p.inputUsdPerMillion)),
+      output: distribution(prices.map((p) => p.outputUsdPerMillion)),
       cheapestPeerId: cheapest.peerId,
       cheapestInputUsdPerMillion: cheapest.inputUsdPerMillion,
       cheapestOutputUsdPerMillion: cheapest.outputUsdPerMillion,
@@ -465,9 +494,7 @@ function computeRegions(peers: readonly PeerMetadata[]): RegionDistributionEntry
 // ── concentration ──────────────────────────────────────────────────────────
 
 function computeConcentration(sellerTotals: readonly SellerTotalsWithId[]): ConcentrationStats {
-  const requests = sellerTotals
-    .map((s) => s.totalRequests)
-    .filter((v) => v > 0n);
+  const requests = sellerTotals.map((s) => s.totalRequests).filter((v) => v > 0n);
   return {
     sellerCount: requests.length,
     gini: gini(requests),
@@ -489,43 +516,43 @@ function computeVelocityWindow(
   // up to one sampling interval ahead of the latest write, which makes the
   // current-window delta artificially small.
   const tsNow = Math.min(nowSeconds, last.ts);
-  const startCurrent = tsNow - windowSeconds;
-  const startPrior = tsNow - 2 * windowSeconds;
-
-  const currentBaseline = lastAtOrBefore(history, startCurrent);
+  const currentBaseline = lastAtOrBefore(history, tsNow - windowSeconds);
   if (!currentBaseline) return null;
+
   const requestsDelta = last.totalRequests - currentBaseline.totalRequests;
   const tokensDelta =
     last.totalInputTokens + last.totalOutputTokens
     - currentBaseline.totalInputTokens - currentBaseline.totalOutputTokens;
   const settlementsDelta = last.settlementCount - currentBaseline.settlementCount;
 
-  let growthPct: number | null = null;
-  const priorBaseline = lastAtOrBefore(history, startPrior);
-  if (priorBaseline && priorBaseline.ts < currentBaseline.ts) {
-    const priorRequests = currentBaseline.totalRequests - priorBaseline.totalRequests;
-    if (priorRequests > 0n) {
-      // Number-cast here is safe enough for display: requests counts in a
-      // single window comfortably fit JS Number range; precision loss only
-      // matters at counts > 2^53 (>9e15), well beyond realistic.
-      growthPct = (Number(requestsDelta) - Number(priorRequests)) / Number(priorRequests);
-    } else if (requestsDelta > 0n) {
-      // Prior window had no activity but the current window does — flag as a
-      // sentinel rather than reporting NaN/Infinity. The UI can render this as
-      // "new" instead of a meaningless percentage.
-      growthPct = -1;
-    } else {
-      growthPct = 0;
-    }
-  }
-
   return {
     windowSeconds,
     requestsDelta: requestsDelta.toString(),
     tokensDelta: tokensDelta.toString(),
     settlementsDelta,
-    requestsGrowthPct: growthPct,
+    requestsGrowthPct: computeGrowthPct(history, currentBaseline, requestsDelta, tsNow - 2 * windowSeconds),
   };
+}
+
+function computeGrowthPct(
+  history: readonly HistorySample[],
+  currentBaseline: HistorySample,
+  requestsDelta: bigint,
+  priorWindowStart: number,
+): number | null {
+  const priorBaseline = lastAtOrBefore(history, priorWindowStart);
+  if (!priorBaseline || priorBaseline.ts >= currentBaseline.ts) return null;
+
+  const priorRequests = currentBaseline.totalRequests - priorBaseline.totalRequests;
+  if (priorRequests > 0n) {
+    // Number-cast is safe enough for display: counts in a single window
+    // comfortably fit JS Number range; precision loss only matters above
+    // 2^53 (>9e15), well past realistic.
+    return (Number(requestsDelta) - Number(priorRequests)) / Number(priorRequests);
+  }
+  // Prior window had no activity. Sentinel -1 flags "infinite growth" so the
+  // UI can render "new" instead of NaN/Infinity; 0 means truly idle.
+  return requestsDelta > 0n ? -1 : 0;
 }
 
 function computeVelocity(history: readonly HistorySample[], nowSeconds: number): Velocity {
@@ -556,17 +583,10 @@ function computeActivity(
 
 // ── price stability / movers ───────────────────────────────────────────────
 
-/**
- * Build a peerId → displayName map from the live snapshot. Volatility rows
- * key on peerId (40-hex without 0x); the snapshot already exposes peerId in
- * the same format, so direct equality lookup works.
- */
 function displayNamesByPeerId(peers: readonly PeerMetadata[]): Map<string, string | null> {
   const out = new Map<string, string | null>();
   for (const peer of peers) {
-    if (typeof peer.peerId === 'string') {
-      out.set(peer.peerId, peer.displayName ?? null);
-    }
+    if (typeof peer.peerId === 'string') out.set(peer.peerId, peer.displayName ?? null);
   }
   return out;
 }
@@ -594,29 +614,49 @@ function computePriceStability(
 ): PriceStability {
   if (rows.length === 0) return { mostStable: [], mostVolatile: [] };
 
+  const toEntry = (row: PriceVolatilityRow) => toStabilityEntry(row, names.get(row.peerId) ?? null);
+
   // mostStable: lowest changeCount wins; tie-break by sampleCount desc (more
   // samples = stronger evidence the price is genuinely stable, not just one
   // lonely announcement) then by latest input price asc (cheaper first).
-  const mostStable = [...rows]
-    .sort((a, b) => {
-      if (a.changeCount !== b.changeCount) return a.changeCount - b.changeCount;
-      if (a.sampleCount !== b.sampleCount) return b.sampleCount - a.sampleCount;
-      return a.latestInputUsdPerMillion - b.latestInputUsdPerMillion;
-    })
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((row) => toStabilityEntry(row, names.get(row.peerId) ?? null));
+  const mostStable = topByDesc(
+    rows,
+    () => true,
+    (a, b) =>
+      a.changeCount - b.changeCount
+      || b.sampleCount - a.sampleCount
+      || a.latestInputUsdPerMillion - b.latestInputUsdPerMillion,
+    toEntry,
+  );
 
-  // mostVolatile: drop rows with changeCount<2 — they didn't actually change.
-  const mostVolatile = rows
-    .filter((row) => row.changeCount >= 2)
-    .sort((a, b) => {
-      if (b.changeCount !== a.changeCount) return b.changeCount - a.changeCount;
-      return b.sampleCount - a.sampleCount;
-    })
-    .slice(0, LEADERBOARD_LIMIT)
-    .map((row) => toStabilityEntry(row, names.get(row.peerId) ?? null));
+  // changeCount<2 means it didn't actually change.
+  const mostVolatile = topByDesc(
+    rows,
+    (row) => row.changeCount >= 2,
+    (a, b) => (b.changeCount - a.changeCount) || (b.sampleCount - a.sampleCount),
+    toEntry,
+  );
 
   return { mostStable, mostVolatile };
+}
+
+function toMoverEntry(
+  row: PriceVolatilityRow,
+  pct: number,
+  displayName: string | null,
+): PriceMoverEntry {
+  return {
+    peerId: row.peerId,
+    displayName,
+    provider: row.provider,
+    service: row.service,
+    inputChangePct: pct,
+    fromInputUsdPerMillion: row.firstInputUsdPerMillion,
+    toInputUsdPerMillion: row.latestInputUsdPerMillion,
+    fromOutputUsdPerMillion: row.firstOutputUsdPerMillion,
+    toOutputUsdPerMillion: row.latestOutputUsdPerMillion,
+    windowSeconds: PRICE_STABILITY_WINDOW_SECONDS,
+  };
 }
 
 function computePriceMovers(
@@ -624,31 +664,26 @@ function computePriceMovers(
   names: ReadonlyMap<string, string | null>,
 ): PriceMovers {
   if (rows.length === 0) return { biggestDrops: [], biggestHikes: [] };
-  const movers: Array<PriceMoverEntry & { sortKey: number }> = [];
+
+  const movers: PriceMoverEntry[] = [];
   for (const row of rows) {
     if (row.firstInputUsdPerMillion <= 0) continue;
     if (row.firstInputUsdPerMillion === row.latestInputUsdPerMillion) continue;
     const pct = (row.latestInputUsdPerMillion - row.firstInputUsdPerMillion) / row.firstInputUsdPerMillion;
     if (Math.abs(pct) < PRICE_MOVER_MIN_PCT) continue;
-    movers.push({
-      peerId: row.peerId,
-      displayName: names.get(row.peerId) ?? null,
-      provider: row.provider,
-      service: row.service,
-      inputChangePct: pct,
-      fromInputUsdPerMillion: row.firstInputUsdPerMillion,
-      toInputUsdPerMillion: row.latestInputUsdPerMillion,
-      fromOutputUsdPerMillion: row.firstOutputUsdPerMillion,
-      toOutputUsdPerMillion: row.latestOutputUsdPerMillion,
-      windowSeconds: PRICE_STABILITY_WINDOW_SECONDS,
-      sortKey: pct,
-    });
+    movers.push(toMoverEntry(row, pct, names.get(row.peerId) ?? null));
   }
-  const drops = movers.filter((m) => m.sortKey < 0).sort((a, b) => a.sortKey - b.sortKey).slice(0, LEADERBOARD_LIMIT);
-  const hikes = movers.filter((m) => m.sortKey > 0).sort((a, b) => b.sortKey - a.sortKey).slice(0, LEADERBOARD_LIMIT);
-  // Strip the internal sortKey before returning — it's an implementation detail.
-  const stripKey = ({ sortKey: _, ...rest }: PriceMoverEntry & { sortKey: number }): PriceMoverEntry => rest;
-  return { biggestDrops: drops.map(stripKey), biggestHikes: hikes.map(stripKey) };
+
+  return {
+    biggestDrops: movers
+      .filter((m) => m.inputChangePct < 0)
+      .sort((a, b) => a.inputChangePct - b.inputChangePct)
+      .slice(0, LEADERBOARD_LIMIT),
+    biggestHikes: movers
+      .filter((m) => m.inputChangePct > 0)
+      .sort((a, b) => b.inputChangePct - a.inputChangePct)
+      .slice(0, LEADERBOARD_LIMIT),
+  };
 }
 
 // ── trending leaderboards ──────────────────────────────────────────────────
@@ -659,11 +694,6 @@ interface TrendingComputed {
   last24hDelta: number;
 }
 
-/**
- * Group activity rows by agentId. Caller should pre-filter to the trending
- * window length (here 8 days = 24h current + 7d baseline). Each group is
- * already sorted by ts ascending thanks to the upstream query.
- */
 function groupActivity(rows: readonly SellerActivityRow[]): Map<number, SellerActivityRow[]> {
   const out = new Map<number, SellerActivityRow[]>();
   for (const row of rows) {
@@ -677,18 +707,16 @@ function groupActivity(rows: readonly SellerActivityRow[]): Map<number, SellerAc
   return out;
 }
 
-function computeTrending(
+/** Pure number-crunching: maps the grouped activity rows to per-agent ratios. */
+function computeTrendingRatios(
   sellerActivity: readonly SellerActivityRow[],
-  peerByAgent: ReadonlyMap<number, PeerMetadata>,
   nowSeconds: number,
-): { trendingUp: LeaderboardEntry[]; trendingDown: LeaderboardEntry[] } {
-  if (sellerActivity.length === 0) return { trendingUp: [], trendingDown: [] };
+): TrendingComputed[] {
   const grouped = groupActivity(sellerActivity);
-
   const cutoff24h = nowSeconds - 86400;
   const cutoff8d = nowSeconds - 86400 * 8;
 
-  const computed: TrendingComputed[] = [];
+  const out: TrendingComputed[] = [];
   for (const [agentId, rows] of grouped) {
     if (rows.length < 2) continue;
     const latest = rows[rows.length - 1]!;
@@ -698,35 +726,45 @@ function computeTrending(
 
     const last24hDelta = Number(latest.totalRequests - at24h.totalRequests);
     const prior7dDelta = Number(at24h.totalRequests - at8d.totalRequests);
-    if (last24hDelta < TRENDING_MIN_REQUESTS_24H && prior7dDelta < TRENDING_MIN_REQUESTS_24H * 7) {
-      // Tiny absolute volume — leave out so the leaderboard doesn't surface
-      // 1-request sellers as "trending up 100×".
-      continue;
-    }
+    // Tiny absolute volume — leave out so the leaderboard doesn't surface
+    // 1-request sellers as "trending up 100×".
+    if (last24hDelta < TRENDING_MIN_REQUESTS_24H && prior7dDelta < TRENDING_MIN_REQUESTS_24H * 7) continue;
+
     if (prior7dDelta <= 0) {
-      // Brand-new seller — flag as trendingUp with sentinel ratio so the UI
-      // can display "new" rather than a ratio. We use Infinity as the sort
-      // key; clamp to a large number when emitting so JSON stays valid.
-      computed.push({ agentId, ratio: Number.POSITIVE_INFINITY, last24hDelta });
+      // Brand-new seller — flag with sentinel ratio so the UI can display
+      // "new" rather than a ratio. Infinity sorts to the top of trendingUp.
+      out.push({ agentId, ratio: Number.POSITIVE_INFINITY, last24hDelta });
       continue;
     }
     const priorDailyAvg = prior7dDelta / 7;
     if (priorDailyAvg <= 0) continue;
-    computed.push({ agentId, ratio: last24hDelta / priorDailyAvg, last24hDelta });
+    out.push({ agentId, ratio: last24hDelta / priorDailyAvg, last24hDelta });
   }
+  return out;
+}
 
-  function toEntry(t: TrendingComputed): LeaderboardEntry {
-    const peer = peerByAgent.get(t.agentId);
-    const ratioForDisplay = Number.isFinite(t.ratio) ? t.ratio.toFixed(4) : 'new';
-    return {
-      agentId: t.agentId,
-      peerId: peer?.peerId ?? null,
-      displayName: peer?.displayName ?? null,
-      region: peer?.region ?? null,
-      metric: ratioForDisplay,
-      secondary: t.last24hDelta,
-    };
-  }
+function trendingToEntry(
+  t: TrendingComputed,
+  peerByAgent: ReadonlyMap<number, PeerMetadata>,
+): LeaderboardEntry {
+  const peer = peerByAgent.get(t.agentId);
+  return {
+    agentId: t.agentId,
+    peerId: peer?.peerId ?? null,
+    displayName: peer?.displayName ?? null,
+    region: peer?.region ?? null,
+    metric: Number.isFinite(t.ratio) ? t.ratio.toFixed(4) : 'new',
+    secondary: t.last24hDelta,
+  };
+}
+
+function computeTrending(
+  sellerActivity: readonly SellerActivityRow[],
+  peerByAgent: ReadonlyMap<number, PeerMetadata>,
+  nowSeconds: number,
+): { trendingUp: LeaderboardEntry[]; trendingDown: LeaderboardEntry[] } {
+  if (sellerActivity.length === 0) return { trendingUp: [], trendingDown: [] };
+  const computed = computeTrendingRatios(sellerActivity, nowSeconds);
 
   const up = computed
     // Only sellers that genuinely accelerated above their baseline make the
@@ -739,13 +777,13 @@ function computeTrending(
       return b.ratio - a.ratio;
     })
     .slice(0, LEADERBOARD_LIMIT)
-    .map(toEntry);
+    .map((t) => trendingToEntry(t, peerByAgent));
 
   const down = computed
     .filter((t) => Number.isFinite(t.ratio) && t.ratio < 1)
     .sort((a, b) => a.ratio - b.ratio)
     .slice(0, LEADERBOARD_LIMIT)
-    .map(toEntry);
+    .map((t) => trendingToEntry(t, peerByAgent));
 
   return { trendingUp: up, trendingDown: down };
 }

@@ -7,7 +7,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { BackfillStatus, HistoryRange } from '../api';
+import { fetchTokensHistory, type BackfillStatus, type HistoryRange } from '../api';
 import { formatLargeNumber } from '../utils';
 import { formatTick, formatTooltipLabel, HistoryChartFrame } from './HistoryChartFrame';
 
@@ -29,6 +29,8 @@ export function TokensChart({
       ariaLabel="Tokens range"
       backfill={backfill}
       now={now}
+      fetcher={fetchTokensHistory}
+      queryKey="history/tokens"
       renderChart={(points, bucketSeconds) => {
         const seriesLabel = bucketSeconds < 86_400 ? 'Tokens / hour' : 'Tokens / day';
         return (

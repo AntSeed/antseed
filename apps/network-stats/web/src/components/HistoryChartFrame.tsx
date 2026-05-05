@@ -1,10 +1,9 @@
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  fetchHistory,
   type BackfillStatus,
-  type HistoryPoint,
   type HistoryRange,
+  type HistorySeries,
 } from '../api';
 import { BackfillSyncStrip } from './BackfillSyncStrip';
 
@@ -44,15 +43,18 @@ export function formatTooltipLabel(tsSec: number, bucketSeconds: number): string
  * caller can provide its own Recharts composition.
  *
  * Range state is lifted to the parent so multiple frames on the same page
- * stay in sync. react-query dedupes identical ['history', range] keys, so
- * two frames with the same range share a single fetch.
+ * stay in sync. Each frame fetches its own slice via `fetcher` + `queryKey`;
+ * react-query dedupes identical [queryKey, range] tuples, so two frames
+ * pointed at the same endpoint with the same range share a single request.
  */
-export function HistoryChartFrame({
+export function HistoryChartFrame<P extends { ts: number }>({
   range,
   onRangeChange,
   ariaLabel,
   backfill = null,
   now = Date.now(),
+  fetcher,
+  queryKey,
   renderChart,
   renderLegend,
 }: {
@@ -61,12 +63,14 @@ export function HistoryChartFrame({
   ariaLabel: string;
   backfill?: BackfillStatus | null;
   now?: number;
-  renderChart: (points: HistoryPoint[], bucketSeconds: number) => ReactNode;
+  fetcher: (range: HistoryRange) => Promise<HistorySeries<P>>;
+  queryKey: string;
+  renderChart: (points: P[], bucketSeconds: number) => ReactNode;
   renderLegend: (bucketSeconds: number) => ReactNode;
 }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['history', range],
-    queryFn: () => fetchHistory(range),
+    queryKey: [queryKey, range],
+    queryFn: () => fetcher(range),
     // Server appends a sample once per minute; match that cadence.
     refetchInterval: 60_000,
   });

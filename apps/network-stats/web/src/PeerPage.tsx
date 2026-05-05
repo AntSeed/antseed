@@ -1,6 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchStats, getPeerServices, type Peer, type ProviderAnnouncement } from './api';
+import {
+  fetchStatsNetwork,
+  fetchStatsPeers,
+  getPeerServices,
+  type Peer,
+  type ProviderAnnouncement,
+} from './api';
 import { SearchGlyph } from './components/icons';
 import { Modal } from './components/Modal';
 import {
@@ -23,15 +29,26 @@ const SERVICES_PREVIEW_LIMIT = 18;
 const PROVIDER_GROUP_PREVIEW_LIMIT = 10;
 
 export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => void }) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['stats'],
-    queryFn: fetchStats,
+  // Two queries with shared keys — App.tsx mounts the same ones for the
+  // sidebar/header strip, so react-query dedupes the network ones and the
+  // peers fetch is reused if the user is also on the peers route.
+  const peersStatsQuery = useQuery({
+    queryKey: ['stats', 'peers'],
+    queryFn: fetchStatsPeers,
+    refetchInterval: REFETCH_INTERVAL_MS,
+  });
+  const networkStatsQuery = useQuery({
+    queryKey: ['stats', 'network'],
+    queryFn: fetchStatsNetwork,
     refetchInterval: REFETCH_INTERVAL_MS,
   });
   const now = useTick(1000);
 
-  const peer: Peer | undefined = data?.peers.find((p) => p.peerId === peerId);
-  const updatedAtMs = data ? parseUpdatedAt(data.updatedAt) : null;
+  const peer: Peer | undefined = peersStatsQuery.data?.peers.find((p) => p.peerId === peerId);
+  const updatedAtMs = peersStatsQuery.data ? parseUpdatedAt(peersStatsQuery.data.updatedAt) : null;
+  const isLoading = peersStatsQuery.isLoading;
+  const error = peersStatsQuery.error;
+  const chainId = networkStatsQuery.data?.indexer?.chainId;
 
   return (
     <main className="dash-content fade-in">
@@ -42,7 +59,7 @@ export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => voi
         </div>
       )}
 
-      {data && !peer && (
+      {peersStatsQuery.data && !peer && (
         <div className="status-banner">
           Peer <code>{peerId}</code> isn't in the latest poll. It may have gone offline.
           {updatedAtMs && (
@@ -54,7 +71,7 @@ export function PeerPage({ peerId, onBack }: { peerId: string; onBack: () => voi
         </div>
       )}
 
-      {peer && <PeerDetail peer={peer} chainId={data?.indexer?.chainId} now={now} />}
+      {peer && <PeerDetail peer={peer} chainId={chainId} now={now} />}
     </main>
   );
 }

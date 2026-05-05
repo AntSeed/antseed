@@ -12,7 +12,11 @@ export function bump(counts: Record<string, number>, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
 }
 
-/** Nearest-rank percentile. Caller must pass a non-empty sorted-ascending array. */
+/**
+ * Nearest-rank percentile on a sorted-ascending non-empty array. The non-null
+ * assertion is safe because `Math.ceil(p * len) - 1` lies in [0, len-1] for
+ * p ∈ [0, 1] and len >= 1; callers are responsible for the non-empty contract.
+ */
 export function pct(sorted: number[], p: number): number {
   return sorted[Math.ceil(p * sorted.length) - 1]!;
 }
@@ -166,7 +170,17 @@ export function normalizeAddress(value: string | null | undefined): string | nul
   return lower.startsWith('0x') ? lower : `0x${lower}`;
 }
 
-export function getPeerLookupAddress(peer: { peerId?: string | null; sellerContract?: string | null }): string | null {
+/**
+ * The structural shape we read off `PeerMetadata` (and a few test fixtures
+ * that pre-date that type). Kept narrow to avoid pulling in @antseed/node's
+ * full peer type for what's a two-field lookup.
+ */
+export interface PeerLookupShape {
+  peerId?: string | null;
+  sellerContract?: string | null;
+}
+
+export function getPeerLookupAddress(peer: PeerLookupShape): string | null {
   // Contract-backed sellers announce the settlement address separately; use
   // that for on-chain volume lookup when present.
   return normalizeAddress(peer.sellerContract) ?? normalizeAddress(peer.peerId);
