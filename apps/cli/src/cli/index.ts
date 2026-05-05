@@ -10,6 +10,7 @@ import { registerIdentityCommands } from './commands/identity/index.js';
 import { registerAgentCommand } from './commands/agent.js';
 import { registerDevCommand } from './commands/dev.js';
 import { registerPaymentsCommand } from './commands/payments.js';
+import { registerMetricsCommand } from './commands/metrics.js';
 
 loadEnvFromFiles();
 
@@ -34,5 +35,6 @@ registerIdentityCommands(program);
 registerDevCommand(program);
 registerAgentCommand(program);
 registerPaymentsCommand(program);
+registerMetricsCommand(program);
 
 program.parse(process.argv);
