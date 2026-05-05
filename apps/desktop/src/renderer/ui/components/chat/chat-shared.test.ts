@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildAssistantTurnContent,
   hasAssistantProcessContent,
   hasAssistantResponseContent,
   isAssistantProcessBlock,
@@ -25,6 +26,20 @@ test('assistant content split separates response blocks from background process 
 
   assert.deepEqual(parts.responseBlocks.map((block) => block.type), ['text', 'image']);
   assert.deepEqual(parts.processBlocks.map((block) => block.type), ['thinking', 'tool_use', 'tool_result']);
+});
+
+test('assistant turn content preserves original order while annotating response/process lanes', () => {
+  const turn = buildAssistantTurnContent([
+    { type: 'thinking', thinking: 'checking' },
+    { type: 'text', text: 'First answer chunk' },
+    { type: 'tool_use', id: 'tool-1', name: 'read' },
+    { type: 'text', text: 'Second answer chunk' },
+  ]);
+
+  assert.deepEqual(turn.orderedParts.map((part) => part.kind), ['process', 'response', 'process', 'response']);
+  assert.deepEqual(turn.orderedParts.map((part) => part.block.type), ['thinking', 'text', 'tool_use', 'text']);
+  assert.deepEqual(turn.responseBlocks.map((block) => block.type), ['text', 'text']);
+  assert.deepEqual(turn.processBlocks.map((block) => block.type), ['thinking', 'tool_use']);
 });
 
 test('assistant process block predicate is centralized for reasoning and tools', () => {

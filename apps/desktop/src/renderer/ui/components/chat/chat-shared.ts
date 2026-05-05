@@ -533,11 +533,29 @@ function asContentBlocks(content: unknown): ContentBlock[] {
   return [];
 }
 
+export type AssistantContentBlockKind = 'response' | 'process';
+
+export type AssistantContentBlockPart = {
+  kind: AssistantContentBlockKind;
+  block: ContentBlock;
+};
+
 export type AssistantMessageContentParts = {
   /** Blocks that represent the assistant-facing answer content for the main chat. */
   responseBlocks: ContentBlock[];
   /** Blocks that represent the assistant's background process, tools, and reasoning. */
   processBlocks: ContentBlock[];
+};
+
+export type AssistantTurnContent = AssistantMessageContentParts & {
+  /**
+   * Original assistant block order annotated with the lane it belongs to.
+   *
+   * This lets the current inline chat renderer keep existing behavior while
+   * future turn-level UI can render responseBlocks and processBlocks in
+   * separate, related lanes.
+   */
+  orderedParts: AssistantContentBlockPart[];
 };
 
 export function isAssistantProcessBlock(block: ContentBlock): boolean {
@@ -550,18 +568,26 @@ export function isAssistantResponseBlock(block: ContentBlock): boolean {
   return !isAssistantProcessBlock(block);
 }
 
-export function splitAssistantContentBlocks(content: unknown): AssistantMessageContentParts {
+export function buildAssistantTurnContent(content: unknown): AssistantTurnContent {
   const responseBlocks: ContentBlock[] = [];
   const processBlocks: ContentBlock[] = [];
+  const orderedParts: AssistantContentBlockPart[] = [];
 
   for (const block of asContentBlocks(content)) {
     if (isAssistantProcessBlock(block)) {
       processBlocks.push(block);
+      orderedParts.push({ kind: 'process', block });
     } else {
       responseBlocks.push(block);
+      orderedParts.push({ kind: 'response', block });
     }
   }
 
+  return { responseBlocks, processBlocks, orderedParts };
+}
+
+export function splitAssistantContentBlocks(content: unknown): AssistantMessageContentParts {
+  const { responseBlocks, processBlocks } = buildAssistantTurnContent(content);
   return { responseBlocks, processBlocks };
 }
 

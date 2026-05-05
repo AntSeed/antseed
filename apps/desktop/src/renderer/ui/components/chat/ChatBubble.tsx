@@ -9,6 +9,7 @@ import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
+  buildAssistantTurnContent,
   buildChatMetaParts,
   formatToolExecutionLabel,
   getMyrmecochoryLabel,
@@ -652,7 +653,7 @@ function extractPlainText(content: unknown): string {
   return '';
 }
 
-function CopyResponseButton({ content }: { content: unknown }) {
+function CopyResponseButton({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
@@ -663,14 +664,17 @@ function CopyResponseButton({ content }: { content: unknown }) {
   }, []);
 
   const handleCopy = useCallback(() => {
-    const text = extractPlainText(content);
+    const copyContent = message.role === 'assistant'
+      ? buildAssistantTurnContent(message.content).responseBlocks
+      : message.content;
+    const text = extractPlainText(copyContent);
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => setCopied(false), 2000);
     }).catch(() => {/* clipboard denied — silently ignore */});
-  }, [content]);
+  }, [message]);
 
   return (
     <Tooltip.Provider delayDuration={300}>
@@ -731,10 +735,9 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
 
   const content = useMemo(() => {
     if (message.role === 'assistant') {
-      if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
-      }
-      return <MarkdownContent text={String(message.content)} />;
+      const assistantTurnContent = buildAssistantTurnContent(message.content);
+      const inlineBlocks = assistantTurnContent.orderedParts.map((part) => part.block);
+      return renderAssistantBlocks(inlineBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
     }
 
     if (typeof message.content === 'string') {
@@ -759,7 +762,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
       <div>{content}</div>
       {message.role !== 'user' && !isStreamingBubble ? (
         <div className={styles.messageActions}>
-          <CopyResponseButton content={message.content} />
+          <CopyResponseButton message={message} />
         </div>
       ) : null}
     </div>
