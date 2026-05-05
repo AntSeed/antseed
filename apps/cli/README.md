@@ -36,6 +36,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed peer <peerId>` | Show a peer's profile (lightweight) |
 | `antseed network peer <peerId>` | Show full peer details (providers, services, on-chain stats) |
 | `antseed dashboard` | Start the web dashboard |
+| `antseed metrics serve` | Serve Prometheus metrics for buyers and sellers |
 | `antseed buyer channels` | List payment channels |
 | `antseed seller emissions info` | View ANTS emissions and epoch info |
 | `antseed dev` | Run seller + buyer locally for testing |
@@ -304,6 +305,25 @@ Use `base-sepolia` for testing with MockUSDC.
 - `ANTSEED_IDENTITY_HEX=<hex>` — inject identity via env (supports 0x prefix)
 
 Provider-specific options are configured via each plugin's config schema (see `antseed plugin add --help`).
+
+## Metrics
+
+Expose a Prometheus-compatible endpoint for a buyer or seller:
+
+```bash
+antseed --config ~/.antseed/config.json --data-dir ~/.antseed \
+  metrics serve --role seller --host 0.0.0.0 --port 9108 --instance my-peer
+```
+
+Endpoints:
+
+```text
+/metrics
+/healthz
+/readyz
+```
+
+See [Metrics](../../apps/website/docs/guides/metrics.md) for metric names, labels, and operational notes.
 
 ## Development
 

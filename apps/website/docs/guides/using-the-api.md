@@ -149,6 +149,16 @@ When you send a request:
 
 The proxy does not require an API key. Authentication and payments are handled by the protocol using your node's identity key and on-chain USDC deposits. Tools that require an API key (like Codex) can use any placeholder value.
 
+## Monitor Buyer Usage
+
+Expose buyer metrics with:
+
+```bash
+antseed metrics serve --role buyer
+```
+
+See [Metrics](/docs/guides/metrics) for buyer spend, channel, request, token, and per-peer metrics.
+
 ## Agent Skills
 
 If you're using Pi, Codex or another agent, these skills can walk you through the full setup:

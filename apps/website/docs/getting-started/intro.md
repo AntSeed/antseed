@@ -39,3 +39,7 @@ Your Tool (Claude Code, Codex, curl)
 - **Real payments** — USDC on Base, per-request metering, automatic settlement
 - **Any model** — providers choose what to serve, buyers choose what to use
 - **Open market** — providers compete on price, quality, and reputation
+
+## Operations
+
+- [Metrics](/docs/guides/metrics) — expose Prometheus-compatible buyer and seller metrics with `antseed metrics serve`

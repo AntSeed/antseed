@@ -65,3 +65,4 @@ Back up your identity key. Losing it means a new identity on the network and los
 - [Using the API](/docs/guides/using-the-api) — connect as a buyer and start making requests
 - [Become a Provider](/docs/guides/become-a-provider) — register, stake, and start earning
 - [Payments](/docs/guides/payments) — deposit USDC, understand pricing and settlement
+- [Metrics](/docs/guides/metrics) — expose Prometheus-compatible buyer and seller metrics

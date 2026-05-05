@@ -16,6 +16,21 @@ hide_title: true
 --help                   Show help
 ```
 
+## Metrics Flags
+
+`antseed metrics serve` also supports:
+
+```bash title="metrics"
+--role <buyer|seller|both|auto>
+--host <host>
+--port <port>
+--path <path>
+--instance <name>
+--include-chain
+```
+
+See [Metrics](/docs/guides/metrics) for details.
+
 ## Environment Variables
 
 | Variable | Description |
@@ -29,3 +44,8 @@ hide_title: true
 | `ANTSEED_DEFAULT_SESSION_USDC` | Default session authorization amount in USDC |
 | `ANTSEED_AUTO_FUND_DEPOSIT` | Auto-fund deposit on session start (`true`/`false`) |
 | `ANTSEED_SELLER_WALLET_ADDRESS` | Seller EVM wallet address override |
+| `ANTSEED_METRICS_ROLE` | Metrics exporter role (`buyer`, `seller`, `both`, or `auto`) |
+| `ANTSEED_METRICS_HOST` | Metrics exporter listen host |
+| `ANTSEED_METRICS_PORT` | Metrics exporter listen port |
+| `ANTSEED_METRICS_PATH` | Metrics endpoint path |
+| `ANTSEED_METRICS_INSTANCE` | Metrics `instance` label |

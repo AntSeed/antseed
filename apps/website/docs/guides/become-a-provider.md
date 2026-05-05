@@ -209,6 +209,8 @@ Once running, your node is discoverable on the network:
 antseed network browse
 ```
 
+For production monitoring, expose seller metrics with `antseed metrics serve --role seller`. See [Metrics](/docs/guides/metrics).
+
 ## How Payments Work
 
 1. A buyer connects and sends a ReserveAuth (session budget)
@@ -224,6 +226,7 @@ Earnings are paid directly to your wallet address on each `settle()` or `close()
 - [Ant Agent](/docs/provider-api#ant-agent) — wrap your service with a knowledge-augmented agent
 - [Configuration](/docs/config) — full config reference
 - [CLI Commands](/docs/commands) — all available commands
+- [Metrics](/docs/guides/metrics) — monitor seller earnings, channels, requests, and tokens
 
 ## Agent Skills
 

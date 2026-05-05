@@ -44,6 +44,7 @@ antseed payments                      Launch the payments portal
 ```bash title="network"
 antseed seller status                 Show seller status
 antseed buyer status                  Show buyer status
+antseed metrics serve                 Serve Prometheus-compatible buyer/seller metrics
 antseed config                        Manage config file
 antseed peer <peerId>                 View a peer's profile
 antseed profile                       Manage your peer profile

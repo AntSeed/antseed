@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
         'guides/become-a-provider',
         'guides/payments',
         'guides/pricing',
+        'guides/metrics',
       ],
     },
     {
