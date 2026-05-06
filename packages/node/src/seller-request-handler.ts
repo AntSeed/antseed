@@ -24,6 +24,7 @@ export interface SellerRequestHandlerDeps {
   sessionTracker: SellerSessionTracker | null;
   channelsClient: ChannelsClient | null;
   announcer: PeerAnnouncer | null;
+  maxUploadBodyBytes?: number;
   emit: (event: string, ...args: unknown[]) => boolean;
 }
 
@@ -54,7 +55,9 @@ export class SellerRequestHandler {
     buyerPeerId: string,
     paymentMux: PaymentMux,
   ): { mux: ProxyMux } {
-    const mux = new ProxyMux(conn);
+    const mux = new ProxyMux(conn, {
+      maxUploadBodyBytes: this._deps.maxUploadBodyBytes,
+    });
 
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);

@@ -3,6 +3,7 @@ import { DEFAULT_MAX_UPLOAD_BODY_BYTES, ProxyMux } from '../src/proxy/proxy-mux.
 import {
   decodeHttpRequest,
   decodeHttpRequestChunk,
+  decodeHttpResponse,
   encodeHttpRequestChunk,
 } from '../src/proxy/request-codec.js';
 import { MessageType } from '../src/types/protocol.js';
@@ -254,14 +255,16 @@ describe('ProxyMux upload limits — storage protection', () => {
 
   it('rejects upload that exceeds per-request limit with 413', async () => {
     const statusCodes: number[] = [];
+    const maxBytesHeaders: string[] = [];
     // Limit: anything larger than one upload chunk (ANTSEED_UPLOAD_CHUNK_SIZE - 1 bytes)
     const sellerMux = createMux(
       (f) => {
         const { type, payload } = decodeFrameHeader(f);
         if (type === MessageType.HttpResponse) {
-          const view = new DataView(payload.buffer, payload.byteOffset);
-          const idLen = view.getUint16(0);
-          statusCodes.push(view.getUint16(2 + idLen));
+          const response = decodeHttpResponse(payload);
+          statusCodes.push(response.statusCode);
+          const maxBytes = response.headers['x-antseed-max-upload-body-bytes'];
+          if (maxBytes) maxBytesHeaders.push(maxBytes);
         }
       },
       { maxUploadBodyBytes: ANTSEED_UPLOAD_CHUNK_SIZE - 1 },
@@ -286,6 +289,7 @@ describe('ProxyMux upload limits — storage protection', () => {
 
     expect(statusCodes).toHaveLength(1);
     expect(statusCodes[0]).toBe(413);
+    expect(maxBytesHeaders[0]).toBe(String(ANTSEED_UPLOAD_CHUNK_SIZE - 1));
     expect(sellerMux.pendingUploadCount()).toBe(0);
     expect(sellerMux.pendingUploadBytes()).toBe(0);
   });

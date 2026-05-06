@@ -145,6 +145,8 @@ export interface NodeConfig {
   requestTimeoutMs?: number;  // Default: 30000
   /** Maximum buffered body size (bytes) while reconstructing streaming responses. Default: 16 MiB. */
   maxStreamBufferBytes?: number;
+  /** Maximum upload body size (bytes) a seller will accept per request. Default: 64 MiB. */
+  maxUploadBodyBytes?: number;
   /** Maximum wall time allowed for a streaming response. Default: 5 minutes. */
   maxStreamDurationMs?: number;
   /** Allow private/loopback IPs in DHT lookups. Default: false. Set true for local testing. */
@@ -1114,6 +1116,7 @@ export class AntseedNode extends EventEmitter {
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,
+      maxUploadBodyBytes: this._config.maxUploadBodyBytes,
       emit: (event, ...args) => this.emit(event, ...args),
     });
 
@@ -1489,7 +1492,9 @@ export class AntseedNode extends EventEmitter {
       return existing;
     }
 
-    const mux = new ProxyMux(conn);
+    const mux = new ProxyMux(conn, {
+      maxUploadBodyBytes: this._config.maxUploadBodyBytes,
+    });
     this._muxes.set(peerId, mux);
     return mux;
   }

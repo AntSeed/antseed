@@ -130,6 +130,7 @@ interface NodeConfig {
   identityStore?: IdentityStore; // Pluggable identity storage backend
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
+  maxUploadBodyBytes?: number; // Default: 64 MiB per request
   bootstrapNodes?: Array<{ host: string; port: number }>;
   payments?: {
     enabled?: boolean;
@@ -152,6 +153,7 @@ interface NodeConfig {
 | `identityStore` | `FileIdentityStore` | Pluggable identity storage backend (see [Identity Storage](#identity-storage)) |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
+| `maxUploadBodyBytes` | `64 MiB` | Maximum request body a seller accepts per proxied upload. Raise this for large Codex-style `/v1/responses` payloads while keeping the aggregate pending-upload budget bounded. |
 | `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
 | `payments` | disabled | Optional seller-side payment channel + settlement lifecycle wiring |
 

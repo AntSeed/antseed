@@ -396,7 +396,10 @@ export class ProxyMux {
     this.sendProxyResponse({
       requestId,
       statusCode,
-      headers: { 'content-type': 'text/plain' },
+      headers: {
+        'content-type': 'text/plain',
+        ...(statusCode === 413 ? { 'x-antseed-max-upload-body-bytes': String(this._maxUploadBodyBytes) } : {}),
+      },
       body: new TextEncoder().encode(reason),
     });
   }

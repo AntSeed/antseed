@@ -7,6 +7,7 @@ import type {
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
+const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 
 function validatePricingLeaf(
   path: string,
@@ -146,6 +147,13 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isFinite(config.seller.reserveFloor) || config.seller.reserveFloor < 0) {
     errors.push('seller.reserveFloor must be a non-negative finite number');
+  }
+
+  if (
+    config.seller.maxUploadBodyBytes !== undefined &&
+    (!Number.isInteger(config.seller.maxUploadBodyBytes) || config.seller.maxUploadBodyBytes < MIN_SELLER_UPLOAD_BODY_BYTES)
+  ) {
+    errors.push('seller.maxUploadBodyBytes must be an integer >= 1048576');
   }
 
   if (config.seller.agentDir !== undefined) {

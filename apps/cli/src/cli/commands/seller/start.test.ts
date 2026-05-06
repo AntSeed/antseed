@@ -7,6 +7,7 @@ import {
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
   mergeSellerRuntimeEnv,
+  parseOptionalPositiveIntegerEnv,
   selectSellerProviderNames,
 } from './start.js';
 
@@ -233,6 +234,14 @@ test('seller start merge keeps explicit pricing when runtime env also contains p
   assert.equal(merged['ANTSEED_INPUT_USD_PER_MILLION'], '0.05');
   assert.equal(merged['ANTSEED_OUTPUT_USD_PER_MILLION'], '0.1');
   assert.equal(merged['ANTSEED_MAX_CONCURRENCY'], '10');
+});
+
+test('parseOptionalPositiveIntegerEnv accepts positive integer env values', () => {
+  assert.equal(parseOptionalPositiveIntegerEnv('134217728'), 134217728);
+  assert.equal(parseOptionalPositiveIntegerEnv(' 134217728 '), 134217728);
+  assert.equal(parseOptionalPositiveIntegerEnv('0'), undefined);
+  assert.equal(parseOptionalPositiveIntegerEnv('123abc'), undefined);
+  assert.equal(parseOptionalPositiveIntegerEnv('not-a-number'), undefined);
 });
 
 test('selectSellerProviderNames defaults to all configured providers', () => {

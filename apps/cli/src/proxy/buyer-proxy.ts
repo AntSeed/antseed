@@ -1167,6 +1167,70 @@ export class BuyerProxy {
     }
   }
 
+  private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {
+    const raw = headers['x-antseed-max-upload-body-bytes']
+    if (!raw) return null
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  private _formatUploadLimitError(
+    statusCode: number,
+    body: Uint8Array,
+    headers: Record<string, string>,
+    requestBytes: number,
+    requestedService: string | null,
+  ): string | null {
+    if (statusCode !== 413) return null
+    const bodyText = Buffer.from(body).toString('utf-8').trim()
+    if (!/upload body exceeds per-request limit/i.test(bodyText)) return null
+
+    const maxBytes = this._parseMaxUploadBodyBytes(headers)
+    const requestSize = this._formatBytes(requestBytes)
+    const maxSize = maxBytes != null ? this._formatBytes(maxBytes) : 'the seller upload limit'
+    const service = requestedService ? ` for ${requestedService}` : ''
+    return `Request body${service} is ${requestSize}, but the selected seller allows ${maxSize} per request. `
+      + 'This commonly happens when Codex sends a large repository context to /v1/responses. '
+      + 'Reduce Codex context, exclude large/generated files, or pick a seller with a higher seller.maxUploadBodyBytes limit.'
+  }
+
+  private _withFriendlyUploadLimitError(
+    response: SerializedHttpResponse,
+    requestBytes: number,
+    requestedService: string | null,
+  ): SerializedHttpResponse {
+    const message = this._formatUploadLimitError(
+      response.statusCode,
+      response.body,
+      response.headers,
+      requestBytes,
+      requestedService,
+    )
+    if (!message) return response
+    return {
+      ...response,
+      headers: { ...response.headers, 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({
+        error: {
+          type: 'upload_body_too_large',
+          code: 'upload_body_too_large',
+          message,
+          requestBytes,
+          sellerMaxUploadBodyBytes: this._parseMaxUploadBodyBytes(response.headers),
+        },
+      })),
+    }
+  }
+
+  private _formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes < 0) return 'unknown size'
+    const mib = bytes / (1024 * 1024)
+    if (mib >= 1) return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`
+    const kib = bytes / 1024
+    if (kib >= 1) return `${kib.toFixed(kib >= 10 ? 0 : 1)} KiB`
+    return `${bytes} B`
+  }
+
   /**
    * Dispatch a request to a specific peer. Returns `{ done: true }` if the response
    * was sent to the client (success or non-retryable error), or retry info if the
@@ -1296,6 +1360,7 @@ export class BuyerProxy {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
+        responseForClient = this._withFriendlyUploadLimitError(responseForClient, requestForPeer.body.length, requestedService)
         if (responseForClient.statusCode === 402) {
           responseForClient = inject402PeerId(responseForClient, selectedPeer.peerId)
         }
@@ -1367,6 +1432,7 @@ export class BuyerProxy {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
+        response = this._withFriendlyUploadLimitError(response, requestForPeer.body.length, requestedService)
         if (response.statusCode === 402) {
           response = inject402PeerId(response, selectedPeer.peerId)
         }
