@@ -47,9 +47,18 @@ describe('SqliteStore', () => {
       .sort();
 
     assert.deepEqual(tables, [
+      // ANTS token rollups (gap 6) — populated by AntsIndexer.
+      'ants_holder_balances',
+      'ants_supply',
+      'ants_supply_history',
+      // Generic raw event log shared across every contract indexer (gap 1).
+      'chain_events',
       'indexer_checkpoint',
       'network_history',
       'peer_pricing_history',
+      // ERC-8004 ReputationRegistry rollups (gap 7) — populated by ReputationIndexer.
+      'reputation_agent_totals',
+      'reputation_feedback',
       'seller_activity_history',
       'seller_buyer_totals',
       'seller_channel_totals',
@@ -600,6 +609,252 @@ describe('SqliteStore', () => {
     assert.equal(rows[0]!.ts, 100);
     assert.equal(rows[1]!.ts, 300);
     assert.equal(rows[1]!.totalRequests, 15n);
+    store.close();
+  });
+
+  // ── ANTS rollup ──────────────────────────────────────────────────────────
+
+  const ZERO = '0x' + '0'.repeat(40);
+  const A = '0x' + 'a'.repeat(40);
+  const B = '0x' + 'b'.repeat(40);
+  const C = '0x' + 'c'.repeat(40);
+
+  it('applyAntsTransfers handles mints, transfers, burns, and zero-balance pruning', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    // Mint 1000 to A
+    store.applyAntsTransfers([{ blockNumber: 10, from: ZERO, to: A, value: 1000n }]);
+    let supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 1);
+    assert.equal(supply.lastUpdatedBlock, 10);
+
+    // A → B (300). Both holders, supply unchanged.
+    store.applyAntsTransfers([{ blockNumber: 20, from: A, to: B, value: 300n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 2);
+
+    const top = store.getTopAntsHolders(10);
+    assert.equal(top.length, 2);
+    assert.equal(top[0]!.address, A);
+    assert.equal(top[0]!.balance, 700n);
+    assert.equal(top[1]!.address, B);
+    assert.equal(top[1]!.balance, 300n);
+
+    // A → B (700). A drops to zero → row deleted, holderCount=1.
+    store.applyAntsTransfers([{ blockNumber: 30, from: A, to: B, value: 700n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 1);
+
+    // Burn 200 from B
+    store.applyAntsTransfers([{ blockNumber: 40, from: B, to: ZERO, value: 200n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 800n);
+    assert.equal(supply.holderCount, 1);
+    assert.equal(supply.lastUpdatedBlock, 40);
+
+    store.close();
+  });
+
+  it('applyAntsTransfers throws on a balance underflow (drift detection)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // No mint to A — sending FROM a zero-balance address must surface as a
+    // bug rather than silently producing a negative balance.
+    assert.throws(
+      () => store.applyAntsTransfers([{ blockNumber: 1, from: A, to: B, value: 50n }]),
+      /negative balance/,
+    );
+    store.close();
+  });
+
+  it('recordAntsSupplySample dedups byte-identical snapshots', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyAntsTransfers([{ blockNumber: 10, from: ZERO, to: A, value: 1000n }]);
+    const snap = store.getAntsSupply();
+    assert.equal(store.recordAntsSupplySample(100, snap).written, true);
+    // Same supply + holder count → skipped.
+    assert.equal(store.recordAntsSupplySample(200, snap).written, false);
+    // Mutate the snapshot → written.
+    store.applyAntsTransfers([{ blockNumber: 20, from: ZERO, to: B, value: 500n }]);
+    assert.equal(store.recordAntsSupplySample(300, store.getAntsSupply()).written, true);
+    const history = store.getAntsSupplyHistory(10_000, 1000);
+    assert.equal(history.length, 2);
+    assert.equal(history[0]!.totalSupply, 1000n);
+    assert.equal(history[1]!.totalSupply, 1500n);
+    store.close();
+  });
+
+  // ── Reputation rollup ────────────────────────────────────────────────────
+
+  function newFeedback(over: Partial<{
+    blockNumber: number; agentId: bigint; clientAddress: string;
+    feedbackIndex: number; value: bigint; valueDecimals: number;
+  }> = {}): Parameters<SqliteStore['applyReputationEvents']>[0][number] {
+    return {
+      kind: 'NewFeedback',
+      blockNumber: over.blockNumber ?? 100,
+      blockTimestamp: 1_700_000_000,
+      txHash: '0x' + 'f'.repeat(64),
+      agentId: over.agentId ?? 1n,
+      clientAddress: over.clientAddress ?? A,
+      feedbackIndex: over.feedbackIndex ?? 0,
+      value: over.value ?? 5n,
+      valueDecimals: over.valueDecimals ?? 0,
+      tag1: '', tag2: '', endpoint: '',
+      feedbackURI: '', feedbackHash: '0x' + '0'.repeat(64),
+    };
+  }
+
+  it('applyReputationEvents inserts feedback + maintains per-agent totals', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyReputationEvents([
+      newFeedback({ agentId: 1n, clientAddress: A, feedbackIndex: 0, blockNumber: 100, value: 5n }),
+      newFeedback({ agentId: 1n, clientAddress: B, feedbackIndex: 0, blockNumber: 110, value: 4n }),
+    ]);
+    const totals = store.getReputationTotals(1);
+    assert.ok(totals !== null);
+    assert.equal(totals.feedbackCount, 2);
+    assert.equal(totals.uniqueClients, 2);
+    assert.equal(totals.firstFeedbackBlock, 100);
+    assert.equal(totals.lastFeedbackBlock, 110);
+
+    const recent = store.getRecentReputationFeedback(10);
+    assert.equal(recent.length, 2);
+    assert.equal(recent[0]!.blockNumber, 110);
+    assert.equal(recent[0]!.clientAddress, B);
+    store.close();
+  });
+
+  it('applyReputationEvents counts a repeat client as the same uniqueClients=1', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // Same client (A) submits twice in one batch — uniqueClients must stay 1.
+    store.applyReputationEvents([
+      newFeedback({ agentId: 7n, clientAddress: A, feedbackIndex: 0, blockNumber: 50 }),
+      newFeedback({ agentId: 7n, clientAddress: A, feedbackIndex: 1, blockNumber: 51 }),
+    ]);
+    const totals = store.getReputationTotals(7);
+    assert.ok(totals !== null);
+    assert.equal(totals.feedbackCount, 2);
+    assert.equal(totals.uniqueClients, 1);
+    store.close();
+  });
+
+  it('applyReputationEvents applies ResponseAppended and FeedbackRevoked to the matching row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyReputationEvents([
+      newFeedback({ agentId: 9n, clientAddress: A, feedbackIndex: 0, blockNumber: 100 }),
+    ]);
+    store.applyReputationEvents([
+      {
+        kind: 'ResponseAppended',
+        blockNumber: 110,
+        agentId: 9n, clientAddress: A, feedbackIndex: 0,
+        responder: C,
+        responseURI: 'ipfs://r', responseHash: '0x' + '1'.repeat(64),
+      },
+    ]);
+    store.applyReputationEvents([
+      {
+        kind: 'FeedbackRevoked',
+        blockNumber: 120,
+        agentId: 9n, clientAddress: A, feedbackIndex: 0,
+      },
+    ]);
+
+    const rows = store.getReputationFeedbackForAgent(9, 10);
+    assert.equal(rows.length, 1);
+    const r = rows[0]!;
+    assert.equal(r.responseURI, 'ipfs://r');
+    assert.equal(r.responseResponder, C);
+    assert.equal(r.responseAtBlock, 110);
+    assert.equal(r.revoked, true);
+    assert.equal(r.revokedAtBlock, 120);
+
+    const totals = store.getReputationTotals(9);
+    assert.ok(totals !== null);
+    assert.equal(totals.responseCount, 1);
+    assert.equal(totals.revokedCount, 1);
+    assert.equal(totals.lastFeedbackBlock, 120);
+    store.close();
+  });
+
+  it('getReputationLeaderboard ranks by netFeedback (count − revoked)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // agent 1: 3 feedback, 1 revoked → net 2
+    store.applyReputationEvents([
+      newFeedback({ agentId: 1n, clientAddress: A, feedbackIndex: 0 }),
+      newFeedback({ agentId: 1n, clientAddress: B, feedbackIndex: 0 }),
+      newFeedback({ agentId: 1n, clientAddress: C, feedbackIndex: 0 }),
+      { kind: 'FeedbackRevoked', blockNumber: 200, agentId: 1n, clientAddress: A, feedbackIndex: 0 },
+    ]);
+    // agent 2: 4 feedback, 0 revoked → net 4 (should rank first)
+    store.applyReputationEvents([
+      newFeedback({ agentId: 2n, clientAddress: A, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: B, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: C, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: A, feedbackIndex: 1 }),
+    ]);
+    const lb = store.getReputationLeaderboard(10);
+    assert.equal(lb.length, 2);
+    assert.equal(lb[0]!.agentId, 2);
+    assert.equal(lb[0]!.feedbackCount - lb[0]!.revokedCount, 4);
+    assert.equal(lb[1]!.agentId, 1);
+    assert.equal(lb[1]!.feedbackCount - lb[1]!.revokedCount, 2);
+    store.close();
+  });
+
+  // ── chain_events read path ───────────────────────────────────────────────
+
+  it('getChainEvents filters by event/contract/tx and paginates with the keyset cursor', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // Feed via the ANTS Transfer path — the easiest atomic write into chain_events
+    // with multiple distinct (block, logIndex) coordinates. Use applyChainEventBatch
+    // for full control over event_name/contract_address shape.
+    const tx = '0x' + 'a'.repeat(64);
+    store.applyChainEventBatch({
+      chainId: 'base',
+      contractAddress: '0xANTS',
+      newCheckpoint: 100,
+      newCheckpointTimestamp: 1_700_000_000,
+      rows: [
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 10, blockTimestamp: 1, txHash: tx, logIndex: 0, eventName: 'Transfer', args: { from: A, to: B, value: '1' } },
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 10, blockTimestamp: 1, txHash: tx, logIndex: 1, eventName: 'Transfer', args: { from: B, to: C, value: '2' } },
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 20, blockTimestamp: 2, txHash: '0x' + 'b'.repeat(64), logIndex: 0, eventName: 'Approval', args: {} },
+      ],
+    });
+
+    // Newest-first across the whole table.
+    const all = store.getChainEvents({});
+    assert.deepEqual(all.map((r) => [r.blockNumber, r.logIndex]), [[20, 0], [10, 1], [10, 0]]);
+
+    // Filter by event_name.
+    const transfers = store.getChainEvents({ eventName: 'Transfer' });
+    assert.equal(transfers.length, 2);
+    assert.ok(transfers.every((r) => r.eventName === 'Transfer'));
+
+    // Filter by tx_hash.
+    const sameTx = store.getChainEvents({ txHash: tx });
+    assert.equal(sameTx.length, 2);
+    assert.deepEqual(sameTx.map((r) => r.logIndex), [1, 0]);
+
+    // Keyset cursor: rows strictly before (20, 0) → all blockNumber=10 rows.
+    const page = store.getChainEvents({ beforeBlockNumber: 20, beforeLogIndex: 0 });
+    assert.deepEqual(page.map((r) => [r.blockNumber, r.logIndex]), [[10, 1], [10, 0]]);
+
+    // contract_address is matched lowercase regardless of input casing.
+    const upper = store.getChainEvents({ contractAddress: '0xANTS' });
+    assert.equal(upper.length, 3);
+
     store.close();
   });
 

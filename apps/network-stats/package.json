@@ -17,7 +17,7 @@
     "dev:tsc": "tsc --watch --preserveWatchOutput",
     "dev:server": "node --watch dist/index.js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json",
-    "test": "pnpm run build:server && node --test dist/*.test.js"
+    "test": "pnpm run build:server && node --test dist/*.test.js dist/indexers/*.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

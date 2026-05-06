@@ -25,6 +25,16 @@ export interface ChainConfig {
   statsContractAddress?: string;
   /** Deployment block of AntseedStats for cold-start indexer backfill. */
   statsDeployBlock?: number;
+  /** Deployment block of ANTSToken for cold-start indexer backfill. */
+  antsTokenDeployBlock?: number;
+  /**
+   * ERC-8004 ReputationRegistry address for this chain. The IdentityRegistry
+   * companion lives at `identityRegistryAddress`; both are external (canonical
+   * ERC-8004 deployment), not Antseed-owned.
+   */
+  reputationRegistryAddress?: string;
+  /** Deployment block of the ReputationRegistry for cold-start indexer backfill. */
+  reputationRegistryDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
 }
@@ -54,6 +64,9 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     channelsDeployBlock: 44469557,
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
+    antsTokenDeployBlock: 44469557,
+    reputationRegistryAddress: '0x8004BAa17c55a88189aE136B182e5fdA19DE9b63',
+    reputationRegistryDeployBlock: 41663784,
     networkStatsUrl: 'https://network.antseed.com',
   },
   'base-sepolia': {
@@ -110,6 +123,9 @@ export function resolveChainConfig(overrides?: {
   emissionsContractAddress?: string;
   antsTokenAddress?: string;
   subPoolContractAddress?: string;
+  reputationRegistryAddress?: string;
+  reputationRegistryDeployBlock?: number;
+  antsTokenDeployBlock?: number;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
   // If the caller overrode the primary rpcUrl without providing their own
@@ -130,6 +146,9 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.subPoolContractAddress ? { subPoolContractAddress: overrides.subPoolContractAddress } : {}),
+    ...(overrides?.reputationRegistryAddress ? { reputationRegistryAddress: overrides.reputationRegistryAddress } : {}),
+    ...(overrides?.reputationRegistryDeployBlock !== undefined ? { reputationRegistryDeployBlock: overrides.reputationRegistryDeployBlock } : {}),
+    ...(overrides?.antsTokenDeployBlock !== undefined ? { antsTokenDeployBlock: overrides.antsTokenDeployBlock } : {}),
   };
 }
 

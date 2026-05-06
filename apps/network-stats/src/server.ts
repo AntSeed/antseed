@@ -21,15 +21,18 @@
 import express from 'express';
 import type { StakingClient } from '@antseed/node';
 
-import type { MetadataIndexer } from './indexer.js';
+import type { MetadataIndexer } from './indexers/metadata-indexer.js';
 import type { NetworkPoller } from './poller.js';
 import type { SqliteStore } from './store.js';
-import { AgentIdCache } from './http/agentIdCache.js';
+import { AgentIdCache } from './http/agent-id-cache.js';
 import { corsMiddleware, errorHandler } from './http/middleware.js';
-import { InProcessResponseCache, type ResponseCache } from './http/responseCache.js';
+import { InProcessResponseCache, type ResponseCache } from './http/response-cache.js';
+import { registerAntsRoutes } from './http/routes/ants.js';
+import { registerEventsRoutes } from './http/routes/events.js';
 import { registerHealthRoutes } from './http/routes/health.js';
 import { registerHistoryRoutes } from './http/routes/history.js';
 import { registerInsightsRoutes } from './http/routes/insights.js';
+import { registerReputationRoutes } from './http/routes/reputation.js';
 import { registerStatsRoutes } from './http/routes/stats.js';
 import type { BackfillStatusPayload } from './http/types.js';
 
@@ -42,6 +45,8 @@ export interface CreateServerDeps {
   indexer?: MetadataIndexer;      // source of chain head + reorg buffer for sync status
   chainId?: string;               // used to look up the indexer checkpoint
   contractAddress?: string;       // contract whose checkpoint to expose
+  /** Lowercased ANTS token contract address — scopes /ants/transfers when indexed. */
+  antsContractAddress?: string;
   getBackfillStatus?: () => BackfillStatusPayload;
   port?: number;
 }
@@ -58,7 +63,10 @@ export interface ServerHandle {
 }
 
 export function createServer(deps: CreateServerDeps): ServerHandle {
-  const { poller, store, stakingClient, indexer, chainId, contractAddress, getBackfillStatus, port = 4000 } = deps;
+  const {
+    poller, store, stakingClient, indexer, chainId, contractAddress,
+    antsContractAddress, getBackfillStatus, port = 4000,
+  } = deps;
   const app = express();
 
   // Per-server cache shared across /stats and /insights so a single agentId
@@ -91,6 +99,19 @@ export function createServer(deps: CreateServerDeps): ServerHandle {
     cache: responseCache,
   });
   registerHistoryRoutes(app, {
+    ...(store ? { store } : {}),
+    cache: responseCache,
+  });
+  registerEventsRoutes(app, {
+    ...(store ? { store } : {}),
+    cache: responseCache,
+  });
+  registerAntsRoutes(app, {
+    ...(store ? { store } : {}),
+    ...(antsContractAddress ? { antsContractAddress: antsContractAddress.toLowerCase() } : {}),
+    cache: responseCache,
+  });
+  registerReputationRoutes(app, {
     ...(store ? { store } : {}),
     cache: responseCache,
   });

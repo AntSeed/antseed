@@ -1,14 +1,14 @@
 import type { Express } from 'express';
 
 import type { HistoryRange, HistoryResponse, SqliteStore } from '../../store.js';
-import { historyCacheKey } from '../cacheKeys.js';
+import { historyCacheKey } from '../cache-keys.js';
 import { asyncHandler } from '../middleware.js';
 import {
   sendCachedJson,
   sendProjectedJson,
   type CachedEnvelope,
   type ResponseCache,
-} from '../responseCache.js';
+} from '../response-cache.js';
 import { bucketSecondsForRange, parseHistoryRange } from '../validators.js';
 
 // History data updates only when the sampler writes a new bucket (default 60s)

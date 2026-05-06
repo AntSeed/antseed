@@ -9,8 +9,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { InProcessResponseCache, hashPayload } from './http/responseCache.js';
-import type { CacheKeyConfig } from './http/responseCache.js';
+import { InProcessResponseCache, hashPayload } from './http/response-cache.js';
+import type { CacheKeyConfig } from './http/response-cache.js';
 
 interface Sample {
   value: number;

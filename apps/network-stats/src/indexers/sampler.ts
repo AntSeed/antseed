@@ -23,8 +23,8 @@
  *      changed.
  */
 
-import type { NetworkSnapshot } from './poller.js';
-import { ACTIVE_PEERS_UNKNOWN, type SqliteStore } from './store.js';
+import type { NetworkSnapshot } from '../poller.js';
+import { ACTIVE_PEERS_UNKNOWN, type SqliteStore } from '../store.js';
 
 const SELLER_ACTIVITY_WINDOW_SECONDS = 8 * 86400;
 

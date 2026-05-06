@@ -29,13 +29,13 @@
  */
 
 import type { StatsClient, DecodedMetadataRecorded } from '@antseed/node';
-import { ACTIVE_PEERS_UNKNOWN, type SqliteStore } from './store.js';
+import { ACTIVE_PEERS_UNKNOWN, type SqliteStore } from '../store.js';
 import {
   createProgressReporter,
   defaultLog,
   resolveBlockTimestamps,
   type BlockProvider,
-} from './utils.js';
+} from '../utils.js';
 
 export interface BackfillProgress {
   /** What the routine is doing right now. UI uses this to pick a label. */

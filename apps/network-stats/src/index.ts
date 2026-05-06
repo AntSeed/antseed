@@ -11,18 +11,29 @@ if (existsSync(envFile)) {
   process.loadEnvFile(envFile);
 }
 
+import type { ethers } from 'ethers';
+
 import { NetworkPoller } from './poller.js';
 import { createServer } from './server.js';
 import { SqliteStore } from './store.js';
-import { MetadataIndexer } from './indexer.js';
-import { backfillNetworkHistory, type BackfillProgress } from './backfill.js';
-import { HistorySampler } from './sampler.js';
+import { MetadataIndexer } from './indexers/metadata-indexer.js';
+import { AntsIndexer } from './indexers/ants-indexer.js';
+import { ReputationIndexer } from './indexers/reputation-indexer.js';
+import { backfillNetworkHistory, type BackfillProgress } from './indexers/backfill.js';
+import { HistorySampler } from './indexers/sampler.js';
+import type { BlockProvider } from './utils.js';
 import {
+  ANTS_HOLDERS_CACHE_KEY,
+  ANTS_SUPPLY_CACHE_KEY,
+  EVENTS_RECENT_CACHE_KEY,
   INSIGHTS_CACHE_KEY,
+  REPUTATION_LEADERBOARD_CACHE_KEY,
+  REPUTATION_RECENT_CACHE_KEY,
   STATS_NETWORK_CACHE_KEY,
   STATS_PEERS_CACHE_KEY,
+  antsSupplyHistoryCacheKey,
   historyCacheKey,
-} from './http/cacheKeys.js';
+} from './http/cache-keys.js';
 import type { BackfillStatusPayload } from './http/types.js';
 
 // ── env-driven config ──────────────────────────────────────────────────────
@@ -68,6 +79,19 @@ interface ChainServices {
   indexer: MetadataIndexer;
   contractAddress: string;
   deployBlock: number;
+  /**
+   * Optional ANTS token indexer. Created only when the chain config provides
+   * `antsTokenAddress` AND `antsTokenDeployBlock` — both are needed to do a
+   * cold-start scan, and a chain without ANTS just won't expose /ants/* slots.
+   */
+  antsIndexer: AntsIndexer | null;
+  antsContractAddress: string | null;
+  /**
+   * Optional ERC-8004 ReputationRegistry indexer. Same gating logic — needs
+   * both an address and a deploy block. Chains without this configured (e.g.
+   * base-local during dev) just don't expose /reputation/* data.
+   */
+  reputationIndexer: ReputationIndexer | null;
 }
 
 function buildChainServices(): ChainServices | null {
@@ -117,6 +141,48 @@ function buildChainServices(): ChainServices | null {
     console.warn(`[network-stats] stats contract is configured for ${CHAIN_ID} but staking contract is not — /stats enrichment will fall back to the legacy non-enriched payload`);
   }
 
+  // Reuse the StatsClient's provider for any sibling indexer on the same
+  // chain — keeps connection pooling, FallbackProvider, and quota usage in
+  // one place rather than spawning a second JsonRpcProvider per indexer.
+  const sharedProvider = statsClient.provider as ethers.Provider & BlockProvider;
+
+  let antsIndexer: AntsIndexer | null = null;
+  let antsContractAddress: string | null = null;
+  if (chainConfig.antsTokenAddress && typeof chainConfig.antsTokenDeployBlock === 'number') {
+    antsContractAddress = chainConfig.antsTokenAddress.toLowerCase();
+    antsIndexer = new AntsIndexer({
+      store,
+      provider: sharedProvider,
+      chainId: CHAIN_ID,
+      contractAddress: antsContractAddress,
+      deployBlock: chainConfig.antsTokenDeployBlock,
+      tickIntervalMs: TICK_INTERVAL_MS,
+      reorgSafetyBlocks: REORG_SAFETY_BLOCKS,
+      maxBlocksPerTick: MAX_BLOCKS_PER_TICK,
+    });
+  } else {
+    console.log(`[network-stats] ANTS indexer disabled for chain ${CHAIN_ID} (token address or deploy block missing)`);
+  }
+
+  let reputationIndexer: ReputationIndexer | null = null;
+  if (
+    chainConfig.reputationRegistryAddress
+    && typeof chainConfig.reputationRegistryDeployBlock === 'number'
+  ) {
+    reputationIndexer = new ReputationIndexer({
+      store,
+      provider: sharedProvider,
+      chainId: CHAIN_ID,
+      contractAddress: chainConfig.reputationRegistryAddress,
+      deployBlock: chainConfig.reputationRegistryDeployBlock,
+      tickIntervalMs: TICK_INTERVAL_MS,
+      reorgSafetyBlocks: REORG_SAFETY_BLOCKS,
+      maxBlocksPerTick: MAX_BLOCKS_PER_TICK,
+    });
+  } else {
+    console.log(`[network-stats] Reputation indexer disabled for chain ${CHAIN_ID} (registry address or deploy block missing)`);
+  }
+
   return {
     store,
     statsClient,
@@ -124,6 +190,9 @@ function buildChainServices(): ChainServices | null {
     indexer,
     contractAddress: chainConfig.statsContractAddress,
     deployBlock: chainConfig.statsDeployBlock,
+    antsIndexer,
+    antsContractAddress,
+    reputationIndexer,
   };
 }
 
@@ -232,6 +301,7 @@ const server = createServer({
   ...(chain?.stakingClient ? { stakingClient: chain.stakingClient } : {}),
   ...(chain ? { indexer: chain.indexer } : {}),
   ...(chain ? { chainId: CHAIN_ID, contractAddress: chain.contractAddress } : {}),
+  ...(chain?.antsContractAddress ? { antsContractAddress: chain.antsContractAddress } : {}),
   getBackfillStatus: () => backfillTracker.snapshot(),
   port: PORT,
 });
@@ -263,6 +333,41 @@ if (chain) {
     if (eventCount > 0) {
       server.cache.invalidate(STATS_PEERS_CACHE_KEY);
       server.cache.invalidate(INSIGHTS_CACHE_KEY);
+      server.cache.invalidate(EVENTS_RECENT_CACHE_KEY);
+    }
+  };
+}
+
+if (chain?.antsIndexer) {
+  // ANTS Transfer ticks invalidate balance-driven slots (supply, holders) +
+  // the chain-wide events feed. Empty ticks only refresh the events feed —
+  // there are no balance changes to surface.
+  chain.antsIndexer.onTickComplete = ({ eventCount }) => {
+    if (eventCount > 0) {
+      server.cache.invalidate(ANTS_SUPPLY_CACHE_KEY);
+      server.cache.invalidate(ANTS_HOLDERS_CACHE_KEY);
+      server.cache.invalidate(EVENTS_RECENT_CACHE_KEY);
+    }
+  };
+  chain.antsIndexer.onSupplySampleComplete = () => {
+    // A new bucket landed — invalidate every range slot. The dedup inside
+    // recordAntsSupplySample means this only fires when supply actually
+    // changed, so the per-range invalidations match user-visible movement.
+    server.cache.invalidate(antsSupplyHistoryCacheKey('1d'));
+    server.cache.invalidate(antsSupplyHistoryCacheKey('7d'));
+    server.cache.invalidate(antsSupplyHistoryCacheKey('30d'));
+  };
+}
+
+if (chain?.reputationIndexer) {
+  chain.reputationIndexer.onTickComplete = ({ eventCount }) => {
+    if (eventCount > 0) {
+      // recent + leaderboard always change when there's a new feedback;
+      // per-agent slots are not in this map (they're keyed by agentId), so
+      // they fall back to natural staleMs expiry rather than per-tick churn.
+      server.cache.invalidate(REPUTATION_RECENT_CACHE_KEY);
+      server.cache.invalidate(REPUTATION_LEADERBOARD_CACHE_KEY);
+      server.cache.invalidate(EVENTS_RECENT_CACHE_KEY);
     }
   };
 }
@@ -298,6 +403,13 @@ if (chain) {
     sampler?.markBackfillResolved();
     chain.indexer.start();
   });
+  // ANTS + Reputation indexers are independent of the metadata backfill —
+  // their checkpoints sit in `indexer_checkpoint` keyed by their own
+  // contract addresses, so they don't share state with the stats indexer.
+  // Starting them immediately means the supply chart and feedback feed
+  // begin populating even while the stats backfill is still scanning.
+  chain.antsIndexer?.start();
+  chain.reputationIndexer?.start();
 } else {
   // No chain wiring — nothing to run.
 }
@@ -309,6 +421,8 @@ function shutdown(): void {
   console.log('[network-stats] shutting down...');
   sampler?.stop();
   chain?.indexer.stop();
+  chain?.antsIndexer?.stop();
+  chain?.reputationIndexer?.stop();
   chain?.store.close();
   poller.stop();
   server.stop();

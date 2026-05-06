@@ -4,15 +4,15 @@ import type { NetworkPoller } from '../../poller.js';
 import type { SqliteStore } from '../../store.js';
 import { computeInsights, type NetworkInsights } from '../../insights.js';
 import { getPeerLookupAddress, snapshotUpdatedAtMs } from '../../utils.js';
-import type { AgentIdCache } from '../agentIdCache.js';
-import { INSIGHTS_CACHE_KEY } from '../cacheKeys.js';
+import type { AgentIdCache } from '../agent-id-cache.js';
+import { INSIGHTS_CACHE_KEY } from '../cache-keys.js';
 import { asyncHandler } from '../middleware.js';
 import {
   sendCachedJson,
   sendProjectedJson,
   type CachedEnvelope,
   type ResponseCache,
-} from '../responseCache.js';
+} from '../response-cache.js';
 
 // Velocity needs at least 2× the longest window so growth-pct denominators
 // have somewhere to land — we expose a 7d window, so request 14d of history.

@@ -1,18 +1,18 @@
 import type { Express } from 'express';
 
-import type { MetadataIndexer } from '../../indexer.js';
+import type { MetadataIndexer } from '../../indexers/metadata-indexer.js';
 import type { NetworkPoller, NetworkSnapshot } from '../../poller.js';
 import type { SqliteStore } from '../../store.js';
 import { computeNetworkMetrics, type NetworkMetrics } from '../../metrics.js';
 import { getPeerLookupAddress, snapshotUpdatedAtMs } from '../../utils.js';
-import type { AgentIdCache } from '../agentIdCache.js';
-import { STATS_NETWORK_CACHE_KEY, STATS_PEERS_CACHE_KEY } from '../cacheKeys.js';
+import type { AgentIdCache } from '../agent-id-cache.js';
+import { STATS_NETWORK_CACHE_KEY, STATS_PEERS_CACHE_KEY } from '../cache-keys.js';
 import { asyncHandler } from '../middleware.js';
 import {
   mergeEnvelopes,
   sendCachedJson,
   type ResponseCache,
-} from '../responseCache.js';
+} from '../response-cache.js';
 import { serializeNetworkTotals, serializeOnChainStats } from '../serializers.js';
 import type { BackfillStatusPayload } from '../types.js';
 

@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import type { StatsClient } from '@antseed/node';
-import type { SqliteStore } from './store.js';
-import { resolveBlockTimestamps } from './utils.js';
+import type { SqliteStore } from '../store.js';
+import { resolveBlockTimestamps } from '../utils.js';
 
 export interface MetadataIndexerOptions {
   store: SqliteStore;

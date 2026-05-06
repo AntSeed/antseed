@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SqliteStore, ACTIVE_PEERS_UNKNOWN } from './store.js';
+import { SqliteStore, ACTIVE_PEERS_UNKNOWN } from '../store.js';
 import { backfillNetworkHistory } from './backfill.js';
 import type { DecodedMetadataRecorded } from '@antseed/node';
 
