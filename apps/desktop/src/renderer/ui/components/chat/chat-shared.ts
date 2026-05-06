@@ -606,6 +606,56 @@ export function hasAssistantResponseContent(message: ChatMessage): boolean {
   return splitAssistantMessageContent(message).responseBlocks.length > 0;
 }
 
+/**
+ * Stable identifier for an assistant turn, used by experimental UIs that need
+ * to track "which assistant response is currently selected" (e.g. the
+ * Codex-style activity sidebar).
+ *
+ * Mirrors the per-message prefix rule used by ChatBubble (id || createdAt ||
+ * role) and falls back to the index so freshly-created messages without an id
+ * or timestamp still get a unique key inside one render pass.
+ */
+export function getAssistantTurnId(message: ChatMessage, fallbackIndex = 0): string {
+  const explicitId = (message as { id?: unknown }).id;
+  if (typeof explicitId === 'string' && explicitId.length > 0) return `id:${explicitId}`;
+  if (typeof explicitId === 'number' && Number.isFinite(explicitId)) return `id:${String(explicitId)}`;
+  const createdAt = Number(message.createdAt);
+  if (Number.isFinite(createdAt) && createdAt > 0) return `ts:${String(createdAt)}`;
+  return `idx:${String(fallbackIndex)}`;
+}
+
+export type AssistantProcessSummary = {
+  thinking: number;
+  toolUse: number;
+  toolResult: number;
+  running: number;
+  errors: number;
+  total: number;
+};
+
+/**
+ * Lightweight summary used by the activity sidebar header. Wraps countBlocks
+ * and additionally tallies running/error states so the header can show
+ * "Streaming" / "Errors" pills without re-walking the block list.
+ */
+export function summarizeAssistantProcess(blocks: ContentBlock[]): AssistantProcessSummary {
+  const counts = countBlocks(blocks);
+  let running = 0;
+  let errors = 0;
+  for (const block of blocks) {
+    if (block.status === 'running' || block.streaming) running += 1;
+    if (block.status === 'error' || block.is_error) errors += 1;
+  }
+  return {
+    thinking: counts.thinking,
+    toolUse: counts.toolUse,
+    toolResult: counts.toolResult,
+    running,
+    errors,
+    total: blocks.length,
+  };
+}
+
 function mergeAssistantMessages(base: ChatMessage, next: ChatMessage): ChatMessage {
   const mergedBase = cloneChatMessage(base);
   const mergedNext = cloneChatMessage(next);

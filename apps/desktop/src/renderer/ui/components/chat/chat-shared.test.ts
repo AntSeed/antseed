@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 
 import {
   buildAssistantTurnContent,
+  getAssistantTurnId,
   hasAssistantProcessContent,
   hasAssistantResponseContent,
   isAssistantProcessBlock,
   isAssistantResponseBlock,
   splitAssistantContentBlocks,
   splitAssistantMessageContent,
+  summarizeAssistantProcess,
   type ChatMessage,
   type ContentBlock,
 } from './chat-shared.js';
@@ -98,4 +100,38 @@ test('assistant content presence helpers report response and process availabilit
   assert.equal(hasAssistantProcessContent(mixed), true);
   assert.equal(hasAssistantResponseContent(processOnly), false);
   assert.equal(hasAssistantProcessContent(processOnly), true);
+});
+
+test('getAssistantTurnId prefers explicit id, then createdAt, then index', () => {
+  const withId: ChatMessage = { role: 'assistant', content: [], id: 'abc' } as ChatMessage;
+  const withTs: ChatMessage = { role: 'assistant', content: [], createdAt: 1234 };
+  const bare: ChatMessage = { role: 'assistant', content: [] };
+
+  assert.equal(getAssistantTurnId(withId, 5), 'id:abc');
+  assert.equal(getAssistantTurnId(withTs, 5), 'ts:1234');
+  assert.equal(getAssistantTurnId(bare, 7), 'idx:7');
+});
+
+test('summarizeAssistantProcess tallies counts plus running/error states', () => {
+  const blocks: ContentBlock[] = [
+    { type: 'thinking', thinking: 'plan', streaming: true },
+    { type: 'tool_use', id: 't1', name: 'bash', status: 'running' },
+    { type: 'tool_use', id: 't2', name: 'grep', status: 'success' },
+    { type: 'tool_use', id: 't3', name: 'edit', status: 'error' },
+    { type: 'tool_result', tool_use_id: 't9', content: 'oops', is_error: true },
+  ];
+
+  const summary = summarizeAssistantProcess(blocks);
+
+  assert.equal(summary.thinking, 1);
+  assert.equal(summary.toolUse, 3);
+  assert.equal(summary.toolResult, 1);
+  assert.equal(summary.running, 2);
+  assert.equal(summary.errors, 2);
+  assert.equal(summary.total, 5);
+});
+
+test('summarizeAssistantProcess returns zeroed summary for empty input', () => {
+  const summary = summarizeAssistantProcess([]);
+  assert.deepEqual(summary, { thinking: 0, toolUse: 0, toolResult: 0, running: 0, errors: 0, total: 0 });
 });

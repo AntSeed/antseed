@@ -165,7 +165,7 @@ function StreamingMarkdown({ text }: { text: string }) {
   );
 }
 
-function ThinkingBlockView({ block }: { block: ContentBlock }) {
+export function ThinkingBlockView({ block }: { block: ContentBlock }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const isOpen = manualToggle ?? true;
 
@@ -318,7 +318,7 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
   );
 }
 
-function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOpenPreview?: (url: string) => void }) {
+export function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOpenPreview?: (url: string) => void }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
   const wasRunningRef = useRef(false);
@@ -712,9 +712,17 @@ type ChatBubbleProps = {
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
+  /** Experimental (Codex-style activity sidebar): when true, render a subtle
+   *  selected-turn affordance on this bubble. Defaults to false; non-Codex
+   *  surfaces are unaffected. */
+  selected?: boolean;
+  /** Experimental (Codex-style activity sidebar): if provided, clicking the
+   *  bubble selects this assistant turn. Clicks on links/buttons/code blocks
+   *  are ignored so existing in-bubble controls keep working. */
+  onSelect?: () => void;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, selected = false, onSelect }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -735,9 +743,17 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
 
   const content = useMemo(() => {
     if (message.role === 'assistant') {
+      // Codex-style experiment: main chat shows responseBlocks only.
+      // Process blocks (thinking / tool_use / tool_result) are surfaced in the
+      // persistent ActivitySidebar rendered by ChatView.
       const assistantTurnContent = buildAssistantTurnContent(message.content);
-      const inlineBlocks = assistantTurnContent.orderedParts.map((part) => part.block);
-      return renderAssistantBlocks(inlineBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
+      return renderAssistantBlocks(
+        assistantTurnContent.responseBlocks,
+        isStreamingBubble,
+        messagePrefix,
+        onOpenPreview,
+        conversationId,
+      );
     }
 
     if (typeof message.content === 'string') {
@@ -756,8 +772,41 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
       <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
+  const isSelectable = message.role === 'assistant' && typeof onSelect === 'function';
+
+  // Ignore clicks that originate from interactive descendants so existing
+  // copy buttons, links, code blocks and the tool modal keep working.
+  const handleBubbleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectable) return;
+    const target = event.target as HTMLElement | null;
+    if (target && target.closest('a, button, pre, code, input, textarea, [role="dialog"]')) return;
+    onSelect?.();
+  }, [isSelectable, onSelect]);
+
+  const handleBubbleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isSelectable) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const target = event.target as HTMLElement | null;
+    if (target && target.closest('a, button, pre, code, input, textarea')) return;
+    event.preventDefault();
+    onSelect?.();
+  }, [isSelectable, onSelect]);
+
+  const className = [
+    styles.chatBubble,
+    message.role === 'user' ? styles.own : styles.other,
+    selected ? styles.selectedTurn : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
+    <div
+      className={className}
+      onClick={isSelectable ? handleBubbleClick : undefined}
+      onKeyDown={isSelectable ? handleBubbleKeyDown : undefined}
+      role={isSelectable ? 'button' : undefined}
+      tabIndex={isSelectable ? 0 : undefined}
+      aria-pressed={isSelectable ? selected : undefined}
+    >
       {bubbleMeta}
       <div>{content}</div>
       {message.role !== 'user' && !isStreamingBubble ? (

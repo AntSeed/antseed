@@ -11,6 +11,7 @@ import {
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
+import { ActivitySidebar } from '../chat/ActivitySidebar';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
@@ -21,7 +22,7 @@ import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewer';
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
-import { buildDisplayMessages } from '../chat/chat-shared';
+import { buildDisplayMessages, getAssistantTurnId } from '../chat/chat-shared';
 import type { ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
 import { AntStationStackedLogo } from '../AntStationLogo';
 
@@ -152,6 +153,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   };
   const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<ViewerAttachment | null>(null);
+  // Codex-style activity sidebar experiment: which assistant turn the
+  // sidebar is currently showing. When `userPinned` is false the sidebar
+  // automatically follows the latest/streaming assistant turn.
+  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
+  const [userPinned, setUserPinned] = useState(false);
   const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
@@ -177,6 +183,67 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
+
+  // Codex-style activity sidebar: build a stable id for every visible
+  // assistant turn so we can wire selection through ChatBubble. Pre-computed
+  // outside the render map so the streaming turn can share the same scheme.
+  const assistantTurnIds = useMemo(() => {
+    const ids = new Map<number, string>();
+    visibleMessages.forEach((msg, index) => {
+      if (msg.role === 'assistant') ids.set(index, getAssistantTurnId(msg, index));
+    });
+    return ids;
+  }, [visibleMessages]);
+
+  const lastAssistantIndex = useMemo(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+      if (visibleMessages[i].role === 'assistant') return i;
+    }
+    return -1;
+  }, [visibleMessages]);
+
+  const streamingTurnId = useMemo(
+    () => (snap.chatStreamingMessage ? `streaming:${snap.chatActiveConversation || 'new'}` : null),
+    [snap.chatStreamingMessage, snap.chatActiveConversation],
+  );
+
+  // Reset selection when conversation changes so an old pin doesn't leak.
+  useEffect(() => {
+    setSelectedTurnId(null);
+    setUserPinned(false);
+  }, [snap.chatActiveConversation]);
+
+  // Resolve the message currently being shown in the activity sidebar.
+  const sidebarTarget = useMemo<{ message: ChatMessage | null; streaming: boolean }>(() => {
+    const streamingMsg = (snap.chatStreamingMessage as ChatMessage | null) || null;
+
+    if (userPinned && selectedTurnId) {
+      if (streamingMsg && streamingTurnId === selectedTurnId) {
+        return { message: streamingMsg, streaming: true };
+      }
+      for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+        const msg = visibleMessages[i];
+        if (msg.role !== 'assistant') continue;
+        if (assistantTurnIds.get(i) === selectedTurnId) {
+          return { message: msg, streaming: false };
+        }
+      }
+      // Fall through if the pinned id no longer exists.
+    }
+
+    if (streamingMsg) return { message: streamingMsg, streaming: true };
+    if (lastAssistantIndex >= 0) {
+      return { message: visibleMessages[lastAssistantIndex], streaming: false };
+    }
+    return { message: null, streaming: false };
+  }, [userPinned, selectedTurnId, streamingTurnId, snap.chatStreamingMessage, visibleMessages, assistantTurnIds, lastAssistantIndex]);
+
+  const handleSelectTurn = useCallback((turnId: string, isLatest: boolean) => {
+    setSelectedTurnId(turnId);
+    // Selecting the latest/streaming turn re-arms auto-follow; selecting an
+    // older turn pins the sidebar to that turn.
+    setUserPinned(!isLatest);
+  }, []);
 
   const previewUrl = snap.browserPreviewUrl;
   const previewRequestId = snap.browserPreviewRequestId;
@@ -704,22 +771,38 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 </div>
               </div>
             ) : (
-              visibleMessages.map((msg, i) => (
-                <ChatBubble
-                  key={getMessageKey(msg, i)}
-                  message={msg}
-                  onOpenPreview={handleOpenPreview}
-                  conversationId={snap.chatActiveConversation || undefined}
-                />
-              ))
+              visibleMessages.map((msg, i) => {
+                const turnId = assistantTurnIds.get(i);
+                const isAssistant = msg.role === 'assistant';
+                const isLatestAssistant =
+                  isAssistant && !snap.chatStreamingMessage && i === lastAssistantIndex;
+                const selected =
+                  isAssistant && turnId !== undefined && sidebarTarget.message === msg;
+                return (
+                  <ChatBubble
+                    key={getMessageKey(msg, i)}
+                    message={msg}
+                    onOpenPreview={handleOpenPreview}
+                    conversationId={snap.chatActiveConversation || undefined}
+                    selected={selected}
+                    onSelect={
+                      isAssistant && turnId !== undefined
+                        ? () => handleSelectTurn(turnId, isLatestAssistant)
+                        : undefined
+                    }
+                  />
+                );
+              })
             )}
-            {snap.chatStreamingMessage ? (
+            {snap.chatStreamingMessage && streamingTurnId ? (
               <ChatBubble
-                key={`streaming:${snap.chatActiveConversation || 'new'}`}
+                key={streamingTurnId}
                 message={snap.chatStreamingMessage as ChatMessage}
                 streaming
                 onOpenPreview={handleOpenPreview}
                 conversationId={snap.chatActiveConversation || undefined}
+                selected={sidebarTarget.message === snap.chatStreamingMessage}
+                onSelect={() => handleSelectTurn(streamingTurnId, true)}
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
@@ -908,6 +991,16 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             </div>
           </div>
         </div>
+        {/* Codex-style activity sidebar (experiment). Hidden while the
+            BrowserPreview is open — v1 prototype behavior; long term this
+            should become a collapsible/toggleable sidebar instead. */}
+        {!previewOpen && (
+          <ActivitySidebar
+            message={sidebarTarget.message}
+            streaming={sidebarTarget.streaming}
+            onOpenPreview={handleOpenPreview}
+          />
+        )}
         {previewOpen && (
           <>
             <div
