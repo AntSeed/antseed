@@ -280,7 +280,7 @@
   min-height: 0;
 
   > * {
-    max-width: 640px;
+    max-width: min(1120px, 100%);
     width: 100%;
     margin-left: auto;
     margin-right: auto;

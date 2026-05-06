@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Copy01Icon, Tick02Icon, BrowserIcon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { ReactNode } from 'react';
+import type { ReactNode, WheelEvent } from 'react';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
@@ -653,6 +653,24 @@ function extractPlainText(content: unknown): string {
   return '';
 }
 
+function handleLaneWheel(event: WheelEvent<HTMLElement>): void {
+  const target = event.currentTarget;
+  const canScroll = target.scrollHeight > target.clientHeight;
+  if (!canScroll) return;
+
+  const scrollingDown = event.deltaY > 0;
+  const scrollingUp = event.deltaY < 0;
+  const atTop = target.scrollTop <= 0;
+  const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
+
+  // Keep wheel movement inside the lane while it has room to scroll. Once the
+  // lane reaches its top/bottom, let the event bubble so the outer chat can
+  // continue moving between messages.
+  if ((scrollingDown && !atBottom) || (scrollingUp && !atTop)) {
+    event.stopPropagation();
+  }
+}
+
 function CopyResponseButton({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
@@ -747,7 +765,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
 
       return (
         <div className={styles.assistantTurnSample}>
-          <section className={styles.assistantAnswerLane} aria-label="Assistant answer">
+          <section className={styles.assistantAnswerLane} aria-label="Assistant answer" onWheel={handleLaneWheel}>
             {renderAssistantBlocks(responseBlocks, isStreamingBubble, `${messagePrefix}-answer`, onOpenPreview, conversationId)}
           </section>
           <aside className={styles.assistantProcessLane} aria-label="Behind the scenes">
@@ -755,7 +773,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
               <span>Behind the scenes</span>
               <span>{assistantTurnContent.processBlocks.length}</span>
             </div>
-            <div className={styles.assistantProcessBody}>
+            <div className={styles.assistantProcessBody} onWheel={handleLaneWheel}>
               {renderAssistantBlocks(assistantTurnContent.processBlocks, isStreamingBubble, `${messagePrefix}-process`, onOpenPreview, conversationId)}
             </div>
           </aside>
