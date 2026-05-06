@@ -250,6 +250,15 @@ function PeerGroupSection({
   const convsRef = useRef<HTMLDivElement>(null);
   const letter = (group.displayName || '?').charAt(0).toUpperCase();
 
+  // When the group is collapsed, surface a single running indicator on the
+  // peer header if any of its conversations is in flight — otherwise a user
+  // who collapses a peer can't tell that work is still happening underneath.
+  // When expanded, the existing per-chat dots are visible, so we don't
+  // duplicate the indicator at the peer level. (Issue #461.)
+  const hasRunningConv = !expanded && group.conversations.some(
+    (conv) => sendingConvIds.has(String(conv.id ?? '')),
+  );
+
   // Scroll the header into view and animate convs open when expanded
   useEffect(() => {
     if (expanded && headerRef.current) {
@@ -277,6 +286,14 @@ function PeerGroupSection({
           {letter}
         </span>
         <span className={styles.peerGroupName}>{group.displayName}</span>
+        {hasRunningConv && (
+          <span
+            className={styles.peerGroupRunningDot}
+            role="status"
+            aria-label={`A chat in ${group.displayName} is running`}
+            title="A chat in this peer is running"
+          />
+        )}
         {group.peerId && (
           <button
             className={styles.peerGroupAdd}
