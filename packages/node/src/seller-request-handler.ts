@@ -369,7 +369,7 @@ export class SellerRequestHandler {
             debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`);
 
             const accepted = spm.getAcceptedCumulative(session.sessionId);
-            const requiredAmount = cumulativeSpend + costUsdc;
+            const requiredAmount = cumulativeSpend;
             debugLog(`[SellerHandler] Sending NeedAuth: cost=${costUsdc} cumulative=${cumulativeSpend} required=${requiredAmount}`);
             this._sendNeedAuthBestEffort(paymentMux, {
               channelId: session.sessionId,
