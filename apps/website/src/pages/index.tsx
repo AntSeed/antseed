@@ -1,5 +1,4 @@
 import {useEffect, useRef, useState, useMemo} from 'react';
-import BrowserOnly from '@docusaurus/BrowserOnly';
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -13,7 +12,6 @@ import {DesktopDownloadIcon} from '../lib/DesktopDownloadIcon';
 
 /* ========== LIVENESS BAR ========== */
 const STATS_URL = 'https://network.antseed.com/stats';
-const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 function useNetworkStats() {
   const [peerCount, setPeerCount] = useState<number | null>(null);
@@ -21,19 +19,16 @@ function useNetworkStats() {
 
   useEffect(() => {
     const refresh = async () => {
-      for (const url of [STATS_URL, DEV_STATS_URL]) {
-        try {
-          const res = await fetch(url, {signal: AbortSignal.timeout(5000)});
-          if (!res.ok) continue;
-          const data = await res.json();
-          const peers = data.peers ?? [];
-          const services: string[] = [];
-          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.push(m);
-          setPeerCount(peers.length);
-          setServiceCount(services.length);
-          return;
-        } catch { /* try next */ }
-      }
+      try {
+        const res = await fetch(STATS_URL, {signal: AbortSignal.timeout(5000)});
+        if (!res.ok) return;
+        const data = await res.json();
+        const peers = data.peers ?? [];
+        const services: string[] = [];
+        for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.push(m);
+        setPeerCount(peers.length);
+        setServiceCount(services.length);
+      } catch { /* stats unavailable — leave counters hidden */ }
     };
     refresh();
     const interval = setInterval(refresh, 30_000);

@@ -7,7 +7,6 @@ import styles from './network.module.css';
 /* ── Stats API types (mirrors PeerMetadata from @antseed/node) ──── */
 
 const STATS_URL = 'https://network.antseed.com/stats';
-const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 interface TokenPricing {
   inputUsdPerMillion: number;
@@ -256,21 +255,19 @@ export default function PricingPage() {
 
   useEffect(() => {
     const refresh = async () => {
-      for (const url of [STATS_URL, DEV_STATS_URL]) {
-        try {
-          const res = await fetch(url, {signal: AbortSignal.timeout(5000)});
-          if (!res.ok) continue;
-          const data = (await res.json()) as StatsResponse;
-          setPeers(data.peers);
-          setUpdatedAt(data.updatedAt);
-          setNetworkTotals(data.totals ?? null);
-          setLoading(false);
-          setError(false);
-          return;
-        } catch { /* try next */ }
+      try {
+        const res = await fetch(STATS_URL, {signal: AbortSignal.timeout(5000)});
+        if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
+        const data = (await res.json()) as StatsResponse;
+        setPeers(data.peers);
+        setUpdatedAt(data.updatedAt);
+        setNetworkTotals(data.totals ?? null);
+        setLoading(false);
+        setError(false);
+      } catch {
+        setLoading(false);
+        setError(true);
       }
-      setLoading(false);
-      setError(true);
     };
     refresh();
     const interval = setInterval(refresh, 30_000);
