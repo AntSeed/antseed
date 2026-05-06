@@ -9,7 +9,7 @@ import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protoc
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
   services: string[];
-  servicePricing?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+  servicePricing?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }>;
 }): Provider {
   return {
     name: opts.name,
@@ -249,6 +249,182 @@ describe('SellerRequestHandler payment pricing selection', () => {
       currentAcceptedCumulative: '0',
       requiredCumulativeAmount: '0',
     }));
+  });
+
+  it('uses cumulative spend as NeedAuth required amount without double-counting the latest request', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai-responses',
+      services: ['gpt-5.3-codex-spark'],
+      servicePricing: {
+        'gpt-5.3-codex-spark': {
+          inputUsdPerMillion: 5,
+          outputUsdPerMillion: 30,
+          cachedInputUsdPerMillion: 1,
+        },
+      },
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        usage: {
+          prompt_tokens: 30426,
+          completion_tokens: 108,
+          prompt_tokens_details: { cached_tokens: 1920 },
+        },
+      })),
+    }));
+
+    const costUsdc = 147_690n;
+    let cumulativeSpend = 0n;
+    const sendNeedAuth = vi.fn();
+    const recordSpend = vi.fn((_sessionId: string, cost: bigint) => {
+      cumulativeSpend += cost;
+    });
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
+        recordSpend,
+        getCumulativeSpend: () => cumulativeSpend,
+        getAcceptedCumulative: () => 0n,
+        getReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '10000', suggestedAmount: '1000000' }),
+        waitForPendingAuths: async () => {},
+        awaitAcceptedAtLeast: async () => true,
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth,
+      sendPaymentRequired: vi.fn(),
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    const request: SerializedHttpRequest = {
+      requestId: 'req-codex-cost',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.3-codex-spark' })),
+    };
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest(request),
+    });
+
+    expect(sentFrames.length).toBeGreaterThan(0);
+    expect(recordSpend).toHaveBeenCalledWith('session-1', costUsdc);
+    expect(sendNeedAuth).toHaveBeenCalledOnce();
+    expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: request.requestId,
+      lastRequestCost: costUsdc.toString(),
+      requiredCumulativeAmount: costUsdc.toString(),
+      inputTokens: '30426',
+      cachedInputTokens: '1920',
+      freshInputTokens: '28506',
+      outputTokens: '108',
+    }));
+  });
+
+  it('keeps post-response NeedAuth below the reserve ceiling when cumulative spend is still covered', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai-responses',
+      services: ['gpt-5.3-codex-spark'],
+      servicePricing: {
+        'gpt-5.3-codex-spark': {
+          inputUsdPerMillion: 5,
+          outputUsdPerMillion: 30,
+          cachedInputUsdPerMillion: 1,
+        },
+      },
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        usage: {
+          prompt_tokens: 32048,
+          completion_tokens: 136,
+          prompt_tokens_details: { cached_tokens: 1920 },
+        },
+      })),
+    }));
+
+    const existingSpend = 835_714n;
+    const costUsdc = 156_640n;
+    const cumulativeAfterRequest = existingSpend + costUsdc;
+    const reserveMax = 1_000_000n;
+    let cumulativeSpend = existingSpend;
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: reserveMax.toString() }),
+        recordSpend: vi.fn((_sessionId: string, cost: bigint) => {
+          cumulativeSpend += cost;
+        }),
+        getCumulativeSpend: () => cumulativeSpend,
+        getAcceptedCumulative: () => existingSpend + 1n,
+        getReserveMax: () => reserveMax,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '10000', suggestedAmount: reserveMax.toString() }),
+        waitForPendingAuths: async () => {},
+        awaitAcceptedAtLeast: async () => true,
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth,
+      sendPaymentRequired: vi.fn(),
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-near-reserve',
+        method: 'POST',
+        path: '/v1/responses',
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.3-codex-spark' })),
+      }),
+    });
+
+    expect(cumulativeAfterRequest).toBeLessThan(reserveMax);
+    expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      lastRequestCost: costUsdc.toString(),
+      requiredCumulativeAmount: cumulativeAfterRequest.toString(),
+    }));
+    expect(BigInt(sendNeedAuth.mock.calls[0]![0].requiredCumulativeAmount)).toBeLessThanOrEqual(reserveMax);
   });
 
   it('skips the 402 / ReserveAuth handshake when the service is free', async () => {

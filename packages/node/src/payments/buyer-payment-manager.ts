@@ -789,7 +789,6 @@ export class BuyerPaymentManager {
     }
 
     const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
-    if (payload.requestId) this._requestService.delete(payload.requestId);
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -801,6 +800,7 @@ export class BuyerPaymentManager {
       );
       return;
     }
+    if (payload.requestId) this._requestService.delete(payload.requestId);
 
     // Validate the seller's claimed cost if reported
     if (payload.lastRequestCost) {
