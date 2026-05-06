@@ -1,0 +1,3 @@
+# Runtime artifacts — DHT cache snapshot and indexer SQLite db
+cache/
+data/
