@@ -277,3 +277,44 @@ export function rewriteServiceInBody(
   }
   return { body: rewritten, headers: updatedHeaders }
 }
+
+/**
+ * Ensure a streaming OpenAI Chat Completions request includes
+ * `stream_options.include_usage = true` so the upstream LLM emits a final
+ * `usage` SSE chunk. Without it, providers like minimax (and many other
+ * OpenAI-compatible backends) return SSE streams with no usage data, which
+ * causes the buyer's BuyerNegotiator to record `cost=0 (in=0 out=0)` for
+ * every request and the dashboard's spend gauge to flatline at zero.
+ *
+ * Notes:
+ *  - Anthropic→Chat and Responses→Chat transforms in @antseed/api-adapter
+ *    already inject this option, but a buyer talking native chat-completions
+ *    has no transform path — hence this helper.
+ *  - Only applies to /v1/chat/completions requests with stream:true. We
+ *    leave non-streaming or non-chat-completions requests untouched (their
+ *    JSON response body always carries `usage` directly).
+ *  - Preserves an existing user-supplied `stream_options` object.
+ */
+export function ensureChatCompletionsUsageStreamOptions(
+  request: SerializedHttpRequest,
+): SerializedHttpRequest {
+  if (!request.path.toLowerCase().startsWith('/v1/chat/completions')) return request
+  if (!getHeader(request.headers, 'content-type').toLowerCase().includes('application/json')) return request
+  if (request.body.length === 0) return request
+  const parsed = parseJsonObject(request.body)
+  if (!parsed) return request
+  if (parsed.stream !== true) return request
+  const existing = parsed.stream_options && typeof parsed.stream_options === 'object' && !Array.isArray(parsed.stream_options)
+    ? (parsed.stream_options as Record<string, unknown>)
+    : {}
+  if (existing.include_usage === true) return request
+  const updatedBody = { ...parsed, stream_options: { ...existing, include_usage: true } }
+  const rewritten = new TextEncoder().encode(JSON.stringify(updatedBody))
+  const updatedHeaders = { ...request.headers }
+  if ('content-length' in updatedHeaders) {
+    updatedHeaders['content-length'] = String(rewritten.length)
+  } else if ('Content-Length' in updatedHeaders) {
+    updatedHeaders['Content-Length'] = String(rewritten.length)
+  }
+  return { ...request, headers: updatedHeaders, body: rewritten }
+}

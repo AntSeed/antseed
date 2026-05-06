@@ -35,6 +35,7 @@ import {
   summarizeErrorResponse,
   requestWantsStreaming,
   rewriteServiceInBody,
+  ensureChatCompletionsUsageStreamOptions,
   isConnectionChurnError,
   isConnectionHealthy,
 } from './request-utils.js'
@@ -1243,6 +1244,14 @@ export class BuyerProxy {
         })
       }
     }
+
+    // For native OpenAI Chat Completions streaming requests (no transform
+    // path), inject `stream_options.include_usage = true` so the upstream
+    // LLM emits a final `usage` SSE chunk. Without this, the buyer's
+    // BuyerNegotiator records cost=0 / tokens=0 per request and the
+    // dashboard's spend gauge flatlines. The Anthropic→Chat and Responses→Chat
+    // transforms already do this themselves; calling it again is a no-op.
+    requestForPeer = ensureChatCompletionsUsageStreamOptions(requestForPeer)
 
     if (DEBUG()) {
       log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
