@@ -26,6 +26,25 @@ export interface NetworkTotals {
   lastUpdatedAt: number | null;
 }
 
+/** Aggregated activity over a fixed time window (e.g. last 24h, 7d, 30d). */
+export interface TimeframeTotals {
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+}
+
+/** Per-agent all-time stats — the building block for global rankings. */
+export interface SellerAllTimeStats {
+  agentId: number;
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+  uniqueBuyers: number;
+  firstSeenAt: number | null;
+}
+
 interface SellerRow {
   total_input_tokens: string;
   total_output_tokens: string;
@@ -74,6 +93,10 @@ export class SqliteStore {
   private _selectAllSellerTotals!: Database.Statement<[], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
+  private _insertSettlementEvent!: Database.Statement<[number, number, number, number, string, string, string]>;
+  private _selectEventsSince!: Database.Statement<[number], { agent_id: number; input_tokens: string; output_tokens: string; request_count: string }>;
+  private _selectAllSellersWithId!: Database.Statement<[], { agent_id: number; total_request_count: string; total_input_tokens: string; total_output_tokens: string; settlement_count: number; first_seen_at: number | null }>;
+  private _countBuyersByAgent!: Database.Statement<[], { agent_id: number; c: number }>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -127,6 +150,26 @@ export class SqliteStore {
         last_block_timestamp INTEGER,
         PRIMARY KEY (chain_id, contract_address)
       );
+
+      -- Per-event log used to compute "last 24h / 7d / 30d" rollups. One row
+      -- per MetadataRecorded event, only inserted when the indexer was able
+      -- to fetch the block timestamp (i.e. production runs with rpcUrl set;
+      -- unit tests that pass no timestamps produce no rows here, which is
+      -- intentional). All-time totals continue to live in seller_metadata_totals.
+      CREATE TABLE IF NOT EXISTS seller_settlement_events (
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        block_timestamp INTEGER NOT NULL,
+        input_tokens TEXT NOT NULL,
+        output_tokens TEXT NOT NULL,
+        request_count TEXT NOT NULL,
+        PRIMARY KEY (block_number, log_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_settlement_events_agent_ts
+        ON seller_settlement_events(agent_id, block_timestamp);
+      CREATE INDEX IF NOT EXISTS idx_settlement_events_ts
+        ON seller_settlement_events(block_timestamp);
     `);
 
     this._selectCheckpoint = this.db.prepare(
@@ -189,6 +232,29 @@ export class SqliteStore {
 
     this._countChannels = this.db.prepare(
       'SELECT COUNT(*) AS c FROM seller_channel_totals WHERE agent_id = ?',
+    );
+
+    // INSERT OR IGNORE is defensive — (block_number, log_index) is globally
+    // unique within a single contract's logs, but if a previous tick rolled
+    // back partway and re-fetched the same range, we don't want to fail the
+    // re-application; the row is identical anyway.
+    this._insertSettlementEvent = this.db.prepare(
+      `INSERT OR IGNORE INTO seller_settlement_events
+         (block_number, log_index, agent_id, block_timestamp,
+          input_tokens, output_tokens, request_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectEventsSince = this.db.prepare(
+      'SELECT agent_id, input_tokens, output_tokens, request_count FROM seller_settlement_events WHERE block_timestamp >= ?',
+    );
+
+    this._selectAllSellersWithId = this.db.prepare(
+      'SELECT agent_id, total_request_count, total_input_tokens, total_output_tokens, settlement_count, first_seen_at FROM seller_metadata_totals',
+    );
+
+    this._countBuyersByAgent = this.db.prepare(
+      'SELECT agent_id, COUNT(*) AS c FROM seller_buyer_totals GROUP BY agent_id',
     );
   }
 
@@ -298,6 +364,22 @@ export class SqliteStore {
           prevChannelFirstBlock,
           event.blockNumber,
         );
+
+        // ── seller_settlement_events ─────────────────────────────────
+        // Only recorded when we know the on-chain wall-clock for the block.
+        // Without a timestamp the row would be excluded from every windowed
+        // query anyway, so we skip the write entirely.
+        if (eventTimestamp !== null) {
+          this._insertSettlementEvent.run(
+            event.blockNumber,
+            event.logIndex,
+            agentId,
+            eventTimestamp,
+            event.inputTokens.toString(),
+            event.outputTokens.toString(),
+            event.requestCount.toString(),
+          );
+        }
       }
 
       this._upsertCheckpoint.run(
@@ -376,6 +458,64 @@ export class SqliteStore {
       sellerCount,
       lastUpdatedAt,
     };
+  }
+
+  /**
+   * Returns all-time per-agent stats keyed by agentId. Used by the rankings
+   * endpoint to sort sellers by lifetime activity (mostUsed.allTime,
+   * topVolume.allTime, mostReach, risingStars). Two SQL reads — the metadata
+   * roll-up + a GROUP BY on the buyer table — joined in JS by agentId.
+   */
+  getAllSellerStats(): Map<number, SellerAllTimeStats> {
+    const buyerCounts = new Map<number, number>();
+    for (const row of this._countBuyersByAgent.all()) {
+      buyerCounts.set(row.agent_id, row.c);
+    }
+
+    const result = new Map<number, SellerAllTimeStats>();
+    for (const row of this._selectAllSellersWithId.all()) {
+      result.set(row.agent_id, {
+        agentId: row.agent_id,
+        totalRequests: BigInt(row.total_request_count),
+        totalInputTokens: BigInt(row.total_input_tokens),
+        totalOutputTokens: BigInt(row.total_output_tokens),
+        settlementCount: row.settlement_count,
+        uniqueBuyers: buyerCounts.get(row.agent_id) ?? 0,
+        firstSeenAt: row.first_seen_at,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Returns per-seller activity for events at or after `cutoffSeconds` (unix
+   * epoch seconds). Sums are accumulated in BigInt to preserve full precision
+   * for large token counts; SQL SUM on TEXT-encoded bigints would either
+   * overflow INT64 or lose precision via REAL.
+   *
+   * Returns an empty Map if the events table has no matching rows (e.g. fresh
+   * deploy before any events flow in, or unit tests that don't pass block
+   * timestamps).
+   */
+  getSellerTotalsSince(cutoffSeconds: number): Map<number, TimeframeTotals> {
+    const result = new Map<number, TimeframeTotals>();
+    for (const row of this._selectEventsSince.iterate(cutoffSeconds)) {
+      const existing = result.get(row.agent_id);
+      if (existing) {
+        existing.totalRequests += BigInt(row.request_count);
+        existing.totalInputTokens += BigInt(row.input_tokens);
+        existing.totalOutputTokens += BigInt(row.output_tokens);
+        existing.settlementCount += 1;
+      } else {
+        result.set(row.agent_id, {
+          totalRequests: BigInt(row.request_count),
+          totalInputTokens: BigInt(row.input_tokens),
+          totalOutputTokens: BigInt(row.output_tokens),
+          settlementCount: 1,
+        });
+      }
+    }
+    return result;
   }
 
   /** Closes the underlying DB handle. */

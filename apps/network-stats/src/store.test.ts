@@ -51,6 +51,7 @@ describe('SqliteStore', () => {
       'seller_buyer_totals',
       'seller_channel_totals',
       'seller_metadata_totals',
+      'seller_settlement_events',
     ]);
     store.close();
   });
@@ -261,6 +262,94 @@ describe('SqliteStore', () => {
     assert.equal(after2.firstSettledBlock, 500);
     assert.equal(after2.lastSettledBlock, 750);
     assert.equal(after2.settlementCount, 2);
+    store.close();
+  });
+
+  // ── Timeframe rollups (seller_settlement_events) ─────────────────────────
+  it('getSellerTotalsSince — empty when no events recorded with timestamps', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    // applyBatch without blockTimestamps → no event log rows
+    store.applyBatch('base', '0xcontract', [
+      makeEvent({ agentId: 1n, blockNumber: 10, requestCount: 5n }),
+    ], 10);
+
+    const result = store.getSellerTotalsSince(0);
+    assert.equal(result.size, 0);
+    store.close();
+  });
+
+  it('getSellerTotalsSince — sums per agent over the cutoff window', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    // Block timestamps: 1000, 2000, 3000 (unix seconds)
+    const timestamps = new Map<number, number>([
+      [10, 1000],
+      [20, 2000],
+      [30, 3000],
+    ]);
+
+    store.applyBatch(
+      'base',
+      '0xcontract',
+      [
+        makeEvent({ agentId: 1n, blockNumber: 10, logIndex: 0, inputTokens: 10n, outputTokens: 20n, requestCount: 1n }),
+        makeEvent({ agentId: 1n, blockNumber: 20, logIndex: 0, inputTokens: 30n, outputTokens: 40n, requestCount: 2n }),
+        makeEvent({ agentId: 2n, blockNumber: 30, logIndex: 0, inputTokens: 50n, outputTokens: 60n, requestCount: 3n }),
+      ],
+      30,
+      timestamps,
+    );
+
+    // Window includes all three events
+    const all = store.getSellerTotalsSince(500);
+    assert.equal(all.size, 2);
+    const a1 = all.get(1)!;
+    assert.equal(a1.totalRequests, 3n);
+    assert.equal(a1.totalInputTokens, 40n);
+    assert.equal(a1.totalOutputTokens, 60n);
+    assert.equal(a1.settlementCount, 2);
+    const a2 = all.get(2)!;
+    assert.equal(a2.totalRequests, 3n);
+    assert.equal(a2.settlementCount, 1);
+
+    // Window cuts off the first event
+    const recent = store.getSellerTotalsSince(2000);
+    assert.equal(recent.size, 2);
+    assert.equal(recent.get(1)!.totalRequests, 2n);
+    assert.equal(recent.get(1)!.settlementCount, 1);
+    assert.equal(recent.get(2)!.totalRequests, 3n);
+
+    // Window in the future → empty
+    const future = store.getSellerTotalsSince(99_999);
+    assert.equal(future.size, 0);
+
+    store.close();
+  });
+
+  it('getSellerTotalsSince — preserves BigInt precision beyond INT64', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const huge = 10n ** 25n;
+    store.applyBatch(
+      'base',
+      '0xcontract',
+      [
+        makeEvent({ agentId: 7n, blockNumber: 1, logIndex: 0, inputTokens: huge, outputTokens: huge, requestCount: huge }),
+        makeEvent({ agentId: 7n, blockNumber: 2, logIndex: 0, inputTokens: huge, outputTokens: huge, requestCount: huge }),
+      ],
+      2,
+      new Map([[1, 1000], [2, 2000]]),
+    );
+
+    const result = store.getSellerTotalsSince(0);
+    const totals = result.get(7)!;
+    assert.equal(totals.totalRequests, huge * 2n);
+    assert.equal(totals.totalInputTokens, huge * 2n);
+    assert.equal(totals.totalOutputTokens, huge * 2n);
     store.close();
   });
 
