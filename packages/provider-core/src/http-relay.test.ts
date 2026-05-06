@@ -391,6 +391,111 @@ describe('HttpRelay', () => {
     expect(parsed.service).toBeUndefined();
   });
 
+  describe('stream_options.include_usage injection (chat-completions streaming)', () => {
+    function chatCompletionsRequest(body: Record<string, unknown>): SerializedHttpRequest {
+      return makeRequest({
+        path: '/v1/chat/completions',
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      });
+    }
+
+    function relayWith(allowedServices: string[] = ['minimax-m2.7-highspeed']) {
+      const responses: SerializedHttpResponse[] = [];
+      const relay = new HttpRelay(
+        makeConfig({ allowedServices }),
+        { onResponse: (r) => responses.push(r) },
+      );
+      return { relay, responses };
+    }
+
+    function upstreamBody(): Record<string, unknown> {
+      const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+      return JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as Record<string, unknown>;
+    }
+
+    it('injects include_usage=true on streaming chat-completions requests', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const { relay, responses } = relayWith();
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }));
+      expect(responses[0]!.statusCode).toBe(200);
+      expect(upstreamBody().stream_options).toEqual({ include_usage: true });
+    });
+
+    it('preserves caller-supplied stream_options fields', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const { relay } = relayWith();
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_obfuscation: false },
+      }));
+      expect(upstreamBody().stream_options).toEqual({ include_obfuscation: false, include_usage: true });
+    });
+
+    it('does not override an explicit include_usage:false (operator escape hatch)', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const { relay } = relayWith();
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: false },
+      }));
+      expect(upstreamBody().stream_options).toEqual({ include_usage: false });
+    });
+
+    it('leaves non-streaming chat-completions requests untouched', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const { relay } = relayWith();
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: false,
+      }));
+      expect(upstreamBody().stream_options).toBeUndefined();
+    });
+
+    it('leaves non-chat-completions paths untouched (e.g. /v1/responses)', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const responses: SerializedHttpResponse[] = [];
+      const relay = new HttpRelay(
+        makeConfig({ allowedServices: ['gpt-5.4'] }),
+        { onResponse: (r) => responses.push(r) },
+      );
+      await relay.handleRequest(makeRequest({
+        path: '/v1/responses',
+        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.4', input: 'hi', stream: true })),
+      }));
+      expect(upstreamBody().stream_options).toBeUndefined();
+    });
+
+    it('still defers to operator injectJsonFields override', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      // Operator can still force their own value via OPENAI_BODY_INJECT_JSON.
+      const responses: SerializedHttpResponse[] = [];
+      const relay = new HttpRelay(
+        makeConfig({
+          allowedServices: ['minimax-m2.7-highspeed'],
+          injectJsonFields: { stream_options: { include_usage: false, include_obfuscation: true } },
+        }),
+        { onResponse: (r) => responses.push(r) },
+      );
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }));
+      // injectJsonFields runs after our default injection and deep-merges,
+      // so an explicit operator override of include_usage wins.
+      expect(upstreamBody().stream_options).toEqual({ include_usage: false, include_obfuscation: true });
+    });
+  });
+
   it('strips body.service when body.model is already present', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
