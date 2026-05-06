@@ -474,6 +474,28 @@ describe('SellerPaymentManager', () => {
     expect(metadata).toBe(encodeMetadata(ZERO_METADATA));
   });
 
+  it('settleSession suppresses duplicate in-flight close attempts for the same channel', async () => {
+    const channelId = makeChannelId(12);
+
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+    manager.recordSpend(channelId, 50_000n);
+
+    let resolveClose!: (value: string) => void;
+    const closePromise = new Promise<string>((resolve) => { resolveClose = resolve; });
+    vi.spyOn(manager.channelsClient, 'close').mockReturnValue(closePromise);
+
+    const first = manager.settleSession(buyerIdentity.peerId);
+    const second = manager.settleSession(buyerIdentity.peerId);
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    resolveClose('0xclose-hash');
+    await Promise.all([first, second]);
+  });
+
   it('rejects SpendingAuth when cumulative exceeds on-chain deposit', async () => {
     const channelId = makeChannelId(40);
 
