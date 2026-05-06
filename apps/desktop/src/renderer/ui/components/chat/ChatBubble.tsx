@@ -736,8 +736,31 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       const assistantTurnContent = buildAssistantTurnContent(message.content);
-      const inlineBlocks = assistantTurnContent.orderedParts.map((part) => part.block);
-      return renderAssistantBlocks(inlineBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
+      const hasProcessBlocks = assistantTurnContent.processBlocks.length > 0;
+      const responseBlocks = assistantTurnContent.responseBlocks.length > 0
+        ? assistantTurnContent.responseBlocks
+        : [{ type: 'text', text: isStreamingBubble ? 'Working…' : '' } satisfies ContentBlock];
+
+      if (!hasProcessBlocks) {
+        return renderAssistantBlocks(responseBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
+      }
+
+      return (
+        <div className={styles.assistantTurnSample}>
+          <section className={styles.assistantAnswerLane} aria-label="Assistant answer">
+            {renderAssistantBlocks(responseBlocks, isStreamingBubble, `${messagePrefix}-answer`, onOpenPreview, conversationId)}
+          </section>
+          <aside className={styles.assistantProcessLane} aria-label="Behind the scenes">
+            <div className={styles.assistantProcessHeader}>
+              <span>Behind the scenes</span>
+              <span>{assistantTurnContent.processBlocks.length}</span>
+            </div>
+            <div className={styles.assistantProcessBody}>
+              {renderAssistantBlocks(assistantTurnContent.processBlocks, isStreamingBubble, `${messagePrefix}-process`, onOpenPreview, conversationId)}
+            </div>
+          </aside>
+        </div>
+      );
     }
 
     if (typeof message.content === 'string') {
