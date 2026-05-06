@@ -626,15 +626,6 @@
   }
 }
 
-/* Codex-style activity sidebar experiment: subtle selected-turn affordance.
-   Applied additively on .chat-bubble; non-experiment surfaces are unaffected. */
-.selected-turn {
-  position: relative;
-  border-radius: 8px;
-  outline: 1px solid var(--accent-blue);
-  outline-offset: 2px;
-}
-
 /* ===================================================================
    Bubble meta
    =================================================================== */

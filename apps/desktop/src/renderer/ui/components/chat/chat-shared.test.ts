@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   buildAssistantTurnContent,
+  classifyFileAction,
+  countDiffStats,
+  extractToolDiff,
+  extractToolFilePath,
   getAssistantTurnId,
+  groupAssistantActivity,
   hasAssistantProcessContent,
   hasAssistantResponseContent,
   isAssistantProcessBlock,
@@ -134,4 +139,77 @@ test('summarizeAssistantProcess tallies counts plus running/error states', () =>
 test('summarizeAssistantProcess returns zeroed summary for empty input', () => {
   const summary = summarizeAssistantProcess([]);
   assert.deepEqual(summary, { thinking: 0, toolUse: 0, toolResult: 0, running: 0, errors: 0, total: 0 });
+});
+
+test('classifyFileAction maps known tool names to file action kinds', () => {
+  assert.equal(classifyFileAction('read_file'), 'read');
+  assert.equal(classifyFileAction('view'), 'read');
+  assert.equal(classifyFileAction('write_file'), 'write');
+  assert.equal(classifyFileAction('edit'), 'edit');
+  assert.equal(classifyFileAction('str_replace_editor'), 'edit');
+  assert.equal(classifyFileAction('list_directory'), 'list');
+  assert.equal(classifyFileAction('bash'), null);
+  assert.equal(classifyFileAction(''), null);
+  assert.equal(classifyFileAction(undefined), null);
+});
+
+test('extractToolFilePath pulls the most likely path key from tool input', () => {
+  assert.equal(extractToolFilePath('read_file', { path: 'README.md' }), 'README.md');
+  assert.equal(extractToolFilePath('write_file', { filePath: 'src/x.ts' }), 'src/x.ts');
+  assert.equal(extractToolFilePath('edit', { file: 'a.ts', other: 'noise' }), 'a.ts');
+  assert.equal(extractToolFilePath('list_directory', { directory: 'src' }), 'src');
+  assert.equal(extractToolFilePath('read_file', {}), '');
+  assert.equal(extractToolFilePath('read_file', null), '');
+});
+
+test('extractToolDiff prefers details.diff and falls back to unified diff in content', () => {
+  assert.equal(extractToolDiff({ type: 'tool_use', details: { diff: 'D' } }), 'D');
+  const inlineDiff = '--- a.ts\n+++ b.ts\n@@ -1 +1 @@\n-a\n+b\n';
+  assert.equal(extractToolDiff({ type: 'tool_use', content: inlineDiff }), inlineDiff);
+  assert.equal(extractToolDiff({ type: 'tool_use', content: 'plain output' }), '');
+});
+
+test('countDiffStats counts +/- lines but ignores file header lines', () => {
+  const diff = '--- a.ts\n+++ b.ts\n@@ -1,2 +1,3 @@\n-old\n+new1\n+new2\n unchanged\n';
+  assert.deepEqual(countDiffStats(diff), { additions: 2, removals: 1 });
+  assert.deepEqual(countDiffStats(''), { additions: 0, removals: 0 });
+});
+
+test('groupAssistantActivity projects process blocks into Plan/Actions/Files/Results', () => {
+  const blocks: ContentBlock[] = [
+    { type: 'thinking', thinking: 'plan A' },
+    { type: 'tool_use', id: 'r1', name: 'read_file', input: { path: 'README.md' }, status: 'success', content: 'hello' },
+    { type: 'tool_use', id: 'b1', name: 'bash', input: { command: 'ls' }, status: 'success', content: 'a\nb' },
+    { type: 'tool_use', id: 'e1', name: 'edit', input: { path: 'src/x.ts' }, status: 'error', content: 'boom' },
+    { type: 'tool_use', id: 'r2', name: 'read_file', input: { path: 'README.md' }, status: 'success', content: 'hello v2' },
+    { type: 'tool_result', tool_use_id: 'b1', name: 'bash', is_error: true, content: 'detached error' },
+  ];
+
+  const grouped = groupAssistantActivity(blocks);
+
+  assert.equal(grouped.plan.length, 1);
+  assert.equal(grouped.plan[0].text, 'plan A');
+
+  assert.equal(grouped.actions.length, 4);
+  assert.deepEqual(grouped.actions.map((a) => a.toolName), ['read_file', 'bash', 'edit', 'read_file']);
+
+  // Files dedup by path; later read_file wins for README.md.
+  assert.equal(grouped.files.length, 2);
+  const readme = grouped.files.find((f) => f.path === 'README.md');
+  assert.ok(readme);
+  assert.equal(readme!.id, 'r2');
+  assert.equal(readme!.kind, 'read');
+  const edited = grouped.files.find((f) => f.path === 'src/x.ts');
+  assert.ok(edited);
+  assert.equal(edited!.kind, 'edit');
+  assert.equal(edited!.status, 'error');
+
+  // Results = errored tool_use entries + standalone is_error tool_result.
+  assert.equal(grouped.results.length, 2);
+  assert.deepEqual(grouped.results.map((r) => r.id), ['e1', 'b1']);
+});
+
+test('groupAssistantActivity returns empty groups for empty input', () => {
+  const grouped = groupAssistantActivity([]);
+  assert.deepEqual(grouped, { plan: [], actions: [], files: [], results: [] });
 });

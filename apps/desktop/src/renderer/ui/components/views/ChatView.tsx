@@ -776,15 +776,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 const isAssistant = msg.role === 'assistant';
                 const isLatestAssistant =
                   isAssistant && !snap.chatStreamingMessage && i === lastAssistantIndex;
-                const selected =
-                  isAssistant && turnId !== undefined && sidebarTarget.message === msg;
                 return (
                   <ChatBubble
                     key={getMessageKey(msg, i)}
                     message={msg}
                     onOpenPreview={handleOpenPreview}
                     conversationId={snap.chatActiveConversation || undefined}
-                    selected={selected}
                     onSelect={
                       isAssistant && turnId !== undefined
                         ? () => handleSelectTurn(turnId, isLatestAssistant)
@@ -801,7 +798,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 streaming
                 onOpenPreview={handleOpenPreview}
                 conversationId={snap.chatActiveConversation || undefined}
-                selected={sidebarTarget.message === snap.chatStreamingMessage}
                 onSelect={() => handleSelectTurn(streamingTurnId, true)}
               />
             ) : null}
@@ -998,6 +994,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           <ActivitySidebar
             message={sidebarTarget.message}
             streaming={sidebarTarget.streaming}
+            pinned={userPinned}
+            onShowLatest={() => {
+              setUserPinned(false);
+              setSelectedTurnId(null);
+            }}
             onOpenPreview={handleOpenPreview}
           />
         )}

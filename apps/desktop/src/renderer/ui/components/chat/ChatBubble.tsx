@@ -165,7 +165,7 @@ function StreamingMarkdown({ text }: { text: string }) {
   );
 }
 
-export function ThinkingBlockView({ block }: { block: ContentBlock }) {
+function ThinkingBlockView({ block }: { block: ContentBlock }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const isOpen = manualToggle ?? true;
 
@@ -318,7 +318,7 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
   );
 }
 
-export function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOpenPreview?: (url: string) => void }) {
+function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOpenPreview?: (url: string) => void }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
   const wasRunningRef = useRef(false);
@@ -712,17 +712,15 @@ type ChatBubbleProps = {
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
-  /** Experimental (Codex-style activity sidebar): when true, render a subtle
-   *  selected-turn affordance on this bubble. Defaults to false; non-Codex
-   *  surfaces are unaffected. */
-  selected?: boolean;
   /** Experimental (Codex-style activity sidebar): if provided, clicking the
-   *  bubble selects this assistant turn. Clicks on links/buttons/code blocks
-   *  are ignored so existing in-bubble controls keep working. */
+   *  bubble silently re-targets the sidebar to this assistant turn. There is
+   *  intentionally no visual affordance — the sidebar header carries the
+   *  scope indicator instead. Clicks on links/buttons/code blocks are
+   *  ignored so existing in-bubble controls keep working. */
   onSelect?: () => void;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, selected = false, onSelect }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, onSelect }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -774,8 +772,11 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
 
   const isSelectable = message.role === 'assistant' && typeof onSelect === 'function';
 
-  // Ignore clicks that originate from interactive descendants so existing
-  // copy buttons, links, code blocks and the tool modal keep working.
+  // Codex-style activity sidebar (experiment): selection is intentionally
+  // silent — no visual affordance on the bubble. Clicking re-targets the
+  // sidebar; the sidebar header carries the scope indicator. Clicks inside
+  // interactive descendants are ignored so links/copy/code blocks keep
+  // working.
   const handleBubbleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!isSelectable) return;
     const target = event.target as HTMLElement | null;
@@ -783,29 +784,10 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
     onSelect?.();
   }, [isSelectable, onSelect]);
 
-  const handleBubbleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isSelectable) return;
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    const target = event.target as HTMLElement | null;
-    if (target && target.closest('a, button, pre, code, input, textarea')) return;
-    event.preventDefault();
-    onSelect?.();
-  }, [isSelectable, onSelect]);
-
-  const className = [
-    styles.chatBubble,
-    message.role === 'user' ? styles.own : styles.other,
-    selected ? styles.selectedTurn : '',
-  ].filter(Boolean).join(' ');
-
   return (
     <div
-      className={className}
+      className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}
       onClick={isSelectable ? handleBubbleClick : undefined}
-      onKeyDown={isSelectable ? handleBubbleKeyDown : undefined}
-      role={isSelectable ? 'button' : undefined}
-      tabIndex={isSelectable ? 0 : undefined}
-      aria-pressed={isSelectable ? selected : undefined}
     >
       {bubbleMeta}
       <div>{content}</div>

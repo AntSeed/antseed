@@ -656,6 +656,216 @@ export function summarizeAssistantProcess(blocks: ContentBlock[]): AssistantProc
   };
 }
 
+// ---------------------------------------------------------------------------
+// Codex-style activity grouping (experimental)
+//
+// These helpers project the raw processBlocks of an assistant turn into the
+// review-oriented sections the Codex-style sidebar uses (Plan / Actions /
+// Files / Results). They are pure derivations — no UI deps — so they can be
+// unit-tested in isolation.
+// ---------------------------------------------------------------------------
+
+export function extractToolDiff(block: ContentBlock): string {
+  const detailsDiff = block.details?.diff;
+  if (typeof detailsDiff === 'string' && detailsDiff.trim().length > 0) {
+    return detailsDiff;
+  }
+  const output = String(block.content || '');
+  if (/^--- .*?\n\+\+\+ .*?\n@@/m.test(output)) {
+    return output;
+  }
+  return '';
+}
+
+export function countDiffStats(diff: string): { additions: number; removals: number } {
+  let additions = 0;
+  let removals = 0;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) additions += 1;
+    if (line.startsWith('-')) removals += 1;
+  }
+  return { additions, removals };
+}
+
+export type FileActionKind = 'read' | 'write' | 'edit' | 'list';
+
+const READ_TOOLS = new Set(['read_file', 'read', 'view', 'cat']);
+const WRITE_TOOLS = new Set(['write_file', 'write', 'create_file', 'create']);
+const EDIT_TOOLS = new Set(['edit', 'replace', 'str_replace', 'str_replace_editor', 'apply_patch', 'patch']);
+const LIST_TOOLS = new Set(['list_directory', 'list_dir', 'ls', 'find']);
+
+export function classifyFileAction(name: unknown): FileActionKind | null {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return null;
+  if (READ_TOOLS.has(key)) return 'read';
+  if (WRITE_TOOLS.has(key)) return 'write';
+  if (EDIT_TOOLS.has(key)) return 'edit';
+  if (LIST_TOOLS.has(key)) return 'list';
+  return null;
+}
+
+export function extractToolFilePath(name: unknown, input: unknown): string {
+  if (!input || typeof input !== 'object') return '';
+  const payload = input as Record<string, unknown>;
+  const kind = classifyFileAction(name);
+  const keys = kind === 'list'
+    ? ['path', 'directory', 'dir', 'target']
+    : ['path', 'filePath', 'file_path', 'file', 'target', 'filename'];
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+  return '';
+}
+
+export type ActivityActionItem = {
+  id: string;
+  label: string;
+  toolName: string;
+  status: 'running' | 'success' | 'error';
+  output: string;
+  diff: string;
+  additions: number;
+  removals: number;
+  previewUrl?: string;
+};
+
+export type ActivityFileItem = {
+  id: string;
+  path: string;
+  kind: FileActionKind;
+  status: 'running' | 'success' | 'error';
+  diff: string;
+  additions: number;
+  removals: number;
+  output: string;
+};
+
+export type ActivityResultItem = {
+  id: string;
+  label: string;
+  status: 'error';
+  output: string;
+};
+
+export type ActivityPlanItem = {
+  id: string;
+  text: string;
+  streaming: boolean;
+};
+
+export type GroupedAssistantActivity = {
+  plan: ActivityPlanItem[];
+  actions: ActivityActionItem[];
+  files: ActivityFileItem[];
+  results: ActivityResultItem[];
+};
+
+function normalizeStatus(block: ContentBlock): 'running' | 'success' | 'error' {
+  if (block.status === 'running' || block.streaming) return 'running';
+  if (block.status === 'error' || block.is_error) return 'error';
+  if (block.status === 'success') return 'success';
+  return 'success';
+}
+
+const PREVIEW_TOOL_NAMES = new Set(['open_browser_preview', 'start_dev_server']);
+
+function extractPreviewUrl(name: unknown, input: unknown, output: string): string | undefined {
+  const toolName = String(name || '');
+  if (!PREVIEW_TOOL_NAMES.has(toolName)) return undefined;
+  const inputObj = (typeof input === 'object' && input !== null) ? input as Record<string, unknown> : {};
+  const url = typeof inputObj.url === 'string' ? inputObj.url : undefined;
+  if (url) return url;
+  const urlMatch = output.match(/https?:\/\/\S+/);
+  return urlMatch?.[0];
+}
+
+export function groupAssistantActivity(blocks: ContentBlock[]): GroupedAssistantActivity {
+  const plan: ActivityPlanItem[] = [];
+  const actions: ActivityActionItem[] = [];
+  const filesByPath = new Map<string, ActivityFileItem>();
+  const results: ActivityResultItem[] = [];
+
+  blocks.forEach((block, index) => {
+    if (block.type === 'thinking') {
+      const text = String(block.thinking || '').trim();
+      if (text.length > 0) {
+        plan.push({
+          id: String(block.id || `plan-${index}`),
+          text,
+          streaming: Boolean(block.streaming),
+        });
+      }
+      return;
+    }
+
+    if (block.type === 'tool_use') {
+      const status = normalizeStatus(block);
+      const output = String(block.content || '');
+      const diff = extractToolDiff(block);
+      const { additions, removals } = countDiffStats(diff);
+      const id = String(block.id || `action-${index}`);
+      const action: ActivityActionItem = {
+        id,
+        label: formatToolExecutionLabel(block.name, block.input),
+        toolName: String(block.name || '').trim(),
+        status,
+        output,
+        diff,
+        additions,
+        removals,
+        previewUrl: extractPreviewUrl(block.name, block.input, output),
+      };
+      actions.push(action);
+
+      if (status === 'error') {
+        results.push({
+          id,
+          label: action.label,
+          status: 'error',
+          output,
+        });
+      }
+
+      const kind = classifyFileAction(block.name);
+      const path = extractToolFilePath(block.name, block.input);
+      if (kind && path) {
+        // Latest action wins per path — dedup keeps the sidebar tight when the
+        // agent re-reads or re-edits the same file.
+        filesByPath.set(path, {
+          id,
+          path,
+          kind,
+          status,
+          diff,
+          additions,
+          removals,
+          output,
+        });
+      }
+      return;
+    }
+
+    if (block.type === 'tool_result' && block.is_error) {
+      const id = String(block.tool_use_id || block.id || `result-${index}`);
+      results.push({
+        id,
+        label: toToolDisplayName(block.name) || 'Tool error',
+        status: 'error',
+        output: String(block.content || ''),
+      });
+    }
+  });
+
+  return {
+    plan,
+    actions,
+    files: Array.from(filesByPath.values()),
+    results,
+  };
+}
+
 function mergeAssistantMessages(base: ChatMessage, next: ChatMessage): ChatMessage {
   const mergedBase = cloneChatMessage(base);
   const mergedNext = cloneChatMessage(next);
