@@ -189,6 +189,19 @@ export function classifyChatStreamFailure({
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
 
+  const antseedNetworkLike =
+    /\bno antseed providers were discovered\b|\bno sellers available\b|\bno peers discovered\b|\bp2p request failed\b|\bselected provider .* is not reachable\b|\bpinned peer .* not discoverable\b|\bconnection to [0-9a-f]{12,} (?:failed|timed out)\b/i.test(rawMessage);
+  if (antseedNetworkLike) {
+    return {
+      kind: 'network_error',
+      source: 'transport',
+      retryable: true,
+      message: 'AntStation could not reach a provider on the AntSeed network. The provider may be offline, blocked by VPN/firewall/NAT, or discovery has not found peers yet. Try Scan Network, choose another provider, or retry in a moment.',
+      ...(statusCode ? { statusCode } : {}),
+      ...(errorCode ? { errorCode } : {}),
+    };
+  }
+
   // Keep the text-based abort match narrow so transport-side aborts (e.g.
   // "connection aborted by remote") aren't misclassified as user-initiated.
   if (

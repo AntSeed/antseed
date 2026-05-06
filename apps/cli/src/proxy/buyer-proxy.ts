@@ -104,6 +104,26 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_THRESHOLD = 10
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 
+type ProxyErrorHelp = Record<string, string | number | boolean | null>
+
+function writeProxyJsonError(
+  res: ServerResponse,
+  statusCode: number,
+  code: string,
+  message: string,
+  help?: ProxyErrorHelp,
+): void {
+  res.writeHead(statusCode, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({
+    error: {
+      type: code,
+      code,
+      message,
+      ...(help ? { help } : {}),
+    },
+  }))
+}
+
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
 type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
 
@@ -327,6 +347,10 @@ export class BuyerProxy {
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
+  private _lastDiscoveryStartedAtMs = 0
+  private _lastDiscoveryFinishedAtMs = 0
+  private _lastDiscoveryPeerCount = 0
+  private _lastDiscoveryError: string | null = null
 
   /**
    * Per-peer rolling failure counters. Entries are created on the first
@@ -676,11 +700,26 @@ export class BuyerProxy {
 
   private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
     log('Discovering peers via DHT...')
-    const peers = await this._node.discoverPeers()
-    if (peers.length > 0) {
-      log(`Found ${peers.length} peer(s)`)
+    this._lastDiscoveryStartedAtMs = Date.now()
+    this._lastDiscoveryError = null
+    try {
+      const peers = await this._node.discoverPeers()
+      this._lastDiscoveryPeerCount = peers.length
+      if (peers.length > 0) {
+        log(`Found ${peers.length} peer(s)`)
+      } else {
+        log('Discovery completed with 0 peers')
+      }
+      return peers
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this._lastDiscoveryError = message
+      this._lastDiscoveryPeerCount = 0
+      log(`Discovery failed: ${message}`)
+      throw err
+    } finally {
+      this._lastDiscoveryFinishedAtMs = Date.now()
     }
-    return peers
   }
 
   private async _refreshPeersNow(): Promise<PeerInfo[]> {
@@ -741,6 +780,32 @@ export class BuyerProxy {
     return this._refreshPeersNow()
   }
 
+  private _getStatusPayload(): Record<string, unknown> {
+    const cacheAgeMs = this._cacheLastUpdatedAtMs > 0 ? Date.now() - this._cacheLastUpdatedAtMs : null
+    return {
+      ok: true,
+      proxy: 'connected',
+      peerCache: {
+        count: this._cachedPeers.length,
+        lastUpdatedAtMs: this._cacheLastUpdatedAtMs,
+        ageMs: cacheAgeMs,
+        ttlMs: this._peerCacheTtlMs,
+        stale: cacheAgeMs === null || cacheAgeMs > this._peerCacheTtlMs,
+      },
+      discovery: {
+        refreshInProgress: this._peerRefreshPromise !== null,
+        lastStartedAtMs: this._lastDiscoveryStartedAtMs,
+        lastFinishedAtMs: this._lastDiscoveryFinishedAtMs,
+        lastPeerCount: this._lastDiscoveryPeerCount,
+        lastError: this._lastDiscoveryError,
+      },
+      routing: {
+        pinnedPeerId: this._pinnedPeer,
+        pinnedService: this._pinnedService,
+      },
+    }
+  }
+
   private _formatPeerSelectionDiagnostics(peers: PeerInfo[]): string {
     if (peers.length === 0) {
       return 'No peers discovered.'
@@ -778,6 +843,12 @@ export class BuyerProxy {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
       res.writeHead(204)
       res.end()
+      return
+    }
+
+    if (path === '/_antseed/status' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(this._getStatusPayload()))
       return
     }
 
@@ -1023,8 +1094,16 @@ export class BuyerProxy {
     const peers = await this._getPeers()
     if (peers.length === 0) {
       log('No sellers available')
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end('No sellers available on the network. Is a seeder running?')
+      writeProxyJsonError(
+        res,
+        502,
+        'no_sellers_available',
+        'No AntSeed providers were discovered. Buyer runtime is online, but network discovery returned zero peers.',
+        {
+          action: 'Check internet, VPN, firewall, or try Scan Network again.',
+          lastDiscoveryError: this._lastDiscoveryError,
+        },
+      )
       return
     }
 
@@ -1086,12 +1165,12 @@ export class BuyerProxy {
       const logSource = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag or session pin'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
       log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... is not reachable right now. `
-        + 'It may be offline, not announcing, or temporarily unreachable. '
-        + 'Pick a different service in Discover or try again later. '
-        + diagnostics,
+      writeProxyJsonError(
+        res,
+        502,
+        'pinned_peer_not_discoverable',
+        `Selected provider ${explicitPeerId.slice(0, 12)}... is not reachable right now. It may be offline, not announcing, or blocked by network/NAT/firewall.`,
+        { diagnostics },
       )
       return
     }
@@ -1110,23 +1189,24 @@ export class BuyerProxy {
         if (!providers.includes(explicitProvider)) {
           const providerList = providers.length > 0 ? providers.join(', ') : 'none'
           log(`Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
-          res.writeHead(502, { 'content-type': 'text/plain' })
-          res.end(
-            `Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
-            + `Available providers: ${providerList}. `
-            + 'Remove or change the x-antseed-provider header, or pick a different peer. '
-            + diagnostics,
+          writeProxyJsonError(
+            res,
+            502,
+            'pinned_peer_provider_mismatch',
+            `Selected provider ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. Available providers: ${providerList}.`,
+            { diagnostics },
           )
           return
         }
       }
 
       log(`Pinned peer ${explicitPeerId.slice(0, 12)}... filtered out by protocol/service match`)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... does not support this request `
-        + `(${protocolLabel}, ${providerLabel}, ${serviceLabel}). `
-        + `Pick a different service in Discover. ${diagnostics}`,
+      writeProxyJsonError(
+        res,
+        502,
+        'pinned_peer_service_mismatch',
+        `Selected provider ${explicitPeerId.slice(0, 12)}... does not support this request (${protocolLabel}, ${providerLabel}, ${serviceLabel}). Pick a different service in Discover.`,
+        { diagnostics },
       )
       return
     }
@@ -1142,8 +1222,12 @@ export class BuyerProxy {
     // if an invariant breaks.
     if (!selectedPeer) {
       log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
+      writeProxyJsonError(
+        res,
+        502,
+        'pinned_peer_unreachable',
+        `Selected provider ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment or choose another provider.`,
+      )
       return
     }
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
@@ -1486,7 +1570,18 @@ export class BuyerProxy {
         return { done: true }
       }
 
-      return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }
+      const body = JSON.stringify({
+        error: {
+          type: 'p2p_connection_failed',
+          code: 'p2p_connection_failed',
+          message: `P2P request failed: ${message}`,
+          help: {
+            action: 'Try another provider, scan the network again, or check VPN/firewall/NAT connectivity.',
+            peerId: selectedPeer.peerId,
+          },
+        },
+      })
+      return { done: false, statusCode: 502, responseBody: Buffer.from(body), responseHeaders: { 'content-type': 'application/json' }, errorMessage: message }
     }
   }
 }
