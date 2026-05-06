@@ -474,6 +474,43 @@ describe('HttpRelay', () => {
       expect(upstreamBody().stream_options).toBeUndefined();
     });
 
+    it('leaves Anthropic /v1/messages requests untouched even with stream:true', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const responses: SerializedHttpResponse[] = [];
+      const relay = new HttpRelay(
+        makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }),
+        { onResponse: (r) => responses.push(r) },
+      );
+      await relay.handleRequest(makeRequest({
+        path: '/v1/messages',
+        body: new TextEncoder().encode(JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        })),
+      }));
+      const body = upstreamBody();
+      // Anthropic /v1/messages does not understand stream_options.
+      expect(body.stream_options).toBeUndefined();
+    });
+
+    it('is a no-op when the protocol transform already injected include_usage:true', async () => {
+      // Simulates traffic from the Anthropic→Chat or Responses→Chat transform:
+      // the request reaches the relay with path=/v1/chat/completions and
+      // stream_options.include_usage already set to true.
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      const { relay } = relayWith();
+      await relay.handleRequest(chatCompletionsRequest({
+        model: 'minimax-m2.7-highspeed',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }));
+      // Body unchanged — we do not duplicate or mutate when the option is
+      // already correctly set by an upstream transform.
+      expect(upstreamBody().stream_options).toEqual({ include_usage: true });
+    });
+
     it('still defers to operator injectJsonFields override', async () => {
       fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
       // Operator can still force their own value via OPENAI_BODY_INJECT_JSON.
