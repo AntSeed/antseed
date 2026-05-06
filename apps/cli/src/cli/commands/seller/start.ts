@@ -16,6 +16,7 @@ import type { AntseedConfig } from '../../../config/types.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
@@ -333,6 +334,17 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.error(chalk.dim(`Configured providers: ${configuredProviderNames.join(', ') || '(none)'}`))
         process.exit(1)
       }
+
+      // Refresh any installed plugin whose pinned `@antseed/*` core deps are
+      // older than the versions the CLI itself bundles. Must run BEFORE the
+      // first `loadProviderPlugin` import below — once a plugin is `import()`-ed,
+      // refreshing it on disk has no effect on the running process.
+      // Best-effort: failures here log a warning and let startup continue
+      // with the existing (possibly stale) plugins.
+      const selectedProviderPackages = selectedProviderNames.map((name) =>
+        resolvePluginPackage(effectiveSellerConfig.providers[name]!.plugin),
+      )
+      await ensurePluginsUpToDate(selectedProviderPackages)
 
       const providers: Provider[] = []
       for (const providerName of selectedProviderNames) {

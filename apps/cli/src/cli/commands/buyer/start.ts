@@ -12,6 +12,8 @@ import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
+import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
@@ -224,6 +226,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           console.error(chalk.red(`Instance "${options.instance}" is a ${instance.type}, not a router.`))
           process.exit(1)
         }
+        // Refresh stale plugins before importing them. Best-effort; see
+        // ensurePluginsUpToDate / plugins/drift.ts for the full rationale.
+        await ensurePluginsUpToDate([resolvePluginPackage(instance.package)])
         const spinner = ora(`Loading router plugin "${instance.package}"...`).start()
         try {
           const plugin = await loadRouterPlugin(instance.package)
@@ -237,6 +242,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           process.exit(1)
         }
       } else {
+        // Refresh stale plugins before importing them. Best-effort; see
+        // ensurePluginsUpToDate / plugins/drift.ts for the full rationale.
+        await ensurePluginsUpToDate([resolvePluginPackage(routerName)])
         const spinner = ora(`Loading router plugin "${routerName}"...`).start()
         try {
           const plugin = await loadRouterPlugin(routerName)
