@@ -88,6 +88,8 @@ export interface SellerCLIConfig {
   agentDir?: string | Record<string, string>;
   /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
   publicAddress?: string;
+  /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
+  maxUploadBodyBytes?: number;
 }
 
 /**

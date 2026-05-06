@@ -176,6 +176,14 @@ function toUSDCBaseUnits(value: string | undefined, fallbackBaseUnits: string): 
   return String(Math.round(parsed * 1_000_000))
 }
 
+export function parseOptionalPositiveIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return undefined
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
 export function buildSellerRuntimeOverridesFromFlags(options: {
   reserve?: number
   inputUsdPerMillion?: number
@@ -285,8 +293,6 @@ export function mergeSellerRuntimeEnv(
 
   return merged
 }
-
-
 
 export function registerSellerStartCommand(sellerCmd: Command): void {
   sellerCmd
@@ -478,6 +484,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
+        ?? effectiveSellerConfig.maxUploadBodyBytes
+      if (maxUploadBodyBytes !== undefined) {
+        console.log(chalk.dim(`  max upload body bytes: ${maxUploadBodyBytes}`))
+      }
       console.log('')
 
       const nodeSpinner = ora('Starting seeding daemon...').start()
@@ -498,6 +509,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
         ...(signalingPort ? { signalingPort } : {}),
+        ...(maxUploadBodyBytes !== undefined ? { maxUploadBodyBytes } : {}),
         payments: {
           enabled: paymentsEnabled,
           paymentMethod: preferredMethod,
@@ -632,7 +644,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           syntheticDetails.push({
             sessionId,
             buyerPeerId: 'unknown',
-              provider: primaryProviderName,
+            provider: primaryProviderName,
             startedAt: startedAtTs,
             lastActivityAt: now,
             totalRequests: 0,

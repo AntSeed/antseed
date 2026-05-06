@@ -190,6 +190,7 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       providers: mergeSellerProviders(defaults.providers, undefined),
       publicAddress: defaults.publicAddress,
+      ...(typeof defaults.maxUploadBodyBytes === 'number' ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes } : {}),
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
     };
   }
@@ -205,6 +206,11 @@ function mergeSellerConfig(
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
+    ...(typeof value['maxUploadBodyBytes'] === 'number'
+      ? { maxUploadBodyBytes: value['maxUploadBodyBytes'] }
+      : typeof defaults.maxUploadBodyBytes === 'number'
+        ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes }
+        : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
   };
 }

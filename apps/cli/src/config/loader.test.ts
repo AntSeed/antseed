@@ -166,6 +166,36 @@ test('loadConfig preserves seller publicAddress override', async () => {
   );
 });
 
+test('loadConfig preserves seller maxUploadBodyBytes setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        maxUploadBodyBytes: 134217728,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.seller.maxUploadBodyBytes, 134217728);
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller maxUploadBodyBytes setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        maxUploadBodyBytes: 123,
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.maxUploadBodyBytes/
+      );
+    }
+  );
+});
+
 test('loadConfig preserves seller agentDir setting', async () => {
   await withTempConfig(
     JSON.stringify({

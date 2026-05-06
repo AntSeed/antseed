@@ -115,6 +115,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
   },
   "seller": {
     "publicAddress": "peer.example.com:6882",
+    "maxUploadBodyBytes": 134217728,
     "providers": {
       "anthropic": {
         "plugin": "anthropic",
@@ -193,6 +194,9 @@ antseed config seller set providers.anthropic.services.claude-sonnet-4-5-2025092
 
 # Seller public address override for load-balanced deployments
 antseed config seller set publicAddress "peer.example.com:6882"
+
+# Raise the seller per-request upload cap (bytes) for large Codex-style payloads
+antseed config seller set maxUploadBodyBytes 134217728
 
 # Buyer max pricing
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
