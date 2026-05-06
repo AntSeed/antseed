@@ -2,8 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { DecodedMetadataRecorded } from '@antseed/node';
-import { SqliteStore } from './store.js';
-import { MetadataIndexer } from './indexer.js';
+import { SqliteStore } from '../store.js';
+import { MetadataIndexer } from './metadata-indexer.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

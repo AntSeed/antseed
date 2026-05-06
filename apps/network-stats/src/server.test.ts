@@ -11,7 +11,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createServer, __resetAgentIdCacheForTests } from './server.js';
+import { createServer } from './server.js';
 import { SqliteStore } from './store.js';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient, DecodedMetadataRecorded } from '@antseed/node';
@@ -93,8 +93,6 @@ describe('createServer — legacy path (no store/stakingClient)', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('GET /stats returns snapshot shape without onChainStats', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     assert.equal(res.status, 200);
@@ -123,8 +121,6 @@ describe('createServer — enriched: agent with totals', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats with correct values including analytics', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as {
@@ -197,7 +193,6 @@ describe('createServer — enriched: contract-backed peer uses sellerContract', 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     seen.length = 0;
   });
 
@@ -229,8 +224,6 @@ describe('createServer — enriched: network totals include inactive sellers', (
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('returns aggregate totals across all indexed sellers, not just active peers', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as {
@@ -261,8 +254,6 @@ describe('createServer — enriched: agent with no events in store', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats: null when store has no row', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: unknown }> };
@@ -282,8 +273,6 @@ describe('createServer — enriched: unstaked peer returns agentId 0', () => {
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('peer has onChainStats: null when agentId is 0', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: unknown }> };
@@ -305,7 +294,6 @@ describe('createServer — enriched: peer missing peerId', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
   });
 
@@ -336,7 +324,6 @@ describe('createServer — enriched: cache reused across requests', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
   });
 
@@ -348,6 +335,75 @@ describe('createServer — enriched: cache reused across requests', () => {
     // Second request: all 3 addresses are cached
     await fetch(`http://localhost:${PORT}/stats`);
     assert.equal(counter.calls, 3, 'second request should not call getAgentId again (cache hit)');
+  });
+});
+
+// ── Test 8a: Cache is scoped per server instance ─────────────────────────────
+
+describe('createServer — enriched: cache isolation', () => {
+  it('does not share agentId cache entries across createServer calls', async () => {
+    const port1 = nextPort();
+    const port2 = nextPort();
+    const peers = [fakePeer('shared', '0xshared')];
+    const poller = makePoller(peers);
+    const store1 = makeStore();
+    const store2 = makeStore();
+    const counter1 = { calls: 0 };
+    const counter2 = { calls: 0 };
+    const handle1 = createServer({
+      poller,
+      store: store1,
+      stakingClient: makeStakingClient(() => 0, counter1),
+      port: port1,
+    });
+    const handle2 = createServer({
+      poller,
+      store: store2,
+      stakingClient: makeStakingClient(() => 0, counter2),
+      port: port2,
+    });
+
+    await handle1.start();
+    await handle2.start();
+    try {
+      await fetch(`http://localhost:${port1}/stats`);
+      await fetch(`http://localhost:${port2}/stats`);
+
+      assert.equal(counter1.calls, 1);
+      assert.equal(counter2.calls, 1);
+    } finally {
+      handle1.stop();
+      handle2.stop();
+      store1.close();
+      store2.close();
+    }
+  });
+});
+
+// ── Test 8b: Duplicate addresses are resolved once ──────────────────────────────
+
+describe('createServer — enriched: duplicate addresses are deduped per request', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const peers = [
+    fakePeer('dup1', '0xduplicated'),
+    fakePeer('dup2', '0xduplicated'),
+  ];
+  const poller = makePoller(peers);
+  const counter = { calls: 0 };
+  const stakingClient = makeStakingClient(() => 0, counter);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => {
+    counter.calls = 0;
+  });
+
+  it('calls getAgentId once for peers sharing the same lookup address', async () => {
+    await fetch(`http://localhost:${PORT}/stats`);
+
+    assert.equal(counter.calls, 1);
   });
 });
 
@@ -370,7 +426,6 @@ describe('createServer — enriched: RPC failure does not cache', () => {
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => {
-    __resetAgentIdCacheForTests();
     counter.calls = 0;
     shouldFail = true;
   });
@@ -411,8 +466,6 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
 
   before(async () => { await handle.start(); });
   after(() => { handle.stop(); store.close(); });
-  beforeEach(() => { __resetAgentIdCacheForTests(); });
-
   it('large bigint values survive JSON serialization as strings', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     const body = await res.json() as { peers: Array<{ onChainStats: { totalRequests: string; totalInputTokens: string; totalOutputTokens: string } | null }> };
@@ -424,3 +477,454 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
   });
 });
 
+// ── Test 11: Network metrics — legacy fast path ───────────────────────────────
+
+// fakePeer() sets version='v1' (string) which the aggregator skips. These
+// tests need real-shaped values to exercise the aggregate logic, so they
+// override the noisy fields directly on the fixture.
+type AggPeer = Record<string, unknown>;
+function aggregatePeer(address: string, overrides: Partial<AggPeer>): AggPeer {
+  return { ...fakePeer('agg', address), ...overrides };
+}
+
+describe('createServer — network metrics: legacy fast path', () => {
+  const PORT = nextPort();
+  const peers = [
+    aggregatePeer('0xaaa', {}),
+    aggregatePeer('0xbbb', {}),
+    aggregatePeer('0xccc', {}),
+  ];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('GET /stats returns a network block alongside peers/updatedAt', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      peers: unknown[];
+      updatedAt: string;
+      network: {
+        peerCount: number;
+        serviceCounts: Record<string, number>;
+        serviceCategoryCounts: Record<string, number>;
+        stake: unknown;
+        freshness: { medianAgeSeconds: number } | null;
+        peersWithSellerContract: number;
+        peersWithDisplayName: number;
+      };
+    };
+    assert.ok(body.network, 'network block must be present in legacy path');
+    assert.equal(body.network.peerCount, 3);
+    assert.deepEqual(body.network.serviceCounts, {});           // no providers in fixture
+    assert.deepEqual(body.network.serviceCategoryCounts, {});
+    assert.equal(body.network.stake, null);                     // no stake in fixture
+    assert.equal(body.network.peersWithSellerContract, 0);
+    assert.equal(body.network.peersWithDisplayName, 0);
+    assert.ok(body.network.freshness, 'freshness present when peers carry timestamps');
+  });
+});
+
+// ── Test 12: Network metrics — enriched path ──────────────────────────────────
+
+describe('createServer — network metrics: enriched path', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const peers = [
+    aggregatePeer('0xabc', {}),
+    aggregatePeer('0xdef', {}),
+  ];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 0); // both unstaked
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  it('enriched response includes network alongside peers and totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      peers: unknown[];
+      network: {
+        peerCount: number;
+      };
+      totals: { sellerCount: number };
+    };
+    assert.ok(body.network, 'network block must be present in enriched path');
+    assert.equal(body.network.peerCount, 2);
+    assert.ok(body.totals, 'totals must still be present in enriched path');
+  });
+});
+
+// ── Test 13: /history endpoint ────────────────────────────────────────────────
+
+describe('createServer — GET /history', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  // Seed a couple of samples a few hours apart so 1d bucketing has data.
+  const nowSec = Math.floor(Date.now() / 1000);
+  store.recordHistorySample({
+    ts: nowSec - 3600 * 3,
+    activePeers: 5,
+    sellerCount: 2,
+    totalRequests: 100n,
+    totalInputTokens: 0n,
+    totalOutputTokens: 0n,
+    settlementCount: 10,
+  });
+  store.recordHistorySample({
+    ts: nowSec - 60,
+    activePeers: 8,
+    sellerCount: 3,
+    totalRequests: 150n,
+    totalInputTokens: 0n,
+    totalOutputTokens: 0n,
+    settlementCount: 14,
+  });
+
+  const poller = makePoller([fakePeer('a', '0xabc')]);
+  const stakingClient = makeStakingClient(() => 0);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('GET /history?range=1d returns hourly buckets with delta + last-gauge fields', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<{ ts: number; activePeers: number; requests: number; settlements: number }>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2, 'expected at least 2 points');
+    const last = body.points[body.points.length - 1]!;
+    assert.equal(last.activePeers, 8);
+    // Last bucket's request delta uses the previous bucket's last cumulative
+    // as baseline → 150 - 100 = 50.
+    assert.equal(last.requests, 50);
+    assert.equal(last.settlements, 4);
+  });
+
+  it('GET /history with no range defaults to 1d', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string };
+    assert.equal(body.range, '1d');
+  });
+
+  it('GET /history?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history?range=bogus`);
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /history/peers projects only peer-activity fields', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<Record<string, unknown>>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2);
+    const last = body.points[body.points.length - 1]!;
+    assert.deepEqual(Object.keys(last).sort(), ['activePeers', 'requests', 'settlements', 'ts']);
+    assert.equal(last['activePeers'], 8);
+    assert.equal(last['requests'], 50);
+    assert.equal(last['settlements'], 4);
+  });
+
+  it('GET /history/tokens projects only the tokens field', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens?range=1d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      range: string;
+      bucketSeconds: number;
+      points: Array<Record<string, unknown>>;
+    };
+    assert.equal(body.range, '1d');
+    assert.equal(body.bucketSeconds, 3600);
+    assert.ok(body.points.length >= 2);
+    const last = body.points[body.points.length - 1]!;
+    assert.deepEqual(Object.keys(last).sort(), ['tokens', 'ts']);
+    assert.equal(typeof last['tokens'], 'number');
+  });
+
+  it('GET /history/peers?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=bogus`);
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /history/tokens?range=bogus returns 400', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens?range=bogus`);
+    assert.equal(res.status, 400);
+  });
+});
+
+// ── Test 14: /history with no store ───────────────────────────────────────────
+
+describe('createServer — GET /history without store', () => {
+  const PORT = nextPort();
+  const poller = makePoller([fakePeer('a', undefined)]);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; points: unknown[] };
+    assert.equal(body.range, '1d');
+    assert.deepEqual(body.points, []);
+  });
+
+  it('GET /history/peers returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/peers?range=7d`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; bucketSeconds: number; points: unknown[] };
+    assert.equal(body.range, '7d');
+    assert.equal(body.bucketSeconds, 86400);
+    assert.deepEqual(body.points, []);
+  });
+
+  it('GET /history/tokens returns empty payload when no store is configured', async () => {
+    const res = await fetch(`http://localhost:${PORT}/history/tokens`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { range: string; points: unknown[] };
+    assert.equal(body.range, '1d');
+    assert.deepEqual(body.points, []);
+  });
+});
+
+// ── Test 15: /insights endpoint ───────────────────────────────────────────────
+
+describe('createServer — GET /insights (enriched)', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  // Seed a single seller's totals so the leaderboards have something to rank.
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 7n, blockNumber: 100, inputTokens: 1000n, outputTokens: 2000n, requestCount: 50n }),
+  ], 1);
+  // Seed two history samples to drive a non-null 24h velocity window.
+  const nowSec = Math.floor(Date.now() / 1000);
+  store.recordHistorySample({
+    ts: nowSec - 86400 - 60,
+    activePeers: 1, sellerCount: 1,
+    totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+  });
+  store.recordHistorySample({
+    ts: nowSec - 60,
+    activePeers: 2, sellerCount: 1,
+    totalRequests: 60n, totalInputTokens: 1100n, totalOutputTokens: 2200n, settlementCount: 5,
+  });
+
+  const peers = [fakePeer('a', '0xabc1234')];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 7);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('returns leaderboards + pricing + concentration + velocity + activity', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      leaderboards: { mostActive: Array<{ agentId: number; metric: string }> };
+      pricing: { byService: Record<string, unknown> };
+      services: { topServices: unknown[]; topCategories: unknown[] };
+      regions: unknown[];
+      concentration: { sellerCount: number };
+      velocity: { last24h: { requestsDelta: string } | null };
+      activity: { peersOnline: number; totalSellersIndexed: number };
+    };
+    assert.ok(Array.isArray(body.leaderboards.mostActive));
+    assert.equal(body.leaderboards.mostActive.length, 1);
+    assert.equal(body.leaderboards.mostActive[0]!.agentId, 7);
+    assert.equal(body.leaderboards.mostActive[0]!.metric, '50');
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.activity.totalSellersIndexed, 1);
+    assert.equal(body.concentration.sellerCount, 1);
+    assert.ok(body.velocity.last24h !== null);
+    assert.equal(body.velocity.last24h!.requestsDelta, '50');
+  });
+
+  it('GET /insights/leaderboards projects only generatedAt + leaderboards', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/leaderboards`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      leaderboards: { mostActive: Array<{ agentId: number }> };
+    };
+    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'leaderboards']);
+    assert.ok(Array.isArray(body.leaderboards.mostActive));
+    assert.equal(body.leaderboards.mostActive[0]!.agentId, 7);
+  });
+
+  it('GET /insights/pricing projects pricing + stability + movers', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/pricing`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['generatedAt', 'priceMovers', 'priceStability', 'pricing'],
+    );
+  });
+
+  it('GET /insights/services projects services + regions + concentration', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/services`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      concentration: { sellerCount: number };
+    };
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['concentration', 'generatedAt', 'regions', 'services'],
+    );
+    assert.equal(body.concentration.sellerCount, 1);
+  });
+
+  it('GET /insights/activity projects velocity + activity', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/activity`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      activity: { peersOnline: number };
+      velocity: { last24h: { requestsDelta: string } | null };
+    };
+    assert.deepEqual(
+      Object.keys(body).sort(),
+      ['activity', 'generatedAt', 'velocity'],
+    );
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.velocity.last24h!.requestsDelta, '50');
+  });
+});
+
+// ── Test 16: /insights without store returns DHT-only payload ─────────────────
+
+describe('createServer — GET /insights without store', () => {
+  const PORT = nextPort();
+  const peers = [fakePeer('a', undefined)];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('still returns the DHT-only sections', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      leaderboards: { mostActive: unknown[] };
+      activity: { peersOnline: number; totalSellersIndexed: number };
+      velocity: { last24h: unknown };
+    };
+    assert.deepEqual(body.leaderboards.mostActive, []);
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.activity.totalSellersIndexed, 0);
+    assert.equal(body.velocity.last24h, null);
+  });
+
+  it('GET /insights/leaderboards still returns DHT-only payload without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/leaderboards`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      leaderboards: { mostActive: unknown[] };
+    };
+    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'leaderboards']);
+    assert.deepEqual(body.leaderboards.mostActive, []);
+  });
+
+  it('GET /insights/activity still returns DHT-only payload without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/insights/activity`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { activity: { peersOnline: number }; velocity: { last24h: unknown } };
+    assert.equal(body.activity.peersOnline, 1);
+    assert.equal(body.velocity.last24h, null);
+  });
+});
+
+// ── Test 17: /stats sub-routes (network + peers split) ────────────────────────
+
+describe('createServer — GET /stats/network and /stats/peers (enriched)', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  store.applyBatch('test', '0xcontract', [
+    makeEvent({ agentId: 42n, blockNumber: 100, inputTokens: 100n, outputTokens: 200n, requestCount: 5n }),
+  ], 1);
+  const peers = [fakePeer('a', '0xabc1234')];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient(() => 42);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+
+  it('GET /stats/network excludes peers but keeps network/totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/network`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      updatedAt: string;
+      network: { peerCount: number };
+      totals: { sellerCount: number; totalRequests: string };
+    };
+    assert.equal(Object.hasOwn(body, 'peers'), false, '/stats/network must not include peers');
+    assert.equal(typeof body.updatedAt, 'string');
+    assert.equal(body.network.peerCount, 1);
+    assert.equal(body.totals.sellerCount, 1);
+    assert.equal(body.totals.totalRequests, '5');
+  });
+
+  it('GET /stats/peers returns enriched peers but no network/totals', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/peers`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      updatedAt: string;
+      peers: Array<{ onChainStats: { agentId: number; totalRequests: string } | null }>;
+    };
+    assert.equal(typeof body.updatedAt, 'string');
+    assert.equal(body.peers.length, 1);
+    assert.equal(body.peers[0]!.onChainStats!.agentId, 42);
+    assert.equal(body.peers[0]!.onChainStats!.totalRequests, '5');
+    assert.equal(Object.hasOwn(body, 'network'), false, '/stats/peers must not include network');
+    assert.equal(Object.hasOwn(body, 'totals'), false, '/stats/peers must not include totals');
+  });
+});
+
+describe('createServer — GET /stats/network and /stats/peers (legacy/no store)', () => {
+  const PORT = nextPort();
+  const peers = [fakePeer('a', undefined), fakePeer('b', undefined)];
+  const poller = makePoller(peers);
+  const handle = createServer({ poller, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); });
+
+  it('GET /stats/network returns just network + updatedAt without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/network`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as Record<string, unknown> & {
+      network: { peerCount: number };
+    };
+    assert.equal(body.network.peerCount, 2);
+    assert.equal(Object.hasOwn(body, 'totals'), false);
+    assert.equal(Object.hasOwn(body, 'indexer'), false);
+    assert.equal(Object.hasOwn(body, 'backfill'), false);
+    assert.equal(Object.hasOwn(body, 'peers'), false);
+  });
+
+  it('GET /stats/peers returns unenriched peers without store', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats/peers`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { peers: Record<string, unknown>[] };
+    assert.equal(body.peers.length, 2);
+    for (const peer of body.peers) {
+      assert.equal(Object.hasOwn(peer, 'onChainStats'), false, 'no-store path must not add onChainStats key');
+    }
+  });
+});

@@ -40,6 +40,13 @@ export class NetworkPoller {
   private snapshot: NetworkSnapshot = { peers: [], updatedAt: new Date(0).toISOString() };
   private cachePath: string;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Optional listener invoked after every successful poll, with the snapshot
+   * just written. Kept as an opaque callback so the poller stays storage-
+   * agnostic — the wiring layer (index.ts) is the one place that knows about
+   * both the poller and the SqliteStore.
+   */
+  onPollComplete: ((snapshot: NetworkSnapshot) => void) | null = null;
 
   constructor(cachePath = DEFAULT_CACHE_PATH) {
     this.cachePath = cachePath;
@@ -124,6 +131,13 @@ export class NetworkPoller {
 
       console.log(`[network-stats] poll complete — ${this.snapshot.peers.length} peers`);
       await this.saveCache();
+      // Fire-and-forget listener (history sample, etc.). Failures here must
+      // not affect the poll itself, hence the swallowed try/catch.
+      try {
+        this.onPollComplete?.(this.snapshot);
+      } catch (err) {
+        console.error('[network-stats] onPollComplete listener threw:', err);
+      }
     } finally {
       await dht.stop().catch(() => {});
     }

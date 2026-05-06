@@ -7,7 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SqliteStore } from './store.js';
+import { SqliteStore, bucketHistoryRows, ACTIVE_PEERS_UNKNOWN } from './store.js';
 import type { DecodedMetadataRecorded } from '@antseed/node';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -47,7 +47,19 @@ describe('SqliteStore', () => {
       .sort();
 
     assert.deepEqual(tables, [
+      // ANTS token rollups (gap 6) — populated by AntsIndexer.
+      'ants_holder_balances',
+      'ants_supply',
+      'ants_supply_history',
+      // Generic raw event log shared across every contract indexer (gap 1).
+      'chain_events',
       'indexer_checkpoint',
+      'network_history',
+      'peer_pricing_history',
+      // ERC-8004 ReputationRegistry rollups (gap 7) — populated by ReputationIndexer.
+      'reputation_agent_totals',
+      'reputation_feedback',
+      'seller_activity_history',
       'seller_buyer_totals',
       'seller_channel_totals',
       'seller_metadata_totals',
@@ -264,6 +276,242 @@ describe('SqliteStore', () => {
     store.close();
   });
 
+  // ── network_history ────────────────────────────────────────────────────────
+
+  it('recordHistorySample + getHistory: 1d range buckets hourly with deltas + last-gauge', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const HOUR = 3600;
+    // Anchor `now` exactly on an hour boundary so ts arithmetic below lands
+    // each sample in the bucket we expect without surprise rounding.
+    const now = Math.floor(1_700_000_000 / HOUR) * HOUR;
+
+    // Two samples in the bucket [now-2h, now-1h), then two samples in
+    // [now-1h, now). Cumulative grows monotonically; gauge fluctuates.
+    store.recordHistorySample({
+      ts: now - 90 * 60,      // 1.5 h ago — bucket A
+      activePeers: 8,
+      sellerCount: 2,
+      totalRequests: 100n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 10,
+    });
+    store.recordHistorySample({
+      ts: now - 75 * 60,      // 1.25 h ago — bucket A
+      activePeers: 9,
+      sellerCount: 2,
+      totalRequests: 130n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 13,
+    });
+    store.recordHistorySample({
+      ts: now - 45 * 60,      // 0.75 h ago — bucket B
+      activePeers: 12,
+      sellerCount: 3,
+      totalRequests: 160n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 17,
+    });
+    store.recordHistorySample({
+      ts: now - 15 * 60,      // 0.25 h ago — bucket B
+      activePeers: 11,
+      sellerCount: 3,
+      totalRequests: 180n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 20,
+    });
+
+    const history = store.getHistory('1d', now);
+    assert.equal(history.range, '1d');
+    assert.equal(history.bucketSeconds, HOUR);
+    assert.equal(history.points.length, 2);
+
+    // Bucket A: baseline = own first (no prior bucket) → 130-100=30, 13-10=3;
+    // gauge = last sample in bucket = 9.
+    assert.equal(history.points[0]!.activePeers, 9);
+    assert.equal(history.points[0]!.requests, 30);
+    assert.equal(history.points[0]!.settlements, 3);
+
+    // Bucket B: baseline = previous bucket's last cumulative (130, 13).
+    // → 180-130=50; 20-13=7; gauge = last = 11.
+    assert.equal(history.points[1]!.activePeers, 11);
+    assert.equal(history.points[1]!.requests, 50);
+    assert.equal(history.points[1]!.settlements, 7);
+
+    store.close();
+  });
+
+  it('getHistory: 7d range buckets daily and excludes samples outside the window', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const now = 1_700_000_000;
+    const DAY = 86400;
+
+    // Sample 10 days ago — should be filtered out (outside 7d window).
+    store.recordHistorySample({
+      ts: now - 10 * DAY,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 1n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 1,
+    });
+    // Sample 3 days ago.
+    store.recordHistorySample({
+      ts: now - 3 * DAY,
+      activePeers: 5,
+      sellerCount: 2,
+      totalRequests: 100n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 10,
+    });
+    // Sample 2 days ago.
+    store.recordHistorySample({
+      ts: now - 2 * DAY,
+      activePeers: 6,
+      sellerCount: 2,
+      totalRequests: 150n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 15,
+    });
+
+    const history = store.getHistory('7d', now);
+    assert.equal(history.bucketSeconds, DAY);
+    // Two day-buckets, one each.
+    assert.equal(history.points.length, 2);
+    // First in-range bucket uses its own value as baseline → 0 delta.
+    assert.equal(history.points[0]!.requests, 0);
+    assert.equal(history.points[0]!.settlements, 0);
+    // Second bucket: 150-100=50, 15-10=5.
+    assert.equal(history.points[1]!.requests, 50);
+    assert.equal(history.points[1]!.settlements, 5);
+    store.close();
+  });
+
+  it('recordHistorySample is idempotent on duplicate ts (INSERT OR IGNORE)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const sample = {
+      ts: 1_700_000_000,
+      activePeers: 5,
+      sellerCount: 1,
+      totalRequests: 10n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 1,
+    };
+
+    assert.doesNotThrow(() => {
+      store.recordHistorySample(sample);
+      // Same ts, different peer count — must NOT throw and must NOT overwrite.
+      store.recordHistorySample({ ...sample, activePeers: 99 });
+    });
+
+    const history = store.getHistory('1d', sample.ts);
+    assert.equal(history.points.length, 1);
+    assert.equal(history.points[0]!.activePeers, 5); // first write wins
+    store.close();
+  });
+
+  it('bucketHistoryRows clamps negative deltas to zero', () => {
+    // Pathological: cumulative counter goes DOWN (e.g. DB reset).
+    // We clamp instead of letting a negative number reach the chart.
+    const points = bucketHistoryRows(
+      [
+        { ts: 0,      active_peers: 1, seller_count: 1, total_requests: '500', total_input_tokens: '1000', total_output_tokens: '500', settlement_count: 50 },
+        { ts: 86400,  active_peers: 1, seller_count: 1, total_requests: '100', total_input_tokens: '0',    total_output_tokens: '0',   settlement_count: 10 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    assert.equal(points[1]!.requests, 0);
+    assert.equal(points[1]!.settlements, 0);
+    assert.equal(points[1]!.tokens, 0);
+  });
+
+  it('bucketHistoryRows computes tokens delta as input+output across buckets', () => {
+    // Two day-buckets. Tokens combine input + output cumulatively, and the
+    // per-bucket delta is the change in that combined cumulative.
+    const points = bucketHistoryRows(
+      [
+        // bucket 0: cumulative input=100, output=50 → tokens=150
+        { ts: 0,       active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '100',  total_output_tokens: '50',  settlement_count: 0 },
+        { ts: 3600,    active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '300',  total_output_tokens: '150', settlement_count: 0 },
+        // bucket 1 (next day): cumulative input=1000, output=400 → tokens=1400
+        { ts: 86400,   active_peers: 1, seller_count: 1, total_requests: '0', total_input_tokens: '1000', total_output_tokens: '400', settlement_count: 0 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    // First bucket: baseline = own first sample (150) → 450 - 150 = 300
+    assert.equal(points[0]!.tokens, 300);
+    // Second bucket: baseline = previous bucket's last (450) → 1400 - 450 = 950
+    assert.equal(points[1]!.tokens, 950);
+  });
+
+  it('bucketHistoryRows: ACTIVE_PEERS_UNKNOWN sentinel becomes null on the way out', () => {
+    const points = bucketHistoryRows(
+      [
+        // Backfilled bucket — only chain data, no DHT info.
+        { ts: 0,      active_peers: ACTIVE_PEERS_UNKNOWN, seller_count: 1, total_requests: '50',  total_input_tokens: '0', total_output_tokens: '0', settlement_count: 5 },
+        // Forward-sampled bucket with a real peer count.
+        { ts: 86400,  active_peers: 7,                    seller_count: 2, total_requests: '120', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 12 },
+      ],
+      86400,
+    );
+    assert.equal(points.length, 2);
+    assert.equal(points[0]!.activePeers, null, 'backfilled bucket emits null peers');
+    assert.equal(points[1]!.activePeers, 7);
+    // Real samples take precedence within a single bucket — last-sample wins.
+    const mixed = bucketHistoryRows(
+      [
+        { ts: 0, active_peers: ACTIVE_PEERS_UNKNOWN, seller_count: 1, total_requests: '0', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 0 },
+        { ts: 1, active_peers: 5,                    seller_count: 1, total_requests: '0', total_input_tokens: '0', total_output_tokens: '0', settlement_count: 0 },
+      ],
+      86400,
+    );
+    assert.equal(mixed[0]!.activePeers, 5, 'real peer sample later in bucket overrides earlier sentinel');
+  });
+
+  it('getEarliestHistoryTs returns null on empty table, then min(ts) once populated', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    assert.equal(store.getEarliestHistoryTs(), null);
+
+    store.recordHistorySample({
+      ts: 200,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 0n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 0,
+    });
+    store.recordHistorySample({
+      ts: 100,
+      activePeers: 1,
+      sellerCount: 1,
+      totalRequests: 0n,
+      totalInputTokens: 0n,
+      totalOutputTokens: 0n,
+      settlementCount: 0,
+    });
+
+    assert.equal(store.getEarliestHistoryTs(), 100);
+    store.close();
+  });
+
   // Test: Checkpoint key is case-insensitive on contract_address
   it('checkpoint contract_address key is case-insensitive', () => {
     const store = new SqliteStore(':memory:');
@@ -282,5 +530,359 @@ describe('SqliteStore', () => {
 
     store.close();
   });
-});
 
+  // ── pricing history ──────────────────────────────────────────────────────
+
+  it('recordPriceSample dedups when prices match the latest stored row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const baseSample = {
+      peerId: 'aa', provider: 'p', service: 's',
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    };
+    store.recordPriceSample({ ...baseSample, ts: 100 });
+    // Identical price at a later ts → no new row.
+    store.recordPriceSample({ ...baseSample, ts: 200 });
+    // Changed price → new row.
+    store.recordPriceSample({ ...baseSample, ts: 300, inputUsdPerMillion: 5 });
+
+    const rollup = store.getPriceVolatility(0);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 2);
+    assert.equal(rollup[0]!.changeCount, 2);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 1);
+    assert.equal(rollup[0]!.latestInputUsdPerMillion, 5);
+    store.close();
+  });
+
+  it('recordPriceSample writes daily heartbeats for unchanged prices', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    const DAY = 86400;
+    const baseSample = {
+      peerId: 'aa', provider: 'p', service: 's',
+      inputUsdPerMillion: 1, outputUsdPerMillion: 2,
+    };
+    store.recordPriceSample({ ...baseSample, ts: 100 });
+    store.recordPriceSample({ ...baseSample, ts: 100 + DAY - 1 });
+    store.recordPriceSample({ ...baseSample, ts: 100 + DAY });
+
+    const rollup = store.getPriceVolatility(100 + 3600);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 1);
+    assert.equal(rollup[0]!.changeCount, 1);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 1);
+    assert.equal(rollup[0]!.latestInputUsdPerMillion, 1);
+    store.close();
+  });
+
+  it('getPriceVolatility window excludes samples before sinceSec', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordPriceSample({ peerId: 'aa', provider: 'p', service: 's', ts: 100, inputUsdPerMillion: 1, outputUsdPerMillion: 1 });
+    store.recordPriceSample({ peerId: 'aa', provider: 'p', service: 's', ts: 500, inputUsdPerMillion: 2, outputUsdPerMillion: 2 });
+    const rollup = store.getPriceVolatility(400);
+    assert.equal(rollup.length, 1);
+    assert.equal(rollup[0]!.sampleCount, 1);
+    assert.equal(rollup[0]!.firstInputUsdPerMillion, 2);
+    store.close();
+  });
+
+  // ── seller activity history ──────────────────────────────────────────────
+
+  it('recordSellerActivitySample dedups when totals match the latest stored row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 100, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    // No change → not stored.
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 200, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    // New settlement → stored.
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 300, totalRequests: 15n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 4,
+    });
+    const rows = store.getSellerActivitySince(0);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.ts, 100);
+    assert.equal(rows[1]!.ts, 300);
+    assert.equal(rows[1]!.totalRequests, 15n);
+    store.close();
+  });
+
+  // ── ANTS rollup ──────────────────────────────────────────────────────────
+
+  const ZERO = '0x' + '0'.repeat(40);
+  const A = '0x' + 'a'.repeat(40);
+  const B = '0x' + 'b'.repeat(40);
+  const C = '0x' + 'c'.repeat(40);
+
+  it('applyAntsTransfers handles mints, transfers, burns, and zero-balance pruning', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    // Mint 1000 to A
+    store.applyAntsTransfers([{ blockNumber: 10, from: ZERO, to: A, value: 1000n }]);
+    let supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 1);
+    assert.equal(supply.lastUpdatedBlock, 10);
+
+    // A → B (300). Both holders, supply unchanged.
+    store.applyAntsTransfers([{ blockNumber: 20, from: A, to: B, value: 300n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 2);
+
+    const top = store.getTopAntsHolders(10);
+    assert.equal(top.length, 2);
+    assert.equal(top[0]!.address, A);
+    assert.equal(top[0]!.balance, 700n);
+    assert.equal(top[1]!.address, B);
+    assert.equal(top[1]!.balance, 300n);
+
+    // A → B (700). A drops to zero → row deleted, holderCount=1.
+    store.applyAntsTransfers([{ blockNumber: 30, from: A, to: B, value: 700n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 1000n);
+    assert.equal(supply.holderCount, 1);
+
+    // Burn 200 from B
+    store.applyAntsTransfers([{ blockNumber: 40, from: B, to: ZERO, value: 200n }]);
+    supply = store.getAntsSupply();
+    assert.equal(supply.totalSupply, 800n);
+    assert.equal(supply.holderCount, 1);
+    assert.equal(supply.lastUpdatedBlock, 40);
+
+    store.close();
+  });
+
+  it('applyAntsTransfers throws on a balance underflow (drift detection)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // No mint to A — sending FROM a zero-balance address must surface as a
+    // bug rather than silently producing a negative balance.
+    assert.throws(
+      () => store.applyAntsTransfers([{ blockNumber: 1, from: A, to: B, value: 50n }]),
+      /negative balance/,
+    );
+    store.close();
+  });
+
+  it('recordAntsSupplySample dedups byte-identical snapshots', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyAntsTransfers([{ blockNumber: 10, from: ZERO, to: A, value: 1000n }]);
+    const snap = store.getAntsSupply();
+    assert.equal(store.recordAntsSupplySample(100, snap).written, true);
+    // Same supply + holder count → skipped.
+    assert.equal(store.recordAntsSupplySample(200, snap).written, false);
+    // Mutate the snapshot → written.
+    store.applyAntsTransfers([{ blockNumber: 20, from: ZERO, to: B, value: 500n }]);
+    assert.equal(store.recordAntsSupplySample(300, store.getAntsSupply()).written, true);
+    const history = store.getAntsSupplyHistory(10_000, 1000);
+    assert.equal(history.length, 2);
+    assert.equal(history[0]!.totalSupply, 1000n);
+    assert.equal(history[1]!.totalSupply, 1500n);
+    store.close();
+  });
+
+  // ── Reputation rollup ────────────────────────────────────────────────────
+
+  function newFeedback(over: Partial<{
+    blockNumber: number; agentId: bigint; clientAddress: string;
+    feedbackIndex: number; value: bigint; valueDecimals: number;
+  }> = {}): Parameters<SqliteStore['applyReputationEvents']>[0][number] {
+    return {
+      kind: 'NewFeedback',
+      blockNumber: over.blockNumber ?? 100,
+      blockTimestamp: 1_700_000_000,
+      txHash: '0x' + 'f'.repeat(64),
+      agentId: over.agentId ?? 1n,
+      clientAddress: over.clientAddress ?? A,
+      feedbackIndex: over.feedbackIndex ?? 0,
+      value: over.value ?? 5n,
+      valueDecimals: over.valueDecimals ?? 0,
+      tag1: '', tag2: '', endpoint: '',
+      feedbackURI: '', feedbackHash: '0x' + '0'.repeat(64),
+    };
+  }
+
+  it('applyReputationEvents inserts feedback + maintains per-agent totals', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyReputationEvents([
+      newFeedback({ agentId: 1n, clientAddress: A, feedbackIndex: 0, blockNumber: 100, value: 5n }),
+      newFeedback({ agentId: 1n, clientAddress: B, feedbackIndex: 0, blockNumber: 110, value: 4n }),
+    ]);
+    const totals = store.getReputationTotals(1);
+    assert.ok(totals !== null);
+    assert.equal(totals.feedbackCount, 2);
+    assert.equal(totals.uniqueClients, 2);
+    assert.equal(totals.firstFeedbackBlock, 100);
+    assert.equal(totals.lastFeedbackBlock, 110);
+
+    const recent = store.getRecentReputationFeedback(10);
+    assert.equal(recent.length, 2);
+    assert.equal(recent[0]!.blockNumber, 110);
+    assert.equal(recent[0]!.clientAddress, B);
+    store.close();
+  });
+
+  it('applyReputationEvents counts a repeat client as the same uniqueClients=1', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // Same client (A) submits twice in one batch — uniqueClients must stay 1.
+    store.applyReputationEvents([
+      newFeedback({ agentId: 7n, clientAddress: A, feedbackIndex: 0, blockNumber: 50 }),
+      newFeedback({ agentId: 7n, clientAddress: A, feedbackIndex: 1, blockNumber: 51 }),
+    ]);
+    const totals = store.getReputationTotals(7);
+    assert.ok(totals !== null);
+    assert.equal(totals.feedbackCount, 2);
+    assert.equal(totals.uniqueClients, 1);
+    store.close();
+  });
+
+  it('applyReputationEvents applies ResponseAppended and FeedbackRevoked to the matching row', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.applyReputationEvents([
+      newFeedback({ agentId: 9n, clientAddress: A, feedbackIndex: 0, blockNumber: 100 }),
+    ]);
+    store.applyReputationEvents([
+      {
+        kind: 'ResponseAppended',
+        blockNumber: 110,
+        agentId: 9n, clientAddress: A, feedbackIndex: 0,
+        responder: C,
+        responseURI: 'ipfs://r', responseHash: '0x' + '1'.repeat(64),
+      },
+    ]);
+    store.applyReputationEvents([
+      {
+        kind: 'FeedbackRevoked',
+        blockNumber: 120,
+        agentId: 9n, clientAddress: A, feedbackIndex: 0,
+      },
+    ]);
+
+    const rows = store.getReputationFeedbackForAgent(9, 10);
+    assert.equal(rows.length, 1);
+    const r = rows[0]!;
+    assert.equal(r.responseURI, 'ipfs://r');
+    assert.equal(r.responseResponder, C);
+    assert.equal(r.responseAtBlock, 110);
+    assert.equal(r.revoked, true);
+    assert.equal(r.revokedAtBlock, 120);
+
+    const totals = store.getReputationTotals(9);
+    assert.ok(totals !== null);
+    assert.equal(totals.responseCount, 1);
+    assert.equal(totals.revokedCount, 1);
+    assert.equal(totals.lastFeedbackBlock, 120);
+    store.close();
+  });
+
+  it('getReputationLeaderboard ranks by netFeedback (count − revoked)', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // agent 1: 3 feedback, 1 revoked → net 2
+    store.applyReputationEvents([
+      newFeedback({ agentId: 1n, clientAddress: A, feedbackIndex: 0 }),
+      newFeedback({ agentId: 1n, clientAddress: B, feedbackIndex: 0 }),
+      newFeedback({ agentId: 1n, clientAddress: C, feedbackIndex: 0 }),
+      { kind: 'FeedbackRevoked', blockNumber: 200, agentId: 1n, clientAddress: A, feedbackIndex: 0 },
+    ]);
+    // agent 2: 4 feedback, 0 revoked → net 4 (should rank first)
+    store.applyReputationEvents([
+      newFeedback({ agentId: 2n, clientAddress: A, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: B, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: C, feedbackIndex: 0 }),
+      newFeedback({ agentId: 2n, clientAddress: A, feedbackIndex: 1 }),
+    ]);
+    const lb = store.getReputationLeaderboard(10);
+    assert.equal(lb.length, 2);
+    assert.equal(lb[0]!.agentId, 2);
+    assert.equal(lb[0]!.feedbackCount - lb[0]!.revokedCount, 4);
+    assert.equal(lb[1]!.agentId, 1);
+    assert.equal(lb[1]!.feedbackCount - lb[1]!.revokedCount, 2);
+    store.close();
+  });
+
+  // ── chain_events read path ───────────────────────────────────────────────
+
+  it('getChainEvents filters by event/contract/tx and paginates with the keyset cursor', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    // Feed via the ANTS Transfer path — the easiest atomic write into chain_events
+    // with multiple distinct (block, logIndex) coordinates. Use applyChainEventBatch
+    // for full control over event_name/contract_address shape.
+    const tx = '0x' + 'a'.repeat(64);
+    store.applyChainEventBatch({
+      chainId: 'base',
+      contractAddress: '0xANTS',
+      newCheckpoint: 100,
+      newCheckpointTimestamp: 1_700_000_000,
+      rows: [
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 10, blockTimestamp: 1, txHash: tx, logIndex: 0, eventName: 'Transfer', args: { from: A, to: B, value: '1' } },
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 10, blockTimestamp: 1, txHash: tx, logIndex: 1, eventName: 'Transfer', args: { from: B, to: C, value: '2' } },
+        { chainId: 'base', contractAddress: '0xants', blockNumber: 20, blockTimestamp: 2, txHash: '0x' + 'b'.repeat(64), logIndex: 0, eventName: 'Approval', args: {} },
+      ],
+    });
+
+    // Newest-first across the whole table.
+    const all = store.getChainEvents({});
+    assert.deepEqual(all.map((r) => [r.blockNumber, r.logIndex]), [[20, 0], [10, 1], [10, 0]]);
+
+    // Filter by event_name.
+    const transfers = store.getChainEvents({ eventName: 'Transfer' });
+    assert.equal(transfers.length, 2);
+    assert.ok(transfers.every((r) => r.eventName === 'Transfer'));
+
+    // Filter by tx_hash.
+    const sameTx = store.getChainEvents({ txHash: tx });
+    assert.equal(sameTx.length, 2);
+    assert.deepEqual(sameTx.map((r) => r.logIndex), [1, 0]);
+
+    // Keyset cursor: rows strictly before (20, 0) → all blockNumber=10 rows.
+    const page = store.getChainEvents({ beforeBlockNumber: 20, beforeLogIndex: 0 });
+    assert.deepEqual(page.map((r) => [r.blockNumber, r.logIndex]), [[10, 1], [10, 0]]);
+
+    // contract_address is matched lowercase regardless of input casing.
+    const upper = store.getChainEvents({ contractAddress: '0xANTS' });
+    assert.equal(upper.length, 3);
+
+    store.close();
+  });
+
+  it('getSellerActivityForTrending includes the latest pre-window baseline per active agent', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 100, totalRequests: 10n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+    });
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 250, totalRequests: 20n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 2,
+    });
+    store.recordSellerActivitySample({
+      agentId: 1, ts: 300, totalRequests: 30n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 3,
+    });
+    store.recordSellerActivitySample({
+      agentId: 2, ts: 150, totalRequests: 99n, totalInputTokens: 100n, totalOutputTokens: 200n, settlementCount: 1,
+    });
+
+    const rows = store.getSellerActivityForTrending(200);
+    assert.deepEqual(
+      rows.map((row) => [row.agentId, row.ts, row.totalRequests.toString()]),
+      [
+        [1, 100, '10'],
+        [1, 250, '20'],
+        [1, 300, '30'],
+      ],
+    );
+    store.close();
+  });
+});

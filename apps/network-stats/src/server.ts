@@ -1,15 +1,42 @@
 /**
  * Express HTTP server — exposes network stats for XHR consumption.
  *
- * GET /stats  →  { peers: PeerMetadata[], updatedAt }
- * GET /health →  { ok: true }
+ * GET /stats                    →  union of network + per-peer payload (legacy — kept for back-compat)
+ * GET /stats/network            →  cheap: network metrics, totals, indexer, backfill (no per-peer fan-out)
+ * GET /stats/peers              →  heavy: per-peer DHT snapshot enriched with on-chain totals
+ * GET /insights                 →  union of all insight sections (legacy — kept for back-compat)
+ * GET /insights/leaderboards    →  ranked-seller leaderboards
+ * GET /insights/pricing         →  pricing market + stability + movers
+ * GET /insights/services        →  service/protocol/provider rankings + regions + concentration
+ * GET /insights/activity        →  live activity + 24h/7d velocity windows
+ * GET /history                  →  bucketed time series, all fields (legacy — kept for back-compat)
+ * GET /history/peers            →  bucketed time series, peer-activity fields only
+ * GET /history/tokens           →  bucketed time series, tokens field only
+ * GET /health                   →  liveness probe
+ *
+ * Routing, validation, and per-endpoint logic live under ./http. This file
+ * owns wiring (DI), middleware order, and the start/stop lifecycle only.
  */
 
 import express from 'express';
-import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
+
+import type { MetadataIndexer } from './indexers/metadata-indexer.js';
+import type { NetworkPoller } from './poller.js';
 import type { SqliteStore } from './store.js';
-import type { MetadataIndexer } from './indexer.js';
+import { AgentIdCache } from './http/agent-id-cache.js';
+import { corsMiddleware, errorHandler } from './http/middleware.js';
+import { InProcessResponseCache, type ResponseCache } from './http/response-cache.js';
+import { registerAntsRoutes } from './http/routes/ants.js';
+import { registerEventsRoutes } from './http/routes/events.js';
+import { registerHealthRoutes } from './http/routes/health.js';
+import { registerHistoryRoutes } from './http/routes/history.js';
+import { registerInsightsRoutes } from './http/routes/insights.js';
+import { registerReputationRoutes } from './http/routes/reputation.js';
+import { registerStatsRoutes } from './http/routes/stats.js';
+import type { BackfillStatusPayload } from './http/types.js';
+
+export type { BackfillStatusPayload } from './http/types.js';
 
 export interface CreateServerDeps {
   poller: NetworkPoller;
@@ -18,159 +45,87 @@ export interface CreateServerDeps {
   indexer?: MetadataIndexer;      // source of chain head + reorg buffer for sync status
   chainId?: string;               // used to look up the indexer checkpoint
   contractAddress?: string;       // contract whose checkpoint to expose
+  /** Lowercased ANTS token contract address — scopes /ants/transfers when indexed. */
+  antsContractAddress?: string;
+  getBackfillStatus?: () => BackfillStatusPayload;
   port?: number;
 }
 
-// module-scoped cache, key: lowercased address. Staked peers are cached
-// indefinitely (agentId assignments don't change). Unstaked peers (agentId=0)
-// are cached with a short TTL so a peer that stakes shortly after being
-// observed picks up its real agentId on the next request instead of being
-// permanently pinned to `onChainStats: null`.
-const UNSTAKED_TTL_MS = 5 * 60 * 1000;
-interface CacheEntry {
-  agentId: number;
-  expiresAt: number; // Infinity for staked (never expires)
-}
-const agentIdCache = new Map<string, CacheEntry>();
-
-function normalizeAddress(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const lower = value.toLowerCase();
-  return lower.startsWith('0x') ? lower : `0x${lower}`;
+export interface ServerHandle {
+  start(): Promise<void>;
+  stop(): void;
+  /**
+   * Materialized read-model cache, exposed so the bootstrap layer can wire
+   * writer-event invalidation (poller / indexer / sampler) without coupling
+   * those modules to the cache directly.
+   */
+  cache: ResponseCache;
 }
 
-async function resolveAgentId(
-  client: StakingClient,
-  address: string | null | undefined,
-): Promise<number | null> {
-  const key = normalizeAddress(address);
-  if (!key) return null;
-  const cached = agentIdCache.get(key);
-  if (cached !== undefined && cached.expiresAt > Date.now()) {
-    return cached.agentId;
-  }
-  try {
-    const agentId = await client.getAgentId(key);
-    agentIdCache.set(key, {
-      agentId,
-      expiresAt: agentId === 0 ? Date.now() + UNSTAKED_TTL_MS : Infinity,
-    });
-    return agentId;
-  } catch (err) {
-    console.warn(`[network-stats] getAgentId failed for ${key}:`, err);
-    return null;
-  }
-}
-
-export function __resetAgentIdCacheForTests(): void {
-  agentIdCache.clear();
-}
-
-export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
-  const { poller, store, stakingClient, indexer, chainId, contractAddress, port = 4000 } = deps;
+export function createServer(deps: CreateServerDeps): ServerHandle {
+  const {
+    poller, store, stakingClient, indexer, chainId, contractAddress,
+    antsContractAddress, getBackfillStatus, port = 4000,
+  } = deps;
   const app = express();
 
-  app.use((_req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
-    next();
+  // Per-server cache shared across /stats and /insights so a single agentId
+  // resolution serves both endpoints. Per-instance by design — keeps tests
+  // and colocated servers isolated.
+  const agentIds = stakingClient ? new AgentIdCache(stakingClient) : undefined;
+  // Materialized read-model cache. One slot per route family (currently only
+  // /insights/*; stats/history migrate next). Per-instance by design so
+  // colocated test servers don't share state. Becomes a Redis-backed impl
+  // (same `ResponseCache` interface) when this service goes multi-instance.
+  const responseCache = new InProcessResponseCache();
+
+  app.use(corsMiddleware);
+
+  registerHealthRoutes(app);
+  registerStatsRoutes(app, {
+    poller,
+    ...(store ? { store } : {}),
+    ...(agentIds ? { agentIds } : {}),
+    ...(indexer ? { indexer } : {}),
+    ...(chainId ? { chainId } : {}),
+    ...(contractAddress ? { contractAddress } : {}),
+    ...(getBackfillStatus ? { getBackfillStatus } : {}),
+    cache: responseCache,
+  });
+  registerInsightsRoutes(app, {
+    poller,
+    ...(store ? { store } : {}),
+    ...(agentIds ? { agentIds } : {}),
+    cache: responseCache,
+  });
+  registerHistoryRoutes(app, {
+    ...(store ? { store } : {}),
+    cache: responseCache,
+  });
+  registerEventsRoutes(app, {
+    ...(store ? { store } : {}),
+    cache: responseCache,
+  });
+  registerAntsRoutes(app, {
+    ...(store ? { store } : {}),
+    ...(antsContractAddress ? { antsContractAddress: antsContractAddress.toLowerCase() } : {}),
+    cache: responseCache,
+  });
+  registerReputationRoutes(app, {
+    ...(store ? { store } : {}),
+    cache: responseCache,
   });
 
-  app.get('/stats', async (_req, res) => {
-    const snapshot = poller.getSnapshot();
-
-    // Fast path: no indexer configured. Return snapshot byte-compatibly with the old shape.
-    if (!store || !stakingClient) {
-      res.json(snapshot);
-      return;
-    }
-
-    const enrichedPeers = await Promise.all(
-      snapshot.peers.map(async (peer) => {
-        // peerId is the lowercased seller/operator EVM address without the 0x prefix.
-        // Contract-backed sellers (for example Venice's proxy) announce the
-        // settlement address separately; use that for on-chain volume lookup.
-        const { peerId, sellerContract } = peer as { peerId?: string; sellerContract?: string };
-        const address = normalizeAddress(sellerContract) ?? normalizeAddress(peerId);
-        const agentId = await resolveAgentId(stakingClient, address);
-        if (agentId === null || agentId === 0) {
-          return { ...peer, onChainStats: null };
-        }
-        const totals = store.getSellerTotals(agentId);
-        if (!totals) {
-          return { ...peer, onChainStats: null };
-        }
-        return {
-          ...peer,
-          onChainStats: {
-            agentId,
-            totalRequests: totals.totalRequests.toString(),
-            totalInputTokens: totals.totalInputTokens.toString(),
-            totalOutputTokens: totals.totalOutputTokens.toString(),
-            settlementCount: totals.settlementCount,
-            uniqueBuyers: totals.uniqueBuyers,
-            uniqueChannels: totals.uniqueChannels,
-            firstSettledBlock: totals.firstSettledBlock,
-            lastSettledBlock: totals.lastSettledBlock,
-            firstSeenAt: totals.firstSeenAt,
-            lastSeenAt: totals.lastSeenAt,
-            avgRequestsPerChannel: totals.avgRequestsPerChannel,
-            avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
-            lastUpdatedAt: totals.lastUpdatedAt,
-          },
-        };
-      }),
-    );
-
-    const indexerInfo =
-      chainId && contractAddress
-        ? store.getCheckpointInfo(chainId, contractAddress.toLowerCase())
-        : null;
-
-    // Chain head comes from the indexer's in-memory cache, refreshed on every
-    // tick. `synced` is true when the checkpoint has caught up to (latest − reorg
-    // buffer), i.e. there's nothing else the indexer could have processed.
-    const chainHead = indexer?.getChainHead();
-    const indexerPayload = indexerInfo
-      ? {
-          ...indexerInfo,
-          ...(chainHead?.latestBlock != null
-            ? {
-                latestBlock: chainHead.latestBlock,
-                synced: indexerInfo.lastBlock >= chainHead.latestBlock - chainHead.reorgSafetyBlocks,
-              }
-            : {}),
-        }
-      : null;
-
-    const networkTotals = store.getNetworkTotals();
-
-    res.json({
-      ...snapshot,
-      peers: enrichedPeers,
-      totals: {
-        totalRequests: networkTotals.totalRequests.toString(),
-        totalInputTokens: networkTotals.totalInputTokens.toString(),
-        totalOutputTokens: networkTotals.totalOutputTokens.toString(),
-        settlementCount: networkTotals.settlementCount,
-        sellerCount: networkTotals.sellerCount,
-        lastUpdatedAt: networkTotals.lastUpdatedAt,
-      },
-      ...(indexerPayload ? { indexer: indexerPayload } : {}),
-    });
-  });
-
-  app.get('/health', (_req, res) => {
-    res.json({ ok: true });
-  });
+  app.use(errorHandler);
 
   let server: ReturnType<typeof app.listen> | null = null;
 
   return {
+    cache: responseCache,
     start: () =>
       new Promise((resolve) => {
         server = app.listen(port, '0.0.0.0', () => {
-          console.log(`[network-stats] HTTP server listening on port ${port}`);
+          console.log(`[network-stats] HTTP server listening at http://localhost:${port}`);
           resolve();
         });
       }),
