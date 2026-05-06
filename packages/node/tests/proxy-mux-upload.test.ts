@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ProxyMux } from '../src/proxy/proxy-mux.js';
+import { DEFAULT_MAX_UPLOAD_BODY_BYTES, ProxyMux } from '../src/proxy/proxy-mux.js';
 import {
   decodeHttpRequest,
   decodeHttpRequestChunk,
@@ -248,6 +248,10 @@ describe('ProxyMux chunked upload — seller side', () => {
 });
 
 describe('ProxyMux upload limits — storage protection', () => {
+  it('defaults the per-request upload limit to 64 MiB', () => {
+    expect(DEFAULT_MAX_UPLOAD_BODY_BYTES).toBe(64 * 1024 * 1024);
+  });
+
   it('rejects upload that exceeds per-request limit with 413', async () => {
     const statusCodes: number[] = [];
     // Limit: anything larger than one upload chunk (ANTSEED_UPLOAD_CHUNK_SIZE - 1 bytes)

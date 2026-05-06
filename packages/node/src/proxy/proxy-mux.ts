@@ -33,7 +33,7 @@ type RequestHandler = (request: SerializedHttpRequest) => void | Promise<void>;
 
 /** Per-request upload size cap, total budget, and stall timeout. */
 export interface ProxyMuxUploadLimits {
-  /** Max body bytes for a single upload. Default: 32 MiB. Buyer receives 413 on violation. */
+  /** Max body bytes for a single upload. Default: 64 MiB. Buyer receives 413 on violation. */
   maxUploadBodyBytes?: number;
   /** Max bytes across ALL concurrent in-progress uploads. Default: 256 MiB. */
   maxTotalPendingUploadBytes?: number;
@@ -41,9 +41,13 @@ export interface ProxyMuxUploadLimits {
   uploadTimeoutMs?: number;
 }
 
-const DEFAULT_MAX_UPLOAD_BODY_BYTES       = 32  * 1024 * 1024; // 32 MiB
-const DEFAULT_MAX_TOTAL_PENDING_BYTES     = 256 * 1024 * 1024; // 256 MiB
-const DEFAULT_UPLOAD_TIMEOUT_MS           = 120_000;            // 2 min
+// Codex-style /v1/responses requests can include large repository context.
+// Raising the per-request cap to 64 MiB accommodates those requests while the
+// separate 256 MiB aggregate pending-upload budget continues to bound seller
+// memory exposure across concurrent uploads.
+export const DEFAULT_MAX_UPLOAD_BODY_BYTES = 64  * 1024 * 1024; // 64 MiB
+const DEFAULT_MAX_TOTAL_PENDING_BYTES      = 256 * 1024 * 1024; // 256 MiB
+const DEFAULT_UPLOAD_TIMEOUT_MS            = 120_000;            // 2 min
 
 interface PendingUpload {
   headerReq: SerializedHttpRequest;
