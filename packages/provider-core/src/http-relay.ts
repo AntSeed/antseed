@@ -180,6 +180,29 @@ export class HttpRelay {
           // Remove the "service" field — upstream APIs don't understand it.
           delete transformed.service;
 
+          // Force `stream_options.include_usage = true` on streaming OpenAI Chat
+          // Completions requests. Without this, strict OpenAI-spec upstreams
+          // (e.g. api.minimax.io) return SSE streams with no `usage` chunk,
+          // which makes `parseResponseUsage` return zeros and causes the
+          // seller to record `cost=0 (in=0 out=0)` for every request —
+          // effectively giving away inference for free.
+          //
+          // We only touch `/v1/chat/completions` with `stream:true`, and we
+          // preserve any caller-supplied `stream_options` fields. We don't
+          // override an explicit `include_usage:false` (operators can still
+          // disable via `injectJsonFields` below if they really need to).
+          if (
+            request.path.toLowerCase().startsWith('/v1/chat/completions')
+            && transformed.stream === true
+          ) {
+            const existing = transformed.stream_options && typeof transformed.stream_options === 'object' && !Array.isArray(transformed.stream_options)
+              ? transformed.stream_options as Record<string, unknown>
+              : {};
+            if (existing.include_usage === undefined) {
+              transformed.stream_options = { ...existing, include_usage: true };
+            }
+          }
+
           const merged = this._config.injectJsonFields
             ? deepMerge(transformed, this._config.injectJsonFields)
             : transformed;
