@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
@@ -39,6 +39,7 @@ const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
 
 type CardItem = {
   name: string;
+  canonicalName: string;
   displayName: string;
   peerLabel: string;
   peerId: string;
@@ -91,6 +92,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
     const rawName = opt.label || opt.id;
     return {
       name: rawName,
+      canonicalName: opt.id,
       displayName: normalizeServiceName(rawName),
       peerLabel: opt.peerLabel || '',
       peerId: opt.peerId || '',
@@ -143,6 +145,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
     const peerLabel = row.peerLabel || '';
     out.push({
       name: rawName,
+      canonicalName: row.serviceId,
       displayName: normalizeServiceName(rawName),
       peerLabel,
       peerId: row.peerId,
@@ -556,9 +559,28 @@ function Card({
   onClick: (v: string, peerId: string) => void;
 }) {
   const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
+  const [copied, setCopied] = useState(false);
   const hasInput = item.inputUsdPerMillion != null;
   const hasOutput = item.outputUsdPerMillion != null;
   const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const handleCopyModelName = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const modelName = item.canonicalName || item.name;
+    if (!modelName) return;
+    navigator.clipboard.writeText(modelName).then(() => {
+      setCopied(true);
+    }).catch(() => {
+      // Clipboard permission can be denied; keep the card interaction unchanged.
+    });
+  }, [item.canonicalName, item.name]);
 
   return (
     <div
@@ -584,7 +606,20 @@ function Card({
             </span>
           )}
         </div>
-        <div className={styles.cardName}>{item.displayName}</div>
+        <div className={styles.cardNameRow}>
+          <div className={styles.cardName} title={item.canonicalName}>{item.displayName}</div>
+          <button
+            type="button"
+            className={`${styles.copyModelButton}${copied ? ` ${styles.copyModelButtonCopied}` : ''}`}
+            onClick={handleCopyModelName}
+            onKeyDown={(e) => e.stopPropagation()}
+            aria-label={copied ? `Copied ${item.canonicalName}` : `Copy exact model name ${item.canonicalName}`}
+            title={copied ? 'Copied' : `Copy exact model name: ${item.canonicalName}`}
+          >
+            <span className={styles.copyModelIcon} aria-hidden="true">{copied ? '✓' : '⧉'}</span>
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
         <div className={styles.cardDesc}>{item.description}</div>
         <div className={styles.cardPricing}>
           {isFree ? (
