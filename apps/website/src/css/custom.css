@@ -37,6 +37,10 @@ html[data-theme='light'],
   --ifm-table-border-color: rgba(10, 14, 20, 0.06);
 
   --docusaurus-highlighted-code-line-bg: rgba(22, 168, 99, 0.08);
+
+  /* Navbar link hover/active should be ink-dark, not the bright primary green
+     (which renders pale on the cream navbar background). */
+  --ifm-navbar-link-hover-color: #0a0e14;
 }
 
 html[data-theme='dark'] {
@@ -109,10 +113,14 @@ nav.navbar {
   font-weight: 500;
   letter-spacing: 1px;
   color: #6b7280;
+  transition: color 0.15s ease;
 }
 
-.navbar__items--right .navbar__link:hover {
+.navbar__items--right .navbar__link:hover,
+.navbar__items--right .navbar__link:focus-visible,
+.navbar__items--right .navbar__link--active {
   color: #0a0e14;
+  font-weight: 600;
 }
 
 /* Social icon links — SVG background icons */
@@ -207,7 +215,14 @@ nav.navbar {
 /* =============================================
    Custom Footer hover states
    ============================================= */
-.custom-footer-link:hover {
+.custom-footer-link:hover,
+.custom-footer-link:focus-visible {
+  color: #0a0e14 !important;
+  text-decoration: none;
+}
+
+html[data-theme='dark'] .custom-footer-link:hover,
+html[data-theme='dark'] .custom-footer-link:focus-visible {
   color: #e6edf3 !important;
 }
 

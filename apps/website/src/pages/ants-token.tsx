@@ -16,12 +16,20 @@ const EPOCH_DURATION = 604_800; // 1 week in seconds
 const GENESIS: number = 1775728461; // 2026-04-09T09:54:21Z
 
 function useEpochCountdown() {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  // Start with a deterministic value so SSR and the first client render match.
+  // The real `now` is filled in after mount to avoid React hydration mismatches.
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
+    setNow(Math.floor(Date.now() / 1000));
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(id);
   }, []);
+
+  if (now === null) {
+    // Pre-hydration / SSR: render a stable placeholder identical on server and client.
+    return { epoch: 0, timeLeft: '—', started: false };
+  }
 
   if (GENESIS === 0) {
     return { epoch: 0, timeLeft: 'Not started', started: false };

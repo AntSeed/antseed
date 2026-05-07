@@ -1249,7 +1249,7 @@ img, video, canvas, svg { max-width: 100%; }
 }
 
 /* ---- merged integration hub section ---- */
-.integrationHubSection { border-top: 1px solid #e8e8e3; border-bottom: 1px solid #e8e8e3; max-width: none; padding-top: 82px; padding-bottom: 88px; background:
+.integrationHubSection { border-top: 1px solid #e8e8e3; border-bottom: 1px solid #e8e8e3; max-width: none; padding-top: 82px; padding-bottom: 88px; padding-left: max(60px, calc((100vw - 1180px)/2 + 60px)); padding-right: max(60px, calc((100vw - 1180px)/2 + 60px)); background:
   radial-gradient(circle at 82% 52%, rgba(31,216,122,.08), transparent 28%),
   linear-gradient(180deg, #fff, #fbfbf7);
 }
@@ -1314,6 +1314,12 @@ img, video, canvas, svg { max-width: 100%; }
 /* Integration hub animation polish: keep labels clear and mobile-safe. */
 .integrationToolHermes { bottom: 54px; }
 .integrationSettlement { bottom: 18px; max-width: calc(100% - 48px); text-align: center; }
+@media (max-width: 1300px) {
+  .integrationHubSection { padding-left: 60px; padding-right: 60px; }
+}
+@media (max-width: 700px) {
+  .integrationHubSection { padding-left: 20px; padding-right: 20px; }
+}
 @media (max-width: 900px) {
   .integrationHubSection { padding-top: 56px; padding-bottom: 58px; }
   .integrationHubAnimation { min-height: 620px; margin-top: 12px; }

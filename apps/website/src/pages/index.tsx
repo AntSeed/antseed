@@ -62,7 +62,10 @@ function EarnAnimation() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeNode, setActiveNode] = useState(-1);
   const initialSkills = ['claude-sonnet-4-6 · raw inference','Legal in Guatemala · AI Agent','TEE Router · routing','llama-3-70b · raw inference','Price Router · routing'];
-  const initialFeed = initialSkills.map((skill, i) => ({skill, amount:(Math.random()*0.014+0.001).toFixed(3), id:i}));
+  // Use deterministic seed amounts so SSR and the first client render match.
+  // Real randomized amounts are generated inside an effect after mount.
+  const seedAmounts = ['0.008','0.012','0.005','0.014','0.010'];
+  const initialFeed = initialSkills.map((skill, i) => ({skill, amount: seedAmounts[i], id:i}));
   const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>(initialFeed);
   const startedRef = useRef(false);
   const totalRef = useRef(initialFeed.reduce((s,f) => s + parseFloat(f.amount), 0));
