@@ -796,6 +796,162 @@ describe('SellerPaymentManager', () => {
     });
   });
 
+  describe('checkTimeouts auto-close zombies', () => {
+    // A "zombie" is an on-chain Active channel where the buyer disconnected
+    // before signing any SpendingAuth (accepted=0). Without auto-close, these
+    // sit around forever:
+    //   - blocking the seller's `unstake()` (gated on activeChannelCount=0),
+    //   - keeping the seller's reputation counter at 0
+    //     (channelCount only increments on close/withdraw),
+    //   - and locking the buyer's reserved deposit.
+    // The contract lets the seller call close(channelId, settled, "0x", "0x")
+    // when finalAmount == settled — no buyer signature is verified in that
+    // branch (AntseedChannels.sol:288-294). checkTimeouts must use this path.
+
+    function seedZombie(
+      channelStore: ChannelStore,
+      channelId: string,
+      buyer: Identity,
+      seller: Identity,
+      opts: { deadlineSec?: number } = {},
+    ): void {
+      const now = Date.now();
+      const deadline = opts.deadlineSec ?? Math.floor(now / 1000) - 3600;
+      channelStore.upsertChannel({
+        sessionId: channelId,
+        peerId: buyer.peerId,
+        role: 'seller',
+        sellerEvmAddr: seller.wallet.address,
+        buyerEvmAddr: buyer.wallet.address,
+        nonce: 0,
+        authMax: '0',
+        previousConsumption: '1000000',
+        tokensDelivered: '0',
+        deadline,
+        previousSessionId: '',
+        requestCount: 0,
+        reservedAt: now,
+        settledAt: null,
+        settledAmount: null,
+        status: 'active',
+        latestBuyerSig: null,
+        latestSpendingAuthSig: null,
+        latestMetadata: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    it('closes a zombie on-chain with empty signature when buyer disconnected past deadline', async () => {
+      const channelId = makeChannelId(60);
+      seedZombie(store, channelId, buyerIdentity, sellerIdentity);
+
+      // Fresh manager so the channel hydrates from the store with no in-memory auth.
+      const mgr = new SellerPaymentManager(
+        sellerIdentity,
+        { rpcUrl: 'http://127.0.0.1:8545', channelsContractAddress: CONTRACT_ADDR, chainId: CHAIN_ID, dataDir: tempDir },
+        store,
+      );
+      // Buyer is not connected — evict the in-memory active flag the constructor seeded.
+      mgr.onBuyerDisconnect(buyerIdentity.peerId);
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+
+      // Channel still Active on-chain with settled=0.
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 0n, status: 1 }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.checkTimeouts();
+
+      // The seller called close() with finalAmount=0 and empty bytes for both metadata and sig.
+      expect(closeSpy).toHaveBeenCalledOnce();
+      const args = closeSpy.mock.calls[0]!;
+      expect(args[1]).toBe(channelId);
+      expect(args[2]).toBe(0n);            // finalAmount == on-chain settled
+      expect(args[3]).toBe('0x');          // empty metadata
+      expect(args[4]).toBe('0x');          // empty signature — contract skips verification
+      expect(store.getChannel(channelId)!.status).toBe('settled');
+    });
+
+    it('does not close zombie before deadline has passed (buyer may still reconnect)', async () => {
+      const channelId = makeChannelId(61);
+      // Deadline 1h in the future — channel is fresh, buyer might come back.
+      seedZombie(store, channelId, buyerIdentity, sellerIdentity, {
+        deadlineSec: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const mgr = new SellerPaymentManager(
+        sellerIdentity,
+        { rpcUrl: 'http://127.0.0.1:8545', channelsContractAddress: CONTRACT_ADDR, chainId: CHAIN_ID, dataDir: tempDir },
+        store,
+      );
+      mgr.onBuyerDisconnect(buyerIdentity.peerId);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 0n, status: 1 }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.checkTimeouts();
+
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(store.getChannel(channelId)!.status).toBe('active');
+    });
+
+    it('falls back to local eviction when zombie close exhausts retries', async () => {
+      const channelId = makeChannelId(62);
+      seedZombie(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = new SellerPaymentManager(
+        sellerIdentity,
+        { rpcUrl: 'http://127.0.0.1:8545', channelsContractAddress: CONTRACT_ADDR, chainId: CHAIN_ID, dataDir: tempDir },
+        store,
+      );
+      mgr.onBuyerDisconnect(buyerIdentity.peerId);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 0n, status: 1 }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockRejectedValue(new Error('boom'));
+
+      // MAX_CLOSE_RETRIES = 3 — four ticks: three failed close attempts, then local eviction.
+      await mgr.checkTimeouts();
+      await mgr.checkTimeouts();
+      await mgr.checkTimeouts();
+      await mgr.checkTimeouts();
+
+      expect(closeSpy).toHaveBeenCalledTimes(3);
+      expect(store.getChannel(channelId)!.status).toBe('timeout');
+    });
+
+    it('uses the on-chain settled cumulative as finalAmount, not the local 0', async () => {
+      // Regression guard: if the channel was settled by an earlier process
+      // (e.g. a previous instance before restart), passing finalAmount=0 would
+      // revert with FinalAmountBelowSettled. The fix must read on-chain settled
+      // first and pass that through.
+      const channelId = makeChannelId(63);
+      seedZombie(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = new SellerPaymentManager(
+        sellerIdentity,
+        { rpcUrl: 'http://127.0.0.1:8545', channelsContractAddress: CONTRACT_ADDR, chainId: CHAIN_ID, dataDir: tempDir },
+        store,
+      );
+      mgr.onBuyerDisconnect(buyerIdentity.peerId);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 250_000n, status: 1 }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.checkTimeouts();
+
+      expect(closeSpy).toHaveBeenCalledOnce();
+      expect(closeSpy.mock.calls[0]![2]).toBe(250_000n);
+    });
+  });
+
   describe('settleSession idle-settle skip logic', () => {
     async function seedAcceptedAuth(
       mgr: SellerPaymentManager,
