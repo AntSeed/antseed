@@ -149,6 +149,7 @@ export function initChatModule({
   const sendingConversationIds = new Set<string>();
   const streamTurnsByConversation = new Map<string, number>();
   const streamStartedAtByConversation = new Map<string, number>();
+  const streamCompletedAtByConversation = new Map<string, number>();
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
   let newChatDraftVersion = 0;
@@ -1940,6 +1941,8 @@ export function initChatModule({
     if (!bridge) return;
 
     const selection = selectionOverride ?? getSelectedChatServiceSelection();
+    const requestStartedAt = Date.now();
+    streamCompletedAtByConversation.delete(convId);
 
     if (!selection.id) {
       reportChatError('No service is selected for this conversation.', 'Request failed');
@@ -1974,6 +1977,12 @@ export function initChatModule({
           }
 
           if (!result.ok) {
+            if ((streamCompletedAtByConversation.get(convId) ?? 0) >= requestStartedAt) {
+              clearPaymentRetry(convId);
+              setConversationSending(convId, false);
+              return;
+            }
+
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch) {
@@ -1999,6 +2008,12 @@ export function initChatModule({
             }
           }
         } catch (err) {
+          if ((streamCompletedAtByConversation.get(convId) ?? 0) >= requestStartedAt) {
+            clearPaymentRetry(convId);
+            setConversationSending(convId, false);
+            return;
+          }
+
           scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
           setConversationSending(convId, false);
         }
@@ -2582,6 +2597,7 @@ export function initChatModule({
           getConversationStreamingMessage(data.conversationId),
         );
 
+        streamCompletedAtByConversation.set(data.conversationId, Date.now());
         clearPaymentRetry(data.conversationId);
 
         if (data.conversationId === uiState.chatActiveConversation) {
