@@ -39,7 +39,11 @@ const CHANNELS_ABI = [
   'function getAgentStats(uint256 agentId) external view returns (uint64 channelCount, uint64 ghostCount, uint256 totalVolumeUsdc, uint64 lastSettledAt)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
+  'event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount)',
+  'event ChannelSettled(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 cumulativeAmount, uint128 delta, uint128 totalSettled, uint256 platformFee, bytes metadata)',
+  'event ChannelClosed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 settledAmount, uint128 refund)',
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
+  'event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 refund)',
 ] as const;
 
 /// @dev Probe ABI for the seller-facade passthrough. Present on
@@ -54,6 +58,51 @@ export interface CloseRequestedEvent {
   channelId: string;
   buyer: string;
 }
+
+interface ChannelEventBase {
+  blockNumber: number;
+  txHash: string;
+  logIndex: number;
+  channelId: string;   // 0x-prefixed, 32 bytes
+  buyer: string;       // lowercased
+  seller: string;      // lowercased
+}
+
+export interface DecodedReserved extends ChannelEventBase {
+  type: 'reserved';
+  maxAmount: bigint;
+}
+
+export interface DecodedChannelSettled extends ChannelEventBase {
+  type: 'settled';
+  cumulativeAmount: bigint;
+  delta: bigint;          // USDC charged in *this* settlement
+  totalSettled: bigint;
+  platformFee: bigint;
+}
+
+export interface DecodedChannelClosed extends ChannelEventBase {
+  type: 'closed';
+  settledAmount: bigint;
+  refund: bigint;
+}
+
+export interface DecodedCloseRequested extends ChannelEventBase {
+  type: 'closeRequested';
+  gracePeriodEnd: bigint;
+}
+
+export interface DecodedChannelWithdrawn extends ChannelEventBase {
+  type: 'withdrawn';
+  refund: bigint;
+}
+
+export type DecodedChannelEvent =
+  | DecodedReserved
+  | DecodedChannelSettled
+  | DecodedChannelClosed
+  | DecodedCloseRequested
+  | DecodedChannelWithdrawn;
 
 export class ChannelsClient extends BaseEvmClient {
   /**
@@ -253,6 +302,82 @@ export class ChannelsClient extends BaseEvmClient {
       totalVolumeUsdc: result[2] as bigint,
       lastSettledAt: Number(result[3]),
     };
+  }
+
+  /**
+   * Read all indexed lifecycle events (Reserved, ChannelSettled, ChannelClosed,
+   * CloseRequested, ChannelWithdrawn) in [fromBlock, toBlock], sorted ascending
+   * by (blockNumber, logIndex). Reads from `_contractAddress` directly — no
+   * facade probe, since callers (network-stats indexers) point at canonical
+   * AntseedChannels deployments.
+   */
+  async getChannelEvents(params: {
+    fromBlock: number;
+    toBlock: number;
+  }): Promise<DecodedChannelEvent[]> {
+    const iface = new ethers.Interface(CHANNELS_ABI);
+    const eventTopics = [
+      iface.getEvent('Reserved')!.topicHash,
+      iface.getEvent('ChannelSettled')!.topicHash,
+      iface.getEvent('ChannelClosed')!.topicHash,
+      iface.getEvent('CloseRequested')!.topicHash,
+      iface.getEvent('ChannelWithdrawn')!.topicHash,
+    ];
+
+    const logs = await this._provider.getLogs({
+      address: this._contractAddress,
+      fromBlock: params.fromBlock,
+      toBlock: params.toBlock,
+      topics: [eventTopics],
+    });
+
+    const events: DecodedChannelEvent[] = [];
+    for (const log of logs) {
+      const parsed = iface.parseLog(log);
+      if (!parsed) continue;
+      const args = parsed.args;
+      const base: ChannelEventBase = {
+        blockNumber: log.blockNumber,
+        txHash: log.transactionHash,
+        logIndex: log.index,
+        channelId: args.channelId,
+        buyer: (args.buyer as string).toLowerCase(),
+        seller: (args.seller as string).toLowerCase(),
+      };
+      switch (parsed.name) {
+        case 'Reserved':
+          events.push({ ...base, type: 'reserved', maxAmount: args.maxAmount });
+          break;
+        case 'ChannelSettled':
+          events.push({
+            ...base,
+            type: 'settled',
+            cumulativeAmount: args.cumulativeAmount,
+            delta: args.delta,
+            totalSettled: args.totalSettled,
+            platformFee: args.platformFee,
+          });
+          break;
+        case 'ChannelClosed':
+          events.push({
+            ...base,
+            type: 'closed',
+            settledAmount: args.settledAmount,
+            refund: args.refund,
+          });
+          break;
+        case 'CloseRequested':
+          events.push({ ...base, type: 'closeRequested', gracePeriodEnd: args.gracePeriodEnd });
+          break;
+        case 'ChannelWithdrawn':
+          events.push({ ...base, type: 'withdrawn', refund: args.refund });
+          break;
+      }
+    }
+    events.sort((a, b) =>
+      a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex,
+    );
+    return events;
   }
 
   /**

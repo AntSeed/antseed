@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { createServer, __resetAgentIdCacheForTests } from './server.js';
 import { SqliteStore } from './store.js';
 import type { NetworkPoller } from './poller.js';
-import type { StakingClient, DecodedMetadataRecorded } from '@antseed/node';
+import type { StakingClient, DecodedMetadataRecorded, DecodedChannelEvent } from '@antseed/node';
 
 function makeEvent(overrides: Partial<DecodedMetadataRecorded> = {}): DecodedMetadataRecorded {
   return {
@@ -586,6 +586,246 @@ describe('createServer — rankings: empty windowed lists when no event rows', (
     assert.equal(body.rankings.mostUsed.allTime[0]!.agentId, 42);
     assert.equal(body.rankings.mostUsed.allTime[0]!.requests, '5');
     assert.equal(body.rankings.risingStars.length, 0);
+  });
+});
+
+// ── Test: Channels — per-peer USDC + lifecycle enrichment ──────────────────
+
+describe('createServer — channels: per-peer USDC + channelLifecycle', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const SELLER = '0x' + 'a'.repeat(40);
+  const BUYER = '0x' + 'b'.repeat(40);
+
+  // Seed metadata totals so the peer enrichment finds an agentId match.
+  // Pass a block-timestamp map so the event also appears in the windowed
+  // (seller_settlement_events) read — without it, last24h.requests would
+  // render as '0' even though allTime is '1'.
+  const nowSec = Math.floor(Date.now() / 1000);
+  store.applyBatch(
+    'test',
+    '0xstats',
+    [makeEvent({ agentId: 7n, blockNumber: 100, inputTokens: 1n, outputTokens: 1n, requestCount: 1n })],
+    100,
+    new Map([[100, nowSec - 60 * 60]]),
+  );
+
+  // Seed channel events: 2 settlements totalling 7000 USDC, 1 closeRequested.
+  const ts = new Map<number, number>([
+    [10, nowSec - 60 * 60],
+    [11, nowSec - 60 * 60],
+    [12, nowSec - 60 * 60],
+  ]);
+  const settle: DecodedChannelEvent = {
+    type: 'settled',
+    blockNumber: 10,
+    logIndex: 0,
+    txHash: '0x' + '0'.repeat(64),
+    channelId: '0x' + '1'.repeat(64),
+    buyer: BUYER,
+    seller: SELLER,
+    cumulativeAmount: 5_000n,
+    delta: 5_000n,
+    totalSettled: 5_000n,
+    platformFee: 0n,
+  };
+  const settle2: DecodedChannelEvent = { ...settle, blockNumber: 11, delta: 2_000n, totalSettled: 7_000n };
+  const closeReq: DecodedChannelEvent = {
+    type: 'closeRequested',
+    blockNumber: 12,
+    logIndex: 0,
+    txHash: '0x' + '0'.repeat(64),
+    channelId: '0x' + '1'.repeat(64),
+    buyer: BUYER,
+    seller: SELLER,
+    gracePeriodEnd: 0n,
+  };
+  store.applyChannelBatch('test', '0xchannels', [settle, settle2, closeReq], 12, ts);
+
+  // peerId is the lowercased seller address sans 0x — matches resolution flow.
+  const peers = [fakePeer('agent7', SELLER)];
+  const poller = makePoller(peers);
+  const stakingClient = makeStakingClient((addr) => addr === SELLER ? 7 : 0);
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => { __resetAgentIdCacheForTests(); });
+
+  it('peer onChainStats merges USDC into each window block and exposes channelLifecycle', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    type WindowShape = {
+      requests: string;
+      inputTokens: string;
+      outputTokens: string;
+      volume: string;
+      users: number;
+      settlements: number;
+      usdcSettled: string;
+      settleCount: number;
+      closeCount: number;
+    };
+    const body = await res.json() as {
+      peers: Array<{
+        onChainStats: {
+          agentId: number;
+          last24h: WindowShape | null;
+          last7d: WindowShape | null;
+          last30d: WindowShape | null;
+          allTime: WindowShape;
+          channelLifecycle: {
+            reservedCount: number;
+            settledCount: number;
+            closedCount: number;
+            closeRequestedCount: number;
+            withdrawnCount: number;
+            totalUsdcSettled: string;
+          } | null;
+        } | null;
+      }>;
+    };
+
+    const stats = body.peers[0]!.onChainStats!;
+    assert.equal(stats.agentId, 7);
+
+    // USDC fields live on each window block, alongside requests/tokens.
+    assert.equal(stats.last24h!.usdcSettled, '7000');
+    assert.equal(stats.last24h!.settleCount, 2);
+    assert.equal(stats.last24h!.closeCount, 0);
+    // Token-side still present in the same block.
+    assert.equal(stats.last24h!.requests, '1');
+
+    // allTime carries cumulative USDC pulled from the lifetime counters.
+    assert.equal(stats.allTime.usdcSettled, '7000');
+    assert.equal(stats.allTime.settleCount, 2);
+
+    // channelLifecycle is its own field — counters that don't fit a window.
+    assert.ok(stats.channelLifecycle !== null);
+    assert.equal(stats.channelLifecycle!.settledCount, 2);
+    assert.equal(stats.channelLifecycle!.closeRequestedCount, 1);
+    assert.equal(stats.channelLifecycle!.totalUsdcSettled, '7000');
+  });
+
+  it('per-window USDC defaults to 0 when only token side has data', async () => {
+    // last30d should still include the same activity since it's a superset
+    // window — but token-only sellers in any window should render USDC as 0,
+    // not null. Verified by inspecting the response shape.
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      peers: Array<{ onChainStats: { last30d: { usdcSettled: string; requests: string } | null } | null }>;
+    };
+    const w = body.peers[0]!.onChainStats!.last30d!;
+    assert.equal(w.usdcSettled, '7000');
+    assert.equal(typeof w.requests, 'string');
+  });
+});
+
+// ── Test: Channels — topRevenue ranking ────────────────────────────────────
+
+describe('createServer — channels: topRevenue ranking', () => {
+  const PORT = nextPort();
+  const store = makeStore();
+  const SELLER_HIGH = '0x' + 'a'.repeat(40);
+  const SELLER_LOW = '0x' + 'b'.repeat(40);
+
+  // Seed channel events: SELLER_HIGH earned 9_000 USDC, SELLER_LOW earned 100.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const recent = nowSec - 60 * 60;
+  const ts = new Map<number, number>([[1, recent], [2, recent]]);
+
+  const mkSettle = (over: Partial<DecodedChannelEvent>): DecodedChannelEvent => ({
+    type: 'settled',
+    blockNumber: 1,
+    logIndex: 0,
+    txHash: '0x' + '0'.repeat(64),
+    channelId: '0x' + '1'.repeat(64),
+    buyer: '0x' + '9'.repeat(40),
+    seller: SELLER_HIGH,
+    cumulativeAmount: 0n,
+    delta: 0n,
+    totalSettled: 0n,
+    platformFee: 0n,
+    ...over,
+  } as DecodedChannelEvent);
+
+  store.applyChannelBatch(
+    'test',
+    '0xchannels',
+    [
+      mkSettle({ blockNumber: 1, logIndex: 0, seller: SELLER_HIGH, delta: 9_000n, totalSettled: 9_000n }),
+      mkSettle({ blockNumber: 2, logIndex: 0, seller: SELLER_LOW, delta: 100n, totalSettled: 100n }),
+    ],
+    2,
+    ts,
+  );
+
+  const poller = makePoller([fakePeer('x', '0xunused')]);
+  // Deterministic resolver maps each known seller address to an agentId.
+  const stakingClient = makeStakingClient((addr) => {
+    if (addr === SELLER_HIGH) return 100;
+    if (addr === SELLER_LOW) return 200;
+    return 0;
+  });
+  const handle = createServer({ poller, store, stakingClient, port: PORT });
+
+  before(async () => { await handle.start(); });
+  after(() => { handle.stop(); store.close(); });
+  beforeEach(() => { __resetAgentIdCacheForTests(); });
+
+  it('topRevenue.allTime sorts by USDC desc and surfaces resolved agentIds', async () => {
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      rankings: {
+        topRevenue: {
+          last24h: Array<{ agentId: number; usdcSettled: string; settleCount: number; closeCount: number }>;
+          last7d: Array<{ agentId: number; usdcSettled: string }>;
+          last30d: Array<{ agentId: number; usdcSettled: string }>;
+          allTime: Array<{ agentId: number; usdcSettled: string }>;
+        };
+      };
+    };
+    assert.deepEqual(body.rankings.topRevenue.allTime.map((e) => e.agentId), [100, 200]);
+    assert.equal(body.rankings.topRevenue.allTime[0]!.usdcSettled, '9000');
+    assert.equal(body.rankings.topRevenue.allTime[1]!.usdcSettled, '100');
+
+    // Windowed mirrors all-time here since both events fall inside 24h.
+    assert.deepEqual(body.rankings.topRevenue.last24h.map((e) => e.agentId), [100, 200]);
+    assert.equal(body.rankings.topRevenue.last24h[0]!.settleCount, 1);
+  });
+
+  it('skips entries whose seller address resolves to agentId=0', async () => {
+    // Seed a third seller whose address resolves to 0 (unstaked).
+    const SELLER_UNSTAKED = '0x' + 'c'.repeat(40);
+    const recent2 = nowSec - 60 * 60;
+    store.applyChannelBatch(
+      'test',
+      '0xchannels',
+      [
+        {
+          type: 'settled',
+          blockNumber: 99,
+          logIndex: 0,
+          txHash: '0x' + '0'.repeat(64),
+          channelId: '0x' + '1'.repeat(64),
+          buyer: '0x' + '9'.repeat(40),
+          seller: SELLER_UNSTAKED,
+          cumulativeAmount: 50_000n,
+          delta: 50_000n,
+          totalSettled: 50_000n,
+          platformFee: 0n,
+        } as DecodedChannelEvent,
+      ],
+      99,
+      new Map([[99, recent2]]),
+    );
+
+    const res = await fetch(`http://localhost:${PORT}/stats`);
+    const body = await res.json() as {
+      rankings: { topRevenue: { allTime: Array<{ agentId: number }> } };
+    };
+    // SELLER_UNSTAKED would top the list by USDC (50_000) but agentId=0 → skip.
+    assert.ok(!body.rankings.topRevenue.allTime.some((e) => e.agentId === 0));
+    assert.equal(body.rankings.topRevenue.allTime[0]!.agentId, 100);
   });
 });
 

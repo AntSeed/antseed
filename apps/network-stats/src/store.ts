@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { DecodedMetadataRecorded } from '@antseed/node';
+import type { DecodedMetadataRecorded, DecodedChannelEvent } from '@antseed/node';
 
 export interface SellerTotals {
   totalRequests: bigint;
@@ -46,6 +46,26 @@ export interface SellerAllTimeStats {
   firstSeenAt: number | null;
 }
 
+/** Lifetime counters per seller address derived from AntseedChannels events. */
+export interface SellerChannelLifetime {
+  reservedCount: number;
+  settledCount: number;
+  closedCount: number;
+  closeRequestedCount: number;
+  withdrawnCount: number;
+  totalUsdcSettled: bigint;
+  firstEventBlock: number | null;
+  lastEventBlock: number | null;
+  lastUpdatedAt: number;
+}
+
+/** Aggregated channel economics per seller address over a fixed window. */
+export interface SellerUsdcWindow {
+  usdcSettled: bigint;
+  settleCount: number;
+  closeCount: number;
+}
+
 interface SellerRow {
   total_input_tokens: string;
   total_output_tokens: string;
@@ -76,6 +96,18 @@ interface SellerTotalsRow {
   last_updated_at: number;
 }
 
+interface SellerChannelLifetimeRow {
+  reserved_count: number;
+  settled_count: number;
+  closed_count: number;
+  close_requested_count: number;
+  withdrawn_count: number;
+  total_usdc_settled: string;
+  first_event_block: number | null;
+  last_event_block: number | null;
+  last_updated_at: number;
+}
+
 export class SqliteStore {
   private db: Database.Database;
 
@@ -98,6 +130,20 @@ export class SqliteStore {
   private _selectEventsSince!: Database.Statement<[number], { agent_id: number; input_tokens: string; output_tokens: string; request_count: string; buyer: string | null }>;
   private _selectAllSellersWithId!: Database.Statement<[], { agent_id: number; total_request_count: string; total_input_tokens: string; total_output_tokens: string; settlement_count: number; first_seen_at: number | null }>;
   private _countBuyersByAgent!: Database.Statement<[], { agent_id: number; c: number }>;
+
+  // ── Channel-events plumbing (AntseedChannels lifecycle) ────────────────
+  private _insertChannelEvent!: Database.Statement<[
+    number, number, number | null, string, string, string, string,
+    string | null, string | null, string | null, string | null, string | null,
+  ]>;
+  private _selectChannelLifetime!: Database.Statement<[string], SellerChannelLifetimeRow>;
+  private _upsertChannelLifetime!: Database.Statement<[
+    string, number, number, number, number, number, string, number | null, number | null, number,
+  ]>;
+  private _selectAllChannelLifetime!: Database.Statement<[], SellerChannelLifetimeRow & { seller: string }>;
+  private _selectChannelEventsSince!: Database.Statement<[number], {
+    seller: string; event_type: string; delta_usdc: string | null;
+  }>;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -172,6 +218,49 @@ export class SqliteStore {
         ON seller_settlement_events(agent_id, block_timestamp);
       CREATE INDEX IF NOT EXISTS idx_settlement_events_ts
         ON seller_settlement_events(block_timestamp);
+
+      -- ── AntseedChannels lifecycle ─────────────────────────────────
+      -- Per-event log for windowed economic queries (USDC settled in last
+      -- 24h/7d/30d). One row per Channels event we care about. Keys mirror
+      -- seller_settlement_events: (block, logIndex) is globally unique within
+      -- a contract's logs and INSERT OR IGNORE protects against re-runs of an
+      -- already-applied range. block_timestamp may be null for tests that don't
+      -- pass timestamps; rows without it are excluded from windowed reads.
+      CREATE TABLE IF NOT EXISTS channel_events (
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+        block_timestamp INTEGER,
+        event_type TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        buyer TEXT NOT NULL,
+        seller TEXT NOT NULL,
+        delta_usdc TEXT,
+        total_settled TEXT,
+        settled_amount TEXT,
+        refund TEXT,
+        max_amount TEXT,
+        PRIMARY KEY (block_number, log_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_events_seller_ts
+        ON channel_events(seller, block_timestamp);
+      CREATE INDEX IF NOT EXISTS idx_channel_events_seller_type
+        ON channel_events(seller, event_type);
+
+      -- Pre-aggregated lifetime counters per seller address. Updated inside
+      -- applyChannelBatch so the all-time read in /stats is one cheap table
+      -- scan instead of streaming the full event log on every request.
+      CREATE TABLE IF NOT EXISTS seller_channel_lifetime (
+        seller TEXT PRIMARY KEY,
+        reserved_count INTEGER NOT NULL DEFAULT 0,
+        settled_count INTEGER NOT NULL DEFAULT 0,
+        closed_count INTEGER NOT NULL DEFAULT 0,
+        close_requested_count INTEGER NOT NULL DEFAULT 0,
+        withdrawn_count INTEGER NOT NULL DEFAULT 0,
+        total_usdc_settled TEXT NOT NULL DEFAULT '0',
+        first_event_block INTEGER,
+        last_event_block INTEGER,
+        last_updated_at INTEGER NOT NULL
+      );
     `);
 
     // Defensive backfill for deployments created before `buyer` was tracked.
@@ -267,6 +356,41 @@ export class SqliteStore {
 
     this._countBuyersByAgent = this.db.prepare(
       'SELECT agent_id, COUNT(*) AS c FROM seller_buyer_totals GROUP BY agent_id',
+    );
+
+    // ── Channel events ──────────────────────────────────────────
+    this._insertChannelEvent = this.db.prepare(
+      `INSERT OR IGNORE INTO channel_events
+         (block_number, log_index, block_timestamp, event_type, channel_id, buyer, seller,
+          delta_usdc, total_settled, settled_amount, refund, max_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectChannelLifetime = this.db.prepare(
+      `SELECT reserved_count, settled_count, closed_count, close_requested_count,
+              withdrawn_count, total_usdc_settled, first_event_block, last_event_block,
+              last_updated_at
+       FROM seller_channel_lifetime WHERE seller = ?`,
+    );
+
+    this._upsertChannelLifetime = this.db.prepare(
+      `INSERT OR REPLACE INTO seller_channel_lifetime
+         (seller, reserved_count, settled_count, closed_count, close_requested_count,
+          withdrawn_count, total_usdc_settled, first_event_block, last_event_block, last_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this._selectAllChannelLifetime = this.db.prepare(
+      `SELECT seller, reserved_count, settled_count, closed_count, close_requested_count,
+              withdrawn_count, total_usdc_settled, first_event_block, last_event_block,
+              last_updated_at
+       FROM seller_channel_lifetime`,
+    );
+
+    this._selectChannelEventsSince = this.db.prepare(
+      `SELECT seller, event_type, delta_usdc
+       FROM channel_events
+       WHERE block_timestamp IS NOT NULL AND block_timestamp >= ?`,
     );
   }
 
@@ -543,6 +667,168 @@ export class SqliteStore {
     for (const [agentId, set] of buyersByAgent) {
       const totals = result.get(agentId);
       if (totals) totals.uniqueBuyers = set.size;
+    }
+    return result;
+  }
+
+  /**
+   * Atomic transaction for AntseedChannels lifecycle events:
+   *   1. Append each event to channel_events (raw log).
+   *   2. Bump per-seller counters in seller_channel_lifetime; sum delta_usdc
+   *      onto total_usdc_settled for `settled` events.
+   *   3. Advance indexer_checkpoint for (chainId, contractAddress).
+   *
+   * Events MUST be sorted ascending by (blockNumber, logIndex). last_event_block
+   * advances to the last event's block; first_event_block is set on first insert
+   * and never overwritten.
+   *
+   * Address resolution to agentId happens at read time in server.ts — this
+   * write path stores raw seller addresses to keep the index path RPC-free.
+   */
+  applyChannelBatch(
+    chainId: string,
+    contractAddress: string,
+    events: DecodedChannelEvent[],
+    newCheckpoint: number,
+    blockTimestamps?: Map<number, number>,
+    newCheckpointTimestamp?: number | null,
+  ): void {
+    this.db.transaction(() => {
+      for (const event of events) {
+        const seller = event.seller.toLowerCase();
+        const buyer = event.buyer.toLowerCase();
+        const channelId = event.channelId.toLowerCase();
+        const ts = blockTimestamps?.get(event.blockNumber) ?? null;
+
+        // Per-event row — discriminate by event.type for the type-specific
+        // economic fields. The wide-table-with-nulls shape is intentional:
+        // five event types with mostly disjoint payloads, queried by seller
+        // + window. A normalized split across five tables would make
+        // windowed cross-type reads (e.g. "seller's settlements + closes
+        // in 7d") need multiple scans.
+        let delta: string | null = null;
+        let totalSettled: string | null = null;
+        let settledAmount: string | null = null;
+        let refund: string | null = null;
+        let maxAmount: string | null = null;
+        switch (event.type) {
+          case 'reserved':
+            maxAmount = event.maxAmount.toString();
+            break;
+          case 'settled':
+            delta = event.delta.toString();
+            totalSettled = event.totalSettled.toString();
+            break;
+          case 'closed':
+            settledAmount = event.settledAmount.toString();
+            refund = event.refund.toString();
+            break;
+          case 'closeRequested':
+            // gracePeriodEnd is intentionally not stored — neither v1 reads
+            // nor reliability scoring use it. Block timestamp + buyer/seller
+            // are the load-bearing fields.
+            break;
+          case 'withdrawn':
+            refund = event.refund.toString();
+            break;
+        }
+
+        this._insertChannelEvent.run(
+          event.blockNumber,
+          event.logIndex,
+          ts,
+          event.type,
+          channelId,
+          buyer,
+          seller,
+          delta,
+          totalSettled,
+          settledAmount,
+          refund,
+          maxAmount,
+        );
+
+        // ── seller_channel_lifetime — pre-aggregated counters ──────
+        const existing = this._selectChannelLifetime.get(seller);
+        const reservedCount = (existing?.reserved_count ?? 0) + (event.type === 'reserved' ? 1 : 0);
+        const settledCount = (existing?.settled_count ?? 0) + (event.type === 'settled' ? 1 : 0);
+        const closedCount = (existing?.closed_count ?? 0) + (event.type === 'closed' ? 1 : 0);
+        const closeRequestedCount =
+          (existing?.close_requested_count ?? 0) + (event.type === 'closeRequested' ? 1 : 0);
+        const withdrawnCount =
+          (existing?.withdrawn_count ?? 0) + (event.type === 'withdrawn' ? 1 : 0);
+        const prevUsdc = existing ? BigInt(existing.total_usdc_settled) : 0n;
+        const addedUsdc = event.type === 'settled' ? event.delta : 0n;
+        const totalUsdc = prevUsdc + addedUsdc;
+        const firstBlock = existing?.first_event_block ?? event.blockNumber;
+        const lastBlock = event.blockNumber;
+        const now = Math.floor(Date.now() / 1000);
+
+        this._upsertChannelLifetime.run(
+          seller,
+          reservedCount,
+          settledCount,
+          closedCount,
+          closeRequestedCount,
+          withdrawnCount,
+          totalUsdc.toString(),
+          firstBlock,
+          lastBlock,
+          now,
+        );
+      }
+
+      this._upsertCheckpoint.run(
+        chainId,
+        contractAddress.toLowerCase(),
+        newCheckpoint,
+        newCheckpointTimestamp ?? null,
+      );
+    })();
+  }
+
+  /**
+   * Returns lifetime channel counters for every seller address that has ever
+   * been seen in a Channels event. Single SELECT — used to build the
+   * `topRevenue` ranking and per-peer `channelLifecycle` enrichment.
+   */
+  getAllSellerChannelLifetime(): Map<string, SellerChannelLifetime> {
+    const result = new Map<string, SellerChannelLifetime>();
+    for (const row of this._selectAllChannelLifetime.all()) {
+      result.set(row.seller, {
+        reservedCount: row.reserved_count,
+        settledCount: row.settled_count,
+        closedCount: row.closed_count,
+        closeRequestedCount: row.close_requested_count,
+        withdrawnCount: row.withdrawn_count,
+        totalUsdcSettled: BigInt(row.total_usdc_settled),
+        firstEventBlock: row.first_event_block,
+        lastEventBlock: row.last_event_block,
+        lastUpdatedAt: row.last_updated_at,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Returns per-seller windowed channel economics for events at or after
+   * `cutoffSeconds`. Mirrors `getSellerTotalsSince` — TEXT-encoded uint128 deltas
+   * accumulated as BigInt in JS for full precision.
+   */
+  getSellerUsdcSince(cutoffSeconds: number): Map<string, SellerUsdcWindow> {
+    const result = new Map<string, SellerUsdcWindow>();
+    for (const row of this._selectChannelEventsSince.iterate(cutoffSeconds)) {
+      let entry = result.get(row.seller);
+      if (!entry) {
+        entry = { usdcSettled: 0n, settleCount: 0, closeCount: 0 };
+        result.set(row.seller, entry);
+      }
+      if (row.event_type === 'settled') {
+        entry.settleCount += 1;
+        if (row.delta_usdc) entry.usdcSettled += BigInt(row.delta_usdc);
+      } else if (row.event_type === 'closed') {
+        entry.closeCount += 1;
+      }
     }
     return result;
   }

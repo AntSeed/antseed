@@ -8,7 +8,12 @@
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
 import type { StakingClient } from '@antseed/node';
-import type { SqliteStore, TimeframeTotals } from './store.js';
+import type {
+  SqliteStore,
+  TimeframeTotals,
+  SellerChannelLifetime,
+  SellerUsdcWindow,
+} from './store.js';
 import type { MetadataIndexer } from './indexer.js';
 
 const SECONDS_PER_DAY = 86_400;
@@ -18,10 +23,42 @@ const SECONDS_PER_DAY = 86_400;
 // noisy ratios (e.g. 1 request in 7d / lifetime rate of 1/day = score 7).
 const RISING_STARS_MIN_LIFETIME_REQUESTS = 5n;
 
+// Bound on the per-window leaderboard size — also bounds how many seller
+// addresses we resolve to agentIds on the cold path. After the first request,
+// resolved entries stay in the module-level agentIdCache, so subsequent
+// requests are free for the same seller set.
+const TOP_REVENUE_LIMIT = 50;
+
 type RankingMetric = { agentId: number; requests: string; inputTokens: string; outputTokens: string; volume: string; users: number; settlements: number };
 type ReachEntry = { agentId: number; uniqueBuyers: number; totalRequests: string };
 type RisingStarEntry = { agentId: number; score: number; requests7d: string; lifetimeRequests: string; daysActive: number };
-type WindowMetric = { requests: string; inputTokens: string; outputTokens: string; volume: string; users: number; settlements: number };
+
+// Per-peer windowed metric — returned for last24h / last7d / last30d / allTime
+// blocks under `onChainStats`. Token-side fields come from the stats indexer;
+// USDC-side fields come from the channels indexer. When one indexer hasn't
+// observed activity for a window the missing-side fields default to '0' / 0
+// so consumers can iterate the four windows uniformly.
+type PeerWindowMetric = {
+  requests: string;
+  inputTokens: string;
+  outputTokens: string;
+  volume: string;
+  users: number;
+  settlements: number;
+  usdcSettled: string;
+  settleCount: number;
+  closeCount: number;
+};
+
+type ChannelLifecycleMetric = {
+  reservedCount: number;
+  settledCount: number;
+  closedCount: number;
+  closeRequestedCount: number;
+  withdrawnCount: number;
+  totalUsdcSettled: string;
+};
+type RevenueEntry = { agentId: number; usdcSettled: string; settleCount: number; closeCount: number };
 
 // Accepts either a TimeframeTotals (windowed) or a SellerTotals-like all-time
 // shape — both expose totalRequests/Input/Output, settlementCount, uniqueBuyers.
@@ -45,17 +82,56 @@ function makeRankingMetric(agentId: number, t: MetricSource): RankingMetric {
   };
 }
 
-// Per-peer windowed totals — same shape as RankingMetric minus the agentId,
-// since the agentId is already on the parent onChainStats object.
-function toWindowMetric(t: MetricSource | undefined): WindowMetric | null {
-  if (!t) return null;
+// Per-peer windowed metric — merges token-side (stats indexer) and USDC-side
+// (channels indexer) data into one object keyed by window. Returns null only
+// when both sides are absent for the window; if one indexer is still backfilling
+// the present side renders normally and the absent side reports zeros.
+function toPeerWindowMetric(
+  token: MetricSource | undefined,
+  usdc: SellerUsdcWindow | undefined,
+): PeerWindowMetric | null {
+  if (!token && !usdc) return null;
   return {
-    requests: t.totalRequests.toString(),
-    inputTokens: t.totalInputTokens.toString(),
-    outputTokens: t.totalOutputTokens.toString(),
-    volume: (t.totalInputTokens + t.totalOutputTokens).toString(),
-    users: t.uniqueBuyers,
-    settlements: t.settlementCount,
+    requests: token?.totalRequests.toString() ?? '0',
+    inputTokens: token?.totalInputTokens.toString() ?? '0',
+    outputTokens: token?.totalOutputTokens.toString() ?? '0',
+    volume: token ? (token.totalInputTokens + token.totalOutputTokens).toString() : '0',
+    users: token?.uniqueBuyers ?? 0,
+    settlements: token?.settlementCount ?? 0,
+    usdcSettled: usdc?.usdcSettled.toString() ?? '0',
+    settleCount: usdc?.settleCount ?? 0,
+    closeCount: usdc?.closeCount ?? 0,
+  };
+}
+
+// All-time variant — token side is always present (we only build this when
+// SellerTotals exists), USDC side is whatever the channels indexer has so far.
+function toPeerAllTimeMetric(
+  totals: MetricSource,
+  lifetime: SellerChannelLifetime | undefined,
+): PeerWindowMetric {
+  return {
+    requests: totals.totalRequests.toString(),
+    inputTokens: totals.totalInputTokens.toString(),
+    outputTokens: totals.totalOutputTokens.toString(),
+    volume: (totals.totalInputTokens + totals.totalOutputTokens).toString(),
+    users: totals.uniqueBuyers,
+    settlements: totals.settlementCount,
+    usdcSettled: lifetime?.totalUsdcSettled.toString() ?? '0',
+    settleCount: lifetime?.settledCount ?? 0,
+    closeCount: lifetime?.closedCount ?? 0,
+  };
+}
+
+function toChannelLifecycleMetric(l: SellerChannelLifetime | undefined): ChannelLifecycleMetric | null {
+  if (!l) return null;
+  return {
+    reservedCount: l.reservedCount,
+    settledCount: l.settledCount,
+    closedCount: l.closedCount,
+    closeRequestedCount: l.closeRequestedCount,
+    withdrawnCount: l.withdrawnCount,
+    totalUsdcSettled: l.totalUsdcSettled.toString(),
   };
 }
 
@@ -148,6 +224,18 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
       last30d: store.getSellerTotalsSince(nowSec - 30 * SECONDS_PER_DAY),
     };
 
+    // Channel-side maps — keyed by lowercased seller address (not agentId).
+    // The `topRevenue` ranking and per-peer USDC enrichment join on address
+    // because agentId resolution happens lazily via stakingClient.getAgentId
+    // (see decision C: indexer-side resolution skipped to keep the index
+    // RPC-free).
+    const usdcWindowMaps: Record<'last24h' | 'last7d' | 'last30d', Map<string, SellerUsdcWindow>> = {
+      last24h: store.getSellerUsdcSince(nowSec - 1 * SECONDS_PER_DAY),
+      last7d: store.getSellerUsdcSince(nowSec - 7 * SECONDS_PER_DAY),
+      last30d: store.getSellerUsdcSince(nowSec - 30 * SECONDS_PER_DAY),
+    };
+    const channelLifetimeMap = store.getAllSellerChannelLifetime();
+
     const enrichedPeers = await Promise.all(
       snapshot.peers.map(async (peer) => {
         // peerId is the lowercased seller/operator EVM address without the 0x prefix.
@@ -163,6 +251,9 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
         if (!totals) {
           return { ...peer, onChainStats: null };
         }
+        // address is non-null at this point — guarded above by agentId !== 0
+        const sellerAddr = address!;
+        const channelLifetime = channelLifetimeMap.get(sellerAddr);
         return {
           ...peer,
           onChainStats: {
@@ -180,14 +271,18 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
             avgRequestsPerChannel: totals.avgRequestsPerChannel,
             avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
             lastUpdatedAt: totals.lastUpdatedAt,
-            last24h: toWindowMetric(windowMaps.last24h.get(agentId)),
-            last7d: toWindowMetric(windowMaps.last7d.get(agentId)),
-            last30d: toWindowMetric(windowMaps.last30d.get(agentId)),
-            // Same shape as the windowed metrics so clients can iterate
-            // ['last24h', 'last7d', 'last30d', 'allTime'] uniformly. The flat
-            // totalRequests/totalInputTokens/etc. fields above are kept for
-            // backward compatibility.
-            allTime: toWindowMetric(totals),
+            // Each window block carries both token-side and USDC-side metrics,
+            // so consumers can iterate ['last24h','last7d','last30d','allTime']
+            // with one uniform shape. USDC fields render as '0' / 0 when the
+            // channels indexer hasn't observed activity for this seller yet
+            // (cold start or backfill-in-progress).
+            last24h: toPeerWindowMetric(windowMaps.last24h.get(agentId), usdcWindowMaps.last24h.get(sellerAddr)),
+            last7d: toPeerWindowMetric(windowMaps.last7d.get(agentId), usdcWindowMaps.last7d.get(sellerAddr)),
+            last30d: toPeerWindowMetric(windowMaps.last30d.get(agentId), usdcWindowMaps.last30d.get(sellerAddr)),
+            allTime: toPeerAllTimeMetric(totals, channelLifetime),
+            // Lifetime counters that don't fit a window — kept as a separate
+            // object. Null when no channel events have been seen for this seller.
+            channelLifecycle: toChannelLifecycleMetric(channelLifetime),
           },
         };
       }),
@@ -289,6 +384,55 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
     }
     risingStars.sort((a, b) => b.score - a.score);
 
+    // ── topRevenue ───────────────────────────────────────────────────
+    // USDC-settled leaderboard. Built from address-keyed maps; each candidate
+    // address is resolved to agentId via stakingClient.getAgentId (cached
+    // module-wide). Capped at TOP_REVENUE_LIMIT per window so the cold-path
+    // RPC count stays bounded — subsequent requests hit the cache.
+    const buildRevenueCandidates = (
+      m: Map<string, { usdcSettled: bigint; settleCount: number; closeCount: number }>,
+    ): Array<[string, { usdcSettled: bigint; settleCount: number; closeCount: number }]> =>
+      Array.from(m)
+        .filter(([, v]) => v.usdcSettled > 0n)
+        .sort((a, b) => compareBigDesc(a[1].usdcSettled, b[1].usdcSettled))
+        .slice(0, TOP_REVENUE_LIMIT);
+
+    const allTimeRevenueCandidates: Array<[string, { usdcSettled: bigint; settleCount: number; closeCount: number }]> =
+      Array.from(channelLifetimeMap)
+        .filter(([, v]) => v.totalUsdcSettled > 0n)
+        .sort((a, b) => compareBigDesc(a[1].totalUsdcSettled, b[1].totalUsdcSettled))
+        .slice(0, TOP_REVENUE_LIMIT)
+        .map(([addr, v]) => [addr, {
+          usdcSettled: v.totalUsdcSettled,
+          settleCount: v.settledCount,
+          closeCount: v.closedCount,
+        }]);
+
+    const resolveRevenueEntries = async (
+      candidates: Array<[string, { usdcSettled: bigint; settleCount: number; closeCount: number }]>,
+    ): Promise<RevenueEntry[]> => {
+      const resolved = await Promise.all(
+        candidates.map(async ([addr, v]) => {
+          const agentId = await resolveAgentId(stakingClient, addr);
+          if (agentId === null || agentId === 0) return null;
+          return {
+            agentId,
+            usdcSettled: v.usdcSettled.toString(),
+            settleCount: v.settleCount,
+            closeCount: v.closeCount,
+          };
+        }),
+      );
+      return resolved.filter((e): e is RevenueEntry => e !== null);
+    };
+
+    const [topRevenue24h, topRevenue7d, topRevenue30d, topRevenueAll] = await Promise.all([
+      resolveRevenueEntries(buildRevenueCandidates(usdcWindowMaps.last24h)),
+      resolveRevenueEntries(buildRevenueCandidates(usdcWindowMaps.last7d)),
+      resolveRevenueEntries(buildRevenueCandidates(usdcWindowMaps.last30d)),
+      resolveRevenueEntries(allTimeRevenueCandidates),
+    ]);
+
     res.json({
       ...snapshot,
       peers: enrichedPeers,
@@ -315,6 +459,12 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
         },
         mostReach,
         risingStars,
+        topRevenue: {
+          last24h: topRevenue24h,
+          last7d: topRevenue7d,
+          last30d: topRevenue30d,
+          allTime: topRevenueAll,
+        },
       },
       ...(indexerPayload ? { indexer: indexerPayload } : {}),
     });

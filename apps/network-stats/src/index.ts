@@ -1,12 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { StakingClient, StatsClient, resolveChainConfig } from '@antseed/node';
+import { ChannelsClient, StakingClient, StatsClient, resolveChainConfig } from '@antseed/node';
 
 import { NetworkPoller } from './poller.js';
 import { createServer } from './server.js';
 import { SqliteStore } from './store.js';
 import { MetadataIndexer } from './indexer.js';
+import { ChannelsIndexer } from './channels-indexer.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '4000', 10);
 const CACHE_PATH = process.env['CACHE_PATH'];
@@ -25,6 +26,7 @@ const chainConfig = resolveChainConfig({
 });
 let store: SqliteStore | null = null;
 let indexer: MetadataIndexer | null = null;
+let channelsIndexer: ChannelsIndexer | null = null;
 let stakingClient: StakingClient | null = null;
 
 if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 'number') {
@@ -58,6 +60,31 @@ if (chainConfig.statsContractAddress && typeof chainConfig.statsDeployBlock === 
   } else {
     console.warn(`[network-stats] stats contract is configured for ${CHAIN_ID} but staking contract is not — /stats enrichment will fall back to the legacy non-enriched payload`);
   }
+
+  // AntseedChannels lifecycle indexer — runs in parallel with the stats
+  // indexer and writes USDC + reliability events into the same SqliteStore.
+  // Skipped when the chain config doesn't supply a deploy block: without it
+  // a cold start would scan from genesis on every tick.
+  if (typeof chainConfig.channelsDeployBlock === 'number') {
+    const channelsClient = new ChannelsClient({
+      rpcUrl: chainConfig.rpcUrl,
+      ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+      contractAddress: chainConfig.channelsContractAddress,
+    });
+    channelsIndexer = new ChannelsIndexer({
+      store,
+      channelsClient,
+      chainId: CHAIN_ID,
+      contractAddress: chainConfig.channelsContractAddress.toLowerCase(),
+      deployBlock: chainConfig.channelsDeployBlock,
+      tickIntervalMs: TICK_INTERVAL_MS,
+      reorgSafetyBlocks: REORG_SAFETY_BLOCKS,
+      maxBlocksPerTick: MAX_BLOCKS_PER_TICK,
+      rpcUrl: chainConfig.rpcUrl,
+    });
+  } else {
+    console.log(`[network-stats] channels indexer disabled for chain ${CHAIN_ID} (no channelsDeployBlock configured)`);
+  }
 } else {
   console.log(
     `[network-stats] stats indexer disabled for chain ${CHAIN_ID} (no stats contract configured)`,
@@ -78,6 +105,7 @@ const server = createServer({
 await server.start();
 await poller.start();
 indexer?.start();
+channelsIndexer?.start();
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
@@ -85,6 +113,7 @@ process.on('SIGTERM', shutdown);
 function shutdown(): void {
   console.log('[network-stats] shutting down...');
   indexer?.stop();
+  channelsIndexer?.stop();
   store?.close();
   poller.stop();
   server.stop();

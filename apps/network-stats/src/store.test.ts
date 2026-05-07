@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from './store.js';
-import type { DecodedMetadataRecorded } from '@antseed/node';
+import type { DecodedMetadataRecorded, DecodedChannelEvent } from '@antseed/node';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,8 +47,10 @@ describe('SqliteStore', () => {
       .sort();
 
     assert.deepEqual(tables, [
+      'channel_events',
       'indexer_checkpoint',
       'seller_buyer_totals',
+      'seller_channel_lifetime',
       'seller_channel_totals',
       'seller_metadata_totals',
       'seller_settlement_events',
@@ -370,6 +372,245 @@ describe('SqliteStore', () => {
     assert.equal(mixed, 42);
 
     store.close();
+  });
+
+  // ── AntseedChannels lifecycle (applyChannelBatch) ────────────────────────
+  describe('applyChannelBatch + read methods', () => {
+    const SELLER_A = '0x' + 'a'.repeat(40);
+    const SELLER_B = '0x' + 'b'.repeat(40);
+    const BUYER = '0x' + '1'.repeat(40);
+    const CHANNEL = '0x' + '2'.repeat(64);
+
+    function reservedEvt(over: Partial<DecodedChannelEvent> = {}): DecodedChannelEvent {
+      return {
+        type: 'reserved',
+        blockNumber: 1,
+        logIndex: 0,
+        txHash: '0x' + '0'.repeat(64),
+        channelId: CHANNEL,
+        buyer: BUYER,
+        seller: SELLER_A,
+        maxAmount: 0n,
+        ...over,
+      } as DecodedChannelEvent;
+    }
+    function settledEvt(over: Partial<DecodedChannelEvent> = {}): DecodedChannelEvent {
+      return {
+        type: 'settled',
+        blockNumber: 1,
+        logIndex: 0,
+        txHash: '0x' + '0'.repeat(64),
+        channelId: CHANNEL,
+        buyer: BUYER,
+        seller: SELLER_A,
+        cumulativeAmount: 0n,
+        delta: 0n,
+        totalSettled: 0n,
+        platformFee: 0n,
+        ...over,
+      } as DecodedChannelEvent;
+    }
+    function closedEvt(over: Partial<DecodedChannelEvent> = {}): DecodedChannelEvent {
+      return {
+        type: 'closed',
+        blockNumber: 1,
+        logIndex: 0,
+        txHash: '0x' + '0'.repeat(64),
+        channelId: CHANNEL,
+        buyer: BUYER,
+        seller: SELLER_A,
+        settledAmount: 0n,
+        refund: 0n,
+        ...over,
+      } as DecodedChannelEvent;
+    }
+    function closeRequestedEvt(over: Partial<DecodedChannelEvent> = {}): DecodedChannelEvent {
+      return {
+        type: 'closeRequested',
+        blockNumber: 1,
+        logIndex: 0,
+        txHash: '0x' + '0'.repeat(64),
+        channelId: CHANNEL,
+        buyer: BUYER,
+        seller: SELLER_A,
+        gracePeriodEnd: 0n,
+        ...over,
+      } as DecodedChannelEvent;
+    }
+    function withdrawnEvt(over: Partial<DecodedChannelEvent> = {}): DecodedChannelEvent {
+      return {
+        type: 'withdrawn',
+        blockNumber: 1,
+        logIndex: 0,
+        txHash: '0x' + '0'.repeat(64),
+        channelId: CHANNEL,
+        buyer: BUYER,
+        seller: SELLER_A,
+        refund: 0n,
+        ...over,
+      } as DecodedChannelEvent;
+    }
+
+    it('aggregates lifetime counters across all five event types', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [
+          reservedEvt({ blockNumber: 1, logIndex: 0, maxAmount: 1_000_000n }),
+          settledEvt({ blockNumber: 2, logIndex: 0, delta: 200_000n, totalSettled: 200_000n }),
+          settledEvt({ blockNumber: 3, logIndex: 0, delta: 300_000n, totalSettled: 500_000n }),
+          closeRequestedEvt({ blockNumber: 4, logIndex: 0 }),
+          closedEvt({ blockNumber: 5, logIndex: 0, settledAmount: 500_000n, refund: 500_000n }),
+          withdrawnEvt({ blockNumber: 6, logIndex: 0, refund: 0n }),
+        ],
+        6,
+      );
+
+      const all = store.getAllSellerChannelLifetime();
+      const a = all.get(SELLER_A);
+      assert.ok(a !== undefined);
+      assert.equal(a!.reservedCount, 1);
+      assert.equal(a!.settledCount, 2);
+      assert.equal(a!.closedCount, 1);
+      assert.equal(a!.closeRequestedCount, 1);
+      assert.equal(a!.withdrawnCount, 1);
+      assert.equal(a!.totalUsdcSettled, 500_000n);
+      assert.equal(a!.firstEventBlock, 1);
+      assert.equal(a!.lastEventBlock, 6);
+
+      assert.equal(store.getCheckpoint('base', '0xchannels'), 6);
+      store.close();
+    });
+
+    it('keeps lifetime counters separate per seller', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [
+          settledEvt({ blockNumber: 1, logIndex: 0, seller: SELLER_A, delta: 100n, totalSettled: 100n }),
+          settledEvt({ blockNumber: 2, logIndex: 0, seller: SELLER_B, delta: 999n, totalSettled: 999n }),
+          settledEvt({ blockNumber: 3, logIndex: 0, seller: SELLER_A, delta: 50n, totalSettled: 150n }),
+        ],
+        3,
+      );
+
+      const all = store.getAllSellerChannelLifetime();
+      assert.equal(all.get(SELLER_A)!.totalUsdcSettled, 150n);
+      assert.equal(all.get(SELLER_B)!.totalUsdcSettled, 999n);
+      assert.equal(all.get(SELLER_A)!.settledCount, 2);
+      assert.equal(all.get(SELLER_B)!.settledCount, 1);
+      store.close();
+    });
+
+    it('preserves BigInt precision beyond INT64 in total_usdc_settled', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+      const huge = 10n ** 25n;
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [
+          settledEvt({ blockNumber: 1, logIndex: 0, delta: huge, totalSettled: huge }),
+          settledEvt({ blockNumber: 2, logIndex: 0, delta: huge, totalSettled: huge * 2n }),
+        ],
+        2,
+      );
+      const a = store.getAllSellerChannelLifetime().get(SELLER_A)!;
+      assert.equal(a.totalUsdcSettled, huge * 2n);
+      store.close();
+    });
+
+    it('getSellerUsdcSince — windows correctly and excludes timestamp-less rows', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+
+      const now = 100_000;
+      const ts = new Map<number, number>([
+        [10, now - 1000],   // inside any window
+        [20, now - 100],    // inside any window
+        [30, now - 10],     // inside any window
+      ]);
+
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [
+          settledEvt({ blockNumber: 10, logIndex: 0, delta: 100n, totalSettled: 100n }),
+          settledEvt({ blockNumber: 20, logIndex: 0, delta: 50n, totalSettled: 150n }),
+          closedEvt({ blockNumber: 30, logIndex: 0, settledAmount: 150n, refund: 850n }),
+        ],
+        30,
+        ts,
+      );
+
+      // No timestamp → excluded from window
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [settledEvt({ blockNumber: 999, logIndex: 0, delta: 9_999_999n, totalSettled: 9_999_999n })],
+        999,
+      );
+
+      const window = store.getSellerUsdcSince(now - 5000);
+      const a = window.get(SELLER_A)!;
+      assert.equal(a.usdcSettled, 150n);
+      assert.equal(a.settleCount, 2);
+      assert.equal(a.closeCount, 1);
+      store.close();
+    });
+
+    it('rolls back the whole batch on mid-batch error', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+
+      // Baseline
+      store.applyChannelBatch(
+        'base',
+        '0xchannels',
+        [settledEvt({ blockNumber: 1, logIndex: 0, delta: 10n, totalSettled: 10n })],
+        1,
+      );
+
+      // Throw mid-batch by passing a malformed delta on the second event
+      const bad = settledEvt({ blockNumber: 3, logIndex: 0, delta: null as unknown as bigint });
+
+      assert.throws(() => {
+        store.applyChannelBatch(
+          'base',
+          '0xchannels',
+          [
+            settledEvt({ blockNumber: 2, logIndex: 0, delta: 999n, totalSettled: 1009n }),
+            bad,
+          ],
+          99,
+        );
+      });
+
+      // Checkpoint stays at 1, lifetime totals unchanged
+      assert.equal(store.getCheckpoint('base', '0xchannels'), 1);
+      const a = store.getAllSellerChannelLifetime().get(SELLER_A)!;
+      assert.equal(a.totalUsdcSettled, 10n);
+      assert.equal(a.settledCount, 1);
+      store.close();
+    });
+
+    it('uses a separate checkpoint key from the stats contract', () => {
+      const store = new SqliteStore(':memory:');
+      store.init();
+
+      store.applyBatch('base', '0xstats', [], 42);
+      store.applyChannelBatch('base', '0xchannels', [], 999);
+
+      assert.equal(store.getCheckpoint('base', '0xstats'), 42);
+      assert.equal(store.getCheckpoint('base', '0xchannels'), 999);
+      store.close();
+    });
   });
 });
 
