@@ -451,8 +451,13 @@ export default function Home(): JSX.Element {
           <div className={styles.integrationBeamOne} />
           <div className={styles.integrationBeamTwo} />
           <div className={styles.integrationBeamThree} />
-          <div className={styles.integrationPacketOne} />
-          <div className={styles.integrationPacketTwo} />
+          {/* Inbound packet stream — one per tool, all converging on the core */}
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromClaude}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromCodex}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromVs}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromCurl}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromClaw}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromHermes}`} aria-hidden="true" />
           <div className={styles.integrationSettlement}>tool request → provider route → USDC settlement</div>
         </div>
         <div className={styles.integrationMobileFlow} aria-label="Integration hub mobile flow">

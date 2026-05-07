@@ -1298,16 +1298,49 @@ img, video, canvas, svg { max-width: 100%; }
 .integrationBeamOne { transform: rotate(-28deg); }
 .integrationBeamTwo { transform: rotate(24deg); animation-delay: .4s; }
 .integrationBeamThree { transform: rotate(92deg); width: 250px; animation-delay: .8s; }
-.integrationPacketOne, .integrationPacketTwo { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; border-radius: 50%; background: #1FD87A; box-shadow: 0 0 18px rgba(31,216,122,.85); z-index: 6; }
-.integrationPacketOne { animation: packetOrbitOne 3.1s ease-in-out infinite; }
-.integrationPacketTwo { animation: packetOrbitTwo 3.6s ease-in-out infinite .7s; }
+.integrationPacketOne, .integrationPacketTwo { display: none; }
+
+/* ---- inbound packet stream: tool → localhost:8377 core ---- */
+.integrationFlowPacket {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: #1FD87A;
+  box-shadow: 0 0 16px rgba(31,216,122,.85);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 0;
+  /* Each tool sets --fx / --fy = the packet's *origin* offset from center.
+     The shared keyframes animate from that origin back to the core (0,0). */
+  --fx: 0px;
+  --fy: 0px;
+  animation: packetFlow 2.6s linear infinite;
+}
+.flowFromClaude  { --fx: -150px; --fy: -185px; animation-delay: 0s;    }
+.flowFromCodex   { --fx:  150px; --fy: -180px; animation-delay: .42s;  }
+.flowFromClaw    { --fx:    0px; --fy: -220px; animation-delay: .84s;  }
+.flowFromCurl    { --fx:  148px; --fy:  160px; animation-delay: 1.26s; }
+.flowFromHermes  { --fx:    0px; --fy:  205px; animation-delay: 1.68s; }
+.flowFromVs      { --fx: -152px; --fy:  152px; animation-delay: 2.10s; }
+@keyframes packetFlow {
+  0%   { transform: translate(var(--fx), var(--fy)) scale(.7); opacity: 0; }
+  12%  { opacity: 1; }
+  85%  { transform: translate(0, 0) scale(1.05); opacity: 1; }
+  100% { transform: translate(0, 0) scale(.4); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .integrationFlowPacket { animation: none; opacity: 0; }
+}
 .integrationSettlement { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); padding: 10px 16px; border-radius: 999px; background: rgba(31,216,122,.12); border: 1px solid rgba(31,216,122,.22); color: #bfffdc; font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: nowrap; z-index: 7; }
 @keyframes hubSpin { to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes hubSpinReverse { to { transform: translate(-50%, -50%) rotate(-360deg); } }
 @keyframes nodeFloat { 0%,100% { translate: 0 0; } 50% { translate: 0 -8px; } }
 @keyframes providerPulse { 0%,100% { box-shadow: 0 12px 34px rgba(0,0,0,.28), inset 0 0 0 1px rgba(31,216,122,.04); } 50% { box-shadow: 0 16px 44px rgba(31,216,122,.14), inset 0 0 0 1px rgba(31,216,122,.16); } }
-@keyframes packetOrbitOne { 0% { transform: translate(-20px, -10px); opacity: 0; } 15% { opacity: 1; } 55% { transform: translate(170px, -92px); opacity: 1; } 100% { transform: translate(235px, -34px); opacity: 0; } }
-@keyframes packetOrbitTwo { 0% { transform: translate(8px, 8px); opacity: 0; } 15% { opacity: 1; } 58% { transform: translate(-185px, 24px); opacity: 1; } 100% { transform: translate(-220px, 135px); opacity: 0; } }
+
 @media (max-width: 900px) { .integrationHubAnimation { min-height: 500px; } .integrationPillGrid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .integrationHubAnimation { min-height: 560px; } .integrationToolNode { min-width: 104px; padding: 8px 10px; } .integrationToolNode span { font-size: 10px; } .integrationToolClaude { left: 14px; } .integrationToolCodex { right: 14px; } .integrationToolVs { left: 14px; } .integrationToolCurl { right: 14px; } .integrationProviderPrice { left: 8px; } .integrationProviderModel { right: 8px; } .integrationSettlement { white-space: normal; width: calc(100% - 48px); text-align: center; } }
 
@@ -1336,6 +1369,13 @@ img, video, canvas, svg { max-width: 100%; }
   .integrationProviderModel { right: 12px; top: 280px; }
   .integrationProviderPrivate { bottom: 212px; }
   .integrationSettlement { bottom: 24px; white-space: normal; }
+  /* Tighter packet origins to match the more compact tablet layout. */
+  .flowFromClaude  { --fx: -130px; --fy: -200px; }
+  .flowFromCodex   { --fx:  130px; --fy: -200px; }
+  .flowFromClaw    { --fx:    0px; --fy: -150px; }
+  .flowFromCurl    { --fx:  130px; --fy:  130px; }
+  .flowFromHermes  { --fx:    0px; --fy:  175px; }
+  .flowFromVs      { --fx: -130px; --fy:  130px; }
 }
 @media (max-width: 560px) {
   .integrationHubSection { padding-left: 14px; padding-right: 14px; }
