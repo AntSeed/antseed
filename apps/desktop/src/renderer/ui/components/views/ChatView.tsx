@@ -267,7 +267,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const target = messageRefs.current.get(activeSearchResultKey);
     if (!target) return;
     isUserScrolledUp.current = true;
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+    const frame = requestAnimationFrame(() => {
+      const activeMark = target.querySelector('.chat-search-mark-active');
+      const scrollTarget = activeMark instanceof HTMLElement ? activeMark : target;
+      scrollTarget.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(frame);
   }, [activeSearchResultKey]);
 
   const openMessageSearch = useCallback(() => {
@@ -905,6 +912,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             ) : (
               keyedVisibleMessages.map(({ message: msg, key }) => {
                 const isSearchMatch = messageSearchResults.includes(key);
+                const isActiveSearchMatch = activeSearchResultKey === key;
                 return (
                   <div
                     key={key}
@@ -918,6 +926,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                       onOpenPreview={handleOpenPreview}
                       conversationId={snap.chatActiveConversation || undefined}
                       searchQuery={isSearchMatch ? messageSearchQuery : undefined}
+                      searchActive={isActiveSearchMatch}
                     />
                   </div>
                 );
