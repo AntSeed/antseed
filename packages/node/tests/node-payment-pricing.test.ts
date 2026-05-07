@@ -498,7 +498,149 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(response.statusCode).toBe(200);
   });
 
-  it('stops serving once delivered spend has caught up to the last accepted auth', async () => {
+  it('continues serving when delivered spend exactly matches the last accepted auth', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'paid-tier',
+      services: ['local-test'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ ok: true })),
+    }));
+
+    const sendPaymentRequired = vi.fn();
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
+        recordSpend: vi.fn(),
+        getCumulativeSpend: () => 2_184n,
+        getAcceptedCumulative: () => 2_184n,
+        getReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '50000', suggestedAmount: '1000000' }),
+        waitForPendingAuths: async () => {},
+        awaitAcceptedAtLeast: async () => false,
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth,
+      sendPaymentRequired,
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-exactly-covered',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
+      }),
+    });
+
+    expect(provider.handleRequest).toHaveBeenCalledOnce();
+    expect(sendPaymentRequired).not.toHaveBeenCalled();
+    expect(sendNeedAuth).toHaveBeenCalledOnce();
+
+    const responseFrames = sentFrames
+      .map((f) => decodeFrame(f))
+      .filter((d) => d?.message.type === MessageType.HttpResponse);
+    expect(responseFrames).toHaveLength(1);
+    const response = decodeHttpResponse(responseFrames[0]!.message.payload);
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('stops serving when delivered spend is already at the reserve ceiling', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'paid-tier',
+      services: ['local-test'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ ok: true })),
+    }));
+
+    const settleSession = vi.fn(async () => {});
+    const sendPaymentRequired = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
+        recordSpend: vi.fn(),
+        getCumulativeSpend: () => 1_000_000n,
+        getAcceptedCumulative: () => 1_000_000n,
+        getReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '50000', suggestedAmount: '1000000' }),
+        waitForPendingAuths: async () => {},
+        awaitAcceptedAtLeast: async () => false,
+        settleSession,
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth: vi.fn(),
+      sendPaymentRequired,
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-ceiling',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
+      }),
+    });
+
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).toHaveBeenCalledOnce();
+    expect(settleSession).toHaveBeenCalledOnce();
+    const response = decodeHttpResponse(decodeFrame(sentFrames[0]!)!.message.payload);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    expect(response.statusCode).toBe(402);
+    expect(body).toMatchObject({
+      code: PAYMENT_CODE_CHANNEL_EXHAUSTED,
+      requiredCumulativeAmount: '1000000',
+      reserveMaxAmount: '1000000',
+    });
+  });
+
+  it('stops serving once delivered spend is ahead of the last accepted auth', async () => {
     const provider = makeProvider(1, 1, {
       name: 'paid-tier',
       services: ['local-test'],
@@ -567,7 +709,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(response.statusCode).toBe(402);
   });
 
-  it('closes and flags the channel when the next required cumulative exceeds the reserve ceiling', async () => {
+  it('closes and flags the channel when unsigned delivered spend exceeds the reserve ceiling', async () => {
     const provider = makeProvider(1, 1, {
       name: 'paid-tier',
       services: ['local-test'],
@@ -588,7 +730,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
         hasSession: () => true,
         getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '950001' }),
         recordSpend: vi.fn(),
-        getCumulativeSpend: () => 950_001n,
+        getCumulativeSpend: () => 1_000_001n,
         getAcceptedCumulative: () => 950_001n,
         getReserveMax: () => 1_000_000n,
         getPaymentRequirements: () => ({ minBudgetPerRequest: '50000', suggestedAmount: '1000000' }),
