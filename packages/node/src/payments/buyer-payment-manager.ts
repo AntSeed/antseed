@@ -206,6 +206,11 @@ export class BuyerPaymentManager {
     return this._reserveSalt.has(sellerPeerId);
   }
 
+  clearLockConfirmation(sellerPeerId: string): void {
+    this._confirmedPeers.delete(sellerPeerId);
+    this._rejectedPeers.delete(sellerPeerId);
+  }
+
   async resendCurrentSpendingAuth(
     sellerPeerId: string,
     paymentMux: PaymentMux,

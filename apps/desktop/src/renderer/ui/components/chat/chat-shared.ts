@@ -288,7 +288,6 @@ export function paymentLogToThinkingPhase(line: string): string | null {
   if (line.includes('[BuyerNegotiator] Reserve top-up needed')) return 'Reserve top-up needed';
 
   // --- Payment wire ---
-  if (line.includes('[PaymentMux] → send SpendingAuth')) return 'Sending SpendingAuth';
   if (line.includes('[PaymentMux] → send ReserveAuth')) return 'Sending ReserveAuth';
   if (line.includes('[PaymentMux] → send AuthAck')) return 'Acking seller auth';
   if (line.includes('[PaymentMux] ← recv SpendingAuth')) return 'Received SpendingAuth';

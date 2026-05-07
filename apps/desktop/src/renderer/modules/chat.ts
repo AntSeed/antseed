@@ -109,6 +109,8 @@ export function initChatModule({
   };
 
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
+  const PAYMENT_AUTO_RETRY_DELAY_MS = 7_000;
+  const PAYMENT_AUTO_RETRY_MAX_ATTEMPTS = 2;
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
@@ -229,7 +231,66 @@ export function initChatModule({
     }
   }
 
-  async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
+  type ChatRetryContext = {
+    convId: string;
+    content?: string;
+    attachments?: PreparedChatAttachment[];
+    selection?: ChatServiceSelection;
+  };
+
+  const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const chatRetryAttempts = new Map<string, number>();
+
+  function clearPaymentRetry(convId: string): void {
+    const timer = chatRetryTimers.get(convId);
+    if (timer) clearTimeout(timer);
+    chatRetryTimers.delete(convId);
+    chatRetryAttempts.delete(convId);
+  }
+
+  function scheduleChatRetry(
+    ctx?: ChatRetryContext,
+    reason: 'payment' | 'request' = 'payment',
+    finalError?: unknown,
+  ): void {
+    const convId = ctx?.convId ?? uiState.chatActiveConversation;
+    if (!convId) return;
+
+    const nextAttempt = (chatRetryAttempts.get(convId) ?? 0) + 1;
+    if (nextAttempt > PAYMENT_AUTO_RETRY_MAX_ATTEMPTS) {
+      if (reason === 'payment') {
+        appendSystemLog('Payment negotiation is still pending. Please retry the request in a moment.');
+      } else {
+        reportChatError(finalError ?? 'Request failed after retry.', 'Request failed');
+      }
+      return;
+    }
+
+    const existing = chatRetryTimers.get(convId);
+    if (existing) clearTimeout(existing);
+    chatRetryAttempts.set(convId, nextAttempt);
+    appendSystemLog(
+      reason === 'payment'
+        ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
+        : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
+    );
+
+    const timer = setTimeout(() => {
+      chatRetryTimers.delete(convId);
+      uiState.chatError = null;
+      if (ctx?.content != null) {
+        setConversationSending(convId, true);
+        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
+      } else if (convId === uiState.chatActiveConversation) {
+        retryAfterPayment();
+      } else {
+        notifyUiStateChanged();
+      }
+    }, PAYMENT_AUTO_RETRY_DELAY_MS);
+    chatRetryTimers.set(convId, timer);
+  }
+
+  async function handlePaymentRequired(amountBaseUnits: string, retryCtx?: ChatRetryContext): Promise<void> {
     const required = Number(amountBaseUnits) / 1_000_000;
     const available = await refreshAvailableCreditsUsdc();
 
@@ -243,7 +304,8 @@ export function initChatModule({
       uiState.chatPaymentApprovalPeerName = null;
       uiState.chatPaymentApprovalPeerInfo = null;
       uiState.chatPaymentApprovalError = null;
-      showChatError('Payment setup failed. Retry the request.');
+      uiState.chatError = null;
+      scheduleChatRetry(retryCtx, 'payment');
       notifyUiStateChanged();
       return;
     }
@@ -1916,20 +1978,28 @@ export function initChatModule({
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch) {
               setConversationSending(convId, false);
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], {
+                convId,
+                content,
+                attachments,
+                selection,
+              });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: the stream-error handler has already
               // finalized the partial message. Don't overwrite with an error.
+              clearPaymentRetry(convId);
               setConversationSending(convId, false);
             } else {
-              if (!uiState.chatError) {
-                reportChatError(result.stopReason?.message ?? result.error, 'Request failed');
-              }
+              scheduleChatRetry(
+                { convId, content, attachments, selection },
+                'request',
+                result.stopReason?.message ?? result.error,
+              );
               setConversationSending(convId, false);
             }
           }
         } catch (err) {
-          reportChatError(err, 'Chat send failed');
+          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -1960,11 +2030,27 @@ export function initChatModule({
           }
 
           if (!result.ok) {
-            reportChatError(result.error, 'Request failed');
+            const errorMsg = typeof result.error === 'string' ? result.error : '';
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch) {
+              void handlePaymentRequired(paymentMatch[1], {
+                convId,
+                content,
+                attachments,
+                selection,
+              });
+            } else if (errorMsg === 'Request aborted') {
+              // User-initiated abort: don't auto-retry.
+              clearPaymentRetry(convId);
+            } else {
+              scheduleChatRetry({ convId, content, attachments, selection }, 'request', result.error);
+            }
+          } else {
+            clearPaymentRetry(convId);
           }
           setConversationSending(convId, false);
         } catch (err) {
-          reportChatError(err, 'Chat send failed');
+          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -2128,8 +2214,14 @@ export function initChatModule({
       bridge.onChatAiError((data) => {
         setConversationSending(data.conversationId, false);
         if (data.conversationId === uiState.chatActiveConversation) {
-          if (data.error !== 'Request aborted') {
-            showChatError(data.error);
+          const errStr = typeof data.error === 'string' ? data.error : '';
+          const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
+          if (paymentMatch) {
+            void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
+          } else if (data.error === 'Request aborted') {
+            clearPaymentRetry(data.conversationId);
+          } else {
+            scheduleChatRetry({ convId: data.conversationId }, 'request', data.error);
             appendSystemLog(`AI Chat error: ${data.error}`);
           }
         }
@@ -2490,6 +2582,8 @@ export function initChatModule({
           getConversationStreamingMessage(data.conversationId),
         );
 
+        clearPaymentRetry(data.conversationId);
+
         if (data.conversationId === uiState.chatActiveConversation) {
           if (finalizedStreamingMessage) {
             commitAssistantMessage(finalizedStreamingMessage);
@@ -2566,14 +2660,20 @@ export function initChatModule({
             setConversationSending(data.conversationId, false);
           }
 
-          if (!isAbort) {
+          if (isAbort) {
+            clearPaymentRetry(data.conversationId);
+          } else {
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
             } else {
-              showChatError(stopReason?.message ?? data.error);
+              scheduleChatRetry(
+                { convId: data.conversationId },
+                'request',
+                stopReason?.message ?? data.error,
+              );
             }
             appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
           }
