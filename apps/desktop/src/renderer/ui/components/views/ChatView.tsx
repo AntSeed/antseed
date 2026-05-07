@@ -94,7 +94,7 @@ function collectSearchableText(value: unknown, depth = 0): string {
 }
 
 function getSearchableMessageText(message: ChatMessage): string {
-  return [message.role, collectSearchableText(message.content)].filter(Boolean).join('\n');
+  return collectSearchableText(message.content);
 }
 
 function getNormalizedSearchQuery(query: string): string {
