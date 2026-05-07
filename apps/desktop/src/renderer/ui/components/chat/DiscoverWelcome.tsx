@@ -616,7 +616,8 @@ function Card({
             aria-label={copied ? `Copied ${item.canonicalName}` : `Copy exact model name ${item.canonicalName}`}
             title={copied ? 'Copied' : `Copy exact model name: ${item.canonicalName}`}
           >
-            <span aria-hidden="true">{copied ? '✓' : '⧉'}</span>
+            <span className={styles.copyModelIcon} aria-hidden="true">{copied ? '✓' : '⧉'}</span>
+            <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </div>
         <div className={styles.cardDesc}>{item.description}</div>
