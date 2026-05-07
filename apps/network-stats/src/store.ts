@@ -32,6 +32,7 @@ export interface TimeframeTotals {
   totalInputTokens: bigint;
   totalOutputTokens: bigint;
   settlementCount: number;
+  uniqueBuyers: number;
 }
 
 /** Per-agent all-time stats — the building block for global rankings. */
@@ -93,8 +94,8 @@ export class SqliteStore {
   private _selectAllSellerTotals!: Database.Statement<[], SellerTotalsRow>;
   private _countBuyers!: Database.Statement<[number], { c: number }>;
   private _countChannels!: Database.Statement<[number], { c: number }>;
-  private _insertSettlementEvent!: Database.Statement<[number, number, number, number, string, string, string]>;
-  private _selectEventsSince!: Database.Statement<[number], { agent_id: number; input_tokens: string; output_tokens: string; request_count: string }>;
+  private _insertSettlementEvent!: Database.Statement<[number, number, number, number, string, string, string, string]>;
+  private _selectEventsSince!: Database.Statement<[number], { agent_id: number; input_tokens: string; output_tokens: string; request_count: string; buyer: string | null }>;
   private _selectAllSellersWithId!: Database.Statement<[], { agent_id: number; total_request_count: string; total_input_tokens: string; total_output_tokens: string; settlement_count: number; first_seen_at: number | null }>;
   private _countBuyersByAgent!: Database.Statement<[], { agent_id: number; c: number }>;
 
@@ -164,6 +165,7 @@ export class SqliteStore {
         input_tokens TEXT NOT NULL,
         output_tokens TEXT NOT NULL,
         request_count TEXT NOT NULL,
+        buyer TEXT,
         PRIMARY KEY (block_number, log_index)
       );
       CREATE INDEX IF NOT EXISTS idx_settlement_events_agent_ts
@@ -171,6 +173,16 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_settlement_events_ts
         ON seller_settlement_events(block_timestamp);
     `);
+
+    // Defensive backfill for deployments created before `buyer` was tracked.
+    // Older rows keep buyer = NULL and are excluded from windowed uniqueBuyers
+    // counts; new events fill it in.
+    const eventCols = this.db
+      .prepare(`SELECT name FROM pragma_table_info('seller_settlement_events')`)
+      .all() as Array<{ name: string }>;
+    if (!eventCols.some((c) => c.name === 'buyer')) {
+      this.db.exec(`ALTER TABLE seller_settlement_events ADD COLUMN buyer TEXT`);
+    }
 
     this._selectCheckpoint = this.db.prepare(
       'SELECT last_block, last_block_timestamp FROM indexer_checkpoint WHERE chain_id = ? AND contract_address = ?',
@@ -241,12 +253,12 @@ export class SqliteStore {
     this._insertSettlementEvent = this.db.prepare(
       `INSERT OR IGNORE INTO seller_settlement_events
          (block_number, log_index, agent_id, block_timestamp,
-          input_tokens, output_tokens, request_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          input_tokens, output_tokens, request_count, buyer)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     this._selectEventsSince = this.db.prepare(
-      'SELECT agent_id, input_tokens, output_tokens, request_count FROM seller_settlement_events WHERE block_timestamp >= ?',
+      'SELECT agent_id, input_tokens, output_tokens, request_count, buyer FROM seller_settlement_events WHERE block_timestamp >= ?',
     );
 
     this._selectAllSellersWithId = this.db.prepare(
@@ -378,6 +390,7 @@ export class SqliteStore {
             event.inputTokens.toString(),
             event.outputTokens.toString(),
             event.requestCount.toString(),
+            buyer,
           );
         }
       }
@@ -499,6 +512,9 @@ export class SqliteStore {
    */
   getSellerTotalsSince(cutoffSeconds: number): Map<number, TimeframeTotals> {
     const result = new Map<number, TimeframeTotals>();
+    // Track distinct buyers per agent in JS — settling per-window DISTINCT in
+    // SQL would need a second query; the row count we iterate here is small.
+    const buyersByAgent = new Map<number, Set<string>>();
     for (const row of this._selectEventsSince.iterate(cutoffSeconds)) {
       const existing = result.get(row.agent_id);
       if (existing) {
@@ -512,8 +528,21 @@ export class SqliteStore {
           totalInputTokens: BigInt(row.input_tokens),
           totalOutputTokens: BigInt(row.output_tokens),
           settlementCount: 1,
+          uniqueBuyers: 0,
         });
       }
+      if (row.buyer) {
+        let set = buyersByAgent.get(row.agent_id);
+        if (!set) {
+          set = new Set<string>();
+          buyersByAgent.set(row.agent_id, set);
+        }
+        set.add(row.buyer);
+      }
+    }
+    for (const [agentId, set] of buyersByAgent) {
+      const totals = result.get(agentId);
+      if (totals) totals.uniqueBuyers = set.size;
     }
     return result;
   }

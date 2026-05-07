@@ -18,29 +18,43 @@ const SECONDS_PER_DAY = 86_400;
 // noisy ratios (e.g. 1 request in 7d / lifetime rate of 1/day = score 7).
 const RISING_STARS_MIN_LIFETIME_REQUESTS = 5n;
 
-type RankingMetric = { agentId: number; requests: string; inputTokens: string; outputTokens: string; settlements: number };
+type RankingMetric = { agentId: number; requests: string; inputTokens: string; outputTokens: string; volume: string; users: number; settlements: number };
 type ReachEntry = { agentId: number; uniqueBuyers: number; totalRequests: string };
 type RisingStarEntry = { agentId: number; score: number; requests7d: string; lifetimeRequests: string; daysActive: number };
-type WindowMetric = { requests: string; inputTokens: string; outputTokens: string; settlements: number };
+type WindowMetric = { requests: string; inputTokens: string; outputTokens: string; volume: string; users: number; settlements: number };
 
-function makeRankingMetric(agentId: number, t: TimeframeTotals): RankingMetric {
+// Accepts either a TimeframeTotals (windowed) or a SellerTotals-like all-time
+// shape — both expose totalRequests/Input/Output, settlementCount, uniqueBuyers.
+type MetricSource = {
+  totalRequests: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  settlementCount: number;
+  uniqueBuyers: number;
+};
+
+function makeRankingMetric(agentId: number, t: MetricSource): RankingMetric {
   return {
     agentId,
     requests: t.totalRequests.toString(),
     inputTokens: t.totalInputTokens.toString(),
     outputTokens: t.totalOutputTokens.toString(),
+    volume: (t.totalInputTokens + t.totalOutputTokens).toString(),
+    users: t.uniqueBuyers,
     settlements: t.settlementCount,
   };
 }
 
 // Per-peer windowed totals — same shape as RankingMetric minus the agentId,
 // since the agentId is already on the parent onChainStats object.
-function toWindowMetric(t: TimeframeTotals | undefined): WindowMetric | null {
+function toWindowMetric(t: MetricSource | undefined): WindowMetric | null {
   if (!t) return null;
   return {
     requests: t.totalRequests.toString(),
     inputTokens: t.totalInputTokens.toString(),
     outputTokens: t.totalOutputTokens.toString(),
+    volume: (t.totalInputTokens + t.totalOutputTokens).toString(),
+    users: t.uniqueBuyers,
     settlements: t.settlementCount,
   };
 }
@@ -220,6 +234,7 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
         totalInputTokens: s.totalInputTokens,
         totalOutputTokens: s.totalOutputTokens,
         settlementCount: s.settlementCount,
+        uniqueBuyers: s.uniqueBuyers,
       }),
     );
 
