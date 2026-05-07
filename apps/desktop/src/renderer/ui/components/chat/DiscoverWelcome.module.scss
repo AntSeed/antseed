@@ -376,7 +376,15 @@
 
 /* ── Card content ───────────────────────────────────────────────────── */
 
+.card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .card-name {
+  min-width: 0;
   font-size: 16px;
   font-weight: 500;
   color: var(--text-primary);
@@ -385,6 +393,44 @@
   overflow: hidden;
   text-overflow: ellipsis;
   text-transform: capitalize;
+}
+
+.copy-model-button {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+.copy-model-button-copied {
+  color: var(--accent-green, #10b981);
+  opacity: 1;
 }
 
 .card-desc {
