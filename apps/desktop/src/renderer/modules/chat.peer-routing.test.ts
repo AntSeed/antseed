@@ -305,6 +305,95 @@ test('discover-selected draft keeps its peer if another discover chat is opened 
   await waitFor(() => uiState.chatSendingConversationIds.length === 0);
 });
 
+test('queued send targets its original conversation after switching chats', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [
+    {
+      id: 'model-a', label: 'Model A', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
+      value: `openai${SEP}model-a${SEP}peer-a`, peerId: 'peer-a', peerDisplayName: 'Peer A', peerLabel: 'Peer A',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+    },
+    {
+      id: 'model-b', label: 'Model B', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
+      value: `openai${SEP}model-b${SEP}peer-b`, peerId: 'peer-b', peerDisplayName: 'Peer B', peerLabel: 'Peer B',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+    },
+  ];
+
+  const conversations: Conversation[] = [
+    {
+      id: 'conv-a',
+      title: 'Conversation A',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-b',
+      title: 'Conversation B',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+  const sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }> = [];
+  const streamDoneHandlers: Array<(data: { conversationId: string }) => void> = [];
+
+  const bridge: DesktopBridge = {
+    chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
+    chatAiGetConversation: async (id) => {
+      const conversation = conversations.find((c) => c.id === id);
+      return conversation
+        ? { ok: true, data: { ...conversation, messages: [...conversation.messages] } }
+        : { ok: false, error: 'not found' };
+    },
+    chatPrepareAttachments: async () => ({ ok: true, data: [] }),
+    chatAiSendStream: async (conversationId, message, service, provider, _attachments, peerId) => {
+      sends.push({ conversationId, message, service, provider, peerId });
+      return { ok: true };
+    },
+    onChatAiStreamDone: (handler) => {
+      streamDoneHandlers.push(handler);
+      return () => undefined;
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+  await api.openConversation('conv-b');
+
+  // Mirrors ChatView's pending queue flush: the draft was authored in conv-a,
+  // but the user has since opened conv-b. It must still route to conv-a's peer.
+  api.sendMessageToConversation('conv-a', 'queued for a');
+  await waitFor(() => sends.length === 1);
+
+  assert.deepEqual(sends[0], {
+    conversationId: 'conv-a',
+    message: 'queued for a',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+  });
+  assert.equal(uiState.chatActiveConversation, 'conv-b');
+  assert.equal(uiState.chatRoutedPeerId, 'peer-b');
+  assert.deepEqual(uiState.chatSendingConversationIds, ['conv-a']);
+
+  for (const handler of streamDoneHandlers) {
+    handler({ conversationId: 'conv-a' });
+  }
+  await waitFor(() => uiState.chatSendingConversationIds.length === 0);
+});
+
 test('sending from reopened conversation ignores unrelated global dropdown peer', async () => {
   installDomTimers();
 
