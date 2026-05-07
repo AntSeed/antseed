@@ -955,7 +955,18 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
   line-height: 1.55;
+  /* Critical: clip + scroll long shell lines INSIDE this element.
+   * `width: 100%` + `box-sizing: border-box` means the padding (incl.
+   * the 56px right gutter for the copy button) eats from this width
+   * rather than expanding the box past the parent. Without these two
+   * lines the intrinsic width of `<span class=codeBlockText>` (which
+   * has `white-space: pre`) bubbles up through the `<li>`/`<ul>`/
+   * `<section>` chain and stretches the page. */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   white-space: pre;
   margin: 0;
   border: 1px solid rgba(255, 255, 255, 0.04);
@@ -1004,7 +1015,13 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.55;
+  /* Same width guard as .codeBlock — keep horizontal scroll inside
+   * the dark box, never on the page. */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   white-space: pre;
   border: 1px solid rgba(255, 255, 255, 0.05);
   opacity: 0.94;
