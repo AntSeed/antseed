@@ -72,8 +72,8 @@ export interface BuyerProxyConfig {
   peerCacheTtlMs?: number
   /**
    * Pin all requests to a specific peer ID for this session.
-   * The router is bypassed; the named peer is used directly if it is available
-   * and protocol-compatible. A 502 is returned if the peer cannot be reached.
+   * The named peer is used directly if it is available, protocol-compatible,
+   * and allowed by the router's buyer policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
   /**
@@ -266,6 +266,9 @@ export function parsePersistedPeers(
     }
     if (typeof entry.defaultOutputUsdPerMillion === 'number') {
       peer.defaultOutputUsdPerMillion = entry.defaultOutputUsdPerMillion
+    }
+    if (typeof entry.defaultCachedInputUsdPerMillion === 'number') {
+      peer.defaultCachedInputUsdPerMillion = entry.defaultCachedInputUsdPerMillion
     }
     if (typeof entry.maxConcurrency === 'number') {
       peer.maxConcurrency = entry.maxConcurrency
@@ -580,6 +583,7 @@ export class BuyerProxy {
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+        defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
         maxConcurrency: p.maxConcurrency ?? 0,
         currentLoad: p.currentLoad ?? null,
         // On-chain stats read authoritatively by the buyer from AntseedChannels.
@@ -1146,6 +1150,17 @@ export class BuyerProxy {
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
+    const policySelectedPeer = router?.selectPeer(serializedReq, [selectedPeer]) ?? null
+    if (router && policySelectedPeer?.peerId !== selectedPeer.peerId) {
+      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(
+        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy. `
+        + 'Pick a different service in Discover or adjust your buyer max pricing.',
+      )
+      return
+    }
+
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,

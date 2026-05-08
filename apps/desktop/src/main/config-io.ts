@@ -5,6 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_CONFIG_PATH } from './constants.js';
 import { asString, asNumber } from './utils.js';
 
+export const DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION = 5;
+export const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
+
 const DEFAULT_CONFIG: Record<string, unknown> = {
   identity: { displayName: 'AntSeed Node' },
   seller: {
@@ -14,7 +17,12 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
     pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
   },
   buyer: {
-    maxPricing: { defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
+    maxPricing: {
+      defaults: {
+        inputUsdPerMillion: DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+        outputUsdPerMillion: DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+      },
+    },
     minPeerReputation: 50,
     proxyPort: 8377,
   },
@@ -24,16 +32,88 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
   plugins: [],
 };
 
-/**
- * Ensure config.json exists. Creates it with defaults on first launch.
- */
-export async function ensureConfig(configPath = DEFAULT_CONFIG_PATH): Promise<void> {
-  if (existsSync(configPath)) return;
+function asRecordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function writeConfigAtomic(config: Record<string, unknown>, configPath: string): Promise<void> {
   const dir = path.dirname(configPath);
   await mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.config.${randomUUID()}.json.tmp`);
-  await writeFile(tmp, JSON.stringify(DEFAULT_CONFIG, null, 2));
+  await writeFile(tmp, JSON.stringify(config, null, 2));
   await rename(tmp, configPath);
+}
+
+function migrateDesktopBuyerMaxPricing(config: Record<string, unknown>): {
+  config: Record<string, unknown>;
+  migrated: boolean;
+} {
+  const buyer = asRecordValue(config.buyer);
+  const maxPricing = asRecordValue(buyer.maxPricing);
+  const defaults = asRecordValue(maxPricing.defaults);
+
+  const input = defaults.inputUsdPerMillion;
+  const output = defaults.outputUsdPerMillion;
+
+  const nextDefaults = { ...defaults };
+  let migrated = false;
+
+  if (
+    typeof input !== 'number' ||
+    !Number.isFinite(input) ||
+    input > DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION
+  ) {
+    nextDefaults.inputUsdPerMillion = DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION;
+    migrated = true;
+  }
+
+  if (
+    typeof output !== 'number' ||
+    !Number.isFinite(output) ||
+    output > DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION
+  ) {
+    nextDefaults.outputUsdPerMillion = DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION;
+    migrated = true;
+  }
+
+  if (!migrated) return { config, migrated: false };
+
+  return {
+    config: {
+      ...config,
+      buyer: {
+        ...buyer,
+        maxPricing: {
+          ...maxPricing,
+          defaults: nextDefaults,
+        },
+      },
+    },
+    migrated: true,
+  };
+}
+
+/**
+ * Ensure config.json exists and legacy desktop defaults are migrated.
+ */
+export async function ensureConfig(configPath = DEFAULT_CONFIG_PATH): Promise<void> {
+  if (!existsSync(configPath)) {
+    await writeConfigAtomic(DEFAULT_CONFIG, configPath);
+    return;
+  }
+
+  const existing = await readConfig(configPath);
+  if (Object.keys(existing).length === 0) {
+    await writeConfigAtomic(DEFAULT_CONFIG, configPath);
+    return;
+  }
+
+  const migration = migrateDesktopBuyerMaxPricing(existing);
+  if (migration.migrated) {
+    await writeConfigAtomic(migration.config, configPath);
+  }
 }
 
 /**
@@ -81,11 +161,7 @@ export async function mergeConfig(
       }
     }
 
-    const dir = path.dirname(configPath);
-    await mkdir(dir, { recursive: true });
-    const tmp = path.join(dir, `.config.${randomUUID()}.json.tmp`);
-    await writeFile(tmp, JSON.stringify(merged, null, 2));
-    await rename(tmp, configPath);
+    await writeConfigAtomic(merged, configPath);
 
     result = merged;
   }).catch((err) => {

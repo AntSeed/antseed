@@ -46,6 +46,10 @@ import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import {
+  DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+  DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+} from './config-io.js';
+import {
   buildChatServiceCatalogFromPeers,
   sortChatServiceCatalogEntries,
   type ChatServiceCatalogEntry,
@@ -233,6 +237,12 @@ function augmentChatToolPath(): void {
 
 augmentChatToolPath();
 
+type BuyerMaxPricingDefaults = {
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
+};
+
 type DiscoverRowEntry = {
   rowKey: string;
   serviceId: string;
@@ -323,7 +333,68 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function normalizeNonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
 
+async function loadBuyerMaxPricingDefaults(configPath: string): Promise<BuyerMaxPricingDefaults> {
+  try {
+    const raw = await readFile(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const buyer = asRecord(parsed.buyer);
+    const maxPricing = asRecord(buyer?.maxPricing);
+    const defaults = asRecord(maxPricing?.defaults);
+    const input = normalizeNonNegativeNumber(defaults?.inputUsdPerMillion);
+    const output = normalizeNonNegativeNumber(defaults?.outputUsdPerMillion);
+    const cachedInput = normalizeNonNegativeNumber(defaults?.cachedInputUsdPerMillion);
+    return {
+      inputUsdPerMillion: input ?? DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+      outputUsdPerMillion: output ?? DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+      ...(cachedInput != null ? { cachedInputUsdPerMillion: cachedInput } : {}),
+    };
+  } catch {
+    return {
+      inputUsdPerMillion: DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+      outputUsdPerMillion: DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+    };
+  }
+}
+
+function isPriceAllowedByBuyerMax(
+  inputUsdPerMillion: number | null | undefined,
+  outputUsdPerMillion: number | null | undefined,
+  cachedInputUsdPerMillion: number | null | undefined,
+  maxPricing: BuyerMaxPricingDefaults,
+): boolean {
+  if (inputUsdPerMillion != null && inputUsdPerMillion > maxPricing.inputUsdPerMillion) {
+    return false;
+  }
+  if (outputUsdPerMillion != null && outputUsdPerMillion > maxPricing.outputUsdPerMillion) {
+    return false;
+  }
+  if (cachedInputUsdPerMillion != null) {
+    if (inputUsdPerMillion != null && cachedInputUsdPerMillion > inputUsdPerMillion) {
+      return false;
+    }
+    const maxCachedInput = maxPricing.cachedInputUsdPerMillion ?? maxPricing.inputUsdPerMillion;
+    if (cachedInputUsdPerMillion > maxCachedInput) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isCatalogEntryAllowedByBuyerMax(
+  entry: ChatServiceCatalogEntry,
+  maxPricing: BuyerMaxPricingDefaults,
+): boolean {
+  return isPriceAllowedByBuyerMax(
+    entry.inputUsdPerMillion,
+    entry.outputUsdPerMillion,
+    entry.cachedInputUsdPerMillion,
+    maxPricing,
+  );
+}
 
 function updateServiceProviderHints(
   serviceProviderHints: Map<string, string[]>,
@@ -390,6 +461,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const peerLabel = typeof entry.peerLabel === 'string' ? entry.peerLabel.trim() : undefined;
   const inputUsd = normalizeOptionalNumber(entry.inputUsdPerMillion);
   const outputUsd = normalizeOptionalNumber(entry.outputUsdPerMillion);
+  const cachedInputUsd = normalizeOptionalNumber(entry.cachedInputUsdPerMillion);
   const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
   const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   return {
@@ -402,6 +474,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
     ...(peerLabel ? { peerLabel } : {}),
     ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
     ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
+    ...(cachedInputUsd != null && cachedInputUsd >= 0 ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
     ...(categories?.length ? { categories } : {}),
     ...(description ? { description } : {}),
   };
@@ -494,6 +567,7 @@ async function discoverChatServiceCatalog(
           : undefined,
         defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
         defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
+        defaultCachedInputUsdPerMillion: typeof p.defaultCachedInputUsdPerMillion === 'number' ? p.defaultCachedInputUsdPerMillion : undefined,
       }))
       .filter((p) => p.peerId.length === 40); // EVM address peer IDs only (40 hex chars)
   } catch {
@@ -716,9 +790,11 @@ async function buildDiscoverRows(
 
     const stats = peerStats.get(peerId);
     const cachedPricingEntry = peerBlob?.providerPricing?.[entry.provider]?.services?.[entry.id];
-    const cachedInputUsdPerMillion = Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
-      ? cachedPricingEntry!.cachedInputUsdPerMillion!
-      : null;
+    const cachedInputUsdPerMillion = Number.isFinite(entry.cachedInputUsdPerMillion)
+      ? entry.cachedInputUsdPerMillion!
+      : Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
+        ? cachedPricingEntry!.cachedInputUsdPerMillion!
+        : null;
 
     const netForAgent = enrichmentRow.agentId > 0
       ? networkStats.get(enrichmentRow.agentId) ?? null
@@ -2352,7 +2428,9 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-discover-rows', async () => {
     try {
-      const entries = await refreshServiceCatalogFromNetwork();
+      const buyerMaxPricing = await loadBuyerMaxPricingDefaults(configPath);
+      const entries = (await refreshServiceCatalogFromNetwork())
+        .filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
 
       const buyerPort = await resolveProxyPort(configPath);
       const statsMap = new Map<string, {
@@ -2487,7 +2565,13 @@ export function registerPiChatHandlers({
         }
       })();
 
-      const rows = await buildDiscoverRows(entries, statsMap, enrichment, discoveredPeersMap, networkStats);
+      const rows = (await buildDiscoverRows(entries, statsMap, enrichment, discoveredPeersMap, networkStats))
+        .filter((row) => isPriceAllowedByBuyerMax(
+          row.inputUsdPerMillion,
+          row.outputUsdPerMillion,
+          row.cachedInputUsdPerMillion,
+          buyerMaxPricing,
+        ));
       return { ok: true, data: rows };
     } catch (error) {
       return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };

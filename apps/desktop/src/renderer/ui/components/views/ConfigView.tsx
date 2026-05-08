@@ -12,8 +12,6 @@ export function ConfigView({ active }: ConfigViewProps) {
 
   // Local form state — initialized from config, edited locally, saved on button click
   const [proxyPort, setProxyPort] = useState('8377');
-  const [maxInput, setMaxInput] = useState('0');
-  const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
   const [chainId, setChainId] = useState('base-mainnet');
   const [dirty, setDirty] = useState(false);
@@ -23,8 +21,6 @@ export function ConfigView({ active }: ConfigViewProps) {
   useEffect(() => {
     if (configFormData && !initialized) {
       setProxyPort(String(configFormData.proxyPort));
-      setMaxInput(String(configFormData.maxInputUsdPerMillion));
-      setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
       setChainId(configFormData.cryptoChainId || 'base-mainnet');
       setInitialized(true);
@@ -45,8 +41,6 @@ export function ConfigView({ active }: ConfigViewProps) {
     await actions.saveConfig({
       ...configFormData,
       proxyPort: parseInt(proxyPort, 10) || 8377,
-      maxInputUsdPerMillion: parseFloat(maxInput) || 0,
-      maxOutputUsdPerMillion: parseFloat(maxOutput) || 0,
       minRep: parseInt(minRep, 10) || 0,
       cryptoChainId: chainId,
     });
@@ -82,32 +76,6 @@ export function ConfigView({ active }: ConfigViewProps) {
                 className="form-input settings-control"
                 value={proxyPort}
                 onChange={(e) => { setProxyPort(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Max Input Price</h4>
-                <p>Highest input token price you will accept (USD per 1M tokens).</p>
-              </div>
-              <input
-                type="number"
-                className="form-input settings-control"
-                step="0.01"
-                value={maxInput}
-                onChange={(e) => { setMaxInput(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Max Output Price</h4>
-                <p>Highest output token price you will accept (USD per 1M tokens).</p>
-              </div>
-              <input
-                type="number"
-                className="form-input settings-control"
-                step="0.01"
-                value={maxOutput}
-                onChange={(e) => { setMaxOutput(e.target.value); markDirty(); }}
               />
             </label>
             <label className="settings-item">

@@ -5,6 +5,7 @@ import {
   matchesMinStake,
   matchesLastSeen, matchesLastSettled,
   matchesMinChannels, rowChannelCount,
+  hasValidCachedInputPrice,
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
@@ -53,6 +54,14 @@ test('matchesMaxOutputPrice filters rows by the output slider ceiling', () => {
   assert.ok(matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: 0.4 }), 0.6));
   assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: 0.7 }), 0.6));
   assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: null }), 0.6));
+});
+
+test('hasValidCachedInputPrice rejects cached input above input', () => {
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: null })));
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 0.5 })));
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 1 })));
+  assert.ok(!hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 1.1 })));
+  assert.ok(!hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: null, cachedInputUsdPerMillion: 0.5 })));
 });
 
 test('matchesMinStake compares base-6 USDC bigint to slider value', () => {

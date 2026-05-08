@@ -18,11 +18,11 @@ export const MAX_CHANNELS_SLIDER = 200;
 export const CHANNELS_SLIDER_STEP = 5;
 
 /**
- * Default minimum on-chain channel count for Discover. 20 hides brand-new peers
- * that haven't accumulated a track record while still showing modestly-active ones.
- * Users can lower the slider to 0 to see every peer.
+ * Default minimum on-chain channel count for Discover. 120 hides brand-new peers
+ * that haven't accumulated a stronger track record. Users can lower the slider
+ * to 0 to see every peer.
  */
-export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 20;
+export const DEFAULT_MIN_ON_CHAIN_CHANNELS = 120;
 
 export type TimeWindow = 'any' | 'today' | 'week' | 'month';
 
@@ -91,6 +91,13 @@ export function matchesMaxOutputPrice(row: DiscoverRow, maxPrice: number): boole
   return output <= maxPrice;
 }
 
+export function hasValidCachedInputPrice(row: DiscoverRow): boolean {
+  const cached = row.cachedInputUsdPerMillion;
+  if (cached == null) return true;
+  const input = row.inputUsdPerMillion;
+  return input != null && cached <= input;
+}
+
 export function matchesCategoryFilter(row: DiscoverRow, set: Set<string>): boolean {
   if (set.size === 0) return true;
   return row.categories.some((c) => set.has(c.toLowerCase()));
@@ -157,6 +164,7 @@ export function applyFilters(rows: DiscoverRow[], inputs: DiscoverFilterInputs):
     && matchesPeerFilter(row, inputs.peerSet)
     && matchesMaxInputPrice(row, inputs.maxInputPrice)
     && matchesMaxOutputPrice(row, inputs.maxOutputPrice)
+    && hasValidCachedInputPrice(row)
     && (inputs.chattedOnly ? hasBeenUsed(row) : true)
     && matchesMinStake(row, inputs.minStakeUsdc)
     && matchesLastSeen(row, inputs.lastSeenWindow, nowMs)

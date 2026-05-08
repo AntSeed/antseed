@@ -92,6 +92,42 @@ describe('LocalRouter', () => {
     expect(router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [overpricedOutputPeer])).toBeNull();
   });
 
+  it('rejects peers when cached input price exceeds input price', () => {
+    const router = new LocalRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 50 },
+      },
+    });
+
+    const invalidCachedPricePeer = makePeer({
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 20, cachedInputUsdPerMillion: 6 },
+        },
+      },
+    });
+
+    expect(router.selectPeer(makeRequest(), [invalidCachedPricePeer])).toBeNull();
+  });
+
+  it('rejects peers when cached input price exceeds buyer cached max', () => {
+    const router = new LocalRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 50, cachedInputUsdPerMillion: 2 },
+      },
+    });
+
+    const expensiveCachedInputPeer = makePeer({
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 20, cachedInputUsdPerMillion: 3 },
+        },
+      },
+    });
+
+    expect(router.selectPeer(makeRequest(), [expensiveCachedInputPeer])).toBeNull();
+  });
+
   it('uses service-specific seller offer pricing when request service is present', () => {
     const router = new LocalRouter({
       maxPricing: {
