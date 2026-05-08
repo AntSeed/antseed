@@ -1,17 +1,21 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
+import type { KeyboardEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
+  ArrowDown02Icon,
   BrowserIcon,
+  Cancel01Icon,
   Folder01Icon,
-  GitBranchIcon
+  GitBranchIcon,
+  Search01Icon
 } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
-import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
+import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
@@ -63,6 +67,38 @@ function getMessageKey(message: ChatMessage, index: number): string {
   }
   const createdAt = Number(message.createdAt) || 0;
   return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
+}
+
+function collectSearchableText(value: unknown, depth = 0): string {
+  if (value == null || depth > 4) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => collectSearchableText(entry, depth + 1)).filter(Boolean).join('\n');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return [
+      record.text,
+      record.thinking,
+      record.content,
+      record.name,
+      record.fileName,
+      record.error,
+      record.input,
+      record.details,
+    ].map((entry) => collectSearchableText(entry, depth + 1)).filter(Boolean).join('\n');
+  }
+  return '';
+}
+
+function getSearchableMessageText(message: ChatMessage): string {
+  return collectSearchableText(message.content);
+}
+
+function getNormalizedSearchQuery(query: string): string {
+  return query.trim().toLowerCase();
 }
 
 function getPathTail(value: string | null | undefined): string {
@@ -141,6 +177,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
   const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
   // While the LLM is streaming we still let the user type/paste.
   // Drafts the user confirms (Enter / Send) are parked in this queue as
   // cards above the composer and ship one-per-turn as soon as the current
@@ -164,6 +203,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setTooltipDismissed(true);
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messageSearchInputRef = useRef<HTMLInputElement>(null);
+  const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -177,6 +218,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
+  const keyedVisibleMessages = useMemo(
+    () => visibleMessages.map((message, index) => ({ message, key: getMessageKey(message, index) })),
+    [visibleMessages],
+  );
+  const normalizedMessageSearchQuery = getNormalizedSearchQuery(messageSearchQuery);
+  const messageSearchResults = useMemo(() => {
+    if (!normalizedMessageSearchQuery) return [];
+    return keyedVisibleMessages
+      .filter(({ message }) => hasSearchPhraseMatch(getSearchableMessageText(message), normalizedMessageSearchQuery))
+      .map(({ key }) => key);
+  }, [keyedVisibleMessages, normalizedMessageSearchQuery]);
+  const activeSearchResultKey = messageSearchResults[selectedSearchIndex] || null;
 
   const previewUrl = snap.browserPreviewUrl;
   const previewRequestId = snap.browserPreviewRequestId;
@@ -186,6 +239,98 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       setPreviewOpen(true);
     }
   }, [previewUrl, previewRequestId]);
+
+  useEffect(() => {
+    setMessageSearchOpen(false);
+    setMessageSearchQuery('');
+    setSelectedSearchIndex(0);
+  }, [snap.chatActiveConversation]);
+
+  useEffect(() => {
+    setSelectedSearchIndex(0);
+  }, [normalizedMessageSearchQuery]);
+
+  useEffect(() => {
+    if (selectedSearchIndex >= messageSearchResults.length) {
+      setSelectedSearchIndex(Math.max(0, messageSearchResults.length - 1));
+    }
+  }, [messageSearchResults.length, selectedSearchIndex]);
+
+  useEffect(() => {
+    if (!messageSearchOpen) return;
+    const frame = requestAnimationFrame(() => messageSearchInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [messageSearchOpen]);
+
+  useEffect(() => {
+    if (!activeSearchResultKey) return;
+    const target = messageRefs.current.get(activeSearchResultKey);
+    if (!target) return;
+    isUserScrolledUp.current = true;
+
+    const frame = requestAnimationFrame(() => {
+      const activeMark = target.querySelector('.chat-search-mark-active');
+      const scrollTarget = activeMark instanceof HTMLElement ? activeMark : target;
+      scrollTarget.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [activeSearchResultKey]);
+
+  const openMessageSearch = useCallback(() => {
+    setMessageSearchOpen(true);
+  }, []);
+
+  const closeMessageSearch = useCallback(() => {
+    setMessageSearchOpen(false);
+    setMessageSearchQuery('');
+    setSelectedSearchIndex(0);
+    inputRef.current?.focus();
+  }, []);
+
+  const selectNextSearchResult = useCallback(() => {
+    setSelectedSearchIndex((current) => {
+      if (messageSearchResults.length === 0) return 0;
+      return (current + 1) % messageSearchResults.length;
+    });
+  }, [messageSearchResults.length]);
+
+  const selectPreviousSearchResult = useCallback(() => {
+    setSelectedSearchIndex((current) => {
+      if (messageSearchResults.length === 0) return 0;
+      return (current - 1 + messageSearchResults.length) % messageSearchResults.length;
+    });
+  }, [messageSearchResults.length]);
+
+  const handleMessageSearchKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) selectPreviousSearchResult();
+      else selectNextSearchResult();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMessageSearch();
+    }
+  }, [closeMessageSearch, selectNextSearchResult, selectPreviousSearchResult]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        openMessageSearch();
+        return;
+      }
+      if (event.key === 'Escape' && messageSearchOpen) {
+        event.preventDefault();
+        closeMessageSearch();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [active, closeMessageSearch, messageSearchOpen, openMessageSearch]);
 
   // Track whether the user has scrolled away from the bottom
   useEffect(() => {
@@ -657,14 +802,75 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           )}
         </div>
         {snap.chatActiveConversation && (
-          <ChatSessionStats
-            sessionCost={snap.chatSessionAccumulatedCostUsd}
-            sessionTokens={snap.chatSessionTotalTokens}
-            lifetimeCost={snap.chatLifetimeSpentUsdc}
-            lifetimeTokens={snap.chatLifetimeTotalTokens}
-            reserved={snap.chatSessionReservedUsdc}
-            started={snap.chatSessionStarted}
-          />
+          <div className={styles.pageHeaderRight}>
+            {messageSearchOpen ? (
+              <div className={styles.messageSearchBar} role="search">
+                <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.8} className={styles.messageSearchIcon} />
+                <input
+                  ref={messageSearchInputRef}
+                  className={styles.messageSearchInput}
+                  value={messageSearchQuery}
+                  onChange={(event) => setMessageSearchQuery(event.target.value)}
+                  onKeyDown={handleMessageSearchKeyDown}
+                  placeholder="Search messages…"
+                  aria-label="Search messages in this conversation"
+                />
+                <span className={styles.messageSearchCount} aria-live="polite">
+                  {normalizedMessageSearchQuery
+                    ? `${messageSearchResults.length > 0 ? selectedSearchIndex + 1 : 0} / ${messageSearchResults.length}`
+                    : '0 / 0'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={selectPreviousSearchResult}
+                  disabled={messageSearchResults.length === 0}
+                  aria-label="Previous search result"
+                  title="Previous result"
+                >
+                  <HugeiconsIcon icon={ArrowUp02Icon} size={14} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={selectNextSearchResult}
+                  disabled={messageSearchResults.length === 0}
+                  aria-label="Next search result"
+                  title="Next result"
+                >
+                  <HugeiconsIcon icon={ArrowDown02Icon} size={14} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={closeMessageSearch}
+                  aria-label="Close message search"
+                  title="Close search"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={styles.messageSearchTrigger}
+                onClick={openMessageSearch}
+                aria-label="Search messages in this conversation"
+                title="Search messages (⌘/Ctrl+F)"
+              >
+                <HugeiconsIcon icon={Search01Icon} size={15} strokeWidth={1.8} />
+                <span>Search</span>
+              </button>
+            )}
+            <ChatSessionStats
+              sessionCost={snap.chatSessionAccumulatedCostUsd}
+              sessionTokens={snap.chatSessionTotalTokens}
+              lifetimeCost={snap.chatLifetimeSpentUsdc}
+              lifetimeTokens={snap.chatLifetimeTotalTokens}
+              reserved={snap.chatSessionReservedUsdc}
+              started={snap.chatSessionStarted}
+            />
+          </div>
         )}
       </div>
 
@@ -704,14 +910,27 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 </div>
               </div>
             ) : (
-              visibleMessages.map((msg, i) => (
-                <ChatBubble
-                  key={getMessageKey(msg, i)}
-                  message={msg}
-                  onOpenPreview={handleOpenPreview}
-                  conversationId={snap.chatActiveConversation || undefined}
-                />
-              ))
+              keyedVisibleMessages.map(({ message: msg, key }) => {
+                const isSearchMatch = messageSearchResults.includes(key);
+                const isActiveSearchMatch = activeSearchResultKey === key;
+                return (
+                  <div
+                    key={key}
+                    ref={(node) => {
+                      if (node) messageRefs.current.set(key, node);
+                      else messageRefs.current.delete(key);
+                    }}
+                  >
+                    <ChatBubble
+                      message={msg}
+                      onOpenPreview={handleOpenPreview}
+                      conversationId={snap.chatActiveConversation || undefined}
+                      searchQuery={isSearchMatch ? messageSearchQuery : undefined}
+                      searchActive={isActiveSearchMatch}
+                    />
+                  </div>
+                );
+              })
             )}
             {snap.chatStreamingMessage ? (
               <ChatBubble

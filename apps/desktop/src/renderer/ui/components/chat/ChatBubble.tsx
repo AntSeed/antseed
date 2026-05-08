@@ -99,7 +99,7 @@ function getBlockRenderKey(block: ContentBlock, index: number, messagePrefix = '
 }
 
 
-function StreamingMarkdown({ text }: { text: string }) {
+function StreamingMarkdown({ text, highlightQuery, activeHighlight }: { text: string; highlightQuery?: string; activeHighlight?: boolean }) {
   const [visibleText, setVisibleText] = useState(text);
   const frameRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef(0);
@@ -160,12 +160,12 @@ function StreamingMarkdown({ text }: { text: string }) {
 
   return (
     <div className="chat-bubble-content streaming-cursor">
-      <MarkdownContent text={visibleText} />
+      <MarkdownContent text={visibleText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
     </div>
   );
 }
 
-function ThinkingBlockView({ block }: { block: ContentBlock }) {
+function ThinkingBlockView({ block, highlightQuery, activeHighlight }: { block: ContentBlock; highlightQuery?: string; activeHighlight?: boolean }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const isOpen = manualToggle ?? true;
 
@@ -196,13 +196,13 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
       </button>
       {!isOpen && (
         <div className="thinking-block-preview">
-          <MarkdownContent text={preview} className="thinking-block-preview-md" />
+          <MarkdownContent text={preview} className="thinking-block-preview-md" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
         </div>
       )}
       <div className="thinking-block-body">
         {block.streaming
-          ? <StreamingMarkdown text={thinkingText} />
-          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />}
+          ? <StreamingMarkdown text={thinkingText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />}
       </div>
     </div>
   );
@@ -447,6 +447,8 @@ function renderAssistantBlocks(
   messagePrefix = '',
   onOpenPreview?: (url: string) => void,
   conversationId?: string,
+  highlightQuery?: string,
+  activeHighlight?: boolean,
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
@@ -469,7 +471,7 @@ function renderAssistantBlocks(
       return;
     }
     flushToolGroup();
-    nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId));
+    nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId, highlightQuery, activeHighlight));
   });
 
   flushToolGroup();
@@ -589,18 +591,20 @@ function renderBlock(
   streaming = false,
   messagePrefix = '',
   conversationId?: string,
+  highlightQuery?: string,
+  activeHighlight?: boolean,
 ): ReactNode {
   const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
   if (block.type === 'text') {
     if (block.streaming) {
-      return <StreamingMarkdown key={blockKey} text={String(block.text || '')} />;
+      return <StreamingMarkdown key={blockKey} text={String(block.text || '')} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
     }
-    return <MarkdownContent key={blockKey} text={String(block.text || '')} />;
+    return <MarkdownContent key={blockKey} text={String(block.text || '')} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
   }
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockView key={blockKey} block={block} />;
+    return <ThinkingBlockView key={blockKey} block={block} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
   }
 
   if (block.type === 'file') {
@@ -712,9 +716,11 @@ type ChatBubbleProps = {
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
+  searchQuery?: string;
+  searchActive?: boolean;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -737,19 +743,19 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
     if (message.role === 'assistant') {
       const assistantTurnContent = buildAssistantTurnContent(message.content);
       const inlineBlocks = assistantTurnContent.orderedParts.map((part) => part.block);
-      return renderAssistantBlocks(inlineBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
+      return renderAssistantBlocks(inlineBlocks, isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive);
     }
 
     if (typeof message.content === 'string') {
-      return <MarkdownContent text={message.content} />;
+      return <MarkdownContent text={message.content} highlightQuery={searchQuery} activeHighlight={searchActive} />;
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix, conversationId));
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix, conversationId, searchQuery, searchActive));
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId]);
+  }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive]);
 
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (

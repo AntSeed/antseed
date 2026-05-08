@@ -20,6 +20,19 @@
       line-height: 1.7;
     }
 
+    .chat-search-mark {
+      padding: 1px 3px;
+      border-radius: 4px;
+      background: rgba(34, 197, 94, 0.28);
+      color: inherit;
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18);
+    }
+
+    .chat-search-mark-active {
+      background: rgba(34, 197, 94, 0.44);
+      box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.48), inset 0 -2px 0 rgba(22, 163, 74, 0.72);
+    }
+
     .chat-bubble-content h1,
     .chat-bubble-content h2,
     .chat-bubble-content h3 {
