@@ -145,6 +145,13 @@ export class LocalRouter implements Router {
     return !this._offerExceedsMaxPrice(offer, max);
   }
 
+  allowsPeerForPolicy(req: SerializedHttpRequest, peer: PeerInfo): boolean {
+    if (this._effectiveReputation(peer) < this._minReputation) {
+      return false;
+    }
+    return this.allowsPeerForPricing(req, peer);
+  }
+
   private _effectiveReputation(p: PeerInfo): number {
     return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
   }

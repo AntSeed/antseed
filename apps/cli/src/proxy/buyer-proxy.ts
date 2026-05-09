@@ -108,7 +108,8 @@ const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
 type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
 
-type PricingPolicyRouter = Router & {
+type BuyerPolicyRouter = Router & {
+  allowsPeerForPolicy?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
   allowsPeerForPricing?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
 }
 
@@ -1169,16 +1170,18 @@ export class BuyerProxy {
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
-    const pricingRouter = router as PricingPolicyRouter | null | undefined
-    const pricingAllowed = pricingRouter?.allowsPeerForPricing
-      ? pricingRouter.allowsPeerForPricing(serializedReq, selectedPeer)
-      : true
-    if (!pricingAllowed) {
-      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer pricing policy`)
+    const policyRouter = router as BuyerPolicyRouter | null | undefined
+    const policyAllowed = policyRouter?.allowsPeerForPolicy
+      ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
+      : policyRouter?.allowsPeerForPricing
+        ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
+        : true
+    if (!policyAllowed) {
+      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
-        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer pricing policy. `
-        + 'Pick a different service in Discover or adjust your buyer max pricing.',
+        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy. `
+        + 'Pick a different service in Discover or adjust your buyer pricing/reputation limits.',
       )
       return
     }

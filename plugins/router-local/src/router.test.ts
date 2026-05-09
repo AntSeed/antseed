@@ -133,7 +133,7 @@ describe('LocalRouter', () => {
     expect(router.selectPeer(makeRequest(), [expensiveCachedInputPeer])).toBeNull();
   });
 
-  it('allows pinned peers by pricing without applying reputation filters', () => {
+  it('checks pricing-only and full pinned-peer policies separately', () => {
     const router = new LocalRouter({
       minReputation: 70,
       maxPricing: {
@@ -142,6 +142,14 @@ describe('LocalRouter', () => {
     });
     const lowRepAllowedPrice = makePeer({
       reputationScore: 1,
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
+        },
+      },
+    });
+    const highRepAllowedPrice = makePeer({
+      reputationScore: 90,
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
@@ -159,7 +167,9 @@ describe('LocalRouter', () => {
 
     expect(router.selectPeer(makeRequest(), [lowRepAllowedPrice])).toBeNull();
     expect(router.allowsPeerForPricing(makeRequest(), lowRepAllowedPrice)).toBe(true);
-    expect(router.allowsPeerForPricing(makeRequest(), highRepOverpriced)).toBe(false);
+    expect(router.allowsPeerForPolicy(makeRequest(), lowRepAllowedPrice)).toBe(false);
+    expect(router.allowsPeerForPolicy(makeRequest(), highRepAllowedPrice)).toBe(true);
+    expect(router.allowsPeerForPolicy(makeRequest(), highRepOverpriced)).toBe(false);
   });
 
   it('uses service-specific seller offer pricing when request service is present', () => {
