@@ -133,6 +133,72 @@ EIP-712 domain: name="AntseedChannels", version="1"
 - **Swappable contract** (Channels) holds no USDC — can be redeployed by re-pointing stable contracts
 - Buyer never needs gas — all on-chain actions are seller-initiated or permissionless
 
+## Building a Plugin (External Contributor Workflow)
+
+Plugins are first-class citizens — they are standalone npm packages, not contributions to this org.
+See [CONTRIBUTING.md](https://github.com/AntSeed/.github/blob/main/CONTRIBUTING.md#publishing-a-plugin)
+and [packages/node/README.md](./packages/node/README.md) for full interface definitions.
+
+### Quick-start
+```bash
+# 1. Scaffold a new plugin (from a clone of this repo — for the node SDK type access)
+antseed plugin create my-provider --type provider
+# or: antseed plugin create my-router --type router
+
+# 2. Implement the interface
+#    Provider: implement AntseedProviderPlugin from @antseed/node
+#    Router:   implement AntseedRouterPlugin   from @antseed/node
+
+# 3. Test locally by pointing the CLI at your plugin directory
+antseed seed --provider ./plugins/my-provider   # provider test
+antseed connect --router ./plugins/my-router    # router test
+
+# 4. Publish to npm (no org approval required)
+npm publish --access public
+```
+
+### Provider plugin skeleton
+```ts
+import type { AntseedProviderPlugin } from '@antseed/node';
+
+const plugin: AntseedProviderPlugin = {
+  name: 'my-provider',
+  services: [
+    {
+      id: 'my-model',
+      label: 'My Model',
+      billingMode: { kind: 'token', inputUsdPerMillion: 1.0, outputUsdPerMillion: 3.0 },
+    },
+  ],
+  async handleRequest(request, respond) {
+    // proxy to your upstream API and stream back chunks
+  },
+};
+
+export default plugin;
+```
+
+### Router plugin skeleton
+```ts
+import type { AntseedRouterPlugin } from '@antseed/node';
+
+const plugin: AntseedRouterPlugin = {
+  name: 'my-router',
+  scoreProvider(peer) {
+    // return a number; higher = more preferred
+    return peer.reputation + (1 / (peer.latencyMs + 1));
+  },
+};
+
+export default plugin;
+```
+
+### TypeScript requirements for plugins
+- Must use `@antseed/node` as a peerDependency (not bundled)
+- ES modules only (`"type": "module"` in package.json)
+- Export the plugin as the **default** export (exception to the no-default-exports rule)
+- Recommended: use the same `tsconfig.base.json` from this monorepo as a starting point
+
 ## Local Testing (Full Payment Flow)
 
 Prerequisites: `anvil` (from Foundry) and `cast` must be installed.
@@ -185,3 +251,4 @@ storage/
 To add a new migration: create `NNN_name.ts` exporting `{ migration: Migration }`,
 add it to the domain's `index.ts`. Use `/add-migration` skill for scaffolding.
 Never modify an existing migration file — always create a new one.
+
