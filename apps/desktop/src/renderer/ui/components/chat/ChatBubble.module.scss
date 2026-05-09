@@ -260,10 +260,13 @@
     align-self: stretch;
     background: transparent;
     color: var(--text-primary);
-    border-left: 0;
     border-radius: 0;
     width: 100%;
-    padding: 0 16px;
+    // Left accent bar gives a clear visual anchor for where each assistant
+    // response starts — fixes the missing boundary reported in #424.
+    border-left: 2px solid var(--border);
+    padding: 0 16px 0 14px;
+    margin-top: 4px;
 
   :global {
     /* Tool group */
