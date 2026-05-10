@@ -12,12 +12,13 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Desktop
 
-- `@antseed/desktop@0.1.75`
+- `@antseed/desktop@0.1.76`
 
 ### Fixed
 
 - Fixed `antseed buyer start` so trusted router plugins are repaired automatically when the plugin package is present but incomplete, including missing nested dependencies such as `ethers` under bundled Desktop installs.
-- Fixed Desktop plugin setup so bundled router repairs copy the runtime dependency tree needed by `@antseed/node`.
+- Fixed Desktop plugin setup so bundled router repairs copy the full transitive runtime dependency tree of `@antseed/node` (`ethers`, `@silentbot1/nat-api`, `tokenx`, ...) and work fully offline without Node or npm on the user machine.
+- Fixed Desktop bundling so the dependency tree of `@antseed/node` is materialized as real files under `Resources/bundled-plugins/`, avoiding `ENOTDIR` failures when copying out of `app.asar`.
 - Fixed the Desktop setup screen so a transient router-plugin install failure no longer blocks the app after the buyer runtime and service catalog are available.
 - Added a manual install hint to missing third-party plugin errors.
 

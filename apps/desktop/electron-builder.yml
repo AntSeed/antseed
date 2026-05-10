@@ -59,6 +59,15 @@ extraResources:
       - "**/*.js"
   - from: ../../packages/api-adapter/package.json
     to: bundled-plugins/@antseed/api-adapter/package.json
+  # bundled-runtime contains the full transitive runtime dependency tree of
+  # @antseed/node (ethers, @silentbot1/nat-api, tokenx, ...) materialized as
+  # real files by scripts/prepare-dist.mjs. We expose it under bundled-plugins
+  # so plugins.ts.installPluginFromBundle can copy everything offline without
+  # going through npm.
+  - from: bundled-runtime/
+    to: bundled-plugins/
+    filter:
+      - "**/*"
 
 afterPack: ./scripts/after-pack.js
 

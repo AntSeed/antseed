@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, mkdir, cp, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
-import { builtinModules, createRequire } from 'node:module';
+import { builtinModules } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const execFileAsync = promisify(execFileCallback);
-const requireFromHere = createRequire(import.meta.url);
 const NODE_BUILTINS = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
@@ -143,32 +142,6 @@ function dependencyNamesForManifest(manifest: PackageManifest, includePeers: boo
   }).filter((name) => !NODE_BUILTINS.has(name));
 }
 
-function findAppPackageDir(packageName: string): string | null {
-  const lookupPaths = requireFromHere.resolve.paths(packageName) ?? [];
-  for (const dir of lookupPaths) {
-    const candidate = path.join(dir, ...packageName.split('/'));
-    const manifest = readPackageManifestSync(candidate);
-    if (manifest?.name === packageName) return candidate;
-  }
-
-  let entry: string;
-  try {
-    entry = requireFromHere.resolve(packageName);
-  } catch {
-    return null;
-  }
-
-  let cur = entry;
-  for (let i = 0; i < 16; i += 1) {
-    const parent = path.dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-    const manifest = readPackageManifestSync(cur);
-    if (manifest?.name === packageName) return cur;
-  }
-  return null;
-}
-
 function hasMissingInstalledDependencyTree(
   packageName: string,
   pluginsDir: string = DEFAULT_PLUGINS_DIR,
@@ -190,37 +163,6 @@ function hasMissingInstalledDependencyTree(
   }
 
   return false;
-}
-
-async function copyAppDependencyTree(
-  packageName: string,
-  visited: Set<string> = new Set(),
-): Promise<void> {
-  if (visited.has(packageName)) return;
-  visited.add(packageName);
-
-  const destDir = packageNodeModulesPath(DEFAULT_PLUGINS_DIR, packageName);
-  let manifest = await readPackageManifest(destDir);
-  if (!manifest) {
-    const sourceDir = findAppPackageDir(packageName);
-    if (!sourceDir) {
-      throw new Error(`Bundled dependency "${packageName}" is not available in the desktop app`);
-    }
-    await mkdir(path.dirname(destDir), { recursive: true });
-    await rm(destDir, { recursive: true, force: true });
-    await cp(sourceDir, destDir, { recursive: true, force: true });
-    _appendLog('connect', 'system', `Copied bundled dependency ${packageName}.`);
-    manifest = await readPackageManifest(destDir);
-  }
-
-  if (!manifest) {
-    throw new Error(`Bundled dependency "${packageName}" has no readable package.json after copy`);
-  }
-
-  const includePeers = (manifest.name ?? packageName).startsWith('@antseed/');
-  for (const depName of dependencyNamesForManifest(manifest, includePeers)) {
-    await copyAppDependencyTree(depName, visited);
-  }
 }
 
 export async function ensurePluginsDirectory(): Promise<void> {
@@ -342,26 +284,41 @@ export async function installPluginFromBundle(packageName: string): Promise<bool
   await ensurePluginsDirectory();
   const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
 
-  // Copy all scoped packages from the bundle (target + its bundled dependencies).
+  // Copy every package from the bundle (scoped and unscoped) into the user's
+  // plugins dir. The bundle contains the plugin itself, the @antseed/* peer
+  // packages it imports at runtime, and the full transitive runtime dependency
+  // tree of @antseed/node (ethers, @silentbot1/nat-api, ...) so the desktop
+  // can repair itself fully offline — no Node/npm required on the user box.
   const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
-  const scopeDirs = bundleEntries.filter((e) => e.isDirectory() && e.name.startsWith('@'));
 
-  for (const scope of scopeDirs) {
-    const pkgEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
-    for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
-      const src = path.join(bundleRoot, scope.name, pkg.name);
-      const dest = path.join(destRoot, scope.name, pkg.name);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await rm(dest, { recursive: true, force: true });
-      await cp(src, dest, { recursive: true, force: true });
-      _appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name}.`);
+  for (const entry of bundleEntries.filter((e) => e.isDirectory())) {
+    if (entry.name.startsWith('@')) {
+      const pkgEntries = await readdir(path.join(bundleRoot, entry.name), { withFileTypes: true });
+      for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
+        await copyBundledPackage(
+          path.join(bundleRoot, entry.name, pkg.name),
+          path.join(destRoot, entry.name, pkg.name),
+          `${entry.name}/${pkg.name}`,
+        );
+      }
+    } else {
+      await copyBundledPackage(
+        path.join(bundleRoot, entry.name),
+        path.join(destRoot, entry.name),
+        entry.name,
+      );
     }
   }
 
-  await copyAppDependencyTree(packageName);
-
   return existsSync(path.join(destRoot, ...packageName.split('/'), 'package.json'))
     && !hasMissingInstalledDependencyTree(packageName);
+}
+
+async function copyBundledPackage(src: string, dest: string, label: string): Promise<void> {
+  await mkdir(path.dirname(dest), { recursive: true });
+  await rm(dest, { recursive: true, force: true });
+  await cp(src, dest, { recursive: true, force: true });
+  _appendLog('connect', 'system', `Copied bundled package ${label}.`);
 }
 
 export function isPluginInstalled(packageName: string): boolean {
@@ -491,10 +448,13 @@ export async function ensureDefaultPlugin(
         : `Required plugin "${packageName}" not found. Installing`,
   );
   try {
-    // 1. Try copying from the app bundle (production builds — instant, no network).
-    // If bundle repair fails, remove the partial copied @antseed packages before
-    // falling back to npm. A half-copied @antseed/node can otherwise satisfy
-    // npm's peer check while still missing runtime deps like `ethers`.
+    // Wipe any partial AntSeed runtime install before repairing. A half-copied
+    // @antseed/node from a previous broken setup can otherwise satisfy presence
+    // checks while still missing nested deps like `ethers`.
+    if (incompleteInstall) await removeDefaultRouterRuntimePackages();
+
+    // 1. Try copying from the app bundle (production builds — instant, fully
+    //    offline, no Node/npm required on the user machine).
     let installedFromBundle = false;
     try {
       installedFromBundle = await installPluginFromBundle(packageName);
@@ -516,7 +476,7 @@ export async function ensureDefaultPlugin(
         await installPluginDependency(toFileInstallSpec(packageName, localSource));
       } else {
         // 3. Fall back to npm registry. Install @antseed/node explicitly so npm
-        // repairs its runtime deps instead of treating a stale copied peer as OK.
+        //    repairs its runtime deps instead of treating a stale copied peer as OK.
         await installPluginDependencies([`${packageName}@latest`, '@antseed/node@latest']);
       }
     }

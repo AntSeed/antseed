@@ -15,9 +15,9 @@
  * packages (e.g. @antseed/node).
  */
 
-import { readdirSync, lstatSync, readlinkSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync, readFileSync } from 'node:fs';
+import { readdirSync, lstatSync, readlinkSync, realpathSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -146,5 +146,109 @@ execFileSync(process.execPath, [
   '--verbose',
 ], { cwd: betterSqlite3Dir, stdio: 'inherit' });
 console.log('[prepare-dist] Native module prebuild installed for Electron.');
+
+// --- 4. Bundle full transitive runtime deps of @antseed/node ---
+// The desktop app must be repairable from its own bundle even on machines that
+// have no Node/npm available (e.g. corp networks where npm registry SSL is
+// blocked). electron-builder asarUnpack does not transparently fix fs.cp from
+// the asar archive, so we materialize the dep tree as real files under
+// bundled-runtime/ and ship it as extraResources.
+
+const BUNDLED_RUNTIME_DIR = path.join(appDir, 'bundled-runtime');
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+]);
+
+rmSync(BUNDLED_RUNTIME_DIR, { recursive: true, force: true });
+mkdirSync(BUNDLED_RUNTIME_DIR, { recursive: true });
+
+const desktopRequire = createRequire(path.join(appDir, 'package.json'));
+
+function findRealPackageDir(name) {
+  const lookupPaths = desktopRequire.resolve.paths(name) ?? [];
+  for (const dir of lookupPaths) {
+    const candidate = path.join(dir, ...name.split('/'));
+    const pkgJson = path.join(candidate, 'package.json');
+    if (existsSync(pkgJson)) {
+      try {
+        const parsed = JSON.parse(readFileSync(pkgJson, 'utf8'));
+        if (parsed.name === name) {
+          try { return realpathSync(candidate); } catch { return candidate; }
+        }
+      } catch {}
+    }
+  }
+
+  let entry;
+  try {
+    entry = desktopRequire.resolve(name);
+  } catch {
+    return null;
+  }
+
+  let cur = entry;
+  for (let i = 0; i < 16; i += 1) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+    const pkgJson = path.join(cur, 'package.json');
+    if (existsSync(pkgJson)) {
+      try {
+        const parsed = JSON.parse(readFileSync(pkgJson, 'utf8'));
+        if (parsed.name === name) {
+          try { return realpathSync(cur); } catch { return cur; }
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function copyDepTree(name, destRoot, visited) {
+  if (visited.has(name)) return;
+  visited.add(name);
+  if (NODE_BUILTINS.has(name)) return;
+
+  const sourceDir = findRealPackageDir(name);
+  if (!sourceDir) {
+    console.warn(`[prepare-dist] WARNING: could not locate dep "${name}" for bundled runtime`);
+    return;
+  }
+
+  const destDir = path.join(destRoot, ...name.split('/'));
+  mkdirSync(path.dirname(destDir), { recursive: true });
+  rmSync(destDir, { recursive: true, force: true });
+  cpSync(sourceDir, destDir, { recursive: true, dereference: true });
+
+  // Drop any nested node_modules to keep the bundled tree flat — every
+  // dependency lives at the top level of bundled-runtime/.
+  const nestedNm = path.join(destDir, 'node_modules');
+  if (existsSync(nestedNm)) {
+    rmSync(nestedNm, { recursive: true, force: true });
+  }
+
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(path.join(sourceDir, 'package.json'), 'utf8'));
+  } catch {
+    return;
+  }
+  for (const depName of Object.keys(pkg.dependencies ?? {})) {
+    copyDepTree(depName, destRoot, visited);
+  }
+}
+
+const nodePackageDir = findRealPackageDir('@antseed/node');
+if (!nodePackageDir) {
+  console.warn('[prepare-dist] WARNING: could not locate @antseed/node — bundled runtime will be incomplete');
+} else {
+  const nodePkg = JSON.parse(readFileSync(path.join(nodePackageDir, 'package.json'), 'utf8'));
+  const visited = new Set();
+  for (const depName of Object.keys(nodePkg.dependencies ?? {})) {
+    copyDepTree(depName, BUNDLED_RUNTIME_DIR, visited);
+  }
+  console.log(`[prepare-dist] Bundled ${visited.size} runtime dep(s) for @antseed/node into ${BUNDLED_RUNTIME_DIR}`);
+}
 
 console.log('[prepare-dist] Done.');
