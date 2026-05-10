@@ -1,6 +1,6 @@
 import type { RendererUiState, ConfigFormData } from '../core/state';
 import { notifyUiStateChanged } from '../core/store';
-import { safeNumber, safeArray, safeString } from '../core/safe';
+import { safeNumber, safeString } from '../core/safe';
 
 type SettingsModuleOptions = {
   uiState: RendererUiState;
@@ -19,6 +19,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 const DESKTOP_DEV_MODE_KEY = 'antseed.desktop.devMode';
+const DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION = 5;
+const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
 
 function loadDesktopDevMode(): boolean {
   try {
@@ -65,8 +67,14 @@ export function initSettingsModule({
 
     applyConfigFormData({
       proxyPort: safeNumber(buyer.proxyPort, 8377),
-      maxInputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0),
-      maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
+      maxInputUsdPerMillion: safeNumber(
+        buyerMaxPricingDefaults.inputUsdPerMillion,
+        DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+      ),
+      maxOutputUsdPerMillion: safeNumber(
+        buyerMaxPricingDefaults.outputUsdPerMillion,
+        DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+      ),
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,

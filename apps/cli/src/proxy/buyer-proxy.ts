@@ -3,15 +3,16 @@ import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import type {
-  AntseedNode,
-  PeerInfo,
-  PeerMetadata,
-  RequestStreamResponseMetadata,
-  Router,
-  SerializedHttpRequest,
-  SerializedHttpResponse,
-  SerializedHttpResponseChunk,
+import {
+  computeOnChainReputationScore,
+  type AntseedNode,
+  type PeerInfo,
+  type PeerMetadata,
+  type RequestStreamResponseMetadata,
+  type Router,
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+  type SerializedHttpResponseChunk,
 } from '@antseed/node'
 import {
   createOpenAIChatToAnthropicStreamingAdapter,
@@ -72,8 +73,8 @@ export interface BuyerProxyConfig {
   peerCacheTtlMs?: number
   /**
    * Pin all requests to a specific peer ID for this session.
-   * The router is bypassed; the named peer is used directly if it is available
-   * and protocol-compatible. A 502 is returned if the peer cannot be reached.
+   * The named peer is used directly if it is available, protocol-compatible,
+   * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
   /**
@@ -106,6 +107,11 @@ const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
 type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
+
+type BuyerPolicyRouter = Router & {
+  allowsPeerForPolicy?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
+  allowsPeerForPricing?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
+}
 
 type ProtocolTransformStrategy = {
   transformRequest: (req: SerializedHttpRequest) => TransformResult | null
@@ -267,8 +273,20 @@ export function parsePersistedPeers(
     if (typeof entry.defaultOutputUsdPerMillion === 'number') {
       peer.defaultOutputUsdPerMillion = entry.defaultOutputUsdPerMillion
     }
+    if (typeof entry.defaultCachedInputUsdPerMillion === 'number') {
+      peer.defaultCachedInputUsdPerMillion = entry.defaultCachedInputUsdPerMillion
+    }
     if (typeof entry.maxConcurrency === 'number') {
       peer.maxConcurrency = entry.maxConcurrency
+    }
+    if (typeof entry.onChainAgentId === 'number' && Number.isFinite(entry.onChainAgentId)) {
+      peer.onChainAgentId = entry.onChainAgentId
+    }
+    if (typeof entry.onChainStakeUsdcMicros === 'number' && Number.isFinite(entry.onChainStakeUsdcMicros)) {
+      peer.onChainStakeUsdcMicros = entry.onChainStakeUsdcMicros
+    }
+    if (typeof entry.onChainReputationScore === 'number' && Number.isFinite(entry.onChainReputationScore)) {
+      peer.onChainReputationScore = entry.onChainReputationScore
     }
     if (typeof entry.onChainChannelCount === 'number' && Number.isFinite(entry.onChainChannelCount)) {
       peer.onChainChannelCount = entry.onChainChannelCount
@@ -281,6 +299,9 @@ export function parsePersistedPeers(
     }
     if (typeof entry.onChainLastSettledAtSec === 'number' && Number.isFinite(entry.onChainLastSettledAtSec)) {
       peer.onChainLastSettledAtSec = entry.onChainLastSettledAtSec
+    }
+    if (typeof entry.onChainStakedAtSec === 'number' && Number.isFinite(entry.onChainStakedAtSec)) {
+      peer.onChainStakedAtSec = entry.onChainStakedAtSec
     }
     if (typeof entry.onChainStatsFetchedAt === 'number' && Number.isFinite(entry.onChainStatsFetchedAt)) {
       peer.onChainStatsFetchedAt = entry.onChainStatsFetchedAt
@@ -580,15 +601,20 @@ export class BuyerProxy {
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+        defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
         maxConcurrency: p.maxConcurrency ?? 0,
         currentLoad: p.currentLoad ?? null,
-        // On-chain stats read authoritatively by the buyer from AntseedChannels.
-        // Persisted so `antseed network browse` can render richer UI without a
-        // fresh DHT + RPC round-trip.
+        // On-chain stats read authoritatively by the buyer from AntseedChannels/Staking.
+        // Persisted so CLI/desktop surfaces can render richer UI without their
+        // own duplicate staking/channel RPC and reputation-score implementations.
+        onChainAgentId: p.onChainAgentId ?? null,
+        onChainStakeUsdcMicros: p.onChainStakeUsdcMicros ?? null,
         onChainChannelCount: p.onChainChannelCount ?? null,
         onChainGhostCount: p.onChainGhostCount ?? null,
         onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
+        onChainStakedAtSec: p.onChainStakedAtSec ?? null,
+        onChainReputationScore: p.onChainReputationScore ?? computeOnChainReputationScore(p) ?? null,
         onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
         // Persisted so cold-started buyers can still resolve the facade address
         // for channelId derivation. See parsePersistedPeers for the round-trip.
@@ -750,13 +776,12 @@ export class BuyerProxy {
       const providers = peer.providers
         .map((provider) => provider.trim())
         .filter((provider) => provider.length > 0)
-      const trust = Number.isFinite(peer.trustScore) ? String(peer.trustScore) : 'n/a'
       const rep = Number.isFinite(peer.reputationScore) ? String(peer.reputationScore) : 'n/a'
       const onChain = Number.isFinite(peer.onChainChannelCount) ? String(peer.onChainChannelCount) : 'n/a'
       const input = Number.isFinite(peer.defaultInputUsdPerMillion) ? String(peer.defaultInputUsdPerMillion) : 'n/a'
       const output = Number.isFinite(peer.defaultOutputUsdPerMillion) ? String(peer.defaultOutputUsdPerMillion) : 'n/a'
 
-      return `${peer.peerId.slice(0, 8)} providers=[${providers.join(',') || 'none'}] trust=${trust} rep=${rep} onchain=${onChain} in=${input} out=${output}`
+      return `${peer.peerId.slice(0, 8)} providers=[${providers.join(',') || 'none'}] rep=${rep} onchain=${onChain} in=${input} out=${output}`
     }
 
     const samples = peers.slice(0, 5).map((peer) => summarize(peer)).join(' | ')
@@ -806,7 +831,6 @@ export class BuyerProxy {
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,
         reputationScore: p.reputationScore,
-        trustScore: p.trustScore,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -1146,6 +1170,22 @@ export class BuyerProxy {
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
+    const policyRouter = router as BuyerPolicyRouter | null | undefined
+    const policyAllowed = policyRouter?.allowsPeerForPolicy
+      ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
+      : policyRouter?.allowsPeerForPricing
+        ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
+        : true
+    if (!policyAllowed) {
+      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(
+        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy. `
+        + 'Pick a different service in Discover or adjust your buyer pricing/reputation limits.',
+      )
+      return
+    }
+
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,

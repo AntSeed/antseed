@@ -70,12 +70,12 @@ function makeProxyResponse(): {
   }
 }
 
-function makeBuyerProxyWithPeers(initialPeers: PeerInfo[], refreshedPeers = initialPeers): BuyerProxy {
+function makeBuyerProxyWithPeers(initialPeers: PeerInfo[], refreshedPeers = initialPeers, router: unknown = null): BuyerProxy {
   const proxy = new BuyerProxy({
     port: 0,
     dataDir: '/tmp/antseed-test',
     node: {
-      router: null,
+      router,
     } as any,
   })
   ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) =>
@@ -303,6 +303,25 @@ test('pinned proxy request reports protocol or service mismatch when provider is
   assert.match(res.body, /does not support this request/)
   assert.match(res.body, /provider=local-llm/)
   assert.match(res.body, /protocol=openai-responses/)
+})
+
+test('pinned proxy request enforces buyer routing policy', async () => {
+  const pinnedPeer = makePeer('a', ['openai'])
+  const router = {
+    allowsPeerForPolicy: () => false,
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], router)
+  const req = makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': pinnedPeer.peerId,
+    },
+  })
+
+  const res = await invokeProxy(proxy, req)
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /outside your buyer routing policy/)
+  assert.match(res.body, /pricing\/reputation limits/)
 })
 
 // parsePersistedPeers — hydrates _cachedPeers from buyer.state.json at startup

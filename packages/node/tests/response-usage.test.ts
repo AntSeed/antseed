@@ -29,6 +29,22 @@ describe('parseResponseUsage', () => {
     expect(usage.freshInputTokens).toBe(32);
   });
 
+  it('extracts total input tokens from Anthropic cached usage', () => {
+    const usage = parseResponseUsage(enc.encode(JSON.stringify({
+      usage: {
+        input_tokens: 200,
+        cache_read_input_tokens: 800,
+        output_tokens: 100,
+      },
+    })));
+    expect(usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 100,
+      freshInputTokens: 200,
+      cachedInputTokens: 800,
+    });
+  });
+
   it('returns zeros when the body has no usage field', () => {
     const usage = parseResponseUsage(enc.encode(JSON.stringify({ model: 'foo' })));
     expect(usage).toEqual({ inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 });

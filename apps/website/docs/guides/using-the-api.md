@@ -40,7 +40,7 @@ Extra buyer config is optional. Add it only for advanced customization such as p
 ```json
 {
   "buyer": {
-    "minPeerReputation": 50,
+    "minPeerReputation": 0,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 25,

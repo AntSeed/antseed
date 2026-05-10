@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { computeOnChainReputationScore } from '../src/reputation/on-chain-reputation.js';
 import type { PeerInfo } from '../src/types/peer.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
@@ -73,52 +74,37 @@ describe('Reputation Integration', () => {
       publicAddress: '1.2.3.4:6882',
       onChainChannelCount: metadata.onChainChannelCount,
       onChainGhostCount: metadata.onChainGhostCount,
-      trustScore: metadata.onChainChannelCount,
     };
 
     expect(peerInfo.onChainChannelCount).toBe(100);
     expect(peerInfo.onChainGhostCount).toBe(1);
-    expect(peerInfo.trustScore).toBe(100);
   });
 
-  it('should prefer on-chain reputation in effective reputation', () => {
-    // Simulates the _effectiveReputation logic from the router
+  it('should prefer computed on-chain reputation over reported reputation', () => {
     function effectiveReputation(p: PeerInfo): number {
-      if (p.onChainChannelCount !== undefined) {
-        return p.onChainChannelCount;
-      }
-      return p.trustScore ?? p.reputationScore ?? 0;
+      return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
     }
 
     const peer: PeerInfo = {
       peerId: 'a'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['anthropic'],
-      onChainChannelCount: 88,
-      trustScore: 70,
+      onChainChannelCount: 120,
+      onChainGhostCount: 0,
+      onChainTotalVolumeUsdcMicros: 1_000_000_000,
+      onChainLastSettledAtSec: Math.floor(Date.now() / 1000),
       reputationScore: 60,
     };
 
-    expect(effectiveReputation(peer)).toBe(88);
+    expect(effectiveReputation(peer)).toBeGreaterThan(90);
   });
 
-  it('should fall back when on-chain reputation is not available', () => {
+  it('should fall back to reported reputation when on-chain reputation is not available', () => {
     function effectiveReputation(p: PeerInfo): number {
-      if (p.onChainChannelCount !== undefined) {
-        return p.onChainChannelCount;
-      }
-      return p.trustScore ?? p.reputationScore ?? 0;
+      return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
     }
 
-    const peerWithTrust: PeerInfo = {
-      peerId: 'a'.repeat(40) as any,
-      lastSeen: Date.now(),
-      providers: ['anthropic'],
-      trustScore: 75,
-      reputationScore: 60,
-    };
-
-    const peerWithRepOnly: PeerInfo = {
+    const peerWithRep: PeerInfo = {
       peerId: 'b'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['openai'],
@@ -131,8 +117,7 @@ describe('Reputation Integration', () => {
       providers: ['openai'],
     };
 
-    expect(effectiveReputation(peerWithTrust)).toBe(75);
-    expect(effectiveReputation(peerWithRepOnly)).toBe(55);
+    expect(effectiveReputation(peerWithRep)).toBe(55);
     expect(effectiveReputation(peerWithNothing)).toBe(0);
   });
 

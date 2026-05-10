@@ -2,10 +2,10 @@ import { useMemo, useState, useCallback } from 'react';
 import type { DiscoverRow } from '../../core/state';
 import { getPeerGradient } from '../../core/peer-utils';
 import {
-  applyFilters, applySort, rowChannelCount,
+  applyFilters, applySort, rowReputationScore,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
-  DEFAULT_MIN_ON_CHAIN_CHANNELS,
-  type DiscoverSortKey, type TimeWindow,
+  DEFAULT_MIN_REPUTATION_SCORE,
+  type DiscoverSortKey,
 } from '../components/chat/discover-filter-util';
 
 export type DiscoverPeerOption = {
@@ -21,11 +21,8 @@ export type DiscoverFilterState = {
   peerSet: Set<string>;
   maxInputPrice: number;
   maxOutputPrice: number;
-  chattedOnly: boolean;
   minStakeUsdc: number;
-  lastSeenWindow: TimeWindow;
-  lastSettledWindow: TimeWindow;
-  minOnChainChannels: number;
+  minReputationScore: number;
   sortKey: DiscoverSortKey;
 
   sortedRows: DiscoverRow[];
@@ -37,11 +34,8 @@ export type DiscoverFilterState = {
   togglePeer: (peerId: string) => void;
   setMaxInputPrice: (v: number) => void;
   setMaxOutputPrice: (v: number) => void;
-  setChattedOnly: (v: boolean) => void;
   setMinStakeUsdc: (v: number) => void;
-  setLastSeenWindow: (v: TimeWindow) => void;
-  setLastSettledWindow: (v: TimeWindow) => void;
-  setMinOnChainChannels: (v: number) => void;
+  setMinReputationScore: (v: number) => void;
   setSortKey: (k: DiscoverSortKey) => void;
   resetAll: () => void;
 };
@@ -52,12 +46,9 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   const [peerSet, setPeerSet] = useState<Set<string>>(() => new Set());
   const [maxInputPrice, setMaxInputPrice] = useState<number>(MAX_INPUT_PRICE_SLIDER_USD);
   const [maxOutputPrice, setMaxOutputPrice] = useState<number>(MAX_OUTPUT_PRICE_SLIDER_USD);
-  const [chattedOnly, setChattedOnly] = useState(false);
   const [minStakeUsdc, setMinStakeUsdc] = useState<number>(0);
-  const [lastSeenWindow, setLastSeenWindow] = useState<TimeWindow>('any');
-  const [lastSettledWindow, setLastSettledWindow] = useState<TimeWindow>('any');
-  const [minOnChainChannels, setMinOnChainChannels] = useState<number>(DEFAULT_MIN_ON_CHAIN_CHANNELS);
-  const [sortKey, setSortKey] = useState<DiscoverSortKey>('channelsDesc');
+  const [minReputationScore, setMinReputationScore] = useState<number>(DEFAULT_MIN_REPUTATION_SCORE);
+  const [sortKey, setSortKey] = useState<DiscoverSortKey>('reputationDesc');
 
   const toggleCategory = useCallback((cat: string) => {
     setCategorySet((prev) => {
@@ -84,12 +75,9 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     setPeerSet(new Set());
     setMaxInputPrice(MAX_INPUT_PRICE_SLIDER_USD);
     setMaxOutputPrice(MAX_OUTPUT_PRICE_SLIDER_USD);
-    setChattedOnly(false);
     setMinStakeUsdc(0);
-    setLastSeenWindow('any');
-    setLastSettledWindow('any');
-    setMinOnChainChannels(DEFAULT_MIN_ON_CHAIN_CHANNELS);
-    setSortKey('channelsDesc');
+    setMinReputationScore(DEFAULT_MIN_REPUTATION_SCORE);
+    setSortKey('reputationDesc');
   }, []);
 
   const availableCategories = useMemo(() => {
@@ -99,9 +87,8 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
   }, [rows]);
 
   const availablePeers = useMemo<DiscoverPeerOption[]>(() => {
-    // One entry per peer, ranked by on-chain channel count so trusted peers float
-    // to the top of the sidebar and brand-new peers sink to the bottom. Channel
-    // count is per-peer, so any row for a given peer produces the same score.
+    // One entry per peer, ranked by on-chain reputation so strong activity
+    // floats to the top of the sidebar without hiding brand-new peers.
     const seen = new Map<string, { opt: DiscoverPeerOption; score: number; label: string }>();
     for (const r of rows) {
       if (!r.peerId || seen.has(r.peerId)) continue;
@@ -110,7 +97,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       const letter = (label || '?').charAt(0).toUpperCase();
       seen.set(r.peerId, {
         opt: { peerId: r.peerId, label, letter, gradient },
-        score: rowChannelCount(r),
+        score: rowReputationScore(r),
         label,
       });
     }
@@ -124,11 +111,11 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
 
   const filteredRows = useMemo(
     () => applyFilters(rows, {
-      search, categorySet, peerSet, maxInputPrice, maxOutputPrice, chattedOnly, minStakeUsdc,
-      lastSeenWindow, lastSettledWindow, minOnChainChannels,
+      search, categorySet, peerSet, maxInputPrice, maxOutputPrice, minStakeUsdc,
+      minReputationScore,
     }),
-    [rows, search, categorySet, peerSet, maxInputPrice, maxOutputPrice, chattedOnly, minStakeUsdc,
-      lastSeenWindow, lastSettledWindow, minOnChainChannels],
+    [rows, search, categorySet, peerSet, maxInputPrice, maxOutputPrice, minStakeUsdc,
+      minReputationScore],
   );
 
   const sortedRows = useMemo(
@@ -142,11 +129,8 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     peerSet,
     maxInputPrice,
     maxOutputPrice,
-    chattedOnly,
     minStakeUsdc,
-    lastSeenWindow,
-    lastSettledWindow,
-    minOnChainChannels,
+    minReputationScore,
     sortKey,
 
     sortedRows,
@@ -158,11 +142,8 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     togglePeer,
     setMaxInputPrice,
     setMaxOutputPrice,
-    setChattedOnly,
     setMinStakeUsdc,
-    setLastSeenWindow,
-    setLastSettledWindow,
-    setMinOnChainChannels,
+    setMinReputationScore,
     setSortKey,
     resetAll,
   };

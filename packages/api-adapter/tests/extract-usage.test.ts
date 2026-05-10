@@ -46,9 +46,9 @@ describe('extractUsage', () => {
       },
     });
     expect(result).toEqual({
-      inputTokens: 200,
+      inputTokens: 1000,        // total logical input = fresh + cached
       outputTokens: 100,
-      freshInputTokens: 200,   // already fresh-only
+      freshInputTokens: 200,    // already fresh-only
       cachedInputTokens: 800,
     });
   });
@@ -62,7 +62,7 @@ describe('extractUsage', () => {
       },
     });
     expect(result).toEqual({
-      inputTokens: 150,
+      inputTokens: 750,
       outputTokens: 75,
       freshInputTokens: 150,
       cachedInputTokens: 600,

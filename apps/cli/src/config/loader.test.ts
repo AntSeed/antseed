@@ -56,6 +56,34 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
   );
 });
 
+test('loadConfig treats legacy buyer minPeerReputation 50 as the new default', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        minPeerReputation: 50,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.minPeerReputation, 0);
+    }
+  );
+});
+
+test('loadConfig preserves explicit non-default buyer minPeerReputation', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        minPeerReputation: 42,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.minPeerReputation, 42);
+    }
+  );
+});
+
 test('loadConfig rejects incomplete service pricing', async () => {
   await withTempConfig(
     JSON.stringify({

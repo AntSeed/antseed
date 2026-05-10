@@ -62,7 +62,10 @@ function EarnAnimation() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeNode, setActiveNode] = useState(-1);
   const initialSkills = ['claude-sonnet-4-6 · raw inference','Legal in Guatemala · AI Agent','TEE Router · routing','llama-3-70b · raw inference','Price Router · routing'];
-  const initialFeed = initialSkills.map((skill, i) => ({skill, amount:(Math.random()*0.014+0.001).toFixed(3), id:i}));
+  // Use deterministic seed amounts so SSR and the first client render match.
+  // Real randomized amounts are generated inside an effect after mount.
+  const seedAmounts = ['0.008','0.012','0.005','0.014','0.010'];
+  const initialFeed = initialSkills.map((skill, i) => ({skill, amount: seedAmounts[i], id:i}));
   const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>(initialFeed);
   const startedRef = useRef(false);
   const totalRef = useRef(initialFeed.reduce((s,f) => s + parseFloat(f.amount), 0));
@@ -311,7 +314,7 @@ export default function Home(): JSX.Element {
       {/* Audience paths */}
       <section className={styles.entrySwitchboard}>
         <div className={styles.entryHeader}>
-          <h2>Three ways in.</h2>
+          <h2>Two ways in.</h2>
         </div>
 
         <div className={styles.switchboardShell}>
@@ -327,14 +330,14 @@ export default function Home(): JSX.Element {
             </div>
           </div>
 
-          <div className={styles.entryGrid}>
-            <article className={styles.entryCard}>
+          <div className={`${styles.entryGrid} ${styles.entryGridTwo}`}>
+            <article className={`${styles.entryCard} ${styles.chatEntryCard}`}>
               <div className={styles.stationIcon}><img src="/logos/antseed-mark.svg" alt="AntStation" /></div>
               <div className={styles.entryContent}>
                 <span>Chat</span>
                 <h3>AntStation</h3>
                 <p>Sort providers by what you need — video, images, coding, price, privacy — then chat anonymously.</p>
-                <div className={styles.entryBadges}><b>No account</b></div>
+                <div className={styles.entryBadges}><b>No account</b><b>Desktop app</b></div>
               </div>
               <div className={styles.entryDownloadPair}>
                 <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.entryCta}><DesktopDownloadIcon platform={download.platform} />{download.platform === 'win' ? 'Windows' : 'Mac'}</a>
@@ -342,35 +345,26 @@ export default function Home(): JSX.Element {
               </div>
             </article>
 
-            <article className={styles.entryCard}>
-              <div className={styles.toolStack} aria-label="Coding tools">
+            <article className={`${styles.entryCard} ${styles.buildEntryCard}`}>
+              <div className={styles.integrationIconRow} aria-label="Integration types">
                 <span><img src="/logos/anthropic.png" alt="" /></span>
                 <span><img src="/logos/openai.png" alt="" /></span>
                 <span className={styles.toolText}>VS</span>
-                <span className={styles.toolText}>OC</span>
-                <span className={styles.toolText}>PI</span>
+                <span><img src="/logos/openclaw.svg" alt="" /></span>
+                <span><img src="/logos/nousresearch.svg" alt="" /></span>
               </div>
               <div className={styles.entryContent}>
-                <span>CLI</span>
-                <h3>Coding tools</h3>
-                <p>Sort coding providers by model, price, latency, or reputation — then plug your tools into one local endpoint.</p>
-                <code>localhost:8377/v1</code>
+                <span>Integrations</span>
+                <h3>Connect the tools and agents you already use.</h3>
+                <p>Use one local endpoint for coding agents, CLIs, app frameworks, and autonomous-agent platforms.</p>
               </div>
-              <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
-            </article>
-
-            <article className={styles.entryCard}>
-              <div className={styles.agentStack} aria-label="Agent tools">
-                <span><img src="/logos/openclaw.svg" alt="" />OpenClaw</span>
-                <span><img src="/logos/nousresearch.svg" alt="" />Hermes</span>
+              <div className={styles.integrationSummaryGrid}>
+                <Link to="/integrations"><b>Coding agents</b><span>Claude Code, Codex, Cursor, OpenCode.</span></Link>
+                <Link to="/integrations"><b>CLI clients</b><span>cURL and raw OpenAI/Anthropic-compatible calls.</span></Link>
+                <Link to="/integrations"><b>Frameworks</b><span>Drop AntSeed into apps and SDK workflows.</span></Link>
+                <Link to="/integrations"><b>Agent platforms</b><span>OpenClaw, Hermes, and autonomous routing.</span></Link>
               </div>
-              <div className={styles.entryContent}>
-                <span>Agents</span>
-                <h3>Connect your agent</h3>
-                <p>Let agents sort providers by task, price, latency, reputation, capability, or Private Provider routes.</p>
-                <div className={styles.entryBadges}><b>cheap</b><b>fast</b><b>reliable</b></div>
-              </div>
-              <a href="https://github.com/AntSeed/antseed/tree/main/skills" target="_blank" rel="noopener noreferrer" className={styles.entryCta}>Connect</a>
+              <Link to="/integrations" className={styles.entryCta}>Explore integrations</Link>
             </article>
           </div>
         </div>
@@ -412,88 +406,79 @@ export default function Home(): JSX.Element {
         </div>
       </section>
 
-      {/* CLI users */}
-      <section className={`${styles.audienceSection} ${styles.cliSection}`}>
-        <div className={styles.audienceMedia}>
-          <video
-            src="/videos/claude-code.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
-            className={styles.mediaVideo}
-          />
-          <div className={styles.toolLogoRow}>
-            <span><img src="/logos/anthropic.png" alt="" />Claude Code</span>
-            <span><img src="/logos/openai.png" alt="" />Codex</span>
-            <span className={styles.toolLogoText}>VS</span>
-            <span className={styles.toolLogoText}>OC</span>
-            <span className={styles.toolLogoText}>PI</span>
-            <span>OpenAI API</span>
-          </div>
-        </div>
+      {/* Integration hub */}
+      <section className={`${styles.audienceSection} ${styles.integrationHubSection}`}>
         <div className={styles.audienceCopy}>
-          <span className={styles.kicker}>For CLI users</span>
-          <h2>Keep your workflow. Swap in the open market.</h2>
-          <p className={styles.audienceLead}>Developers care about speed, model quality, low prices, easy integration, and not getting stuck with one provider. AntSeed exposes a local OpenAI-compatible endpoint for the tools they already use.</p>
+          <span className={styles.kicker}>Integration Hub</span>
+          <h2>One local endpoint for tools, frameworks, and autonomous agents.</h2>
+          <p className={styles.audienceLead}>AntSeed exposes OpenAI and Anthropic-compatible APIs at localhost, then routes each request across the open provider market by model, price, latency, reputation, capability, or privacy.</p>
           <div className={styles.localEndpoint}>
             <span>Base URL</span>
             <code>http://localhost:8377/v1</code>
           </div>
-          <ul className={styles.checkList}>
-            <li>Use the best coding model available right now</li>
-            <li>Fallback across providers when one is slow or unavailable</li>
-            <li>Compare price, latency, and reputation before routing</li>
-            <li>Works with normal SDKs, CLIs, and editor plugins</li>
-          </ul>
-          <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect CLI →</a>
-        </div>
-      </section>
-
-      {/* Agent users */}
-      <section className={`${styles.audienceSection} ${styles.agentSection}`}>
-        <div className={styles.audienceCopy}>
-          <span className={styles.kicker}>For agents</span>
-          <div className={styles.agentLogoRow}>
-            <span><img src="/logos/openclaw.svg" alt="" />OpenClaw</span>
-            <span><img src="/logos/nousresearch.svg" alt="" />Hermes</span>
-          </div>
-          <h2>Agents need economic routing, not another SaaS account.</h2>
-          <p className={styles.audienceLead}>Autonomous agents optimize for cost, capability, reliability, and privacy. AntSeed gives them a discoverable service market where providers compete for the lowest viable price.</p>
-          <div className={styles.agentMetrics}>
-            <div><span>Price</span><strong>lowest viable</strong></div>
-            <div><span>Latency</span><strong>fastest healthy</strong></div>
-            <div><span>Trust</span><strong>on-chain reputation</strong></div>
-            <div><span>Privacy</span><strong>TEE / direct P2P</strong></div>
+          <div className={styles.integrationPillGrid}>
+            <Link to="/integrations"><strong>Coding agents</strong><span>Claude Code, Codex, Cursor, OpenCode</span></Link>
+            <Link to="/integrations"><strong>CLI clients</strong><span>cURL, SDKs, raw HTTP</span></Link>
+            <Link to="/integrations"><strong>Frameworks</strong><span>App and agent SDK workflows</span></Link>
+            <Link to="/integrations"><strong>Agent platforms</strong><span>OpenClaw, Hermes, economic routing</span></Link>
           </div>
           <ul className={styles.checkList}>
-            <li>Raw inference for commodity tasks</li>
-            <li>Routing services for cost, latency, privacy, or domain policies</li>
-            <li>Specialist AI agents for packaged expertise and tools</li>
-            <li>USDC settlement without platform custody</li>
+            <li>Keep existing tools while swapping providers underneath</li>
+            <li>Fallback when a provider is slow, expensive, or unavailable</li>
+            <li>Route by price, latency, reputation, model capability, or privacy</li>
+            <li>Settle directly with providers in USDC without platform custody</li>
           </ul>
-          <a href="https://github.com/AntSeed/antseed/tree/main/skills" target="_blank" rel="noopener noreferrer" className={styles.pathPrimaryBtn}>Connect →</a>
+          <Link to="/integrations" className={styles.pathPrimaryBtn}>Explore integrations →</Link>
         </div>
-        <div className={styles.agentAnimation} aria-label="Agent provider routing animation">
-          <div className={styles.orbitRing} />
-          <div className={styles.orbitRingTwo} />
-          <div className={styles.agentCore}>
-            <div className={styles.agentCoreIcons}>
-              <img src="/logos/openclaw.svg" alt="" />
-              <img src="/logos/nousresearch.svg" alt="" />
-            </div>
-            <strong>agent</strong>
-            <span>selects provider</span>
+        <div className={styles.integrationHubAnimation} aria-label="Integration hub routing animation">
+          <div className={styles.integrationGridGlow} />
+          <div className={styles.integrationRing} />
+          <div className={styles.integrationRingTwo} />
+          <div className={styles.integrationCore}>
+            <img src="/logos/antseed-mark.svg" alt="" />
+            <strong>localhost:8377</strong>
+            <span>AntSeed proxy</span>
           </div>
-          <div className={`${styles.providerNode} ${styles.providerPrice}`}><b>$</b><span>lowest price</span></div>
-          <div className={`${styles.providerNode} ${styles.providerCode}`}><b>{`</>`}</b><span>coding model</span></div>
-          <div className={`${styles.providerNode} ${styles.providerTee}`}><b>TEE</b><span>private route</span></div>
-          <div className={`${styles.providerNode} ${styles.providerResearch}`}><b>R</b><span>research agent</span></div>
-          <div className={`${styles.providerNode} ${styles.providerOpen}`}><b>OS</b><span>open source</span></div>
-          <div className={styles.routeBeam} />
-          <div className={styles.routeBeamTwo} />
-          <div className={styles.routePacket} />
-          <div className={styles.agentSettlement}>provider selected → USDC settlement</div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolClaude}`}><img src="/logos/anthropic.png" alt="" /><span>Claude Code</span></div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolCodex}`}><img src="/logos/openai.png" alt="" /><span>Codex</span></div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolVs}`}><b>VS</b><span>VS Code</span></div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolCurl}`}><b>API</b><span>cURL / SDK</span></div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolClaw}`}><img src="/logos/openclaw.svg" alt="" /><span>OpenClaw</span></div>
+          <div className={`${styles.integrationToolNode} ${styles.integrationToolHermes}`}><img src="/logos/nousresearch.svg" alt="" /><span>Hermes</span></div>
+          <div className={`${styles.integrationProviderNode} ${styles.integrationProviderModel}`}><b>{`</>`}</b><span>coding model</span></div>
+          <div className={`${styles.integrationProviderNode} ${styles.integrationProviderPrice}`}><b>$</b><span>best price</span></div>
+          <div className={`${styles.integrationProviderNode} ${styles.integrationProviderPrivate}`}><b>TEE</b><span>private route</span></div>
+          <div className={styles.integrationBeamOne} />
+          <div className={styles.integrationBeamTwo} />
+          <div className={styles.integrationBeamThree} />
+          {/* Inbound packet stream — one per tool, all converging on the core */}
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromClaude}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromCodex}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromVs}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromCurl}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromClaw}`} aria-hidden="true" />
+          <span className={`${styles.integrationFlowPacket} ${styles.flowFromHermes}`} aria-hidden="true" />
+          <div className={styles.integrationSettlement}>tool request → provider route → USDC settlement</div>
+        </div>
+        <div className={styles.integrationMobileFlow} aria-label="Integration hub mobile flow">
+          <div className={styles.mobileFlowGroup}>
+            <span><img src="/logos/anthropic.png" alt="" />Claude</span>
+            <span><img src="/logos/openai.png" alt="" />Codex</span>
+            <span><b>API</b>SDKs</span>
+            <span><img src="/logos/openclaw.svg" alt="" />Agents</span>
+          </div>
+          <div className={styles.mobileFlowArrow}>↓</div>
+          <div className={styles.mobileFlowCore}>
+            <img src="/logos/antseed-mark.svg" alt="" />
+            <strong>localhost:8377</strong>
+            <span>AntSeed proxy</span>
+          </div>
+          <div className={styles.mobileFlowArrow}>↓</div>
+          <div className={styles.mobileFlowRoutes}>
+            <span>best price</span>
+            <span>fastest healthy</span>
+            <span>private route</span>
+          </div>
         </div>
       </section>
 
@@ -515,26 +500,6 @@ export default function Home(): JSX.Element {
         <Link to="/providers">Provider page →</Link>
       </section>
 
-      {/* Bottom CTAs */}
-      <section className={styles.bottomCtas}>
-        <div className={styles.bottomGrid}>
-          <div className={styles.bottomCard}>
-            <h3>Chat Anonymously</h3>
-            <p>Download AntStation and use frontier or open-source models without creating a central account.</p>
-            <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.bottomBtn}>Download AntStation →</a>
-          </div>
-          <div className={styles.bottomCard}>
-            <h3>Connect your CLI</h3>
-            <p>Point Claude Code, Codex, VS Code, or any OpenAI-compatible tool at your local AntSeed endpoint.</p>
-            <a href="/docs/guides/using-the-api" rel="noopener noreferrer" className={styles.bottomBtn}>Connect a tool →</a>
-          </div>
-          <div className={styles.bottomCard}>
-            <h3>Build with agents</h3>
-            <p>Route tasks by model quality, price, latency, privacy, and on-chain reputation.</p>
-            <Link to="https://github.com/AntSeed/antseed/tree/main/skills" className={styles.bottomBtn}>Connect agents →</Link>
-          </div>
-        </div>
-      </section>
 
       {/* FAQ */}
       <FAQSection />

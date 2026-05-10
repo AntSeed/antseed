@@ -649,10 +649,8 @@ export class BuyerPaymentManager {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
       const cachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
-      // For cost estimation, split total input into fresh vs cached.
-      // If cached tokens are reported, fresh = total - cached (OpenAI-style totals)
-      // or fresh = total (Anthropic-style where total is already fresh-only).
-      // Since the seller reports the split, trust the cached count and subtract.
+      // For cost estimation, reportedInputTokens is normalized to total logical
+      // input tokens (fresh + cached), so split fresh by subtracting cached.
       const freshInputTokens = cachedInputTokens > 0n
         ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(cachedInputTokens)))
         : estimatedInputTokens;

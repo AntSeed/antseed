@@ -17,6 +17,7 @@ import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 import { ServiceDropdown } from '../chat/ServiceDropdown';
 import { SwitchServiceDialog } from '../chat/SwitchServiceDialog';
+import { LowReputationDialog } from '../chat/LowReputationDialog';
 import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewer';
 import { BrowserPreview } from '../BrowserPreview';
@@ -27,6 +28,7 @@ import { AntStationStackedLogo } from '../AntStationLogo';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
 const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
+const LOW_REPUTATION_SCORE_THRESHOLD = 50;
 
 import styles from './ChatView.module.scss';
 import bubbleStyles from '../chat/ChatBubble.module.scss';
@@ -141,6 +143,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
   const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
+  const [lowReputationDialogOpen, setLowReputationDialogOpen] = useState(false);
+  const [pendingLowReputationSend, setPendingLowReputationSend] = useState<{
+    text: string;
+    attachments: RawChatAttachment[];
+  } | null>(null);
   // While the LLM is streaming we still let the user type/paste.
   // Drafts the user confirms (Enter / Send) are parked in this queue as
   // cards above the composer and ship one-per-turn as soon as the current
@@ -166,6 +173,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const approvedLowReputationPeersRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
@@ -329,6 +337,28 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   );
   const peerDisplayName =
     snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
+  const currentDiscoverRow = useMemo(() => {
+    const peerId = currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
+    const serviceId = currentServiceOption?.id || '';
+    if (!peerId) return null;
+    return snap.discoverRows.find((row) => (
+      row.peerId === peerId
+      && (!serviceId || row.serviceId === serviceId)
+      && (!currentServiceOption?.value || row.selectionValue === currentServiceOption.value || row.serviceId === serviceId)
+    )) ?? snap.discoverRows.find((row) => row.peerId === peerId) ?? null;
+  }, [currentServiceOption, snap.chatSelectedPeerId, snap.chatRoutedPeerId, snap.discoverRows]);
+  const lowReputationPeer = useMemo(() => {
+    const score = currentDiscoverRow?.onChainReputationScore;
+    const peerId = currentDiscoverRow?.peerId || currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
+    if (!peerId || typeof score !== 'number' || !Number.isFinite(score) || score >= LOW_REPUTATION_SCORE_THRESHOLD) {
+      return null;
+    }
+    return {
+      peerId,
+      score,
+      label: peerDisplayName || currentDiscoverRow?.peerDisplayName || currentDiscoverRow?.peerLabel || peerId.slice(0, 8),
+    };
+  }, [currentDiscoverRow, currentServiceOption?.peerId, snap.chatSelectedPeerId, snap.chatRoutedPeerId, peerDisplayName]);
 
   const applyServiceChange = useCallback(
     (value: string) => {
@@ -427,10 +457,38 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       resetComposer();
       return;
     }
+
+    if (
+      lowReputationPeer
+      && visibleMessages.length === 0
+      && !approvedLowReputationPeersRef.current.has(lowReputationPeer.peerId)
+    ) {
+      setPendingLowReputationSend({ text, attachments: attachedFiles });
+      setLowReputationDialogOpen(true);
+      return;
+    }
+
     const filesToSend = attachedFiles;
     resetComposer();
     actions.sendMessage(text, filesToSend);
-  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer]);
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length]);
+
+  const handleLowReputationContinue = useCallback(() => {
+    if (lowReputationPeer) {
+      approvedLowReputationPeersRef.current.add(lowReputationPeer.peerId);
+    }
+    const pending = pendingLowReputationSend;
+    setLowReputationDialogOpen(false);
+    setPendingLowReputationSend(null);
+    if (!pending) return;
+    resetComposer();
+    actions.sendMessage(pending.text, pending.attachments);
+  }, [actions, lowReputationPeer, pendingLowReputationSend, resetComposer]);
+
+  const handleLowReputationCancel = useCallback(() => {
+    setLowReputationDialogOpen(false);
+    setPendingLowReputationSend(null);
+  }, []);
 
   const handleRemovePending = useCallback((id: string) => {
     setPendingQueue((prev) => prev.filter((item) => item.id !== id));
@@ -944,6 +1002,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         onStartNew={handleSwitchStartNew}
         onCancel={handleSwitchCancel}
       />
+      <LowReputationDialog
+        visible={lowReputationDialogOpen}
+        peerLabel={lowReputationPeer?.label || 'this peer'}
+        scoreLabel={lowReputationPeer ? (lowReputationPeer.score / 10).toFixed(1) : ''}
+        onContinue={handleLowReputationContinue}
+        onCancel={handleLowReputationCancel}
+      />
       {previewAttachment && (
         <AttachmentViewer
           attachment={previewAttachment}
@@ -955,8 +1020,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 }
 
 function compactTokensFromFormatted(formatted: string): string {
-  const n = Number(formatted.replace(/[^0-9.]/g, ''));
-  if (!Number.isFinite(n) || n <= 0) return '0';
+  const raw = String(formatted || '').trim();
+  const base = Number(raw.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(base) || base <= 0) return '0';
+  const lower = raw.toLowerCase();
+  const n = lower.includes('b')
+    ? base * 1_000_000_000
+    : lower.includes('m')
+      ? base * 1_000_000
+      : lower.includes('k')
+        ? base * 1_000
+        : base;
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(Math.floor(n));

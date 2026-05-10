@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { Wallet } from 'ethers';
+import { AbiCoder, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
@@ -25,6 +25,12 @@ function createTestIdentity(): Identity {
 function fakePeerId(label: string): string {
   const hex = Buffer.from(label).toString('hex').padEnd(40, '0').slice(0, 40);
   return hex;
+}
+
+function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
+  const coder = AbiCoder.defaultAbiCoder();
+  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  return { inputTokens, outputTokens };
 }
 
 function createMockPaymentMux(): PaymentMux & {
@@ -438,6 +444,28 @@ describe('BuyerPaymentManager', () => {
        Number(reportedOut) * TEST_PRICING.outputUsdPerMillion) / 1_000_000 * 1_000_000
     ));
     expect(BigInt(payload.cumulativeAmount)).toBe(reportedCost);
+  });
+
+  it('signPerRequestAuth includes cached tokens in metadata input total', async () => {
+    const sellerPeerId = fakePeerId('seller-cached-total');
+    const pricing = { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 0.3 };
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, pricing);
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        reportedInputTokens: 1000n,
+        reportedCachedInputTokens: 800n,
+        reportedOutputTokens: 100n,
+      },
+    );
+
+    const meta = decodeMetadataTokens(payload.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(100n);
+    expect(BigInt(payload.cumulativeAmount)).toBe(2340n);
   });
 
   it('signPerRequestAuth throws if no active session', async () => {

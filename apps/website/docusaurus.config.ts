@@ -1,6 +1,8 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin, PluginModule} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import integrationsPagesPlugin from './plugins/integrations-pages';
+import {integrations as integrationEntries} from './src/integrations/integrations';
 
 const statsProxyPlugin: PluginModule = () => ({
   name: 'stats-proxy',
@@ -87,10 +89,17 @@ const config: Config = {
       {
         redirects: [
           {from: '/lightpaper', to: '/docs/lightpaper'},
+          // /connect was renamed to /integrations — keep old links working.
+          {from: '/connect', to: '/integrations'},
+          ...integrationEntries.map((i) => ({
+            from: `/connect/${i.slug}`,
+            to: `/integrations/${i.slug}`,
+          })),
         ],
       },
     ],
     statsProxyPlugin,
+    integrationsPagesPlugin,
   ],
 
   headTags: [
@@ -166,6 +175,7 @@ const config: Config = {
       },
       items: [
         {to: '/network', label: 'Pricing', position: 'right'},
+        {to: '/integrations', label: 'Integrations hub', position: 'right'},
         {to: '/providers', label: 'Providers', position: 'right'},
         {
           type: 'docSidebar',

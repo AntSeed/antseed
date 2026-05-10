@@ -79,6 +79,7 @@ import {
   type RequestStreamResponseMetadata,
   type RequestExecutionOptions,
 } from "./buyer-request-handler.js";
+import { computeOnChainReputationScore } from "./reputation/on-chain-reputation.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -611,8 +612,16 @@ export class AntseedNode extends EventEmitter {
         const evmAddress = resolver
           ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
           : peerIdToAddress(p.peerId);
-        const agentId = await stakingClient.getAgentId(evmAddress);
+        const [agentId, stake, stakedAt] = await Promise.all([
+          stakingClient.getAgentId(evmAddress),
+          stakingClient.getStake(evmAddress).catch(() => 0n),
+          stakingClient.getStakedAt(evmAddress).catch(() => 0),
+        ]);
         const stats = await channelsClient.getAgentStats(agentId);
+        p.onChainAgentId = agentId;
+        p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(stake)
+          : Number.MAX_SAFE_INTEGER;
         p.onChainChannelCount = stats.channelCount;
         p.onChainGhostCount = stats.ghostCount;
         // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
@@ -622,6 +631,8 @@ export class AntseedNode extends EventEmitter {
           ? Number(volumeMicros)
           : Number.MAX_SAFE_INTEGER;
         p.onChainLastSettledAtSec = stats.lastSettledAt;
+        p.onChainStakedAtSec = stakedAt;
+        p.onChainReputationScore = computeOnChainReputationScore(p) ?? undefined;
         p.onChainStatsFetchedAt = Date.now();
       } catch {
         // Per-peer verification failure — keep whatever seller metadata claimed

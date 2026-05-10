@@ -8,6 +8,7 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
+  computeOnChainReputationScore,
   type PeerInfo,
 } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
@@ -21,7 +22,7 @@ import {
 } from './tag-filter.js';
 import { formatUsdPerMillion } from './pricing-format.js';
 
-type PeerSortKey = 'volume' | 'sessions' | 'price' | 'recent';
+type PeerSortKey = 'score' | 'volume' | 'sessions' | 'price' | 'recent';
 
 interface BrowseOptions {
   service?: string;
@@ -191,6 +192,33 @@ function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output:
   return { input: bestInput, output: bestOutput };
 }
 
+function effectiveOnChainReputationScore(peer: PeerInfo): number | null {
+  return peer.onChainReputationScore ?? computeOnChainReputationScore(peer);
+}
+
+function formatReputationScore(peer: PeerInfo): string {
+  const score = effectiveOnChainReputationScore(peer);
+  if (score == null) return chalk.dim('—');
+  const formatted = (score / 10).toFixed(1);
+  if (score >= 80) return chalk.green(formatted);
+  if (score >= 50) return chalk.cyan(formatted);
+  if (score > 0) return chalk.yellow(formatted);
+  return chalk.dim('0.0');
+}
+
+function peerReputationScore(peer: PeerInfo): number {
+  return effectiveOnChainReputationScore(peer) ?? -1;
+}
+
+type PeerInfoJson = Omit<PeerInfo, 'onChainReputationScore'> & { onChainReputationScore: number | null };
+
+function peerWithReputationScore(peer: PeerInfo): PeerInfoJson {
+  return {
+    ...peer,
+    onChainReputationScore: effectiveOnChainReputationScore(peer),
+  };
+}
+
 function formatUsdcVolume(micros: number | undefined | null): string {
   if (typeof micros !== 'number' || !Number.isFinite(micros) || micros < 0) {
     return chalk.dim('—');
@@ -232,19 +260,24 @@ function formatHumanAgeMs(ms: number): string {
 }
 
 /**
- * Mark a peer as "vouched" when it has positive on-chain channel count and no
- * ghosts. Rendered as a ✓ next to its peer id in the table.
+ * Mark a peer as "vouched" when its reputation score is high enough to avoid
+ * contradicting the score column. Rendered as a ✓ next to its peer id in the table.
  */
 function isPeerVouched(peer: PeerInfo): boolean {
-  const channels = peer.onChainChannelCount ?? 0;
-  const ghosts = peer.onChainGhostCount ?? 0;
-  return channels > 0 && ghosts === 0;
+  const score = effectiveOnChainReputationScore(peer) ?? 0;
+  return score >= 10;
 }
 
 function sortPeers(peers: PeerInfo[], sortKey: PeerSortKey): PeerInfo[] {
   const copy = [...peers];
   copy.sort((a, b) => {
     switch (sortKey) {
+      case 'score': {
+        const sa = peerReputationScore(a);
+        const sb = peerReputationScore(b);
+        if (sa !== sb) return sb - sa;
+        return (b.onChainTotalVolumeUsdcMicros ?? 0) - (a.onChainTotalVolumeUsdcMicros ?? 0);
+      }
       case 'volume': {
         const va = a.onChainTotalVolumeUsdcMicros ?? -1;
         const vb = b.onChainTotalVolumeUsdcMicros ?? -1;
@@ -275,11 +308,11 @@ function sortPeers(peers: PeerInfo[], sortKey: PeerSortKey): PeerInfo[] {
 }
 
 function parseSortKey(raw: string | undefined): PeerSortKey {
-  const normalized = (raw ?? 'volume').trim().toLowerCase();
-  if (normalized === 'sessions' || normalized === 'price' || normalized === 'recent' || normalized === 'volume') {
+  const normalized = (raw ?? 'score').trim().toLowerCase();
+  if (normalized === 'score' || normalized === 'sessions' || normalized === 'price' || normalized === 'recent' || normalized === 'volume') {
     return normalized;
   }
-  return 'volume';
+  return 'score';
 }
 
 function parseTopLimit(raw: string | undefined): number {
@@ -312,6 +345,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
   ];
   if (anyFreeService) head.push(chalk.bold('Free'));
   head.push(
+    chalk.bold('Score'),
     chalk.bold('Sessions'),
     chalk.bold('Ghosts'),
     chalk.bold('Volume'),
@@ -363,6 +397,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
     ];
     if (anyFreeService) row.push(freeCell);
     row.push(
+      formatReputationScore(peer),
       sessionsCell,
       ghostCell,
       formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
@@ -406,6 +441,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     service: string;
     input: string;
     output: string;
+    score: string;
     sessions: string;
     volume: string;
     tags: string[];
@@ -427,6 +463,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
           service: '—',
           input: formatUsdPerMillion(peer.defaultInputUsdPerMillion ?? null),
           output: formatUsdPerMillion(peer.defaultOutputUsdPerMillion ?? null),
+          score: formatReputationScore(peer),
           sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
           volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
           tags: [],
@@ -447,6 +484,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
           service: '(default)',
           input: formatUsdPerMillion(providerEntry.defaults?.inputUsdPerMillion ?? null),
           output: formatUsdPerMillion(providerEntry.defaults?.outputUsdPerMillion ?? null),
+          score: formatReputationScore(peer),
           sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
           volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
           tags: [],
@@ -463,6 +501,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
           service: serviceName,
           input: formatUsdPerMillion(servicePricing.inputUsdPerMillion),
           output: formatUsdPerMillion(servicePricing.outputUsdPerMillion),
+          score: formatReputationScore(peer),
           sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
           volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
           tags: collectServiceTags(peer, providerName, serviceName),
@@ -479,6 +518,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     chalk.bold('Service'),
     chalk.bold('In $/1M'),
     chalk.bold('Out $/1M'),
+    chalk.bold('Score'),
     chalk.bold('Sessions'),
     chalk.bold('Volume'),
   ];
@@ -493,6 +533,7 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
       r.service === '—' || r.service === '(default)' ? chalk.dim(r.service) : r.service,
       r.input,
       r.output,
+      r.score,
       r.sessions === '—' ? chalk.dim('—') : r.sessions,
       r.volume,
     ];
@@ -530,7 +571,7 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
       + '(e.g. --tag tee,privacy). Well-known tags: privacy, legal, uncensored, coding, finance, tee',
     )
     .option('--services', 'expand to one row per (peer, provider, service) with per-service pricing', false)
-    .option('--sort <key>', 'sort by volume | sessions | price | recent (default: volume)')
+    .option('--sort <key>', 'sort by score | volume | sessions | price | recent (default: score)')
     .option('--top <n>', 'show only the top N peers (default: 20)')
     .option('--json', 'output as JSON', false)
     .action(async (rawOptions: BrowseOptions) => {
@@ -624,7 +665,7 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
             tags: tagFilter.size > 0 ? Array.from(tagFilter).sort() : null,
           },
           total: peers.length,
-          peers: displayed,
+          peers: displayed.map((peer) => peerWithReputationScore(peer)),
         }, null, 2));
         return;
       }

@@ -28,6 +28,7 @@ export type NetworkPeerAddress = {
   providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
   defaultInputUsdPerMillion?: number;
   defaultOutputUsdPerMillion?: number;
+  defaultCachedInputUsdPerMillion?: number;
 };
 
 export type ChatServiceCatalogEntry = {
@@ -40,6 +41,7 @@ export type ChatServiceCatalogEntry = {
   peerLabel?: string;
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
+  cachedInputUsdPerMillion?: number;
   categories?: string[];
   description?: string;
 };
@@ -82,7 +84,8 @@ export function resolveProviderServicePricing(
   serviceId: string,
   defaultInput?: number,
   defaultOutput?: number,
-): { inputUsdPerMillion?: number; outputUsdPerMillion?: number } {
+  defaultCachedInput?: number,
+): { inputUsdPerMillion?: number; outputUsdPerMillion?: number; cachedInputUsdPerMillion?: number } {
   const providerPricing = pricingMap?.[provider];
   const servicePricing = providerPricing?.services?.[serviceId];
   const defaultPricing = providerPricing?.defaults;
@@ -96,9 +99,13 @@ export function resolveProviderServicePricing(
     ?? defaultPricing?.outputUsdPerMillion
     ?? defaultPricing?.output
     ?? defaultOutput;
+  const cachedInputUsd = servicePricing?.cachedInputUsdPerMillion
+    ?? defaultPricing?.cachedInputUsdPerMillion
+    ?? defaultCachedInput;
   return {
     ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
     ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
+    ...(cachedInputUsd != null ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
   };
 }
 
@@ -140,6 +147,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
     const categoriesMap = peer.providerServiceCategories;
     const defaultInput = peer.defaultInputUsdPerMillion;
     const defaultOutput = peer.defaultOutputUsdPerMillion;
+    const defaultCachedInput = peer.defaultCachedInputUsdPerMillion;
 
     if (providerList.length > 0) {
       // Build rows from each provider's own announced service map. The flattened
@@ -159,12 +167,13 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           const protocol = resolveProviderServiceProtocol(apiProtocols, provider, serviceId) ?? inferProviderProtocol(provider);
           if (!protocol) continue;
 
-          const { inputUsdPerMillion, outputUsdPerMillion } = resolveProviderServicePricing(
+          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
             pricingMap,
             provider,
             serviceId,
             defaultInput,
             defaultOutput,
+            defaultCachedInput,
           );
           const categories = categoriesMap?.[provider]?.services?.[serviceId];
 
@@ -178,6 +187,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             ...(peerLabel ? { peerLabel } : {}),
             ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
             ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
+            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
             ...(categories?.length ? { categories } : {}),
           });
         }
@@ -198,12 +208,13 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           }
           const protocol = resolveProviderServiceProtocol(apiProtocols, fallbackProvider, serviceId) ?? inferProviderProtocol(fallbackProvider);
           if (!protocol) continue;
-          const { inputUsdPerMillion, outputUsdPerMillion } = resolveProviderServicePricing(
+          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
             pricingMap,
             fallbackProvider,
             serviceId,
             defaultInput,
             defaultOutput,
+            defaultCachedInput,
           );
           const categories = categoriesMap?.[fallbackProvider]?.services?.[serviceId];
 
@@ -217,6 +228,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             ...(peerLabel ? { peerLabel } : {}),
             ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
             ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
+            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
             ...(categories?.length ? { categories } : {}),
           });
         }
@@ -226,12 +238,13 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           const protocol = inferProviderProtocol(provider);
           if (!protocol) continue;
 
-          const { inputUsdPerMillion, outputUsdPerMillion } = resolveProviderServicePricing(
+          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
             pricingMap,
             provider,
             provider,
             defaultInput,
             defaultOutput,
+            defaultCachedInput,
           );
           results.push({
             id: provider,
@@ -243,6 +256,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             ...(peerLabel ? { peerLabel } : {}),
             ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
             ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
+            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
           });
         }
       }

@@ -71,7 +71,6 @@ interface PeerMetadata {
   region: string;             // e.g. "us-east", "unknown"
   timestamp: number;          // unix ms when this peer last announced
   stakeAmountUSDC?: number;   // staked USDC backing this peer
-  trustScore?: number;        // 0..1 reputation score
   onChainChannelCount?: number;
   onChainStats?: OnChainStats;
   signature: string;          // peer-signed announcement

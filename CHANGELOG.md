@@ -4,6 +4,30 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-09 — Reputation, pricing, and cached-token fixes
+
+### Published
+
+- `@antseed/api-adapter@0.1.38`
+- `@antseed/node@0.2.83`
+- `@antseed/router-core@0.1.44`
+- `@antseed/router-local@0.1.43`
+- `@antseed/payments@0.1.17`
+- `@antseed/cli@0.1.116`
+
+### Added
+
+- Added multi-factor on-chain peer reputation scores based on settled volume, completed channels, average channel value, recency, stake age, and ghost penalties.
+- Surfaced reputation scores in `antseed network browse` and Desktop Discover, with reputation-first ranking and low-reputation warnings.
+- Added settled USDC volume to Desktop Discover peer cards.
+
+### Fixed
+
+- Enforced buyer pricing policy across router, CLI, and Desktop Discover paths, including invalid cached-input pricing.
+- Fixed pinned peer routing so manual peer selection respects the full buyer policy, including explicit minimum reputation.
+- Fixed Anthropic cached-input token accounting so usage metadata records total logical input tokens while preserving fresh/cached cost splits.
+- Fixed compact token formatting so `1000M` rolls up to `1B`.
+
 ## 2026-05-07 — Payment channel catch-up fixes
 
 ### Published

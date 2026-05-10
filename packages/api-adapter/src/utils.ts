@@ -50,7 +50,7 @@ export function toNonNegativeInt(value: unknown): number {
 }
 
 export interface TokenUsage {
-  /** Total input tokens (includes cached for OpenAI, fresh-only for Anthropic). */
+  /** Total logical input tokens, including cached input tokens when reported. */
   inputTokens: number;
   outputTokens: number;
   /** Fresh (non-cached) input tokens. Always independent of cachedInputTokens. */
@@ -75,7 +75,7 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   }
 
   const hasPromptTokens = usage.prompt_tokens !== undefined && usage.prompt_tokens !== null;
-  const totalInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
+  const rawInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
   // Cache hits arrive in two competing shapes:
@@ -84,7 +84,7 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   //     input_tokens_details. fresh = total - cached.
   //   - Separate shape (Anthropic): cache_read_input_tokens is reported
   //     alongside input_tokens, where input_tokens is already fresh-only.
-  //     fresh = total.
+  //     fresh = input_tokens; total logical input = fresh + cached.
   // Some providers (e.g. Venice) emit BOTH fields for the same cache hit.
   // Discriminate by the input field, not the cache field: prompt_tokens or
   // input_tokens_details.cached_tokens always implies subset semantics.
@@ -100,10 +100,13 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   const isSubsetShape = hasPromptTokens || inputDetails.cached_tokens !== undefined;
   const cachedInputTokens = Math.max(subsetCached, separateCached);
   const freshInputTokens = isSubsetShape
-    ? Math.max(0, totalInput - cachedInputTokens)
-    : totalInput;
+    ? Math.max(0, rawInput - cachedInputTokens)
+    : rawInput;
+  const inputTokens = isSubsetShape
+    ? rawInput
+    : rawInput + cachedInputTokens;
 
-  return { inputTokens: totalInput, outputTokens, freshInputTokens, cachedInputTokens };
+  return { inputTokens, outputTokens, freshInputTokens, cachedInputTokens };
 }
 
 function toStringContentBlock(block: Record<string, unknown>): string {

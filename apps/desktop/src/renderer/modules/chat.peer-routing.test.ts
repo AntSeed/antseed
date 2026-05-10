@@ -67,6 +67,7 @@ test('new chat created while previous response is pending sends to its own peer'
       peerLabel: 'Peer A',
       inputUsdPerMillion: null,
       outputUsdPerMillion: null,
+      cachedInputUsdPerMillion: null,
       categories: [],
       description: '',
     },
@@ -82,6 +83,7 @@ test('new chat created while previous response is pending sends to its own peer'
       peerLabel: 'Peer B',
       inputUsdPerMillion: null,
       outputUsdPerMillion: null,
+      cachedInputUsdPerMillion: null,
       categories: [],
       description: '',
     },
@@ -201,12 +203,12 @@ test('discover-selected draft keeps its peer if another discover chat is opened 
     {
       id: 'model-a', label: 'Model A', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
       value: `openai${SEP}model-a${SEP}peer-a`, peerId: 'peer-a', peerDisplayName: 'Peer A', peerLabel: 'Peer A',
-      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, cachedInputUsdPerMillion: null, categories: [], description: '',
     },
     {
       id: 'model-b', label: 'Model B', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
       value: `openai${SEP}model-b${SEP}peer-b`, peerId: 'peer-b', peerDisplayName: 'Peer B', peerLabel: 'Peer B',
-      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, cachedInputUsdPerMillion: null, categories: [], description: '',
     },
   ];
 
@@ -402,12 +404,12 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
     {
       id: 'model-a', label: 'Model A', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
       value: `openai${SEP}model-a${SEP}peer-a`, peerId: 'peer-a', peerDisplayName: 'Peer A', peerLabel: 'Peer A',
-      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, cachedInputUsdPerMillion: null, categories: [], description: '',
     },
     {
       id: 'model-b', label: 'Model B', provider: 'openai', protocol: 'openai-chat-completions', count: 1,
       value: `openai${SEP}model-b${SEP}peer-b`, peerId: 'peer-b', peerDisplayName: 'Peer B', peerLabel: 'Peer B',
-      inputUsdPerMillion: null, outputUsdPerMillion: null, categories: [], description: '',
+      inputUsdPerMillion: null, outputUsdPerMillion: null, cachedInputUsdPerMillion: null, categories: [], description: '',
     },
   ];
   uiState.chatSelectedServiceValue = `openai${SEP}model-b${SEP}peer-b`;

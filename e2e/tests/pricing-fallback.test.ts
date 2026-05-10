@@ -20,7 +20,6 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
     peerId: 'a'.repeat(40) as PeerInfo['peerId'],
     lastSeen: Date.now(),
     providers: ['anthropic'],
-    trustScore: 80,
     reputationScore: 80,
     defaultInputUsdPerMillion: 15,
     defaultOutputUsdPerMillion: 15,

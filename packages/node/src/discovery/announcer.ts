@@ -60,7 +60,6 @@ export interface AnnouncerConfig {
   >;
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
-  trustScore?: number;
   paymentsEnabled?: boolean;
   channelsClient?: ChannelsClient;
   stakingClient?: StakingClient;
@@ -232,9 +231,6 @@ export class PeerAnnouncer {
     }
     if (this.config.stakeAmountUSDC != null) {
       metadata.stakeAmountUSDC = this.config.stakeAmountUSDC;
-    }
-    if (this.config.trustScore != null) {
-      metadata.trustScore = this.config.trustScore;
     }
 
     if (this.config.paymentsEnabled) {

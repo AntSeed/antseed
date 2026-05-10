@@ -63,6 +63,7 @@ export type ChatServiceOptionEntry = {
   peerLabel: string;
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion?: number | null;
   categories: string[];
   description: string;
 };
@@ -101,13 +102,13 @@ export type DiscoverRow = {
   // On-chain staking (AntseedStaking)
   agentId: number;
   stakeUsdc: string;            // bigint as string, 6-decimal USDC
-  stakedAt: number;             // unix seconds
 
   // On-chain agent stats (AntseedChannels.getAgentStats)
   onChainActiveChannelCount: number;
   onChainGhostCount: number;
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
+  onChainReputationScore: number | null;
 
   /**
    * Network-wide totals from @antseed/network-stats, indexed from AntseedStats.MetadataRecorded.

@@ -97,10 +97,23 @@ export { DefaultRouter, type DefaultRouterConfig } from './routing/default-route
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
 
 // Reputation
-export { TrustScoreEngine } from './reputation/trust-engine.js';
 export { UptimeTracker } from './reputation/uptime-tracker.js';
-export { computeTrustScore, DEFAULT_TRUST_WEIGHTS } from './reputation/trust-score.js';
-export type { TrustScore, TrustComponents } from './reputation/trust-score.js';
+export {
+  computeOnChainReputationBreakdown,
+  computeOnChainReputationScore,
+  ON_CHAIN_REPUTATION_AVG_CHANNEL_TARGET_USDC,
+  ON_CHAIN_REPUTATION_AVG_CHANNEL_WEIGHT,
+  ON_CHAIN_REPUTATION_CHANNEL_LOG_TARGET,
+  ON_CHAIN_REPUTATION_CHANNEL_WEIGHT,
+  ON_CHAIN_REPUTATION_GHOST_PENALTY_MULTIPLIER,
+  ON_CHAIN_REPUTATION_QUALITY_FLOOR,
+  ON_CHAIN_REPUTATION_RECENCY_DECAY_DAYS,
+  ON_CHAIN_REPUTATION_RECENCY_FLOOR,
+  ON_CHAIN_REPUTATION_RECENCY_WEIGHT,
+  ON_CHAIN_REPUTATION_VOLUME_EXPONENT,
+  ON_CHAIN_REPUTATION_VOLUME_LOG_TARGET_USDC,
+  type OnChainReputationBreakdown,
+} from './reputation/on-chain-reputation.js';
 export type { UptimeWindow, PeerUptimeRecord } from './reputation/uptime-tracker.js';
 export { ReportManager } from './reputation/report-manager.js';
 export type { PeerReport, ReportReason, ReportEvidence, ReportStatus } from './types/report.js';

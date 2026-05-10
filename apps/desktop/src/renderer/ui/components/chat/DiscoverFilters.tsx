@@ -4,9 +4,8 @@ import { getTagOutlineTint } from '../../../core/peer-utils';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
-  MAX_CHANNELS_SLIDER, CHANNELS_SLIDER_STEP,
+  MAX_REPUTATION_SCORE_SLIDER, REPUTATION_SCORE_SLIDER_STEP,
   formatCategoryLabel,
-  type TimeWindow,
 } from './discover-filter-util';
 import styles from './DiscoverFilters.module.scss';
 
@@ -20,17 +19,10 @@ function formatPriceLabel(value: number, max: number): string {
   return `Up to $${value.toFixed(2)}/M`;
 }
 
-function formatChannelsLabel(value: number): string {
+function formatReputationScoreLabel(value: number): string {
   if (value <= 0) return 'Any';
-  return `${value}+`;
+  return `${(value / 10).toFixed(1)}★+`;
 }
-
-const TIME_WINDOW_OPTIONS: ReadonlyArray<{ value: TimeWindow; label: string }> = [
-  { value: 'any', label: 'Any time' },
-  { value: 'today', label: 'Today' },
-  { value: 'week', label: 'This week' },
-  { value: 'month', label: 'This month' },
-];
 
 export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props) {
   return (
@@ -145,61 +137,24 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
         </div>
       </div>
 
-      {/* On-chain channel count: simple proxy for whether a peer has a track record. */}
+      {/* Reputation score */}
       <div className={styles.field}>
         <div className={styles.sliderHeader}>
-          <span className={styles.label}>channels</span>
-          <span className={styles.sliderValue}>{formatChannelsLabel(filters.minOnChainChannels)}</span>
+          <span className={styles.label}>Reputation score</span>
+          <span className={styles.sliderValue}>{formatReputationScoreLabel(filters.minReputationScore)}</span>
         </div>
         <div className={styles.sliderWrapper}>
           <input
             type="range"
             className={styles.slider}
             min={0}
-            max={MAX_CHANNELS_SLIDER}
-            step={CHANNELS_SLIDER_STEP}
-            value={filters.minOnChainChannels}
-            onChange={(e) => filters.setMinOnChainChannels(Number(e.target.value))}
+            max={MAX_REPUTATION_SCORE_SLIDER}
+            step={REPUTATION_SCORE_SLIDER_STEP}
+            value={filters.minReputationScore}
+            onChange={(e) => filters.setMinReputationScore(Number(e.target.value))}
           />
         </div>
       </div>
-
-      {/* Last seen window */}
-      <div className={styles.field}>
-        <div className={styles.label}>Last seen</div>
-        <select
-          className={styles.select}
-          value={filters.lastSeenWindow}
-          onChange={(e) => filters.setLastSeenWindow(e.target.value as TimeWindow)}
-        >
-          {TIME_WINDOW_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Last settled window */}
-      <div className={styles.field}>
-        <div className={styles.label}>Last settled</div>
-        <select
-          className={styles.select}
-          value={filters.lastSettledWindow}
-          onChange={(e) => filters.setLastSettledWindow(e.target.value as TimeWindow)}
-        >
-          {TIME_WINDOW_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-
-      <label className={styles.listItem}>
-        <input
-          type="checkbox"
-          checked={filters.chattedOnly}
-          onChange={(e) => filters.setChattedOnly(e.target.checked)}
-        />
-        <span>Previously used</span>
-      </label>
 
       {/* Reset */}
       <button type="button" className={styles.resetBtn} onClick={filters.resetAll}>

@@ -59,7 +59,6 @@ interface PeerMetadata {
   region: string;
   timestamp: number;
   stakeAmountUSDC?: number;
-  trustScore?: number;
   onChainStats?: OnChainStats;
 }
 

@@ -20,9 +20,9 @@ test('buildChatServiceCatalogFromPeers keeps provider-specific service pricing f
         },
       },
       openai: {
-        defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0.5 },
         services: {
-          'gpt-4o-mini': { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 },
+          'gpt-4o-mini': { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6, cachedInputUsdPerMillion: 0.05 },
         },
       },
     },
@@ -41,6 +41,7 @@ test('buildChatServiceCatalogFromPeers keeps provider-specific service pricing f
   assert.equal(anthropic!.outputUsdPerMillion, 21);
   assert.equal(openai!.inputUsdPerMillion, 0.15);
   assert.equal(openai!.outputUsdPerMillion, 0.6);
+  assert.equal(openai!.cachedInputUsdPerMillion, 0.05);
   assert.equal(openai!.protocol, 'openai-chat-completions');
 });
 

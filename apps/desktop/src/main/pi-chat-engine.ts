@@ -46,13 +46,17 @@ import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import {
+  DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+  DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+} from './config-io.js';
+import {
   buildChatServiceCatalogFromPeers,
   sortChatServiceCatalogEntries,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
   type NetworkPeerAddress,
 } from './chat-service-catalog.js';
-import { StakingClient, ChannelsClient, resolveChainConfig } from '@antseed/node';
+import { resolveChainConfig } from '@antseed/node';
 import {
   AuthStorage,
   createAgentSession,
@@ -104,7 +108,6 @@ type AiMessageMeta = {
   peerAddress?: string;
   peerProviders?: string[];
   peerReputation?: number;
-  peerTrustScore?: number;
   peerCurrentLoad?: number;
   peerMaxConcurrency?: number;
   provider?: string;
@@ -233,6 +236,12 @@ function augmentChatToolPath(): void {
 
 augmentChatToolPath();
 
+type BuyerMaxPricingDefaults = {
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
+};
+
 type DiscoverRowEntry = {
   rowKey: string;
   serviceId: string;
@@ -257,11 +266,11 @@ type DiscoverRowEntry = {
   onChainChannelCount: number | null;
   agentId: number;
   stakeUsdc: string;
-  stakedAt: number;
   onChainActiveChannelCount: number;
   onChainGhostCount: number;
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
+  onChainReputationScore: number | null;
   networkRequests: string | null;
   networkInputTokens: string | null;
   networkOutputTokens: string | null;
@@ -323,7 +332,68 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function normalizeNonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
 
+async function loadBuyerMaxPricingDefaults(configPath: string): Promise<BuyerMaxPricingDefaults> {
+  try {
+    const raw = await readFile(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const buyer = asRecord(parsed.buyer);
+    const maxPricing = asRecord(buyer?.maxPricing);
+    const defaults = asRecord(maxPricing?.defaults);
+    const input = normalizeNonNegativeNumber(defaults?.inputUsdPerMillion);
+    const output = normalizeNonNegativeNumber(defaults?.outputUsdPerMillion);
+    const cachedInput = normalizeNonNegativeNumber(defaults?.cachedInputUsdPerMillion);
+    return {
+      inputUsdPerMillion: input ?? DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+      outputUsdPerMillion: output ?? DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+      ...(cachedInput != null ? { cachedInputUsdPerMillion: cachedInput } : {}),
+    };
+  } catch {
+    return {
+      inputUsdPerMillion: DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
+      outputUsdPerMillion: DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
+    };
+  }
+}
+
+function isPriceAllowedByBuyerMax(
+  inputUsdPerMillion: number | null | undefined,
+  outputUsdPerMillion: number | null | undefined,
+  cachedInputUsdPerMillion: number | null | undefined,
+  maxPricing: BuyerMaxPricingDefaults,
+): boolean {
+  if (inputUsdPerMillion != null && inputUsdPerMillion > maxPricing.inputUsdPerMillion) {
+    return false;
+  }
+  if (outputUsdPerMillion != null && outputUsdPerMillion > maxPricing.outputUsdPerMillion) {
+    return false;
+  }
+  if (cachedInputUsdPerMillion != null) {
+    if (inputUsdPerMillion != null && cachedInputUsdPerMillion > inputUsdPerMillion) {
+      return false;
+    }
+    const maxCachedInput = maxPricing.cachedInputUsdPerMillion ?? maxPricing.inputUsdPerMillion;
+    if (cachedInputUsdPerMillion > maxCachedInput) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isCatalogEntryAllowedByBuyerMax(
+  entry: ChatServiceCatalogEntry,
+  maxPricing: BuyerMaxPricingDefaults,
+): boolean {
+  return isPriceAllowedByBuyerMax(
+    entry.inputUsdPerMillion,
+    entry.outputUsdPerMillion,
+    entry.cachedInputUsdPerMillion,
+    maxPricing,
+  );
+}
 
 function updateServiceProviderHints(
   serviceProviderHints: Map<string, string[]>,
@@ -390,6 +460,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const peerLabel = typeof entry.peerLabel === 'string' ? entry.peerLabel.trim() : undefined;
   const inputUsd = normalizeOptionalNumber(entry.inputUsdPerMillion);
   const outputUsd = normalizeOptionalNumber(entry.outputUsdPerMillion);
+  const cachedInputUsd = normalizeOptionalNumber(entry.cachedInputUsdPerMillion);
   const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
   const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   return {
@@ -402,6 +473,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
     ...(peerLabel ? { peerLabel } : {}),
     ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
     ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
+    ...(cachedInputUsd != null && cachedInputUsd >= 0 ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
     ...(categories?.length ? { categories } : {}),
     ...(description ? { description } : {}),
   };
@@ -494,6 +566,7 @@ async function discoverChatServiceCatalog(
           : undefined,
         defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
         defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
+        defaultCachedInputUsdPerMillion: typeof p.defaultCachedInputUsdPerMillion === 'number' ? p.defaultCachedInputUsdPerMillion : undefined,
       }))
       .filter((p) => p.peerId.length === 40); // EVM address peer IDs only (40 hex chars)
   } catch {
@@ -509,173 +582,21 @@ async function discoverChatServiceCatalog(
   return buildChatServiceCatalogFromPeers(peers);
 }
 
-type OnChainPeerEnrichment = {
-  agentId: number;
-  stakeUsdc: string;
-  stakedAt: number;
-  onChainActiveChannelCount: number;
-  onChainGhostCount: number;
-  onChainTotalVolumeUsdc: string;
-  onChainLastSettledAt: number;
+type BuyerStateDiscoveredPeer = {
+  onChainAgentId: number | null;
+  onChainStakeUsdcMicros: number | null;
+  onChainChannelCount: number | null;
+  onChainGhostCount: number | null;
+  onChainTotalVolumeUsdcMicros: number | null;
+  onChainLastSettledAtSec: number | null;
+  onChainReputationScore: number | null;
+  sellerContract?: string;
+  providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
 };
-
-const ON_CHAIN_ENRICHMENT_TTL_MS = 2 * 60_000;
-let onChainEnrichmentCache: Map<string, { fetchedAt: number; data: OnChainPeerEnrichment }> = new Map();
 
 export function invalidateOnChainEnrichmentCache(): void {
-  onChainEnrichmentCache.clear();
-  cachedStakingClient = null;
-  cachedChannelsClient = null;
-}
-
-let cachedStakingClient: StakingClient | null = null;
-let cachedChannelsClient: ChannelsClient | null = null;
-
-async function loadOnChainClients(configPath: string): Promise<{ stakingClient: StakingClient; channelsClient: ChannelsClient } | null> {
-  if (cachedStakingClient && cachedChannelsClient) {
-    return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };
-  }
-  let overrides: Record<string, unknown> = {};
-  try {
-    const raw = await readFile(configPath, 'utf8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const payments = (parsed.payments && typeof parsed.payments === 'object') ? parsed.payments as Record<string, unknown> : {};
-    overrides = (payments.crypto && typeof payments.crypto === 'object') ? payments.crypto as Record<string, unknown> : {};
-  } catch {
-    // No config — use defaults
-  }
-  const selectedChain = (typeof overrides.chainId === 'string' && overrides.chainId.trim().length > 0)
-    ? overrides.chainId
-    : 'base-mainnet';
-  const userRpcUrl = typeof overrides.rpcUrl === 'string' && overrides.rpcUrl.trim().length > 0 ? overrides.rpcUrl : '';
-  const cc = resolveChainConfig({
-    chainId: selectedChain,
-    ...(userRpcUrl ? { rpcUrl: userRpcUrl } : {}),
-  });
-  if (!cc.stakingContractAddress) return null;
-  cachedStakingClient = new StakingClient({
-    rpcUrl: cc.rpcUrl,
-    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
-    contractAddress: cc.stakingContractAddress,
-    usdcAddress: cc.usdcContractAddress,
-    evmChainId: cc.evmChainId,
-  });
-  cachedChannelsClient = new ChannelsClient({
-    rpcUrl: cc.rpcUrl,
-    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
-    contractAddress: cc.channelsContractAddress,
-    evmChainId: cc.evmChainId,
-  });
-  return { stakingClient: cachedStakingClient, channelsClient: cachedChannelsClient };
-}
-
-/**
- * Per-peer snapshot of on-chain stats lifted from the running buyer daemon's
- * `buyer.state.json`. When the daemon is up, it reads
- * `AntseedChannels.getAgentStats` every discovery cycle and persists the
- * result — so we can reuse those values here and skip the duplicate
- * `channelsClient.getAgentStats()` RPC per peer. `agentId` and `stakeUsdc`
- * are not in buyer.state.json, so we still call StakingClient for those.
- */
-export type BuyerStateOnChainStats = {
-  channelCount: number;
-  ghostCount: number;
-  totalVolumeUsdcMicros: number;
-  lastSettledAtSec: number;
-  fetchedAtMs: number;
-};
-
-async function fetchOnChainEnrichment(
-  peerEvmAddresses: string[],
-  stakingClient: import('@antseed/node').StakingClient,
-  channelsClient: import('@antseed/node').ChannelsClient,
-  buyerStateStatsByPeerId: Map<string, BuyerStateOnChainStats>,
-): Promise<Map<string, OnChainPeerEnrichment>> {
-  const now = Date.now();
-  const out = new Map<string, OnChainPeerEnrichment>();
-  const toFetch: string[] = [];
-
-  for (const addr of peerEvmAddresses) {
-    const cached = onChainEnrichmentCache.get(addr);
-    if (cached && now - cached.fetchedAt < ON_CHAIN_ENRICHMENT_TTL_MS) {
-      out.set(addr, cached.data);
-    } else {
-      toFetch.push(addr);
-    }
-  }
-
-  await Promise.all(toFetch.map(async (addr) => {
-    try {
-      const [agentId, stake] = await Promise.all([
-        stakingClient.getAgentId(addr),
-        stakingClient.getStake(addr),
-      ]);
-      if (agentId === 0) {
-        const sentinel: OnChainPeerEnrichment = {
-          agentId: 0,
-          stakeUsdc: '0',
-          stakedAt: 0,
-          onChainActiveChannelCount: 0,
-          onChainGhostCount: 0,
-          onChainTotalVolumeUsdc: '0',
-          onChainLastSettledAt: 0,
-        };
-        onChainEnrichmentCache.set(addr, { fetchedAt: now, data: sentinel });
-        out.set(addr, sentinel);
-        return;
-      }
-
-      // Prefer values already fetched by the buyer daemon (persisted to
-      // buyer.state.json). We reuse them when they are within the desktop's
-      // own enrichment TTL — the daemon's authoritative on-chain read is the
-      // same one we'd make here, so skipping saves an RPC per peer.
-      const peerId = addr.slice(2).toLowerCase();
-      const fromBuyerState = buyerStateStatsByPeerId.get(peerId);
-      const buyerStateFresh = fromBuyerState
-        && now - fromBuyerState.fetchedAtMs < ON_CHAIN_ENRICHMENT_TTL_MS;
-
-      let stats: { channelCount: number; ghostCount: number; totalVolumeUsdc: bigint; lastSettledAt: number };
-      if (buyerStateFresh && fromBuyerState) {
-        stats = {
-          channelCount: fromBuyerState.channelCount,
-          ghostCount: fromBuyerState.ghostCount,
-          totalVolumeUsdc: BigInt(fromBuyerState.totalVolumeUsdcMicros),
-          lastSettledAt: fromBuyerState.lastSettledAtSec,
-        };
-      } else {
-        stats = await channelsClient.getAgentStats(agentId);
-      }
-
-      const data: OnChainPeerEnrichment = {
-        agentId,
-        stakeUsdc: stake.toString(),
-        stakedAt: 0,
-        onChainActiveChannelCount: stats.channelCount,
-        onChainGhostCount: stats.ghostCount,
-        onChainTotalVolumeUsdc: stats.totalVolumeUsdc.toString(),
-        onChainLastSettledAt: stats.lastSettledAt,
-      };
-      onChainEnrichmentCache.set(addr, { fetchedAt: now, data });
-      out.set(addr, data);
-    } catch {
-      // Preserve Discover inventory when staking/channel RPC is unavailable.
-      // Request routing still performs its own eligibility checks; this view
-      // should not hide services merely because enrichment failed.
-      const sentinel: OnChainPeerEnrichment = {
-        agentId: 0,
-        stakeUsdc: '0',
-        stakedAt: 0,
-        onChainActiveChannelCount: 0,
-        onChainGhostCount: 0,
-        onChainTotalVolumeUsdc: '0',
-        onChainLastSettledAt: 0,
-      };
-      onChainEnrichmentCache.set(addr, { fetchedAt: now, data: sentinel });
-      out.set(addr, sentinel);
-    }
-  }));
-
-  return out;
+  // On-chain enrichment now comes from the buyer daemon's buyer.state.json.
+  // The desktop process intentionally performs no staking/channel RPC here.
 }
 
 async function buildDiscoverRows(
@@ -688,12 +609,7 @@ async function buildDiscoverRows(
     firstSessionAt: number | null;
     lastSessionAt: number | null;
   }>,
-  enrichment: Map<string, OnChainPeerEnrichment>,
-  buyerStateDiscoveredPeers: Record<string, {
-    onChainChannelCount: number | null;
-    sellerContract?: string;
-    providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
-  }>,
+  buyerStateDiscoveredPeers: Record<string, BuyerStateDiscoveredPeer>,
   networkStats: Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>,
 ): Promise<DiscoverRowEntry[]> {
   const rows: DiscoverRowEntry[] = [];
@@ -704,25 +620,23 @@ async function buildDiscoverRows(
     const peerBlob = buyerStateDiscoveredPeers[peerId];
     const sellerHex = typeof peerBlob?.sellerContract === 'string' ? peerBlob.sellerContract.trim().toLowerCase().replace(/^0x/, '') : '';
     const sellerEvmAddress = /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : peerEvmAddress;
-    const enrichmentRow = enrichment.get(sellerEvmAddress) ?? {
-      agentId: 0,
-      stakeUsdc: '0',
-      stakedAt: 0,
-      onChainActiveChannelCount: 0,
-      onChainGhostCount: 0,
-      onChainTotalVolumeUsdc: '0',
-      onChainLastSettledAt: 0,
-    };
 
     const stats = peerStats.get(peerId);
     const cachedPricingEntry = peerBlob?.providerPricing?.[entry.provider]?.services?.[entry.id];
-    const cachedInputUsdPerMillion = Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
-      ? cachedPricingEntry!.cachedInputUsdPerMillion!
-      : null;
+    const cachedInputUsdPerMillion = Number.isFinite(entry.cachedInputUsdPerMillion)
+      ? entry.cachedInputUsdPerMillion!
+      : Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
+        ? cachedPricingEntry!.cachedInputUsdPerMillion!
+        : null;
 
-    const netForAgent = enrichmentRow.agentId > 0
-      ? networkStats.get(enrichmentRow.agentId) ?? null
-      : null;
+    const agentId = peerBlob?.onChainAgentId ?? 0;
+    const stakeUsdc = String(peerBlob?.onChainStakeUsdcMicros ?? 0);
+    const onChainActiveChannelCount = peerBlob?.onChainChannelCount ?? 0;
+    const onChainGhostCount = peerBlob?.onChainGhostCount ?? 0;
+    const onChainTotalVolumeUsdc = String(peerBlob?.onChainTotalVolumeUsdcMicros ?? 0);
+    const onChainLastSettledAt = peerBlob?.onChainLastSettledAtSec ?? 0;
+    const onChainReputationScore = peerBlob?.onChainReputationScore ?? null;
+    const netForAgent = agentId > 0 ? networkStats.get(agentId) ?? null : null;
     const networkRequests = netForAgent ? netForAgent.requests.toString() : null;
     const networkInputTokens = netForAgent ? netForAgent.inputTokens.toString() : null;
     const networkOutputTokens = netForAgent ? netForAgent.outputTokens.toString() : null;
@@ -749,13 +663,13 @@ async function buildDiscoverRows(
       lifetimeFirstSessionAt: stats?.firstSessionAt ?? null,
       lifetimeLastSessionAt: stats?.lastSessionAt ?? null,
       onChainChannelCount: peerBlob?.onChainChannelCount ?? null,
-      agentId: enrichmentRow.agentId,
-      stakeUsdc: enrichmentRow.stakeUsdc,
-      stakedAt: enrichmentRow.stakedAt,
-      onChainActiveChannelCount: enrichmentRow.onChainActiveChannelCount,
-      onChainGhostCount: enrichmentRow.onChainGhostCount,
-      onChainTotalVolumeUsdc: enrichmentRow.onChainTotalVolumeUsdc,
-      onChainLastSettledAt: enrichmentRow.onChainLastSettledAt,
+      agentId,
+      stakeUsdc,
+      onChainActiveChannelCount,
+      onChainGhostCount,
+      onChainTotalVolumeUsdc,
+      onChainLastSettledAt,
+      onChainReputationScore,
       networkRequests,
       networkInputTokens,
       networkOutputTokens,
@@ -2352,7 +2266,9 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-discover-rows', async () => {
     try {
-      const entries = await refreshServiceCatalogFromNetwork();
+      const buyerMaxPricing = await loadBuyerMaxPricingDefaults(configPath);
+      const entries = (await refreshServiceCatalogFromNetwork())
+        .filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
 
       const buyerPort = await resolveProxyPort(configPath);
       const statsMap = new Map<string, {
@@ -2399,12 +2315,7 @@ export function registerPiChatHandlers({
       // Static imports at the top of the file — see note on the
       // `discoverChatServiceCatalog` read for why these must not be
       // dynamic in packaged Windows builds.
-      let discoveredPeersMap: Record<string, {
-        onChainChannelCount: number | null;
-        sellerContract?: string;
-        providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
-      }> = {};
-      const buyerStateOnChainStats = new Map<string, BuyerStateOnChainStats>();
+      let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
       try {
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -2414,60 +2325,23 @@ export function registerPiChatHandlers({
             const rec = p as Record<string, unknown>;
             const peerId = rec.peerId as string;
             discoveredPeersMap[peerId] = {
+              onChainAgentId: typeof rec.onChainAgentId === 'number' ? rec.onChainAgentId : null,
+              onChainStakeUsdcMicros: typeof rec.onChainStakeUsdcMicros === 'number' ? rec.onChainStakeUsdcMicros : null,
               onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,
+              onChainGhostCount: typeof rec.onChainGhostCount === 'number' ? rec.onChainGhostCount : null,
+              onChainTotalVolumeUsdcMicros: typeof rec.onChainTotalVolumeUsdcMicros === 'number' ? rec.onChainTotalVolumeUsdcMicros : null,
+              onChainLastSettledAtSec: typeof rec.onChainLastSettledAtSec === 'number' ? rec.onChainLastSettledAtSec : null,
+              onChainReputationScore: typeof rec.onChainReputationScore === 'number' ? rec.onChainReputationScore : null,
               sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               providerPricing: rec.providerPricing as Record<string, {
                 services?: Record<string, { cachedInputUsdPerMillion?: number }>
               }> | undefined,
             };
-            // Capture the buyer daemon's on-chain stats snapshot so we can
-            // reuse it inside fetchOnChainEnrichment and skip the redundant
-            // `channelsClient.getAgentStats()` RPC per peer.
-            const channelCount = rec.onChainChannelCount;
-            const ghostCount = rec.onChainGhostCount;
-            const volume = rec.onChainTotalVolumeUsdcMicros;
-            const lastSettled = rec.onChainLastSettledAtSec;
-            const fetchedAt = rec.onChainStatsFetchedAt;
-            if (
-              typeof channelCount === 'number' && Number.isFinite(channelCount)
-              && typeof ghostCount === 'number' && Number.isFinite(ghostCount)
-              && typeof volume === 'number' && Number.isFinite(volume)
-              && typeof lastSettled === 'number' && Number.isFinite(lastSettled)
-              && typeof fetchedAt === 'number' && Number.isFinite(fetchedAt)
-            ) {
-              buyerStateOnChainStats.set(peerId.toLowerCase(), {
-                channelCount,
-                ghostCount,
-                totalVolumeUsdcMicros: volume,
-                lastSettledAtSec: lastSettled,
-                fetchedAtMs: fetchedAt,
-              });
-            }
           }
         }
       } catch {
         // No state file yet
       }
-
-      const uniqueAddresses = Array.from(new Set(
-        entries
-          .map((e) => {
-            const peerId = e.peerId?.trim().toLowerCase() ?? '';
-            if (!/^[0-9a-f]{40}$/.test(peerId)) return '';
-            const sellerHex = discoveredPeersMap[peerId]?.sellerContract?.trim().toLowerCase().replace(/^0x/, '') ?? '';
-            return /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : `0x${peerId}`;
-          })
-          .filter((a) => a.length === 42)
-      ));
-      const clients = await loadOnChainClients(configPath);
-      const enrichment = clients
-        ? await fetchOnChainEnrichment(
-          uniqueAddresses,
-          clients.stakingClient,
-          clients.channelsClient,
-          buyerStateOnChainStats,
-        )
-        : new Map<string, OnChainPeerEnrichment>();
 
       // Network-wide stats from @antseed/network-stats. On non-mainnet chains and on any
       // failure this returns an empty map and buildDiscoverRows falls back to local stats.
@@ -2487,7 +2361,13 @@ export function registerPiChatHandlers({
         }
       })();
 
-      const rows = await buildDiscoverRows(entries, statsMap, enrichment, discoveredPeersMap, networkStats);
+      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats))
+        .filter((row) => isPriceAllowedByBuyerMax(
+          row.inputUsdPerMillion,
+          row.outputUsdPerMillion,
+          row.cachedInputUsdPerMillion,
+          buyerMaxPricing,
+        ));
       return { ok: true, data: rows };
     } catch (error) {
       return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };
