@@ -171,8 +171,8 @@ mkdirSync(BUNDLED_RUNTIME_DIR, { recursive: true });
 
 const desktopRequire = createRequire(path.join(appDir, 'package.json'));
 
-function findRealPackageDir(name) {
-  const lookupPaths = desktopRequire.resolve.paths(name) ?? [];
+function findPackageDirFromRequire(req, name) {
+  const lookupPaths = req.resolve.paths(name) ?? [];
   for (const dir of lookupPaths) {
     const candidate = path.join(dir, ...name.split('/'));
     const pkgJson = path.join(candidate, 'package.json');
@@ -188,7 +188,7 @@ function findRealPackageDir(name) {
 
   let entry;
   try {
-    entry = desktopRequire.resolve(name);
+    entry = req.resolve(name);
   } catch {
     return null;
   }
@@ -211,50 +211,79 @@ function findRealPackageDir(name) {
   return null;
 }
 
-function copyDepTree(name, destRoot, visited) {
-  if (visited.has(name)) return;
-  visited.add(name);
+function readPackageJson(dir) {
+  try {
+    return JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Walk the dependency graph rooted at `parentSourceDir` and place each
+// transitive dependency into `bundled-runtime/`. Resolution is done from
+// each parent's own perspective (not from the desktop) so that nested
+// version-pinned copies (e.g. default-gateway/node_modules/execa@7) are
+// found correctly. When a package would land at the top of bundled-runtime/
+// but a different version of the same name is already there, it is placed
+// nested under the parent's dest dir instead — mirroring npm/pnpm's
+// hoisting + nesting fallback so `import { execa } from 'execa'` resolves
+// to the version each consumer was paired with at install time.
+function copyDepTree(name, parentSourceDir, parentDestDir, topDestRoot, visited) {
   if (NODE_BUILTINS.has(name)) return;
 
-  const sourceDir = findRealPackageDir(name);
+  const parentRequire = createRequire(path.join(parentSourceDir, 'package.json'));
+  const sourceDir = findPackageDirFromRequire(parentRequire, name);
   if (!sourceDir) {
-    console.warn(`[prepare-dist] WARNING: could not locate dep "${name}" for bundled runtime`);
+    console.warn(`[prepare-dist] WARNING: could not resolve "${name}" from ${parentSourceDir}`);
     return;
   }
 
+  const pkg = readPackageJson(sourceDir);
+  if (!pkg || !pkg.version) {
+    console.warn(`[prepare-dist] WARNING: invalid package.json at ${sourceDir}`);
+    return;
+  }
+
+  // Default placement: top-level. Nest under parent only on version conflict.
+  let destDir = path.join(topDestRoot, ...name.split('/'));
+  if (existsSync(destDir)) {
+    const existing = readPackageJson(destDir);
+    if (existing && existing.version !== pkg.version) {
+      destDir = path.join(parentDestDir, 'node_modules', ...name.split('/'));
+    }
+  }
+
+  if (visited.has(destDir)) return;
+  visited.add(destDir);
+
   if (!EXPLICITLY_BUNDLED_PACKAGES.has(name)) {
-    const destDir = path.join(destRoot, ...name.split('/'));
     mkdirSync(path.dirname(destDir), { recursive: true });
     rmSync(destDir, { recursive: true, force: true });
     cpSync(sourceDir, destDir, { recursive: true, dereference: true });
 
-    // Drop any nested node_modules to keep the bundled tree flat — every
-    // dependency lives at the top level of bundled-runtime/.
+    // Strip nested node_modules from the freshly copied source — we re-place
+    // any conflicting nested deps ourselves at the next recursion level.
     const nestedNm = path.join(destDir, 'node_modules');
     if (existsSync(nestedNm)) {
       rmSync(nestedNm, { recursive: true, force: true });
     }
   }
 
-  let pkg;
-  try {
-    pkg = JSON.parse(readFileSync(path.join(sourceDir, 'package.json'), 'utf8'));
-  } catch {
-    return;
-  }
   for (const depName of Object.keys(pkg.dependencies ?? {})) {
-    copyDepTree(depName, destRoot, visited);
+    copyDepTree(depName, sourceDir, destDir, topDestRoot, visited);
   }
 }
 
-const nodePackageDir = findRealPackageDir('@antseed/node');
+const nodePackageDir = findPackageDirFromRequire(desktopRequire, '@antseed/node');
 if (!nodePackageDir) {
   console.warn('[prepare-dist] WARNING: could not locate @antseed/node — bundled runtime will be incomplete');
 } else {
-  const nodePkg = JSON.parse(readFileSync(path.join(nodePackageDir, 'package.json'), 'utf8'));
+  const nodePkg = readPackageJson(nodePackageDir);
   const visited = new Set();
+  // For top-level deps the "parent dest" is the runtime root itself — no
+  // sibling can collide at this layer because each direct dep name is unique.
   for (const depName of Object.keys(nodePkg.dependencies ?? {})) {
-    copyDepTree(depName, BUNDLED_RUNTIME_DIR, visited);
+    copyDepTree(depName, nodePackageDir, BUNDLED_RUNTIME_DIR, BUNDLED_RUNTIME_DIR, visited);
   }
   console.log(`[prepare-dist] Bundled ${visited.size} runtime dep(s) for @antseed/node into ${BUNDLED_RUNTIME_DIR}`);
 }

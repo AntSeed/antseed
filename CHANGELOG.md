@@ -4,6 +4,16 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-10 — Desktop bundled runtime version resolution fix
+
+### Desktop
+
+- `@antseed/desktop@0.1.79`
+
+### Fixed
+
+- Fixed Desktop bundled router runtime to resolve each transitive dependency from its parent package's perspective and nest version-conflicting copies under the parent. The previous flat-copy bundler picked the workspace-hoisted top-level version and silently dropped parent-specific nested copies — causing the buyer to fail at startup with `Named export 'execa' not found ... CommonJS module` because `default-gateway@7.2.2` was paired with the wrong `execa` version.
+
 ## 2026-05-10 — Desktop router clean reinstall
 
 ### Desktop
