@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, mkdir, cp, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,10 @@ const __dirname = path.dirname(__filename);
 
 const execFileAsync = promisify(execFileCallback);
 const requireFromHere = createRequire(import.meta.url);
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+]);
 
 export const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
 const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
@@ -136,7 +140,7 @@ function dependencyNamesForManifest(manifest: PackageManifest, includePeers: boo
   return Object.keys({
     ...(manifest.dependencies ?? {}),
     ...(includePeers ? manifest.peerDependencies ?? {} : {}),
-  });
+  }).filter((name) => !NODE_BUILTINS.has(name));
 }
 
 function findAppPackageDir(packageName: string): string | null {
@@ -288,11 +292,15 @@ export function setPluginAppendLog(fn: AppendLogFn): void {
 }
 
 export async function installPluginDependency(packageSpec: string): Promise<void> {
+  await installPluginDependencies([packageSpec]);
+}
+
+export async function installPluginDependencies(packageSpecs: string[]): Promise<void> {
   await ensurePluginsDirectory();
   const npm = resolveNpmInvocation();
-  _appendLog('connect', 'system', `Installing "${packageSpec}" via ${npm.bin}...`);
+  _appendLog('connect', 'system', `Installing ${packageSpecs.map((spec) => `"${spec}"`).join(', ')} via ${npm.bin}...`);
 
-  await execFileAsync(npm.bin, [...npm.leadingArgs, 'install', '--ignore-scripts', packageSpec], {
+  await execFileAsync(npm.bin, [...npm.leadingArgs, 'install', '--ignore-scripts', ...packageSpecs], {
     cwd: DEFAULT_PLUGINS_DIR,
     timeout: 120_000, // 2-minute hard limit
     env: {
@@ -312,6 +320,18 @@ export async function installPluginDependency(packageSpec: string): Promise<void
       ].filter((segment) => segment.length > 0).join(path.delimiter),
     },
   });
+}
+
+async function removeDefaultRouterRuntimePackages(): Promise<void> {
+  const packages = [
+    '@antseed/router-local',
+    '@antseed/router-core',
+    '@antseed/node',
+    '@antseed/api-adapter',
+  ];
+  for (const packageName of packages) {
+    await rm(packageNodeModulesPath(DEFAULT_PLUGINS_DIR, packageName), { recursive: true, force: true });
+  }
 }
 
 export async function installPluginFromBundle(packageName: string): Promise<boolean> {
@@ -471,19 +491,33 @@ export async function ensureDefaultPlugin(
         : `Required plugin "${packageName}" not found. Installing`,
   );
   try {
-    // 1. Try copying from the app bundle (production builds — instant, no network)
-    const installedFromBundle = await installPluginFromBundle(packageName);
+    // 1. Try copying from the app bundle (production builds — instant, no network).
+    // If bundle repair fails, remove the partial copied @antseed packages before
+    // falling back to npm. A half-copied @antseed/node can otherwise satisfy
+    // npm's peer check while still missing runtime deps like `ethers`.
+    let installedFromBundle = false;
+    try {
+      installedFromBundle = await installPluginFromBundle(packageName);
+    } catch (bundleErr) {
+      const message = bundleErr instanceof Error ? bundleErr.message : String(bundleErr);
+      ctx.appendLog('connect', 'system', `Bundled plugin repair failed: ${message}`);
+      await removeDefaultRouterRuntimePackages();
+    }
+
     if (installedFromBundle) {
       ctx.appendLog('connect', 'system', `Installed plugin "${packageName}" from app bundle.`);
     } else {
+      if (installed) await removeDefaultRouterRuntimePackages();
+
       // 2. Try local monorepo source (dev builds)
       const localSource = await resolveLocalPluginSource(packageName);
       ctx.appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmInvocation().bin})...`);
       if (localSource) {
         await installPluginDependency(toFileInstallSpec(packageName, localSource));
       } else {
-        // 3. Fall back to npm registry
-        await installPluginDependency(packageName);
+        // 3. Fall back to npm registry. Install @antseed/node explicitly so npm
+        // repairs its runtime deps instead of treating a stale copied peer as OK.
+        await installPluginDependencies([`${packageName}@latest`, '@antseed/node@latest']);
       }
     }
     ctx.appendLog('connect', 'system', `Installed plugin "${packageName}".`);
