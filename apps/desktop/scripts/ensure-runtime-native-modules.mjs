@@ -150,12 +150,15 @@ function rebuildModule(check) {
   // auto-detect in that case.
   const moduleDir = path.resolve(repoRoot, 'node_modules', check.moduleName);
   if (existsSync(moduleDir)) {
-    const args = ['prebuild-install'];
+    const args = [];
     if (check.moduleName === 'better-sqlite3') {
       args.push('--runtime', 'node', '--target', process.version, '--arch', process.arch);
     }
     try {
-      execFileSync('npx', args, { cwd: moduleDir, stdio: 'inherit' });
+      const prebuildInstallEntry = createRequire(
+        path.join(moduleDir, 'package.json'),
+      ).resolve('prebuild-install/bin.js');
+      execFileSync(process.execPath, [prebuildInstallEntry, ...args], { cwd: moduleDir, stdio: 'inherit' });
       return;
     } catch {
       // prebuild-install failed — fall through to npm rebuild
