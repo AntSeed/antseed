@@ -8,7 +8,7 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "ensure:cli-dist": "pnpm -C ../../packages/api-adapter build && pnpm -C ../../packages/router-core build && pnpm -C ../../plugins/router-local build && pnpm -C ../../packages/node build && pnpm -C ../payments build:server && pnpm -C ../cli build",
+    "ensure:cli-dist": "pnpm -C ../../packages/api-adapter build && pnpm -C ../../packages/node build && pnpm -C ../../packages/provider-core build && pnpm -C ../../packages/ant-agent build && pnpm -C ../../packages/router-core build && pnpm -C ../../plugins/router-local build && pnpm -C ../payments build:server && pnpm -C ../cli build",
     "brand:electron-dev": "node ./scripts/brand-electron-dev.mjs",
     "ensure:native": "npm run ensure:runtime-native",
     "ensure:runtime-native": "node ./scripts/ensure-runtime-native-modules.mjs",
@@ -18,7 +18,7 @@
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
-    "test": "npm run build:main && node --test dist/main",
+    "test": "npm run build:main && node --test dist/main/*.test.js",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json --noEmit",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
     "dev:debug": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron:debug\"",
