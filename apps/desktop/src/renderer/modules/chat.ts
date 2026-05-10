@@ -34,6 +34,7 @@ type ChatConversationSummary = {
   service?: string;
   provider?: string;
   peerId?: string;
+  workspacePath?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -1408,6 +1409,24 @@ export function initChatModule({
     }
   }
 
+  async function restoreWorkspace(workspacePath: string): Promise<void> {
+    if (!bridge?.chatAiSetWorkspace) return;
+
+    try {
+      const result = await bridge.chatAiSetWorkspace(workspacePath);
+      if (result.ok && result.data) {
+        uiState.chatWorkspacePath = result.data.current;
+        uiState.chatWorkspaceDefaultPath = result.data.default;
+        notifyUiStateChanged();
+        await refreshWorkspaceGitStatus();
+      }
+      // If result.ok is false (e.g. workspace path no longer exists on disk),
+      // keep the current workspace — the user can still manually set it.
+    } catch {
+      // Silently fail — the user can still manually set the workspace
+    }
+  }
+
   async function chooseWorkspace(): Promise<void> {
     if (!bridge?.pickDirectory || !bridge.chatAiSetWorkspace) return;
 
@@ -1495,6 +1514,15 @@ export function initChatModule({
         updateThreadMeta(activeConversation);
         uiState.chatError = null;
         notifyUiStateChanged();
+
+        const convWorkspacePath = conv.workspacePath;
+        if (
+          typeof convWorkspacePath === 'string' &&
+          convWorkspacePath.length > 0 &&
+          convWorkspacePath !== uiState.chatWorkspacePath
+        ) {
+          void restoreWorkspace(convWorkspacePath);
+        }
 
         const peerId = resolveConversationPeerId(activeConversation);
         if (peerId) debouncedFetchMeteringStats(peerId);

@@ -469,3 +469,137 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
   }
   await waitFor(() => uiState.chatSendingConversationIds.length === 0);
 });
+
+test('opening a conversation restores its workspace path', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.appSetupComplete = true;
+  uiState.chatWorkspacePath = '/default/workspace';
+
+  const conversations: Conversation[] = [
+    {
+      id: 'conv-project-a',
+      title: 'Project A Chat',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-project-b',
+      title: 'Project B Chat',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const workspaceCallLog: string[] = [];
+
+  const bridge: DesktopBridge = {
+    chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
+    chatAiGetWorkspace: async () => ({ ok: true, data: { current: '/default/workspace', default: '/default' } }),
+    chatAiGetWorkspaceGitStatus: async () => ({
+      ok: true,
+      data: {
+        available: true,
+        rootPath: '/default/workspace',
+        branch: 'main',
+        isDetached: false,
+        ahead: 0,
+        behind: 0,
+        stagedFiles: 0,
+        modifiedFiles: 0,
+        untrackedFiles: 0,
+        error: null,
+      },
+    }),
+    chatAiGetConversation: async (id) => {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv) return { ok: false, error: 'not found' };
+      // Simulate that conv-a was created in /project-a and conv-b in /project-b
+      const workspacePath = id === 'conv-project-a' ? '/project-a' : '/project-b';
+      return { ok: true, data: { ...conv, messages: [], workspacePath } };
+    },
+    chatAiSetWorkspace: async (workspacePath: string) => {
+      workspaceCallLog.push(workspacePath);
+      uiState.chatWorkspacePath = workspacePath;
+      return { ok: true, data: { current: workspacePath, default: '/default' } };
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+
+  // Before opening any conversation, workspace is the default
+  assert.equal(uiState.chatWorkspacePath, '/default/workspace');
+
+  // Open conv-project-a — should restore workspace to /project-a
+  await api.openConversation('conv-project-a');
+
+  // Wait for the async restoreWorkspace call
+  await waitFor(() => workspaceCallLog.length >= 1, 2_000);
+  assert.equal(workspaceCallLog[0], '/project-a');
+  assert.equal(uiState.chatWorkspacePath, '/project-a');
+
+  // Open conv-project-b — should restore workspace to /project-b
+  workspaceCallLog.length = 0;
+  await api.openConversation('conv-project-b');
+
+  await waitFor(() => workspaceCallLog.length >= 1, 2_000);
+  assert.equal(workspaceCallLog[0], '/project-b');
+  assert.equal(uiState.chatWorkspacePath, '/project-b');
+});
+
+test('opening a conversation does not switch workspace if it matches the current one', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.appSetupComplete = true;
+  uiState.chatWorkspacePath = '/project-a';
+
+  const conversation: Conversation = {
+    id: 'conv-project-a',
+    title: 'Project A Chat',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+
+  const workspaceCallLog: string[] = [];
+
+  const bridge: DesktopBridge = {
+    chatAiListConversations: async () => ({ ok: true, data: [conversation] }),
+    chatAiGetConversation: async () => ({
+      ok: true,
+      data: { ...conversation, messages: [], workspacePath: '/project-a' },
+    }),
+    chatAiSetWorkspace: async (workspacePath: string) => {
+      workspaceCallLog.push(workspacePath);
+      return { ok: true, data: { current: workspacePath, default: '/default' } };
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+
+  // The conversation's workspacePath matches current workspace (/project-a)
+  // so chatAiSetWorkspace should NOT be called
+  await api.openConversation('conv-project-a');
+
+  // Give a tick for any potential async calls
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(workspaceCallLog.length, 0, 'should not call chatAiSetWorkspace when workspace already matches');
+});

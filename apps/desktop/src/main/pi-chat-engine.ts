@@ -147,6 +147,7 @@ type AiConversation = {
   createdAt: number;
   updatedAt: number;
   usage: AiUsageTotals;
+  workspacePath?: string;
 };
 
 type AiConversationSummary = {
@@ -162,6 +163,7 @@ type AiConversationSummary = {
   usage: AiUsageTotals;
   totalTokens: number;
   totalEstimatedCostUsd: number;
+  workspacePath?: string;
 };
 
 type RegisterPiChatHandlersOptions = {
@@ -1247,6 +1249,7 @@ class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    const sessionCwd = manager.getCwd() || undefined;
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
@@ -1258,6 +1261,7 @@ class PiConversationStore {
       usage,
       ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
       ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+      ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }
 
@@ -1303,6 +1307,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
 
@@ -1325,6 +1330,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
 
