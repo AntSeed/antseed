@@ -34,30 +34,17 @@ async function loadPlugin<T>(
     (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
 
   const isTrusted = TRUSTED_PLUGINS.some(p => p.package === pkgName)
+  if (isTrusted) {
+    await ensureTrustedPluginInstallReady(pkgName, resolved, pluginsDir)
+  }
 
   let mod: { default?: unknown }
   try {
     mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
-    if (isModuleNotFound(err) && isTrusted && !existsSync(resolved)) {
-      console.log(`Plugin "${pkgName}" not installed. Installing...`)
-      try {
-        await installPlugin(pkgName)
-      } catch (installErr) {
-        const cause = installErr instanceof Error ? installErr.message : String(installErr)
-        throw new Error(`Failed to install plugin "${pkgName}".\nCause: ${cause}`)
-      }
-      try {
-        mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
-      } catch (retryErr) {
-        const cause = retryErr instanceof Error ? retryErr.message : String(retryErr)
-        throw new Error(
-          `Plugin "${pkgName}" failed to load after install from ${resolved}.\nCause: ${cause}`
-        )
-      }
-    } else if (isModuleNotFound(err)) {
+    if (isModuleNotFound(err) && !existsSync(resolved)) {
       throw new Error(
-        `Plugin "${pkgName}" not found. Install it first, then retry your command.`
+        `Plugin "${pkgName}" not found. Install it first, then retry your command.\nRun: antseed plugin add ${pkgName}`
       )
     } else {
       const cause = err instanceof Error ? err.message : String(err)
@@ -79,6 +66,42 @@ async function loadPlugin<T>(
   }
 
   return plugin as T
+}
+
+async function ensureTrustedPluginInstallReady(
+  pkgName: string,
+  entryPath: string,
+  pluginsDir: string,
+): Promise<void> {
+  const pkgJsonPath = join(pluginsDir, 'node_modules', ...pkgName.split('/'), 'package.json')
+  const shouldInstall = !existsSync(entryPath) || !existsSync(pkgJsonPath) || hasMissingDeclaredDependency(pkgJsonPath, pluginsDir)
+  if (!shouldInstall) return
+
+  const action = existsSync(entryPath)
+    ? 'appears incomplete or stale. Reinstalling latest version...'
+    : 'not installed. Installing...'
+  console.log(`Plugin "${pkgName}" ${action}`)
+  try {
+    await installPlugin(`${pkgName}@latest`)
+  } catch (installErr) {
+    const cause = installErr instanceof Error ? installErr.message : String(installErr)
+    throw new Error(`Failed to install plugin "${pkgName}".\nCause: ${cause}`)
+  }
+}
+
+function hasMissingDeclaredDependency(pkgJsonPath: string, pluginsDir: string): boolean {
+  try {
+    const raw = readFileSync(pkgJsonPath, 'utf8')
+    const parsed = JSON.parse(raw) as { dependencies?: Record<string, string> }
+    for (const depName of Object.keys(parsed.dependencies ?? {})) {
+      const depPkgJsonPath = path.resolve(join(pluginsDir, 'node_modules', ...depName.split('/'), 'package.json'))
+      if (!depPkgJsonPath.startsWith(path.resolve(pluginsDir))) return true
+      if (!existsSync(depPkgJsonPath)) return true
+    }
+    return false
+  } catch {
+    return true
+  }
 }
 
 export async function loadProviderPlugin(nameOrPackage: string): Promise<AntseedProviderPlugin> {
