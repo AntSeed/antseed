@@ -76,6 +76,7 @@ export type ChatModuleApi = {
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
+  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
@@ -848,6 +849,7 @@ export function initChatModule({
       streamStartedAtByConversation.delete(convId);
     }
     syncActiveConversationSendingState();
+    notifyUiStateChangedSync();
   }
 
   function setChatSending(sending: boolean): void {
@@ -981,6 +983,27 @@ export function initChatModule({
       peerId: entry.peerId || undefined,
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
+  }
+
+  function getConversationServiceSelection(convId: string): ChatServiceSelection {
+    const conversation =
+      activeConversation?.id === convId
+        ? activeConversation
+        : (Array.isArray(uiState.chatConversations)
+            ? (uiState.chatConversations as ChatConversationSummary[]).find((conv) => conv.id === convId)
+            : null);
+
+    const conversationModel = normalizeChatServiceId(conversation?.service);
+    if (conversationModel.length > 0) {
+      const conversationPeerId = conversation?.peerId?.trim() || undefined;
+      return {
+        id: conversationModel,
+        provider: normalizeProviderId(conversation?.provider),
+        ...(conversationPeerId ? { peerId: conversationPeerId } : {}),
+      };
+    }
+
+    return getSelectedChatServiceSelection();
   }
 
   function getSelectedChatServiceSelection(): ChatServiceSelection {
@@ -1941,7 +1964,7 @@ export function initChatModule({
   ): void {
     if (!bridge) return;
 
-    const selection = selectionOverride ?? getSelectedChatServiceSelection();
+    const selection = selectionOverride ?? getConversationServiceSelection(convId);
     const requestStartedAt = Date.now();
     streamCompletedAtByConversation.delete(convId);
 
@@ -2755,6 +2778,7 @@ export function initChatModule({
     renameConversation,
     openConversation,
     sendMessage,
+    sendMessageToConversation,
     retryAfterPayment,
     abortChat,
     handleServiceChange,

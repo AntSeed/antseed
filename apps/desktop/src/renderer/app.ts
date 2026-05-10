@@ -441,6 +441,7 @@ registerActions({
   startNewChat: chatApi.startNewChat,
   openConversation: chatApi.openConversation,
   sendMessage: chatApi.sendMessage,
+  sendMessageToConversation: chatApi.sendMessageToConversation,
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
   renameConversation: chatApi.renameConversation,

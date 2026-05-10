@@ -154,6 +154,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   // stream ends (naturally or via Stop). See issue #59.
   type PendingDraft = {
     id: string;
+    conversationId: string | null;
     text: string;
     attachments: RawChatAttachment[];
   };
@@ -176,7 +177,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
-  const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
   const wasActiveRef = useRef<boolean>(active);
   const isUserScrolledUp = useRef(false);
@@ -261,23 +261,29 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => observer.disconnect();
   }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending, scrollChatToBottom]);
 
-  // Re-focus the input when it transitions from disabled → enabled, and if a
-  // draft is queued, ship the head of the queue as its own turn. Each draft
-  // stays a distinct message so the model can reason/respond between them
-  // (matches CLI-style turn-by-turn flow).
-  // Dispatch is inlined (rather than delegating to handleSend) so the effect
-  // isn't coupled to handleSend's stale closure over chatInputDisabled.
+  const activePendingQueue = useMemo(
+    () => pendingQueue.filter((item) => item.conversationId === snap.chatActiveConversation),
+    [pendingQueue, snap.chatActiveConversation],
+  );
+
+  // Re-focus the input when the active conversation becomes writable, and if
+  // that same conversation has queued drafts, ship the head of its queue as its
+  // own turn. Queue entries are scoped to the conversation they were authored
+  // in so switching chats while a response streams cannot send the draft in the
+  // newly-opened chat.
   useEffect(() => {
-    const wasDisabled = prevInputDisabled.current;
-    const isDisabled = snap.chatInputDisabled;
-    prevInputDisabled.current = isDisabled;
-    if (!wasDisabled || isDisabled) return;
+    if (snap.chatInputDisabled) return;
     if (inputRef.current) inputRef.current.focus();
-    if (pendingQueue.length === 0) return;
-    const [head, ...rest] = pendingQueue;
-    setPendingQueue(rest);
-    actions.sendMessage(head.text, head.attachments);
-  }, [snap.chatInputDisabled, pendingQueue, actions]);
+    if (activePendingQueue.length === 0) return;
+    const head = activePendingQueue[0];
+    if (!head) return;
+    setPendingQueue((prev) => prev.filter((item) => item.id !== head.id));
+    if (head.conversationId) {
+      actions.sendMessageToConversation(head.conversationId, head.text, head.attachments);
+    } else {
+      actions.sendMessage(head.text, head.attachments);
+    }
+  }, [snap.chatInputDisabled, activePendingQueue, actions]);
 
   // --- Divider drag (pointer capture — no orphaned listeners) ---
   const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
@@ -444,7 +450,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `pending-${String(Date.now())}-${String(Math.random())}`;
-      setPendingQueue((prev) => [...prev, { id, text, attachments: attachedFiles }]);
+      setPendingQueue((prev) => [
+        ...prev,
+        { id, conversationId: snap.chatActiveConversation, text, attachments: attachedFiles },
+      ]);
       resetComposer();
       return;
     }
@@ -462,7 +471,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const filesToSend = attachedFiles;
     resetComposer();
     actions.sendMessage(text, filesToSend);
-  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, resetComposer, lowReputationPeer, visibleMessages.length]);
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length]);
 
   const handleLowReputationContinue = useCallback(() => {
     if (lowReputationPeer) {
@@ -786,7 +795,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 phaseLabel={snap.chatThinkingPhase}
               />
             )}
-            {pendingQueue.map((item) => (
+            {activePendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
                 className={`${bubbleStyles.chatBubble} ${bubbleStyles.own}`}
