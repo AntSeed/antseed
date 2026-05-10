@@ -148,6 +148,8 @@ export function initChatModule({
   let serviceRefreshToken = 0;
   let serviceRefreshInProgress = false;
   let serviceSelectFocused = false;
+  let workspaceSwitchToken = 0;
+  let desiredWorkspacePath: string | null = uiState.chatWorkspacePath || null;
   const sendingConversationIds = new Set<string>();
   const streamTurnsByConversation = new Map<string, number>();
   const streamStartedAtByConversation = new Map<string, number>();
@@ -1378,6 +1380,7 @@ export function initChatModule({
       if (result.ok && result.data) {
         uiState.chatWorkspacePath = result.data.current;
         uiState.chatWorkspaceDefaultPath = result.data.default;
+        desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
         await refreshWorkspaceGitStatus();
       }
@@ -1412,11 +1415,26 @@ export function initChatModule({
   async function restoreWorkspace(workspacePath: string): Promise<void> {
     if (!bridge?.chatAiSetWorkspace) return;
 
+    const token = ++workspaceSwitchToken;
+    desiredWorkspacePath = workspacePath;
+
     try {
       const result = await bridge.chatAiSetWorkspace(workspacePath);
+      if (token !== workspaceSwitchToken) {
+        // A newer conversation/manual workspace selection won the race. The IPC
+        // call above may still have persisted this stale workspace in main, so
+        // re-apply the latest requested workspace to keep main and the UI aligned.
+        const latestWorkspacePath = desiredWorkspacePath;
+        if (latestWorkspacePath && latestWorkspacePath !== workspacePath) {
+          void restoreWorkspace(latestWorkspacePath);
+        }
+        return;
+      }
+
       if (result.ok && result.data) {
         uiState.chatWorkspacePath = result.data.current;
         uiState.chatWorkspaceDefaultPath = result.data.default;
+        desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
         await refreshWorkspaceGitStatus();
       }
@@ -1436,14 +1454,21 @@ export function initChatModule({
         return;
       }
 
+      const token = ++workspaceSwitchToken;
+      desiredWorkspacePath = picked.path;
       const result = await bridge.chatAiSetWorkspace(picked.path);
       if (!result.ok || !result.data) {
+        desiredWorkspacePath = uiState.chatWorkspacePath || null;
         showChatError(result.error || 'Failed to set workspace');
+        return;
+      }
+      if (token !== workspaceSwitchToken) {
         return;
       }
 
       uiState.chatWorkspacePath = result.data.current;
       uiState.chatWorkspaceDefaultPath = result.data.default;
+      desiredWorkspacePath = result.data.current;
       uiState.chatError = null;
       startNewChat();
       await refreshChatConversations();

@@ -1739,7 +1739,16 @@ export function registerPiChatHandlers({
     // one-shot session.agent.setSystemPrompt call would be overridden.)
     // Priority: user override (env/config) → AntStation default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
-    const chatWorkspaceDir = getCurrentChatWorkspaceDir();
+    const sessionWorkspaceDir = sessionManager.getCwd()?.trim();
+    const chatWorkspaceDir = sessionWorkspaceDir && existsSync(sessionWorkspaceDir)
+      ? sessionWorkspaceDir
+      : getCurrentChatWorkspaceDir();
+    if (sessionWorkspaceDir && sessionWorkspaceDir !== chatWorkspaceDir) {
+      appendSystemLog(
+        `Conversation workspace is no longer available: ${sessionWorkspaceDir}. `
+        + `Using current workspace instead: ${chatWorkspaceDir}`,
+      );
+    }
     const settingsManager = SettingsManager.create(chatWorkspaceDir, CHAT_AGENT_DIR);
     const resourceLoader = new DefaultResourceLoader({
       cwd: chatWorkspaceDir,

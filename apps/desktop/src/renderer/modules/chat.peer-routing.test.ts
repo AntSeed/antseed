@@ -37,6 +37,22 @@ function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   });
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+type WorkspaceSetResult = { ok: boolean; data: { current: string; default: string } };
+
 type Conversation = {
   id: string;
   title: string;
@@ -557,6 +573,110 @@ test('opening a conversation restores its workspace path', async () => {
   await waitFor(() => workspaceCallLog.length >= 1, 2_000);
   assert.equal(workspaceCallLog[0], '/project-b');
   assert.equal(uiState.chatWorkspacePath, '/project-b');
+});
+
+test('rapid conversation switches keep the latest workspace selected', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.appSetupComplete = true;
+  uiState.chatWorkspacePath = '/default/workspace';
+
+  const conversations: Conversation[] = [
+    {
+      id: 'conv-project-a',
+      title: 'Project A Chat',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-project-b',
+      title: 'Project B Chat',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const workspaceCallLog: string[] = [];
+  const pendingWorkspaceSets = new Map<
+    string,
+    ReturnType<typeof createDeferred<WorkspaceSetResult>>
+  >();
+
+  const bridge: DesktopBridge = {
+    chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
+    chatAiGetWorkspaceGitStatus: async () => ({
+      ok: true,
+      data: {
+        available: true,
+        rootPath: uiState.chatWorkspacePath,
+        branch: 'main',
+        isDetached: false,
+        ahead: 0,
+        behind: 0,
+        stagedFiles: 0,
+        modifiedFiles: 0,
+        untrackedFiles: 0,
+        error: null,
+      },
+    }),
+    chatAiGetConversation: async (id) => {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv) return { ok: false, error: 'not found' };
+      const workspacePath = id === 'conv-project-a' ? '/project-a' : '/project-b';
+      return { ok: true, data: { ...conv, messages: [], workspacePath } };
+    },
+    chatAiSetWorkspace: async (workspacePath: string) => {
+      workspaceCallLog.push(workspacePath);
+      const deferred = createDeferred<WorkspaceSetResult>();
+      pendingWorkspaceSets.set(`${workspacePath}:${workspaceCallLog.length}`, deferred);
+      return deferred.promise;
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+
+  await api.openConversation('conv-project-a');
+  await waitFor(() => workspaceCallLog.length === 1);
+  assert.equal(workspaceCallLog[0], '/project-a');
+
+  await api.openConversation('conv-project-b');
+  await waitFor(() => workspaceCallLog.length === 2);
+  assert.equal(workspaceCallLog[1], '/project-b');
+
+  // Let the latest switch finish first.
+  pendingWorkspaceSets.get('/project-b:2')?.resolve({
+    ok: true,
+    data: { current: '/project-b', default: '/default' },
+  });
+  await waitFor(() => uiState.chatWorkspacePath === '/project-b');
+
+  // Now a stale earlier switch finishes. The module should re-apply /project-b
+  // because the stale IPC call may have changed persisted main-process state.
+  pendingWorkspaceSets.get('/project-a:1')?.resolve({
+    ok: true,
+    data: { current: '/project-a', default: '/default' },
+  });
+  await waitFor(() => workspaceCallLog.length === 3);
+  assert.equal(workspaceCallLog[2], '/project-b');
+  pendingWorkspaceSets.get('/project-b:3')?.resolve({
+    ok: true,
+    data: { current: '/project-b', default: '/default' },
+  });
+
+  await waitFor(() => uiState.chatWorkspacePath === '/project-b');
+  assert.equal(uiState.chatActiveConversation, 'conv-project-b');
 });
 
 test('opening a conversation does not switch workspace if it matches the current one', async () => {
