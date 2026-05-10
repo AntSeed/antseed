@@ -1,9 +1,21 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { builtinModules } from 'node:module'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey } from '@antseed/node'
+
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+])
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
 
 function resolvePackageName(nameOrPackage: string): string {
   const legacy = LEGACY_PACKAGE_MAP[nameOrPackage]
@@ -78,6 +90,7 @@ async function ensureTrustedPluginInstallReady(
     || !existsSync(pkgJsonPath)
     || hasMissingDeclaredDependencyTree(pkgName, pluginsDir)
   if (!shouldInstall) return
+  if (isTruthyEnv(process.env['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'])) return
 
   const action = existsSync(entryPath)
     ? 'appears incomplete or stale. Reinstalling latest version...'
@@ -116,6 +129,7 @@ function hasMissingDeclaredDependencyTree(
       ...(manifestName.startsWith('@antseed/') ? parsed.peerDependencies ?? {} : {}),
     }
     for (const depName of Object.keys(deps)) {
+      if (NODE_BUILTINS.has(depName)) continue
       if (hasMissingDeclaredDependencyTree(depName, pluginsDir, visited)) return true
     }
     return false

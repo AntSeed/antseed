@@ -4,6 +4,17 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-10 — Desktop router clean reinstall
+
+### Desktop
+
+- `@antseed/desktop@0.1.78`
+
+### Fixed
+
+- Fixed Desktop router recovery so stale or incomplete bundled router installs are deleted and recreated from the app bundle instead of being incrementally repaired.
+- Prevented the Desktop-started buyer runtime from retrying npm plugin repair after a successful bundled reinstall, keeping recovery offline on locked-down corporate networks.
+
 ## 2026-05-10 — Anthropic streaming token accounting fix
 
 ### Published

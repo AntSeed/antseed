@@ -276,11 +276,18 @@ async function removeDefaultRouterRuntimePackages(): Promise<void> {
   }
 }
 
+async function resetBundledPluginInstall(): Promise<void> {
+  await rm(path.join(DEFAULT_PLUGINS_DIR, 'node_modules'), { recursive: true, force: true });
+  await rm(path.join(DEFAULT_PLUGINS_DIR, 'package-lock.json'), { force: true });
+  await rm(path.join(DEFAULT_PLUGINS_DIR, 'npm-shrinkwrap.json'), { force: true });
+}
+
 export async function installPluginFromBundle(packageName: string): Promise<boolean> {
   // In production builds, plugins are bundled into Resources/bundled-plugins/.
   const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
   if (!existsSync(bundledPackagePath(bundleRoot, packageName))) return false;
 
+  await resetBundledPluginInstall();
   await ensurePluginsDirectory();
   const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
 
@@ -448,15 +455,11 @@ export async function ensureDefaultPlugin(
         : `Required plugin "${packageName}" not found. Installing`,
   );
   try {
-    // Wipe any partial AntSeed runtime install before repairing. A half-copied
-    // @antseed/node from a previous broken setup can otherwise satisfy presence
-    // checks while still missing nested deps like `ethers`.
-    if (incompleteInstall) await removeDefaultRouterRuntimePackages();
-
     // 1. Try copying from the app bundle (production builds — instant, fully
     //    offline, no Node/npm required on the user machine).
     let installedFromBundle = false;
     try {
+      ctx.appendLog('connect', 'system', 'Resetting bundled router plugin install.');
       installedFromBundle = await installPluginFromBundle(packageName);
     } catch (bundleErr) {
       const message = bundleErr instanceof Error ? bundleErr.message : String(bundleErr);
