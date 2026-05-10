@@ -60,15 +60,26 @@ export interface TokenUsage {
 }
 
 export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
-  // Direct shape: { usage: {...} } (OpenAI Chat, Anthropic Messages, etc.)
-  // Nested shape: { response: { usage: {...} } } (OpenAI Responses SSE
-  // `response.completed` events from the Codex backend bury usage under
-  // `response`).
+  // Direct shape: { usage: {...} } (OpenAI Chat, Anthropic Messages non-streaming)
+  // Nested shapes:
+  //   - { response: { usage: {...} } } — OpenAI Responses SSE `response.completed`
+  //     events from the Codex backend bury usage under `response`.
+  //   - { message: { usage: {...} } } — Anthropic Messages streaming
+  //     `message_start` event nests usage under `message`. This is where the
+  //     full input + cache_read_input_tokens + cache_creation_input_tokens
+  //     values live; without this unwrap, every cached Anthropic stream was
+  //     metered at only the small "fresh" tail count from `message_delta`,
+  //     making on-chain MetadataRecorded.inputTokens look absurdly low.
   let usage: Record<string, unknown> = {};
   if (parsed.usage && typeof parsed.usage === 'object') {
     usage = parsed.usage as Record<string, unknown>;
   } else if (parsed.response && typeof parsed.response === 'object') {
     const inner = parsed.response as Record<string, unknown>;
+    if (inner.usage && typeof inner.usage === 'object') {
+      usage = inner.usage as Record<string, unknown>;
+    }
+  } else if (parsed.message && typeof parsed.message === 'object') {
+    const inner = parsed.message as Record<string, unknown>;
     if (inner.usage && typeof inner.usage === 'object') {
       usage = inner.usage as Record<string, unknown>;
     }

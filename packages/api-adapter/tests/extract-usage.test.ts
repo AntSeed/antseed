@@ -151,6 +151,34 @@ describe('extractUsage', () => {
     });
   });
 
+  it('unwraps Anthropic Messages streaming message_start (message.usage)', () => {
+    // Anthropic streaming SSE: `message_start` nests usage under `message`.
+    // Without unwrapping, the cached/cache-creation counts vanish and only the
+    // fresh tail from message_delta survives — producing absurdly low
+    // on-chain inputTokens for Anthropic agents.
+    const result = extractUsage({
+      type: 'message_start',
+      message: {
+        id: 'msg_123',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet-4-5',
+        usage: {
+          input_tokens: 23,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 15000,
+          output_tokens: 1,
+        },
+      },
+    });
+    expect(result).toEqual({
+      inputTokens: 15023,        // fresh + cached (Anthropic separate-shape)
+      outputTokens: 1,
+      freshInputTokens: 23,
+      cachedInputTokens: 15000,
+    });
+  });
+
   it('takes the larger cached count when subset and separate disagree', () => {
     // Defensive: if a provider reports mismatched values, prefer the larger one
     // and still apply subset semantics (since prompt_tokens is present).

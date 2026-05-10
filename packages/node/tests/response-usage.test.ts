@@ -45,6 +45,32 @@ describe('parseResponseUsage', () => {
     });
   });
 
+  it('extracts cached + fresh + output from a real Anthropic streaming SSE', () => {
+    // Mirrors the shape Anthropic returns when the SDK sends a request that
+    // hits prompt cache: `message_start` carries the input/cache counts under
+    // `message.usage`, and `message_delta` carries only the running
+    // output_tokens. This was the exact failure mode reported on chain:
+    // inputTokens=23, outputTokens=21747 — the 15k cached tokens were dropped.
+    const stream = [
+      'event: message_start',
+      'data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":23,"cache_creation_input_tokens":0,"cache_read_input_tokens":15000,"output_tokens":1}}}',
+      '',
+      'event: content_block_delta',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}',
+      '',
+      'event: message_delta',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":21747}}',
+      '',
+    ].join('\n');
+    const usage = parseResponseUsage(enc.encode(stream));
+    expect(usage).toEqual({
+      inputTokens: 15023,
+      outputTokens: 21747,
+      freshInputTokens: 23,
+      cachedInputTokens: 15000,
+    });
+  });
+
   it('returns zeros when the body has no usage field', () => {
     const usage = parseResponseUsage(enc.encode(JSON.stringify({ model: 'foo' })));
     expect(usage).toEqual({ inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 });
