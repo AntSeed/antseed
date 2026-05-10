@@ -4,6 +4,24 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-10 — Anthropic streaming token accounting fix
+
+### Published
+
+- `@antseed/api-adapter@0.1.39`
+- `@antseed/node@0.2.84`
+- `@antseed/payments@0.1.18`
+- `@antseed/cli@0.1.119`
+
+### Desktop
+
+- `@antseed/desktop@0.1.77`
+
+### Fixed
+
+- Fixed Anthropic Messages streaming token accounting so the `message_start` event's `message.usage` payload is unwrapped alongside `parsed.usage` and `parsed.response.usage`. Previously, cached input tokens (`cache_read_input_tokens`) and the full input count vanished from streamed Anthropic responses, leaving only the small fresh tail from `message_delta` — producing on-chain `MetadataRecorded` events with absurdly low `inputTokens` and under-billing sellers for cached traffic. Both buyer and seller installs need this update for correct on-chain stats, accurate seller billing, and matching cost-tolerance validation between peers.
+- Fixed Desktop bundling so the prepared resource tree no longer collides when multiple plugins share transitive runtime dependencies.
+
 ## 2026-05-10 — Buyer router install repair
 
 ### Published
