@@ -1,0 +1,154 @@
+import { useEffect, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { useBodyScrollLock } from '../../hooks/use-body-scroll-lock';
+import { useBuyerEvmAddress } from '../../hooks/queries';
+import { DepositView } from '../../views/deposit-view';
+import type { OverlayPhase } from '../../context/app-shell-context';
+
+interface EmptyStateOverlayProps {
+  phase: OverlayPhase;
+  onContinue: () => void;
+  onDismissDeposit?: () => void;
+}
+
+function CopyIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M3 10.5V3.5C3 2.67 3.67 2 4.5 2H10.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3.5 8.5L6.5 11.5L12.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function BigCheckIcon() {
+  return (
+    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="32" cy="32" r="30" fill="var(--accent)" />
+      <path
+        className="success-check-path"
+        d="M20 33L28.5 41.5L44.5 23"
+        stroke="#fff"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function EmptyStateOverlay({
+  phase,
+  onContinue,
+  onDismissDeposit,
+}: EmptyStateOverlayProps) {
+  const buyerAddress = useBuyerEvmAddress();
+  const [copied, setCopied] = useState(false);
+
+  const isVisible = phase !== null;
+
+  useBodyScrollLock(isVisible);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (phase === 'deposit' && onDismissDeposit) onDismissDeposit();
+      else if (phase === 'success') onContinue();
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isVisible, phase, onDismissDeposit, onContinue]);
+
+  if (!isVisible) return null;
+
+  async function handleCopy() {
+    if (!buyerAddress) return;
+    try {
+      await navigator.clipboard.writeText(buyerAddress);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // clipboard blocked — ignore
+    }
+  }
+
+  return (
+    <div className="empty-state-overlay" role="dialog" aria-modal="true" aria-label="Get started">
+      <div className={`empty-state-card ${phase === 'success' ? 'empty-state-card--success' : ''}`}>
+        {phase === 'deposit' ? (
+          <>
+            {onDismissDeposit && (
+              <button
+                type="button"
+                className="empty-state-close"
+                onClick={onDismissDeposit}
+                aria-label="Close deposit prompt"
+              >
+                <CloseIcon />
+              </button>
+            )}
+            <div className="empty-state-header">
+              <div className="empty-state-eyebrow">Welcome to AntSeed</div>
+              <h2 className="empty-state-title">Fund your AntSeed account</h2>
+              <p className="empty-state-subtitle">
+                Deposit USDC to start routing requests across the network. Your AntSeed
+                signer authorizes spending from the account — it never holds funds itself.
+              </p>
+            </div>
+
+            <div className="empty-state-body">
+              <div className="empty-state-step">
+                <div className="empty-state-step-label">Step 1 · Deposit USDC</div>
+                <DepositView />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="empty-state-success">
+            <div className="empty-state-success-burst" aria-hidden="true">
+              <span className="empty-state-success-ring empty-state-success-ring--outer" />
+              <span className="empty-state-success-ring empty-state-success-ring--mid" />
+              <div className="empty-state-success-icon">
+                <BigCheckIcon />
+              </div>
+            </div>
+            <div className="empty-state-success-eyebrow">Deposit confirmed</div>
+            <h2 className="empty-state-title">You're all set</h2>
+            <p className="empty-state-subtitle">
+              Your deposit is in. AntSeed will now route requests across the network —
+              you only pay for what you use.
+            </p>
+            <div className="empty-state-success-actions">
+              <button
+                type="button"
+                className="rh-cta"
+                onClick={onContinue}
+              >
+                <span>Continue</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
