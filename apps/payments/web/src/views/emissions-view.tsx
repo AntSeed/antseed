@@ -1,12 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
+import { useCallback } from 'react';
+import { useAccount } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseAbi } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
-import { AntMark } from '../components/AntSeedLogo';
-import { Tooltip } from '../components/Tooltip';
+import { AntMark } from '../components/ui/ant-seed-logo';
+import { Tooltip } from '../components/ui/tooltip';
 import {
   type EmissionsPendingResponse,
   type EmissionsShares as SharesType,
@@ -17,10 +16,11 @@ import {
   useEmissionsPending,
   useEmissionsShares,
   useTransfersEnabled,
+  queryKeys,
 } from '../hooks/queries';
+import { useWagmiWrite } from '../hooks/use-wagmi-write';
 import { EMISSIONS_CLAIM_ABI } from '../abi';
-import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
+import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { estimateEmissionReward, safeBigint, formatAnts } from '../utils/format';
 
 interface EmissionsViewProps {
@@ -59,7 +59,6 @@ function computeEpochShare(
 
 export function EmissionsView({ config }: EmissionsViewProps) {
   const buyerAddress = config?.evmAddress ?? null;
-  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
   const { requireAuthorization, operatorSet } = useAuthorizedWallet();
   const { connector } = useAccount();
   const queryClient = useQueryClient();
@@ -85,21 +84,11 @@ export function EmissionsView({ config }: EmissionsViewProps) {
     : null;
 
   const invalidateEmissions = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['emissions'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.emissions });
   }, [queryClient]);
 
-  // Seller claim — wagmi write
-  const {
-    writeContract: writeSellerClaim,
-    data: sellerClaimTx,
-    reset: resetSellerClaim,
-    isPending: sellerClaimSubmitting,
-  } = useWriteContract();
-  const { isSuccess: sellerClaimConfirmed, isLoading: sellerClaimConfirming } = useWaitForTransactionReceipt({
-    hash: sellerClaimTx,
-    chainId: expectedChainId,
-  });
-  const [sellerClaimError, setSellerClaimError] = useState<string | null>(null);
+  const sellerClaim = useWagmiWrite(config, invalidateEmissions);
+  const buyerClaim = useWagmiWrite(config, invalidateEmissions);
 
   const handleClaimSeller = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending) return;
@@ -107,44 +96,14 @@ export function EmissionsView({ config }: EmissionsViewProps) {
       .filter((r) => !r.isCurrent && !r.seller.claimed && r.seller.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
-    requireAuthorization(async () => {
-      setSellerClaimError(null);
-      try {
-        await ensureCorrectNetwork();
-        writeSellerClaim({
-          address: config.emissionsContractAddress as `0x${string}`,
-          abi: parseAbi(EMISSIONS_CLAIM_ABI),
-          functionName: 'claimSellerEmissions',
-          chainId: expectedChainId,
-          args: [epochs],
-        }, {
-          onError: (err) => setSellerClaimError(getErrorMessage(err)),
-        });
-      } catch (err) {
-        setSellerClaimError(getErrorMessage(err));
-      }
-    });
-  }, [config, pending, ensureCorrectNetwork, expectedChainId, writeSellerClaim, requireAuthorization]);
-
-  useEffect(() => {
-    if (sellerClaimConfirmed) {
-      resetSellerClaim();
-      invalidateEmissions();
-    }
-  }, [sellerClaimConfirmed, resetSellerClaim, invalidateEmissions]);
-
-  // Buyer claim — wagmi write
-  const {
-    writeContract: writeBuyerClaim,
-    data: buyerClaimTx,
-    reset: resetBuyerClaim,
-    isPending: buyerClaimSubmitting,
-  } = useWriteContract();
-  const { isSuccess: buyerClaimConfirmed, isLoading: buyerClaimConfirming } = useWaitForTransactionReceipt({
-    hash: buyerClaimTx,
-    chainId: expectedChainId,
-  });
-  const [buyerClaimError, setBuyerClaimError] = useState<string | null>(null);
+    requireAuthorization(() => sellerClaim.submit(() => ({
+      address: config.emissionsContractAddress as `0x${string}`,
+      abi: EMISSIONS_CLAIM_ABI,
+      functionName: 'claimSellerEmissions',
+      chainId: sellerClaim.expectedChainId,
+      args: [epochs],
+    })));
+  }, [config, pending, requireAuthorization, sellerClaim]);
 
   const handleClaimBuyer = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending || !buyerAddress) return;
@@ -152,31 +111,19 @@ export function EmissionsView({ config }: EmissionsViewProps) {
       .filter((r) => !r.isCurrent && !r.buyer.claimed && r.buyer.amount !== '0')
       .map((r) => BigInt(r.epoch));
     if (epochs.length === 0) return;
-    requireAuthorization(async () => {
-      setBuyerClaimError(null);
-      try {
-        await ensureCorrectNetwork();
-        writeBuyerClaim({
-          address: config.emissionsContractAddress as `0x${string}`,
-          abi: parseAbi(EMISSIONS_CLAIM_ABI),
-          functionName: 'claimBuyerEmissions',
-          chainId: expectedChainId,
-          args: [buyerAddress as `0x${string}`, epochs],
-        }, {
-          onError: (err) => setBuyerClaimError(getErrorMessage(err)),
-        });
-      } catch (err) {
-        setBuyerClaimError(getErrorMessage(err));
-      }
-    });
-  }, [config, pending, buyerAddress, ensureCorrectNetwork, expectedChainId, writeBuyerClaim, requireAuthorization]);
+    requireAuthorization(() => buyerClaim.submit(() => ({
+      address: config.emissionsContractAddress as `0x${string}`,
+      abi: EMISSIONS_CLAIM_ABI,
+      functionName: 'claimBuyerEmissions',
+      chainId: buyerClaim.expectedChainId,
+      args: [buyerAddress as `0x${string}`, epochs],
+    })));
+  }, [config, pending, buyerAddress, requireAuthorization, buyerClaim]);
 
-  useEffect(() => {
-    if (buyerClaimConfirmed) {
-      resetBuyerClaim();
-      invalidateEmissions();
-    }
-  }, [buyerClaimConfirmed, resetBuyerClaim, invalidateEmissions]);
+  const sellerClaimBusy = sellerClaim.running;
+  const buyerClaimBusy = buyerClaim.running;
+  const sellerClaimError = sellerClaim.error;
+  const buyerClaimError = buyerClaim.error;
 
   if (isFirstLoad) {
     return <EmissionsSkeleton />;
@@ -259,7 +206,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const sellerClaimable = sellerClaimableWei > 0n;
   const buyerClaimable = buyerClaimableWei > 0n;
   const anyClaimable = sellerClaimable || buyerClaimable;
-  const claimBusy = sellerClaimSubmitting || sellerClaimConfirming || buyerClaimSubmitting || buyerClaimConfirming;
+  const claimBusy = sellerClaimBusy || buyerClaimBusy;
 
   // Reason a per-side button is disabled (busy or unauthorized). null = good to go.
   const claimDisabledReason: string | null = claimBusy
@@ -294,7 +241,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
                 <span className="page-banner-action-icon page-banner-action-icon--accent" aria-hidden="true">
                   <AntMark size={14} />
                 </span>
-                {sellerClaimSubmitting || sellerClaimConfirming
+                {sellerClaimBusy
                   ? 'Claiming…'
                   : `Claim ${formatAnts(sellerClaimableWei)} seller`}
                 <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={1.8} />
@@ -312,7 +259,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
                 <span className="page-banner-action-icon page-banner-action-icon--accent" aria-hidden="true">
                   <AntMark size={14} />
                 </span>
-                {buyerClaimSubmitting || buyerClaimConfirming
+                {buyerClaimBusy
                   ? 'Claiming…'
                   : `Claim ${formatAnts(buyerClaimableWei)} buyer`}
                 <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={1.8} />

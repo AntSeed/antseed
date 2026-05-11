@@ -145,7 +145,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   });
 
   // Withdrawals are now submitted directly from the connected wallet
-  // (see apps/payments/web/src/hooks/useWithdraw.ts). The contract requires
+  // (see apps/payments/web/src/hooks/use-withdraw.ts). The contract requires
   // msg.sender == operator and sends funds to msg.sender, so the server-side
   // signer cannot execute withdraw once a separate wallet is authorized.
 

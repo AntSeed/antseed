@@ -4,7 +4,7 @@ import { useAccount, usePublicClient } from 'wagmi';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, Plant01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
-import type { TabId } from '../layout/Sidebar';
+import type { TabId } from '../layout/sidebar';
 import {
   type EmissionsPendingResponse,
   type EmissionsShares,
@@ -23,8 +23,8 @@ import {
   formatDurationHuman,
   safeBigint,
 } from '../utils/format';
-import { AntMark } from '../components/AntSeedLogo';
-import './EarnView.scss';
+import { AntMark } from '../components/ui/ant-seed-logo';
+import './earn-view.scss';
 
 interface EarnViewProps {
   config: PaymentConfig | null;

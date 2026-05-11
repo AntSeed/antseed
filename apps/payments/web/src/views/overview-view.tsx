@@ -1,11 +1,11 @@
 import type { PaymentConfig, BalanceData } from '../types';
 import { type BuyerUsageChannelPoint } from '../api';
 import { useBuyerUsage, useNetworkStats } from '../hooks/queries';
-import { UsageChart } from '../components/UsageChart';
+import { UsageChart } from '../components/ui/usage-chart';
 import { formatCompact, formatNumber, bigintFromString } from '../utils/format';
-import { OverviewHero } from './OverviewHero';
-import type { TabId } from '../layout/Sidebar';
-import './OverviewView.scss';
+import { OverviewHero } from './overview-hero';
+import type { TabId } from '../layout/sidebar';
+import './overview-view.scss';
 
 interface OverviewViewProps {
   config: PaymentConfig | null;

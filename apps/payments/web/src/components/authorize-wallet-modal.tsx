@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ActionModal } from '../layout/ActionModal';
-import { Tooltip } from './Tooltip';
-import { useSetOperator } from '../hooks/useSetOperator';
+import { ActionModal } from '../layout/action-modal';
+import { Tooltip } from './ui/tooltip';
+import { useSetOperator } from '../hooks/use-set-operator';
 import type { PaymentConfig } from '../types';
 
 interface AuthorizeWalletModalProps {

@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import type { ChannelData } from '../api';
 import { CHANNELS_ABI } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { useChannels } from '../hooks/useChannels';
-import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
+import { useChannels } from '../hooks/use-channels';
+import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { formatCountdownMSS, formatUsd, truncateAddr } from '../utils/format';
-import './ChannelsView.scss';
+import './channels-view.scss';
 
 interface ChannelsViewProps {
   config: PaymentConfig | null;
@@ -161,8 +160,6 @@ function formatChannelUsd(value: string): string {
   return n.toFixed(4);
 }
 
-const parsedAbi = parseAbi(CHANNELS_ABI);
-
 function ChannelRow({
   session,
   config,
@@ -177,53 +174,82 @@ function ChannelRow({
   const { requireAuthorization } = useAuthorizedWallet();
   const [error, setError] = useState<string | null>(null);
 
-  const { writeContract: writeRequestClose, data: closeTxHash } = useWriteContract();
-  const { isSuccess: closeConfirmed } = useWaitForTransactionReceipt({
+  const {
+    writeContract: writeRequestClose,
+    data: closeTxHash,
+    reset: resetClose,
+    isPending: closeSubmitting,
+  } = useWriteContract();
+  const { isSuccess: closeConfirmed, isLoading: closeConfirming } = useWaitForTransactionReceipt({
     hash: closeTxHash,
     chainId: expectedChainId,
   });
 
-  const { writeContract: writeWithdraw, data: withdrawTxHash } = useWriteContract();
-  const { isSuccess: withdrawConfirmed } = useWaitForTransactionReceipt({
+  const {
+    writeContract: writeWithdraw,
+    data: withdrawTxHash,
+    reset: resetWithdraw,
+    isPending: withdrawSubmitting,
+  } = useWriteContract();
+  const { isSuccess: withdrawConfirmed, isLoading: withdrawConfirming } = useWaitForTransactionReceipt({
     hash: withdrawTxHash,
     chainId: expectedChainId,
   });
 
+  const closeBusy = closeSubmitting || closeConfirming;
+  const withdrawBusy = withdrawSubmitting || withdrawConfirming;
+
   const handleRequestClose = useCallback(() => {
+    if (closeBusy) return;
     requireAuthorization(async () => {
       setError(null);
       try {
         await ensureCorrectNetwork();
         writeRequestClose({
           address: config.channelsContractAddress as `0x${string}`,
-          abi: parsedAbi,
+          abi: CHANNELS_ABI,
           functionName: 'requestClose',
           chainId: expectedChainId,
           args: [session.channelId as `0x${string}`],
+        }, {
+          onError: (err) => setError(getErrorMessage(err)),
         });
       } catch (err) {
         setError(getErrorMessage(err));
       }
     });
-  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeRequestClose, requireAuthorization]);
+  }, [closeBusy, config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeRequestClose, requireAuthorization]);
 
   const handleWithdraw = useCallback(() => {
+    if (withdrawBusy) return;
     requireAuthorization(async () => {
       setError(null);
       try {
         await ensureCorrectNetwork();
         writeWithdraw({
           address: config.channelsContractAddress as `0x${string}`,
-          abi: parsedAbi,
+          abi: CHANNELS_ABI,
           functionName: 'withdraw',
           chainId: expectedChainId,
           args: [session.channelId as `0x${string}`],
+        }, {
+          onError: (err) => setError(getErrorMessage(err)),
         });
       } catch (err) {
         setError(getErrorMessage(err));
       }
     });
-  }, [config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeWithdraw, requireAuthorization]);
+  }, [withdrawBusy, config.channelsContractAddress, ensureCorrectNetwork, expectedChainId, session.channelId, writeWithdraw, requireAuthorization]);
+
+  // After the parent refetches, clear the wagmi receipt state so the row drops
+  // out of the "confirmed → Refresh" branch and renders the action button that
+  // matches the new on-chain status.
+  const handleRefreshRow = useCallback(() => {
+    resetClose();
+    resetWithdraw();
+    setError(null);
+    onRefresh();
+  }, [resetClose, resetWithdraw, onRefresh]);
 
   const meta = STATUS_META[status];
   const pillLabel = status === 'closing'
@@ -251,13 +277,25 @@ function ChannelRow({
       </td>
       <td className="channels-table-action">
         {closeConfirmed || withdrawConfirmed ? (
-          <button className="btn-link" onClick={onRefresh}>Refresh</button>
+          <button className="btn-link" onClick={handleRefreshRow}>Refresh</button>
         ) : status === 'active' ? (
-          <button className="btn-outline" onClick={handleRequestClose}>Close</button>
+          <button
+            className="btn-outline"
+            onClick={handleRequestClose}
+            disabled={closeBusy}
+          >
+            {closeSubmitting ? 'Confirm…' : closeConfirming ? 'Closing…' : 'Close'}
+          </button>
         ) : status === 'closing' ? (
           <button className="btn-outline" disabled>Waiting…</button>
         ) : status === 'withdrawable' ? (
-          <button className="btn-primary" onClick={handleWithdraw}>Withdraw</button>
+          <button
+            className="btn-primary"
+            onClick={handleWithdraw}
+            disabled={withdrawBusy}
+          >
+            {withdrawSubmitting ? 'Confirm…' : withdrawConfirming ? 'Withdrawing…' : 'Withdraw'}
+          </button>
         ) : (
           <span className="channels-table-dash">—</span>
         )}

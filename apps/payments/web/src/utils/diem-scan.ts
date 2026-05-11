@@ -1,8 +1,6 @@
-import { parseAbi, type PublicClient } from 'viem';
+import { type PublicClient } from 'viem';
 import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS } from '../abi';
 import { asBigint, asNumber } from './format';
-
-const DIEM_PROXY_ABI = parseAbi(DIEM_STAKING_PROXY_ABI);
 
 export interface DiemEpochRow {
   epoch: number;
@@ -32,12 +30,31 @@ export async function scanDiemEpochs(
   const [firstRaw, finalizedRaw, syncedRaw, lastClaimedRaw] = await publicClient.multicall({
     allowFailure: true,
     contracts: [
-      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'firstRewardEpoch' },
-      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'finalizedRewardEpoch' },
-      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'syncedRewardEpoch' },
-      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'userLastClaimedEpoch', args: [address] },
+      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch' },
+      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'finalizedRewardEpoch' },
+      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'syncedRewardEpoch' },
+      { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'userLastClaimedEpoch', args: [address] },
     ],
   });
+
+  // The cursor reads define the scan window. Coercing failures to 0 silently
+  // produces an empty result that looks identical to "no rewards", so the UI
+  // never sees the RPC error. Surface it instead.
+  const cursorFailure =
+    firstRaw.status === 'failure' ||
+    finalizedRaw.status === 'failure' ||
+    syncedRaw.status === 'failure' ||
+    lastClaimedRaw.status === 'failure';
+  if (cursorFailure) {
+    const firstError =
+      (firstRaw.status === 'failure' && firstRaw.error) ||
+      (finalizedRaw.status === 'failure' && finalizedRaw.error) ||
+      (syncedRaw.status === 'failure' && syncedRaw.error) ||
+      (lastClaimedRaw.status === 'failure' && lastClaimedRaw.error);
+    throw new Error(
+      `DIEM staking proxy unavailable: ${firstError instanceof Error ? firstError.message : 'cursor read failed'}`,
+    );
+  }
 
   const firstRewardEpoch = asNumber(firstRaw.result);
   const finalizedRewardEpoch = asNumber(finalizedRaw.result);
@@ -54,8 +71,8 @@ export async function scanDiemEpochs(
     const results = await publicClient.multicall({
       allowFailure: true,
       contracts: epochs.flatMap((epoch) => [
-        { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'pendingAntsForEpoch', args: [address, epoch] as const },
-        { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'userEpochClaimed',    args: [address, epoch] as const },
+        { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'pendingAntsForEpoch', args: [address, epoch] as const },
+        { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_STAKING_PROXY_ABI, functionName: 'userEpochClaimed',    args: [address, epoch] as const },
       ]),
     });
     rows = epochs.map((epoch, i) => ({

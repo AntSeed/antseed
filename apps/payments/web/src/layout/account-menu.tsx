@@ -22,11 +22,11 @@ import {
 } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
 import { usePaymentNetwork } from '../payment-network';
-import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
-import { useSetOperator, useTransferOperator } from '../hooks/useSetOperator';
-import { InfoHint } from '../components/InfoHint';
-import { Tooltip } from '../components/Tooltip';
-import { BaseLogo } from '../components/BrandLogos';
+import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { useSetOperator, useTransferOperator } from '../hooks/use-set-operator';
+import { InfoHint } from '../components/ui/info-hint';
+import { Tooltip } from '../components/ui/tooltip';
+import { BaseLogo } from '../components/ui/brand-logos';
 import { formatUsd, truncateAddr, ZERO_ADDR } from '../utils/format';
 
 interface AccountMenuProps {

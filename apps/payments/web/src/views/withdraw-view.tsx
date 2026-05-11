@@ -4,12 +4,12 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Wallet02Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
-import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
-import { useWithdraw } from '../hooks/useWithdraw';
+import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { useWithdraw } from '../hooks/use-withdraw';
 import { usePaymentNetwork } from '../payment-network';
-import { UsdcLogo, BaseLogo } from './BrandLogos';
+import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
 import { formatUsd, formatAmountInput, truncateAddr, ZERO_ADDR } from '../utils/format';
-import './WithdrawView.scss';
+import './withdraw-view.scss';
 
 interface WithdrawViewProps {
   config: PaymentConfig | null;

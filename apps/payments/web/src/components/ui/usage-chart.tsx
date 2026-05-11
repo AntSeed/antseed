@@ -9,9 +9,9 @@ import {
   CartesianGrid,
   type TooltipProps,
 } from 'recharts';
-import type { BuyerUsageChannelPoint } from '../api';
-import { formatCompact } from '../utils/format';
-import './UsageChart.scss';
+import type { BuyerUsageChannelPoint } from '../../api';
+import { formatCompact } from '../../utils/format';
+import './usage-chart.scss';
 
 interface UsageChartProps {
   channels: BuyerUsageChannelPoint[];

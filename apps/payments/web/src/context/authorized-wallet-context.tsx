@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { getOperatorInfo } from '../api';
 import type { PaymentConfig } from '../types';
-import { AuthorizeWalletModal } from '../components/AuthorizeWalletModal';
+import { AuthorizeWalletModal } from '../components/authorize-wallet-modal';
 import { ZERO_ADDR } from '../utils/format';
 
 type PendingAction = (() => void | Promise<void>) | null;

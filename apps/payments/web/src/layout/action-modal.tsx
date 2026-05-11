@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { useBodyScrollLock } from '../hooks/use-body-scroll-lock';
 
 interface ActionModalProps {
   isOpen: boolean;

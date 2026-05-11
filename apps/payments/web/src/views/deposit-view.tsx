@@ -7,18 +7,15 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
 } from 'wagmi';
-import { formatUnits, parseAbi, parseUnits } from 'viem';
+import { formatUnits, parseUnits } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { UsdcLogo, BaseLogo } from './BrandLogos';
+import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
 import { formatUsd, formatAmountInput, truncateAddr } from '../utils/format';
 import { DEPOSITS_ABI, ERC20_ABI } from '../abi';
-import './DepositView.scss';
-
-const depositsAbi = parseAbi(DEPOSITS_ABI);
-const erc20Abi = parseAbi(ERC20_ABI);
+import './deposit-view.scss';
 
 const MIN_FIRST_DEPOSIT = 1; // USDC — matches AntseedDeposits.MIN_BUYER_DEPOSIT
 
@@ -148,7 +145,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     isFetching: walletUsdcFetching,
   } = useReadContract({
     address: config?.usdcContractAddress as `0x${string}`,
-    abi: erc20Abi,
+    abi: ERC20_ABI,
     functionName: 'balanceOf',
     chainId: expectedChainId,
     args: [address as `0x${string}`],
@@ -231,7 +228,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     isFetching: allowanceFetching,
   } = useReadContract({
     address: config?.usdcContractAddress as `0x${string}`,
-    abi: erc20Abi,
+    abi: ERC20_ABI,
     functionName: 'allowance',
     chainId: expectedChainId,
     args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
@@ -330,7 +327,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
       setStep('depositing');
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,
-        abi: depositsAbi,
+        abi: DEPOSITS_ABI,
         functionName: 'deposit',
         chainId: expectedChainId,
         args: [depositTarget as `0x${string}`, usdcAmount],
@@ -348,7 +345,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     setStep('approving');
     writeApprove({
       address: config.usdcContractAddress as `0x${string}`,
-      abi: erc20Abi,
+      abi: ERC20_ABI,
       functionName: 'approve',
       chainId: expectedChainId,
       args: [config.depositsContractAddress as `0x${string}`, usdcAmount],

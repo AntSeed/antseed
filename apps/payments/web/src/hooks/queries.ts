@@ -10,13 +10,17 @@ import {
   getNetworkStats,
   getTransfersEnabled,
 } from '../api';
-import { scanDiemEpochs } from '../utils/diemScan';
+import { scanDiemEpochs } from '../utils/diem-scan';
 
 export const queryKeys = {
   balance: ['balance'] as const,
   config: ['config'] as const,
   buyerUsage: ['buyer-usage'] as const,
   networkStats: (url: string) => ['network-stats', url] as const,
+  // Prefix keys — invalidating these prefix-matches every query under them
+  // (react-query's default invalidate behavior is by-prefix).
+  emissions: ['emissions'] as const,
+  diem: ['diem-scan'] as const,
   emissionsInfo: ['emissions', 'info'] as const,
   emissionsPending: (address: string | null) => ['emissions', 'pending', address] as const,
   emissionsShares: ['emissions', 'shares'] as const,

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useReadContracts } from 'wagmi';
-import { formatUnits, parseAbi } from 'viem';
+import { formatUnits } from 'viem';
 import { getChannels, type ChannelData, type RawChannel } from '../api';
 import { CHANNELS_ABI } from '../abi';
 import type { PaymentConfig } from '../types';
 import { safeBigint } from '../utils/format';
-
-const parsedAbi = parseAbi(CHANNELS_ABI);
 
 // Tuple shape of the `channels(bytes32)` getter return.
 // [buyer, seller, deposit, settled, metadataHash, deadline, settledAt, closeRequestedAt, status]
@@ -43,7 +41,7 @@ export function useChannels(config: PaymentConfig | null): {
     const chainId = config.evmChainId;
     return rawChannels.map((c) => ({
       address,
-      abi: parsedAbi,
+      abi: CHANNELS_ABI,
       functionName: 'channels' as const,
       args: [c.channelId as `0x${string}`] as const,
       chainId,

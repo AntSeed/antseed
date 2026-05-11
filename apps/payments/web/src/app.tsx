@@ -2,23 +2,23 @@ import { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { BalanceData, PaymentConfig } from './types';
 import { useBalance, useConfig, queryKeys } from './hooks/queries';
-import { Sidebar, type TabId } from './layout/Sidebar';
-import { EmptyStateOverlay } from './layout/EmptyStateOverlay';
-import { LoaderOverlay } from './layout/LoaderOverlay';
-import { ActionModal } from './layout/ActionModal';
-import { DepositView } from './components/DepositView';
-import { WithdrawView } from './components/WithdrawView';
-import { OverviewView } from './views/OverviewView';
-import { EmissionsView } from './views/EmissionsView';
-import { DiemRewardsView } from './views/DiemRewardsView';
-import { EarnView } from './views/EarnView';
-import { ChannelsView } from './components/ChannelsView';
-import { AuthorizedWalletProvider } from './context/AuthorizedWalletContext';
-import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
+import { Sidebar, TAB_IDS, type TabId } from './layout/sidebar';
+import { EmptyStateOverlay } from './layout/empty-state-overlay';
+import { LoaderOverlay } from './layout/loader-overlay';
+import { ActionModal } from './layout/action-modal';
+import { DepositView } from './views/deposit-view';
+import { WithdrawView } from './views/withdraw-view';
+import { OverviewView } from './views/overview-view';
+import { EmissionsView } from './views/emissions-view';
+import { DiemRewardsView } from './views/diem-rewards-view';
+import { EarnView } from './views/earn-view';
+import { ChannelsView } from './views/channels-view';
+import { AuthorizedWalletProvider } from './context/authorized-wallet-context';
+import { AuthorizeWalletAlert } from './layout/authorize-wallet-alert';
 
 export type OverlayPhase = 'deposit' | 'success' | null;
 
-const VALID_TABS = new Set<TabId>(['overview', 'channels', 'earn', 'emissions', 'diem-rewards']);
+const VALID_TABS: ReadonlySet<TabId> = new Set(TAB_IDS);
 
 function parseTabFromUrl(): TabId {
   const raw = new URLSearchParams(window.location.search).get('tab');

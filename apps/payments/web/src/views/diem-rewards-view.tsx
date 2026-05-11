@@ -2,23 +2,21 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseAbi } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
-import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS } from '../abi';
+import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS, DIEM_TOKEN_ADDRESS } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 import { formatAnts } from '../utils/format';
-import { type DiemEpochRow, type DiemEpochScan } from '../utils/diemScan';
-import { useDiemScan } from '../hooks/queries';
-import { Tooltip } from '../components/Tooltip';
+import { type DiemEpochRow, type DiemEpochScan } from '../utils/diem-scan';
+import { useDiemScan, queryKeys } from '../hooks/queries';
+import { Tooltip } from '../components/ui/tooltip';
 
 interface DiemRewardsViewProps {
   config: PaymentConfig | null;
 }
 
 const MAX_EPOCHS_PREVIEW = 16;
-const DIEM_PROXY_ABI = parseAbi(DIEM_STAKING_PROXY_ABI);
 
 function formatEpochRange(snapshot: DiemEpochScan): string {
   if (snapshot.rows.length === 0) return 'No finalized epochs in range';
@@ -28,7 +26,7 @@ function formatEpochRange(snapshot: DiemEpochScan): string {
 }
 
 export function DiemRewardsView({ config }: DiemRewardsViewProps) {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const publicClient = usePublicClient();
   const accountAddress = address ?? null;
   const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
@@ -58,7 +56,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     if (claimConfirmed) {
       setClaimSuccess(true);
       resetClaim();
-      void queryClient.invalidateQueries({ queryKey: ['diem-scan'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.diem });
     }
   }, [claimConfirmed, queryClient, resetClaim]);
 
@@ -79,7 +77,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
         await ensureCorrectNetwork();
         writeContract({
           address: DIEM_STAKING_PROXY_ADDRESS,
-          abi: DIEM_PROXY_ABI,
+          abi: DIEM_STAKING_PROXY_ABI,
           functionName: 'claimAnts',
           chainId: expectedChainId,
           args: [claimableEpochs],
@@ -92,10 +90,34 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     })();
   }, [claimableEpochs, ensureCorrectNetwork, expectedChainId, snapshot, writeContract]);
 
+  const canAddDiemToWallet = Boolean(connector);
+  const handleAddDiemToWallet = async () => {
+    if (!connector) return;
+    try {
+      const provider = await connector.getProvider();
+      await (provider as { request: (args: unknown) => Promise<unknown> }).request({
+        method: 'wallet_watchAsset',
+        params: {
+          type: 'ERC20',
+          options: {
+            address: DIEM_TOKEN_ADDRESS,
+            symbol: 'DIEM',
+            decimals: 18,
+          },
+        },
+      });
+    } catch {
+      // user rejected or wallet doesn't support watchAsset
+    }
+  };
+
   if (!isConnected || !accountAddress) {
     return (
       <div className="diem-rewards-view">
-        <div className="overview-empty">
+        <div className="diem-empty">
+          <span className="diem-empty-mark" aria-hidden="true">
+            <img src="/diem-logo.png" width="20" height="20" alt="" />
+          </span>
           <div className="overview-empty-title">Connect your staking wallet</div>
           <div className="overview-empty-desc">
             Connect the same wallet you used on the DIEM staking portal to view and claim $ANTS.
@@ -168,6 +190,15 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
               <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={1.8} />
             </button>
           </Tooltip>
+          {canAddDiemToWallet && (
+            <button type="button" className="page-banner-action" onClick={handleAddDiemToWallet}>
+              <span className="page-banner-action-icon" aria-hidden="true">
+                <img src="/diem-logo.png" width="14" height="14" alt="" />
+              </span>
+              Add $DIEM to wallet
+              <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={1.8} />
+            </button>
+          )}
         </div>
         <span className="page-banner-deco" aria-hidden="true" />
       </section>

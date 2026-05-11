@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { useBodyScrollLock } from '../hooks/use-body-scroll-lock';
 import type { BalanceData, PaymentConfig } from '../types';
-import { DepositView } from '../components/DepositView';
-import type { OverlayPhase } from '../App';
+import { DepositView } from '../views/deposit-view';
+import type { OverlayPhase } from '../app';
 
 interface EmptyStateOverlayProps {
   phase: OverlayPhase;

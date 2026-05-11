@@ -7,10 +7,11 @@ import {
   Plant01Icon,
 } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
-import { AntSeedLogo } from '../components/AntSeedLogo';
-import { AccountMenu, SidebarAuthWarning } from './AccountMenu';
+import { AntSeedLogo } from '../components/ui/ant-seed-logo';
+import { AccountMenu, SidebarAuthWarning } from './account-menu';
 
-export type TabId = 'overview' | 'channels' | 'earn' | 'emissions' | 'diem-rewards';
+export const TAB_IDS = ['overview', 'channels', 'earn', 'emissions', 'diem-rewards'] as const;
+export type TabId = typeof TAB_IDS[number];
 
 interface SidebarProps {
   activeTab: TabId;
