@@ -243,44 +243,39 @@ function StreamingMarkdown({ text }: { text: string }) {
 }
 
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
-  const [manualToggle, setManualToggle] = useState<boolean | null>(null);
-  const isOpen = manualToggle ?? true;
+  const [expanded, setExpanded] = useState(false);
 
   if (!block.thinking?.trim()) return null;
 
   const thinkingText = String(block.thinking || '');
-  const previewLength = 120;
-  const preview = thinkingText.length > previewLength
+  const previewLength = 220;
+  const hasMore = thinkingText.length > previewLength;
+  const preview = hasMore
     ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
     : thinkingText;
 
   return (
-    <div className={`thinking-block${block.streaming ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
-      <button
-        type="button"
-        className="thinking-block-header"
-        onClick={() => setManualToggle((prev) => !(prev ?? true))}
-      >
-        <span className="thinking-block-triangle">›</span>
-        <span>Thinking</span>
-        {block.streaming ? (
-          <span className="thinking-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-        ) : null}
-      </button>
-      {!isOpen && (
-        <div className="thinking-block-preview">
-          <MarkdownContent text={preview} className="thinking-block-preview-md" />
-        </div>
-      )}
-      <div className="thinking-block-body">
-        {block.streaming
-          ? <StreamingMarkdown text={thinkingText} />
-          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />}
+    <div className={`thinking-block${block.streaming ? ' streaming' : ''}${expanded ? ' open' : ''}`}>
+      <div className="thinking-block-preview">
+        <MarkdownContent text={expanded ? thinkingText : preview} className="thinking-block-preview-md" />
       </div>
+      {(hasMore || block.streaming) ? (
+        <button
+          type="button"
+          className="thinking-block-header"
+          onClick={() => setExpanded((prev) => !prev)}
+        >
+          <span>{expanded ? 'Show less' : 'Show more'}</span>
+          <span className="thinking-block-triangle">›</span>
+          {block.streaming ? (
+            <span className="thinking-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          ) : null}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -413,8 +408,8 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   }
   if (anyRunning) wasRunningRef.current = true;
 
-  // Keep finished work compact by default, but open live/running work.
-  const isOpen = manualToggle ?? anyRunning;
+  // Keep work compact by default. Details are there when the user asks.
+  const isOpen = manualToggle ?? false;
 
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
   const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
@@ -436,7 +431,7 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
         <button
           type="button"
           className="tool-group-header-btn"
-          onClick={() => setManualToggle((prev) => !(prev ?? anyRunning))}
+          onClick={() => setManualToggle((prev) => !(prev ?? false))}
         >
           <span className="tool-group-chevron">›</span>
           <span className={`tool-group-icon ${groupStatus}`} aria-hidden="true" />

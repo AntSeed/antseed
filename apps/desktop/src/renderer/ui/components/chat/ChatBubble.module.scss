@@ -546,8 +546,9 @@
     .thinking-block-header {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
-      padding: 3px 0;
+      gap: 6px;
+      margin-left: 19px;
+      padding: 2px 0;
       background: transparent;
       border: 0;
       cursor: pointer;
@@ -581,7 +582,6 @@
       font-size: 12px;
       line-height: 1.4;
       color: var(--text-muted);
-      max-height: calc(14px + 1.4em + 8px);
       overflow: hidden;
 
       :global(.thinking-block-preview-md) {
@@ -604,26 +604,6 @@
       }
     }
 
-    .thinking-block.open .thinking-block-preview {
-      display: none;
-    }
-
-    .thinking-block-body {
-      display: none;
-      margin-left: 19px;
-      padding: 4px 0 4px 10px;
-      border-left: 1px solid var(--border-light);
-      font-size: 13px;
-      line-height: 1.5;
-      color: var(--text-secondary);
-      max-height: 400px;
-      overflow-y: auto;
-      word-break: break-word;
-    }
-
-    .thinking-block.open .thinking-block-body {
-      display: block;
-    }
 
     .thinking-dots {
       display: inline-flex;
