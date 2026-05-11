@@ -20,11 +20,12 @@ if (isMain) {
 
   createServer({ port, dataDir, identityHex }).then(async (server) => {
     await server.listen({ port, host: '127.0.0.1' });
-    const token = (server as unknown as { bearerToken?: string }).bearerToken;
-    const devToken = process.env['ANTSEED_PAYMENTS_DEV_TOKEN'];
     console.log(`[payments] Portal running at http://127.0.0.1:${port}`);
-    if (devToken && token) {
-      console.log(`[payments] Dev token pinned — open http://localhost:5175/?token=${token}`);
+    if (process.env['NODE_ENV'] !== 'production' && process.env['ANTSEED_PAYMENTS_DEV_TOKEN']) {
+      const token = (server as unknown as { bearerToken?: string }).bearerToken;
+      if (token) {
+        console.log(`[payments] Dev token pinned — open http://localhost:5175/?token=${token}`);
+      }
     }
   }).catch((err) => {
     console.error('[payments] Failed to start:', err);

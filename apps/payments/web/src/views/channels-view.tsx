@@ -29,7 +29,6 @@ function getRowStatus(session: ChannelData): RowStatus {
   return 'withdrawable';
 }
 
-// Status icons matching PR #445 pattern
 function ActiveIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">

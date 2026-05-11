@@ -29,9 +29,13 @@ export async function createServer(options: PaymentsServerOptions) {
   const fastify = Fastify({ logger: false });
 
   // Generate a bearer token for this session — only the desktop app knows it.
-  // In dev, ANTSEED_PAYMENTS_DEV_TOKEN pins the token across restarts so a
-  // bookmarked `?token=…` URL keeps working after the server reboots.
-  const devToken = process.env['ANTSEED_PAYMENTS_DEV_TOKEN'];
+  // Outside production, ANTSEED_PAYMENTS_DEV_TOKEN pins the token across
+  // restarts so a bookmarked `?token=…` URL keeps working after `node --watch`
+  // reloads. Gated on NODE_ENV so a leaked env var can't downgrade prod auth
+  // to a fixed string.
+  const devToken = process.env['NODE_ENV'] !== 'production'
+    ? process.env['ANTSEED_PAYMENTS_DEV_TOKEN']
+    : undefined;
   const bearerToken = devToken && devToken.length > 0
     ? devToken
     : randomBytes(32).toString('hex');
