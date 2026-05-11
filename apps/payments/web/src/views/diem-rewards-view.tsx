@@ -6,9 +6,9 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
 import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS, DIEM_TOKEN_ADDRESS } from '../abi';
-import { getErrorMessage, usePaymentNetwork } from '../payment-network';
-import { formatAnts } from '../utils/format';
-import { type DiemEpochRow, type DiemEpochScan } from '../utils/diem-scan';
+import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
+import { formatAnts } from '../lib/format';
+import { type DiemEpochRow, type DiemEpochScan } from '../lib/diem-scan';
 import { useDiemScan, queryKeys } from '../hooks/queries';
 import { Tooltip } from '../components/ui/tooltip';
 

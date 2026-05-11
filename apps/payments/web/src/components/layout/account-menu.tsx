@@ -20,14 +20,14 @@ import {
   Logout02Icon,
   BookOpen01Icon,
 } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../types';
-import { usePaymentNetwork } from '../payment-network';
-import { useAuthorizedWallet } from '../context/authorized-wallet-context';
-import { useSetOperator, useTransferOperator } from '../hooks/use-set-operator';
-import { InfoHint } from '../components/ui/info-hint';
-import { Tooltip } from '../components/ui/tooltip';
-import { BaseLogo } from '../components/ui/brand-logos';
-import { formatUsd, truncateAddr, ZERO_ADDR } from '../utils/format';
+import type { BalanceData, PaymentConfig } from '../../types';
+import { usePaymentNetwork } from '../../lib/payment-network';
+import { useAuthorizedWallet } from '../../context/authorized-wallet-context';
+import { useSetOperator, useTransferOperator } from '../../hooks/use-set-operator';
+import { InfoHint } from '../ui/info-hint';
+import { Tooltip } from '../ui/tooltip';
+import { BaseLogo } from '../ui/brand-logos';
+import { formatUsd, truncateAddr, ZERO_ADDR } from '../../lib/format';
 
 interface AccountMenuProps {
   config: PaymentConfig | null;

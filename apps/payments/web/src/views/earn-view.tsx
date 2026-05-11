@@ -4,11 +4,11 @@ import { useAccount, usePublicClient } from 'wagmi';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, Plant01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
-import type { TabId } from '../layout/sidebar';
+import type { TabId } from '../components/layout/sidebar';
 import {
   type EmissionsPendingResponse,
   type EmissionsShares,
-} from '../api';
+} from '../lib/api';
 import {
   useConfig,
   useEmissionsInfo,
@@ -16,13 +16,13 @@ import {
   useEmissionsShares,
   useDiemScan,
 } from '../hooks/queries';
-import { getErrorMessage } from '../payment-network';
+import { getErrorMessage } from '../lib/payment-network';
 import {
   estimateEmissionReward,
   formatAnts,
   formatDurationHuman,
   safeBigint,
-} from '../utils/format';
+} from '../lib/format';
 import { AntMark } from '../components/ui/ant-seed-logo';
 import './earn-view.scss';
 

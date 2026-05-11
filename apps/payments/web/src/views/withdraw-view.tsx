@@ -6,9 +6,9 @@ import { Wallet02Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { useWithdraw } from '../hooks/use-withdraw';
-import { usePaymentNetwork } from '../payment-network';
+import { usePaymentNetwork } from '../lib/payment-network';
 import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
-import { formatUsd, formatAmountInput, truncateAddr, ZERO_ADDR } from '../utils/format';
+import { formatUsd, formatAmountInput, truncateAddr, ZERO_ADDR } from '../lib/format';
 import './withdraw-view.scss';
 
 interface WithdrawViewProps {

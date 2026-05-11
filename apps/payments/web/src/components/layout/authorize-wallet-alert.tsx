@@ -1,4 +1,4 @@
-import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { useAuthorizedWallet } from '../../context/authorized-wallet-context';
 
 export function AuthorizeWalletAlert() {
   const { operatorSet, requireAuthorization } = useAuthorizedWallet();

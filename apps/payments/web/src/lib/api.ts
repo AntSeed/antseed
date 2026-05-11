@@ -1,4 +1,4 @@
-import type { BalanceData, PaymentConfig } from './types';
+import type { BalanceData, PaymentConfig } from '../types';
 
 const BASE = '';
 

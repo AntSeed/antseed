@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useReadContracts } from 'wagmi';
 import { formatUnits } from 'viem';
-import { getChannels, type ChannelData, type RawChannel } from '../api';
+import { getChannels, type ChannelData, type RawChannel } from '../lib/api';
 import { CHANNELS_ABI } from '../abi';
 import type { PaymentConfig } from '../types';
-import { safeBigint } from '../utils/format';
+import { safeBigint } from '../lib/format';
 
 // Tuple shape of the `channels(bytes32)` getter return.
 // [buyer, seller, deposit, settled, metadataHash, deadline, settledAt, closeRequestedAt, status]

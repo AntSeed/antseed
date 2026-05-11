@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ActionModal } from '../layout/action-modal';
-import { Tooltip } from './ui/tooltip';
-import { useSetOperator } from '../hooks/use-set-operator';
-import type { PaymentConfig } from '../types';
+import { ActionModal } from './action-modal';
+import { Tooltip } from '../ui/tooltip';
+import { useSetOperator } from '../../hooks/use-set-operator';
+import type { PaymentConfig } from '../../types';
 
 interface AuthorizeWalletModalProps {
   isOpen: boolean;

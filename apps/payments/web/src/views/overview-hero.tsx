@@ -11,7 +11,7 @@ import {
   WalletAdd01Icon,
 } from '@hugeicons/core-free-icons';
 import type { BalanceData } from '../types';
-import type { TabId } from '../layout/sidebar';
+import type { TabId } from '../components/layout/sidebar';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { AntMark } from '../components/ui/ant-seed-logo';
 

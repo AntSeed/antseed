@@ -9,7 +9,7 @@ import { Tooltip } from '../components/ui/tooltip';
 import {
   type EmissionsPendingResponse,
   type EmissionsShares as SharesType,
-} from '../api';
+} from '../lib/api';
 import {
   useConfig,
   useEmissionsInfo,
@@ -21,7 +21,7 @@ import {
 import { useWagmiWrite } from '../hooks/use-wagmi-write';
 import { EMISSIONS_CLAIM_ABI } from '../abi';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
-import { estimateEmissionReward, safeBigint, formatAnts } from '../utils/format';
+import { estimateEmissionReward, safeBigint, formatAnts } from '../lib/format';
 
 interface EmissionsViewProps {
   config: PaymentConfig | null;

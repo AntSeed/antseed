@@ -6,8 +6,8 @@ import {
   ArrowDataTransferHorizontalIcon,
   Plant01Icon,
 } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../types';
-import { AntSeedLogo } from '../components/ui/ant-seed-logo';
+import type { BalanceData, PaymentConfig } from '../../types';
+import { AntSeedLogo } from '../ui/ant-seed-logo';
 import { AccountMenu, SidebarAuthWarning } from './account-menu';
 
 export const TAB_IDS = ['overview', 'channels', 'earn', 'emissions', 'diem-rewards'] as const;

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import type { PaymentConfig } from '../types';
-import { signOperatorAuth } from '../api';
+import { signOperatorAuth } from '../lib/api';
 import { DEPOSITS_ABI } from '../abi';
 import { useWagmiWrite } from './use-wagmi-write';
 

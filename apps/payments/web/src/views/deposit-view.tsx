@@ -1,20 +1,14 @@
 import { useState, useEffect } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import {
-  useAccount,
-  useChainId,
-  useWriteContract,
-  useWaitForTransactionReceipt,
-  useReadContract,
-} from 'wagmi';
-import { formatUnits, parseUnits } from 'viem';
+import { useAccount, useChainId } from 'wagmi';
+import { parseUnits } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
-import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { usePaymentNetwork } from '../lib/payment-network';
 import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
-import { formatUsd, formatAmountInput, truncateAddr } from '../utils/format';
-import { DEPOSITS_ABI, ERC20_ABI } from '../abi';
+import { formatUsd, formatAmountInput, truncateAddr } from '../lib/format';
+import { useDeposit } from '../hooks/use-deposit';
 import './deposit-view.scss';
 
 const MIN_FIRST_DEPOSIT = 1; // USDC — matches AntseedDeposits.MIN_BUYER_DEPOSIT
@@ -111,8 +105,6 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   const { address, isConnected } = useAccount();
   const connectedChainId = useChainId();
   const [amount, setAmount] = useState('');
-  const [step, setStep] = useState<'idle' | 'approving' | 'checking-allowance' | 'depositing' | 'done'>('idle');
-  const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [trustDetailsOpen, setTrustDetailsOpen] = useState(false);
   const [stepExplainerOpen, setStepExplainerOpen] = useState(false);
@@ -129,34 +121,32 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   const minDeposit = isFirstDeposit ? MIN_FIRST_DEPOSIT : 0;
 
   const {
-    expectedChainId,
     targetChainName,
     walletChainId,
     wrongChain,
     isSwitchingChain,
-    ensureCorrectNetwork,
   } = usePaymentNetwork(config);
   const defaultTarget = buyerAddress ?? address;
 
+  const usdcAmount = safeParseUsdc(amount);
   const {
-    data: walletUsdcRaw,
-    refetch: refetchWalletUsdc,
-    isLoading: walletUsdcLoading,
-    isFetching: walletUsdcFetching,
-  } = useReadContract({
-    address: config?.usdcContractAddress as `0x${string}`,
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    chainId: expectedChainId,
-    args: [address as `0x${string}`],
-    query: { enabled: isConnected && !!config && !!address },
-  });
-  const walletUsdcBalance = walletUsdcRaw === undefined ? null : Number.parseFloat(formatUnits(walletUsdcRaw, 6));
-  const walletUsdcKnown = walletUsdcBalance !== null && Number.isFinite(walletUsdcBalance);
-  const maxDeposit = Math.max(0, Math.min(remainingCreditLimit, walletUsdcKnown ? walletUsdcBalance : remainingCreditLimit));
+    step,
+    error,
+    walletUsdcBalance,
+    walletUsdcKnown,
+    walletUsdcLoading,
+    isCheckingAllowance,
+    hasAllowance,
+    allowanceShortfall,
+    depositTxHash,
+    submit: submitDeposit,
+    reset: resetDepositFlow,
+  } = useDeposit(config, usdcAmount, onDeposited);
+
+  const maxDeposit = Math.max(0, Math.min(remainingCreditLimit, walletUsdcKnown ? walletUsdcBalance! : remainingCreditLimit));
   const maxDepositReason = remainingCreditLimit <= 0
     ? 'limit'
-    : walletUsdcKnown && walletUsdcBalance <= remainingCreditLimit
+    : walletUsdcKnown && walletUsdcBalance! <= remainingCreditLimit
       ? 'wallet'
       : 'limit';
 
@@ -165,14 +155,14 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   // suggesting on `balance` alone would pre-fill the credit-limit headroom before the
   // wallet read returns, and the guard below would then prevent any correction once
   // the wallet turns out to be $0. When the wallet read isn't enabled (no wallet
-  // connected), walletUsdcRaw stays undefined forever, so don't wait on it then.
-  const walletReadPending = isConnected && !!config && !!address && walletUsdcRaw === undefined;
+  // connected), the read never resolves, so don't wait on it then.
+  const walletReadPending = isConnected && !!config && !!address && !walletUsdcKnown;
   useEffect(() => {
     if (amount !== '' || !balance || walletReadPending) return;
     const suggested = getSuggestedDeposit(maxDeposit, isFirstDeposit);
     if (suggested) setAmount(suggested);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [balance, walletUsdcRaw, walletReadPending]);
+  }, [balance, walletUsdcKnown, walletReadPending]);
 
   const amountNum = amount ? Number.parseFloat(amount) : 0;
   let validationError: string | null = null;
@@ -189,8 +179,8 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
       validationError = remainingCreditLimit <= 0
         ? 'You have reached your credit limit'
         : `You already have $${formatUsd(currentTotal)} in AntSeed. You can add $${formatUsd(remainingCreditLimit)} more.`;
-    } else if (walletUsdcKnown && amountNum > walletUsdcBalance) {
-      validationError = `Your connected wallet only has ${formatUsd(walletUsdcBalance)} USDC available.`;
+    } else if (walletUsdcKnown && amountNum > walletUsdcBalance!) {
+      validationError = `Your connected wallet only has ${formatUsd(walletUsdcBalance!)} USDC available.`;
     }
   }
   const isValidAmount = amount !== '' && !validationError && amountNum > 0;
@@ -220,158 +210,26 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     defaultTarget !== undefined &&
     customTargetTrimmed.toLowerCase() !== (defaultTarget as string).toLowerCase();
 
-  // Read on-chain allowance (always, when connected)
-  const {
-    data: allowance,
-    refetch: refetchAllowance,
-    isLoading: allowanceLoading,
-    isFetching: allowanceFetching,
-  } = useReadContract({
-    address: config?.usdcContractAddress as `0x${string}`,
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    chainId: expectedChainId,
-    args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
-    query: { enabled: isConnected && !!config && !!address },
-  });
-
-  const usdcAmount = safeParseUsdc(amount);
-  const allowanceKnown = allowance !== undefined;
-  const isCheckingAllowance = allowanceLoading || allowanceFetching || step === 'checking-allowance';
-  const hasAllowance = allowanceKnown && allowance >= usdcAmount && usdcAmount > 0n;
-  const allowanceShortfall = isValidAmount && allowanceKnown && allowance < usdcAmount;
   const currentWizardStep = !isValidAmount ? 1 : hasAllowance ? 2 : 1;
-
-  // Approve USDC
-  const {
-    writeContract: writeApprove,
-    data: approveTxHash,
-    reset: resetApprove,
-  } = useWriteContract();
-
-  const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
-    hash: approveTxHash,
-    chainId: expectedChainId,
-    query: { enabled: step === 'approving' && !!approveTxHash },
-  });
-
-  const {
-    writeContract: writeDeposit,
-    data: depositTxHash,
-    reset: resetDeposit,
-  } = useWriteContract();
-
-  const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
-    hash: depositTxHash,
-    chainId: expectedChainId,
-    query: { enabled: step === 'depositing' && !!depositTxHash },
-  });
-
-  // After approval confirms → refetch allowance. Keep the user on an explicit
-  // "checking" state instead of assuming approval immediately changed allowance.
-  useEffect(() => {
-    if (step !== 'approving' || !approveConfirmed) return;
-    setStep('checking-allowance');
-    void refetchAllowance();
-  }, [step, approveConfirmed, refetchAllowance]);
-
-  // Once allowance is confirmed on-chain, let the user start step 2 manually.
-  useEffect(() => {
-    if (step !== 'checking-allowance') return;
-    if (hasAllowance) setStep('idle');
-  }, [step, hasAllowance]);
-
-  // After deposit confirms → done
-  useEffect(() => {
-    if (step === 'depositing' && depositConfirmed) {
-      setStep('done');
-      onDeposited();
-    }
-  }, [depositConfirmed, step, onDeposited]);
+  const allowanceShortfallForCta = isValidAmount && allowanceShortfall;
 
   async function handleDeposit() {
-    if (!address || !isValidAmount || !config || !depositTarget) return;
-
-    setError(null);
-
-    try {
-      await ensureCorrectNetwork();
-    } catch (err) {
-      setError(getErrorMessage(err, `Please switch your wallet to ${targetChainName}.`));
-      return;
-    }
-
-    resetApprove();
-    resetDeposit();
-
-    const walletResult = await refetchWalletUsdc();
-    const latestWalletUsdc = walletResult.data === undefined ? null : Number.parseFloat(formatUnits(walletResult.data, 6));
-    if (latestWalletUsdc === null || !Number.isFinite(latestWalletUsdc)) {
-      setError('Could not check your wallet USDC balance. Please try again.');
-      return;
-    }
-    if (amountNum > latestWalletUsdc) {
-      setError(`Your connected wallet only has ${formatUsd(latestWalletUsdc)} USDC available.`);
-      return;
-    }
-
-    const allowanceResult = await refetchAllowance();
-    const latestAllowance = allowanceResult.data;
-    if (latestAllowance === undefined) {
-      setError('Could not check your USDC approval. Please try again.');
-      return;
-    }
-
-    // Step 2: allowance is already sufficient — deposit directly.
-    if (latestAllowance >= usdcAmount) {
-      setStep('depositing');
-      writeDeposit({
-        address: config.depositsContractAddress as `0x${string}`,
-        abi: DEPOSITS_ABI,
-        functionName: 'deposit',
-        chainId: expectedChainId,
-        args: [depositTarget as `0x${string}`, usdcAmount],
-      }, {
-        onError: (err) => {
-          setStep('idle');
-          setError(getErrorMessage(err));
-        },
-      });
-      return;
-    }
-
-    // Step 1: approve USDC first. The user will click again to deposit after
-    // approval is confirmed and allowance has been rechecked.
-    setStep('approving');
-    writeApprove({
-      address: config.usdcContractAddress as `0x${string}`,
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      chainId: expectedChainId,
-      args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
-    }, {
-      onError: (err) => {
-        setStep('idle');
-        setError(getErrorMessage(err));
-      },
-    });
+    if (!isValidAmount || !depositTarget) return;
+    await submitDeposit({ usdcAmount, amountNum, depositTarget: depositTarget as `0x${string}` });
   }
 
   function resetForm() {
-    setStep('idle');
-    setError(null);
     setAmount(getSuggestedDeposit(maxDeposit, isFirstDeposit));
-    resetApprove();
-    resetDeposit();
+    resetDepositFlow();
   }
 
   const ctaLabel = isSwitchingChain ? `Switching to ${targetChainName}…` :
     wrongChain ? `Switch to ${targetChainName}` :
-    walletUsdcLoading || walletUsdcFetching || !walletUsdcKnown ? 'Loading wallet USDC…' :
+    walletUsdcLoading || !walletUsdcKnown ? 'Loading wallet USDC…' :
     isCheckingAllowance ? 'Checking approval…' :
     step === 'approving' ? 'Approve in wallet…' :
     step === 'depositing' ? 'Depositing…' :
-    allowanceShortfall ? `Approve ${amount || '0'} USDC` :
+    allowanceShortfallForCta ? `Approve ${amount || '0'} USDC` :
     'Review & deposit';
 
   // Quick chip presets — only show chips that respect the current ceiling.
@@ -507,7 +365,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
                   <span className="rh-meta-line">
                     <span className="rh-meta-key">Wallet</span>
                     <span className="rh-meta-val">
-                      {walletUsdcKnown ? `$${formatUsd(walletUsdcBalance)}` : '…'}
+                      {walletUsdcKnown ? `$${formatUsd(walletUsdcBalance!)}` : '…'}
                     </span>
                   </span>
                   <span className="rh-meta-dot" aria-hidden="true" />
@@ -582,7 +440,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
             remainingCreditLimit={remainingCreditLimit}
             walletUsdcBalance={walletUsdcBalance}
             walletUsdcKnown={walletUsdcKnown}
-            walletUsdcLoading={walletUsdcLoading || walletUsdcFetching}
+            walletUsdcLoading={walletUsdcLoading}
             maxDeposit={maxDeposit}
             maxDepositReason={maxDepositReason}
           />
@@ -667,7 +525,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
             type="button"
             className="rh-cta"
             onClick={handleDeposit}
-            disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain || customTargetInvalid || !depositTarget || allowanceLoading || allowanceFetching || walletUsdcLoading || walletUsdcFetching || !walletUsdcKnown}
+            disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain || customTargetInvalid || !depositTarget || isCheckingAllowance || walletUsdcLoading || !walletUsdcKnown}
           >
             <span>{ctaLabel}</span>
             <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />

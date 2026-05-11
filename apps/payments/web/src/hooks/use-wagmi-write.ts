@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import type { PaymentConfig } from '../types';
-import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
 
 type WriteParams = Parameters<ReturnType<typeof useWriteContract>['writeContract']>[0];
 

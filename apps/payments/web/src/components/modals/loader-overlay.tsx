@@ -1,4 +1,4 @@
-import { useBodyScrollLock } from '../hooks/use-body-scroll-lock';
+import { useBodyScrollLock } from '../../hooks/use-body-scroll-lock';
 
 interface LoaderOverlayProps {
   isVisible: boolean;

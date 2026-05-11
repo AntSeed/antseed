@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import type { PaymentConfig } from '../types';
-import type { ChannelData } from '../api';
+import type { ChannelData } from '../lib/api';
 import { CHANNELS_ABI } from '../abi';
-import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
 import { useChannels } from '../hooks/use-channels';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
-import { formatCountdownMSS, formatUsd, truncateAddr } from '../utils/format';
+import { formatCountdownMSS, formatUsd, truncateAddr } from '../lib/format';
 import './channels-view.scss';
 
 interface ChannelsViewProps {

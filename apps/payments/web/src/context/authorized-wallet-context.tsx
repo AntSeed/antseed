@@ -8,10 +8,10 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { getOperatorInfo } from '../api';
+import { getOperatorInfo } from '../lib/api';
 import type { PaymentConfig } from '../types';
-import { AuthorizeWalletModal } from '../components/authorize-wallet-modal';
-import { ZERO_ADDR } from '../utils/format';
+import { AuthorizeWalletModal } from '../components/modals/authorize-wallet-modal';
+import { ZERO_ADDR } from '../lib/format';
 
 type PendingAction = (() => void | Promise<void>) | null;
 

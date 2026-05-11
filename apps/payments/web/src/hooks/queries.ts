@@ -9,8 +9,8 @@ import {
   getEmissionsShares,
   getNetworkStats,
   getTransfersEnabled,
-} from '../api';
-import { scanDiemEpochs } from '../utils/diem-scan';
+} from '../lib/api';
+import { scanDiemEpochs } from '../lib/diem-scan';
 
 export const queryKeys = {
   balance: ['balance'] as const,
