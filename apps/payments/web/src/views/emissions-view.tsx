@@ -3,7 +3,6 @@ import { useAccount } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import type { PaymentConfig } from '../types';
 import { AntMark } from '../components/ui/ant-seed-logo';
 import { Tooltip } from '../components/ui/tooltip';
 import {
@@ -22,10 +21,6 @@ import { useWagmiWrite } from '../hooks/use-wagmi-write';
 import { EMISSIONS_CLAIM_ABI } from '../abi';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { estimateEmissionReward, safeBigint, formatAnts } from '../lib/format';
-
-interface EmissionsViewProps {
-  config: PaymentConfig | null;
-}
 
 function addWei(a: string, b: string): string {
   try { return (BigInt(a) + BigInt(b)).toString(); } catch { return '0'; }
@@ -57,31 +52,26 @@ function computeEpochShare(
   return pct;
 }
 
-export function EmissionsView({ config }: EmissionsViewProps) {
+export function EmissionsView() {
+  const { data: config = null } = useConfig();
   const buyerAddress = config?.evmAddress ?? null;
   const { requireAuthorization, operatorSet } = useAuthorizedWallet();
   const { connector } = useAccount();
   const queryClient = useQueryClient();
 
-  const configQuery = useConfig();
   const infoQuery = useEmissionsInfo();
-  const pendingQuery = useEmissionsPending(buyerAddress);
   const sharesQuery = useEmissionsShares();
-  const transfersQuery = useTransfersEnabled();
+  const { data: info = null } = infoQuery;
+  const { data: pending = null } = useEmissionsPending(buyerAddress);
+  const { data: shares = null } = sharesQuery;
+  const { data: transfersData } = useTransfersEnabled();
+  const transfersEnabled = transfersData?.enabled ?? null;
 
-  const info = infoQuery.data ?? null;
-  const pending = pendingQuery.data ?? null;
-  const shares = sharesQuery.data ?? null;
-  const transfersEnabled = transfersQuery.data?.enabled ?? null;
-
-  const isFirstLoad =
-    configQuery.isLoading ||
-    infoQuery.isLoading ||
-    sharesQuery.isLoading ||
-    (!!buyerAddress && !pending);
-  const loadError = (!isFirstLoad && !info && buyerAddress)
-    ? 'Emissions not available on this chain'
-    : null;
+  const infoLoading = infoQuery.isLoading;
+  const sharesLoading = sharesQuery.isLoading;
+  const pendingLoading = !!buyerAddress && !pending;
+  const infoUnavailable = infoQuery.isFetched && !info && !!buyerAddress;
+  const loadError = infoUnavailable ? 'Emissions not available on this chain' : null;
 
   const invalidateEmissions = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.emissions });
@@ -125,11 +115,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   const sellerClaimError = sellerClaim.error;
   const buyerClaimError = buyerClaim.error;
 
-  if (isFirstLoad) {
-    return <EmissionsSkeleton />;
-  }
-
-  if (loadError || !info) {
+  if (infoUnavailable) {
     return (
       <div className="emissions-view">
         <div className="overview-empty">
@@ -160,7 +146,7 @@ export function EmissionsView({ config }: EmissionsViewProps) {
   let totalClaimed = 0n;
   for (const r of rows) {
     if (r.isCurrent) continue;
-    const ep = r.epochEmission ?? info.epochEmission;
+    const ep = r.epochEmission ?? info?.epochEmission ?? '0';
     // Per-side: pendingEmissions returns 0 for claimed sides, so estimate from points
     if (r.seller.claimed && shares) {
       totalClaimed += estimateEmissionReward(ep, shares.sellerSharePct, r.seller.userPoints, r.seller.totalPoints);
@@ -306,23 +292,59 @@ export function EmissionsView({ config }: EmissionsViewProps) {
         <div className="stat-grid">
           <div className="stat-card stat-card--accent">
             <div className="stat-card-label">Estimated reward</div>
-            <div className="stat-card-value">{formatAnts(currentEstimate)} <span className="stat-card-unit">$ANTS</span></div>
-            <div className="stat-card-hint">Not yet final</div>
+            {info && shares ? (
+              <>
+                <div className="stat-card-value">{formatAnts(currentEstimate)} <span className="stat-card-unit">$ANTS</span></div>
+                <div className="stat-card-hint">Not yet final</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Your epoch share</div>
-            <div className="stat-card-value">{epochSharePct > 0 ? `${epochSharePct.toFixed(2)}%` : '—'}</div>
-            <div className="stat-card-hint">Of total epoch emission</div>
+            {shares ? (
+              <>
+                <div className="stat-card-value">{epochSharePct > 0 ? `${epochSharePct.toFixed(2)}%` : '—'}</div>
+                <div className="stat-card-hint">Of total epoch emission</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Claimable</div>
-            <div className="stat-card-value">{formatAnts(totalClaimable.toString())} <span className="stat-card-unit">$ANTS</span></div>
-            <div className="stat-card-hint">From past epochs</div>
+            {pendingLoading || infoLoading ? (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            ) : (
+              <>
+                <div className="stat-card-value">{formatAnts(totalClaimable.toString())} <span className="stat-card-unit">$ANTS</span></div>
+                <div className="stat-card-hint">From past epochs</div>
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Already claimed</div>
-            <div className="stat-card-value">{formatAnts(totalClaimed.toString())} <span className="stat-card-unit">$ANTS</span></div>
-            <div className="stat-card-hint">Across all epochs</div>
+            {pendingLoading || sharesLoading ? (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            ) : (
+              <>
+                <div className="stat-card-value">{formatAnts(totalClaimed.toString())} <span className="stat-card-unit">$ANTS</span></div>
+                <div className="stat-card-hint">Across all epochs</div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -336,7 +358,20 @@ export function EmissionsView({ config }: EmissionsViewProps) {
           </p>
         </header>
         <div className="overview-chart-card">
-          <EmissionsTable rows={pending?.rows ?? []} epochEmission={info.epochEmission} shares={shares} />
+          {pendingLoading ? (
+            <div className="skel-table" aria-busy="true" aria-label="Loading emissions">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div className="skel-row" key={i}>
+                  <span className="skel skel-line skel-line--cell" style={{ width: '12%' }} />
+                  <span className="skel skel-line skel-line--cell" style={{ width: '28%' }} />
+                  <span className="skel skel-line skel-line--cell" style={{ width: '20%' }} />
+                  <span className="skel skel-pill" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmissionsTable rows={pending?.rows ?? []} epochEmission={info?.epochEmission ?? '0'} shares={shares} />
+          )}
           {(sellerClaimError || buyerClaimError) && (
             <div className="status-msg status-error">{sellerClaimError || buyerClaimError}</div>
           )}
@@ -404,63 +439,6 @@ export function EmissionsView({ config }: EmissionsViewProps) {
         </section>
       )}
     </div>
-  );
-}
-
-function EmissionsSkeleton() {
-  return (
-    <div className="emissions-view emissions-skeleton" aria-busy="true" aria-label="Loading emissions">
-      <div className="page-banner">
-        <span className="skel skel-pill" style={{ width: 40, height: 40, borderRadius: 999 }} />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </div>
-      </div>
-      <SkeletonSection />
-      <SkeletonSection accentFirst />
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </header>
-        <div className="overview-chart-card">
-          <div className="skel-table">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div className="skel-row" key={i}>
-                <span className="skel skel-line skel-line--cell" style={{ width: '12%' }} />
-                <span className="skel skel-line skel-line--cell" style={{ width: '28%' }} />
-                <span className="skel skel-line skel-line--cell" style={{ width: '20%' }} />
-                <span className="skel skel-pill" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SkeletonSection({ accentFirst = false }: { accentFirst?: boolean }) {
-  return (
-    <section className="overview-section">
-      <header className="overview-section-head">
-        <span className="skel skel-line skel-line--eyebrow" />
-        <span className="skel skel-line skel-line--title" />
-        <span className="skel skel-line skel-line--sub" />
-      </header>
-      <div className="stat-grid">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div className={`stat-card${accentFirst && i === 0 ? ' stat-card--accent' : ''}`} key={i}>
-            <span className="skel skel-line skel-line--label" />
-            <span className="skel skel-block skel-block--value" />
-            <span className="skel skel-line skel-line--hint" />
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 

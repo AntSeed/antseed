@@ -1,22 +1,14 @@
-import type { PaymentConfig, BalanceData } from '../types';
 import { type BuyerUsageChannelPoint } from '../lib/api';
-import { useBuyerUsage, useNetworkStats } from '../hooks/queries';
+import { useBuyerUsage, useConfig, useNetworkStats } from '../hooks/queries';
 import { UsageChart } from '../components/ui/usage-chart';
 import { formatCompact, formatNumber, bigintFromString } from '../lib/format';
 import { OverviewHero } from './overview-hero';
-import type { TabId } from '../components/layout/sidebar';
 import './overview-view.scss';
-
-interface OverviewViewProps {
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  onOpenDeposit: () => void;
-  onSelectTab: (tab: TabId) => void;
-}
 
 const EMPTY_CHANNELS: BuyerUsageChannelPoint[] = [];
 
-export function OverviewView({ config, balance, onOpenDeposit, onSelectTab }: OverviewViewProps) {
+export function OverviewView() {
+  const { data: config = null } = useConfig();
   const networkStatsUrl = config?.networkStatsUrl ?? null;
 
   const { data: buyerUsage = null, error: buyerUsageErr } = useBuyerUsage();
@@ -41,11 +33,7 @@ export function OverviewView({ config, balance, onOpenDeposit, onSelectTab }: Ov
 
   return (
     <div className="overview-view">
-      <OverviewHero
-        balance={balance}
-        onOpenDeposit={onOpenDeposit}
-        onSelectTab={onSelectTab}
-      />
+      <OverviewHero />
 
       <section className="overview-section">
         <header className="overview-section-head">

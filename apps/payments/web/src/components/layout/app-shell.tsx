@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { BalanceData, PaymentConfig } from '../../types';
-import { queryKeys } from '../../hooks/queries';
+import { queryKeys, useBalance } from '../../hooks/queries';
 import { useTabUrl } from '../../hooks/use-tab-url';
 import { useTheme } from '../../hooks/use-theme';
+import { AppShellContext, type AppShellContextValue, type OverlayPhase } from '../../context/app-shell-context';
 import { Sidebar } from './sidebar';
 import { AuthorizeWalletAlert } from './authorize-wallet-alert';
 import { LoaderOverlay } from '../modals/loader-overlay';
@@ -17,16 +17,9 @@ import { DiemRewardsView } from '../../views/diem-rewards-view';
 import { EarnView } from '../../views/earn-view';
 import { ChannelsView } from '../../views/channels-view';
 
-export type OverlayPhase = 'deposit' | 'success' | null;
-
-interface AppShellProps {
-  balance: BalanceData | null;
-  balanceLoaded: boolean;
-  config: PaymentConfig | null;
-}
-
-export function AppShell({ balance, balanceLoaded, config }: AppShellProps) {
+export function AppShell() {
   const queryClient = useQueryClient();
+  const { data: balance = null, isFetched: balanceFetched } = useBalance();
   const { activeTab, selectTab, initialActionModal, clearDepositAction } = useTabUrl();
   const { isDark, toggleTheme } = useTheme();
   const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(initialActionModal);
@@ -53,9 +46,9 @@ export function AppShell({ balance, balanceLoaded, config }: AppShellProps) {
   const dismissSuccess = useCallback(() => setJustDeposited(false), []);
   const dismissDepositPrompt = useCallback(() => setDepositPromptDismissed(true), []);
 
-  const isLoading = !balanceLoaded;
+  const isLoading = !balanceFetched;
   const isEmptyBuyer =
-    balanceLoaded &&
+    balanceFetched &&
     balance !== null &&
     parseFloat(balance.total) === 0 &&
     parseFloat(balance.reserved) === 0;
@@ -65,47 +58,39 @@ export function AppShell({ balance, balanceLoaded, config }: AppShellProps) {
   else if (isEmptyBuyer && !depositPromptDismissed) overlayPhase = 'deposit';
 
   const shellBlurred = isLoading || overlayPhase !== null;
-  const buyerEvmAddress = config?.evmAddress ?? balance?.evmAddress ?? null;
+
+  const value: AppShellContextValue = useMemo(
+    () => ({
+      activeTab,
+      selectTab,
+      isDark,
+      toggleTheme,
+      openDeposit,
+      openWithdraw,
+      refreshBalance,
+      handleDeposited,
+    }),
+    [activeTab, selectTab, isDark, toggleTheme, openDeposit, openWithdraw, refreshBalance, handleDeposited],
+  );
 
   return (
-    <>
+    <AppShellContext.Provider value={value}>
       <div className={`dash-shell${shellBlurred ? ' dash-shell--blurred' : ''}`}>
-        <Sidebar
-          activeTab={activeTab}
-          onSelect={selectTab}
-          isDark={isDark}
-          onToggleTheme={toggleTheme}
-          config={config}
-          balance={balance}
-          buyerEvmAddress={buyerEvmAddress}
-          onOpenDeposit={openDeposit}
-          onOpenWithdraw={openWithdraw}
-        />
+        <Sidebar />
         <div className="dash-main">
           <AuthorizeWalletAlert />
           <main className="dash-content">
-            {activeTab === 'overview' && (
-              <OverviewView
-                config={config}
-                balance={balance}
-                onOpenDeposit={openDeposit}
-                onSelectTab={selectTab}
-              />
-            )}
-            {activeTab === 'channels' && <ChannelsView config={config} />}
-            {activeTab === 'earn' && <EarnView config={config} onSelectTab={selectTab} />}
-            {activeTab === 'emissions' && <EmissionsView config={config} />}
-            {activeTab === 'diem-rewards' && <DiemRewardsView config={config} />}
+            {activeTab === 'overview' && <OverviewView />}
+            {activeTab === 'channels' && <ChannelsView />}
+            {activeTab === 'earn' && <EarnView />}
+            {activeTab === 'emissions' && <EmissionsView />}
+            {activeTab === 'diem-rewards' && <DiemRewardsView />}
           </main>
         </div>
       </div>
       <LoaderOverlay isVisible={isLoading} />
       <EmptyStateOverlay
         phase={overlayPhase}
-        config={config}
-        balance={balance}
-        buyerAddress={buyerEvmAddress}
-        onDeposited={handleDeposited}
         onContinue={dismissSuccess}
         onDismissDeposit={dismissDepositPrompt}
       />
@@ -116,12 +101,7 @@ export function AppShell({ balance, balanceLoaded, config }: AppShellProps) {
         subtitle="Add credits to your AntSeed account with a guided two-step flow."
         variant="wide"
       >
-        <DepositView
-          config={config}
-          balance={balance}
-          buyerAddress={buyerEvmAddress}
-          onDeposited={handleDeposited}
-        />
+        <DepositView />
       </ActionModal>
       <ActionModal
         isOpen={actionModal === 'withdraw'}
@@ -130,8 +110,8 @@ export function AppShell({ balance, balanceLoaded, config }: AppShellProps) {
         subtitle="Send funds to your authorized wallet."
         variant="wide"
       >
-        <WithdrawView config={config} balance={balance} onAction={refreshBalance} />
+        <WithdrawView />
       </ActionModal>
-    </>
+    </AppShellContext.Provider>
   );
 }

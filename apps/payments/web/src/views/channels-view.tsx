@@ -5,13 +5,10 @@ import type { ChannelData } from '../lib/api';
 import { CHANNELS_ABI } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
 import { useChannels } from '../hooks/use-channels';
+import { useConfig } from '../hooks/queries';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
 import { formatCountdownMSS, formatUsd, truncateAddr } from '../lib/format';
 import './channels-view.scss';
-
-interface ChannelsViewProps {
-  config: PaymentConfig | null;
-}
 
 const GRACE_PERIOD = 900; // 15 minutes in seconds
 const PAGE_SIZE = 10;
@@ -305,7 +302,8 @@ function ChannelRow({
   );
 }
 
-export function ChannelsView({ config }: ChannelsViewProps) {
+export function ChannelsView() {
+  const { data: config = null } = useConfig();
   const { channels, history, loading, refetch } = useChannels(config);
   const [page, setPage] = useState(0);
   const [refreshing, setRefreshing] = useState(false);

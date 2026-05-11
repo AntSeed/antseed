@@ -46,6 +46,13 @@ export function useConfig() {
   });
 }
 
+/** Derived: the AntSeed buyer address, preferring config over balance fallback. */
+export function useBuyerEvmAddress(): string | null {
+  const { data: config } = useConfig();
+  const { data: balance } = useBalance();
+  return config?.evmAddress ?? balance?.evmAddress ?? null;
+}
+
 export function useBuyerUsage() {
   return useQuery({
     queryKey: queryKeys.buyerUsage,

@@ -10,24 +10,16 @@ import {
   Wallet01Icon,
   WalletAdd01Icon,
 } from '@hugeicons/core-free-icons';
-import type { BalanceData } from '../types';
-import type { TabId } from '../components/layout/sidebar';
+import { useBalance } from '../hooks/queries';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { useAppShell } from '../context/app-shell-context';
 import { AntMark } from '../components/ui/ant-seed-logo';
 
 type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
 
-interface OverviewHeroProps {
-  balance: BalanceData | null;
-  onOpenDeposit: () => void;
-  onSelectTab: (tab: TabId) => void;
-}
-
-export function OverviewHero({
-  balance,
-  onOpenDeposit,
-  onSelectTab,
-}: OverviewHeroProps) {
+export function OverviewHero() {
+  const { data: balance = null } = useBalance();
+  const { openDeposit: onOpenDeposit } = useAppShell();
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const { operatorSet, requireAuthorization } = useAuthorizedWallet();
@@ -83,12 +75,7 @@ export function OverviewHero({
 
   if (operatorSet === null) return <HeroSkeleton />;
 
-  return (
-    <WelcomeHero
-      onOpenDeposit={onOpenDeposit}
-      onSelectTab={onSelectTab}
-    />
-  );
+  return <WelcomeHero />;
 }
 
 function HeroSkeleton() {
@@ -137,12 +124,8 @@ function HeroCard({ tone, icon, eyebrow, heading, sub, ctaIcon, ctaLabel, onCta 
   );
 }
 
-interface WelcomeHeroProps {
-  onOpenDeposit: () => void;
-  onSelectTab: (tab: TabId) => void;
-}
-
-function WelcomeHero({ onOpenDeposit, onSelectTab }: WelcomeHeroProps) {
+function WelcomeHero() {
+  const { openDeposit: onOpenDeposit, selectTab: onSelectTab } = useAppShell();
   return (
     <section className="overview-hero overview-hero--ready">
       <span className="overview-hero-avatar" aria-hidden="true">

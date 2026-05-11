@@ -4,17 +4,12 @@ import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteCont
 import { useQueryClient } from '@tanstack/react-query';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import type { PaymentConfig } from '../types';
 import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS, DIEM_TOKEN_ADDRESS } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
 import { formatAnts } from '../lib/format';
 import { type DiemEpochRow, type DiemEpochScan } from '../lib/diem-scan';
-import { useDiemScan, queryKeys } from '../hooks/queries';
+import { useConfig, useDiemScan, queryKeys } from '../hooks/queries';
 import { Tooltip } from '../components/ui/tooltip';
-
-interface DiemRewardsViewProps {
-  config: PaymentConfig | null;
-}
 
 const MAX_EPOCHS_PREVIEW = 16;
 
@@ -25,7 +20,8 @@ function formatEpochRange(snapshot: DiemEpochScan): string {
   return first === last ? `Epoch #${first}` : `Epochs #${first}–#${last}`;
 }
 
-export function DiemRewardsView({ config }: DiemRewardsViewProps) {
+export function DiemRewardsView() {
+  const { data: config = null } = useConfig();
   const { address, isConnected, connector } = useAccount();
   const publicClient = usePublicClient();
   const accountAddress = address ?? null;
@@ -128,10 +124,6 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     );
   }
 
-  if (loading && !snapshot) {
-    return <DiemRewardsSkeleton />;
-  }
-
   if (loadError) {
     return (
       <div className="diem-rewards-view">
@@ -149,9 +141,11 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
 
   const claimDisabledReason: string | null = claimBusy
     ? 'Claim in progress — wait for the current transaction to confirm.'
-    : !hasClaimable
-      ? 'Nothing to claim yet. Once new epochs are finalized by the DIEM proxy, you can claim from here.'
-      : null;
+    : loading && !snapshot
+      ? 'Loading rewards…'
+      : !hasClaimable
+        ? 'Nothing to claim yet. Once new epochs are finalized by the DIEM proxy, you can claim from here.'
+        : null;
 
   const claimLabel = claimBusy
     ? 'Claiming…'
@@ -215,23 +209,59 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
         <div className="stat-grid">
           <div className="stat-card stat-card--accent">
             <div className="stat-card-label">Pending $ANTS</div>
-            <div className="stat-card-value">{formatAnts(totalPending)} <span className="stat-card-unit">$ANTS</span></div>
-            <div className="stat-card-hint">Across scanned finalized epochs</div>
+            {snapshot ? (
+              <>
+                <div className="stat-card-value">{formatAnts(totalPending)} <span className="stat-card-unit">$ANTS</span></div>
+                <div className="stat-card-hint">Across scanned finalized epochs</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Claimable epochs</div>
-            <div className="stat-card-value">{claimableEpochs.length}</div>
-            <div className="stat-card-hint">Includes 0-$ANTS epochs to clear cursor</div>
+            {snapshot ? (
+              <>
+                <div className="stat-card-value">{claimableEpochs.length}</div>
+                <div className="stat-card-hint">Includes 0-$ANTS epochs to clear cursor</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Finalized epoch</div>
-            <div className="stat-card-value">#{snapshot?.finalizedRewardEpoch ?? '—'}</div>
-            <div className="stat-card-hint">Latest reward epoch boundary</div>
+            {snapshot ? (
+              <>
+                <div className="stat-card-value">#{snapshot.finalizedRewardEpoch}</div>
+                <div className="stat-card-hint">Latest reward epoch boundary</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Scanned range</div>
-            <div className="stat-card-value diem-rewards-range">{snapshot ? formatEpochRange(snapshot) : '—'}</div>
-            <div className="stat-card-hint">{snapshot?.hasMore ? 'More epochs available after claim' : 'Up to date'}</div>
+            {snapshot ? (
+              <>
+                <div className="stat-card-value diem-rewards-range">{formatEpochRange(snapshot)}</div>
+                <div className="stat-card-hint">{snapshot.hasMore ? 'More epochs available after claim' : 'Up to date'}</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -245,7 +275,19 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
           </p>
         </header>
         <div className="overview-chart-card">
-          <DiemRewardsTable rows={snapshot?.rows ?? []} />
+          {!snapshot ? (
+            <div className="skel-table" aria-busy="true" aria-label="Loading DIEM epochs">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div className="skel-row" key={i}>
+                  <span className="skel skel-line skel-line--cell" style={{ width: '14%' }} />
+                  <span className="skel skel-line skel-line--cell" style={{ width: '32%' }} />
+                  <span className="skel skel-pill" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <DiemRewardsTable rows={snapshot.rows} />
+          )}
           {(claimError || claimSuccess) && (
             <div className={`status-msg ${claimError ? 'status-error' : 'status-success'}`}>
               {claimError ?? 'DIEM $ANTS claim confirmed.'}
@@ -284,55 +326,6 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
               Claimed $ANTS mints directly to the wallet you connect here. Nothing held by us in between.
             </p>
           </article>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function DiemRewardsSkeleton() {
-  return (
-    <div className="diem-rewards-view emissions-skeleton" aria-busy="true" aria-label="Loading DIEM rewards">
-      <div className="page-banner page-banner--diem">
-        <span className="skel skel-pill" style={{ width: 40, height: 40, borderRadius: 999 }} />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </div>
-      </div>
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </header>
-        <div className="stat-grid">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div className={`stat-card${i === 0 ? ' stat-card--accent' : ''}`} key={i}>
-              <span className="skel skel-line skel-line--label" />
-              <span className="skel skel-block skel-block--value" />
-              <span className="skel skel-line skel-line--hint" />
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </header>
-        <div className="overview-chart-card">
-          <div className="skel-table">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div className="skel-row" key={i}>
-                <span className="skel skel-line skel-line--cell" style={{ width: '14%' }} />
-                <span className="skel skel-line skel-line--cell" style={{ width: '32%' }} />
-                <span className="skel skel-pill" />
-              </div>
-            ))}
-          </div>
         </div>
       </section>
     </div>

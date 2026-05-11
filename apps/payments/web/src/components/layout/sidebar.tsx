@@ -6,24 +6,12 @@ import {
   ArrowDataTransferHorizontalIcon,
   Plant01Icon,
 } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../../types';
 import { AntSeedLogo } from '../ui/ant-seed-logo';
 import { AccountMenu, SidebarAuthWarning } from './account-menu';
+import { useAppShell } from '../../context/app-shell-context';
 
 export const TAB_IDS = ['overview', 'channels', 'earn', 'emissions', 'diem-rewards'] as const;
 export type TabId = typeof TAB_IDS[number];
-
-interface SidebarProps {
-  activeTab: TabId;
-  onSelect: (tab: TabId) => void;
-  isDark: boolean;
-  onToggleTheme: () => void;
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  buyerEvmAddress: string | null;
-  onOpenDeposit: () => void;
-  onOpenWithdraw: () => void;
-}
 
 interface NavItem {
   id: TabId;
@@ -125,17 +113,8 @@ function AlphaHint() {
   );
 }
 
-export function Sidebar({
-  activeTab,
-  onSelect,
-  isDark,
-  onToggleTheme,
-  config,
-  balance,
-  buyerEvmAddress,
-  onOpenDeposit,
-  onOpenWithdraw,
-}: SidebarProps) {
+export function Sidebar() {
+  const { activeTab, selectTab } = useAppShell();
   return (
     <aside className="dash-sidebar">
       <div className="dash-sidebar-header">
@@ -152,7 +131,7 @@ export function Sidebar({
               type="button"
               className={`dash-sidebar-item${isActive ? ' dash-sidebar-item--active' : ''}`}
               aria-current={isActive ? 'page' : undefined}
-              onClick={() => onSelect(item.id)}
+              onClick={() => selectTab(item.id)}
             >
               <span className="dash-sidebar-item-icon">{item.icon}</span>
               <span className="dash-sidebar-item-label">{item.label}</span>
@@ -163,15 +142,7 @@ export function Sidebar({
 
       <div className="dash-sidebar-footer">
         <SidebarAuthWarning />
-        <AccountMenu
-          config={config}
-          balance={balance}
-          buyerEvmAddress={buyerEvmAddress}
-          isDark={isDark}
-          onToggleTheme={onToggleTheme}
-          onOpenDeposit={onOpenDeposit}
-          onOpenWithdraw={onOpenWithdraw}
-        />
+        <AccountMenu />
       </div>
     </aside>
   );

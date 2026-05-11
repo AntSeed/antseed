@@ -2,16 +2,12 @@ import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { useBodyScrollLock } from '../../hooks/use-body-scroll-lock';
-import type { BalanceData, PaymentConfig } from '../../types';
+import { useBuyerEvmAddress } from '../../hooks/queries';
 import { DepositView } from '../../views/deposit-view';
-import type { OverlayPhase } from '../layout/app-shell';
+import type { OverlayPhase } from '../../context/app-shell-context';
 
 interface EmptyStateOverlayProps {
   phase: OverlayPhase;
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  buyerAddress: string | null;
-  onDeposited: () => void;
   onContinue: () => void;
   onDismissDeposit?: () => void;
 }
@@ -59,13 +55,10 @@ function BigCheckIcon() {
 
 export function EmptyStateOverlay({
   phase,
-  config,
-  balance,
-  buyerAddress,
-  onDeposited,
   onContinue,
   onDismissDeposit,
 }: EmptyStateOverlayProps) {
+  const buyerAddress = useBuyerEvmAddress();
   const [copied, setCopied] = useState(false);
 
   const isVisible = phase !== null;
@@ -123,12 +116,7 @@ export function EmptyStateOverlay({
 
             <div className="empty-state-step">
               <div className="empty-state-step-label">Step 1 · Deposit USDC</div>
-              <DepositView
-                config={config}
-                balance={balance}
-                buyerAddress={buyerAddress}
-                onDeposited={onDeposited}
-              />
+              <DepositView />
             </div>
           </>
         ) : (

@@ -3,21 +3,19 @@ import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Wallet02Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../types';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { useBalance, useConfig } from '../hooks/queries';
 import { useWithdraw } from '../hooks/use-withdraw';
+import { useAppShell } from '../context/app-shell-context';
 import { usePaymentNetwork } from '../lib/payment-network';
 import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
 import { formatUsd, formatAmountInput, truncateAddr, ZERO_ADDR } from '../lib/format';
 import './withdraw-view.scss';
 
-interface WithdrawViewProps {
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  onAction: () => void;
-}
-
-export function WithdrawView({ config, balance, onAction }: WithdrawViewProps) {
+export function WithdrawView() {
+  const { data: config = null } = useConfig();
+  const { data: balance = null } = useBalance();
+  const { refreshBalance: onAction } = useAppShell();
   const [amount, setAmount] = useState('');
   const { address, isConnected } = useAccount();
   const { requireAuthorization, operator } = useAuthorizedWallet();

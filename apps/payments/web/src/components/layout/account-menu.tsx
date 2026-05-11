@@ -20,24 +20,15 @@ import {
   Logout02Icon,
   BookOpen01Icon,
 } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../../types';
 import { usePaymentNetwork } from '../../lib/payment-network';
 import { useAuthorizedWallet } from '../../context/authorized-wallet-context';
+import { useBalance, useConfig, useBuyerEvmAddress } from '../../hooks/queries';
 import { useSetOperator, useTransferOperator } from '../../hooks/use-set-operator';
+import { useAppShell } from '../../context/app-shell-context';
 import { InfoHint } from '../ui/info-hint';
 import { Tooltip } from '../ui/tooltip';
 import { BaseLogo } from '../ui/brand-logos';
 import { formatUsd, truncateAddr, ZERO_ADDR } from '../../lib/format';
-
-interface AccountMenuProps {
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  buyerEvmAddress: string | null;
-  isDark: boolean;
-  onToggleTheme: () => void;
-  onOpenDeposit: () => void;
-  onOpenWithdraw: () => void;
-}
 
 function splitUsd(n: number | null): { whole: string; cents: string } {
   if (n === null || !Number.isFinite(n)) return { whole: '—', cents: '' };
@@ -66,15 +57,11 @@ export function SidebarAuthWarning() {
   );
 }
 
-export function AccountMenu({
-  config,
-  balance,
-  buyerEvmAddress,
-  isDark,
-  onToggleTheme,
-  onOpenDeposit,
-  onOpenWithdraw,
-}: AccountMenuProps) {
+export function AccountMenu() {
+  const { data: config = null } = useConfig();
+  const { data: balance = null } = useBalance();
+  const buyerEvmAddress = useBuyerEvmAddress();
+  const { isDark, toggleTheme, openDeposit, openWithdraw } = useAppShell();
   const [open, setOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState<'signer' | 'wallet' | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -508,7 +495,7 @@ export function AccountMenu({
             <button
               type="button"
               className="dash-account-action dash-account-action--primary"
-              onClick={() => { close(); onOpenDeposit(); }}
+              onClick={() => { close(); openDeposit(); }}
             >
               <HugeiconsIcon icon={WalletAdd01Icon} size={14} strokeWidth={1.6} />
               Deposit
@@ -516,7 +503,7 @@ export function AccountMenu({
             <button
               type="button"
               className="dash-account-action"
-              onClick={() => { close(); onOpenWithdraw(); }}
+              onClick={() => { close(); openWithdraw(); }}
             >
               <HugeiconsIcon icon={WalletRemove01Icon} size={14} strokeWidth={1.6} />
               Withdraw
@@ -566,7 +553,7 @@ export function AccountMenu({
               <button
                 type="button"
                 className="dash-account-icon-btn"
-                onClick={onToggleTheme}
+                onClick={toggleTheme}
                 aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
                 title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
               >

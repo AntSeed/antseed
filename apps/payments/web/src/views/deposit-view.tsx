@@ -4,8 +4,9 @@ import { useAccount, useChainId } from 'wagmi';
 import { parseUnits } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import type { BalanceData, PaymentConfig } from '../types';
 import { usePaymentNetwork } from '../lib/payment-network';
+import { useBalance, useBuyerEvmAddress, useConfig } from '../hooks/queries';
+import { useAppShell } from '../context/app-shell-context';
 import { UsdcLogo, BaseLogo } from '../components/ui/brand-logos';
 import { formatUsd, formatAmountInput, truncateAddr } from '../lib/format';
 import { useDeposit } from '../hooks/use-deposit';
@@ -32,16 +33,9 @@ function getSuggestedDeposit(maxDeposit: number, isFirstDeposit: boolean): strin
   return formatAmountInput(Math.max(floor, Math.min(10, maxDeposit)));
 }
 
-interface DepositViewProps {
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  buyerAddress: string | null;
-  onDeposited: () => void;
-}
-
 type DepositMethod = 'crypto' | 'card';
 
-export function DepositView({ config, balance, buyerAddress, onDeposited }: DepositViewProps) {
+export function DepositView() {
   const [method, setMethod] = useState<DepositMethod>('crypto');
 
   return (
@@ -80,12 +74,7 @@ export function DepositView({ config, balance, buyerAddress, onDeposited }: Depo
         </div>
 
         {method === 'crypto' ? (
-          <CryptoDeposit
-            config={config}
-            balance={balance}
-            buyerAddress={buyerAddress}
-            onDeposited={onDeposited}
-          />
+          <CryptoDeposit />
         ) : (
           <CardDepositPlaceholder />
         )}
@@ -96,12 +85,11 @@ export function DepositView({ config, balance, buyerAddress, onDeposited }: Depo
 
 /* ── Crypto Deposit (wagmi + RainbowKit) ── */
 
-function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
-  config: PaymentConfig | null;
-  balance: BalanceData | null;
-  buyerAddress: string | null;
-  onDeposited: () => void;
-}) {
+function CryptoDeposit() {
+  const { data: config = null } = useConfig();
+  const { data: balance = null } = useBalance();
+  const buyerAddress = useBuyerEvmAddress();
+  const { handleDeposited: onDeposited } = useAppShell();
   const { address, isConnected } = useAccount();
   const connectedChainId = useChainId();
   const [amount, setAmount] = useState('');

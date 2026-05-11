@@ -3,8 +3,6 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, usePublicClient } from 'wagmi';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, Plant01Icon } from '@hugeicons/core-free-icons';
-import type { PaymentConfig } from '../types';
-import type { TabId } from '../components/layout/sidebar';
 import {
   type EmissionsPendingResponse,
   type EmissionsShares,
@@ -16,6 +14,7 @@ import {
   useEmissionsShares,
   useDiemScan,
 } from '../hooks/queries';
+import { useAppShell } from '../context/app-shell-context';
 import { getErrorMessage } from '../lib/payment-network';
 import {
   estimateEmissionReward,
@@ -25,11 +24,6 @@ import {
 } from '../lib/format';
 import { AntMark } from '../components/ui/ant-seed-logo';
 import './earn-view.scss';
-
-interface EarnViewProps {
-  config: PaymentConfig | null;
-  onSelectTab: (tab: TabId) => void;
-}
 
 const DIEM_EPOCH_SCAN_LIMIT = 16;
 
@@ -88,22 +82,19 @@ function estimateCurrentReward(
   );
 }
 
-export function EarnView({ config, onSelectTab }: EarnViewProps) {
+export function EarnView() {
+  const { selectTab: onSelectTab } = useAppShell();
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
 
+  const { data: config = null } = useConfig();
   const buyerAddress = config?.evmAddress ?? null;
   const diemAddress = isConnected && address ? address : null;
 
-  const configQuery = useConfig();
-  const infoQuery = useEmissionsInfo();
-  const pendingQuery = useEmissionsPending(buyerAddress);
-  const sharesQuery = useEmissionsShares();
+  const { data: info = null } = useEmissionsInfo();
+  const { data: pending = null } = useEmissionsPending(buyerAddress);
+  const { data: shares = null } = useEmissionsShares();
   const diemQuery = useDiemScan(publicClient, diemAddress, DIEM_EPOCH_SCAN_LIMIT);
-
-  const info = infoQuery.data ?? null;
-  const pending = pendingQuery.data ?? null;
-  const shares = sharesQuery.data ?? null;
 
   const diem = useMemo<DiemSummary | null>(() => {
     const scan = diemQuery.data;
@@ -123,11 +114,8 @@ export function EarnView({ config, onSelectTab }: EarnViewProps) {
     ? getErrorMessage(diemQuery.error, 'Unable to load DIEM rewards.')
     : null;
 
-  const isFirstLoad =
-    configQuery.isLoading ||
-    infoQuery.isLoading ||
-    sharesQuery.isLoading ||
-    (!!buyerAddress && !pending);
+  const pendingReady = !!pending;
+  const networkLoading = !pending && !!buyerAddress;
 
   const currentRow = useMemo(() => pending?.rows.find((r) => r.isCurrent), [pending]);
   const networkClaimable = useMemo(
@@ -142,10 +130,6 @@ export function EarnView({ config, onSelectTab }: EarnViewProps) {
     () => estimateCurrentReward(currentRow, info?.epochEmission ?? '0', shares),
     [currentRow, info, shares],
   );
-
-  if (isFirstLoad) {
-    return <EarnSkeleton />;
-  }
 
   const now = Math.floor(Date.now() / 1000);
   const epochStart = info ? info.genesis + info.currentEpoch * info.epochDuration : 0;
@@ -194,55 +178,103 @@ export function EarnView({ config, onSelectTab }: EarnViewProps) {
         <span className="page-banner-deco" aria-hidden="true" />
       </section>
 
-      {info && (
-        <section className="overview-section">
-          <header className="overview-section-head">
-            <div className="overview-section-eyebrow">Current epoch</div>
-            <h2 className="overview-section-title">Epoch #{info.currentEpoch}</h2>
-            <p className="overview-section-sub">
-              {shares
-                ? `Split: ${shares.sellerSharePct}% sellers · ${shares.buyerSharePct}% buyers · ${shares.reserveSharePct}% reserve · ${shares.teamSharePct}% team.`
-                : 'Live emission window across the AntSeed network.'}
-            </p>
-          </header>
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <div className="overview-section-eyebrow">Current epoch</div>
+          <h2 className="overview-section-title">
+            {info ? `Epoch #${info.currentEpoch}` : <span className="skel skel-line skel-line--title" />}
+          </h2>
+          <p className="overview-section-sub">
+            {shares
+              ? `Split: ${shares.sellerSharePct}% sellers · ${shares.buyerSharePct}% buyers · ${shares.reserveSharePct}% reserve · ${shares.teamSharePct}% team.`
+              : 'Live emission window across the AntSeed network.'}
+          </p>
+        </header>
 
-          <div className="stat-grid">
-            <div className="stat-card">
-              <div className="stat-card-label">Ends in</div>
-              <div className="stat-card-value">{formatDurationHuman(timeRemaining)}</div>
-              <div className="stat-card-hint">{formatEpochEnd(epochEnd)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">Epoch pool</div>
-              <div className="stat-card-value">{formatAnts(info.epochEmission)}</div>
-              <div className="stat-card-hint">$ANTS this epoch</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">Your estimate</div>
-              <div className="stat-card-value">{formatAnts(currentEstimate)}</div>
-              <div className="stat-card-hint">Updates each settlement</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card-label">Next halving</div>
-              <div className="stat-card-value">{epochsUntilHalving}</div>
-              <div className="stat-card-hint">Epochs remaining</div>
-            </div>
+        <div className="stat-grid">
+          <div className="stat-card">
+            <div className="stat-card-label">Ends in</div>
+            {info ? (
+              <>
+                <div className="stat-card-value">{formatDurationHuman(timeRemaining)}</div>
+                <div className="stat-card-hint">{formatEpochEnd(epochEnd)}</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
           </div>
-        </section>
-      )}
+          <div className="stat-card">
+            <div className="stat-card-label">Epoch pool</div>
+            {info ? (
+              <>
+                <div className="stat-card-value">{formatAnts(info.epochEmission)}</div>
+                <div className="stat-card-hint">$ANTS this epoch</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
+          </div>
+          <div className="stat-card">
+            <div className="stat-card-label">Your estimate</div>
+            {info && shares ? (
+              <>
+                <div className="stat-card-value">{formatAnts(currentEstimate)}</div>
+                <div className="stat-card-hint">Updates each settlement</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
+          </div>
+          <div className="stat-card">
+            <div className="stat-card-label">Next halving</div>
+            {info ? (
+              <>
+                <div className="stat-card-value">{epochsUntilHalving}</div>
+                <div className="stat-card-hint">Epochs remaining</div>
+              </>
+            ) : (
+              <>
+                <span className="skel skel-block skel-block--value" />
+                <span className="skel skel-line skel-line--hint" />
+              </>
+            )}
+          </div>
+        </div>
+      </section>
 
-      {pending && pending.rows.length > 0 && (
+      {buyerAddress && (!pendingReady || pending.rows.length > 0) && (
         <section className="overview-section">
           <header className="overview-section-head">
             <div className="overview-section-eyebrow">Activity</div>
             <h2 className="overview-section-title">Recent epochs</h2>
           </header>
-          <EarnHistory
-            rows={pending.rows}
-            epochEmission={info?.epochEmission ?? '0'}
-            shares={shares}
-            onOpen={() => onSelectTab('emissions')}
-          />
+          {pendingReady ? (
+            <EarnHistory
+              rows={pending.rows}
+              epochEmission={info?.epochEmission ?? '0'}
+              shares={shares}
+              onOpen={() => onSelectTab('emissions')}
+            />
+          ) : (
+            <div className="earn-history" aria-busy="true" aria-label="Loading recent epochs">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div className="earn-history-row" key={i}>
+                  <span className="skel skel-line skel-line--cell" style={{ width: '40%' }} />
+                  <span className="skel skel-line skel-line--cell" style={{ width: '50%' }} />
+                  <span className="skel skel-pill" />
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -266,6 +298,7 @@ export function EarnView({ config, onSelectTab }: EarnViewProps) {
             ctaLabel={networkClaimable > 0n ? 'Claim' : 'View'}
             ctaActive={networkClaimable > 0n}
             onCta={() => onSelectTab('emissions')}
+            loading={networkLoading}
           />
           <ProgramCard
             tone="diem"
@@ -291,6 +324,7 @@ export function EarnView({ config, onSelectTab }: EarnViewProps) {
             ctaActive={isConnected && (diem?.pending ?? 0n) > 0n}
             onCta={() => onSelectTab('diem-rewards')}
             connectFallback={!isConnected ? <ConnectButton /> : null}
+            loading={isConnected && !diem && diemQuery.isLoading}
           />
         </div>
       </section>
@@ -312,6 +346,7 @@ interface ProgramCardProps {
   ctaActive: boolean;
   onCta: () => void;
   connectFallback?: React.ReactNode;
+  loading?: boolean;
 }
 
 function ProgramCard({
@@ -326,6 +361,7 @@ function ProgramCard({
   ctaActive,
   onCta,
   connectFallback,
+  loading = false,
 }: ProgramCardProps) {
   return (
     <article className={`earn-program earn-program--${tone}`}>
@@ -336,19 +372,29 @@ function ProgramCard({
 
       <p className="earn-program-sub">{subtitle}</p>
 
-      <div className="earn-program-amount">
-        <span className="earn-program-amount-value">
-          {pending === null ? '—' : formatAnts(pending)}
-        </span>
-        <span className="earn-program-amount-unit">$ANTS pending</span>
-      </div>
+      {loading ? (
+        <span className="skel skel-block skel-block--value" />
+      ) : (
+        <div className="earn-program-amount">
+          <span className="earn-program-amount-value">
+            {pending === null ? '—' : formatAnts(pending)}
+          </span>
+          <span className="earn-program-amount-unit">$ANTS pending</span>
+        </div>
+      )}
 
       <div className="earn-program-foot">
         <div className="earn-program-meta">
           <span className="earn-program-meta-label">{metaLabel}</span>
-          <span className="earn-program-meta-value">{metaValue}</span>
+          {loading ? (
+            <span className="skel skel-line skel-line--hint" />
+          ) : (
+            <span className="earn-program-meta-value">{metaValue}</span>
+          )}
         </div>
-        {connectFallback ?? (
+        {loading ? (
+          <span className="skel skel-pill" style={{ width: 80, height: 34, borderRadius: 999 }} />
+        ) : connectFallback ?? (
           ctaLabel && (
             <button
               type="button"
@@ -402,77 +448,3 @@ function EarnHistory({ rows, epochEmission, shares, onOpen }: EarnHistoryProps) 
   );
 }
 
-function EarnSkeleton() {
-  return (
-    <div className="earn-view emissions-skeleton" aria-busy="true" aria-label="Loading earn">
-      <div className="page-banner">
-        <span className="skel skel-pill" style={{ width: 40, height: 40, borderRadius: 999 }} />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </div>
-      </div>
-
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </header>
-        <div className="stat-grid">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div className="stat-card" key={i}>
-              <span className="skel skel-line skel-line--label" />
-              <span className="skel skel-block skel-block--value" />
-              <span className="skel skel-line skel-line--hint" />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-        </header>
-        <div className="earn-history">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div className="earn-history-row" key={i}>
-              <span className="skel skel-line skel-line--cell" style={{ width: '40%' }} />
-              <span className="skel skel-line skel-line--cell" style={{ width: '50%' }} />
-              <span className="skel skel-pill" />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="overview-section">
-        <header className="overview-section-head">
-          <span className="skel skel-line skel-line--eyebrow" />
-          <span className="skel skel-line skel-line--title" />
-          <span className="skel skel-line skel-line--sub" />
-        </header>
-        <div className="earn-programs">
-          {[0, 1].map((i) => (
-            <div className={`earn-program earn-program--${i === 0 ? 'ants' : 'diem'}`} key={i}>
-              <div className="earn-program-head">
-                <span className="skel skel-pill" style={{ width: 36, height: 36, borderRadius: 10 }} />
-                <span className="skel skel-line skel-line--title" style={{ flex: 1 }} />
-              </div>
-              <span className="skel skel-line skel-line--sub" />
-              <span className="skel skel-block skel-block--value" />
-              <div className="earn-program-foot">
-                <div className="earn-program-meta">
-                  <span className="skel skel-line skel-line--label" />
-                  <span className="skel skel-line skel-line--hint" />
-                </div>
-                <span className="skel skel-pill" style={{ width: 80, height: 34, borderRadius: 999 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}

@@ -2473,39 +2473,115 @@ $dash-sidebar-width: 240px;
   align-items: center;
   justify-content: center;
   padding: 32px 24px;
-  background: rgba(10, 14, 22, 0.6);
-  backdrop-filter: blur(6px);
+  background: rgba(10, 14, 22, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   z-index: var(--z-critical);
-  animation: empty-state-fade 0.25s ease both;
+  animation: empty-state-fade 0.32s ease both;
 }
 
 .session-expired-card {
-  width: min(400px, 100%);
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 16px;
-  padding: 48px 36px;
+  position: relative;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 38px 32px 32px;
   text-align: center;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  background: var(--page-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 50px 120px -30px rgba(10, 14, 22, 0.55),
+    0 20px 60px -20px rgba(10, 14, 22, 0.35);
+  animation: empty-state-rise 0.44s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  /* Soft amber wash bleeding down from the emblem — gives the card
+   * atmosphere without committing to a hard fill. */
+  &::before {
+    content: '';
+    position: absolute;
+    inset: -40px -40px auto -40px;
+    height: 220px;
+    background: radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--amber) 18%, transparent) 0%,
+      transparent 65%
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  > * { position: relative; z-index: 1; }
 }
 
-.session-expired-icon {
-  margin-bottom: 20px;
-  opacity: 0.7;
+.session-expired-emblem {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--amber);
+  margin-bottom: 2px;
+  filter: drop-shadow(
+    0 6px 22px color-mix(in srgb, var(--amber) 28%, transparent)
+  );
+}
+
+.session-expired-emblem-orbit {
+  transform-origin: 42px 42px;
+  transform-box: view-box;
+}
+
+.session-expired-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.session-expired-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-dim);
+  animation: session-expired-pulse 1.8s ease-in-out infinite;
 }
 
 .session-expired-title {
-  font-size: 1.25rem;
+  font-size: 22px;
   font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
   color: var(--text-primary);
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 .session-expired-subtitle {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  max-width: 320px;
+}
+
+@keyframes session-expired-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px var(--amber-dim);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px transparent;
+  }
 }
 
 /* ── Action modal (deposit / withdraw from anywhere) ─────────── */
