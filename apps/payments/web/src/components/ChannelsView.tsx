@@ -3,10 +3,11 @@ import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import type { ChannelData } from '../api';
-import { CHANNELS_ABI } from '../channels-abi';
+import { CHANNELS_ABI } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
 import { useChannels } from '../hooks/useChannels';
 import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
+import { formatCountdownMSS, formatUsd, truncateAddr } from '../utils/format';
 import './ChannelsView.scss';
 
 interface ChannelsViewProps {
@@ -15,10 +16,6 @@ interface ChannelsViewProps {
 
 const GRACE_PERIOD = 900; // 15 minutes in seconds
 const PAGE_SIZE = 10;
-
-function truncateAddress(addr: string): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
 
 type RowStatus =
   | 'active'
@@ -94,6 +91,33 @@ function ClosedIcon() {
   );
 }
 
+function RefreshIcon({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      className={`channels-refresh-icon${spinning ? ' channels-refresh-icon--spin' : ''}`}
+      width="12"
+      height="12"
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 7a5 5 0 1 1-1.46-3.54"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 2.25v2.5h-2.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const STATUS_ICONS: Record<RowStatus, React.ReactNode> = {
   active:       <ActiveIcon />,
   closing:      <ClosingIcon />,
@@ -112,13 +136,8 @@ const STATUS_META: Record<RowStatus, { label: string; modifier: string }> = {
   closed:       { label: 'Closed',       modifier: 'status-pill--muted' },
 };
 
-function formatTimeRemaining(closeRequestedAt: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const remaining = closeRequestedAt + GRACE_PERIOD - now;
-  if (remaining <= 0) return '0:00';
-  const mins = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+function graceRemaining(closeRequestedAt: number): number {
+  return closeRequestedAt + GRACE_PERIOD - Math.floor(Date.now() / 1000);
 }
 
 // Accepts either seconds (on-chain style) or milliseconds (Date.now()) — the
@@ -131,6 +150,15 @@ function toMs(ts: number): number {
 function formatDate(ts: number): string {
   if (!ts) return '—';
   return new Date(toMs(ts)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Table-cell precision: 2 decimals for ≥ $1, 4 decimals for sub-dollar values
+// so that micro-payments stay legible without dropping precision to "$0.00".
+function formatChannelUsd(value: string): string {
+  const n = parseFloat(value);
+  if (!Number.isFinite(n) || n === 0) return '0.00';
+  if (n >= 1) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toFixed(4);
 }
 
 const parsedAbi = parseAbi(CHANNELS_ABI);
@@ -199,13 +227,13 @@ function ChannelRow({
 
   const meta = STATUS_META[status];
   const pillLabel = status === 'closing'
-    ? `Closing ${formatTimeRemaining(session.closeRequestedAt)}`
+    ? `Closing ${formatCountdownMSS(graceRemaining(session.closeRequestedAt))}`
     : meta.label;
 
   return (
     <tr>
       <td className="channels-table-cell-seller" title={session.seller}>
-        {truncateAddress(session.seller)}
+        {truncateAddr(session.seller)}
       </td>
       <td className="channels-table-cell-id" title={session.channelId}>
         {session.channelId.slice(0, 10)}…
@@ -216,8 +244,8 @@ function ChannelRow({
           {pillLabel}
         </span>
       </td>
-      <td className="channels-table-num">${session.deposit}</td>
-      <td className="channels-table-num">${session.settled}</td>
+      <td className="channels-table-num">${formatChannelUsd(session.deposit)}</td>
+      <td className="channels-table-num">${formatChannelUsd(session.settled)}</td>
       <td className="channels-table-date" title={formatDate(session.reservedAt)}>
         {formatDate(session.reservedAt)}
       </td>
@@ -242,9 +270,22 @@ function ChannelRow({
 export function ChannelsView({ config }: ChannelsViewProps) {
   const { channels, history, loading, refetch } = useChannels(config);
   const [page, setPage] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Spin for ≥500ms even when refetch resolves instantly — the local API
+  // usually returns the same data, so without this the click feels inert.
   const fetchData = useCallback(async () => {
-    await refetch();
+    setRefreshing(true);
+    const start = Date.now();
+    try {
+      await refetch();
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
+      setRefreshing(false);
+    }
   }, [refetch]);
 
   // Active first, then history — keeps actionable rows on page one.
@@ -273,50 +314,70 @@ export function ChannelsView({ config }: ChannelsViewProps) {
     [allChannels, page],
   );
 
+  const initialLoading = loading && allChannels.length === 0;
+
   return (
-    <div className="channels-view dashboard-view">
-      <section className="dashboard-section">
+    <div className="channels-view overview-view">
+      <section className="overview-section">
         <div className="channels-section-head-row">
-          <header className="dashboard-section-head">
-            <div className="dashboard-section-eyebrow">Your channels</div>
-            <h2 className="dashboard-section-title">Payment channels</h2>
-            <p className="dashboard-section-sub">
+          <header className="overview-section-head">
+            <div className="overview-section-eyebrow">Your channels</div>
+            <h2 className="overview-section-title">Payment channels</h2>
+            <p className="overview-section-sub">
               Payment channels between you and sellers. Reserve funds once, then settle
               per-request against the escrow.
             </p>
           </header>
-          <button className="btn-outline channels-refresh-btn" onClick={fetchData}>
-            Refresh
+          <button
+            type="button"
+            className="btn-outline channels-refresh-btn"
+            onClick={fetchData}
+            disabled={refreshing || initialLoading}
+            aria-label="Refresh channels"
+          >
+            <RefreshIcon spinning={refreshing} />
+            <span>{refreshing ? 'Refreshing' : 'Refresh'}</span>
           </button>
         </div>
 
-        <div className="dashboard-chart-card">
-          <div className="dashboard-kpi-row">
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Active</div>
-              <div className="dashboard-kpi-value">{totals.active} / {totals.total}</div>
+        <div className="overview-chart-card">
+          <div className="overview-kpi-row" aria-busy={initialLoading || undefined}>
+            <div className="overview-kpi">
+              <div className="overview-kpi-label">Active</div>
+              {initialLoading ? (
+                <span className="skel skel-block skel-block--value" />
+              ) : (
+                <div className="overview-kpi-value">{totals.active} / {totals.total}</div>
+              )}
             </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Reserved</div>
-              <div className="dashboard-kpi-value">${totals.reserved.toFixed(2)}</div>
+            <div className="overview-kpi">
+              <div className="overview-kpi-label">Reserved</div>
+              {initialLoading ? (
+                <span className="skel skel-block skel-block--value" />
+              ) : (
+                <div className="overview-kpi-value">${formatUsd(totals.reserved)}</div>
+              )}
             </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Used</div>
-              <div className="dashboard-kpi-value">${totals.used.toFixed(2)}</div>
+            <div className="overview-kpi">
+              <div className="overview-kpi-label">Used</div>
+              {initialLoading ? (
+                <span className="skel skel-block skel-block--value" />
+              ) : (
+                <div className="overview-kpi-value">${formatUsd(totals.used)}</div>
+              )}
             </div>
-            <div className="dashboard-kpi">
-              <div className="dashboard-kpi-label">Total Spent</div>
-              <div className="dashboard-kpi-value">${totals.totalSpent.toFixed(2)}</div>
+            <div className="overview-kpi">
+              <div className="overview-kpi-label">Total Spent</div>
+              {initialLoading ? (
+                <span className="skel skel-block skel-block--value" />
+              ) : (
+                <div className="overview-kpi-value">${formatUsd(totals.totalSpent)}</div>
+              )}
             </div>
           </div>
 
-          {/* <div className="channels-table-caption">
-            {allChannels.length} channel{allChannels.length === 1 ? '' : 's'}
-            {channels.length > 0 && ` · ${channels.length} active`}
-          </div> */}
-
-          {loading && allChannels.length === 0 ? (
-            <div className="channels-view-empty">Loading channels…</div>
+          {initialLoading ? (
+            <ChannelsTableSkeleton />
           ) : allChannels.length === 0 ? (
             <div className="channels-view-empty">No channels yet</div>
           ) : (
@@ -380,6 +441,43 @@ export function ChannelsView({ config }: ChannelsViewProps) {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ChannelsTableSkeleton() {
+  return (
+    <div className="channels-table-wrap" aria-busy="true" aria-label="Loading channels">
+      <table className="channels-table">
+        <thead>
+          <tr>
+            <th>Seller</th>
+            <th>Channel</th>
+            <th>Status</th>
+            <th className="channels-table-num">Reserved</th>
+            <th className="channels-table-num">Used</th>
+            <th>Opened</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <tr key={i}>
+              <td><span className="skel skel-line skel-line--cell" style={{ width: 80 }} /></td>
+              <td><span className="skel skel-line skel-line--cell" style={{ width: 84 }} /></td>
+              <td><span className="skel skel-pill" /></td>
+              <td className="channels-table-num">
+                <span className="skel skel-line skel-line--cell" style={{ width: 56, marginLeft: 'auto' }} />
+              </td>
+              <td className="channels-table-num">
+                <span className="skel skel-line skel-line--cell" style={{ width: 56, marginLeft: 'auto' }} />
+              </td>
+              <td><span className="skel skel-line skel-line--cell" style={{ width: 90 }} /></td>
+              <td><span className="skel skel-line skel-line--cell" style={{ width: 16 }} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

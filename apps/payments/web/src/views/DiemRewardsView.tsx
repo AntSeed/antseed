@@ -1,54 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
-import { formatUnits, parseAbi } from 'viem';
+import { useQueryClient } from '@tanstack/react-query';
+import { parseAbi } from 'viem';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { PaymentConfig } from '../types';
-import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS } from '../diem-proxy-abi';
+import { DIEM_STAKING_PROXY_ABI, DIEM_STAKING_PROXY_ADDRESS } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { formatAnts } from '../utils/format';
+import { type DiemEpochRow, type DiemEpochScan } from '../utils/diemScan';
+import { useDiemScan } from '../hooks/queries';
+import { Tooltip } from '../components/Tooltip';
 
 interface DiemRewardsViewProps {
   config: PaymentConfig | null;
 }
 
-interface DiemRewardRow {
-  epoch: number;
-  amount: bigint;
-  claimed: boolean;
-}
-
-interface DiemRewardSnapshot {
-  firstRewardEpoch: number;
-  finalizedRewardEpoch: number;
-  syncedRewardEpoch: number;
-  userLastClaimedEpoch: number;
-  rows: DiemRewardRow[];
-  hasMore: boolean;
-}
-
-const ANTS_DECIMALS = 18;
 const MAX_EPOCHS_PREVIEW = 16;
 const DIEM_PROXY_ABI = parseAbi(DIEM_STAKING_PROXY_ABI);
 
-function formatAnts(amountWei: bigint): string {
-  const n = parseFloat(formatUnits(amountWei, ANTS_DECIMALS));
-  if (n === 0) return '0';
-  if (n < 0.0001) return '< 0.0001';
-  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
-}
-
-function formatEpochRange(snapshot: DiemRewardSnapshot): string {
+function formatEpochRange(snapshot: DiemEpochScan): string {
   if (snapshot.rows.length === 0) return 'No finalized epochs in range';
   const first = snapshot.rows[0]?.epoch;
   const last = snapshot.rows[snapshot.rows.length - 1]?.epoch;
   return first === last ? `Epoch #${first}` : `Epochs #${first}–#${last}`;
-}
-
-function asNumber(value: unknown): number {
-  return typeof value === 'number' ? value : Number(value ?? 0);
-}
-
-function asBigint(value: unknown): bigint {
-  return typeof value === 'bigint' ? value : 0n;
 }
 
 export function DiemRewardsView({ config }: DiemRewardsViewProps) {
@@ -56,10 +32,14 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
   const publicClient = usePublicClient();
   const accountAddress = address ?? null;
   const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+  const queryClient = useQueryClient();
 
-  const [snapshot, setSnapshot] = useState<DiemRewardSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const diemAddress = isConnected ? accountAddress : null;
+  const diemQuery = useDiemScan(publicClient, diemAddress, MAX_EPOCHS_PREVIEW);
+  const snapshot: DiemEpochScan | null = diemQuery.data ?? null;
+  const loading = diemQuery.isFetching;
+  const loadError = diemQuery.error ? getErrorMessage(diemQuery.error, 'Unable to load DIEM rewards.') : null;
+
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState(false);
 
@@ -74,84 +54,13 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     chainId: expectedChainId,
   });
 
-  const load = useCallback(async () => {
-    if (!isConnected || !accountAddress || !publicClient) {
-      setSnapshot(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const [firstRewardEpochRaw, finalizedRewardEpochRaw, syncedRewardEpochRaw, userLastClaimedEpochRaw] = await publicClient.multicall({
-        allowFailure: true,
-        contracts: [
-          { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'firstRewardEpoch' },
-          { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'finalizedRewardEpoch' },
-          { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'syncedRewardEpoch' },
-          { address: DIEM_STAKING_PROXY_ADDRESS, abi: DIEM_PROXY_ABI, functionName: 'userLastClaimedEpoch', args: [accountAddress] },
-        ],
-      });
-
-      const firstRewardEpoch = asNumber(firstRewardEpochRaw.result);
-      const finalizedRewardEpoch = asNumber(finalizedRewardEpochRaw.result);
-      const syncedRewardEpoch = asNumber(syncedRewardEpochRaw.result);
-      const userLastClaimedEpoch = asNumber(userLastClaimedEpochRaw.result);
-      const from = Math.max(userLastClaimedEpoch, firstRewardEpoch);
-      const to = Math.min(finalizedRewardEpoch, from + MAX_EPOCHS_PREVIEW);
-      const epochs: number[] = [];
-      for (let e = from; e < to; e += 1) epochs.push(e);
-
-      const rows = epochs.length === 0
-        ? []
-        : await publicClient.multicall({
-            allowFailure: true,
-            contracts: epochs.flatMap((epoch) => [
-              {
-                address: DIEM_STAKING_PROXY_ADDRESS,
-                abi: DIEM_PROXY_ABI,
-                functionName: 'pendingAntsForEpoch',
-                args: [accountAddress, epoch] as const,
-              },
-              {
-                address: DIEM_STAKING_PROXY_ADDRESS,
-                abi: DIEM_PROXY_ABI,
-                functionName: 'userEpochClaimed',
-                args: [accountAddress, epoch] as const,
-              },
-            ]),
-          });
-
-      const rewardRows: DiemRewardRow[] = epochs.map((epoch, i) => ({
-        epoch,
-        amount: asBigint(rows[i * 2]?.result),
-        claimed: rows[i * 2 + 1]?.result === true,
-      }));
-
-      setSnapshot({
-        firstRewardEpoch,
-        finalizedRewardEpoch,
-        syncedRewardEpoch,
-        userLastClaimedEpoch,
-        rows: rewardRows,
-        hasMore: from + MAX_EPOCHS_PREVIEW < finalizedRewardEpoch,
-      });
-    } catch (err) {
-      setLoadError(getErrorMessage(err, 'Unable to load DIEM rewards.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [accountAddress, isConnected, publicClient]);
-
-  useEffect(() => { void load(); }, [load]);
-
   useEffect(() => {
     if (claimConfirmed) {
       setClaimSuccess(true);
       resetClaim();
-      void load();
+      void queryClient.invalidateQueries({ queryKey: ['diem-scan'] });
     }
-  }, [claimConfirmed, load, resetClaim]);
+  }, [claimConfirmed, queryClient, resetClaim]);
 
   const claimableEpochs = useMemo(() => (
     snapshot?.rows.filter((r) => !r.claimed).map((r) => r.epoch) ?? []
@@ -198,11 +107,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
   }
 
   if (loading && !snapshot) {
-    return (
-      <div className="diem-rewards-view">
-        <div className="overview-empty"><div className="overview-empty-desc">Loading DIEM rewards…</div></div>
-      </div>
-    );
+    return <DiemRewardsSkeleton />;
   }
 
   if (loadError) {
@@ -216,32 +121,81 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
     );
   }
 
+  const claimBusy = claimSubmitting;
+  const hasClaimable = claimableEpochs.length > 0;
+  const hasPending = totalPending > 0n;
+
+  const claimDisabledReason: string | null = claimBusy
+    ? 'Claim in progress — wait for the current transaction to confirm.'
+    : !hasClaimable
+      ? 'Nothing to claim yet. Once new epochs are finalized by the DIEM proxy, you can claim from here.'
+      : null;
+
+  const claimLabel = claimBusy
+    ? 'Claiming…'
+    : hasPending
+      ? `Claim ${formatAnts(totalPending)} $ANTS`
+      : hasClaimable
+        ? 'Clear 0-$ANTS epochs'
+        : 'Claim $ANTS';
+
   return (
     <div className="diem-rewards-view">
-      <section className="dashboard-section">
-        <header className="dashboard-section-head">
-          <div className="dashboard-section-eyebrow">DIEM staking</div>
-          <h2 className="dashboard-section-title">Your DIEM $ANTS</h2>
-          <p className="dashboard-section-sub">
-            Rewards earned from staking DIEM through the AntSeed proxy. Connect the same wallet you used for staking.
+      <section className="page-banner page-banner--diem">
+        <span className="page-banner-mark page-banner-mark--neutral" aria-hidden="true">
+          <img src="/diem-logo.png" width="22" height="22" alt="" />
+        </span>
+        <div className="page-banner-content">
+          <div className="page-banner-eyebrow">$DIEM staking</div>
+          <h2 className="page-banner-heading">Earn $ANTS from your $DIEM stake</h2>
+          <p className="page-banner-sub">
+            Your $DIEM (via the AntSeed staking proxy) earns $ANTS each epoch. Claims are
+            non-custodial — tokens mint directly to your wallet.
+          </p>
+        </div>
+        <div className="page-banner-actions">
+          <Tooltip text={claimDisabledReason ?? ''}>
+            <button
+              type="button"
+              className="page-banner-action page-banner-action--primary"
+              onClick={handleClaim}
+              disabled={Boolean(claimDisabledReason)}
+            >
+              <span className="page-banner-action-icon" aria-hidden="true">
+                <img src="/diem-logo.png" width="14" height="14" alt="" />
+              </span>
+              {claimLabel}
+              <HugeiconsIcon icon={ArrowRight01Icon} size={11} strokeWidth={1.8} />
+            </button>
+          </Tooltip>
+        </div>
+        <span className="page-banner-deco" aria-hidden="true" />
+      </section>
+
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <div className="overview-section-eyebrow">Your position</div>
+          <h2 className="overview-section-title">DIEM proxy rewards</h2>
+          <p className="overview-section-sub">
+            Live snapshot of your share across the most recent finalized epochs.
           </p>
         </header>
 
-        <div className="stat-grid diem-rewards-stat-grid">
+        <div className="stat-grid">
           <div className="stat-card stat-card--accent">
             <div className="stat-card-label">Pending $ANTS</div>
-            <div className="stat-card-value">{formatAnts(totalPending)}</div>
+            <div className="stat-card-value">{formatAnts(totalPending)} <span className="stat-card-unit">$ANTS</span></div>
             <div className="stat-card-hint">Across scanned finalized epochs</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Claimable epochs</div>
             <div className="stat-card-value">{claimableEpochs.length}</div>
-            <div className="stat-card-hint">Includes 0-ANTS epochs to clear cursor</div>
+            <div className="stat-card-hint">Includes 0-$ANTS epochs to clear cursor</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Finalized epoch</div>
             <div className="stat-card-value">#{snapshot?.finalizedRewardEpoch ?? '—'}</div>
-            <div className="stat-card-hint">Last claimable reward epoch boundary</div>
+            <div className="stat-card-hint">Latest reward epoch boundary</div>
           </div>
           <div className="stat-card">
             <div className="stat-card-label">Scanned range</div>
@@ -251,41 +205,110 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
         </div>
       </section>
 
-      <section className="dashboard-section">
-        <header className="dashboard-section-head">
-          <div className="dashboard-section-eyebrow">History</div>
-          <h2 className="dashboard-section-title">Diem proxy epochs</h2>
-          <p className="dashboard-section-sub">
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <div className="overview-section-eyebrow">History</div>
+          <h2 className="overview-section-title">DIEM proxy epochs</h2>
+          <p className="overview-section-sub">
             Claimable epochs are finalized by the DiemStakingProxy. Current epochs appear after the proxy closes them.
           </p>
         </header>
-        <div className="dashboard-chart-card">
+        <div className="overview-chart-card">
           <DiemRewardsTable rows={snapshot?.rows ?? []} />
           {(claimError || claimSuccess) && (
             <div className={`status-msg ${claimError ? 'status-error' : 'status-success'}`}>
               {claimError ?? 'DIEM $ANTS claim confirmed.'}
             </div>
           )}
-          <button
-            className="btn-primary"
-            onClick={handleClaim}
-            disabled={claimSubmitting || claimableEpochs.length === 0}
-          >
-            {claimSubmitting
-              ? 'Claiming…'
-              : totalPending > 0n
-                ? `Claim ${formatAnts(totalPending)} $ANTS`
-                : claimableEpochs.length > 0
-                  ? 'Clear 0-$ANTS epochs'
-                  : 'Nothing to claim'}
-          </button>
+        </div>
+      </section>
+
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <div className="overview-section-eyebrow">Info</div>
+          <h2 className="overview-section-title">About $DIEM staking</h2>
+          <p className="overview-section-sub">
+            How $DIEM stakers earn $ANTS through the AntSeed proxy.
+          </p>
+        </header>
+        <div className="emissions-facts">
+          <article className="emissions-fact">
+            <span className="emissions-fact-num">01</span>
+            <h3 className="emissions-fact-title">Stake stays put</h3>
+            <p className="emissions-fact-desc">
+              Your $DIEM remains staked through the AntSeed proxy — only $ANTS rewards move when you claim.
+            </p>
+          </article>
+          <article className="emissions-fact">
+            <span className="emissions-fact-num">02</span>
+            <h3 className="emissions-fact-title">Per-epoch snapshots</h3>
+            <p className="emissions-fact-desc">
+              The proxy finalizes epochs on its own cadence. Claim once an epoch is finalized — order doesn't matter.
+            </p>
+          </article>
+          <article className="emissions-fact">
+            <span className="emissions-fact-num">03</span>
+            <h3 className="emissions-fact-title">Non-custodial</h3>
+            <p className="emissions-fact-desc">
+              Claimed $ANTS mints directly to the wallet you connect here. Nothing held by us in between.
+            </p>
+          </article>
         </div>
       </section>
     </div>
   );
 }
 
-function DiemRewardsTable({ rows }: { rows: DiemRewardRow[] }) {
+function DiemRewardsSkeleton() {
+  return (
+    <div className="diem-rewards-view emissions-skeleton" aria-busy="true" aria-label="Loading DIEM rewards">
+      <div className="page-banner page-banner--diem">
+        <span className="skel skel-pill" style={{ width: 40, height: 40, borderRadius: 999 }} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span className="skel skel-line skel-line--eyebrow" />
+          <span className="skel skel-line skel-line--title" />
+          <span className="skel skel-line skel-line--sub" />
+        </div>
+      </div>
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <span className="skel skel-line skel-line--eyebrow" />
+          <span className="skel skel-line skel-line--title" />
+          <span className="skel skel-line skel-line--sub" />
+        </header>
+        <div className="stat-grid">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div className={`stat-card${i === 0 ? ' stat-card--accent' : ''}`} key={i}>
+              <span className="skel skel-line skel-line--label" />
+              <span className="skel skel-block skel-block--value" />
+              <span className="skel skel-line skel-line--hint" />
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="overview-section">
+        <header className="overview-section-head">
+          <span className="skel skel-line skel-line--eyebrow" />
+          <span className="skel skel-line skel-line--title" />
+          <span className="skel skel-line skel-line--sub" />
+        </header>
+        <div className="overview-chart-card">
+          <div className="skel-table">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div className="skel-row" key={i}>
+                <span className="skel skel-line skel-line--cell" style={{ width: '14%' }} />
+                <span className="skel skel-line skel-line--cell" style={{ width: '32%' }} />
+                <span className="skel skel-pill" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DiemRewardsTable({ rows }: { rows: DiemEpochRow[] }) {
   if (rows.length === 0) {
     return <div className="overview-empty-desc">No finalized DIEM proxy epochs to show.</div>;
   }

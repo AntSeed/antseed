@@ -7,7 +7,14 @@ import { App } from './App';
 import '@rainbow-me/rainbowkit/styles.css';
 import './styles/global.scss';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 const root = document.getElementById('root')!;
 createRoot(root).render(

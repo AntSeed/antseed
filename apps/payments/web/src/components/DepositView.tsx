@@ -7,25 +7,24 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
 } from 'wagmi';
-import { formatUnits, parseUnits } from 'viem';
+import { formatUnits, parseAbi, parseUnits } from 'viem';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { BalanceData, PaymentConfig } from '../types';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { UsdcLogo, BaseLogo } from './BrandLogos';
+import { formatUsd, formatAmountInput, truncateAddr } from '../utils/format';
+import { DEPOSITS_ABI, ERC20_ABI } from '../abi';
 import './DepositView.scss';
 
-const MIN_FIRST_DEPOSIT = 1; // USDC — matches AntseedDeposits.MIN_BUYER_DEPOSIT
+const depositsAbi = parseAbi(DEPOSITS_ABI);
+const erc20Abi = parseAbi(ERC20_ABI);
 
-function formatUsd(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const MIN_FIRST_DEPOSIT = 1; // USDC — matches AntseedDeposits.MIN_BUYER_DEPOSIT
 
 function parseUsd(value?: string | null): number {
   const parsed = Number.parseFloat(value ?? '0');
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatAmountInput(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '';
-  return n.toFixed(6).replace(/\.?(0+)$/, '');
 }
 
 function safeParseUsdc(value: string): bigint {
@@ -49,49 +48,6 @@ interface DepositViewProps {
   onDeposited: () => void;
 }
 
-const DEPOSITS_ABI = [
-  {
-    name: 'deposit',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'buyer', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [],
-  },
-] as const;
-
-const ERC20_ABI = [
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-  {
-    name: 'approve',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'spender', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [{ name: '', type: 'bool' }],
-  },
-  {
-    name: 'allowance',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'owner', type: 'address' },
-      { name: 'spender', type: 'address' },
-    ],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-] as const;
-
 type DepositMethod = 'crypto' | 'card';
 
 export function DepositView({ config, balance, buyerAddress, onDeposited }: DepositViewProps) {
@@ -105,27 +61,31 @@ export function DepositView({ config, balance, buyerAddress, onDeposited }: Depo
           Any wallet can fund your AntSeed account. Your signer authorizes spending; the contract holds the balance.
         </div>
 
-        <div className="deposit-methods">
+        <div className="rh-tabs" role="tablist" aria-label="Deposit method">
           <button
-            className={`deposit-method ${method === 'crypto' ? 'deposit-method--active' : ''}`}
+            role="tab"
+            aria-selected={method === 'crypto'}
+            className={`rh-tab ${method === 'crypto' ? 'is-active' : ''}`}
             onClick={() => setMethod('crypto')}
           >
-            <span className="deposit-method-icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 4.5V11.5L8 15L15 11.5V4.5L8 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/><path d="M1 4.5L8 8M8 8L15 4.5M8 8V15" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+            <span className="rh-tab-icon" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 4.5V11.5L8 15L15 11.5V4.5L8 1Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M1 4.5L8 8M8 8L15 4.5M8 8V15" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
             </span>
-            <span className="deposit-method-label">Crypto Wallet</span>
-            <span className="deposit-method-desc">MetaMask, Coinbase, etc.</span>
+            Crypto wallet
           </button>
           <button
-            className={`deposit-method ${method === 'card' ? 'deposit-method--active' : ''}`}
+            role="tab"
+            aria-selected={method === 'card'}
+            className={`rh-tab ${method === 'card' ? 'is-active' : ''}`}
             onClick={() => setMethod('card')}
           >
-            <span className="deposit-method-icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+            <span className="rh-tab-icon" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.4"/></svg>
             </span>
-            <span className="deposit-method-label">Credit Card</span>
-            <span className="deposit-method-desc">Coming soon</span>
+            Credit card
+            <span className="rh-tab-tag">Soon</span>
           </button>
+          <span className={`rh-tab-indicator ${method === 'card' ? 'is-right' : ''}`} aria-hidden="true" />
         </div>
 
         {method === 'crypto' ? (
@@ -158,6 +118,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [trustDetailsOpen, setTrustDetailsOpen] = useState(false);
+  const [stepExplainerOpen, setStepExplainerOpen] = useState(false);
   const [customTarget, setCustomTarget] = useState('');
   const [customTargetEdited, setCustomTargetEdited] = useState(false);
 
@@ -187,7 +148,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     isFetching: walletUsdcFetching,
   } = useReadContract({
     address: config?.usdcContractAddress as `0x${string}`,
-    abi: ERC20_ABI,
+    abi: erc20Abi,
     functionName: 'balanceOf',
     chainId: expectedChainId,
     args: [address as `0x${string}`],
@@ -203,12 +164,18 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
       : 'limit';
 
   // Default amount: suggest 10 USDC capped by both remaining headroom and wallet USDC.
+  // Wait for BOTH the AntSeed balance and the on-chain wallet USDC read to settle —
+  // suggesting on `balance` alone would pre-fill the credit-limit headroom before the
+  // wallet read returns, and the guard below would then prevent any correction once
+  // the wallet turns out to be $0. When the wallet read isn't enabled (no wallet
+  // connected), walletUsdcRaw stays undefined forever, so don't wait on it then.
+  const walletReadPending = isConnected && !!config && !!address && walletUsdcRaw === undefined;
   useEffect(() => {
-    if (amount !== '' || !balance) return;
+    if (amount !== '' || !balance || walletReadPending) return;
     const suggested = getSuggestedDeposit(maxDeposit, isFirstDeposit);
     if (suggested) setAmount(suggested);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [balance, walletUsdcRaw]);
+  }, [balance, walletUsdcRaw, walletReadPending]);
 
   const amountNum = amount ? Number.parseFloat(amount) : 0;
   let validationError: string | null = null;
@@ -264,7 +231,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     isFetching: allowanceFetching,
   } = useReadContract({
     address: config?.usdcContractAddress as `0x${string}`,
-    abi: ERC20_ABI,
+    abi: erc20Abi,
     functionName: 'allowance',
     chainId: expectedChainId,
     args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
@@ -363,7 +330,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
       setStep('depositing');
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,
-        abi: DEPOSITS_ABI,
+        abi: depositsAbi,
         functionName: 'deposit',
         chainId: expectedChainId,
         args: [depositTarget as `0x${string}`, usdcAmount],
@@ -381,7 +348,7 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     setStep('approving');
     writeApprove({
       address: config.usdcContractAddress as `0x${string}`,
-      abi: ERC20_ABI,
+      abi: erc20Abi,
       functionName: 'approve',
       chainId: expectedChainId,
       args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
@@ -401,88 +368,205 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
     resetDeposit();
   }
 
+  const ctaLabel = isSwitchingChain ? `Switching to ${targetChainName}…` :
+    wrongChain ? `Switch to ${targetChainName}` :
+    walletUsdcLoading || walletUsdcFetching || !walletUsdcKnown ? 'Loading wallet USDC…' :
+    isCheckingAllowance ? 'Checking approval…' :
+    step === 'approving' ? 'Approve in wallet…' :
+    step === 'depositing' ? 'Depositing…' :
+    allowanceShortfall ? `Approve ${amount || '0'} USDC` :
+    'Review & deposit';
+
+  // Quick chip presets — only show chips that respect the current ceiling.
+  const chipValues = [10, 25, 50, 100].filter((v) => v <= maxDeposit || maxDeposit === 0);
+
   return (
-    <div className="deposit-form">
+    <div className="rh-form">
       {!isConnected ? (
         <>
-          <DepositWizard
+          <div className="rh-hero" data-state="disconnected">
+            <div className="rh-hero-cap">
+              <span className="rh-hero-label">You're adding</span>
+              <span className="rh-hero-max rh-hero-max--ghost">— —</span>
+            </div>
+            <div className="rh-hero-amount" aria-hidden="true">
+              <span className="rh-hero-symbol">$</span>
+              <span className="rh-hero-input rh-hero-input--placeholder">0</span>
+            </div>
+            <div className="rh-hero-currency">USDC · connect wallet to begin</div>
+          </div>
+
+          <DepositStepRail
             currentStep={1}
             isApproved={false}
             isCheckingAllowance={false}
             isApproving={false}
             isDepositing={false}
-            amount={amount || 'your chosen amount'}
+            onOpenExplainer={() => setStepExplainerOpen(true)}
           />
-          <div className="deposit-connect-explainer">
-            Connect a wallet so AntSeed can check whether you already approved USDC. If you have, this wizard will jump directly to step 2.
+
+          <div className="rh-explainer">
+            Connect a wallet so AntSeed can check whether you already approved USDC. If you have, the wizard jumps directly to step&nbsp;2.
           </div>
-          <div className="deposit-connect-wrapper">
-            <ConnectButton.Custom>
-              {({ openConnectModal, mounted }) => (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={openConnectModal}
-                  disabled={!mounted}
-                >
-                  Connect Wallet
-                </button>
-              )}
-            </ConnectButton.Custom>
-          </div>
+
+          <ConnectButton.Custom>
+            {({ openConnectModal, mounted }) => (
+              <button
+                type="button"
+                className="rh-cta"
+                onClick={openConnectModal}
+                disabled={!mounted}
+              >
+                <span>Connect wallet</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
+              </button>
+            )}
+          </ConnectButton.Custom>
         </>
       ) : step === 'done' ? (
-        <div className="deposit-success">
-          <div className="deposit-success-icon">&#10003;</div>
-          <div className="deposit-success-title">Deposit confirmed!</div>
-          <div className="deposit-success-hash">{depositTxHash?.slice(0, 18)}...</div>
+        <div className="rh-success">
+          <div className="rh-success-burst" aria-hidden="true">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+              <path d="M5 12.5L10 17.5L19 6.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div className="rh-success-amount">
+            <span className="rh-hero-symbol">$</span>
+            {amount || '0'}
+            <span className="rh-success-unit">USDC</span>
+          </div>
+          <div className="rh-success-title">Deposit confirmed</div>
+          {depositTxHash && (
+            <div className="rh-success-hash">{depositTxHash.slice(0, 10)}…{depositTxHash.slice(-6)}</div>
+          )}
           {depositTarget && depositTarget !== address && (
-            <div className="deposit-success-note">
-              Credits added to {depositTarget.slice(0, 6)}...{depositTarget.slice(-4)}
+            <div className="rh-success-note">
+              Credited to {depositTarget.slice(0, 6)}…{depositTarget.slice(-4)}
             </div>
           )}
-          <div className="deposit-success-note">
-            Your credits are now available. You can return to AntSeed Desktop to continue.
+          <div className="rh-success-note">
+            Your credits are available now. Return to AntSeed Desktop to keep going.
           </div>
-          <button className="btn-outline" onClick={resetForm} style={{ marginTop: 12 }}>
+          <button type="button" className="rh-cta rh-cta--ghost" onClick={resetForm}>
             Deposit more
           </button>
         </div>
       ) : (
         <>
           {wrongChain && (
-            <div className="status-msg" style={{ marginTop: 0, marginBottom: 16 }}>
+            <div className="rh-banner rh-banner--warn" role="alert">
               Wallet is on chain {walletChainId ?? connectedChainId}. Switch to {targetChainName} before depositing.
             </div>
           )}
 
-          <DepositWizard
+          {/* ── HERO AMOUNT ── */}
+          <div className="rh-hero">
+            <div className="rh-hero-cap">
+              <span className="rh-hero-label">You're adding</span>
+              {balance && maxDeposit > 0 && (
+                <button
+                  type="button"
+                  className="rh-hero-max"
+                  onClick={() => setAmount(formatAmountInput(maxDeposit))}
+                  disabled={step !== 'idle'}
+                >
+                  Max ${formatUsd(maxDeposit)}
+                </button>
+              )}
+            </div>
+            <label className="rh-hero-amount" aria-label="Deposit amount in USDC">
+              <span className="rh-hero-symbol">$</span>
+              <input
+                className="rh-hero-input"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="0"
+                value={amount}
+                onChange={(e) => {
+                  const next = e.target.value.replace(/[^0-9.]/g, '');
+                  setAmount(next);
+                }}
+                disabled={step !== 'idle'}
+                aria-invalid={validationError != null}
+              />
+            </label>
+            <div className="rh-hero-currency">
+              <span className="rh-coin"><UsdcLogo size={14} /></span>
+              USDC
+              <span className="rh-currency-sep" aria-hidden="true">·</span>
+              <span className="rh-coin"><BaseLogo size={14} /></span>
+              {targetChainName}
+            </div>
+
+            {/* ── INLINE WALLET / LIMIT META ── */}
+            <div className="rh-meta rh-meta--hero">
+              {balance ? (
+                <>
+                  {isFirstDeposit && (
+                    <span className="rh-meta-pill rh-meta-pill--min">Min ${formatUsd(MIN_FIRST_DEPOSIT)}</span>
+                  )}
+                  <span className="rh-meta-line">
+                    <span className="rh-meta-key">Wallet</span>
+                    <span className="rh-meta-val">
+                      {walletUsdcKnown ? `$${formatUsd(walletUsdcBalance)}` : '…'}
+                    </span>
+                  </span>
+                  <span className="rh-meta-dot" aria-hidden="true" />
+                  <span className="rh-meta-line">
+                    <span className="rh-meta-key">Limit left</span>
+                    <span className="rh-meta-val">${formatUsd(remainingCreditLimit)}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="rh-meta-line">Loading your credit limit…</span>
+              )}
+            </div>
+          </div>
+
+          {/* ── QUICK CHIPS ── */}
+          {chipValues.length > 0 && (
+            <div className="rh-chips" role="group" aria-label="Quick amount presets">
+              {chipValues.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`rh-chip ${amount === String(v) ? 'is-active' : ''}`}
+                  onClick={() => setAmount(String(v))}
+                  disabled={step !== 'idle'}
+                >
+                  ${v}
+                </button>
+              ))}
+              {maxDeposit > 0 && (
+                <button
+                  type="button"
+                  className={`rh-chip rh-chip--max ${amount === formatAmountInput(maxDeposit) ? 'is-active' : ''}`}
+                  onClick={() => setAmount(formatAmountInput(maxDeposit))}
+                  disabled={step !== 'idle'}
+                >
+                  Max
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── STEP RAIL ── */}
+          <DepositStepRail
             currentStep={currentWizardStep}
             isApproved={hasAllowance}
             isCheckingAllowance={isCheckingAllowance}
             isApproving={step === 'approving'}
             isDepositing={step === 'depositing'}
-            amount={amount || '0'}
+            onOpenExplainer={() => setStepExplainerOpen(true)}
           />
 
+          {/* ── TRUST STRIP (collapsed) ── */}
           <DepositTrustCard
             onOpenDetails={() => setTrustDetailsOpen(true)}
-            targetChainName={targetChainName}
-            walletAddress={address}
-            antseedAddress={depositTarget as string | undefined}
-            depositsContract={config?.depositsContractAddress}
-            usdcContract={config?.usdcContractAddress}
             balanceKnown={balanceKnown}
             currentTotal={currentTotal}
-            currentAvailable={currentAvailable}
-            currentReserved={currentReserved}
-            creditLimit={creditLimit}
-            remainingCreditLimit={remainingCreditLimit}
-            walletUsdcBalance={walletUsdcBalance}
-            walletUsdcKnown={walletUsdcKnown}
-            walletUsdcLoading={walletUsdcLoading || walletUsdcFetching}
-            maxDeposit={maxDeposit}
-            maxDepositReason={maxDepositReason}
           />
 
           <TrustDetailsModal
@@ -506,73 +590,42 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
             maxDepositReason={maxDepositReason}
           />
 
-          <div className="input-group">
-            <div className="deposit-amount-head">
-              <label className="input-label">Amount to add (USDC)</label>
-              {balance && maxDeposit > 0 && (
-                <button
-                  type="button"
-                  className="deposit-amount-max"
-                  onClick={() => setAmount(formatAmountInput(maxDeposit))}
-                  disabled={step !== 'idle'}
-                >
-                  Max ${formatUsd(maxDeposit)}
-                </button>
-              )}
-            </div>
-            <input
-              className="input-field"
-              type="number"
-              min={minDeposit || 0}
-              max={maxDeposit || undefined}
-              step="0.01"
-              placeholder={isFirstDeposit ? '10.00' : '0.00'}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              disabled={step !== 'idle'}
-            />
-            {balance ? (
-              <span className="hint">
-                {isFirstDeposit
-                  ? `Min ${MIN_FIRST_DEPOSIT} USDC · `
-                  : ''}
-                Add up to ${formatUsd(maxDeposit)} now — ${formatUsd(remainingCreditLimit)} remaining limit, {walletUsdcKnown ? `${formatUsd(walletUsdcBalance)} USDC in wallet` : 'wallet balance loading'}.
-              </span>
-            ) : (
-              <span className="hint">Loading your credit limit…</span>
-            )}
-          </div>
+          <StepFlowDetailsModal
+            isOpen={stepExplainerOpen}
+            onClose={() => setStepExplainerOpen(false)}
+          />
 
           {validationError && (
-            <div className="status-msg status-error" role="alert">
+            <div className="rh-banner rh-banner--error" role="alert">
               {validationError}
             </div>
           )}
 
-          <div className="deposit-advanced">
+          {/* ── ADVANCED ── */}
+          <div className="rh-advanced">
             <button
               type="button"
-              className="deposit-advanced-toggle"
+              className="rh-advanced-toggle"
               onClick={() => setShowAdvanced((v) => !v)}
               aria-expanded={showAdvanced}
               aria-controls="deposit-advanced-panel"
             >
-              <span className={`deposit-advanced-chevron ${showAdvanced ? 'deposit-advanced-chevron--open' : ''}`} aria-hidden="true">›</span>
-              Advanced — deposit to a different address
+              <span className={`rh-advanced-chev ${showAdvanced ? 'is-open' : ''}`} aria-hidden="true">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 1l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </span>
+              Deposit to a different address
             </button>
             {showAdvanced && (
-              <div id="deposit-advanced-panel" className="deposit-advanced-body">
-                <p className="deposit-advanced-desc">
+              <div id="deposit-advanced-panel" className="rh-advanced-body">
+                <p className="rh-advanced-desc">
                   Deposits credit the AntSeed account whose address you enter below.
                   Anyone can fund any AntSeed account — the balance is still spendable
-                  only by that account's signer. Override only if you mean to top up
-                  someone else's AntSeed account (e.g. a teammate). This does not change
-                  which account spends the credits.
+                  only by that account's signer.
                 </p>
-                <label className="input-label" htmlFor="deposit-custom-target">Signer address</label>
+                <label className="rh-field-label" htmlFor="deposit-custom-target">Signer address</label>
                 <input
                   id="deposit-custom-target"
-                  className="input-field input-field--mono"
+                  className="rh-field rh-field--mono"
                   type="text"
                   spellCheck={false}
                   autoComplete="off"
@@ -584,20 +637,21 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
                   }}
                   disabled={step !== 'idle'}
                 />
-                <div className="deposit-advanced-warn" role="note">
-                  <span className="deposit-advanced-warn-icon" aria-hidden="true">⚠</span>
+                <div className="rh-advanced-warn" role="note">
+                  <span className="rh-advanced-warn-icon" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1l5 9H1l5-9zM6 5v2M6 8.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </span>
                   <span>
-                    Do not send USDC directly to this address — it will not be credited.
-                    Use the Deposit button below; funds must go through the AntSeed
-                    Deposits contract.
+                    Don't send USDC directly to this address — it won't be credited.
+                    Funds must go through the AntSeed Deposits contract.
                   </span>
                 </div>
                 {customTargetInvalid && (
-                  <span className="hint hint--error">Enter a valid 0x… address (42 chars).</span>
+                  <span className="rh-hint rh-hint--error">Enter a valid 0x… address (42 chars).</span>
                 )}
                 {isOverridingTarget && (
-                  <span className="hint hint--warn">
-                    Credits will go to {customTargetTrimmed.slice(0, 6)}…{customTargetTrimmed.slice(-4)},
+                  <span className="rh-hint rh-hint--warn">
+                    Credits go to {customTargetTrimmed.slice(0, 6)}…{customTargetTrimmed.slice(-4)},
                     not your connected wallet.
                   </span>
                 )}
@@ -605,67 +659,62 @@ function CryptoDeposit({ config, balance, buyerAddress, onDeposited }: {
             )}
           </div>
 
+          {error && (
+            <div className="rh-banner rh-banner--error">
+              {error}
+            </div>
+          )}
+
+          {/* ── CTA ── */}
           <button
-            className="btn-primary"
+            type="button"
+            className="rh-cta"
             onClick={handleDeposit}
             disabled={step !== 'idle' || !isValidAmount || !config || isSwitchingChain || customTargetInvalid || !depositTarget || allowanceLoading || allowanceFetching || walletUsdcLoading || walletUsdcFetching || !walletUsdcKnown}
           >
-            {isSwitchingChain ? `Switching to ${targetChainName}...` :
-             wrongChain ? `Switch to ${targetChainName}` :
-             walletUsdcLoading || walletUsdcFetching || !walletUsdcKnown ? 'Loading wallet USDC...' :
-             isCheckingAllowance ? 'Checking approval...' :
-             step === 'approving' ? 'Approve USDC in wallet...' :
-             step === 'depositing' ? 'Depositing...' :
-             allowanceShortfall ? `Step 1: Approve ${amount || '0'} USDC` :
-             'Step 2: Deposit USDC'}
+            <span>{ctaLabel}</span>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
           </button>
         </>
       )}
-
-      {error && (
-        <div className="status-msg status-error">
-          {error}
-        </div>
-      )}
     </div>
   );
-}
-
-function shortAddress(addr?: string | null): string {
-  return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
 }
 
 function DepositTrustCard({
   onOpenDetails,
   balanceKnown,
   currentTotal,
-  maxDeposit,
 }: {
   onOpenDetails: () => void;
   balanceKnown: boolean;
   currentTotal: number;
-  maxDeposit: number;
 }) {
   return (
-    <div className="deposit-trust-card" role="note" aria-label="Deposit safety summary">
-      <button
-        type="button"
-        className="deposit-trust-toggle"
-        onClick={onOpenDetails}
-      >
-        <span className="deposit-trust-shield" aria-hidden="true">✓</span>
-        <span className="deposit-trust-head-copy">
-          <span className="deposit-trust-title">Safe deposit flow</span>
-          <span className="deposit-trust-subtitle">USDC stays on-chain in the AntSeed Deposits contract.</span>
-        </span>
-        <span className="deposit-trust-balance-summary">
-          <span>In AntSeed</span>
-          <strong>{balanceKnown ? `$${formatUsd(currentTotal)}` : 'Loading…'}</strong>
-          <em>{balanceKnown ? `Max $${formatUsd(maxDeposit)}` : 'Loading…'}</em>
-        </span>
-        <span className="deposit-trust-chevron" aria-hidden="true">›</span>
-      </button>
-    </div>
+    <button
+      type="button"
+      className="rh-trust"
+      onClick={onOpenDetails}
+      aria-label="Deposit safety details"
+    >
+      <span className="rh-trust-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M8 1.5L2 4v4.5c0 3.4 2.6 5.6 6 6.5 3.4-.9 6-3.1 6-6.5V4L8 1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+          <path d="M5.5 8l2 2 3.5-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </span>
+      <span className="rh-trust-text">
+        <span className="rh-trust-title">USDC stays on-chain</span>
+        <span className="rh-trust-sub">Held by the AntSeed Deposits contract</span>
+      </span>
+      <span className="rh-trust-balance">
+        <span className="rh-trust-balance-label">In AntSeed</span>
+        <strong>{balanceKnown ? `$${formatUsd(currentTotal)}` : '…'}</strong>
+      </span>
+      <span className="rh-trust-chev" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      </span>
+    </button>
   );
 }
 
@@ -734,7 +783,11 @@ function TrustDetailsModal({
             <h3 id="deposit-details-title">Safe deposit flow</h3>
             <p>USDC stays on-chain in the AntSeed Deposits contract.</p>
           </div>
-          <button type="button" className="deposit-details-close" onClick={onClose} aria-label="Close details">×</button>
+          <button type="button" className="deposit-details-close" onClick={onClose} aria-label="Close details">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
 
         <div className="deposit-details-body">
@@ -775,24 +828,24 @@ function TrustDetailsModal({
             </div>
             <div className="deposit-trust-item">
               <span>Pays from wallet</span>
-              <strong>{shortAddress(walletAddress)}</strong>
+              <strong>{truncateAddr(walletAddress)}</strong>
             </div>
             <div className="deposit-trust-item">
               <span>Credits AntSeed account</span>
-              <strong>{shortAddress(antseedAddress)}</strong>
+              <strong>{truncateAddr(antseedAddress)}</strong>
             </div>
             <div className="deposit-trust-item">
               <span>USDC contract</span>
-              <strong>{shortAddress(usdcContract)}</strong>
+              <strong>{truncateAddr(usdcContract)}</strong>
             </div>
             <div className="deposit-trust-item deposit-trust-item--wide">
               <span>Deposits contract</span>
-              <strong>{shortAddress(depositsContract)}</strong>
+              <strong>{truncateAddr(depositsContract)}</strong>
             </div>
           </div>
 
           <div className="deposit-trust-foot">
-            You will see two wallet confirmations only when needed: first an ERC‑20 approval, then the actual deposit.
+            You'll see two wallet confirmations only when needed: an ERC‑20 approval first, then the deposit itself.
           </div>
         </div>
       </div>
@@ -800,85 +853,173 @@ function TrustDetailsModal({
   );
 }
 
-// Connected flow cards matching PR #445 pattern
-function DepositWizard({
+/* ── Step-flow explainer modal ──────────────────────────────────────
+ * Opens when the user taps the (?) on the two-step rail. Explains why
+ * USDC needs a separate approve step before deposit. Visually inherits
+ * the same .deposit-details-* modal shell as TrustDetailsModal so the
+ * two help-sheets feel like siblings. */
+function StepFlowDetailsModal({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!isOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="deposit-details-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="deposit-details-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rh-step-explainer-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="deposit-details-head">
+          <div>
+            <div className="deposit-details-eyebrow">Deposit flow</div>
+            <h3 id="rh-step-explainer-title">Why two steps?</h3>
+            <p>
+              USDC is an ERC-20 token. ERC-20s require an explicit on-chain authorization
+              before any contract can move them — this is a safety property of the token
+              standard, not specific to AntSeed.
+            </p>
+          </div>
+          <button type="button" className="deposit-details-close" onClick={onClose} aria-label="Close details">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="deposit-details-body">
+          <div className="rh-step-card">
+            <span className="rh-step-card-pip" aria-hidden="true">1</span>
+            <div className="rh-step-card-body">
+              <div className="rh-step-card-title">Approve USDC</div>
+              <p className="rh-step-card-desc">
+                You sign an ERC-20 <code>approve()</code> telling the AntSeed Deposits
+                contract it may move USDC on your behalf — up to the amount you entered.
+                No USDC has moved yet.
+              </p>
+              <ul className="rh-step-card-list">
+                <li>Signed in your wallet</li>
+                <li>Costs a small gas fee</li>
+                <li>Persists on-chain — revocable anytime</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="rh-step-card">
+            <span className="rh-step-card-pip" aria-hidden="true">2</span>
+            <div className="rh-step-card-body">
+              <div className="rh-step-card-title">Add credits</div>
+              <p className="rh-step-card-desc">
+                The Deposits contract calls <code>transferFrom()</code> to pull the
+                approved USDC into escrow, then credits it to your AntSeed account.
+                Funds stay on-chain — AntSeed never custodies them.
+              </p>
+              <ul className="rh-step-card-list">
+                <li>Signed in your wallet</li>
+                <li>Costs a small gas fee</li>
+                <li>Balance is available immediately on confirmation</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="deposit-trust-foot">
+            If you've previously approved a larger amount, step 1 is skipped automatically.
+            You can review or revoke approvals anytime via your wallet or a block explorer.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Slim Robinhood-style step rail
+function DepositStepRail({
   currentStep,
   isApproved,
   isCheckingAllowance,
   isApproving,
   isDepositing,
-  amount,
+  onOpenExplainer,
 }: {
   currentStep: 1 | 2;
   isApproved: boolean;
   isCheckingAllowance: boolean;
   isApproving: boolean;
   isDepositing: boolean;
-  amount: string;
+  onOpenExplainer?: () => void;
 }) {
-  const step1State = currentStep === 1 ? 'active' : isApproved ? 'complete' : 'pending';
-  const step2State = currentStep === 2 ? 'active' : isApproved ? 'ready' : 'locked';
+  const step1Done = isApproved;
+  const step2Done = false;
+  const step1Active = currentStep === 1 && !isApproved;
+  const step2Active = currentStep === 2;
+  const fillPct = isDepositing ? 100 : isApproved ? 50 : isCheckingAllowance ? 35 : isApproving ? 20 : 0;
+
+  const step1Caption =
+    isApproving ? 'Confirm in wallet'
+    : isCheckingAllowance ? 'Checking…'
+    : isApproved ? 'Approved'
+    : 'Approve USDC';
+  const step2Caption =
+    isDepositing ? 'Confirming…'
+    : isApproved ? 'Ready to deposit'
+    : 'Add credits';
+
+  const interactive = !!onOpenExplainer;
+  const RailTag = interactive ? 'button' : 'div';
+  const railProps = interactive
+    ? { type: 'button' as const, onClick: onOpenExplainer, 'aria-label': 'Why two steps? Tap for details' }
+    : { 'aria-label': 'Deposit progress' };
 
   return (
-    <div className="deposit-flow-cards" aria-label="Deposit wizard">
-      {/* Connecting rail */}
-      <div className="deposit-flow-rail" aria-hidden="true">
-        <div
-          className="deposit-flow-rail-fill"
-          style={{ width: isApproved ? '100%' : '0%' }}
-        />
-      </div>
-
-      {/* Step 1: Approve USDC */}
-      <div className={`deposit-flow-card ${step1State === 'complete' ? 'complete' : ''}`}>
-        <div className={`deposit-flow-chip ${step1State}`}>
-          {step1State === 'complete' ? (
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <RailTag className={`rh-rail${interactive ? ' rh-rail--interactive' : ''}`} {...railProps}>
+      <div className={`rh-rail-step ${step1Active ? 'is-active' : ''} ${step1Done ? 'is-done' : ''}`}>
+        <div className="rh-rail-pip">
+          {step1Done ? (
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           ) : (
-            '1'
+            <span className="rh-rail-num">1</span>
           )}
+          {step1Active && <span className="rh-rail-ring" aria-hidden="true" />}
         </div>
-        <div className="deposit-flow-content">
-          <div className="deposit-flow-label">Step 1</div>
-          <div className="deposit-flow-title">Approve USDC</div>
-          <div className="deposit-flow-desc">
-            {isCheckingAllowance
-              ? 'Checking your existing approval on-chain…'
-              : isApproved
-                ? 'Already approved. Ready for step 2.'
-                : isApproving
-                  ? 'Confirm approval in your wallet. This does not move funds.'
-                  : `Permit AntSeed's Deposits contract to use ${amount} USDC.`}
-          </div>
+        <div className="rh-rail-meta">
+          <div className="rh-rail-label">Step 1</div>
+          <div className="rh-rail-caption">{step1Caption}</div>
         </div>
       </div>
 
-      {/* Step 2: Deposit credits */}
-      <div className={`deposit-flow-card ${step2State === 'ready' ? 'ready' : step2State === 'locked' ? 'locked' : ''}`}>
-        <div className={`deposit-flow-chip ${step2State}`}>
-          {step2State === 'ready' ? (
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          ) : (
-            '2'
-          )}
+      <div className="rh-rail-line">
+        <div className="rh-rail-line-fill" style={{ width: `${fillPct}%` }} />
+      </div>
+
+      <div className={`rh-rail-step ${step2Active ? 'is-active' : ''} ${step2Done ? 'is-done' : ''} ${!isApproved && !step2Active ? 'is-locked' : ''}`}>
+        <div className="rh-rail-pip">
+          <span className="rh-rail-num">2</span>
+          {step2Active && <span className="rh-rail-ring" aria-hidden="true" />}
         </div>
-        <div className="deposit-flow-content">
-          <div className="deposit-flow-label">Step 2</div>
-          <div className="deposit-flow-title">Deposit credits</div>
-          <div className="deposit-flow-desc">
-            {isDepositing
-              ? 'Confirm the deposit transaction. This moves USDC into your AntSeed balance.'
-              : isApproved
-                ? 'Ready to deposit USDC into your AntSeed balance.'
-                : 'Locked until approval is confirmed.'}
-          </div>
+        <div className="rh-rail-meta">
+          <div className="rh-rail-label">Step 2</div>
+          <div className="rh-rail-caption">{step2Caption}</div>
         </div>
       </div>
-    </div>
+
+    </RailTag>
   );
 }
 
@@ -886,15 +1027,14 @@ function DepositWizard({
 
 function CardDepositPlaceholder() {
   return (
-    <div className="deposit-form">
-      <div className="deposit-card-coming">
-        <div className="deposit-card-coming-icon">
-          <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+    <div className="rh-form">
+      <div className="rh-coming">
+        <div className="rh-coming-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.4"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
         </div>
-        <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
-        <div className="deposit-card-coming-desc">
-          Direct credit card deposits are being integrated.
-          For now, use the crypto wallet option.
+        <div className="rh-coming-title">Credit card deposits, soon</div>
+        <div className="rh-coming-desc">
+          We're integrating direct card deposits. For now, fund your account with a crypto wallet.
         </div>
       </div>
     </div>

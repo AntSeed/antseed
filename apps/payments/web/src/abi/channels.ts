@@ -7,4 +7,3 @@ export const CHANNELS_ABI = [
   'event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer)',
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer)',
 ] as const;
-

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import type { BalanceData, PaymentConfig } from '../types';
 import { DepositView } from '../components/DepositView';
@@ -41,9 +43,16 @@ function CloseIcon() {
 
 function BigCheckIcon() {
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="32" cy="32" r="30" fill="var(--accent-dim)" stroke="var(--accent)" strokeWidth="2" />
-      <path d="M20 33L28.5 41.5L44.5 23" stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="32" cy="32" r="30" fill="var(--accent)" />
+      <path
+        className="success-check-path"
+        d="M20 33L28.5 41.5L44.5 23"
+        stroke="#fff"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -63,6 +72,18 @@ export function EmptyStateOverlay({
 
   useBodyScrollLock(isVisible);
 
+  useEffect(() => {
+    if (!isVisible) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (phase === 'deposit' && onDismissDeposit) onDismissDeposit();
+      else if (phase === 'success') onContinue();
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isVisible, phase, onDismissDeposit, onContinue]);
+
   if (!isVisible) return null;
 
   async function handleCopy() {
@@ -77,8 +98,8 @@ export function EmptyStateOverlay({
   }
 
   return (
-    <div className="empty-state-overlay" role="dialog" aria-label="Get started">
-      <div className="empty-state-card">
+    <div className="empty-state-overlay" role="dialog" aria-modal="true" aria-label="Get started">
+      <div className={`empty-state-card ${phase === 'success' ? 'empty-state-card--success' : ''}`}>
         {phase === 'deposit' ? (
           <>
             {onDismissDeposit && (
@@ -112,9 +133,14 @@ export function EmptyStateOverlay({
           </>
         ) : (
           <div className="empty-state-success">
-            <div className="empty-state-success-icon">
-              <BigCheckIcon />
+            <div className="empty-state-success-burst" aria-hidden="true">
+              <span className="empty-state-success-ring empty-state-success-ring--outer" />
+              <span className="empty-state-success-ring empty-state-success-ring--mid" />
+              <div className="empty-state-success-icon">
+                <BigCheckIcon />
+              </div>
             </div>
+            <div className="empty-state-success-eyebrow">Deposit confirmed</div>
             <h2 className="empty-state-title">You're all set</h2>
             <p className="empty-state-subtitle">
               Your deposit is in. AntSeed will now route requests across the network —
@@ -123,10 +149,11 @@ export function EmptyStateOverlay({
             <div className="empty-state-success-actions">
               <button
                 type="button"
-                className="btn-primary"
+                className="rh-cta"
                 onClick={onContinue}
               >
-                Continue
+                <span>Continue</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
               </button>
             </div>
           </div>

@@ -6,7 +6,7 @@ interface ActionModalProps {
   onClose: () => void;
   title: string;
   subtitle?: string;
-  variant?: 'default' | 'deposit';
+  variant?: 'default' | 'wide';
   children: ReactNode;
 }
 
@@ -39,25 +39,16 @@ export function ActionModal({ isOpen, onClose, title, subtitle, variant = 'defau
     <div
       className="action-modal-overlay"
       role="dialog"
+      aria-modal="true"
       aria-label={title}
       onClick={onClose}
     >
       <div className={`action-modal-card action-modal-card--${variant}`} onClick={(e) => e.stopPropagation()}>
         <header className="action-modal-head">
-          {variant === 'deposit' ? (
-            <div className="action-modal-deposit-hero">
-              <div className="action-modal-head-text">
-                <div className="action-modal-eyebrow">Deposit wizard</div>
-                <h2 className="action-modal-title">{title}</h2>
-                {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
-              </div>
-            </div>
-          ) : (
-            <div className="action-modal-head-text">
-              <h2 className="action-modal-title">{title}</h2>
-              {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
-            </div>
-          )}
+          <div className="action-modal-head-text">
+            <h2 className="action-modal-title">{title}</h2>
+            {subtitle && <p className="action-modal-subtitle">{subtitle}</p>}
+          </div>
           <button
             type="button"
             className="action-modal-close"

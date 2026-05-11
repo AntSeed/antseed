@@ -4,11 +4,9 @@ import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import { signOperatorAuth } from '../api';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { DEPOSITS_ABI } from '../abi';
 
-const DEPOSITS_OPERATOR_ABI = parseAbi([
-  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
-  'function transferOperator(address buyer, address newOperator) external',
-]);
+const DEPOSITS_OPERATOR_ABI = parseAbi(DEPOSITS_ABI);
 
 export interface UseSetOperatorResult {
   run: () => Promise<void>;

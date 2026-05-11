@@ -11,8 +11,7 @@ import {
 import { getOperatorInfo } from '../api';
 import type { PaymentConfig } from '../types';
 import { AuthorizeWalletModal } from '../components/AuthorizeWalletModal';
-
-const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+import { ZERO_ADDR } from '../utils/format';
 
 type PendingAction = (() => void | Promise<void>) | null;
 

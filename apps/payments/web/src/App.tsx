@@ -1,31 +1,32 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { BalanceData, PaymentConfig } from './types';
-import { getBalance, getConfig } from './api';
+import { useBalance, useConfig, queryKeys } from './hooks/queries';
 import { Sidebar, type TabId } from './layout/Sidebar';
-import { TopBar } from './layout/TopBar';
-import { WalletDrawer } from './layout/WalletDrawer';
 import { EmptyStateOverlay } from './layout/EmptyStateOverlay';
 import { LoaderOverlay } from './layout/LoaderOverlay';
 import { ActionModal } from './layout/ActionModal';
 import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
-import { DashboardView } from './views/DashboardView';
+import { OverviewView } from './views/OverviewView';
 import { EmissionsView } from './views/EmissionsView';
 import { DiemRewardsView } from './views/DiemRewardsView';
+import { EarnView } from './views/EarnView';
 import { ChannelsView } from './components/ChannelsView';
 import { AuthorizedWalletProvider } from './context/AuthorizedWalletContext';
 import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
 
 export type OverlayPhase = 'deposit' | 'success' | null;
 
-const VALID_TABS = new Set<TabId>(['dashboard', 'channels', 'emissions', 'diem-rewards']);
+const VALID_TABS = new Set<TabId>(['overview', 'channels', 'earn', 'emissions', 'diem-rewards']);
 
 function parseTabFromUrl(): TabId {
   const raw = new URLSearchParams(window.location.search).get('tab');
-  if (!raw) return 'dashboard';
-  // Legacy compat: the old deposits tab no longer exists; fall through to dashboard.
-  if (raw === 'deposit' || raw === 'deposits') return 'dashboard';
-  return VALID_TABS.has(raw as TabId) ? (raw as TabId) : 'dashboard';
+  if (!raw) return 'overview';
+  // Legacy compat: the old deposits tab no longer exists, and the overview tab
+  // was previously named "dashboard". Map both to the current overview tab.
+  if (raw === 'deposit' || raw === 'deposits' || raw === 'dashboard') return 'overview';
+  return VALID_TABS.has(raw as TabId) ? (raw as TabId) : 'overview';
 }
 
 function shouldOpenDepositFromUrl(): boolean {
@@ -49,11 +50,10 @@ function clearDepositActionFromUrl() {
 }
 
 export function App() {
-  const [balance, setBalance] = useState<BalanceData | null>(null);
-  const [balanceLoaded, setBalanceLoaded] = useState(false);
-  const [config, setConfig] = useState<PaymentConfig | null>(null);
+  const queryClient = useQueryClient();
+  const { data: balance = null, isFetched: balanceFetched } = useBalance();
+  const { data: config = null } = useConfig();
   const [activeTab, setActiveTab] = useState<TabId>(() => parseTabFromUrl());
-  const [walletDrawerOpen, setWalletDrawerOpen] = useState(false);
   const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(() => shouldOpenDepositFromUrl() ? 'deposit' : null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [isDark, setIsDark] = useState(() => {
@@ -73,25 +73,9 @@ export function App() {
     localStorage.setItem('antseed-payments-theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
-  const fetchBalance = useCallback(async () => {
-    try {
-      const data = await getBalance();
-      setBalance(data);
-      setBalanceLoaded(true);
-    } catch {
-      // Balance not available yet — keep loading state until a fetch succeeds.
-    }
-  }, []);
-
   const refreshBalance = useCallback(async () => {
-    await fetchBalance();
-    setTimeout(fetchBalance, 3000);
-  }, [fetchBalance]);
-
-  useEffect(() => {
-    void fetchBalance();
-    void getConfig().then(setConfig).catch(() => {});
-  }, [fetchBalance]);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.balance });
+  }, [queryClient]);
 
   const handleSelectTab = useCallback((tab: TabId) => {
     setActiveTab(tab);
@@ -111,15 +95,12 @@ export function App() {
     <AuthorizedWalletProvider config={config}>
       <AppShell
         balance={balance}
-        balanceLoaded={balanceLoaded}
+        balanceLoaded={balanceFetched}
         config={config}
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
         isDark={isDark}
         onToggleTheme={() => setIsDark((d) => !d)}
-        walletDrawerOpen={walletDrawerOpen}
-        onOpenWalletDrawer={() => setWalletDrawerOpen(true)}
-        onCloseWalletDrawer={() => setWalletDrawerOpen(false)}
         actionModal={actionModal}
         onOpenDeposit={openDeposit}
         onOpenWithdraw={openWithdraw}
@@ -156,9 +137,6 @@ interface AppShellProps {
   onSelectTab: (tab: TabId) => void;
   isDark: boolean;
   onToggleTheme: () => void;
-  walletDrawerOpen: boolean;
-  onOpenWalletDrawer: () => void;
-  onCloseWalletDrawer: () => void;
   actionModal: 'deposit' | 'withdraw' | null;
   onOpenDeposit: () => void;
   onOpenWithdraw: () => void;
@@ -175,9 +153,6 @@ function AppShell({
   onSelectTab,
   isDark,
   onToggleTheme,
-  walletDrawerOpen,
-  onOpenWalletDrawer,
-  onCloseWalletDrawer,
   actionModal,
   onOpenDeposit,
   onOpenWithdraw,
@@ -219,31 +194,28 @@ function AppShell({
           isDark={isDark}
           onToggleTheme={onToggleTheme}
           config={config}
-        />
-        <div className="dash-main">
-          <TopBar
-            activeTab={activeTab}
-            balance={balance}
-            onOpenWallet={onOpenWalletDrawer}
-            onOpenDeposit={onOpenDeposit}
-          />
-          <AuthorizeWalletAlert />
-          <main className="dash-content">
-            {activeTab === 'dashboard' && <DashboardView config={config} balance={balance} />}
-            {activeTab === 'channels'  && <ChannelsView  config={config} />}
-            {activeTab === 'emissions' && <EmissionsView config={config} />}
-            {activeTab === 'diem-rewards' && <DiemRewardsView config={config} />}
-          </main>
-        </div>
-        <WalletDrawer
-          isOpen={walletDrawerOpen}
-          onClose={onCloseWalletDrawer}
           balance={balance}
-          config={config}
           buyerEvmAddress={buyerEvmAddress}
           onOpenDeposit={onOpenDeposit}
           onOpenWithdraw={onOpenWithdraw}
         />
+        <div className="dash-main">
+          <AuthorizeWalletAlert />
+          <main className="dash-content">
+            {activeTab === 'overview' && (
+              <OverviewView
+                config={config}
+                balance={balance}
+                onOpenDeposit={onOpenDeposit}
+                onSelectTab={onSelectTab}
+              />
+            )}
+            {activeTab === 'channels'  && <ChannelsView  config={config} />}
+            {activeTab === 'earn' && <EarnView config={config} onSelectTab={onSelectTab} />}
+            {activeTab === 'emissions' && <EmissionsView config={config} />}
+            {activeTab === 'diem-rewards' && <DiemRewardsView config={config} />}
+          </main>
+        </div>
       </div>
       <LoaderOverlay isVisible={isLoading} />
       <EmptyStateOverlay
@@ -260,7 +232,7 @@ function AppShell({
         onClose={onCloseActionModal}
         title="Deposit USDC"
         subtitle="Add credits to your AntSeed account with a guided two-step flow."
-        variant="deposit"
+        variant="wide"
       >
         <DepositView
           config={config}
@@ -274,6 +246,7 @@ function AppShell({
         onClose={onCloseActionModal}
         title="Withdraw USDC"
         subtitle="Send funds to your authorized wallet."
+        variant="wide"
       >
         <WithdrawView config={config} balance={balance} onAction={refreshBalance} />
       </ActionModal>

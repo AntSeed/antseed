@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ActionModal } from '../layout/ActionModal';
+import { Tooltip } from './Tooltip';
 import { useSetOperator } from '../hooks/useSetOperator';
 import type { PaymentConfig } from '../types';
 
@@ -24,16 +24,6 @@ export function AuthorizeWalletModal({
   const { address, isConnected } = useAccount();
   const { run, running, success, error, reset } = useSetOperator(config);
 
-  const whyRef = useRef<HTMLDivElement>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null);
-
-  const showTooltip = () => {
-    const rect = whyRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setTooltipPos({ top: rect.bottom + 8, left: rect.left });
-  };
-  const hideTooltip = () => setTooltipPos(null);
-
   useEffect(() => {
     if (success) {
       onAuthorized();
@@ -42,10 +32,7 @@ export function AuthorizeWalletModal({
   }, [success, onAuthorized, reset]);
 
   useEffect(() => {
-    if (!isOpen) {
-      reset();
-      setTooltipPos(null);
-    }
+    if (!isOpen) reset();
   }, [isOpen, reset]);
 
   return (
@@ -56,39 +43,31 @@ export function AuthorizeWalletModal({
       subtitle="Required to withdraw USDC, claim ANTS, and close channels."
     >
       <div className="authorize-wallet-modal">
-        <div
-          ref={whyRef}
-          className="authorize-wallet-why"
+        <Tooltip
+          wrapClassName="authorize-wallet-why"
+          cardClassName="authorize-wallet-why-tooltip"
+          maxWidth={360}
           tabIndex={0}
-          onMouseEnter={showTooltip}
-          onMouseLeave={hideTooltip}
-          onFocus={showTooltip}
-          onBlur={hideTooltip}
+          body={
+            <>
+              <p>
+                Your AntSeed signer lives on this node and authorizes spending, but it
+                never holds USDC or ANTS. To <strong>withdraw funds</strong>,{' '}
+                <strong>claim ANTS rewards</strong>, or{' '}
+                <strong>close a channel</strong>, you need to designate an external
+                wallet that the contracts will trust.
+              </p>
+              <p>
+                Without an authorized wallet, if you lose access to this node (deleted{' '}
+                <code>.antseed</code> directory, lost machine, etc.) your funds are{' '}
+                <strong>unrecoverable</strong>. Set this now to keep your funds safe.
+              </p>
+            </>
+          }
         >
           <span>Why you need an authorized wallet</span>
           <span className="authorize-wallet-why-icon" aria-hidden="true">?</span>
-        </div>
-        {tooltipPos && createPortal(
-          <div
-            className="authorize-wallet-why-tooltip"
-            role="tooltip"
-            style={{ top: tooltipPos.top, left: tooltipPos.left }}
-          >
-            <p>
-              Your AntSeed signer lives on this node and authorizes spending, but it
-              never holds USDC or ANTS. To <strong>withdraw funds</strong>,{' '}
-              <strong>claim ANTS rewards</strong>, or{' '}
-              <strong>close a channel</strong>, you need to designate an external
-              wallet that the contracts will trust.
-            </p>
-            <p>
-              Without an authorized wallet, if you lose access to this node (deleted{' '}
-              <code>.antseed</code> directory, lost machine, etc.) your funds are{' '}
-              <strong>unrecoverable</strong>. Set this now to keep your funds safe.
-            </p>
-          </div>,
-          document.body,
-        )}
+        </Tooltip>
 
         {!isConnected ? (
           <div className="authorize-wallet-connect">

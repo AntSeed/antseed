@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useReadContracts } from 'wagmi';
 import { formatUnits, parseAbi } from 'viem';
 import { getChannels, type ChannelData, type RawChannel } from '../api';
-import { CHANNELS_ABI } from '../channels-abi';
+import { CHANNELS_ABI } from '../abi';
 import type { PaymentConfig } from '../types';
+import { safeBigint } from '../utils/format';
 
 const parsedAbi = parseAbi(CHANNELS_ABI);
 
@@ -12,10 +13,6 @@ const parsedAbi = parseAbi(CHANNELS_ABI);
 type ChannelTuple = readonly [
   `0x${string}`, `0x${string}`, bigint, bigint, `0x${string}`, bigint, bigint, bigint, number | bigint,
 ];
-
-function safeBigint(s: string): bigint {
-  try { return BigInt(s); } catch { return 0n; }
-}
 
 export function useChannels(config: PaymentConfig | null): {
   channels: ChannelData[];

@@ -3,10 +3,9 @@ import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi, parseUnits } from 'viem';
 import type { PaymentConfig } from '../types';
 import { getErrorMessage, usePaymentNetwork } from '../payment-network';
+import { DEPOSITS_ABI } from '../abi';
 
-const DEPOSITS_WITHDRAW_ABI = parseAbi([
-  'function withdraw(address buyer, uint256 amount) external',
-]);
+const DEPOSITS_WITHDRAW_ABI = parseAbi(DEPOSITS_ABI);
 
 export interface UseWithdrawResult {
   /** Sends `withdraw(buyer, parseUnits(amount, 6))` from the connected wallet. */
