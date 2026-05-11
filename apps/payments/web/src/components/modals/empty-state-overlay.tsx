@@ -114,9 +114,11 @@ export function EmptyStateOverlay({
               </p>
             </div>
 
-            <div className="empty-state-step">
-              <div className="empty-state-step-label">Step 1 · Deposit USDC</div>
-              <DepositView />
+            <div className="empty-state-body">
+              <div className="empty-state-step">
+                <div className="empty-state-step-label">Step 1 · Deposit USDC</div>
+                <DepositView />
+              </div>
             </div>
           </>
         ) : (

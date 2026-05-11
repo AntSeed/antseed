@@ -24,7 +24,7 @@ export function AppShell() {
   const { isDark, toggleTheme } = useTheme();
   const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(initialActionModal);
   const [justDeposited, setJustDeposited] = useState(false);
-  const [depositPromptDismissed, setDepositPromptDismissed] = useState(false);
+  const [depositPromptDismissed, setDepositPromptDismissed] = useState(initialActionModal === 'deposit');
 
   const refreshBalance = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.balance });

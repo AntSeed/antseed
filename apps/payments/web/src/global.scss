@@ -2240,15 +2240,12 @@ $dash-sidebar-width: 240px;
 }
 
 .empty-state-card {
-  width: min(720px, 100%);
+  width: min(460px, 100%);
   max-height: calc(100vh - 48px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   position: relative;
   flex-direction: column;
-  gap: 20px;
-  padding: 26px 26px 22px;
   background: var(--page-bg);
   border: 1px solid var(--card-border);
   border-radius: 18px;
@@ -2271,35 +2268,73 @@ $dash-sidebar-width: 240px;
   .deposit .wallet-role-hint { display: none; }
 }
 
+.empty-state-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 26px 22px;
+
+  /* Pin the DepositView's CTA to the bottom of the scrolling area. */
+  .rh-cta {
+    position: sticky;
+    bottom: 0;
+    margin-top: 16px;
+    z-index: 2;
+  }
+
+  &::after {
+    content: '';
+    position: sticky;
+    display: block;
+    bottom: -22px;
+    height: 96px;
+    margin: -96px -26px -22px;
+    pointer-events: none;
+    z-index: 1;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--page-bg) 55%, transparent) 18%,
+      var(--page-bg) 42%,
+      var(--page-bg) 100%
+    );
+  }
+}
+
 .empty-state-close {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 18px;
+  right: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
   border: 1px solid var(--card-border);
-  background: transparent;
-  color: var(--text-secondary);
+  background: var(--input-bg);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.14s, background 0.14s, border-color 0.14s;
+  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.18s ease;
+  flex-shrink: 0;
+  z-index: 3;
 
   &:hover {
     color: var(--text-primary);
-    border-color: var(--accent);
+    border-color: color-mix(in srgb, var(--text-primary) 18%, var(--card-border));
     background: var(--card-hover, rgba(148, 163, 184, 0.08));
+    transform: rotate(90deg);
   }
 }
 
 .empty-state-header {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   text-align: center;
-  padding: 0 4px;
+  padding: 26px 30px 18px;
 }
 
 .empty-state-signer {

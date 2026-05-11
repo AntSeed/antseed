@@ -4,6 +4,7 @@ import { useAccount, useDisconnect } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
+  Wallet01Icon,
   Wallet02Icon,
   WalletAdd01Icon,
   WalletRemove01Icon,
@@ -16,7 +17,6 @@ import {
   Alert02Icon,
   ExchangeIcon,
   UserCircleIcon,
-  Link01Icon,
   Logout02Icon,
   BookOpen01Icon,
 } from '@hugeicons/core-free-icons';
@@ -481,7 +481,7 @@ export function AccountMenu() {
                 onClick={() => { close(); openConnectModal?.(); }}
               >
                 <span className="dash-account-addr-icon-leading">
-                  <HugeiconsIcon icon={Link01Icon} size={14} strokeWidth={1.6} />
+                  <HugeiconsIcon icon={Wallet01Icon} size={14} strokeWidth={1.6} />
                 </span>
                 <span className="dash-account-addr-value">Connect wallet</span>
                 <span className="dash-account-addr-icon">

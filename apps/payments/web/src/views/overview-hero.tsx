@@ -33,7 +33,6 @@ export function OverviewHero() {
       <HeroCard
         tone="accent"
         icon={PlugSocketIcon}
-        eyebrow="Get started"
         heading="Connect your wallet"
         sub="Connect a wallet so you can deposit USDC, authorize withdrawals, and claim ANTS rewards."
         ctaIcon={Wallet01Icon}
@@ -48,7 +47,6 @@ export function OverviewHero() {
       <HeroCard
         tone="accent"
         icon={Coins01Icon}
-        eyebrow="One more step"
         heading="Deposit USDC to get started"
         sub="Your AntSeed account is funded by USDC deposits. Add as little as $1 to start using services."
         ctaIcon={WalletAdd01Icon}
@@ -63,7 +61,6 @@ export function OverviewHero() {
       <HeroCard
         tone="amber"
         icon={FingerPrintScanIcon}
-        eyebrow="Action recommended"
         heading="Authorize your wallet"
         sub="Without an authorized wallet you can't withdraw USDC or claim ANTS. Set this once — you keep the keys."
         ctaIcon={LockKeyIcon}
@@ -97,7 +94,6 @@ function HeroSkeleton() {
 interface HeroCardProps {
   tone: 'accent' | 'amber';
   icon: IconData;
-  eyebrow: string;
   heading: string;
   sub: string;
   ctaIcon?: IconData;
@@ -105,14 +101,13 @@ interface HeroCardProps {
   onCta: () => void;
 }
 
-function HeroCard({ tone, icon, eyebrow, heading, sub, ctaIcon, ctaLabel, onCta }: HeroCardProps) {
+function HeroCard({ tone, icon, heading, sub, ctaIcon, ctaLabel, onCta }: HeroCardProps) {
   return (
     <section className={`overview-hero overview-hero--${tone}`}>
       <span className="overview-hero-icon">
         <HugeiconsIcon icon={icon} size={20} strokeWidth={1.5} />
       </span>
       <div className="overview-hero-content">
-        <div className="overview-hero-eyebrow">{eyebrow}</div>
         <h2 className="overview-hero-heading">{heading}</h2>
         <p className="overview-hero-sub">{sub}</p>
       </div>
