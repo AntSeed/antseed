@@ -82,9 +82,12 @@ export function useChannels(config: PaymentConfig | null): {
         status,
       };
     });
+    // Drop entries whose on-chain status is None (0) — those are phantom local
+    // rows whose reserve tx never landed on-chain.
+    const visible = enriched.filter((c) => c.status !== 0);
     return {
-      channels: enriched.filter((c) => c.status === 1),
-      history: enriched.filter((c) => c.status !== 1),
+      channels: visible.filter((c) => c.status === 1),
+      history: visible.filter((c) => c.status !== 1),
     };
   }, [rawChannels, onChainReads]);
 

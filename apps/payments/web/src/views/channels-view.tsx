@@ -18,13 +18,11 @@ type RowStatus =
   | 'closing'
   | 'withdrawable'
   | 'settled'
-  | 'timedout'
-  | 'closed';
+  | 'timedout';
 
 function getRowStatus(session: ChannelData): RowStatus {
   if (session.status === 2) return 'settled';
   if (session.status === 3) return 'timedout';
-  if (session.status === 0) return 'closed';
   if (session.closeRequestedAt === 0) return 'active';
   const now = Math.floor(Date.now() / 1000);
   if (now < session.closeRequestedAt + GRACE_PERIOD) return 'closing';
@@ -78,15 +76,6 @@ function TimedOutIcon() {
   );
 }
 
-function ClosedIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-      <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function RefreshIcon({ spinning }: { spinning: boolean }) {
   return (
     <svg
@@ -120,7 +109,6 @@ const STATUS_ICONS: Record<RowStatus, React.ReactNode> = {
   withdrawable: <WithdrawableIcon />,
   settled:      <SettledIcon />,
   timedout:     <TimedOutIcon />,
-  closed:       <ClosedIcon />,
 };
 
 const STATUS_META: Record<RowStatus, { label: string; modifier: string }> = {
@@ -129,7 +117,6 @@ const STATUS_META: Record<RowStatus, { label: string; modifier: string }> = {
   withdrawable: { label: 'Withdrawable', modifier: 'status-pill--withdrawable' },
   settled:      { label: 'Settled',      modifier: 'status-pill--muted' },
   timedout:     { label: 'Timed out',    modifier: 'status-pill--muted' },
-  closed:       { label: 'Closed',       modifier: 'status-pill--muted' },
 };
 
 function graceRemaining(closeRequestedAt: number): number {
@@ -160,15 +147,19 @@ function formatChannelUsd(value: string): string {
 function ChannelRow({
   session,
   config,
+  expectedChainId,
+  ensureCorrectNetwork,
+  requireAuthorization,
   onRefresh,
 }: {
   session: ChannelData;
   config: PaymentConfig;
+  expectedChainId: number | undefined;
+  ensureCorrectNetwork: () => Promise<void>;
+  requireAuthorization: (action?: () => void | Promise<void>) => void;
   onRefresh: () => void;
 }) {
   const status = getRowStatus(session);
-  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
-  const { requireAuthorization } = useAuthorizedWallet();
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -305,6 +296,8 @@ function ChannelRow({
 export function ChannelsView() {
   const { data: config = null } = useConfig();
   const { channels, history, loading, refetch } = useChannels(config);
+  const { expectedChainId, ensureCorrectNetwork } = usePaymentNetwork(config);
+  const { requireAuthorization } = useAuthorizedWallet();
   const [page, setPage] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -438,6 +431,9 @@ export function ChannelsView() {
                           key={session.channelId}
                           session={session}
                           config={config}
+                          expectedChainId={expectedChainId}
+                          ensureCorrectNetwork={ensureCorrectNetwork}
+                          requireAuthorization={requireAuthorization}
                           onRefresh={fetchData}
                         />
                       ) : null

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { parseUnits } from 'viem';
 import type { PaymentConfig } from '../types';
 import { DEPOSITS_ABI } from '../abi';
+import { validateWithdrawInput } from '../lib/withdraw-validate';
 import { useWagmiWrite } from './use-wagmi-write';
 
 export interface UseWithdrawResult {
@@ -31,24 +31,9 @@ export function useWithdraw(config: PaymentConfig | null, onSuccess?: () => void
       setError('Payments contract is not configured.');
       return;
     }
-    if (!/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
-      setError('Invalid buyer address.');
-      return;
-    }
-    const parsed = Number(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setError('Enter a valid amount.');
-      return;
-    }
-    let units: bigint;
-    try {
-      units = parseUnits(amount, 6);
-    } catch {
-      setError('Invalid amount.');
-      return;
-    }
-    if (units <= 0n) {
-      setError('Enter a valid amount.');
+    const validated = validateWithdrawInput(buyer, amount);
+    if (!validated.ok) {
+      setError(validated.error);
       return;
     }
 
@@ -57,7 +42,7 @@ export function useWithdraw(config: PaymentConfig | null, onSuccess?: () => void
       abi: DEPOSITS_ABI,
       functionName: 'withdraw',
       chainId: expectedChainId,
-      args: [buyer as `0x${string}`, units],
+      args: [buyer as `0x${string}`, validated.units],
     }));
   }, [config, setError, submit, expectedChainId]);
 

@@ -4,7 +4,7 @@ import { useAccount, useReadContract, useWriteContract, useWaitForTransactionRec
 import type { PaymentConfig } from '../types';
 import { DEPOSITS_ABI, ERC20_ABI } from '../abi';
 import { getErrorMessage, usePaymentNetwork } from '../lib/payment-network';
-import { formatUsd } from '../lib/format';
+import { decideDepositStep } from '../lib/deposit-decide';
 
 export type DepositStep = 'idle' | 'approving' | 'checking-allowance' | 'depositing' | 'done';
 
@@ -133,23 +133,21 @@ export function useDeposit(
 
     const walletResult = await refetchWalletUsdc();
     const latestWalletUsdc = walletResult.data === undefined ? null : Number.parseFloat(formatUnits(walletResult.data, 6));
-    if (latestWalletUsdc === null || !Number.isFinite(latestWalletUsdc)) {
-      setError('Could not check your wallet USDC balance. Please try again.');
-      return;
-    }
-    if (amountNum > latestWalletUsdc) {
-      setError(`Your connected wallet only has ${formatUsd(latestWalletUsdc)} USDC available.`);
-      return;
-    }
-
     const allowanceResult = await refetchAllowance();
-    const latestAllowance = allowanceResult.data;
-    if (latestAllowance === undefined) {
-      setError('Could not check your USDC approval. Please try again.');
+
+    const decision = decideDepositStep({
+      amountNum,
+      usdcAmount,
+      walletUsdcBalance: latestWalletUsdc,
+      allowance: allowanceResult.data,
+    });
+
+    if (decision.kind === 'error') {
+      setError(decision.message);
       return;
     }
 
-    if (latestAllowance >= usdcAmount) {
+    if (decision.kind === 'deposit') {
       setStep('depositing');
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,

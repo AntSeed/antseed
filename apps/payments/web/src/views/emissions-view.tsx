@@ -20,6 +20,7 @@ import {
 import { useWagmiWrite } from '../hooks/use-wagmi-write';
 import { EMISSIONS_CLAIM_ABI } from '../abi';
 import { useAuthorizedWallet } from '../context/authorized-wallet-context';
+import { selectClaimableEpochs } from '../lib/emissions-epochs';
 import { estimateEmissionReward, safeBigint, formatAnts } from '../lib/format';
 
 function addWei(a: string, b: string): string {
@@ -82,9 +83,7 @@ export function EmissionsView() {
 
   const handleClaimSeller = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending) return;
-    const epochs = pending.rows
-      .filter((r) => !r.isCurrent && !r.seller.claimed && r.seller.amount !== '0')
-      .map((r) => BigInt(r.epoch));
+    const epochs = selectClaimableEpochs(pending.rows, 'seller');
     if (epochs.length === 0) return;
     requireAuthorization(() => sellerClaim.submit(() => ({
       address: config.emissionsContractAddress as `0x${string}`,
@@ -97,9 +96,7 @@ export function EmissionsView() {
 
   const handleClaimBuyer = useCallback(() => {
     if (!config?.emissionsContractAddress || !pending || !buyerAddress) return;
-    const epochs = pending.rows
-      .filter((r) => !r.isCurrent && !r.buyer.claimed && r.buyer.amount !== '0')
-      .map((r) => BigInt(r.epoch));
+    const epochs = selectClaimableEpochs(pending.rows, 'buyer');
     if (epochs.length === 0) return;
     requireAuthorization(() => buyerClaim.submit(() => ({
       address: config.emissionsContractAddress as `0x${string}`,

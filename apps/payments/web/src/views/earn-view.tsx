@@ -426,6 +426,10 @@ function EarnHistory({ rows, epochEmission, shares, onOpen }: EarnHistoryProps) 
         const amount = row.isCurrent
           ? estimateCurrentReward(row, epochEmission, shares)
           : safeBigint(row.seller.amount) + safeBigint(row.buyer.amount);
+        // "Done" means either the side has been claimed or it never had any
+        // points to claim. `fullyClaimed` requires both sides done AND at least
+        // one side actually claimed — guards against labelling a zero-zero row
+        // as "Claimed".
         const sellerDone = row.seller.claimed || row.seller.userPoints === '0';
         const buyerDone = row.buyer.claimed || row.buyer.userPoints === '0';
         const fullyClaimed = !row.isCurrent && sellerDone && buyerDone && (row.seller.claimed || row.buyer.claimed);
