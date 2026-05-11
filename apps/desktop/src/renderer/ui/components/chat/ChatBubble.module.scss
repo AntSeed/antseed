@@ -707,7 +707,27 @@
 
 .assistant-work-label {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-green) 28%, var(--border-light));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-green) 8%, transparent);
+  color: var(--text-secondary);
   font-weight: 500;
+}
+
+.assistant-work-hint {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.assistant-work-header:hover .assistant-work-hint {
+  opacity: 1;
+  color: var(--text-muted);
 }
 
 .assistant-work-chevron {

@@ -573,6 +573,7 @@ function AssistantWorkSection({
         aria-expanded={expanded}
       >
         <span className={styles.assistantWorkLabel}>{getAssistantWorkLabel(message, working)}</span>
+        <span className={styles.assistantWorkHint}>{expanded ? 'Hide work' : 'Show work'}</span>
         <span className={styles.assistantWorkChevron}>›</span>
         {working ? (
           <span className="thinking-dots" aria-hidden="true">
