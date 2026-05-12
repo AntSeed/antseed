@@ -132,9 +132,11 @@ AntseedRegistry       Central address book for all protocol contracts
 AntseedStaking        Seller staking (holds stake USDC, binds to ERC-8004 agentId)
 AntseedDeposits       Buyer deposits, seller payouts (holds buyer USDC)
 AntseedChannels       Payment channel lifecycle (swappable, holds NO USDC)
-AntseedEmissions      ANTS token emissions (USDC volume-based rewards)
-ANTSToken             ANTS ERC-20 token (52M max supply)
+AntseedEmissions      ANTS token emissions (USDC volume-based incentives)
+ANTSToken             ANTS ERC-20 token (1.04B max supply)
 ```
+
+Network fees are set to 4% of settlement and flow to the Protocol Reserve, not to a company. The Protocol Reserve is intended to support long-term network sustainability, trust, utility, and alignment. Seller ANTS emissions are currently tracked but locked in a dedicated Provider Pool pending stronger validation; future claims may be subject to verification or slashing.
 
 **Stable contracts** (Staking, Deposits) hold funds and rarely change. The **swappable contract** (Channels) holds no USDC and can be redeployed by re-pointing via the Registry.
 
