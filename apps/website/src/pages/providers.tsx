@@ -22,6 +22,10 @@ const FAQ_DATA = [
     a: 'Buyers lock USDC in on-chain escrow on Base before a session starts. Requests flow freely during the session. When the session ends (or idles for 10 minutes), settlement executes on-chain and USDC lands in your wallet automatically. No invoicing, no billing cycles.',
   },
   {
+    q: 'Are seller ANTS incentives claimable now?',
+    a: 'Seller ANTS emissions are currently tracked but routed into a dedicated Provider Pool and locked. They are not freely claimable yet. Future claimability is expected after stronger validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.',
+  },
+  {
     q: 'Can I use any model underneath?',
     a: 'Yes. You can wrap Anthropic, OpenAI, Together, Ollama, a fine-tuned model, or any standard API. The network only sees what you deliver — not your backend.',
   },
@@ -159,6 +163,9 @@ export default function Providers(): JSX.Element {
             <p>
               Providers are solely responsible for complying with their upstream
               API provider's terms.
+            </p>
+            <p>
+              Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while AntSeed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
             </p>
           </div>
         </div>
@@ -329,11 +336,11 @@ antseed seller start`}</pre>
           </div>
           <div className={styles.econRow}>
             <span className={styles.econLabel}>Protocol fee</span>
-            <span className={styles.econValue}>2% — distributed back to the network, not extracted</span>
+            <span className={styles.econValue}>4% — flows to the Protocol Reserve, not to a company</span>
           </div>
           <div className={styles.econRow}>
             <span className={styles.econLabel}>Your payout</span>
-            <span className={styles.econValue}>98% of what buyers pay, direct to your wallet in USDC</span>
+            <span className={styles.econValue}>96% of what buyers pay, direct to your wallet in USDC</span>
           </div>
           <div className={styles.econRow}>
             <span className={styles.econLabel}>Payment methods</span>

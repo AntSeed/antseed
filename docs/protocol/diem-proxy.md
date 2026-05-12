@@ -125,6 +125,8 @@ Cache TTL: 5 minutes. Rotation detection: when the cached `operator` value no lo
 
 ## Reward accounting
 
+The DIEM pool applies a 10% fee before USDC reaches the staking pool. That fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS. The remaining USDC is streamed pro-rata to stakers.
+
 Two parallel streams: `usdcStream` and `antsStream`. Each uses the Uniswap StakingRewards pattern:
 
 - `rewardRate` (tokens per second), `periodFinish`, `lastUpdateTime`, `rewardPerTokenStored`.
