@@ -561,7 +561,7 @@ function AssistantWorkSection({
   onOpenPreview?: (url: string) => void;
   conversationId?: string;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   if (blocks.length === 0) return null;
 
   return (
