@@ -119,11 +119,11 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
   // First pass: count how many peers serve each service
   const peerCountMap = new Map<string, Set<string>>();
   for (const peer of peers) {
-    const pName = peer.displayName ?? peer.peerId.slice(0, 12);
+    const pId = peer.peerId.slice(0, 12);
     for (const ann of peer.providers) {
       for (const service of ann.services) {
         if (!peerCountMap.has(service)) peerCountMap.set(service, new Set());
-        peerCountMap.get(service)!.add(pName);
+        peerCountMap.get(service)!.add(pId);
       }
     }
   }
@@ -132,6 +132,7 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
   const rows: ServiceRow[] = [];
   for (const peer of peers) {
     const pName = peer.displayName ?? peer.peerId.slice(0, 12);
+    const pId = peer.peerId.slice(0, 12);
     const stats = peer.onChainStats;
 
     for (const ann of peer.providers) {
@@ -145,7 +146,7 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
         const peersForService = peerCountMap.get(service)!;
 
         rows.push({
-          id: `${service}::${pName}`,
+          id: `${service}::${pId}`,
           serviceId: service,
           name: meta?.displayName ?? fallbackName,
           provider: meta?.provider ?? guessProvider(service),
@@ -154,6 +155,7 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
           tags: ['anon', ...(meta?.tags ?? cats)],
           inputPrice: pricing.inputUsdPerMillion,
           outputPrice: pricing.outputUsdPerMillion,
+          cachedInputPrice: pricing.cachedInputUsdPerMillion ?? 0,
           peerCount: peersForService.size,
           peerNames: [...peersForService],
           peerName: pName,
@@ -307,7 +309,11 @@ export default function PricingPage() {
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
     let list = models.filter(m => {
-      if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
+      // Search: serviceId (raw kebab-case name), display name, provider, or tags
+      const nameMatch = m.name.toLowerCase().includes(q) || m.serviceId.toLowerCase().includes(q);
+      const providerMatch = m.provider.toLowerCase().includes(q);
+      const tagMatch = m.tags.some(t => t.toLowerCase().includes(q));
+      if (q && !nameMatch && !providerMatch && !tagMatch) return false;
       if (providerFilter && m.peerName !== providerFilter) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
       // Price sliders: 100=Any, lower=stricter
@@ -341,7 +347,7 @@ export default function PricingPage() {
     ? `Updated ${new Date(updatedAt).toLocaleTimeString()}`
     : null;
 
-  const hasActiveFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching;
+  const hasActiveFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching || !!query || !!providerFilter || !!tagFilter;
 
   const datasetLd = useMemo(() => ({
     '@context': 'https://schema.org',
