@@ -30,7 +30,7 @@ interface IANTSTokenAdmin {
  *   BUYER_CAP_PCT          Defaults to 5 for future epoch snapshots.
  *   SELLER_UNLOCK_POLICY   Existing unlock policy. If unset, this script deploys one.
  *   DIEM_PROXY_SELLER      Optional seller/proxy address to make immediately claimable.
- *   WHITELIST_REWARDS_POOL Defaults to true. Allows locked pool releases while ANTS transfers are disabled.
+ *   WHITELIST_REWARDS_POOL Defaults to false. Enable later when seller claims should be transferable.
  *
  * Usage:
  *   cd packages/contracts
@@ -64,7 +64,7 @@ contract UpgradeEmissionsV2BaseMainnet is Script {
         AntseedSellerRewardsPool rewardsPool = new AntseedSellerRewardsPool(registryAddress);
         console.log("SellerRewardsPool:    ", address(rewardsPool));
 
-        bool whitelistRewardsPool = vm.envOr("WHITELIST_REWARDS_POOL", true);
+        bool whitelistRewardsPool = vm.envOr("WHITELIST_REWARDS_POOL", false);
         if (whitelistRewardsPool) {
             IANTSTokenAdmin(registry.antsToken()).setTransferWhitelist(address(rewardsPool), true);
             console.log("Rewards pool whitelisted for ANTS transfers");
