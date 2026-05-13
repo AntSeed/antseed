@@ -1126,4 +1126,69 @@ contract AntseedChannelsTest is Test {
         channels.requestClose(channelId);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                   METADATA V2 TESTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    uint256 constant METADATA_VERSION_V2 = 2;
+
+    function encodeMetadataV2(
+        uint256 inputTokens,
+        uint256 outputTokens,
+        bytes32 serviceHash
+    ) internal pure returns (bytes memory) {
+        return abi.encode(METADATA_VERSION_V2, inputTokens, outputTokens, uint256(0), uint256(serviceHash));
+    }
+
+    function signSpendingAuthV2(
+        uint256 pk,
+        bytes32 channelId,
+        uint256 cumulativeAmount,
+        uint256 inputTokens,
+        uint256 outputTokens,
+        bytes32 serviceHash
+    ) internal view returns (bytes memory) {
+        bytes32 metadataHash = keccak256(abi.encode(METADATA_VERSION_V2, inputTokens, outputTokens, uint256(0), uint256(serviceHash)));
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SPENDING_AUTH_TYPEHASH,
+                channelId,
+                cumulativeAmount,
+                metadataHash
+            )
+        );
+        bytes32 digest = _hashTypedDataChannels(structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_settle_v2MetadataEmitsServiceHash() public {
+        bytes32 salt = keccak256("session-v2-metadata");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        uint128 settleAmount = USDC_60;
+        uint256 inputTokens = 10_000;
+        uint256 outputTokens = 3_000;
+        // serviceHash = keccak256("gpt-4o") as uint256, matching the hashServiceName() logic in signatures.ts
+        bytes32 serviceHash = keccak256(bytes("gpt-4o"));
+
+        bytes memory metadata = encodeMetadataV2(inputTokens, outputTokens, serviceHash);
+        bytes memory sig = signSpendingAuthV2(BUYER_PK, channelId, settleAmount, inputTokens, outputTokens, serviceHash);
+
+        // Expect the ChannelSettled event to carry the v2 metadata bytes verbatim
+        vm.expectEmit(true, true, true, true);
+        emit AntseedChannels.ChannelSettled(channelId, buyer, seller, settleAmount, settleAmount, settleAmount, (uint256(settleAmount) * 200) / 10000, metadata);
+
+        vm.prank(seller);
+        channels.settle(channelId, settleAmount, metadata, sig);
+
+        // Verify the emitted metadata decodes back to our v2 fields
+        (uint256 ver, uint256 inTok, uint256 outTok, , uint256 sHash) =
+            abi.decode(metadata, (uint256, uint256, uint256, uint256, uint256));
+        assertEq(ver, METADATA_VERSION_V2);
+        assertEq(inTok, inputTokens);
+        assertEq(outTok, outputTokens);
+        assertEq(sHash, uint256(serviceHash));
+    }
+
 }
