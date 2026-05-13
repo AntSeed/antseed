@@ -489,6 +489,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const filesToSend = attachedFiles;
     resetComposer();
     actions.sendMessage(text, filesToSend);
+    scrollChatToBottom('smooth');
   }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length]);
 
   const handleLowReputationContinue = useCallback(() => {
