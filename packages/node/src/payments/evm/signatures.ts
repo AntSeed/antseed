@@ -1,4 +1,4 @@
-import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256 } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256, toUtf8Bytes } from 'ethers';
 
 // =========================================================================
 // EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
@@ -50,26 +50,82 @@ export interface SetOperatorMessage {
 
 // =========================================================================
 // Metadata encoding
+//
+// v1 layout (4 × uint256):
+//   word[0] = 1                           (version)
+//   word[1] = cumulativeInputTokens
+//   word[2] = cumulativeOutputTokens
+//   word[3] = cumulativeRequestCount
+//
+// v2 layout (5 × uint256):
+//   word[0] = 2                           (version)
+//   word[1] = cumulativeInputTokens
+//   word[2] = cumulativeOutputTokens
+//   word[3] = cumulativeRequestCount
+//   word[4] = keccak256(abi.encodePacked(serviceName)) — bytes32 cast to uint256
+//             Zero if the service name is unknown.
+//
+// Indexers can derive the human-readable model name by reversing the hash
+// against the known service catalog in provider_directory.
 // =========================================================================
 
 export interface SpendingAuthMetadata {
   cumulativeInputTokens: bigint;
   cumulativeOutputTokens: bigint;
   cumulativeRequestCount: bigint;
+  /** keccak256 of the UTF-8 service/model name, cast to uint256. Zero = unknown. */
+  serviceHash?: bigint;
 }
 
-export const METADATA_VERSION = 1n;
+export const METADATA_VERSION_V1 = 1n;
+export const METADATA_VERSION_V2 = 2n;
+
+/** @deprecated Use METADATA_VERSION_V2. Kept for consumers that reference the old name. */
+export const METADATA_VERSION = METADATA_VERSION_V1;
+
+/** Compute the keccak256 service hash from a UTF-8 service name string. */
+export function hashServiceName(serviceName: string): bigint {
+  return BigInt(keccak256(toUtf8Bytes(serviceName)));
+}
 
 export function encodeMetadata(metadata: SpendingAuthMetadata): string {
   const coder = AbiCoder.defaultAbiCoder();
+  if (metadata.serviceHash != null && metadata.serviceHash !== 0n) {
+    return coder.encode(
+      ['uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+      [METADATA_VERSION_V2, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeRequestCount, metadata.serviceHash],
+    );
+  }
   return coder.encode(
     ['uint256', 'uint256', 'uint256', 'uint256'],
-    [METADATA_VERSION, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeRequestCount],
+    [METADATA_VERSION_V1, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeRequestCount],
   );
 }
 
 export function computeMetadataHash(metadata: SpendingAuthMetadata): string {
   return keccak256(encodeMetadata(metadata));
+}
+
+/** Decode a hex-encoded metadata blob emitted by a ChannelSettled event. */
+export function decodeMetadata(hex: string): SpendingAuthMetadata & { version: number } | null {
+  const raw = hex.startsWith('0x') ? hex.slice(2) : hex;
+  if (raw.length < 64 * 4) return null;
+  const word = (i: number): bigint => BigInt('0x' + raw.slice(i * 64, (i + 1) * 64));
+  try {
+    const version = Number(word(0));
+    const base = {
+      version,
+      cumulativeInputTokens: word(1),
+      cumulativeOutputTokens: word(2),
+      cumulativeRequestCount: word(3),
+    };
+    if (version >= 2 && raw.length >= 64 * 5) {
+      return { ...base, serviceHash: word(4) };
+    }
+    return base;
+  } catch {
+    return null;
+  }
 }
 
 export const ZERO_METADATA: SpendingAuthMetadata = {
