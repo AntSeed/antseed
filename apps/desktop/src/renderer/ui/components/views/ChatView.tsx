@@ -879,8 +879,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               aria-label="Scroll to latest message"
               title="Scroll to latest message"
             >
-              <HugeiconsIcon icon={ArrowUp02Icon} size={14} strokeWidth={2} className={styles.scrollToLatestIcon} />
-              <span>Latest</span>
+              <HugeiconsIcon icon={ArrowUp02Icon} size={16} strokeWidth={2} className={styles.scrollToLatestIcon} />
               {hasNewActivityWhileScrolledUp ? <span className={styles.scrollToLatestDot} aria-hidden="true" /> : null}
             </button>
           ) : null}

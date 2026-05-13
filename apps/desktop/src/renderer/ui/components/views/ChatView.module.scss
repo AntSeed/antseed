@@ -302,27 +302,25 @@
   z-index: 12;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: 1px solid var(--border-light);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  color: var(--text-muted);
   cursor: pointer;
   backdrop-filter: blur(10px);
   transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
 
   &:hover {
     color: var(--accent-green);
-    border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border-light));
-    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--accent-green) 38%, var(--border-light));
+    background: color-mix(in srgb, var(--accent-green) 7%, var(--bg-card));
     transform: translateX(-50%) translateY(-1px);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
   }
 
   &:focus-visible {
@@ -336,10 +334,13 @@
 }
 
 .scroll-to-latest-button-new {
-  border-color: color-mix(in srgb, var(--accent-green) 36%, var(--border-light));
+  border-color: color-mix(in srgb, var(--accent-green) 32%, var(--border-light));
 }
 
 .scroll-to-latest-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
