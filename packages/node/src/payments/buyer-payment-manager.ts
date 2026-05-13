@@ -14,6 +14,7 @@ import {
   makeChannelsDomain,
   computeMetadataHash,
   encodeMetadata,
+  hashServiceName,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
   computeChannelId,
@@ -90,6 +91,11 @@ export class BuyerPaymentManager {
    *  Used in handleNeedAuth to validate cost with the correct pricing tier
    *  without trusting the seller's claim of which service was used. */
   private readonly _requestService = new Map<string, string>();
+
+  /** sellerPeerId -> most recent service/model name used in this channel.
+   *  Included as serviceHash (word[4]) in v2 metadata so the explorer can
+   *  recover the model from the ChannelSettled event. */
+  private readonly _currentService = new Map<string, string>();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -180,6 +186,7 @@ export class BuyerPaymentManager {
     this._confirmedPeers.delete(sellerPeerId);
     this._rejectedPeers.delete(sellerPeerId);
     this._responseTokenTotals.delete(sellerPeerId);
+    this._currentService.delete(sellerPeerId);
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
@@ -717,10 +724,13 @@ export class BuyerPaymentManager {
 
     // Update cumulative metadata
     const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    if (responseStats.service) this._currentService.set(sellerPeerId, responseStats.service);
+    const currentService = this._currentService.get(sellerPeerId);
     const newMeta: SpendingAuthMetadata = {
       cumulativeInputTokens: prev.cumulativeInputTokens + estimatedInputTokens,
       cumulativeOutputTokens: prev.cumulativeOutputTokens + estimatedOutputTokens,
       cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
+      ...(currentService != null ? { serviceHash: hashServiceName(currentService) } : {}),
     };
     this._metadata.set(sellerPeerId, newMeta);
 
@@ -883,10 +893,13 @@ export class BuyerPaymentManager {
     // on-chain metadata stays consistent even when older sellers omit token
     // fields; absent token fields contribute 0 to the running totals.
     const prevMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    if (buyerService) this._currentService.set(sellerPeerId, buyerService);
+    const currentService = this._currentService.get(sellerPeerId);
     const newMeta: SpendingAuthMetadata = {
       cumulativeInputTokens: prevMeta.cumulativeInputTokens + BigInt(payload.inputTokens ?? '0'),
       cumulativeOutputTokens: prevMeta.cumulativeOutputTokens + BigInt(payload.outputTokens ?? '0'),
       cumulativeRequestCount: prevMeta.cumulativeRequestCount + 1n,
+      ...(currentService != null ? { serviceHash: hashServiceName(currentService) } : {}),
     };
     this._metadata.set(sellerPeerId, newMeta);
 
