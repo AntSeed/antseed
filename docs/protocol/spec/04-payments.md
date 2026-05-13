@@ -173,6 +173,11 @@ currentEpoch = (block.timestamp - genesis) / EPOCH_DURATION
 
 No manual `advanceEpoch()` is required. Epoch parameters (share percentages and per-epoch caps) are snapshotted on first V2 touch of each epoch and remain immutable for that epoch.
 
+#### Emission Schedule
+
+- Epoch emission: `e_e = e_0 / 2^(epoch / HALVING_INTERVAL)` — halving every ~6 months
+- Epoch duration: configurable (default 1 week, 26 epochs per halving interval)
+
 #### Emission Split (per-epoch snapshot)
 
 | Bucket | Default | Purpose |
