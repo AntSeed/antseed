@@ -1249,6 +1249,8 @@ class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    // SessionManager reads the cwd persisted in the session file; restoration
+    // across app restarts depends on that value reflecting the session workspace.
     const sessionCwd = manager.getCwd() || undefined;
     return {
       id: manager.getSessionId(),

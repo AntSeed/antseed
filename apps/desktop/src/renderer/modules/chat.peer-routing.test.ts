@@ -51,7 +51,9 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
-type WorkspaceSetResult = { ok: boolean; data: { current: string; default: string } };
+type WorkspaceSetResult =
+  | { ok: true; data: { current: string; default: string } }
+  | { ok: false; error: string };
 
 type Conversation = {
   id: string;
@@ -677,6 +679,114 @@ test('rapid conversation switches keep the latest workspace selected', async () 
 
   await waitFor(() => uiState.chatWorkspacePath === '/project-b');
   assert.equal(uiState.chatActiveConversation, 'conv-project-b');
+});
+
+test('stale manual workspace failure does not overwrite the latest desired conversation workspace', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.appSetupComplete = true;
+  uiState.chatWorkspacePath = '/current';
+
+  const conversations: Conversation[] = [
+    {
+      id: 'conv-project-a',
+      title: 'Project A Chat',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-project-b',
+      title: 'Project B Chat',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const workspaceCallLog: string[] = [];
+  const pendingWorkspaceSets = new Map<
+    string,
+    ReturnType<typeof createDeferred<WorkspaceSetResult>>
+  >();
+
+  const bridge: DesktopBridge = {
+    pickDirectory: async () => ({ ok: true, path: '/manual' }),
+    chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
+    chatAiGetWorkspaceGitStatus: async () => ({
+      ok: true,
+      data: {
+        available: true,
+        rootPath: uiState.chatWorkspacePath,
+        branch: 'main',
+        isDetached: false,
+        ahead: 0,
+        behind: 0,
+        stagedFiles: 0,
+        modifiedFiles: 0,
+        untrackedFiles: 0,
+        error: null,
+      },
+    }),
+    chatAiGetConversation: async (id) => {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv) return { ok: false, error: 'not found' };
+      const workspacePath = id === 'conv-project-a' ? '/project-a' : '/project-b';
+      return { ok: true, data: { ...conv, messages: [], workspacePath } };
+    },
+    chatAiSetWorkspace: async (workspacePath: string) => {
+      workspaceCallLog.push(workspacePath);
+      const deferred = createDeferred<WorkspaceSetResult>();
+      pendingWorkspaceSets.set(`${workspacePath}:${workspaceCallLog.length}`, deferred);
+      return deferred.promise;
+    },
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+
+  await api.openConversation('conv-project-a');
+  await waitFor(() => workspaceCallLog.length === 1);
+  assert.equal(workspaceCallLog[0], '/project-a');
+
+  const chooseWorkspacePromise = api.chooseWorkspace();
+  await waitFor(() => workspaceCallLog.length === 2);
+  assert.equal(workspaceCallLog[1], '/manual');
+
+  await api.openConversation('conv-project-b');
+  await waitFor(() => workspaceCallLog.length === 3);
+  assert.equal(workspaceCallLog[2], '/project-b');
+
+  pendingWorkspaceSets.get('/manual:2')?.resolve({ ok: false, error: 'manual failed' });
+  await chooseWorkspacePromise;
+
+  // If the stale manual failure reset desiredWorkspacePath, this older stale
+  // completion would not re-apply /project-b.
+  pendingWorkspaceSets.get('/project-a:1')?.resolve({
+    ok: true,
+    data: { current: '/project-a', default: '/default' },
+  });
+  await waitFor(() => workspaceCallLog.length === 4);
+  assert.equal(workspaceCallLog[3], '/project-b');
+
+  pendingWorkspaceSets.get('/project-b:3')?.resolve({
+    ok: true,
+    data: { current: '/project-b', default: '/default' },
+  });
+  pendingWorkspaceSets.get('/project-b:4')?.resolve({
+    ok: true,
+    data: { current: '/project-b', default: '/default' },
+  });
+  await waitFor(() => uiState.chatWorkspacePath === '/project-b');
 });
 
 test('opening a conversation does not switch workspace if it matches the current one', async () => {

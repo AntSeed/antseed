@@ -1437,10 +1437,13 @@ export function initChatModule({
         desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
         await refreshWorkspaceGitStatus();
+      } else {
+        desiredWorkspacePath = uiState.chatWorkspacePath || null;
       }
-      // If result.ok is false (e.g. workspace path no longer exists on disk),
-      // keep the current workspace — the user can still manually set it.
     } catch {
+      if (token === workspaceSwitchToken) {
+        desiredWorkspacePath = uiState.chatWorkspacePath || null;
+      }
       // Silently fail — the user can still manually set the workspace
     }
   }
@@ -1458,7 +1461,9 @@ export function initChatModule({
       desiredWorkspacePath = picked.path;
       const result = await bridge.chatAiSetWorkspace(picked.path);
       if (!result.ok || !result.data) {
-        desiredWorkspacePath = uiState.chatWorkspacePath || null;
+        if (token === workspaceSwitchToken) {
+          desiredWorkspacePath = uiState.chatWorkspacePath || null;
+        }
         showChatError(result.error || 'Failed to set workspace');
         return;
       }
@@ -1481,6 +1486,8 @@ export function initChatModule({
 
   async function openConversation(convId: string): Promise<void> {
     if (!bridge || !bridge.chatAiGetConversation) return;
+
+    const workspacePathAtOpen = uiState.chatWorkspacePath;
 
     uiState.chatActiveConversation = convId;
     uiState.chatRoutedPeerId = '';
@@ -1544,7 +1551,7 @@ export function initChatModule({
         if (
           typeof convWorkspacePath === 'string' &&
           convWorkspacePath.length > 0 &&
-          convWorkspacePath !== uiState.chatWorkspacePath
+          convWorkspacePath !== workspacePathAtOpen
         ) {
           void restoreWorkspace(convWorkspacePath);
         }
