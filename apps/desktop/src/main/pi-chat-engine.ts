@@ -147,6 +147,7 @@ type AiConversation = {
   createdAt: number;
   updatedAt: number;
   usage: AiUsageTotals;
+  workspacePath?: string;
 };
 
 type AiConversationSummary = {
@@ -162,6 +163,7 @@ type AiConversationSummary = {
   usage: AiUsageTotals;
   totalTokens: number;
   totalEstimatedCostUsd: number;
+  workspacePath?: string;
 };
 
 type RegisterPiChatHandlersOptions = {
@@ -1259,6 +1261,9 @@ class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    // SessionManager reads the cwd persisted in the session file; restoration
+    // across app restarts depends on that value reflecting the session workspace.
+    const sessionCwd = manager.getCwd() || undefined;
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
@@ -1270,6 +1275,7 @@ class PiConversationStore {
       usage,
       ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
       ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+      ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }
 
@@ -1315,6 +1321,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
 
@@ -1337,6 +1344,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
 
@@ -1745,7 +1753,16 @@ export function registerPiChatHandlers({
     // one-shot session.agent.setSystemPrompt call would be overridden.)
     // Priority: user override (env/config) → AntStation default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
-    const chatWorkspaceDir = getCurrentChatWorkspaceDir();
+    const sessionWorkspaceDir = sessionManager.getCwd()?.trim();
+    const chatWorkspaceDir = sessionWorkspaceDir && existsSync(sessionWorkspaceDir)
+      ? sessionWorkspaceDir
+      : getCurrentChatWorkspaceDir();
+    if (sessionWorkspaceDir && sessionWorkspaceDir !== chatWorkspaceDir) {
+      appendSystemLog(
+        `Conversation workspace is no longer available: ${sessionWorkspaceDir}. `
+        + `Using current workspace instead: ${chatWorkspaceDir}`,
+      );
+    }
     const settingsManager = SettingsManager.create(chatWorkspaceDir, CHAT_AGENT_DIR);
     const resourceLoader = new DefaultResourceLoader({
       cwd: chatWorkspaceDir,
