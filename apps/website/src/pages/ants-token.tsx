@@ -12,7 +12,7 @@ const ANTS_BASESCAN_URL = `https://basescan.org/token/${ANTS_TOKEN_ADDRESS}`;
 const EPOCH_DURATION = 604_800; // 1 week in seconds
 
 // Genesis timestamp from AntseedEmissions contract on Base mainnet (block 44469557)
-// Read via: eth_call genesis() on 0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5
+// Read via: eth_call genesis() on 0xF13bE52c4A3afC6AE29536f073588d01A0564088
 const GENESIS: number = 1775728461; // 2026-04-09T09:54:21Z
 
 function useEpochCountdown() {

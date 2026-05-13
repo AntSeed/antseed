@@ -192,7 +192,7 @@ All constants are configurable by the contract owner via dedicated setter functi
 | **AntseedDeposits** | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | **AntseedChannels** | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | **AntseedStats** | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
-| **AntseedEmissions** | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| **AntseedEmissionsV2** | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | **ERC-8004 IdentityRegistry** | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (external) |
 
 All verified on [BaseScan](https://basescan.org). Contract addresses are built into `@antseed/node` chain-config — no manual configuration needed when `chainId: "base-mainnet"` is set.
