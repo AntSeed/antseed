@@ -182,10 +182,10 @@ No manual `advanceEpoch()` is required. Epoch parameters (share percentages and 
 
 | Bucket | Default | Purpose |
 |---|---|---|
-| Seller share | 65% | Rewards proven delivery |
-| Buyer share | 25% | Rewards network usage and feedback |
-| Reserve share | 10% | Future use (subscription pool staking, liquidity) |
-| Team share | 0% | Protocol team |
+| Seller share | 50% | Proven delivery (locked rewards pool until unlocked) |
+| Buyer share | 20% | Rewards network usage and feedback |
+| Reserve share | 15% | Protocol Reserve (network sustainability, liquidity) |
+| Team share | 15% | Protocol team |
 
 #### Points Accrual
 

@@ -145,6 +145,8 @@ Network fees are set to 4% of settlement and flow to the Protocol Reserve, not t
 
 `AntseedEmissionsV2` replaced the original `AntseedEmissions` contract at epoch 4. It is backward-compatible: historical points from epochs 1–4 remain claimable through V2, while all new points accrue in V2's own ledger.
 
+Each epoch's ANTS are split: 50% to sellers, 20% to buyers, 15% to the Protocol Reserve, and 15% to the team.
+
 **For sellers:** ANTS rewards from finalized epochs are minted to a locked rewards pool (`AntseedSellerRewardsPool`) by default. Sellers can only claim unlocked tokens when the on-chain `AntseedSellerUnlockPolicy` allows it — typically after stake/activity criteria are met. This replaces the earlier "locked in a dedicated Provider Pool pending validation" state with a transparent, contract-enforced policy.
 
 **For buyers:** Buyer emissions are claimable via an operator address through `claimBuyerEmissions`.
