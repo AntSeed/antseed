@@ -80,6 +80,11 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
+    /// @dev `metadata` is ABI-encoded as N × uint256 words.
+    ///      v1 (4 words): [version=1, inputTokens, outputTokens, requestCount]
+    ///      v2 (5 words): [version=2, inputTokens, outputTokens, requestCount, serviceHash]
+    ///      where serviceHash = uint256(keccak256(bytes(serviceName))), zero = unknown.
+    ///      The contract does not decode metadata; it only verifies keccak256(metadata).
     event ChannelSettled(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 cumulativeAmount, uint128 delta, uint128 totalSettled, uint256 platformFee, bytes metadata);
     event ChannelClosed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 settledAmount, uint128 refund);
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 additionalAmount, uint128 newDeposit);
