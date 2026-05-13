@@ -85,6 +85,8 @@ describe('Reputation Integration', () => {
       return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
     }
 
+    // Keep this coupled to path selection, not the exact score curve.
+    const reportedScore = 30;
     const peer: PeerInfo = {
       peerId: 'a'.repeat(40) as any,
       lastSeen: Date.now(),
@@ -92,11 +94,15 @@ describe('Reputation Integration', () => {
       onChainChannelCount: 120,
       onChainGhostCount: 0,
       onChainTotalVolumeUsdcMicros: 1_000_000_000,
+      onChainStakeUsdcMicros: 10_000_000,
       onChainLastSettledAtSec: Math.floor(Date.now() / 1000),
-      reputationScore: 60,
+      reputationScore: reportedScore,
     };
 
-    expect(effectiveReputation(peer)).toBeGreaterThan(90);
+    const computed = computeOnChainReputationScore(peer);
+    expect(computed).not.toBeNull();
+    expect(effectiveReputation(peer)).toBe(computed);
+    expect(effectiveReputation(peer)).toBeGreaterThan(reportedScore);
   });
 
   it('should fall back to reported reputation when on-chain reputation is not available', () => {

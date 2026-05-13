@@ -62,7 +62,7 @@ export interface PeerInfo {
   lastReachedAt?: number;
   /** LLM providers this peer is offering (empty if buyer-only). */
   providers: string[];
-  /** Reputation score (0-100). */
+  /** Seller-reported reputation score (0-100). */
   reputationScore?: number;
   /** Provider/service-aware pricing map announced by seller. */
   providerPricing?: Record<string, ProviderPricingMatrixEntry>;
@@ -90,36 +90,23 @@ export interface PeerInfo {
    * Read by the buyer directly from the chain.
    */
   onChainStakeUsdcMicros?: number;
-  /**
-   * Buyer-computed on-chain reputation score (0-100), derived from the
-   * on-chain stats below and cached for non-routing UI consumers.
-   */
+  /** Buyer-computed displayed on-chain score (0-100). */
   onChainReputationScore?: number;
-  /**
-   * On-chain settled channel count from `AntseedChannels.getAgentStats`.
-   * Read by the buyer directly from the chain — never trusted from peer metadata.
-   */
+  /** Raw trust: channels × volume × ticket × recency × stake. */
+  onChainTrustScore?: number;
+  /** Sybil-risk heuristic in [0, 1]. */
+  onChainSybilRisk?: number;
+  /** Sybil signals that fired for this peer. */
+  onChainSybilFlags?: string[];
+  /** Settled channel count; buyer overwrites metadata with chain reads when available. */
   onChainChannelCount?: number;
-  /**
-   * On-chain ghost count (provider went silent) from `AntseedChannels.getAgentStats`.
-   * Read by the buyer directly from the chain — never trusted from peer metadata.
-   */
+  /** Ghost count; buyer overwrites metadata with chain reads when available. */
   onChainGhostCount?: number;
-  /**
-   * On-chain cumulative USDC volume (in micro-USDC, i.e. base units with 6 decimals)
-   * from `AntseedChannels.getAgentStats.totalVolumeUsdc`. Number-safe up to ~9 trillion µUSDC
-   * (~9M USDC), which fits JS Number precision. Read by the buyer from chain.
-   */
+  /** Cumulative settled volume in micro-USDC. */
   onChainTotalVolumeUsdcMicros?: number;
-  /**
-   * Unix seconds of the most recent on-chain settlement for this peer,
-   * from `AntseedChannels.getAgentStats.lastSettledAt`. Read by the buyer from chain.
-   */
+  /** Unix seconds of the most recent settlement. */
   onChainLastSettledAtSec?: number;
-  /**
-   * Unix seconds when the seller first staked in `AntseedStaking.sellers`.
-   * Read by the buyer from chain and used as a small maturity signal.
-   */
+  /** Unix seconds when the seller first staked. */
   onChainStakedAtSec?: number;
   /**
    * Unix ms when the buyer last refreshed on-chain stats for this peer.

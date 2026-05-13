@@ -108,7 +108,10 @@ export type DiscoverRow = {
   onChainGhostCount: number;
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
-  onChainReputationScore: number | null;
+  onChainReputationScore: number | null; // displayed 0-100 score
+  onChainTrustScore: number | null;
+  onChainSybilRisk: number | null;
+  onChainSybilFlags: string[];
 
   /**
    * Network-wide totals from @antseed/network-stats, indexed from AntseedStats.MetadataRecorded.

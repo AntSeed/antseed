@@ -46,6 +46,15 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     onChainReputationScore: typeof r.onChainReputationScore === 'number' && Number.isFinite(r.onChainReputationScore)
       ? r.onChainReputationScore
       : null,
+    onChainTrustScore: typeof r.onChainTrustScore === 'number' && Number.isFinite(r.onChainTrustScore)
+      ? r.onChainTrustScore
+      : null,
+    onChainSybilRisk: typeof r.onChainSybilRisk === 'number' && Number.isFinite(r.onChainSybilRisk)
+      ? r.onChainSybilRisk
+      : null,
+    onChainSybilFlags: Array.isArray(r.onChainSybilFlags)
+      ? r.onChainSybilFlags.filter((f): f is string => typeof f === 'string')
+      : [],
     networkRequests: toNullableBigintString(r.networkRequests),
     networkInputTokens: toNullableBigintString(r.networkInputTokens),
     networkOutputTokens: toNullableBigintString(r.networkOutputTokens),

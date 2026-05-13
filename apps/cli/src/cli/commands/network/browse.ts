@@ -196,14 +196,22 @@ function effectiveOnChainReputationScore(peer: PeerInfo): number | null {
   return peer.onChainReputationScore ?? computeOnChainReputationScore(peer);
 }
 
+const BROWSE_SYBIL_WARN_THRESHOLD = 0.30;
+
+function isPeerSybilRisky(peer: PeerInfo): boolean {
+  return typeof peer.onChainSybilRisk === 'number'
+    && peer.onChainSybilRisk >= BROWSE_SYBIL_WARN_THRESHOLD;
+}
+
 function formatReputationScore(peer: PeerInfo): string {
   const score = effectiveOnChainReputationScore(peer);
   if (score == null) return chalk.dim('—');
   const formatted = (score / 10).toFixed(1);
-  if (score >= 80) return chalk.green(formatted);
-  if (score >= 50) return chalk.cyan(formatted);
-  if (score > 0) return chalk.yellow(formatted);
-  return chalk.dim('0.0');
+  const warn = isPeerSybilRisky(peer) ? chalk.red('⚠ ') : '';
+  if (score >= 80) return warn + chalk.green(formatted);
+  if (score >= 50) return warn + chalk.cyan(formatted);
+  if (score > 0)   return warn + chalk.yellow(formatted);
+  return warn + chalk.dim('0.0');
 }
 
 function peerReputationScore(peer: PeerInfo): number {
@@ -347,7 +355,6 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
   head.push(
     chalk.bold('Score'),
     chalk.bold('Sessions'),
-    chalk.bold('Ghosts'),
     chalk.bold('Volume'),
     chalk.bold('Last settled'),
     chalk.bold('Load'),
@@ -363,11 +370,6 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
         ? services.join(', ')
         : `${services.slice(0, 2).join(', ')} ${chalk.dim(`+${services.length - 2}`)}`;
     const pricing = resolveBestPaidPricing(peer);
-
-    const ghostCount = peer.onChainGhostCount;
-    const ghostCell = typeof ghostCount === 'number'
-      ? (ghostCount === 0 ? chalk.dim('0') : chalk.red(String(ghostCount)))
-      : chalk.dim('—');
 
     const sessionsCell = typeof peer.onChainChannelCount === 'number'
       ? (peer.onChainChannelCount > 0 ? chalk.cyan(String(peer.onChainChannelCount)) : chalk.dim('0'))
@@ -399,7 +401,6 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
     row.push(
       formatReputationScore(peer),
       sessionsCell,
-      ghostCell,
       formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
       formatAge(peer.onChainLastSettledAtSec ?? null),
       load,
@@ -411,7 +412,11 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
   console.log('');
   console.log(table.toString());
   if (!hasChainData) {
-    console.log(chalk.dim('  Sessions / Ghosts / Volume / Last settled are dim — configure chain RPC to enable on-chain verification.'));
+    console.log(chalk.dim('  Sessions / Volume / Last settled are dim — configure chain RPC to enable on-chain verification.'));
+  }
+  const anySybilWarn = peers.some(isPeerSybilRisky);
+  if (anySybilWarn) {
+    console.log(chalk.dim(`  ${chalk.red('⚠')} peers triggered on-chain sybil heuristics. Run ${chalk.bold('antseed network peer <id>')} for the per-signal breakdown.`));
   }
   if (anyFreeService) {
     console.log(chalk.dim('  Free column lists services a peer offers at $0 in/out. "Min In/Out $/1M" always reflects the cheapest PAID option.'));

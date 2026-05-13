@@ -288,6 +288,16 @@ export function parsePersistedPeers(
     if (typeof entry.onChainReputationScore === 'number' && Number.isFinite(entry.onChainReputationScore)) {
       peer.onChainReputationScore = entry.onChainReputationScore
     }
+    if (typeof entry.onChainTrustScore === 'number' && Number.isFinite(entry.onChainTrustScore)) {
+      peer.onChainTrustScore = entry.onChainTrustScore
+    }
+    if (typeof entry.onChainSybilRisk === 'number' && Number.isFinite(entry.onChainSybilRisk)) {
+      peer.onChainSybilRisk = entry.onChainSybilRisk
+    }
+    if (Array.isArray(entry.onChainSybilFlags)) {
+      const flags = entry.onChainSybilFlags.filter((f): f is string => typeof f === 'string')
+      if (flags.length > 0) peer.onChainSybilFlags = flags
+    }
     if (typeof entry.onChainChannelCount === 'number' && Number.isFinite(entry.onChainChannelCount)) {
       peer.onChainChannelCount = entry.onChainChannelCount
     }
@@ -614,7 +624,11 @@ export class BuyerProxy {
         onChainTotalVolumeUsdcMicros: p.onChainTotalVolumeUsdcMicros ?? null,
         onChainLastSettledAtSec: p.onChainLastSettledAtSec ?? null,
         onChainStakedAtSec: p.onChainStakedAtSec ?? null,
+        // Fallback keeps pre-upgrade cache rows usable.
         onChainReputationScore: p.onChainReputationScore ?? computeOnChainReputationScore(p) ?? null,
+        onChainTrustScore: p.onChainTrustScore ?? null,
+        onChainSybilRisk: p.onChainSybilRisk ?? null,
+        onChainSybilFlags: p.onChainSybilFlags ?? null,
         onChainStatsFetchedAt: p.onChainStatsFetchedAt ?? null,
         // Persisted so cold-started buyers can still resolve the facade address
         // for channelId derivation. See parsePersistedPeers for the round-trip.

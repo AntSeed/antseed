@@ -271,6 +271,9 @@ type DiscoverRowEntry = {
   onChainTotalVolumeUsdc: string;
   onChainLastSettledAt: number;
   onChainReputationScore: number | null;
+  onChainTrustScore: number | null;
+  onChainSybilRisk: number | null;
+  onChainSybilFlags: string[];
   networkRequests: string | null;
   networkInputTokens: string | null;
   networkOutputTokens: string | null;
@@ -590,6 +593,9 @@ type BuyerStateDiscoveredPeer = {
   onChainTotalVolumeUsdcMicros: number | null;
   onChainLastSettledAtSec: number | null;
   onChainReputationScore: number | null;
+  onChainTrustScore: number | null;
+  onChainSybilRisk: number | null;
+  onChainSybilFlags: string[];
   sellerContract?: string;
   providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
 };
@@ -636,6 +642,9 @@ async function buildDiscoverRows(
     const onChainTotalVolumeUsdc = String(peerBlob?.onChainTotalVolumeUsdcMicros ?? 0);
     const onChainLastSettledAt = peerBlob?.onChainLastSettledAtSec ?? 0;
     const onChainReputationScore = peerBlob?.onChainReputationScore ?? null;
+    const onChainTrustScore = peerBlob?.onChainTrustScore ?? null;
+    const onChainSybilRisk = peerBlob?.onChainSybilRisk ?? null;
+    const onChainSybilFlags = peerBlob?.onChainSybilFlags ?? [];
     const netForAgent = agentId > 0 ? networkStats.get(agentId) ?? null : null;
     const networkRequests = netForAgent ? netForAgent.requests.toString() : null;
     const networkInputTokens = netForAgent ? netForAgent.inputTokens.toString() : null;
@@ -670,6 +679,9 @@ async function buildDiscoverRows(
       onChainTotalVolumeUsdc,
       onChainLastSettledAt,
       onChainReputationScore,
+      onChainTrustScore,
+      onChainSybilRisk,
+      onChainSybilFlags,
       networkRequests,
       networkInputTokens,
       networkOutputTokens,
@@ -2332,6 +2344,11 @@ export function registerPiChatHandlers({
               onChainTotalVolumeUsdcMicros: typeof rec.onChainTotalVolumeUsdcMicros === 'number' ? rec.onChainTotalVolumeUsdcMicros : null,
               onChainLastSettledAtSec: typeof rec.onChainLastSettledAtSec === 'number' ? rec.onChainLastSettledAtSec : null,
               onChainReputationScore: typeof rec.onChainReputationScore === 'number' ? rec.onChainReputationScore : null,
+              onChainTrustScore: typeof rec.onChainTrustScore === 'number' ? rec.onChainTrustScore : null,
+              onChainSybilRisk: typeof rec.onChainSybilRisk === 'number' ? rec.onChainSybilRisk : null,
+              onChainSybilFlags: Array.isArray(rec.onChainSybilFlags)
+                ? rec.onChainSybilFlags.filter((f: unknown): f is string => typeof f === 'string')
+                : [],
               sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               providerPricing: rec.providerPricing as Record<string, {
                 services?: Record<string, { cachedInputUsdPerMillion?: number }>

@@ -79,7 +79,13 @@ import {
   type RequestStreamResponseMetadata,
   type RequestExecutionOptions,
 } from "./buyer-request-handler.js";
-import { computeOnChainReputationScore } from "./reputation/on-chain-reputation.js";
+import {
+  buildSybilContext,
+  computeOnChainScore,
+  computeOnChainSybilRisk,
+  computeOnChainTrust,
+  type SybilContext,
+} from "./reputation/on-chain-reputation.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -632,7 +638,6 @@ export class AntseedNode extends EventEmitter {
           : Number.MAX_SAFE_INTEGER;
         p.onChainLastSettledAtSec = stats.lastSettledAt;
         p.onChainStakedAtSec = stakedAt;
-        p.onChainReputationScore = computeOnChainReputationScore(p) ?? undefined;
         p.onChainStatsFetchedAt = Date.now();
       } catch {
         // Per-peer verification failure — keep whatever seller metadata claimed
@@ -650,6 +655,26 @@ export class AntseedNode extends EventEmitter {
       })());
     }
     await Promise.all(workers);
+
+    this._applyTrustAndSybil(peers);
+  }
+
+  private _applyTrustAndSybil(peers: PeerInfo[]): void {
+    if (peers.length === 0) return;
+    const ctx: SybilContext | undefined = peers.length >= 2
+      ? buildSybilContext(peers)
+      : undefined;
+    for (const p of peers) {
+      const trust = computeOnChainTrust(p);
+      if (trust === null) continue;
+      p.onChainTrustScore = trust;
+      if (ctx) {
+        const sybil = computeOnChainSybilRisk(p, ctx);
+        p.onChainSybilRisk = sybil.risk;
+        p.onChainSybilFlags = sybil.flags;
+      }
+      p.onChainReputationScore = computeOnChainScore(p, ctx) ?? undefined;
+    }
   }
 
   /**

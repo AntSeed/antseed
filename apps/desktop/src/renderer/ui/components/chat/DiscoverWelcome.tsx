@@ -55,13 +55,33 @@ type CardItem = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
-  reputationScore: number | null; // 0-100 on-chain activity/reputation score
+  reputationScore: number | null; // 0-100 displayed score (sybil-attenuated)
   channelCount: number;       // on-chain, from AntseedChannels.getAgentStats
-  ghostCount: number;         // channels withdrawn without settled spend
   volumeUsdc: number;         // settled on-chain USDC volume
+  sybilRisk: number | null;
+  sybilFlags: string[];
   lifetimeRequests: number;   // network-wide (mainnet) or local buyer total (fallback)
   lifetimeTokens: number;     // network-wide (mainnet) or local buyer total (fallback)
 };
+
+const SYBIL_WARN_THRESHOLD = 0.30;
+
+const SYBIL_FLAG_LABELS: Record<string, string> = {
+  narrow_custom:   'narrow custom service',
+  burn_rate:       'high channel burn rate',
+  subfloor_ticket: 'sub-floor avg ticket',
+  young_high_vol:  'young agent, high volume',
+};
+
+function formatSybilFlag(flag: string): string {
+  return SYBIL_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' ');
+}
+
+function sybilIsAlarming(item: { sybilRisk: number | null; sybilFlags: string[] }): boolean {
+  return item.sybilFlags.length > 0
+    && typeof item.sybilRisk === 'number'
+    && item.sybilRisk >= SYBIL_WARN_THRESHOLD;
+}
 
 /* ── Normalize service name for display (dashes → spaces) ─────────────── */
 
@@ -113,8 +133,9 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
       cachedInputUsdPerMillion: opt.cachedInputUsdPerMillion ?? null,
       reputationScore: null,
       channelCount: 0,
-      ghostCount: 0,
       volumeUsdc: 0,
+      sybilRisk: null,
+      sybilFlags: [],
       lifetimeRequests: 0,
       lifetimeTokens: 0,
     };
@@ -169,8 +190,9 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
       reputationScore: row.onChainReputationScore,
       channelCount: row.onChainActiveChannelCount,
-      ghostCount: row.onChainGhostCount,
       volumeUsdc: Number(row.onChainTotalVolumeUsdc) / 1_000_000,
+      sybilRisk: row.onChainSybilRisk,
+      sybilFlags: row.onChainSybilFlags,
       lifetimeRequests: pickRequests(row),
       lifetimeTokens: pickTokens(row),
     });
@@ -206,13 +228,10 @@ function formatReputationScore(score: number | null): string {
   return (score / 10).toFixed(1);
 }
 
-function formatReputationTooltip(item: CardItem): { avgChannelUsdc: string; ghostRate: string } {
+function formatReputationTooltip(item: CardItem): { avgChannelUsdc: string } {
   const avg = item.channelCount > 0 ? item.volumeUsdc / item.channelCount : 0;
-  const ghostDenominator = item.channelCount + item.ghostCount;
-  const ghostRate = ghostDenominator > 0 ? (item.ghostCount / ghostDenominator) * 100 : 0;
   return {
     avgChannelUsdc: formatVolumeUsdc(avg),
-    ghostRate: `${ghostRate.toFixed(ghostRate >= 10 ? 0 : 1).replace(/\.0$/, '')}%`,
   };
 }
 
@@ -731,15 +750,22 @@ function Card({
               >
                 <strong>On-chain reputation score</strong>
                 <span>Settled volume: {formatVolumeUsdc(item.volumeUsdc)} USDC.</span>
-                <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'} · {item.ghostCount} ghost{item.ghostCount === 1 ? '' : 's'} ({reputationTooltip.ghostRate}).</span>
+                <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'}.</span>
                 <span>Avg channel value: {reputationTooltip.avgChannelUsdc} USDC.</span>
-                <span>Multi-factor score: settled volume carries the largest weight, alongside session quality, average value, recency, stake age, and ghost penalties.</span>
+                {sybilIsAlarming(item) && (
+                  <span>
+                    ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
+                  </span>
+                )}
+                <span>Score combines settled sessions, volume, recency, stake, and sybil risk.</span>
               </span>
             </span>
           </div>
         </div>
         <div className={`${styles.cardStats}${lowReputation ? ` ${styles.cardStatsWarning}` : ''}`}>
-          {lowReputation ? (
+          {sybilIsAlarming(item) ? (
+            <span>⚠ Suspected wash activity: {item.sybilFlags.map(formatSybilFlag).join(', ')}</span>
+          ) : lowReputation ? (
             <span>Low reputation: limited on-chain history</span>
           ) : (
             <>
