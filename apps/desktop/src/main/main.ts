@@ -1027,6 +1027,7 @@ app.whenReady().then(async () => {
   let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
   let downloadStallInterval: ReturnType<typeof setInterval> | null = null;
   let lastDownloadProgressAt: number | null = null;
+  let lastDownloadPercent = 0;
 
   const clearStallWatchdog = () => {
     if (downloadStallInterval) {
@@ -1034,6 +1035,7 @@ app.whenReady().then(async () => {
       downloadStallInterval = null;
     }
     lastDownloadProgressAt = null;
+    lastDownloadPercent = 0;
   };
 
   const startStallWatchdog = () => {
@@ -1041,6 +1043,10 @@ app.whenReady().then(async () => {
     lastDownloadProgressAt = Date.now();
     downloadStallInterval = setInterval(() => {
       if (!pendingUpdateVersion || lastDownloadProgressAt === null) return;
+      // Once bytes are done electron-updater still spends time verifying the
+      // file (sha512 / code-sign) and emits no progress — don't treat that as
+      // a stall, just wait for update-downloaded.
+      if (lastDownloadPercent >= 100) return;
       const idleMs = Date.now() - lastDownloadProgressAt;
       if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
       console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
@@ -1061,10 +1067,12 @@ app.whenReady().then(async () => {
   autoUpdater.on('download-progress', (progress) => {
     if (!pendingUpdateVersion) return;
     lastDownloadProgressAt = Date.now();
+    const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
+    lastDownloadPercent = percent;
     getMainWindow()?.webContents.send('app:update-status', {
       status: 'downloading',
       version: pendingUpdateVersion,
-      percent: Math.max(0, Math.min(100, Math.round(progress.percent ?? 0))),
+      percent,
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
