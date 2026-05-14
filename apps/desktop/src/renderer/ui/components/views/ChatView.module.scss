@@ -25,6 +25,7 @@
   position: relative;
   display: flex;
   align-items: center;
+  gap: 4px;
 }
 
 .preview-toggle {
@@ -184,9 +185,51 @@
   }
 }
 
+.header-label-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .peer-name {
   font-weight: 500;
   color: var(--accent-green);
+}
+
+.header-copy-button {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.72;
+  transition: color 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--accent);
+    background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+.header-copy-button-copied {
+  color: var(--accent-green, #10b981);
+  opacity: 1;
 }
 
 .service-separator {

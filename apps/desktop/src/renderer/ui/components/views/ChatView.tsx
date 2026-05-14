@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, MouseEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
@@ -8,9 +8,11 @@ import {
   ArrowDown02Icon,
   BrowserIcon,
   Cancel01Icon,
+  Copy01Icon,
   Folder01Icon,
   GitBranchIcon,
-  Search01Icon
+  Search01Icon,
+  Tick02Icon
 } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
@@ -482,6 +484,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   // Services filtered to the currently-routed peer — lets the user switch
   // between services offered by the same peer without going back to Discover.
   const currentPeerId = snap.chatRoutedPeerId || snap.chatSelectedPeerId || '';
+  const [headerCopied, setHeaderCopied] = useState(false);
   const peerServiceOptions = useMemo(
     () =>
       currentPeerId
@@ -493,6 +496,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
     [snap.chatServiceOptions, snap.chatSelectedServiceValue],
   );
+  const currentServiceKey = currentServiceOption?.id || '';
   const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
   const hasAttachedImages = useMemo(
     () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
@@ -500,6 +504,25 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   );
   const peerDisplayName =
     snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
+
+  const headerCopyValue = `${currentPeerId} ${currentServiceKey}`.trim();
+
+  useEffect(() => {
+    if (!headerCopied) return undefined;
+    const timer = window.setTimeout(() => setHeaderCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [headerCopied]);
+
+  const copyHeaderIdentifiers = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!headerCopyValue) return;
+    navigator.clipboard.writeText(headerCopyValue).then(() => {
+      setHeaderCopied(true);
+    }).catch(() => {
+      // Clipboard permission can be denied; keep the header interaction unchanged.
+    });
+  }, [headerCopyValue]);
   const currentDiscoverRow = useMemo(() => {
     const peerId = currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
     const serviceId = currentServiceOption?.id || '';
@@ -875,9 +898,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
           {peerDisplayName && (
-            <>
+            <span className={styles.headerLabelGroup}>
               <span className={styles.peerName}>{peerDisplayName}</span>
-            </>
+            </span>
           )}
           {peerServiceOptions.length > 0 ? (
             <div className={styles.serviceSwitcherAnchor}>
@@ -887,6 +910,17 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 disabled={snap.chatInputDisabled || snap.chatSending}
                 onChange={handleServiceSwitch}
               />
+              {headerCopyValue && (
+                <button
+                  type="button"
+                  className={`${styles.headerCopyButton}${headerCopied ? ` ${styles.headerCopyButtonCopied}` : ''}`}
+                  onClick={copyHeaderIdentifiers}
+                  aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
+                  title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
+                >
+                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.7} />
+                </button>
+              )}
               {!tooltipDismissed && peerServiceOptions.length >= 2 && (
                 <ServiceSwitchTooltip
                   modelCount={peerServiceOptions.length}
@@ -895,8 +929,21 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               )}
             </div>
           ) : (
-            <span className={styles.serviceLabel}>
-              {currentServiceOption?.label || 'No peer selected'}
+            <span className={styles.headerLabelGroup}>
+              <span className={styles.serviceLabel}>
+                {currentServiceOption?.label || 'No peer selected'}
+              </span>
+              {headerCopyValue && (
+                <button
+                  type="button"
+                  className={`${styles.headerCopyButton}${headerCopied ? ` ${styles.headerCopyButtonCopied}` : ''}`}
+                  onClick={copyHeaderIdentifiers}
+                  aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
+                  title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
+                >
+                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.7} />
+                </button>
+              )}
             </span>
           )}
         </div>

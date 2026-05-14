@@ -366,6 +366,7 @@
 }
 
 .chat-conv-preview {
+  display: none;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;

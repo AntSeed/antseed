@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
@@ -43,6 +45,7 @@ const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
 
 type CardItem = {
   name: string;
+  canonicalName: string;
   displayName: string;
   peerLabel: string;
   peerId: string;
@@ -123,6 +126,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
     const rawName = opt.label || opt.id;
     return {
       name: rawName,
+      canonicalName: opt.id,
       displayName: normalizeServiceName(rawName),
       peerLabel: opt.peerLabel || '',
       peerId: opt.peerId || '',
@@ -180,6 +184,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
     const peerLabel = row.peerLabel || '';
     out.push({
       name: rawName,
+      canonicalName: row.serviceId,
       displayName: normalizeServiceName(rawName),
       peerLabel,
       peerId: row.peerId,
@@ -618,6 +623,7 @@ function Card({
   onClick: (v: string, peerId: string) => void;
 }) {
   const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
+  const [copied, setCopied] = useState(false);
   const hasInput = item.inputUsdPerMillion != null;
   const hasOutput = item.outputUsdPerMillion != null;
   const hasCachedInput = item.cachedInputUsdPerMillion != null;
@@ -677,6 +683,26 @@ function Card({
     };
   }, [positionReputationTooltip, tooltipOpen]);
 
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const serviceKey = item.canonicalName || item.name;
+  const copyValue = `${item.peerId} ${serviceKey}`.trim();
+
+  const handleCopyIdentifiers = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!copyValue) return;
+    navigator.clipboard.writeText(copyValue).then(() => {
+      setCopied(true);
+    }).catch(() => {
+      // Clipboard permission can be denied; keep the card interaction unchanged.
+    });
+  }, [copyValue]);
+
   return (
     <div
       className={styles.card}
@@ -701,7 +727,19 @@ function Card({
             </span>
           )}
         </div>
-        <div className={styles.cardName}>{item.displayName}</div>
+        <div className={styles.cardNameRow}>
+          <div className={styles.cardName} title={serviceKey}>{item.displayName}</div>
+          <button
+            type="button"
+            className={`${styles.copyIconButton}${copied ? ` ${styles.copyIconButtonCopied}` : ''}`}
+            onClick={handleCopyIdentifiers}
+            onKeyDown={(e) => e.stopPropagation()}
+            aria-label={copied ? `Copied ${copyValue}` : `Copy peer ID and service key ${copyValue}`}
+            title={copied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${copyValue}`}
+          >
+            <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.7} />
+          </button>
+        </div>
         <div className={styles.cardDesc}>{item.description}</div>
         <div className={styles.cardPricing}>
           {isFree ? (
