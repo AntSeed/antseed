@@ -240,14 +240,18 @@ function ThinkingBlockView({ block, highlightQuery, activeHighlight }: { block: 
           </span>
         ) : null}
       </button>
-      <div className="thinking-block-body">
-        {hasThinkingText ? (
-          block.streaming
-            ? <StreamingMarkdown text={thinkingText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
-            : <MarkdownContent text={thinkingText} className="thinking-block-markdown" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
-        ) : (
-          <div className="chat-bubble-content streaming-cursor">Thinking...</div>
-        )}
+      <div className={`thinking-block-body-wrap${isOpen ? '' : ' collapsed'}`}>
+        <div className="thinking-block-body-inner">
+          <div className="thinking-block-body">
+            {hasThinkingText ? (
+              block.streaming
+                ? <StreamingMarkdown text={thinkingText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+                : <MarkdownContent text={thinkingText} className="thinking-block-markdown" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+            ) : (
+              <div className="chat-bubble-content streaming-cursor">Thinking...</div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -481,6 +485,24 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   );
 }
 
+function isRenderableThinkingBlock(block: ContentBlock): boolean {
+  return Boolean(block.streaming) || String(block.thinking || '').trim().length > 0;
+}
+
+function mergeThinkingBlocks(blocks: ContentBlock[]): ContentBlock {
+  const first = blocks[0] ?? { type: 'thinking' };
+  return {
+    ...first,
+    type: 'thinking',
+    renderKey: String(first.renderKey || first.id || first.tool_use_id || 'thinking-group'),
+    thinking: blocks
+      .map((block) => String(block.thinking || '').trim())
+      .filter(Boolean)
+      .join('\n\n'),
+    streaming: blocks.some((block) => block.streaming),
+  };
+}
+
 function renderAssistantBlocks(
   blocks: ContentBlock[],
   streaming = false,
@@ -492,6 +514,23 @@ function renderAssistantBlocks(
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
+  let thinkingGroup: ContentBlock[] = [];
+
+  const flushThinkingGroup = (): void => {
+    if (thinkingGroup.length === 0) return;
+    const first = thinkingGroup[0];
+    const index = blocks.indexOf(first);
+    nodes.push(renderBlock(
+      mergeThinkingBlocks(thinkingGroup),
+      index >= 0 ? index : nodes.length,
+      streaming,
+      messagePrefix,
+      conversationId,
+      highlightQuery,
+      activeHighlight,
+    ));
+    thinkingGroup = [];
+  };
 
   const flushToolGroup = (): void => {
     if (toolGroup.length === 0) return;
@@ -505,16 +544,30 @@ function renderAssistantBlocks(
     toolGroup = [];
   };
 
+  const flushGroups = (): void => {
+    flushToolGroup();
+    flushThinkingGroup();
+  };
+
   blocks.forEach((block, index) => {
     if (block.type === 'tool_use') {
+      flushThinkingGroup();
       toolGroup.push(block);
       return;
     }
-    flushToolGroup();
+
+    if (block.type === 'thinking') {
+      if (!isRenderableThinkingBlock(block)) return;
+      flushToolGroup();
+      thinkingGroup.push(block);
+      return;
+    }
+
+    flushGroups();
     nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId, highlightQuery, activeHighlight));
   });
 
-  flushToolGroup();
+  flushGroups();
   return nodes;
 }
 

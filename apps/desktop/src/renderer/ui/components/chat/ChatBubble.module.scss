@@ -581,8 +581,22 @@
       display: none;
     }
 
+    .thinking-block-body-wrap {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 0.22s ease;
+    }
+
+    .thinking-block-body-wrap.collapsed {
+      grid-template-rows: 0fr;
+    }
+
+    .thinking-block-body-inner {
+      overflow: hidden;
+      min-height: 0;
+    }
+
     .thinking-block-body {
-      display: none;
       padding: 4px 0 8px;
       font-size: 13px;
       line-height: 1.5;
@@ -590,10 +604,6 @@
       max-height: 400px;
       overflow-y: auto;
       word-break: break-word;
-    }
-
-    .thinking-block.open .thinking-block-body {
-      display: block;
     }
 
     .thinking-dots {

@@ -1573,11 +1573,15 @@ export function initChatModule({
     setStreamingMessage(null);
     activeConversation = null;
     uiState.chatDeleteVisible = false;
-    uiState.chatInputDisabled = false;
-    uiState.chatSendDisabled = false;
-    uiState.chatAbortVisible = false;
     uiState.chatConversationTitle = 'New Chat';
     uiState.chatError = null;
+    // Re-derive sending flags from the (now null) active conversation so that
+    // the thinking indicator does not leak in from whichever chat the user was
+    // previously viewing while it was still streaming. Without this, the
+    // stale chatSending=true / chatSendingConversationId values would make
+    // ChatView's activeConversationIsSending fall back to chatSending and
+    // render the WalkingAnt inside the empty new-chat screen.
+    syncActiveConversationSendingState();
     updateThreadMeta(null);
     notifyUiStateChanged();
   }
