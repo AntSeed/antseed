@@ -1012,19 +1012,55 @@ app.whenReady().then(async () => {
     // Failure is already logged via appendLog inside ensureDefaultPlugin.
   });
 
-  // Auto-update: check for updates silently on launch and every 4 hours
+  // Auto-update: check for updates silently on launch and every 30 minutes.
+  // If an in-flight download stops emitting progress events for a couple of
+  // minutes (network drop, stuck CDN connection, etc.) we re-trigger the
+  // update check so electron-updater resumes/restarts the download instead
+  // of sitting idle forever.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+  const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60 * 1000;
+  const DOWNLOAD_STALL_POLL_MS = 30 * 1000;
+
   let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+  let downloadStallInterval: ReturnType<typeof setInterval> | null = null;
+  let lastDownloadProgressAt: number | null = null;
+
+  const clearStallWatchdog = () => {
+    if (downloadStallInterval) {
+      clearInterval(downloadStallInterval);
+      downloadStallInterval = null;
+    }
+    lastDownloadProgressAt = null;
+  };
+
+  const startStallWatchdog = () => {
+    clearStallWatchdog();
+    lastDownloadProgressAt = Date.now();
+    downloadStallInterval = setInterval(() => {
+      if (!pendingUpdateVersion || lastDownloadProgressAt === null) return;
+      const idleMs = Date.now() - lastDownloadProgressAt;
+      if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
+      console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
+      clearStallWatchdog();
+      pendingUpdateVersion = null;
+      void autoUpdater.checkForUpdates().catch((err) => {
+        console.error('[auto-update] stall-retry failed:', err?.message ?? err);
+      });
+    }, DOWNLOAD_STALL_POLL_MS);
+  };
 
   let pendingUpdateVersion: string | null = null;
   autoUpdater.on('update-available', (info) => {
     pendingUpdateVersion = info.version;
+    startStallWatchdog();
     getMainWindow()?.webContents.send('app:update-status', { status: 'downloading', version: info.version, percent: 0 });
   });
   autoUpdater.on('download-progress', (progress) => {
     if (!pendingUpdateVersion) return;
+    lastDownloadProgressAt = Date.now();
     getMainWindow()?.webContents.send('app:update-status', {
       status: 'downloading',
       version: pendingUpdateVersion,
@@ -1033,6 +1069,7 @@ app.whenReady().then(async () => {
   });
   autoUpdater.on('update-downloaded', (info) => {
     pendingUpdateVersion = null;
+    clearStallWatchdog();
     getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
@@ -1041,13 +1078,15 @@ app.whenReady().then(async () => {
   });
   autoUpdater.on('error', (err) => {
     console.error('[auto-update] error:', err?.message ?? err);
+    clearStallWatchdog();
+    pendingUpdateVersion = null;
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
 
   updateCheckInterval = setInterval(() => {
     void autoUpdater.checkForUpdates().catch(() => {});
-  }, 4 * 60 * 60 * 1000);
+  }, UPDATE_CHECK_INTERVAL_MS);
 
   ipcMain.handle('app:install-update', () => {
     autoUpdater.quitAndInstall(false, true);
