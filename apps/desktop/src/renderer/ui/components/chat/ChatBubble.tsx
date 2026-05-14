@@ -201,7 +201,7 @@ function StreamingMarkdown({ text }: { text: string }) {
 
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
-  const isOpen = manualToggle ?? true;
+  const isOpen = manualToggle ?? false;
   const thinkingText = String(block.thinking || '');
   const hasThinkingText = thinkingText.trim().length > 0;
 
@@ -223,10 +223,15 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
       <button
         type="button"
         className="thinking-block-header"
-        onClick={() => setManualToggle((prev) => !(prev ?? true))}
+        onClick={() => setManualToggle((prev) => !(prev ?? false))}
       >
-        <span className="thinking-block-triangle">▶</span>
-        <span>Internal Thoughts</span>
+        <span className="thinking-block-triangle">›</span>
+        <span className="thinking-block-label">Internal Thoughts</span>
+        {!isOpen && (
+          <span className="thinking-block-preview">
+            <MarkdownContent text={preview} className="thinking-block-preview-md" />
+          </span>
+        )}
         {block.streaming ? (
           <span className="thinking-dots" aria-hidden="true">
             <span />
@@ -235,11 +240,6 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
           </span>
         ) : null}
       </button>
-      {!isOpen && (
-        <div className="thinking-block-preview">
-          <MarkdownContent text={preview} className="thinking-block-preview-md" />
-        </div>
-      )}
       <div className="thinking-block-body">
         {hasThinkingText ? (
           block.streaming
@@ -387,9 +387,13 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
   const summary = summarizeToolItems(items);
   const closedLabel = anyRunning ? `Running ${items.length} ${items.length === 1 ? 'tool' : 'tools'}` : summary;
-  // Current activity hint: while running, show the active tool; otherwise the last one.
-  const activityItem = items.find((it) => it.status === 'running') ?? items[items.length - 1];
-  const activityHint = activityItem?.label ?? '';
+  // Activity hint: while running show the active tool; otherwise list the
+  // first few tool labels with a "+N more" suffix.
+  const runningItem = items.find((it) => it.status === 'running');
+  const activityHint = runningItem
+    ? runningItem.label
+    : items.slice(0, 3).map((it) => it.label).join(' • ')
+        + (items.length > 3 ? ` +${items.length - 3} more` : '');
   const toggle = () => setManualToggle((prev) => !(prev ?? false));
 
   return (
