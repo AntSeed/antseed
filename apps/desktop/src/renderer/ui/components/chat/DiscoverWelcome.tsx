@@ -77,8 +77,12 @@ function formatSybilFlag(flag: string): string {
   return SYBIL_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' ');
 }
 
+function sybilHasSignals(item: { sybilFlags: string[] }): boolean {
+  return item.sybilFlags.length > 0;
+}
+
 function sybilIsAlarming(item: { sybilRisk: number | null; sybilFlags: string[] }): boolean {
-  return item.sybilFlags.length > 0
+  return sybilHasSignals(item)
     && typeof item.sybilRisk === 'number'
     && item.sybilRisk >= SYBIL_WARN_THRESHOLD;
 }
@@ -752,7 +756,7 @@ function Card({
                 <span>Settled volume: {formatVolumeUsdc(item.volumeUsdc)} USDC.</span>
                 <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'}.</span>
                 <span>Avg channel value: {reputationTooltip.avgChannelUsdc} USDC.</span>
-                {sybilIsAlarming(item) && (
+                {sybilHasSignals(item) && (
                   <span>
                     ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
                   </span>
@@ -762,9 +766,11 @@ function Card({
             </span>
           </div>
         </div>
-        <div className={`${styles.cardStats}${lowReputation ? ` ${styles.cardStatsWarning}` : ''}`}>
+        <div className={`${styles.cardStats}${lowReputation || sybilHasSignals(item) ? ` ${styles.cardStatsWarning}` : ''}`}>
           {sybilIsAlarming(item) ? (
             <span>⚠ Suspected wash activity: {item.sybilFlags.map(formatSybilFlag).join(', ')}</span>
+          ) : sybilHasSignals(item) ? (
+            <span>⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}</span>
           ) : lowReputation ? (
             <span>Low reputation: limited on-chain history</span>
           ) : (
