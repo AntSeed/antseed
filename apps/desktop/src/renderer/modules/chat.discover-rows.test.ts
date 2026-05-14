@@ -20,6 +20,21 @@ test('normalizeDiscoverRow populates all numeric defaults to 0 / null', () => {
   assert.equal(row!.stakeUsdc, '0');
   assert.equal(row!.cachedInputUsdPerMillion, null);
   assert.equal(row!.onChainReputationScore, null);
+  assert.equal(row!.onChainSybilRisk, null);
+  assert.deepEqual(row!.onChainSybilFlags, []);
+});
+
+/* Regression: Discover must carry buyer.state.json Sybil metadata through to the UI. */
+test('normalizeDiscoverRow preserves on-chain sybil risk and string flags', () => {
+  const row = normalizeDiscoverRow({
+    peerId: 'abc123',
+    serviceId: 'gpt-5',
+    onChainSybilRisk: 0.12,
+    onChainSybilFlags: ['narrow_custom', null, 'subfloor_ticket'],
+  });
+  assert.ok(row);
+  assert.equal(row!.onChainSybilRisk, 0.12);
+  assert.deepEqual(row!.onChainSybilFlags, ['narrow_custom', 'subfloor_ticket']);
 });
 
 test('projectRowsToChatServiceOptions dedupes by (provider, service, peer)', () => {
