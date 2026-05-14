@@ -126,26 +126,38 @@ const electronPkg = JSON.parse(
 const electronVersion = electronPkg.version;
 const betterSqlite3Dir = path.resolve(appDir, '..', '..', 'node_modules', 'better-sqlite3');
 
-// Install the prebuild for the current arch — electron-builder handles
-// cross-arch builds by running the pack step separately for each arch,
-// and better-sqlite3 prebuilds are arch-specific.
-//
-// Resolve prebuild-install's JS entry from better-sqlite3's own deps and
-// invoke it via `node` rather than via `npx`: on Windows `npx` is `npx.cmd`
-// which execFileSync can't run without a shell, and shelling out complicates
-// argument escaping. process.execPath works identically on all platforms.
+// Honors ANTSEED_PACK_ARCH so release scripts can pack arm64 + x64 separately
+// without each DMG inheriting the build host's native binary.
+const targetArch = process.env.ANTSEED_PACK_ARCH || process.arch;
+if (!['x64', 'arm64'].includes(targetArch)) {
+  throw new Error(`[prepare-dist] Unsupported ANTSEED_PACK_ARCH=${targetArch}`);
+}
+
 const prebuildInstallEntry = createRequire(
   path.join(betterSqlite3Dir, 'package.json'),
 ).resolve('prebuild-install/bin.js');
-console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${process.arch})...`);
+console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${targetArch})...`);
 execFileSync(process.execPath, [
   prebuildInstallEntry,
   '--runtime', 'electron',
   '--target', electronVersion,
-  '--arch', process.arch,
+  '--arch', targetArch,
   '--verbose',
 ], { cwd: betterSqlite3Dir, stdio: 'inherit' });
-console.log('[prepare-dist] Native module prebuild installed for Electron.');
+
+if (process.platform === 'darwin') {
+  const nodeFile = path.join(betterSqlite3Dir, 'build', 'Release', 'better_sqlite3.node');
+  if (existsSync(nodeFile)) {
+    const desc = execFileSync('file', [nodeFile], { encoding: 'utf8' });
+    const expected = targetArch === 'arm64' ? 'arm64' : 'x86_64';
+    if (!desc.includes(expected)) {
+      throw new Error(
+        `[prepare-dist] better_sqlite3.node arch mismatch — expected ${expected}, got: ${desc.trim()}`,
+      );
+    }
+    console.log(`[prepare-dist] Verified better_sqlite3.node is ${expected}`);
+  }
+}
 
 // --- 4. Bundle full transitive runtime deps of @antseed/node ---
 // The desktop app must be repairable from its own bundle even on machines that

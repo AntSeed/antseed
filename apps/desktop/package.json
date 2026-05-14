@@ -30,8 +30,8 @@
     "start:debug": "cross-env ANTSEED_DESKTOP_DEBUG=1 electron . --debug-runtime",
     "prepare-dist": "node ./scripts/prepare-dist.mjs",
     "dist": "npm run build && npm run prepare-dist && electron-builder",
-    "dist:mac": "npm run build && npm run prepare-dist && electron-builder --mac",
-    "release:mac": "npm run build && npm run prepare-dist && node scripts/release-mac.mjs",
+    "dist:mac": "npm run build && node scripts/release-mac.mjs --no-publish",
+    "release:mac": "npm run build && node scripts/release-mac.mjs",
     "dist:win": "npm run build && npm run prepare-dist && electron-builder --win",
     "release:win": "npm run build && npm run prepare-dist && node scripts/release-win.mjs",
     "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux"
