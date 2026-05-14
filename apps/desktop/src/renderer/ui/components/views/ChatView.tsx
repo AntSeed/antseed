@@ -688,6 +688,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;
   const showScrollToLatest = !showWelcome && !isNearBottom;
+  const activeConversationIsSending = snap.chatActiveConversation
+    ? snap.chatSendingConversationIds.includes(snap.chatActiveConversation)
+    : snap.chatSending;
+  const showThinkingIndicator = snap.chatSending && (
+    !snap.chatSendingConversationId ||
+    snap.chatSendingConversationId === snap.chatActiveConversation ||
+    activeConversationIsSending
+  );
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = getPathEnding(workspacePath);
@@ -813,7 +821,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
-            {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
+            {showThinkingIndicator && (
               <WalkingAnt
                 elapsedMs={snap.chatThinkingElapsedMs}
                 phaseLabel={snap.chatThinkingPhase}

@@ -167,14 +167,21 @@ function StreamingMarkdown({ text }: { text: string }) {
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const isOpen = manualToggle ?? true;
-
-  if (!block.thinking?.trim()) return null;
-
   const thinkingText = String(block.thinking || '');
+  const hasThinkingText = thinkingText.trim().length > 0;
+
+  // Some providers emit a thinking_start event before any thinking_delta, and
+  // some only expose redacted/empty thinking while still spending time in the
+  // reasoning phase. Keep the in-progress block visible so the user sees that
+  // the model is actively thinking instead of an apparently stuck/blank turn.
+  if (!hasThinkingText && !block.streaming) return null;
+
   const previewLength = 120;
-  const preview = thinkingText.length > previewLength
-    ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
-    : thinkingText;
+  const preview = hasThinkingText
+    ? (thinkingText.length > previewLength
+        ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
+        : thinkingText)
+    : 'Thinking...';
 
   return (
     <div className={`thinking-block${block.streaming ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
@@ -199,9 +206,13 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
         </div>
       )}
       <div className="thinking-block-body">
-        {block.streaming
-          ? <StreamingMarkdown text={thinkingText} />
-          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />}
+        {hasThinkingText ? (
+          block.streaming
+            ? <StreamingMarkdown text={thinkingText} />
+            : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />
+        ) : (
+          <div className="chat-bubble-content streaming-cursor">Thinking...</div>
+        )}
       </div>
     </div>
   );
@@ -335,8 +346,8 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   }
   if (anyRunning) wasRunningRef.current = true;
 
-  // Open by default (unless user manually collapsed)
-  const isOpen = manualToggle ?? true;
+  // Closed by default (unless user manually expanded)
+  const isOpen = manualToggle ?? false;
 
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
   const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
