@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useState} from 'react';
+import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
 
 /**
  * Resolves the best AntSeed Desktop download URL for the visitor's OS + arch
@@ -138,18 +139,27 @@ function labelFor(platform: DesktopPlatform): string {
  * (returns a neutral fallback that points at the releases page).
  */
 export function useLatestDesktopDownload(): DesktopDownload {
-  const platform = useMemo<DesktopPlatform>(detectPlatform, []);
-  const [arch, setArch] = useState<DesktopArch>(() => defaultArchFor(platform));
+  // Initial state must be deterministic and identical between server and
+  // first client render — otherwise we trip React hydration mismatches
+  // (#418) because the rendered label and SVG icon both depend on platform.
+  // We start as 'unknown' / 'x64' (matching what SSR sees) and resolve the
+  // real values inside an effect after mount.
+  const [platform, setPlatform] = useState<DesktopPlatform>('unknown');
+  const [arch, setArch] = useState<DesktopArch>('x64');
   const [tag, setTag] = useState<string | null>(null);
   const [assets, setAssets] = useState<GitHubAsset[]>([]);
 
   useEffect(() => {
+    if (!ExecutionEnvironment.canUseDOM) return;
+    const p = detectPlatform();
+    setPlatform(p);
+    setArch(defaultArchFor(p));
     let cancelled = false;
-    detectArch(platform).then(a => {
+    detectArch(p).then(a => {
       if (!cancelled) setArch(a);
     });
     return () => { cancelled = true; };
-  }, [platform]);
+  }, []);
 
   useEffect(() => {
     // Only fetch on platforms we actually ship installers for. Avoids burning

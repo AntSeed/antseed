@@ -1,5 +1,8 @@
 node_modules/
 dist/
+bundled-runtime/
+cli-dist/
+release/
 *.log
 .DS_Store
 .runtime-native-meta.json

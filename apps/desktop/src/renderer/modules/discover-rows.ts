@@ -39,11 +39,22 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     onChainChannelCount: typeof r.onChainChannelCount === 'number' ? r.onChainChannelCount : null,
     agentId: Number(r.agentId) || 0,
     stakeUsdc: String(r.stakeUsdc ?? '0'),
-    stakedAt: Number(r.stakedAt) || 0,
     onChainActiveChannelCount: Number(r.onChainActiveChannelCount) || 0,
     onChainGhostCount: Number(r.onChainGhostCount) || 0,
     onChainTotalVolumeUsdc: String(r.onChainTotalVolumeUsdc ?? '0'),
     onChainLastSettledAt: Number(r.onChainLastSettledAt) || 0,
+    onChainReputationScore: typeof r.onChainReputationScore === 'number' && Number.isFinite(r.onChainReputationScore)
+      ? r.onChainReputationScore
+      : null,
+    onChainTrustScore: typeof r.onChainTrustScore === 'number' && Number.isFinite(r.onChainTrustScore)
+      ? r.onChainTrustScore
+      : null,
+    onChainSybilRisk: typeof r.onChainSybilRisk === 'number' && Number.isFinite(r.onChainSybilRisk)
+      ? r.onChainSybilRisk
+      : null,
+    onChainSybilFlags: Array.isArray(r.onChainSybilFlags)
+      ? r.onChainSybilFlags.filter((f): f is string => typeof f === 'string')
+      : [],
     networkRequests: toNullableBigintString(r.networkRequests),
     networkInputTokens: toNullableBigintString(r.networkInputTokens),
     networkOutputTokens: toNullableBigintString(r.networkOutputTokens),
@@ -68,6 +79,7 @@ export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServic
       peerLabel: row.peerLabel,
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
+      cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
       categories: row.categories,
       description: '',
     });

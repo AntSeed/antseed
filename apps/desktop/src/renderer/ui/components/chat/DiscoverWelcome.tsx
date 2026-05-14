@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
@@ -9,7 +9,7 @@ import {
   type DiscoverSortKey,
   MAX_INPUT_PRICE_SLIDER_USD,
   MAX_OUTPUT_PRICE_SLIDER_USD,
-  DEFAULT_MIN_ON_CHAIN_CHANNELS,
+  DEFAULT_MIN_REPUTATION_SCORE,
   formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
@@ -23,8 +23,12 @@ import styles from './DiscoverWelcome.module.scss';
  * tooltip lists the hidden tags.
  */
 const MAX_VISIBLE_CARD_TAGS = 4;
+const LOW_REPUTATION_SCORE_THRESHOLD = 50;
+const REPUTATION_TOOLTIP_GAP_PX = 8;
+const REPUTATION_TOOLTIP_VIEWPORT_MARGIN_PX = 12;
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
+  { key: 'reputationDesc',  label: 'Best reputation' },
   { key: 'channelsDesc',    label: 'Most channels' },
   { key: 'recentlyUsed',    label: 'Recently used' },
   { key: 'serviceAsc',      label: 'Name A–Z' },
@@ -50,10 +54,34 @@ type CardItem = {
   description: string;
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion: number | null;
+  reputationScore: number | null; // 0-100 displayed score (sybil-attenuated)
   channelCount: number;       // on-chain, from AntseedChannels.getAgentStats
+  volumeUsdc: number;         // settled on-chain USDC volume
+  sybilRisk: number | null;
+  sybilFlags: string[];
   lifetimeRequests: number;   // network-wide (mainnet) or local buyer total (fallback)
   lifetimeTokens: number;     // network-wide (mainnet) or local buyer total (fallback)
 };
+
+const SYBIL_WARN_THRESHOLD = 0.30;
+
+const SYBIL_FLAG_LABELS: Record<string, string> = {
+  narrow_custom:   'narrow custom service',
+  burn_rate:       'high channel burn rate',
+  subfloor_ticket: 'sub-floor avg ticket',
+  young_high_vol:  'young agent, high volume',
+};
+
+function formatSybilFlag(flag: string): string {
+  return SYBIL_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' ');
+}
+
+function sybilIsAlarming(item: { sybilRisk: number | null; sybilFlags: string[] }): boolean {
+  return item.sybilFlags.length > 0
+    && typeof item.sybilRisk === 'number'
+    && item.sybilRisk >= SYBIL_WARN_THRESHOLD;
+}
 
 /* ── Normalize service name for display (dashes → spaces) ─────────────── */
 
@@ -102,7 +130,12 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
       description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
       inputUsdPerMillion: opt.inputUsdPerMillion,
       outputUsdPerMillion: opt.outputUsdPerMillion,
+      cachedInputUsdPerMillion: opt.cachedInputUsdPerMillion ?? null,
+      reputationScore: null,
       channelCount: 0,
+      volumeUsdc: 0,
+      sybilRisk: null,
+      sybilFlags: [],
       lifetimeRequests: 0,
       lifetimeTokens: 0,
     };
@@ -154,7 +187,12 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       description: generateDescription(row.serviceId, row.categories, peerLabel || row.provider),
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
+      cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
+      reputationScore: row.onChainReputationScore,
       channelCount: row.onChainActiveChannelCount,
+      volumeUsdc: Number(row.onChainTotalVolumeUsdc) / 1_000_000,
+      sybilRisk: row.onChainSybilRisk,
+      sybilFlags: row.onChainSybilFlags,
       lifetimeRequests: pickRequests(row),
       lifetimeTokens: pickTokens(row),
     });
@@ -166,9 +204,35 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
 
 function formatCompact(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(n);
+  return String(Math.floor(n));
+}
+
+function formatVolumeUsdc(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (n >= 100) return n.toFixed(0);
+  if (n >= 10) return n.toFixed(1).replace(/\.0$/, '');
+  return n.toFixed(2).replace(/\.00$/, '');
+}
+
+function isLowReputation(score: number | null): boolean {
+  return typeof score === 'number' && Number.isFinite(score) && score < LOW_REPUTATION_SCORE_THRESHOLD;
+}
+
+function formatReputationScore(score: number | null): string {
+  if (score == null || !Number.isFinite(score)) return '—';
+  return (score / 10).toFixed(1);
+}
+
+function formatReputationTooltip(item: CardItem): { avgChannelUsdc: string } {
+  const avg = item.channelCount > 0 ? item.volumeUsdc / item.channelCount : 0;
+  return {
+    avgChannelUsdc: formatVolumeUsdc(avg),
+  };
 }
 
 /* ── Search matcher ──────────────────────────────────────────────────── */
@@ -312,11 +376,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.peerSet.size > 0 ||
     filterState.maxInputPrice < MAX_INPUT_PRICE_SLIDER_USD ||
     filterState.maxOutputPrice < MAX_OUTPUT_PRICE_SLIDER_USD ||
-    filterState.chattedOnly ||
     filterState.minStakeUsdc > 0 ||
-    filterState.lastSeenWindow !== 'any' ||
-    filterState.lastSettledWindow !== 'any' ||
-    filterState.minOnChainChannels !== DEFAULT_MIN_ON_CHAIN_CHANNELS;
+    filterState.minReputationScore !== DEFAULT_MIN_REPUTATION_SCORE;
 
   const hasNetworkData = serviceOptions.length > 0 || rows.length > 0;
   const cards = useMemo(() => {
@@ -337,11 +398,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     filterState.peerSet,
     filterState.maxInputPrice,
     filterState.maxOutputPrice,
-    filterState.chattedOnly,
     filterState.minStakeUsdc,
-    filterState.lastSeenWindow,
-    filterState.lastSettledWindow,
-    filterState.minOnChainChannels,
+    filterState.minReputationScore,
     filterState.sortKey,
   ]);
 
@@ -558,7 +616,62 @@ function Card({
   const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
   const hasInput = item.inputUsdPerMillion != null;
   const hasOutput = item.outputUsdPerMillion != null;
-  const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
+  const hasCachedInput = item.cachedInputUsdPerMillion != null;
+  const isFree = hasInput
+    && hasOutput
+    && item.inputUsdPerMillion === 0
+    && item.outputUsdPerMillion === 0
+    && (!hasCachedInput || item.cachedInputUsdPerMillion === 0);
+  const lowReputation = isLowReputation(item.reputationScore);
+  const reputationTooltip = formatReputationTooltip(item);
+  const scoreBadgeRef = useRef<HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({ left: 0, top: 0 });
+
+  const positionReputationTooltip = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const trigger = scoreBadgeRef.current;
+    const tooltip = tooltipRef.current;
+    if (!trigger || !tooltip) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const tooltipWidth = tooltipRect.width || 260;
+    const tooltipHeight = tooltipRect.height || 0;
+    const margin = REPUTATION_TOOLTIP_VIEWPORT_MARGIN_PX;
+    const gap = REPUTATION_TOOLTIP_GAP_PX;
+
+    const maxLeft = Math.max(margin, window.innerWidth - tooltipWidth - margin);
+    const left = Math.min(Math.max(margin, triggerRect.right - tooltipWidth), maxLeft);
+    const spaceAbove = triggerRect.top - margin - gap;
+    const spaceBelow = window.innerHeight - triggerRect.bottom - margin - gap;
+    const shouldPlaceAbove = spaceAbove >= tooltipHeight || spaceAbove >= spaceBelow;
+    const top = shouldPlaceAbove
+      ? Math.max(margin, triggerRect.top - tooltipHeight - gap)
+      : Math.max(margin, Math.min(window.innerHeight - tooltipHeight - margin, triggerRect.bottom + gap));
+
+    setTooltipStyle({ left, top });
+  }, []);
+
+  const showReputationTooltip = useCallback(() => {
+    positionReputationTooltip();
+    setTooltipOpen(true);
+  }, [positionReputationTooltip]);
+
+  const hideReputationTooltip = useCallback(() => {
+    setTooltipOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!tooltipOpen || typeof window === 'undefined') return undefined;
+    window.addEventListener('resize', positionReputationTooltip);
+    window.addEventListener('scroll', positionReputationTooltip, true);
+    return () => {
+      window.removeEventListener('resize', positionReputationTooltip);
+      window.removeEventListener('scroll', positionReputationTooltip, true);
+    };
+  }, [positionReputationTooltip, tooltipOpen]);
 
   return (
     <div
@@ -589,17 +702,22 @@ function Card({
         <div className={styles.cardPricing}>
           {isFree ? (
             <span className={styles.pricingFree}>Free</span>
-          ) : hasInput && hasOutput ? (
+          ) : (
             <>
-              <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
-              <span className={styles.pricingDot} />
-              <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
+              {(hasInput || hasCachedInput) && (
+                <span className={styles.pricingInputGroup}>
+                  {hasInput && <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>}
+                  {hasCachedInput && (
+                    <span className={styles.pricingCached}>
+                      {formatPerMillionPrice(item.cachedInputUsdPerMillion!)} cached input
+                    </span>
+                  )}
+                </span>
+              )}
+              {hasOutput && (hasInput || hasCachedInput) && <span className={styles.pricingDot} />}
+              {hasOutput && <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>}
             </>
-          ) : hasInput ? (
-            <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
-          ) : hasOutput ? (
-            <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
-          ) : null}
+          )}
         </div>
       </div>
 
@@ -610,18 +728,58 @@ function Card({
             <ProviderAvatar name={providerName} gradient={item.gradient} />
             <span className={styles.cardProviderName}>{providerName}</span>
           </div>
-          {item.providerCount > 1 && (
-            <span className={styles.cardProviderCount}>
-              {item.providerCount} providers
+          <div className={styles.cardFooterMetrics}>
+            <span>{formatCompact(item.channelCount)} session{item.channelCount === 1 ? '' : 's'}</span>
+            <span
+              className={styles.cardScoreWrap}
+              onMouseEnter={showReputationTooltip}
+              onMouseLeave={hideReputationTooltip}
+              onFocus={showReputationTooltip}
+              onBlur={hideReputationTooltip}
+            >
+              <span ref={scoreBadgeRef} className={`${styles.cardScoreBadge}${lowReputation ? ` ${styles.cardScoreBadgeWarn}` : ''}`} tabIndex={0}>
+                {formatReputationScore(item.reputationScore)}
+                <span className={styles.cardScoreStar} aria-hidden="true">★</span>
+                {lowReputation && <span className={styles.cardScoreLowText}>Low</span>}
+              </span>
+              <span
+                ref={tooltipRef}
+                className={`${styles.cardScoreTooltip}${tooltipOpen ? ` ${styles.cardScoreTooltipOpen}` : ''}`}
+                role="tooltip"
+                style={tooltipStyle}
+              >
+                <strong>On-chain reputation score</strong>
+                <span>Settled volume: {formatVolumeUsdc(item.volumeUsdc)} USDC.</span>
+                <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'}.</span>
+                <span>Avg channel value: {reputationTooltip.avgChannelUsdc} USDC.</span>
+                {sybilIsAlarming(item) && (
+                  <span>
+                    ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
+                  </span>
+                )}
+                <span>Score combines settled sessions, volume, recency, stake, and sybil risk.</span>
+              </span>
             </span>
-          )}
+          </div>
         </div>
-        <div className={styles.cardStats}>
-          <span>{item.channelCount} channel{item.channelCount === 1 ? '' : 's'}</span>
-          <span className={styles.statsDot} />
-          <span>{formatCompact(item.lifetimeRequests)} request{item.lifetimeRequests === 1 ? '' : 's'}</span>
-          <span className={styles.statsDot} />
-          <span>{formatCompact(item.lifetimeTokens)} token{item.lifetimeTokens === 1 ? '' : 's'}</span>
+        <div className={`${styles.cardStats}${lowReputation ? ` ${styles.cardStatsWarning}` : ''}`}>
+          {sybilIsAlarming(item) ? (
+            <span>⚠ Suspected wash activity: {item.sybilFlags.map(formatSybilFlag).join(', ')}</span>
+          ) : lowReputation ? (
+            <span>Low reputation: limited on-chain history</span>
+          ) : (
+            <>
+              {item.providerCount > 1 && (
+                <span>{item.providerCount} providers</span>
+              )}
+              {item.providerCount > 1 && <span className={styles.statsDot} />}
+              <span>{formatVolumeUsdc(item.volumeUsdc)} USDC volume</span>
+              <span className={styles.statsDot} />
+              <span>{formatCompact(item.lifetimeRequests)} request{item.lifetimeRequests === 1 ? '' : 's'}</span>
+              <span className={styles.statsDot} />
+              <span>{formatCompact(item.lifetimeTokens)} token{item.lifetimeTokens === 1 ? '' : 's'}</span>
+            </>
+          )}
         </div>
       </div>
     </div>

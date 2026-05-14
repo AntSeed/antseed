@@ -1,4 +1,4 @@
-import type { Router, PeerInfo, SerializedHttpRequest } from '@antseed/node';
+import { computeOnChainReputationScore, type Router, type PeerInfo, type SerializedHttpRequest } from '@antseed/node';
 import {
   scoreCandidates,
   PeerMetricsTracker,
@@ -34,11 +34,14 @@ export class LocalRouter implements Router {
   private readonly _metrics: PeerMetricsTracker;
 
   constructor(config?: LocalRouterConfig) {
-    this._minReputation = config?.minReputation ?? 50;
+    this._minReputation = config?.minReputation ?? 0;
     this._maxPricing = {
       defaults: {
         inputUsdPerMillion: config?.maxPricing?.defaults.inputUsdPerMillion ?? Number.POSITIVE_INFINITY,
         outputUsdPerMillion: config?.maxPricing?.defaults.outputUsdPerMillion ?? Number.POSITIVE_INFINITY,
+        ...(config?.maxPricing?.defaults.cachedInputUsdPerMillion != null
+          ? { cachedInputUsdPerMillion: config.maxPricing.defaults.cachedInputUsdPerMillion }
+          : {}),
       },
       ...(config?.maxPricing?.providers ? { providers: config.maxPricing.providers } : {}),
     };
@@ -65,11 +68,8 @@ export class LocalRouter implements Router {
 
     for (const peer of peers) {
       // Reputation filter
-      if (this._hasReputation(peer)) {
-        const reputation = this._effectiveReputation(peer);
-        if (reputation < this._minReputation) {
-          continue;
-        }
+      if (this._effectiveReputation(peer) < this._minReputation) {
+        continue;
       }
 
       // Cooldown filter
@@ -90,7 +90,7 @@ export class LocalRouter implements Router {
       }
 
       const max = this._resolveBuyerMaxPrice(provider, requestedService);
-      if (offer.inputUsdPerMillion > max.inputUsdPerMillion || offer.outputUsdPerMillion > max.outputUsdPerMillion) {
+      if (this._offerExceedsMaxPrice(offer, max)) {
         continue;
       }
 
@@ -133,19 +133,27 @@ export class LocalRouter implements Router {
     });
   }
 
-  private _effectiveReputation(p: PeerInfo): number {
-    if (p.onChainChannelCount !== undefined) {
-      return p.onChainChannelCount;
-    }
-    return p.trustScore ?? p.reputationScore ?? 0;
+  allowsPeerForPricing(req: SerializedHttpRequest, peer: PeerInfo): boolean {
+    const requestedService = this._extractRequestedService(req);
+    const provider = this._selectProviderForPeer(peer, requestedService);
+    if (!provider) return false;
+
+    const offer = this._resolvePeerOfferPrice(peer, provider, requestedService);
+    if (!offer) return false;
+
+    const max = this._resolveBuyerMaxPrice(provider, requestedService);
+    return !this._offerExceedsMaxPrice(offer, max);
   }
 
-  private _hasReputation(p: PeerInfo): boolean {
-    if (this._isFiniteNonNegative(p.onChainChannelCount)) {
-      return (p.onChainChannelCount ?? 0) > 0 || (p.onChainGhostCount ?? 0) > 0;
+  allowsPeerForPolicy(req: SerializedHttpRequest, peer: PeerInfo): boolean {
+    if (this._effectiveReputation(peer) < this._minReputation) {
+      return false;
     }
+    return this.allowsPeerForPricing(req, peer);
+  }
 
-    return this._isFiniteNonNegative(p.trustScore) || this._isFiniteNonNegative(p.reputationScore);
+  private _effectiveReputation(p: PeerInfo): number {
+    return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0;
   }
 
   private _extractRequestedService(req: SerializedHttpRequest): string | null {
@@ -190,14 +198,14 @@ export class LocalRouter implements Router {
 
     if (service) {
       const serviceSpecific = providerPricing?.services?.[service];
-      if (serviceSpecific && this._isValidOffer(serviceSpecific)) {
-        return serviceSpecific;
+      if (serviceSpecific) {
+        return this._isValidOffer(serviceSpecific) ? serviceSpecific : null;
       }
     }
 
     const providerDefaults = providerPricing?.defaults;
-    if (providerDefaults && this._isValidOffer(providerDefaults)) {
-      return providerDefaults;
+    if (providerDefaults) {
+      return this._isValidOffer(providerDefaults) ? providerDefaults : null;
     }
 
     if (
@@ -207,6 +215,9 @@ export class LocalRouter implements Router {
       return {
         inputUsdPerMillion: peer.defaultInputUsdPerMillion,
         outputUsdPerMillion: peer.defaultOutputUsdPerMillion,
+        ...(this._isFiniteNonNegative(peer.defaultCachedInputUsdPerMillion)
+          ? { cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion }
+          : {}),
       };
     }
 
@@ -218,13 +229,13 @@ export class LocalRouter implements Router {
 
     if (service) {
       const serviceOverride = providerPricing?.services?.[service];
-      if (serviceOverride && this._isValidOffer(serviceOverride)) {
+      if (serviceOverride && this._isValidBuyerMaxPrice(serviceOverride)) {
         return serviceOverride;
       }
     }
 
     const providerDefaults = providerPricing?.defaults;
-    if (providerDefaults && this._isValidOffer(providerDefaults)) {
+    if (providerDefaults && this._isValidBuyerMaxPrice(providerDefaults)) {
       return providerDefaults;
     }
 
@@ -237,8 +248,29 @@ export class LocalRouter implements Router {
 
   private _isValidOffer(offer: TokenPricingUsdPerMillion): boolean {
     return (
-      this._isFiniteNonNegative(offer.inputUsdPerMillion) &&
-      this._isFiniteNonNegative(offer.outputUsdPerMillion)
+      this._isValidBuyerMaxPrice(offer) &&
+      (
+        offer.cachedInputUsdPerMillion === undefined ||
+        offer.cachedInputUsdPerMillion <= offer.inputUsdPerMillion
+      )
     );
+  }
+
+  private _isValidBuyerMaxPrice(pricing: TokenPricingUsdPerMillion): boolean {
+    return (
+      this._isFiniteNonNegative(pricing.inputUsdPerMillion) &&
+      this._isFiniteNonNegative(pricing.outputUsdPerMillion) &&
+      (
+        pricing.cachedInputUsdPerMillion === undefined ||
+        this._isFiniteNonNegative(pricing.cachedInputUsdPerMillion)
+      )
+    );
+  }
+
+  private _offerExceedsMaxPrice(offer: TokenPricingUsdPerMillion, max: TokenPricingUsdPerMillion): boolean {
+    const maxCachedInput = max.cachedInputUsdPerMillion ?? max.inputUsdPerMillion;
+    return offer.inputUsdPerMillion > max.inputUsdPerMillion
+      || offer.outputUsdPerMillion > max.outputUsdPerMillion
+      || (offer.cachedInputUsdPerMillion != null && offer.cachedInputUsdPerMillion > maxCachedInput);
   }
 }

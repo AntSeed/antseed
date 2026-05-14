@@ -268,6 +268,18 @@ Providers set their own prices. The routing layer scores all available providers
 
 Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session is authorized by an EIP-712 ReserveAuth that caps the seller's charge. The seller calls `reserve()` on AntseedChannels to lock funds. During the session, the buyer signs cumulative SpendingAuth messages that authorize spending. The seller calls `close()` with the buyer's latest SpendingAuth to settle and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the session deadline passes, then `withdraw()` after a 15-minute grace period to release buyer funds. No invoicing, no monthly billing — automatic settlement per session.
 
+### Are seller ANTS incentives claimable now?
+
+Seller ANTS emissions are currently tracked but routed into a dedicated Provider Pool and locked for now. They are not freely claimable yet. Future claimability is expected after stronger provider validation, audits, attestations, and proof systems are introduced, and may be subject to verification or slashing.
+
+### Where do protocol fees go?
+
+Network fees are set to 4% and flow into the Protocol Reserve, not to a company. The Protocol Reserve is intended to support long-term network sustainability, trust, utility, and alignment. The same applies to the 10% fee from the DIEM pool.
+
+### Are ANTS incentives guaranteed?
+
+No. ANTS incentives are designed for real usage and real contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing. ANTS token economics are evolving, and more trust and utility mechanisms are planned.
+
 ---
 
 ## Still have questions?

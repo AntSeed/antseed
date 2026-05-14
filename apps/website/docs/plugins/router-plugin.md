@@ -24,7 +24,7 @@ const DEFAULT_WEIGHTS = {
 } as const;
 ```
 
-All factors are min-max normalized across the eligible candidate pool. Peers below `minReputation` (default: 50) are excluded before scoring. Peers in failure cooldown (exponential backoff after 3 consecutive failures) are also excluded.
+All factors are min-max normalized across the eligible candidate pool. By default there is no minimum reputation gate (`minReputation: 0`); buyers can explicitly raise it to exclude lower-reputation peers before scoring. Peers in failure cooldown (exponential backoff after 3 consecutive failures) are also excluded.
 
 ## Router Interface
 

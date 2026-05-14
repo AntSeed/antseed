@@ -265,7 +265,6 @@ export function attachAntseedTelemetryHeaders(
   headers['x-antseed-latency-ms'] = String(Math.max(0, Math.floor(latencyMs)))
   setPeerIdentityHeaders(headers, selectedPeer)
   setFiniteNumberHeader(headers, 'x-antseed-peer-reputation', selectedPeer.reputationScore)
-  setFiniteNumberHeader(headers, 'x-antseed-peer-trust-score', selectedPeer.trustScore)
   setFiniteNumberHeader(headers, 'x-antseed-peer-current-load', selectedPeer.currentLoad)
   setFiniteNumberHeader(headers, 'x-antseed-peer-max-concurrency', selectedPeer.maxConcurrency)
   headers['x-antseed-provider'] = telemetry.pricing.provider

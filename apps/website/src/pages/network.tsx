@@ -44,11 +44,9 @@ interface PeerMetadata {
   region: string;
   timestamp: number;
   stakeAmountUSDC?: number;
-  trustScore?: number;
-  onChainReputation?: number;
   onChainSessionCount?: number;
   onChainChannelCount?: number;
-  onChainStats?: OnChainStats;
+  onChainStats?: OnChainStats | null;
 }
 
 interface NetworkTotals {
@@ -98,7 +96,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 /* ── One row per service per peer ──────────────────────────────────── */
 
 interface ServiceRow {
-  id: string;           // serviceId::peerName (unique key)
+  id: string;           // serviceId::peerId (unique key)
   serviceId: string;
   name: string;
   provider: string;
@@ -107,24 +105,71 @@ interface ServiceRow {
   tags: string[];
   inputPrice: number;
   outputPrice: number;
+  cachedInputPrice: number;
   peerCount: number;    // how many peers serve this same service
-  peerNames: string[];
-  peerName: string;     // the specific peer for this row
+  peerId: string;       // stable peer id used for filtering
+  peerName: string;     // display label for this row
   categories: string[];
   // On-chain stats for this peer
   totalTokens: number;
   uniqueBuyers: number;
 }
 
+interface PeerOption {
+  id: string;
+  label: string;
+  totalTokens: number;
+}
+
+function getPeerBaseLabel(peer: PeerMetadata): string {
+  return peer.displayName?.trim() || peer.peerId.slice(0, 12);
+}
+
+function getPeerTotalTokens(peer: PeerMetadata): number {
+  const stats = peer.onChainStats;
+  return parseInt(stats?.totalInputTokens ?? '0', 10) + parseInt(stats?.totalOutputTokens ?? '0', 10);
+}
+
+function getPeerLabelCounts(peers: PeerMetadata[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const peer of peers) {
+    const label = getPeerBaseLabel(peer);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function getPeerLabel(peer: PeerMetadata, labelCounts: Map<string, number>): string {
+  const label = getPeerBaseLabel(peer);
+  return (labelCounts.get(label) ?? 0) > 1
+    ? `${label} (${peer.peerId.slice(0, 12)})`
+    : label;
+}
+
+function buildPeerOptions(peers: PeerMetadata[]): PeerOption[] {
+  const labelCounts = getPeerLabelCounts(peers);
+  return peers
+    .map(peer => ({
+      id: peer.peerId,
+      label: getPeerLabel(peer, labelCounts),
+      totalTokens: getPeerTotalTokens(peer),
+    }))
+    .sort((a, b) =>
+      b.totalTokens - a.totalTokens
+      || a.label.localeCompare(b.label)
+      || a.id.localeCompare(b.id));
+}
+
 function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
+  const peerLabelCounts = getPeerLabelCounts(peers);
+
   // First pass: count how many peers serve each service
   const peerCountMap = new Map<string, Set<string>>();
   for (const peer of peers) {
-    const pName = peer.displayName ?? peer.peerId.slice(0, 12);
     for (const ann of peer.providers) {
       for (const service of ann.services) {
         if (!peerCountMap.has(service)) peerCountMap.set(service, new Set());
-        peerCountMap.get(service)!.add(pName);
+        peerCountMap.get(service)!.add(peer.peerId);
       }
     }
   }
@@ -132,11 +177,16 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
   // Second pass: one row per service per peer
   const rows: ServiceRow[] = [];
   for (const peer of peers) {
-    const pName = peer.displayName ?? peer.peerId.slice(0, 12);
+    const peerName = getPeerLabel(peer, peerLabelCounts);
+    const totalTokens = getPeerTotalTokens(peer);
     const stats = peer.onChainStats;
+    const seenServices = new Set<string>();
 
     for (const ann of peer.providers) {
       for (const service of ann.services) {
+        if (seenServices.has(service)) continue;
+        seenServices.add(service);
+
         const pricing = ann.servicePricing?.[service] ?? ann.defaultPricing;
         const meta = MODEL_META[service];
         const cats = ann.serviceCategories?.[service] ?? [];
@@ -146,7 +196,7 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
         const peersForService = peerCountMap.get(service)!;
 
         rows.push({
-          id: `${service}::${pName}`,
+          id: `${service}::${peer.peerId}`,
           serviceId: service,
           name: meta?.displayName ?? fallbackName,
           provider: meta?.provider ?? guessProvider(service),
@@ -155,11 +205,12 @@ function buildServiceRows(peers: PeerMetadata[]): ServiceRow[] {
           tags: ['anon', ...(meta?.tags ?? cats)],
           inputPrice: pricing.inputUsdPerMillion,
           outputPrice: pricing.outputUsdPerMillion,
+          cachedInputPrice: pricing.cachedInputUsdPerMillion ?? 0,
           peerCount: peersForService.size,
-          peerNames: [...peersForService],
-          peerName: pName,
+          peerId: peer.peerId,
+          peerName,
           categories: cats,
-          totalTokens: (parseInt(stats?.totalInputTokens ?? '0', 10) + parseInt(stats?.totalOutputTokens ?? '0', 10)),
+          totalTokens,
           uniqueBuyers: stats?.uniqueBuyers ?? 0,
         });
       }
@@ -216,6 +267,7 @@ function formatPrice(p: number): string {
 }
 
 function formatNum(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
@@ -246,7 +298,7 @@ export default function PricingPage() {
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [networkTotals, setNetworkTotals] = useState<NetworkTotals | null>(null);
   const [query, setQuery] = useState('');
-  const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [peerFilter, setPeerFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('inputPrice');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -276,7 +328,7 @@ export default function PricingPage() {
 
   const models = useMemo(() => buildServiceRows(peers), [peers]);
 
-  const allPeerNames = useMemo(() => [...new Set(peers.map(p => p.displayName ?? p.peerId.slice(0, 12)))].sort(), [peers]);
+  const allPeerOptions = useMemo(() => buildPeerOptions(peers), [peers]);
   const allTags = useMemo(() => [...new Set(models.flatMap(m => m.tags))].sort(), [models]);
   const uniqueServiceCount = useMemo(() => models.map(m => m.serviceId).length, [models]);
 
@@ -308,8 +360,12 @@ export default function PricingPage() {
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
     let list = models.filter(m => {
-      if (q && !m.name.toLowerCase().includes(q) && !m.provider.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !m.tags.some(t => t.includes(q))) return false;
-      if (providerFilter && m.peerName !== providerFilter) return false;
+      // Search: serviceId (raw kebab-case name), display name, provider, or tags
+      const nameMatch = m.name.toLowerCase().includes(q) || m.serviceId.toLowerCase().includes(q);
+      const providerMatch = m.provider.toLowerCase().includes(q);
+      const tagMatch = m.tags.some(t => t.toLowerCase().includes(q));
+      if (q && !nameMatch && !providerMatch && !tagMatch) return false;
+      if (peerFilter && m.peerId !== peerFilter) return false;
       if (tagFilter && !m.tags.includes(tagFilter)) return false;
       // Price sliders: 100=Any, lower=stricter
       if (filters.maxInputPct < 100 && m.inputPrice > bounds.maxInput * filters.maxInputPct / 100) return false;
@@ -333,7 +389,7 @@ export default function PricingPage() {
     });
 
     return list;
-  }, [models, query, providerFilter, tagFilter, sortKey, sortDir, filters]);
+  }, [models, query, peerFilter, tagFilter, sortKey, sortDir, filters, bounds]);
 
   const cheapestInput = models.length > 0 ? Math.min(...models.map(m => m.inputPrice)) : 0;
   const totalPeers = peers.length;
@@ -342,7 +398,13 @@ export default function PricingPage() {
     ? `Updated ${new Date(updatedAt).toLocaleTimeString()}`
     : null;
 
-  const hasActiveFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching;
+  const hasAdvancedFilters = filters.maxInputPct < 100 || filters.maxOutputPct < 100 || filters.minVolume > 0 || filters.supportsCaching || !!tagFilter;
+  const hasActiveFilters = hasAdvancedFilters || !!query || !!peerFilter;
+
+  const clearAdvancedFilters = () => {
+    setFilters(DEFAULT_FILTERS);
+    setTagFilter(null);
+  };
 
   const datasetLd = useMemo(() => ({
     '@context': 'https://schema.org',
@@ -379,7 +441,7 @@ export default function PricingPage() {
   return (
     <Layout
       title="Live AI Inference Pricing"
-      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Onchain payments. Verifiable reputation.">
+      description="Live pricing across the AntSeed peer-to-peer network. Compare AI model rates per million tokens across decentralized providers. Onchain payments. Live usage stats.">
       <Head>
         <title>Live AI Inference Pricing Across the AntSeed Network | AntSeed</title>
         <link rel="canonical" href="https://antseed.com/network" />
@@ -510,40 +572,42 @@ export default function PricingPage() {
                   Supports prompt caching
                 </label>
               </div>
-              {hasActiveFilters && (
-                <button className={styles.clearFilters} onClick={() => setFilters(DEFAULT_FILTERS)}>Clear all</button>
+              {allTags.length > 0 && (
+                <div className={`${styles.filterGroup} ${styles.filterGroupWide}`}>
+                  <span className={styles.filterLabel}>Capabilities</span>
+                  <div className={styles.filterChips}>
+                    <button
+                      className={`${styles.chip} ${!tagFilter ? styles.chipActive : ''}`}
+                      onClick={() => setTagFilter(null)}
+                    >All Tags</button>
+                    {allTags.map(t => (
+                      <button
+                        key={t}
+                        className={`${styles.chip} ${tagFilter === t ? styles.chipActive : ''}`}
+                        onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                      >{t}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {hasAdvancedFilters && (
+                <button className={styles.clearFilters} onClick={clearAdvancedFilters}>Clear filters</button>
               )}
             </div>
           )}
 
-          {allPeerNames.length > 0 && (
+          {allPeerOptions.length > 0 && (
             <div className={styles.filterChips}>
               <button
-                className={`${styles.chip} ${!providerFilter ? styles.chipActive : ''}`}
-                onClick={() => setProviderFilter(null)}
-              >All Providers</button>
-              {allPeerNames.map(p => (
+                className={`${styles.chip} ${!peerFilter ? styles.chipActive : ''}`}
+                onClick={() => setPeerFilter(null)}
+              >All Peers</button>
+              {allPeerOptions.map(p => (
                 <button
-                  key={p}
-                  className={`${styles.chip} ${providerFilter === p ? styles.chipActive : ''}`}
-                  onClick={() => setProviderFilter(providerFilter === p ? null : p)}
-                >{p}</button>
-              ))}
-            </div>
-          )}
-
-          {allTags.length > 0 && (
-            <div className={styles.filterChips}>
-              <button
-                className={`${styles.chip} ${!tagFilter ? styles.chipActive : ''}`}
-                onClick={() => setTagFilter(null)}
-              >All Tags</button>
-              {allTags.map(t => (
-                <button
-                  key={t}
-                  className={`${styles.chip} ${tagFilter === t ? styles.chipActive : ''}`}
-                  onClick={() => setTagFilter(tagFilter === t ? null : t)}
-                >{t}</button>
+                  key={p.id}
+                  className={`${styles.chip} ${peerFilter === p.id ? styles.chipActive : ''}`}
+                  onClick={() => setPeerFilter(peerFilter === p.id ? null : p.id)}
+                >{p.label}</button>
               ))}
             </div>
           )}

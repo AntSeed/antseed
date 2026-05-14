@@ -101,6 +101,6 @@ Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`
 | Freshness | 0.10 | Recently seen peers score higher |
 | Reliability | 0.05 | Lower failure rate and streak scores higher |
 
-All factors are min-max normalized across the eligible candidate pool. Peers below `minPeerReputation` (default: 50) are excluded before scoring. Peers in a failure cooldown (exponential backoff) are also excluded.
+All factors are min-max normalized across the eligible candidate pool. By default there is no minimum reputation gate (`minPeerReputation: 0`); buyers can explicitly raise it to exclude lower-reputation peers before scoring. Peers in a failure cooldown (exponential backoff) are also excluded.
 
 Buyers can filter by capability, Skill, minimum reputation, and price ceiling.

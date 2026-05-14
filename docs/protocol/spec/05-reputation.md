@@ -2,9 +2,9 @@
 
 ## Overview
 
-The reputation system enables buyers to make informed peer selection decisions without relying on a central authority. In Phase 1, each node tracks local experience-based metrics. Phase 2 introduces DHT-published signed attestations and staking-weighted trust.
+The reputation system enables buyers to make informed peer selection decisions without relying on a central authority. The current implementation derives reputation from buyer-readable on-chain settlement stats and uses local runtime metrics only for routing tie-breakers such as latency and failure cooldowns.
 
-There is no central reputation authority at any phase.
+There is no central reputation authority.
 
 ---
 
@@ -26,30 +26,22 @@ export interface PeerInfo {
 
 - Type: `number | undefined`
 - Range: 0-100
-- Optional: peers without a score receive a fallback value of **50** during selection
+- Optional: peers without a score receive a fallback value of **0** during selection and are not blocked unless the buyer explicitly configures a higher minimum reputation
 
 ### Router Plugin Peer Scoring
 
-**Source:** `@antseed/router-local/src/router.ts`
+**Source:** `@antseed/router-core/src/peer-scorer.ts`
 
-Buyer-side peer selection is implemented in **router plugins**, not in the core node. Each router plugin is free to define its own scoring logic. The official `@antseed/router-local` plugin computes a composite score for each candidate peer using four weighted factors:
+Buyer-side peer selection is implemented in **router plugins**, not in the core node. Each router plugin is free to define its own scoring logic. The official `@antseed/router-local` plugin delegates composite candidate scoring to `@antseed/router-core`:
 
-| Factor     | Weight | Description                                              |
-|------------|--------|----------------------------------------------------------|
-| price      | 0.40   | Lower price scores higher                                |
-| latency    | 0.30   | Lower latency scores higher (tracked via EMA)            |
-| capacity   | 0.20   | Higher available capacity (`maxConcurrency - currentLoad`) scores higher |
-| reputation | 0.10   | Higher reputation scores higher                          |
-
-```typescript
-// @antseed/router-local/src/router.ts
-const WEIGHTS = {
-  price: 0.40,
-  latency: 0.30,
-  capacity: 0.20,
-  reputation: 0.10,
-} as const;
-```
+| Factor      | Weight | Description                                              |
+|-------------|--------|----------------------------------------------------------|
+| price       | 0.30   | Lower price scores higher                                |
+| latency     | 0.25   | Lower latency scores higher (tracked via EMA)            |
+| capacity    | 0.20   | Higher available capacity (`maxConcurrency - currentLoad`) scores higher |
+| reputation  | 0.10   | Higher reputation scores higher                          |
+| freshness   | 0.10   | Recently seen peers score higher                         |
+| reliability | 0.05   | Peers with fewer failures score higher                   |
 
 All factors are min-max normalised across the eligible candidate pool before weighting. Reputation is normalised from the 0-100 integer range to a 0-1 float:
 
@@ -57,70 +49,29 @@ All factors are min-max normalised across the eligible candidate pool before wei
 reputationFactor = peerReputation / 100
 ```
 
-When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified).
+When a peer has no `reputationScore`, the value **0** is used (treated as unknown/unverified). When on-chain channel stats are available, official routers compute the effective reputation from `AntseedChannels` before falling back to locally reported scores. That on-chain score is multi-factor: settled USDC volume carries the largest weight, completed channels, average channel value, recent settlement, and seller stake age also contribute, and ghost-channel rate applies a penalty.
 
 ### Minimum Reputation Filter
 
 Router plugins apply a minimum reputation filter before scoring. In `@antseed/router-local`:
 
 - Config field: `BuyerConfig.minPeerReputation` (`@antseed/cli/src/config/defaults.ts`)
-- Default value: **50**
+- Default value: **0** (no reputation gate)
 - Passed to the router as `minReputation` in the plugin config
-- Behavior: any peer whose `reputationScore` is below `minReputation` is excluded from the candidate pool before scoring
+- Behavior: when a buyer explicitly raises `minReputation`, any peer whose effective reputation is below that threshold is excluded from the candidate pool before scoring
 
-### Discovery-Layer Scoring (peer-selector.ts)
+## Local Runtime Signals
 
-**Source:** `node/src/discovery/peer-selector.ts`
+Official routers keep local runtime metrics for candidate scoring and operational safety, but these metrics do **not** create a parallel reputation score and are not published to the DHT.
 
-A separate scoring module exists in the core node with its own default weights:
+| Metric | Use |
+|--------|-----|
+| Latency EMA | Tie-breaking and composite router scoring |
+| Failure streak / cooldown | Temporarily avoids peers that are failing for this buyer |
+| Current load / capacity | Prefers peers with available concurrency |
+| Freshness | Prefers recently observed peers |
 
-```typescript
-export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
-  price: 0.35,
-  capacity: 0.25,
-  latency: 0.25,
-  reputation: 0.15,
-};
-```
-
-This module uses a four-factor model (no load factor) and expects `candidate.reputation` as a 0-1 float directly. The reputation weight is the same: **0.15** (15% of composite score).
-
----
-
-## Phase 1: Peer-to-Peer Local Attestation Model
-
-In Phase 1, each node tracks its own experience with peers locally. Attestations are not published to the DHT.
-
-### Local Metrics Tracked
-
-Each node maintains per-peer statistics based on direct interaction:
-
-| Metric                     | Description                                                        |
-|----------------------------|--------------------------------------------------------------------|
-| Request success/failure rate | Ratio of successfully completed requests to total requests sent   |
-| Average latency            | Rolling average round-trip time for requests to the peer           |
-| Token estimate accuracy    | How closely the peer's metered token counts match receipt values (receipt verification disputes) |
-| Uptime                     | Success rate of keepalive probes to the peer                       |
-
-### Score Computation
-
-The local reputation score is a weighted combination of the tracked metrics:
-
-```
-reputationScore = w1 * successRate
-                + w2 * latencyScore
-                + w3 * tokenAccuracy
-                + w4 * uptimeRate
-```
-
-The result is clamped to the 0-100 integer range and stored in the node's local peer table.
-
-### Properties
-
-- **Local only**: each node's view of a peer's reputation is based solely on its own interactions
-- **No publication**: scores are not shared with other nodes in Phase 1
-- **Subjective**: two nodes may have different reputation scores for the same peer based on their individual experiences
-- **Bootstrapping**: new peers with no interaction history receive the fallback reputation of 50
+These signals are buyer-local and transient. They help choose between otherwise eligible candidates, while the durable reputation path remains: buyer-computed on-chain reputation first, optional `PeerInfo.reputationScore` fallback second, and `0` for unknown reputation.
 
 ---
 
@@ -183,13 +134,13 @@ A peer's DHT-published reputation is computed by aggregating all attestations ab
 
 ## Summary
 
-| Aspect                  | Phase 1 (Current)              | Phase 2 (Future)                        |
-|-------------------------|--------------------------------|-----------------------------------------|
-| Data source             | Local interaction metrics      | DHT-published signed attestations       |
-| Storage                 | Local peer table               | DHT (distributed)                       |
-| Trust model             | Direct experience only         | Transitive trust with decay             |
-| Sybil resistance        | None (local only)              | Staking-weighted attestations           |
-| Score range             | 0-100                          | 0-100                                   |
-| Selection weight        | 15% of composite score         | 15% of composite score                  |
-| Minimum threshold       | Configurable (default: 50)     | Configurable (default: 50)              |
-| Central authority       | None                           | None                                    |
+| Aspect                  | Current                                      | Phase 2 (Future)                        |
+|-------------------------|----------------------------------------------|-----------------------------------------|
+| Data source             | On-chain settlements + optional reported score | DHT-published signed attestations       |
+| Storage                 | Chain data, local peer cache                 | DHT (distributed)                       |
+| Trust model             | Buyer-verifiable settlement history          | Transitive trust with decay             |
+| Sybil resistance        | Seller staking + settlement cost             | Staking-weighted attestations           |
+| Score range             | 0-100                                        | 0-100                                   |
+| Selection weight        | 10% of composite score                       | Router-defined                          |
+| Minimum threshold       | Configurable (default: 0)                    | Configurable (default: 0)               |
+| Central authority       | None                                         | None                                    |

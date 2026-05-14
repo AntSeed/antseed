@@ -8,7 +8,6 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
     lastSeen: Date.now(),
     providers: ['anthropic'],
     reputationScore: 80,
-    trustScore: 80,
     defaultInputUsdPerMillion: 10,
     defaultOutputUsdPerMillion: 10,
     providerPricing: {

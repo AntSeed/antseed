@@ -237,7 +237,7 @@ function Why() {
     { h: 'Real revenue, not emissions', p: 'USDC yield comes from actual AI requests on the AntSeed network. If demand grows, your yield grows with it.' },
     { h: 'Your $DIEM never leaves Base', p: 'Funds stay in an audited smart contract. No bridges, no centralized custody, no rehypothecation.' },
     { h: 'Two income streams', p: 'USDC for cash yield today. $ANTS for upside in the network tomorrow. Long-term stakers earn a bigger share of both.' },
-    { h: 'Transparent operations', p: 'The operator currently retains 10% for operations; the remaining USDC flows through the pool to stakers pro-rata.' },
+    { h: 'Protocol-aligned fees', p: 'The 10% DIEM pool fee flows to the Protocol Reserve; the remaining USDC flows through the pool to stakers pro-rata.' },
   ];
   return (
     <div className="why-block">
@@ -296,9 +296,9 @@ export function FAQ() {
             AntSeed is a peer-to-peer network where developers and AI agents buy inference,
             skills, and other services. Every request settles a USDC micropayment on Base,
             and the AntSeed payment channel pays the staking contract directly — the
-            contract is the seller. No operator holds user stake. The operator currently
-            retains 10% for operations; the remaining USDC credits to stakers pro-rata
-            as it reaches the pool.
+            contract is the seller. No operator holds user stake. The 10% DIEM pool fee
+            flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS;
+            the remaining USDC credits to stakers pro-rata as it reaches the pool.
           </div>
         </details>
         <details className="faq">
@@ -354,10 +354,11 @@ export function FAQ() {
           </div>
         </details>
         <details className="faq">
-          <summary>Are there any operator fees?</summary>
+          <summary>Are there any pool fees?</summary>
           <div className="body">
-            Yes. The operator currently retains 10% for operations before USDC reaches
-            the staking pool. The remaining USDC flows to stakers pro-rata. Your wallet
+            Yes. The DIEM pool has a 10% fee before USDC reaches the staking pool.
+            That fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem
+            and ANTS. The remaining USDC flows to stakers pro-rata. Your wallet
             transactions still require Base gas, typically a few cents.
           </div>
         </details>

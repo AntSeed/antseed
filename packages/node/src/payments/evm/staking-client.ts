@@ -16,6 +16,7 @@ const STAKING_ABI = [
   'function unstake() external',
   'function validateSeller(address seller) external view returns (bool)',
   'function getStake(address seller) external view returns (uint256)',
+  'function sellers(address seller) external view returns (uint256 stake, uint256 stakedAt)',
   'function isStakedAboveMin(address seller) external view returns (bool)',
   'function getAgentId(address seller) external view returns (uint256)',
 ] as const;
@@ -48,6 +49,13 @@ export class StakingClient extends BaseEvmClient {
   async getStake(sellerAddr: string): Promise<bigint> {
     const contract = new Contract(this._contractAddress, STAKING_ABI, this._provider);
     return contract.getFunction('getStake')(sellerAddr) as Promise<bigint>;
+  }
+
+  async getStakedAt(sellerAddr: string): Promise<number> {
+    const contract = new Contract(this._contractAddress, STAKING_ABI, this._provider);
+    const result = await contract.getFunction('sellers')(sellerAddr) as { stakedAt?: bigint; 1?: bigint };
+    const stakedAt = result.stakedAt ?? result[1] ?? 0n;
+    return Number(stakedAt);
   }
 
   async isStakedAboveMin(sellerAddr: string): Promise<boolean> {

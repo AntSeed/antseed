@@ -38,20 +38,23 @@ export function AppShell() {
       setSetupVisible(false);
       return;
     }
-    if (!snap.appSetupComplete) {
-      setSetupVisible(true);
-      return;
-    }
 
-    // If setup completed before the renderer observed it, keep the setup screen
-    // only until the first service catalog arrives. Once hidden, latch it hidden
-    // for the rest of the renderer session.
+    // The setup screen is a first-run bootstrap aid, not a hard gate. If the
+    // buyer runtime later starts successfully and services load, let the user
+    // into the app even if plugin setup reported a transient repair/install
+    // failure. This prevents a stale "Failed to install router plugin" status
+    // from covering a now-usable desktop session.
     if (hasServices) {
       const timer = setTimeout(() => {
         setSetupVisible(false);
         setSetupDismissed(true);
       }, 900);
       return () => clearTimeout(timer);
+    }
+
+    if (!snap.appSetupComplete) {
+      setSetupVisible(true);
+      return;
     }
 
     setSetupVisible(true);

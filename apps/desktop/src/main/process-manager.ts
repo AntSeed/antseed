@@ -396,6 +396,10 @@ export class ProcessManager {
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
     await this.ensureRuntimeNativeModules(mode, executable, cliExecution.isLocalDevScript);
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    // Desktop repairs the default router from its own app bundle. Do not let
+    // the child CLI try an npm-based plugin refresh/install on locked-down
+    // machines where npm may be unavailable or behind corporate TLS proxies.
+    childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'] = '1';
     for (const [key, value] of Object.entries(opts.env ?? {})) {
       if (typeof key === 'string' && key.trim().length > 0) {
         childEnv[key] = String(value);
@@ -496,6 +500,7 @@ export class ProcessManager {
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
 
     const childEnv = { ...process.env };
+    childEnv['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'] = '1';
     if (executable === process.execPath) {
       childEnv['ELECTRON_RUN_AS_NODE'] = '1';
     } else {

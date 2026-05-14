@@ -132,9 +132,11 @@ AntseedRegistry       Central address book for all protocol contracts
 AntseedStaking        Seller staking (holds stake USDC, binds to ERC-8004 agentId)
 AntseedDeposits       Buyer deposits, seller payouts (holds buyer USDC)
 AntseedChannels       Payment channel lifecycle (swappable, holds NO USDC)
-AntseedEmissions      ANTS token emissions (USDC volume-based rewards)
-ANTSToken             ANTS ERC-20 token (52M max supply)
+AntseedEmissions      ANTS token emissions (USDC volume-based incentives)
+ANTSToken             ANTS ERC-20 token (1.04B max supply)
 ```
+
+Network fees are set to 4% of settlement and flow to the Protocol Reserve, not to a company. The Protocol Reserve is intended to support long-term network sustainability, trust, utility, and alignment. Seller ANTS emissions are currently tracked but locked in a dedicated Provider Pool pending stronger validation; future claims may be subject to verification or slashing.
 
 **Stable contracts** (Staking, Deposits) hold funds and rarely change. The **swappable contract** (Channels) holds no USDC and can be redeployed by re-pointing via the Registry.
 
@@ -159,7 +161,7 @@ Contract addresses are built into the CLI for each chain — no manual configura
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
 | AntseedStats | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
-| AntseedEmissions | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 | ERC-8004 IdentityRegistry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
 

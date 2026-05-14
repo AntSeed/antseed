@@ -223,7 +223,7 @@ export function DiemRewardsView({ config }: DiemRewardsViewProps) {
           <div className="dashboard-section-eyebrow">DIEM staking</div>
           <h2 className="dashboard-section-title">Your DIEM $ANTS</h2>
           <p className="dashboard-section-sub">
-            Rewards earned from staking DIEM through the AntSeed proxy. Connect the same wallet you used for staking.
+            Rewards earned from staking DIEM through the AntSeed proxy. The 10% DIEM pool fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS. Connect the same wallet you used for staking.
           </p>
         </header>
 

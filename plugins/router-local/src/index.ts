@@ -115,7 +115,7 @@ const plugin: AntseedRouterPlugin = {
   type: 'router',
   description: 'Local router for Claude Code, Aider, Continue.dev, OpenAI Codex',
   configSchema: [
-    { key: 'ANTSEED_MIN_REPUTATION', label: 'Min Reputation', type: 'number', required: false, default: 50, description: 'Min peer reputation 0-100' },
+    { key: 'ANTSEED_MIN_REPUTATION', label: 'Min Reputation', type: 'number', required: false, default: 0, description: 'Min peer reputation 0-100' },
     { key: 'ANTSEED_MAX_PRICING_JSON', label: 'Max Pricing JSON', type: 'string', required: false, description: 'Buyer max pricing JSON' },
     { key: 'ANTSEED_MAX_FAILURES', label: 'Max Failures', type: 'number', required: false, default: 3, description: 'Max consecutive failures before excluding peer' },
     { key: 'ANTSEED_FAILURE_COOLDOWN_MS', label: 'Failure Cooldown (ms)', type: 'number', required: false, default: 30000, description: 'Cooldown after repeated failures (ms)' },

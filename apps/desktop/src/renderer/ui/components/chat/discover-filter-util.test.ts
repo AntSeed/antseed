@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   matchesSearch, matchesMaxInputPrice, matchesMaxOutputPrice,
   matchesMinStake,
-  matchesLastSeen, matchesLastSettled,
-  matchesMinChannels, rowChannelCount,
+  matchesMinReputationScore, rowChannelCount, rowReputationScore,
+  hasValidCachedInputPrice,
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
 } from './discover-filter-util';
@@ -20,8 +20,9 @@ function mkRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     lifetimeSessions: 0, lifetimeRequests: 0, lifetimeInputTokens: 0, lifetimeOutputTokens: 0,
     lifetimeFirstSessionAt: null, lifetimeLastSessionAt: null,
     onChainChannelCount: null,
-    agentId: 1, stakeUsdc: '0', stakedAt: 0,
+    agentId: 1, stakeUsdc: '0',
     onChainActiveChannelCount: 0, onChainGhostCount: 0, onChainTotalVolumeUsdc: '0', onChainLastSettledAt: 0,
+    onChainReputationScore: null,
     networkRequests: null, networkInputTokens: null, networkOutputTokens: null,
     selectionValue: '',
     ...overrides,
@@ -55,33 +56,18 @@ test('matchesMaxOutputPrice filters rows by the output slider ceiling', () => {
   assert.ok(!matchesMaxOutputPrice(mkRow({ outputUsdPerMillion: null }), 0.6));
 });
 
+test('hasValidCachedInputPrice rejects cached input above input', () => {
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: null })));
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 0.5 })));
+  assert.ok(hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 1 })));
+  assert.ok(!hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: 1, cachedInputUsdPerMillion: 1.1 })));
+  assert.ok(!hasValidCachedInputPrice(mkRow({ inputUsdPerMillion: null, cachedInputUsdPerMillion: 0.5 })));
+});
+
 test('matchesMinStake compares base-6 USDC bigint to slider value', () => {
   assert.ok(matchesMinStake(mkRow({ stakeUsdc: '10000000' }), 10));
   assert.ok(!matchesMinStake(mkRow({ stakeUsdc: '9000000' }), 10));
   assert.ok(matchesMinStake(mkRow({ stakeUsdc: '0' }), 0));
-});
-
-test('matchesLastSeen uses lifetimeLastSessionAt in ms', () => {
-  const now = 10_000_000_000;
-  const hourAgo = now - 3600 * 1000;
-  const tenDaysAgo = now - 10 * 86_400 * 1000;
-  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: null }), 'any', now));
-  assert.ok(!matchesLastSeen(mkRow({ lifetimeLastSessionAt: null }), 'today', now));
-  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: hourAgo }), 'today', now));
-  assert.ok(!matchesLastSeen(mkRow({ lifetimeLastSessionAt: tenDaysAgo }), 'week', now));
-  assert.ok(matchesLastSeen(mkRow({ lifetimeLastSessionAt: tenDaysAgo }), 'month', now));
-});
-
-test('matchesLastSettled uses onChainLastSettledAt in seconds', () => {
-  const nowMs = 10_000_000_000;
-  const nowSec = Math.floor(nowMs / 1000);
-  const dayAgoSec = nowSec - 86_400;
-  const monthAgoSec = nowSec - 86_400 * 40;
-  assert.ok(matchesLastSettled(mkRow({ onChainLastSettledAt: 0 }), 'any', nowMs));
-  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: 0 }), 'today', nowMs));
-  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: dayAgoSec }), 'today', nowMs));
-  assert.ok(matchesLastSettled(mkRow({ onChainLastSettledAt: dayAgoSec }), 'week', nowMs));
-  assert.ok(!matchesLastSettled(mkRow({ onChainLastSettledAt: monthAgoSec }), 'month', nowMs));
 });
 
 test('rowChannelCount uses the larger of active vs metadata channel count', () => {
@@ -91,12 +77,13 @@ test('rowChannelCount uses the larger of active vs metadata channel count', () =
   assert.equal(rowChannelCount(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: null })), 0);
 });
 
-test('matchesMinChannels gates rows by channel-count threshold', () => {
-  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 20 }), 20));
-  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: 25 }), 20));
-  assert.ok(!matchesMinChannels(mkRow({ onChainActiveChannelCount: 5, onChainChannelCount: 8 }), 20));
-  // A threshold of zero always passes, regardless of on-chain state
-  assert.ok(matchesMinChannels(mkRow({ onChainActiveChannelCount: 0, onChainChannelCount: null }), 0));
+test('matchesMinReputationScore gates rows by reputation threshold', () => {
+  assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: 75 }), 50));
+  assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: 50 }), 50));
+  assert.ok(!matchesMinReputationScore(mkRow({ onChainReputationScore: 49 }), 50));
+  assert.ok(!matchesMinReputationScore(mkRow({ onChainReputationScore: null }), 50));
+  // A threshold of zero always passes, including peers whose score has not loaded.
+  assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: null }), 0));
 });
 
 test('applyFilters composes all predicates', () => {
@@ -108,13 +95,26 @@ test('applyFilters composes all predicates', () => {
     search: '', categorySet: new Set(['coding']), peerSet: new Set(),
     maxInputPrice: MAX_INPUT_PRICE_SLIDER_USD,
     maxOutputPrice: MAX_OUTPUT_PRICE_SLIDER_USD,
-    chattedOnly: false,
     minStakeUsdc: 0,
-    lastSeenWindow: 'any', lastSettledWindow: 'any',
-    minOnChainChannels: 0,
+    minReputationScore: 0,
   });
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0]!.serviceLabel, 'B');
+});
+
+test('rowReputationScore returns score or -1 for missing values', () => {
+  assert.equal(rowReputationScore(mkRow({ onChainReputationScore: 72.5 })), 72.5);
+  assert.equal(rowReputationScore(mkRow({ onChainReputationScore: null })), -1);
+});
+
+test('applySort reputationDesc orders by reputation score then channel count', () => {
+  const rows = [
+    mkRow({ serviceLabel: 'A', onChainReputationScore: 20, onChainActiveChannelCount: 100 }),
+    mkRow({ serviceLabel: 'B', onChainReputationScore: 80, onChainActiveChannelCount: 1 }),
+    mkRow({ serviceLabel: 'C', onChainReputationScore: 20, onChainActiveChannelCount: 50 }),
+  ];
+  const sorted = applySort(rows, 'reputationDesc', 'desc');
+  assert.deepEqual(sorted.map((r) => r.serviceLabel), ['B', 'A', 'C']);
 });
 
 test('applySort channelsDesc orders by channel count', () => {

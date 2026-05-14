@@ -79,6 +79,13 @@ import {
   type RequestStreamResponseMetadata,
   type RequestExecutionOptions,
 } from "./buyer-request-handler.js";
+import {
+  buildSybilContext,
+  computeOnChainScore,
+  computeOnChainSybilRisk,
+  computeOnChainTrust,
+  type SybilContext,
+} from "./reputation/on-chain-reputation.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -611,8 +618,16 @@ export class AntseedNode extends EventEmitter {
         const evmAddress = resolver
           ? await resolver.resolveSellerAddress(p.peerId, p.metadata)
           : peerIdToAddress(p.peerId);
-        const agentId = await stakingClient.getAgentId(evmAddress);
+        const [agentId, stake, stakedAt] = await Promise.all([
+          stakingClient.getAgentId(evmAddress),
+          stakingClient.getStake(evmAddress).catch(() => 0n),
+          stakingClient.getStakedAt(evmAddress).catch(() => 0),
+        ]);
         const stats = await channelsClient.getAgentStats(agentId);
+        p.onChainAgentId = agentId;
+        p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(stake)
+          : Number.MAX_SAFE_INTEGER;
         p.onChainChannelCount = stats.channelCount;
         p.onChainGhostCount = stats.ghostCount;
         // totalVolumeUsdc is base-6 USDC. Clamp to safe-int range before
@@ -622,6 +637,7 @@ export class AntseedNode extends EventEmitter {
           ? Number(volumeMicros)
           : Number.MAX_SAFE_INTEGER;
         p.onChainLastSettledAtSec = stats.lastSettledAt;
+        p.onChainStakedAtSec = stakedAt;
         p.onChainStatsFetchedAt = Date.now();
       } catch {
         // Per-peer verification failure — keep whatever seller metadata claimed
@@ -639,6 +655,26 @@ export class AntseedNode extends EventEmitter {
       })());
     }
     await Promise.all(workers);
+
+    this._applyTrustAndSybil(peers);
+  }
+
+  private _applyTrustAndSybil(peers: PeerInfo[]): void {
+    if (peers.length === 0) return;
+    const ctx: SybilContext | undefined = peers.length >= 2
+      ? buildSybilContext(peers)
+      : undefined;
+    for (const p of peers) {
+      const trust = computeOnChainTrust(p);
+      if (trust === null) continue;
+      p.onChainTrustScore = trust;
+      if (ctx) {
+        const sybil = computeOnChainSybilRisk(p, ctx);
+        p.onChainSybilRisk = sybil.risk;
+        p.onChainSybilFlags = sybil.flags;
+      }
+      p.onChainReputationScore = computeOnChainScore(p, ctx) ?? undefined;
+    }
   }
 
   /**

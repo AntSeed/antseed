@@ -82,6 +82,20 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return emissionsClient;
   }
 
+  let legacyEmissionsClient: EmissionsClient | null = null;
+  function getLegacyEmissionsClient(): EmissionsClient | null {
+    if (!ctx.chainConfig.legacyEmissionsContractAddress) return null;
+    if (!legacyEmissionsClient) {
+      legacyEmissionsClient = new EmissionsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        ...(ctx.cryptoConfig.fallbackRpcUrls ? { fallbackRpcUrls: ctx.cryptoConfig.fallbackRpcUrls } : {}),
+        contractAddress: ctx.chainConfig.legacyEmissionsContractAddress,
+        evmChainId: ctx.chainConfig.evmChainId,
+      });
+    }
+    return legacyEmissionsClient;
+  }
+
   let antsTokenClient: ANTSTokenClient | null = null;
   function getAntsTokenClient(): ANTSTokenClient | null {
     // ANTSToken address is typically fetched via the registry, but for v1 we
@@ -274,10 +288,12 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       const current = info.epoch;
       const startEpoch = Math.max(0, current - (scanN - 1));
       const epochList = Array.from({ length: current - startEpoch + 1 }, (_, i) => startEpoch + i);
+      const legacyClient = getLegacyEmissionsClient();
+      const migrationEpoch = legacyClient ? await retryRead(() => client.getMigrationEpoch()) : null;
 
       const rows = await Promise.all(
         epochList.map(async (epoch) => {
-          const [pending, userSP, userBP, sellerClaimed, buyerClaimed, totalSP, totalBP, epEmission] = await Promise.all([
+          const [pending, v2UserSP, v2UserBP, v2SellerClaimed, v2BuyerClaimed, v2TotalSP, v2TotalBP, epEmission] = await Promise.all([
             retryRead(() => client.pendingEmissions(address, [epoch])),
             retryRead(() => client.userSellerPoints(address, epoch)),
             retryRead(() => client.userBuyerPoints(address, epoch)),
@@ -287,6 +303,38 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
             retryRead(() => client.epochTotalBuyerPoints(epoch)),
             retryRead(() => client.getEpochEmission(epoch)),
           ]);
+
+          let userSP = v2UserSP;
+          let userBP = v2UserBP;
+          let totalSP = v2TotalSP;
+          let totalBP = v2TotalBP;
+          let sellerClaimed = v2SellerClaimed;
+          let buyerClaimed = v2BuyerClaimed;
+
+          if (legacyClient && migrationEpoch !== null) {
+            if (epoch <= migrationEpoch) {
+              const [legacyUserSP, legacyUserBP, legacyTotalSP, legacyTotalBP] = await Promise.all([
+                retryRead(() => legacyClient.userSellerPoints(address, epoch)),
+                retryRead(() => legacyClient.userBuyerPoints(address, epoch)),
+                retryRead(() => legacyClient.epochTotalSellerPoints(epoch)),
+                retryRead(() => legacyClient.epochTotalBuyerPoints(epoch)),
+              ]);
+              userSP += legacyUserSP;
+              userBP += legacyUserBP;
+              totalSP += legacyTotalSP;
+              totalBP += legacyTotalBP;
+            }
+
+            if (epoch < migrationEpoch) {
+              const [legacySellerClaimed, legacyBuyerClaimed] = await Promise.all([
+                retryRead(() => legacyClient.sellerEpochClaimed(address, epoch)),
+                retryRead(() => legacyClient.buyerEpochClaimed(address, epoch)),
+              ]);
+              sellerClaimed = legacySellerClaimed;
+              buyerClaimed = legacyBuyerClaimed;
+            }
+          }
+
           return {
             epoch,
             epochEmission: epEmission.toString(),

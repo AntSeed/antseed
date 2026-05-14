@@ -321,6 +321,20 @@
   animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
 }
 
+/* Active indicator on a collapsed peer when one of its chats is running.
+   Same visual language as .chat-conv-running-dot so the user reads it as
+   the same "working" signal at a different scope. (Issue #461.) */
+.peer-group-running-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-green, #4ade80);
+  box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.6);
+  animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
+  margin-right: 2px;
+}
+
 @keyframes chat-conv-running-pulse {
   0%, 100% {
     opacity: 1;

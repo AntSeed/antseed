@@ -12,16 +12,24 @@ const ANTS_BASESCAN_URL = `https://basescan.org/token/${ANTS_TOKEN_ADDRESS}`;
 const EPOCH_DURATION = 604_800; // 1 week in seconds
 
 // Genesis timestamp from AntseedEmissions contract on Base mainnet (block 44469557)
-// Read via: eth_call genesis() on 0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5
+// Read via: eth_call genesis() on 0xF13bE52c4A3afC6AE29536f073588d01A0564088
 const GENESIS: number = 1775728461; // 2026-04-09T09:54:21Z
 
 function useEpochCountdown() {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  // Start with a deterministic value so SSR and the first client render match.
+  // The real `now` is filled in after mount to avoid React hydration mismatches.
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
+    setNow(Math.floor(Date.now() / 1000));
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(id);
   }, []);
+
+  if (now === null) {
+    // Pre-hydration / SSR: render a stable placeholder identical on server and client.
+    return { epoch: 0, timeLeft: '—', started: false };
+  }
 
   if (GENESIS === 0) {
     return { epoch: 0, timeLeft: 'Not started', started: false };
@@ -243,17 +251,17 @@ function EarnFlow(): JSX.Element {
           <text x="400" y="88" textAnchor="middle" className={styles.flowBoxSub}>stakes · serves</text>
         </g>
 
-        {/* $ANTS Mint */}
+        {/* $ANTS Emissions */}
         <g>
           <rect x="600" y="30" width="160" height="80" rx="14" className={styles.flowBoxMint} />
-          <text x="680" y="63" textAnchor="middle" className={styles.flowBoxTitleMint}>$ANTS Mint</text>
-          <text x="680" y="88" textAnchor="middle" className={styles.flowBoxSubMint}>epoch settle</text>
+          <text x="680" y="63" textAnchor="middle" className={styles.flowBoxTitleMint}>$ANTS Emissions</text>
+          <text x="680" y="88" textAnchor="middle" className={styles.flowBoxSubMint}>epoch tracking</text>
         </g>
 
         {/* Forward labels */}
         <text x="260" y="58" textAnchor="middle" className={styles.flowLineLabel}>USDC</text>
         <text x="540" y="58" textAnchor="middle" className={styles.flowLineLabel}>volume reported</text>
-        <text x="400" y="216" textAnchor="middle" className={styles.flowLineLabelGreen}>ANTS minted at epoch end</text>
+        <text x="400" y="216" textAnchor="middle" className={styles.flowLineLabelGreen}>ANTS emissions tracked</text>
 
         {/* USDC pellets: Buyer → Seller */}
         <circle r="5" className={styles.flowPellet}>
@@ -267,7 +275,7 @@ function EarnFlow(): JSX.Element {
           </animateMotion>
         </circle>
 
-        {/* ANTS return: Mint → Seller and Mint → Buyer */}
+        {/* ANTS emissions: tracked for sellers and buyers */}
         <circle r="6" className={styles.flowPelletGreen}>
           <animateMotion dur="4.8s" repeatCount="indefinite" begin="1.5s">
             <mpath href="#pMintSeller" />
@@ -309,7 +317,7 @@ export default function AntsToken(): JSX.Element {
   return (
     <Layout
       title="ANTS Token | AntSeed"
-      description="ANTS is earned by the people who build and use the network. Hard-capped at 1.04B with automatic halvings."
+      description="ANTS is the coordination and trust asset of the AntSeed network. Hard-capped at 1.04B with automatic halvings."
     >
 
       {/* ── HERO ── */}
@@ -324,10 +332,18 @@ export default function AntsToken(): JSX.Element {
           <span className={styles.statusText}>Tokens Restricted</span>
         </div>
         <p className={styles.heroSub}>
-          ANTS is earned, not bought. No pre-mine, no insider allocation — sellers and buyers who
-          create real economic activity on the network receive ANTS proportional to their
-          contribution. Hard-capped at 1.04B with automatic halvings.
+          ANTS is designed to become the coordination and trust asset of the AntSeed network.
+          No pre-mine, no insider allocation, no unfair head start, and no company extracting protocol fees.
+          ANTS distribution is meant for real users and providers who help the network grow.
         </p>
+        <a
+          href="https://x.com/AntSeedAI/status/2053924623935218044"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.protocolNotice}
+        >
+          Token economics are evolving →
+        </a>
         <div className={styles.heroCtas}>
           <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
             Download AntStation →
@@ -368,10 +384,9 @@ export default function AntsToken(): JSX.Element {
       {/* ── HOW TO EARN ── */}
       <section className={styles.earn}>
         <div className={styles.earnHeader}>
-          <h2>How you earn ANTS</h2>
+          <h2>ANTS incentives</h2>
           <p>
-            Every USDC dollar settled on-chain mints ANTS at epoch end.
-            No pre mining, no ANTS staking — your share tracks real activity.
+            ANTS emissions track eligible real activity on the network. Claimability and distribution may be subject to caps, validation, locking, and anti-abuse checks.
           </p>
         </div>
 
@@ -381,17 +396,17 @@ export default function AntsToken(): JSX.Element {
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>01</div>
             <h3>As a seller</h3>
-            <p>Stake USDC, serve requests, settle on-chain. Your share of the 50% seller pool is proportional to your USDC volume that epoch. Capped at 50% of seller pool per seller.</p>
+            <p>Serve real requests and settle on-chain. Seller ANTS emissions are tracked but currently routed into a dedicated Provider Pool and locked while stronger provider validation, audits, attestations, and proof systems are introduced.</p>
           </div>
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>02</div>
             <h3>As a buyer</h3>
-            <p>Deposit USDC, use the network, pay for AI services. Your share of the 20% buyer pool is proportional to your USDC spend that epoch. Diversity bonus for using multiple sellers.</p>
+            <p>Deposit USDC, use the network, and pay for AI services. Buyer incentives are designed for real demand and may be subject to caps, quality filters, and anti-abuse checks.</p>
           </div>
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>03</div>
-            <h3>Claim each epoch</h3>
-            <p>At epoch end, call claim with the epoch numbers you participated in. ANTS are minted directly to your wallet. Unclaimed emissions remain claimable.</p>
+            <h3>Claimability</h3>
+            <p>Eligible buyer emissions may be claimable after epoch finalization. Seller emissions remain locked in the Provider Pool for now and may be subject to future verification or slashing before becoming claimable.</p>
           </div>
         </div>
       </section>
@@ -425,9 +440,9 @@ export default function AntsToken(): JSX.Element {
 
         <div className={styles.splitGrid}>
           {[
-            {pct: '50%', label: 'Sellers', desc: 'Pro-rata by USDC volume settled. Capped at 50% of seller pool per seller per epoch.', accent: true},
-            {pct: '20%', label: 'Buyers', desc: 'Pro-rata by USDC spent. Rewards active usage and seller diversity.', accent: false},
-            {pct: '15%', label: 'Protocol Reserve', desc: 'The protocol reserve allocation and seller cap overages flow here. Funds ecosystem growth.', accent: false},
+            {pct: '50%', label: 'Provider Pool', desc: 'Seller emissions are tracked and routed into a locked Provider Pool while stronger validation and proof systems are developed.', accent: true},
+            {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Buyer incentives may be capped, filtered, delayed, or excluded for anti-abuse reasons.', accent: false},
+            {pct: '15%', label: 'Protocol Reserve', desc: 'Supports long-term network sustainability, trust, utility, and alignment.', accent: false},
             {pct: '15%', label: 'Team', desc: 'Vested to core contributors. Aligned with long-term network health.', accent: false},
           ].map(s => (
             <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
@@ -484,7 +499,10 @@ export default function AntsToken(): JSX.Element {
             {label: 'Max supply', value: '1,040,000,000 ANTS'},
             {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
             {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '2% of settlement (200 bps), collected to community reserve pool'},
+            {label: 'Network fee', value: '4% of settlement, flowing to the Protocol Reserve — not to a company'},
+            {label: 'DIEM pool fee', value: '10% fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS'},
+            {label: 'Provider Pool', value: 'Seller ANTS emissions are tracked but locked pending stronger validation; future claims may be subject to verification or slashing'},
+            {label: 'Anti-abuse policy', value: 'Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing'},
             {label: 'Transfers', value: 'Currently restricted'},
           ].map(r => (
             <div key={r.label} className={styles.contractsRow}>
@@ -497,8 +515,8 @@ export default function AntsToken(): JSX.Element {
 
       {/* ── BOTTOM CTA ── */}
       <section className={styles.bottomCta}>
-        <h2>Start earning ANTS</h2>
-        <p>Download AntStation, join the network as a provider or buyer, and start accumulating.</p>
+        <h2>Help build the network</h2>
+        <p>Download AntStation, use the network for real AI work, run a provider, and help improve the open-source protocol.</p>
         <div className={styles.bottomCtaBtns}>
           <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
             Download AntStation →

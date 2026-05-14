@@ -4,6 +4,87 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-10 — Desktop bundled runtime version resolution fix
+
+### Desktop
+
+- `@antseed/desktop@0.1.79`
+
+### Fixed
+
+- Fixed Desktop bundled router runtime to resolve each transitive dependency from its parent package's perspective and nest version-conflicting copies under the parent. The previous flat-copy bundler picked the workspace-hoisted top-level version and silently dropped parent-specific nested copies — causing the buyer to fail at startup with `Named export 'execa' not found ... CommonJS module` because `default-gateway@7.2.2` was paired with the wrong `execa` version.
+
+## 2026-05-10 — Desktop router clean reinstall
+
+### Desktop
+
+- `@antseed/desktop@0.1.78`
+
+### Fixed
+
+- Fixed Desktop router recovery so stale or incomplete bundled router installs are deleted and recreated from the app bundle instead of being incrementally repaired.
+- Prevented the Desktop-started buyer runtime from retrying npm plugin repair after a successful bundled reinstall, keeping recovery offline on locked-down corporate networks.
+
+## 2026-05-10 — Anthropic streaming token accounting fix
+
+### Published
+
+- `@antseed/api-adapter@0.1.39`
+- `@antseed/node@0.2.84`
+- `@antseed/payments@0.1.18`
+- `@antseed/cli@0.1.119`
+
+### Desktop
+
+- `@antseed/desktop@0.1.77`
+
+### Fixed
+
+- Fixed Anthropic Messages streaming token accounting so the `message_start` event's `message.usage` payload is unwrapped alongside `parsed.usage` and `parsed.response.usage`. Previously, cached input tokens (`cache_read_input_tokens`) and the full input count vanished from streamed Anthropic responses, leaving only the small fresh tail from `message_delta` — producing on-chain `MetadataRecorded` events with absurdly low `inputTokens` and under-billing sellers for cached traffic. Both buyer and seller installs need this update for correct on-chain stats, accurate seller billing, and matching cost-tolerance validation between peers.
+- Fixed Desktop bundling so the prepared resource tree no longer collides when multiple plugins share transitive runtime dependencies.
+
+## 2026-05-10 — Buyer router install repair
+
+### Published
+
+- `@antseed/cli@0.1.118`
+
+### Desktop
+
+- `@antseed/desktop@0.1.76`
+
+### Fixed
+
+- Fixed `antseed buyer start` so trusted router plugins are repaired automatically when the plugin package is present but incomplete, including missing nested dependencies such as `ethers` under bundled Desktop installs.
+- Fixed Desktop plugin setup so bundled router repairs copy the full transitive runtime dependency tree of `@antseed/node` (`ethers`, `@silentbot1/nat-api`, `tokenx`, ...) and work fully offline without Node or npm on the user machine.
+- Fixed Desktop bundling so the dependency tree of `@antseed/node` is materialized as real files under `Resources/bundled-plugins/`, avoiding `ENOTDIR` failures when copying out of `app.asar`.
+- Fixed the Desktop setup screen so a transient router-plugin install failure no longer blocks the app after the buyer runtime and service catalog are available.
+- Added a manual install hint to missing third-party plugin errors.
+
+## 2026-05-09 — Reputation, pricing, and cached-token fixes
+
+### Published
+
+- `@antseed/api-adapter@0.1.38`
+- `@antseed/node@0.2.83`
+- `@antseed/router-core@0.1.44`
+- `@antseed/router-local@0.1.43`
+- `@antseed/payments@0.1.17`
+- `@antseed/cli@0.1.116`
+
+### Added
+
+- Added multi-factor on-chain peer reputation scores based on settled volume, completed channels, average channel value, recency, stake age, and ghost penalties.
+- Surfaced reputation scores in `antseed network browse` and Desktop Discover, with reputation-first ranking and low-reputation warnings.
+- Added settled USDC volume to Desktop Discover peer cards.
+
+### Fixed
+
+- Enforced buyer pricing policy across router, CLI, and Desktop Discover paths, including invalid cached-input pricing.
+- Fixed pinned peer routing so manual peer selection respects the full buyer policy, including explicit minimum reputation.
+- Fixed Anthropic cached-input token accounting so usage metadata records total logical input tokens while preserving fresh/cached cost splits.
+- Fixed compact token formatting so `1000M` rolls up to `1B`.
+
 ## 2026-05-07 — Payment channel catch-up fixes
 
 ### Published

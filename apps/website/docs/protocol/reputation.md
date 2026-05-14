@@ -101,8 +101,8 @@ On-chain reputation feeds into the router's peer selection algorithm. The `@ants
 
 ### Scoring Rules
 
-- **Minimum reputation filter**: Peers below `minPeerReputation` (default: 50) are excluded before scoring.
-- **On-chain precedence**: When on-chain reputation data is available, it takes precedence over the local trust score. Local metrics (success rate, latency, uptime) serve as tiebreakers and fill in during the bootstrapping period before a seller has on-chain history.
-- **Score composition**: On-chain score is derived primarily from `channelCount`, `ghostCount`, and `totalVolumeUsdc` from `AntseedChannels`, optionally supplemented by token/request counts from `AntseedStats`, combined with ERC-8004 feedback signals.
+- **Minimum reputation filter**: Defaults to `0` (no reputation gate). Buyers can explicitly raise `minPeerReputation` to exclude lower-reputation peers before scoring.
+- **On-chain precedence**: When on-chain reputation data is available, it takes precedence over locally reported reputation. Runtime metrics such as latency and failure history are handled separately by router scoring.
+- **Score composition**: On-chain score is multi-factor. Settled USDC volume carries the largest weight through an exponent-shaped logarithmic curve, so large settled-volume differences continue to matter and many tiny channels cannot rank highly by themselves. Completed `channelCount`, average settled value per channel, `lastSettledAt` recency, and seller stake age also contribute. `ghostCount` applies a penalty based on the ghost-channel rate.
 - **Latency**: Tracked as an exponential moving average (alpha: 0.3).
 - **Failure backoff**: Peers with consecutive failures enter exponential backoff cooldown.
