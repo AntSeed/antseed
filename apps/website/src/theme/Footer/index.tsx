@@ -35,6 +35,7 @@ export default function Footer(): JSX.Element {
         <Link to="/docs/lightpaper" className="custom-footer-link" style={linkStyle}>Light Paper</Link>
         <Link to="/blog" className="custom-footer-link" style={linkStyle}>Blog</Link>
         <Link to="/vs/openrouter" className="custom-footer-link" style={linkStyle}>vs OpenRouter</Link>
+        <Link to="/terms-of-service" className="custom-footer-link" style={linkStyle}>Terms</Link>
       </div>
 
       {/* Social icons — same filled SVGs as header */}

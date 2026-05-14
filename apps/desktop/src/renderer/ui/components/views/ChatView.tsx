@@ -1,22 +1,27 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
+import type { KeyboardEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
+  ArrowDown02Icon,
   BrowserIcon,
+  Cancel01Icon,
   Folder01Icon,
-  GitBranchIcon
+  GitBranchIcon,
+  Search01Icon
 } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
-import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
+import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 import { ServiceDropdown } from '../chat/ServiceDropdown';
 import { SwitchServiceDialog } from '../chat/SwitchServiceDialog';
+import { LowReputationDialog } from '../chat/LowReputationDialog';
 import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewer';
 import { BrowserPreview } from '../BrowserPreview';
@@ -27,6 +32,7 @@ import { AntStationStackedLogo } from '../AntStationLogo';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
 const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
+const LOW_REPUTATION_SCORE_THRESHOLD = 50;
 
 import styles from './ChatView.module.scss';
 import bubbleStyles from '../chat/ChatBubble.module.scss';
@@ -38,6 +44,11 @@ const DEFAULT_PREVIEW_FRACTION = 0.5;
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const NEAR_BOTTOM_PX = 40;
+
+function isNearScrollBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+}
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -63,6 +74,38 @@ function getMessageKey(message: ChatMessage, index: number): string {
   }
   const createdAt = Number(message.createdAt) || 0;
   return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
+}
+
+function collectSearchableText(value: unknown, depth = 0): string {
+  if (value == null || depth > 4) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => collectSearchableText(entry, depth + 1)).filter(Boolean).join('\n');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return [
+      record.text,
+      record.thinking,
+      record.content,
+      record.name,
+      record.fileName,
+      record.error,
+      record.input,
+      record.details,
+    ].map((entry) => collectSearchableText(entry, depth + 1)).filter(Boolean).join('\n');
+  }
+  return '';
+}
+
+function getSearchableMessageText(message: ChatMessage): string {
+  return collectSearchableText(message.content);
+}
+
+function getNormalizedSearchQuery(query: string): string {
+  return query.trim().toLowerCase();
 }
 
 function getPathTail(value: string | null | undefined): string {
@@ -141,17 +184,28 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
   const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
+  const [lowReputationDialogOpen, setLowReputationDialogOpen] = useState(false);
+  const [pendingLowReputationSend, setPendingLowReputationSend] = useState<{
+    text: string;
+    attachments: RawChatAttachment[];
+  } | null>(null);
   // While the LLM is streaming we still let the user type/paste.
   // Drafts the user confirms (Enter / Send) are parked in this queue as
   // cards above the composer and ship one-per-turn as soon as the current
   // stream ends (naturally or via Stop). See issue #59.
   type PendingDraft = {
     id: string;
+    conversationId: string | null;
     text: string;
     attachments: RawChatAttachment[];
   };
   const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<ViewerAttachment | null>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [hasNewActivityWhileScrolledUp, setHasNewActivityWhileScrolledUp] = useState(false);
   const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
@@ -164,11 +218,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setTooltipDismissed(true);
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messageSearchInputRef = useRef<HTMLInputElement>(null);
+  const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const approvedLowReputationPeersRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
-  const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
   const wasActiveRef = useRef<boolean>(active);
   const isUserScrolledUp = useRef(false);
@@ -177,6 +233,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
+  const keyedVisibleMessages = useMemo(
+    () => visibleMessages.map((message, index) => ({ message, key: getMessageKey(message, index) })),
+    [visibleMessages],
+  );
+  const normalizedMessageSearchQuery = getNormalizedSearchQuery(messageSearchQuery);
+  const messageSearchResults = useMemo(() => {
+    if (!normalizedMessageSearchQuery) return [];
+    return keyedVisibleMessages
+      .filter(({ message }) => hasSearchPhraseMatch(getSearchableMessageText(message), normalizedMessageSearchQuery))
+      .map(({ key }) => key);
+  }, [keyedVisibleMessages, normalizedMessageSearchQuery]);
+  const activeSearchResultKey = messageSearchResults[selectedSearchIndex] || null;
 
   const previewUrl = snap.browserPreviewUrl;
   const previewRequestId = snap.browserPreviewRequestId;
@@ -187,23 +255,122 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, [previewUrl, previewRequestId]);
 
-  // Track whether the user has scrolled away from the bottom
+  useEffect(() => {
+    setMessageSearchOpen(false);
+    setMessageSearchQuery('');
+    setSelectedSearchIndex(0);
+  }, [snap.chatActiveConversation]);
+
+  useEffect(() => {
+    setSelectedSearchIndex(0);
+  }, [normalizedMessageSearchQuery]);
+
+  useEffect(() => {
+    if (selectedSearchIndex >= messageSearchResults.length) {
+      setSelectedSearchIndex(Math.max(0, messageSearchResults.length - 1));
+    }
+  }, [messageSearchResults.length, selectedSearchIndex]);
+
+  useEffect(() => {
+    if (!messageSearchOpen) return;
+    const frame = requestAnimationFrame(() => messageSearchInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [messageSearchOpen]);
+
+  useEffect(() => {
+    if (!activeSearchResultKey) return;
+    const target = messageRefs.current.get(activeSearchResultKey);
+    if (!target) return;
+    isUserScrolledUp.current = true;
+
+    const frame = requestAnimationFrame(() => {
+      const activeMark = target.querySelector('.chat-search-mark-active');
+      const scrollTarget = activeMark instanceof HTMLElement ? activeMark : target;
+      scrollTarget.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [activeSearchResultKey]);
+
+  const openMessageSearch = useCallback(() => {
+    setMessageSearchOpen(true);
+  }, []);
+
+  const closeMessageSearch = useCallback(() => {
+    setMessageSearchOpen(false);
+    setMessageSearchQuery('');
+    setSelectedSearchIndex(0);
+    inputRef.current?.focus();
+  }, []);
+
+  const selectNextSearchResult = useCallback(() => {
+    setSelectedSearchIndex((current) => {
+      if (messageSearchResults.length === 0) return 0;
+      return (current + 1) % messageSearchResults.length;
+    });
+  }, [messageSearchResults.length]);
+
+  const selectPreviousSearchResult = useCallback(() => {
+    setSelectedSearchIndex((current) => {
+      if (messageSearchResults.length === 0) return 0;
+      return (current - 1 + messageSearchResults.length) % messageSearchResults.length;
+    });
+  }, [messageSearchResults.length]);
+
+  const handleMessageSearchKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) selectPreviousSearchResult();
+      else selectNextSearchResult();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMessageSearch();
+    }
+  }, [closeMessageSearch, selectNextSearchResult, selectPreviousSearchResult]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        openMessageSearch();
+        return;
+      }
+      if (event.key === 'Escape' && messageSearchOpen) {
+        event.preventDefault();
+        closeMessageSearch();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [active, closeMessageSearch, messageSearchOpen, openMessageSearch]);
+
+  // Track whether the user has scrolled away from the bottom.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const handleScroll = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      const atBottom = isNearScrollBottom(el);
       isUserScrolledUp.current = !atBottom;
+      setIsNearBottom(atBottom);
+      if (atBottom) {
+        setHasNewActivityWhileScrolledUp(false);
+      }
     };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const scrollChatToBottom = useCallback(() => {
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTo({ top: el.scrollHeight, behavior });
     isUserScrolledUp.current = false;
+    setIsNearBottom(true);
+    setHasNewActivityWhileScrolledUp(false);
   }, []);
 
   // Opening/reopening a conversation should land on the latest message, not the
@@ -224,14 +391,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
     isUserScrolledUp.current = false;
     scrollChatToBottom();
-    const frame = requestAnimationFrame(scrollChatToBottom);
+    const frame = requestAnimationFrame(() => scrollChatToBottom());
     return () => cancelAnimationFrame(frame);
   }, [active, snap.chatActiveConversation, scrollChatToBottom]);
 
   // Keep the view pinned to the bottom while the user is already at the bottom.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || isUserScrolledUp.current) {
+    if (!el) {
+      return;
+    }
+    if (isUserScrolledUp.current) {
+      setHasNewActivityWhileScrolledUp(true);
       return;
     }
 
@@ -253,23 +424,29 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => observer.disconnect();
   }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending, scrollChatToBottom]);
 
-  // Re-focus the input when it transitions from disabled → enabled, and if a
-  // draft is queued, ship the head of the queue as its own turn. Each draft
-  // stays a distinct message so the model can reason/respond between them
-  // (matches CLI-style turn-by-turn flow).
-  // Dispatch is inlined (rather than delegating to handleSend) so the effect
-  // isn't coupled to handleSend's stale closure over chatInputDisabled.
+  const activePendingQueue = useMemo(
+    () => pendingQueue.filter((item) => item.conversationId === snap.chatActiveConversation),
+    [pendingQueue, snap.chatActiveConversation],
+  );
+
+  // Re-focus the input when the active conversation becomes writable, and if
+  // that same conversation has queued drafts, ship the head of its queue as its
+  // own turn. Queue entries are scoped to the conversation they were authored
+  // in so switching chats while a response streams cannot send the draft in the
+  // newly-opened chat.
   useEffect(() => {
-    const wasDisabled = prevInputDisabled.current;
-    const isDisabled = snap.chatInputDisabled;
-    prevInputDisabled.current = isDisabled;
-    if (!wasDisabled || isDisabled) return;
+    if (snap.chatInputDisabled) return;
     if (inputRef.current) inputRef.current.focus();
-    if (pendingQueue.length === 0) return;
-    const [head, ...rest] = pendingQueue;
-    setPendingQueue(rest);
-    actions.sendMessage(head.text, head.attachments);
-  }, [snap.chatInputDisabled, pendingQueue, actions]);
+    if (activePendingQueue.length === 0) return;
+    const head = activePendingQueue[0];
+    if (!head) return;
+    setPendingQueue((prev) => prev.filter((item) => item.id !== head.id));
+    if (head.conversationId) {
+      actions.sendMessageToConversation(head.conversationId, head.text, head.attachments);
+    } else {
+      actions.sendMessage(head.text, head.attachments);
+    }
+  }, [snap.chatInputDisabled, activePendingQueue, actions]);
 
   // --- Divider drag (pointer capture — no orphaned listeners) ---
   const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
@@ -323,6 +500,28 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   );
   const peerDisplayName =
     snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
+  const currentDiscoverRow = useMemo(() => {
+    const peerId = currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
+    const serviceId = currentServiceOption?.id || '';
+    if (!peerId) return null;
+    return snap.discoverRows.find((row) => (
+      row.peerId === peerId
+      && (!serviceId || row.serviceId === serviceId)
+      && (!currentServiceOption?.value || row.selectionValue === currentServiceOption.value || row.serviceId === serviceId)
+    )) ?? snap.discoverRows.find((row) => row.peerId === peerId) ?? null;
+  }, [currentServiceOption, snap.chatSelectedPeerId, snap.chatRoutedPeerId, snap.discoverRows]);
+  const lowReputationPeer = useMemo(() => {
+    const score = currentDiscoverRow?.onChainReputationScore;
+    const peerId = currentDiscoverRow?.peerId || currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
+    if (!peerId || typeof score !== 'number' || !Number.isFinite(score) || score >= LOW_REPUTATION_SCORE_THRESHOLD) {
+      return null;
+    }
+    return {
+      peerId,
+      score,
+      label: peerDisplayName || currentDiscoverRow?.peerDisplayName || currentDiscoverRow?.peerLabel || peerId.slice(0, 8),
+    };
+  }, [currentDiscoverRow, currentServiceOption?.peerId, snap.chatSelectedPeerId, snap.chatRoutedPeerId, peerDisplayName]);
 
   const applyServiceChange = useCallback(
     (value: string) => {
@@ -414,14 +613,46 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `pending-${String(Date.now())}-${String(Math.random())}`;
-      setPendingQueue((prev) => [...prev, { id, text, attachments: attachedFiles }]);
+      setPendingQueue((prev) => [
+        ...prev,
+        { id, conversationId: snap.chatActiveConversation, text, attachments: attachedFiles },
+      ]);
       resetComposer();
       return;
     }
+
+    if (
+      lowReputationPeer
+      && visibleMessages.length === 0
+      && !approvedLowReputationPeersRef.current.has(lowReputationPeer.peerId)
+    ) {
+      setPendingLowReputationSend({ text, attachments: attachedFiles });
+      setLowReputationDialogOpen(true);
+      return;
+    }
+
     const filesToSend = attachedFiles;
     resetComposer();
     actions.sendMessage(text, filesToSend);
-  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, resetComposer]);
+    scrollChatToBottom('smooth');
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length]);
+
+  const handleLowReputationContinue = useCallback(() => {
+    if (lowReputationPeer) {
+      approvedLowReputationPeersRef.current.add(lowReputationPeer.peerId);
+    }
+    const pending = pendingLowReputationSend;
+    setLowReputationDialogOpen(false);
+    setPendingLowReputationSend(null);
+    if (!pending) return;
+    resetComposer();
+    actions.sendMessage(pending.text, pending.attachments);
+  }, [actions, lowReputationPeer, pendingLowReputationSend, resetComposer]);
+
+  const handleLowReputationCancel = useCallback(() => {
+    setLowReputationDialogOpen(false);
+    setPendingLowReputationSend(null);
+  }, []);
 
   const handleRemovePending = useCallback((id: string) => {
     setPendingQueue((prev) => prev.filter((item) => item.id !== id));
@@ -592,11 +823,24 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     bridge?.sendBrowserPreviewElementSelected?.(info);
   }, []);
 
+  const handleScrollToLatest = useCallback(() => {
+    scrollChatToBottom('smooth');
+  }, [scrollChatToBottom]);
+
   const showWelcome =
     snap.chatConversationsLoaded &&
     !snap.chatActiveConversation &&
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;
+  const showScrollToLatest = !showWelcome && !isNearBottom;
+  const activeConversationIsSending = snap.chatActiveConversation
+    ? snap.chatSendingConversationIds.includes(snap.chatActiveConversation)
+    : snap.chatSending;
+  const showThinkingIndicator = snap.chatSending && (
+    !snap.chatSendingConversationId ||
+    snap.chatSendingConversationId === snap.chatActiveConversation ||
+    activeConversationIsSending
+  );
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = getPathEnding(workspacePath);
@@ -657,14 +901,75 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           )}
         </div>
         {snap.chatActiveConversation && (
-          <ChatSessionStats
-            sessionCost={snap.chatSessionAccumulatedCostUsd}
-            sessionTokens={snap.chatSessionTotalTokens}
-            lifetimeCost={snap.chatLifetimeSpentUsdc}
-            lifetimeTokens={snap.chatLifetimeTotalTokens}
-            reserved={snap.chatSessionReservedUsdc}
-            started={snap.chatSessionStarted}
-          />
+          <div className={styles.pageHeaderRight}>
+            {messageSearchOpen ? (
+              <div className={styles.messageSearchBar} role="search">
+                <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.8} className={styles.messageSearchIcon} />
+                <input
+                  ref={messageSearchInputRef}
+                  className={styles.messageSearchInput}
+                  value={messageSearchQuery}
+                  onChange={(event) => setMessageSearchQuery(event.target.value)}
+                  onKeyDown={handleMessageSearchKeyDown}
+                  placeholder="Search messages…"
+                  aria-label="Search messages in this conversation"
+                />
+                <span className={styles.messageSearchCount} aria-live="polite">
+                  {normalizedMessageSearchQuery
+                    ? `${messageSearchResults.length > 0 ? selectedSearchIndex + 1 : 0} / ${messageSearchResults.length}`
+                    : '0 / 0'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={selectPreviousSearchResult}
+                  disabled={messageSearchResults.length === 0}
+                  aria-label="Previous search result"
+                  title="Previous result"
+                >
+                  <HugeiconsIcon icon={ArrowUp02Icon} size={14} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={selectNextSearchResult}
+                  disabled={messageSearchResults.length === 0}
+                  aria-label="Next search result"
+                  title="Next result"
+                >
+                  <HugeiconsIcon icon={ArrowDown02Icon} size={14} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.messageSearchButton}
+                  onClick={closeMessageSearch}
+                  aria-label="Close message search"
+                  title="Close search"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={styles.messageSearchTrigger}
+                onClick={openMessageSearch}
+                aria-label="Search messages in this conversation"
+                title="Search messages (⌘/Ctrl+F)"
+              >
+                <HugeiconsIcon icon={Search01Icon} size={15} strokeWidth={1.8} />
+                <span>Search</span>
+              </button>
+            )}
+            <ChatSessionStats
+              sessionCost={snap.chatSessionAccumulatedCostUsd}
+              sessionTokens={snap.chatSessionTotalTokens}
+              lifetimeCost={snap.chatLifetimeSpentUsdc}
+              lifetimeTokens={snap.chatLifetimeTotalTokens}
+              reserved={snap.chatSessionReservedUsdc}
+              started={snap.chatSessionStarted}
+            />
+          </div>
         )}
       </div>
 
@@ -704,14 +1009,27 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 </div>
               </div>
             ) : (
-              visibleMessages.map((msg, i) => (
-                <ChatBubble
-                  key={getMessageKey(msg, i)}
-                  message={msg}
-                  onOpenPreview={handleOpenPreview}
-                  conversationId={snap.chatActiveConversation || undefined}
-                />
-              ))
+              keyedVisibleMessages.map(({ message: msg, key }) => {
+                const isSearchMatch = messageSearchResults.includes(key);
+                const isActiveSearchMatch = activeSearchResultKey === key;
+                return (
+                  <div
+                    key={key}
+                    ref={(node) => {
+                      if (node) messageRefs.current.set(key, node);
+                      else messageRefs.current.delete(key);
+                    }}
+                  >
+                    <ChatBubble
+                      message={msg}
+                      onOpenPreview={handleOpenPreview}
+                      conversationId={snap.chatActiveConversation || undefined}
+                      searchQuery={isSearchMatch ? messageSearchQuery : undefined}
+                      searchActive={isActiveSearchMatch}
+                    />
+                  </div>
+                );
+              })
             )}
             {snap.chatStreamingMessage ? (
               <ChatBubble
@@ -722,13 +1040,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
-            {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
+            {showThinkingIndicator && (
               <WalkingAnt
                 elapsedMs={snap.chatThinkingElapsedMs}
                 phaseLabel={snap.chatThinkingPhase}
               />
             )}
-            {pendingQueue.map((item) => (
+            {activePendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
                 className={`${bubbleStyles.chatBubble} ${bubbleStyles.own}`}
@@ -781,6 +1099,17 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             />
           </div>
 
+          {showScrollToLatest ? (
+            <button
+              type="button"
+              className={`${styles.scrollToLatestButton}${hasNewActivityWhileScrolledUp ? ` ${styles.scrollToLatestButtonNew}` : ''}`}
+              onClick={handleScrollToLatest}
+              aria-label="Scroll to latest message"
+              title="Scroll to latest message"
+            >
+              <HugeiconsIcon icon={ArrowUp02Icon} size={16} strokeWidth={2} className={styles.scrollToLatestIcon} />
+            </button>
+          ) : null}
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
@@ -935,6 +1264,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         onStartNew={handleSwitchStartNew}
         onCancel={handleSwitchCancel}
       />
+      <LowReputationDialog
+        visible={lowReputationDialogOpen}
+        peerLabel={lowReputationPeer?.label || 'this peer'}
+        scoreLabel={lowReputationPeer ? (lowReputationPeer.score / 10).toFixed(1) : ''}
+        onContinue={handleLowReputationContinue}
+        onCancel={handleLowReputationCancel}
+      />
       {previewAttachment && (
         <AttachmentViewer
           attachment={previewAttachment}
@@ -946,8 +1282,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 }
 
 function compactTokensFromFormatted(formatted: string): string {
-  const n = Number(formatted.replace(/[^0-9.]/g, ''));
-  if (!Number.isFinite(n) || n <= 0) return '0';
+  const raw = String(formatted || '').trim();
+  const base = Number(raw.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(base) || base <= 0) return '0';
+  const lower = raw.toLowerCase();
+  const n = lower.includes('b')
+    ? base * 1_000_000_000
+    : lower.includes('m')
+      ? base * 1_000_000
+      : lower.includes('k')
+        ? base * 1_000
+        : base;
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(Math.floor(n));

@@ -67,6 +67,41 @@ function extractPreviewUrl(name: unknown, input: unknown, output: string): strin
   return urlMatch?.[0];
 }
 
+type VerbBucket = 'edit' | 'read' | 'bash' | 'search' | 'browse' | 'write' | 'other';
+
+function bucketForKind(kind: string): VerbBucket {
+  if (kind === 'edit' || kind === 'multi_edit' || kind === 'apply_patch') return 'edit';
+  if (kind === 'read' || kind === 'read_file' || kind === 'ls' || kind === 'find') return 'read';
+  if (kind === 'bash' || kind === 'shell' || kind === 'run' || kind === 'execute') return 'bash';
+  if (kind === 'grep' || kind === 'search' || kind === 'search_files') return 'search';
+  if (kind === 'web_fetch' || kind === 'open_browser_preview' || kind === 'start_dev_server') return 'browse';
+  if (kind === 'write' || kind === 'write_file') return 'write';
+  return 'other';
+}
+
+function summarizeToolItems(items: ToolRenderItem[]): string {
+  const counts: Record<VerbBucket, number> = {
+    edit: 0, read: 0, bash: 0, search: 0, browse: 0, write: 0, other: 0,
+  };
+  for (const item of items) counts[bucketForKind(item.kind)] += 1;
+
+  const phrase = (n: number, singular: string, plural: string) =>
+    `${n} ${n === 1 ? singular : plural}`;
+
+  const parts: string[] = [];
+  if (counts.edit > 0)   parts.push(`Edited ${phrase(counts.edit,   'file',    'files')}`);
+  if (counts.write > 0)  parts.push(`Wrote ${phrase(counts.write,   'file',    'files')}`);
+  if (counts.read > 0)   parts.push(`Read ${phrase(counts.read,     'file',    'files')}`);
+  if (counts.search > 0) parts.push(`Ran ${phrase(counts.search,    'search',  'searches')}`);
+  if (counts.bash > 0)   parts.push(`Executed ${phrase(counts.bash, 'command', 'commands')}`);
+  if (counts.browse > 0) parts.push(`Opened ${phrase(counts.browse, 'page',    'pages')}`);
+  if (counts.other > 0)  parts.push(`Used ${phrase(counts.other,    'tool',    'tools')}`);
+
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')}, ${parts[parts.length - 1]}`;
+}
+
 function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem {
   const output = String(block.content || '');
   const diff = extractToolDiff(block);
@@ -98,7 +133,7 @@ function getBlockRenderKey(block: ContentBlock, index: number, messagePrefix = '
 }
 
 
-function StreamingMarkdown({ text }: { text: string }) {
+function StreamingMarkdown({ text, highlightQuery, activeHighlight }: { text: string; highlightQuery?: string; activeHighlight?: boolean }) {
   const [visibleText, setVisibleText] = useState(text);
   const frameRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef(0);
@@ -159,32 +194,44 @@ function StreamingMarkdown({ text }: { text: string }) {
 
   return (
     <div className="chat-bubble-content streaming-cursor">
-      <MarkdownContent text={visibleText} />
+      <MarkdownContent text={visibleText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
     </div>
   );
 }
 
-function ThinkingBlockView({ block }: { block: ContentBlock }) {
+function ThinkingBlockView({ block, highlightQuery, activeHighlight }: { block: ContentBlock; highlightQuery?: string; activeHighlight?: boolean }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
-  const isOpen = manualToggle ?? true;
-
-  if (!block.thinking?.trim()) return null;
-
+  const isOpen = manualToggle ?? false;
   const thinkingText = String(block.thinking || '');
+  const hasThinkingText = thinkingText.trim().length > 0;
+
+  // Some providers emit a thinking_start event before any thinking_delta, and
+  // some only expose redacted/empty thinking while still spending time in the
+  // reasoning phase. Keep the in-progress block visible so the user sees that
+  // the model is actively thinking instead of an apparently stuck/blank turn.
+  if (!hasThinkingText && !block.streaming) return null;
+
   const previewLength = 120;
-  const preview = thinkingText.length > previewLength
-    ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
-    : thinkingText;
+  const preview = hasThinkingText
+    ? (thinkingText.length > previewLength
+        ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
+        : thinkingText)
+    : 'Thinking...';
 
   return (
     <div className={`thinking-block${block.streaming ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
       <button
         type="button"
         className="thinking-block-header"
-        onClick={() => setManualToggle((prev) => !(prev ?? true))}
+        onClick={() => setManualToggle((prev) => !(prev ?? false))}
       >
-        <span className="thinking-block-triangle">▶</span>
-        <span>Internal Thoughts</span>
+        <span className="thinking-block-triangle">›</span>
+        <span className="thinking-block-label">Internal Thoughts</span>
+        {!isOpen && (
+          <span className="thinking-block-preview">
+            <MarkdownContent text={preview} className="thinking-block-preview-md" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+          </span>
+        )}
         {block.streaming ? (
           <span className="thinking-dots" aria-hidden="true">
             <span />
@@ -193,15 +240,18 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
           </span>
         ) : null}
       </button>
-      {!isOpen && (
-        <div className="thinking-block-preview">
-          <MarkdownContent text={preview} className="thinking-block-preview-md" />
+      <div className={`thinking-block-body-wrap${isOpen ? '' : ' collapsed'}`}>
+        <div className="thinking-block-body-inner">
+          <div className="thinking-block-body">
+            {hasThinkingText ? (
+              block.streaming
+                ? <StreamingMarkdown text={thinkingText} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+                : <MarkdownContent text={thinkingText} className="thinking-block-markdown" highlightQuery={highlightQuery} activeHighlight={activeHighlight} />
+            ) : (
+              <div className="chat-bubble-content streaming-cursor">Thinking...</div>
+            )}
+          </div>
         </div>
-      )}
-      <div className="thinking-block-body">
-        {block.streaming
-          ? <StreamingMarkdown text={thinkingText} />
-          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />}
       </div>
     </div>
   );
@@ -335,47 +385,42 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   }
   if (anyRunning) wasRunningRef.current = true;
 
-  // Open by default (unless user manually collapsed)
-  const isOpen = manualToggle ?? true;
+  // Closed by default (unless user manually expanded)
+  const isOpen = manualToggle ?? false;
 
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
-  const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
-  const label = `Tools (${items.length})`;
-  const runningSummary = items
-    .filter((item) => item.status === 'running')
-    .map((item) => item.label)
-    .join(' / ');
-  const preview = items
-    .slice(0, 3)
-    .map((item) => item.label)
-    .join(' • ');
-  const previewSuffix = items.length > 3 ? ` +${items.length - 3} more` : '';
+  const summary = summarizeToolItems(items);
+  const closedLabel = anyRunning ? `Running ${items.length} ${items.length === 1 ? 'tool' : 'tools'}` : summary;
+  // Activity hint: while running show the active tool; otherwise list the
+  // first few tool labels with a "+N more" suffix.
+  const runningItem = items.find((it) => it.status === 'running');
+  const activityHint = runningItem
+    ? runningItem.label
+    : items.slice(0, 3).map((it) => it.label).join(' • ')
+        + (items.length > 3 ? ` +${items.length - 3} more` : '');
+  const toggle = () => setManualToggle((prev) => !(prev ?? false));
 
   return (
     <>
-      <div className={`tool-group${anyRunning ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
+      <div className={`tool-group${anyRunning ? ' streaming' : ''}${isOpen ? ' open' : ''} status-${groupStatus}`}>
         <button
           type="button"
-          className="tool-group-header-btn"
-          onClick={() => setManualToggle((prev) => !(prev ?? anyRunning))}
+          className="tool-group-summary-btn"
+          onClick={toggle}
         >
           <span className="tool-group-chevron">›</span>
-          <span className="tool-group-label">{label}</span>
+          <span className="tool-group-summary-text">
+            {isOpen ? `Tools (${items.length})` : closedLabel}
+          </span>
+          {!isOpen && activityHint ? (
+            <span className="tool-group-summary-activity">{activityHint}</span>
+          ) : null}
           {anyRunning ? (
             <span className="thinking-dots" aria-hidden="true">
               <span /><span /><span />
             </span>
           ) : null}
         </button>
-        {!isOpen ? (
-          <div className="tool-group-preview">
-            <span className="tool-group-preview-text">
-              {runningSummary || preview}
-              {previewSuffix}
-            </span>
-            <span className={`tool-group-status ${groupStatus}`}>{groupStatusLabel}</span>
-          </div>
-        ) : null}
         <div className={`tool-group-list-wrap${isOpen ? '' : ' collapsed'}`}>
           <div className="tool-group-list-inner">
             <div className="tool-group-list">
@@ -440,15 +485,52 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   );
 }
 
+function isRenderableThinkingBlock(block: ContentBlock): boolean {
+  return Boolean(block.streaming) || String(block.thinking || '').trim().length > 0;
+}
+
+function mergeThinkingBlocks(blocks: ContentBlock[]): ContentBlock {
+  const first = blocks[0] ?? { type: 'thinking' };
+  return {
+    ...first,
+    type: 'thinking',
+    renderKey: String(first.renderKey || first.id || first.tool_use_id || 'thinking-group'),
+    thinking: blocks
+      .map((block) => String(block.thinking || '').trim())
+      .filter(Boolean)
+      .join('\n\n'),
+    streaming: blocks.some((block) => block.streaming),
+  };
+}
+
 function renderAssistantBlocks(
   blocks: ContentBlock[],
   streaming = false,
   messagePrefix = '',
   onOpenPreview?: (url: string) => void,
   conversationId?: string,
+  highlightQuery?: string,
+  activeHighlight?: boolean,
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
+  let thinkingGroup: ContentBlock[] = [];
+
+  const flushThinkingGroup = (): void => {
+    if (thinkingGroup.length === 0) return;
+    const first = thinkingGroup[0];
+    const index = blocks.indexOf(first);
+    nodes.push(renderBlock(
+      mergeThinkingBlocks(thinkingGroup),
+      index >= 0 ? index : nodes.length,
+      streaming,
+      messagePrefix,
+      conversationId,
+      highlightQuery,
+      activeHighlight,
+    ));
+    thinkingGroup = [];
+  };
 
   const flushToolGroup = (): void => {
     if (toolGroup.length === 0) return;
@@ -462,16 +544,30 @@ function renderAssistantBlocks(
     toolGroup = [];
   };
 
+  const flushGroups = (): void => {
+    flushToolGroup();
+    flushThinkingGroup();
+  };
+
   blocks.forEach((block, index) => {
     if (block.type === 'tool_use') {
+      flushThinkingGroup();
       toolGroup.push(block);
       return;
     }
-    flushToolGroup();
-    nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId));
+
+    if (block.type === 'thinking') {
+      if (!isRenderableThinkingBlock(block)) return;
+      flushToolGroup();
+      thinkingGroup.push(block);
+      return;
+    }
+
+    flushGroups();
+    nodes.push(renderBlock(block, index, streaming, messagePrefix, conversationId, highlightQuery, activeHighlight));
   });
 
-  flushToolGroup();
+  flushGroups();
   return nodes;
 }
 
@@ -588,18 +684,20 @@ function renderBlock(
   streaming = false,
   messagePrefix = '',
   conversationId?: string,
+  highlightQuery?: string,
+  activeHighlight?: boolean,
 ): ReactNode {
   const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
   if (block.type === 'text') {
     if (block.streaming) {
-      return <StreamingMarkdown key={blockKey} text={String(block.text || '')} />;
+      return <StreamingMarkdown key={blockKey} text={String(block.text || '')} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
     }
-    return <MarkdownContent key={blockKey} text={String(block.text || '')} />;
+    return <MarkdownContent key={blockKey} text={String(block.text || '')} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
   }
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockView key={blockKey} block={block} />;
+    return <ThinkingBlockView key={blockKey} block={block} highlightQuery={highlightQuery} activeHighlight={activeHighlight} />;
   }
 
   if (block.type === 'file') {
@@ -708,9 +806,11 @@ type ChatBubbleProps = {
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
+  searchQuery?: string;
+  searchActive?: boolean;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -732,21 +832,21 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview, conversationId);
+        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive);
       }
-      return <MarkdownContent text={String(message.content)} />;
+      return <MarkdownContent text={String(message.content)} highlightQuery={searchQuery} activeHighlight={searchActive} />;
     }
 
     if (typeof message.content === 'string') {
-      return <MarkdownContent text={message.content} />;
+      return <MarkdownContent text={message.content} highlightQuery={searchQuery} activeHighlight={searchActive} />;
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix, conversationId));
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix, conversationId, searchQuery, searchActive));
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId]);
+  }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive]);
 
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (

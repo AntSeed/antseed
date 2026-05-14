@@ -14,7 +14,6 @@ export {
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';
 export { PeerLookup, DEFAULT_LOOKUP_CONFIG, type LookupConfig, type LookupResult } from './peer-lookup.js';
 
-export { scorePeer, rankPeers, selectBestPeer, selectDiversePeers, DEFAULT_SCORING_WEIGHTS, type ScoringWeights, type PeerCandidate, type ScoredPeer } from './peer-selector.js';
 export { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, mergeBootstrapNodes, toBootstrapConfig, type BootstrapNode } from './bootstrap.js';
 export { encodeMetadata, encodeMetadataForSigning, decodeMetadata } from './metadata-codec.js';
 export { validateMetadata, MAX_METADATA_SIZE, MAX_PROVIDERS, type ValidationError } from './metadata-validator.js';

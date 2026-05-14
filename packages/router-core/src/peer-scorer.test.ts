@@ -13,7 +13,6 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
     lastSeen: 1_000_000,
     providers: ['anthropic'],
     reputationScore: 80,
-    trustScore: 80,
     maxConcurrency: 10,
     currentLoad: 1,
     ...overrides,

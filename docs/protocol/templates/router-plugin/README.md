@@ -63,7 +63,7 @@ Then update `src/index.ts` to use the new class and adjust `name`, `displayName`
 
 ```ts
 import { DefaultRouter } from '@antseed/node';
-const router = new DefaultRouter({ minReputation: 70 }); // default is 50
+const router = new DefaultRouter({ minReputation: 70 }); // default is 0 (no reputation gate)
 ```
 
 ## Publishing

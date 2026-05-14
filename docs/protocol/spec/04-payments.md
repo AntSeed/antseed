@@ -153,69 +153,99 @@ ERC-20 on Base. No pre-mine. No initial supply. All ANTS distributed through ver
 
 **Phase 1 (current):** Non-transferable. `transfer()` and `transferFrom()` revert. Participants earn and claim but cannot trade. Owner calls `enableTransfers()` (one-way toggle) when the network matures.
 
-Mint authority restricted to `AntseedEmissions` contract (`setEmissionsContract()` — one-time setter).
+Mint authority restricted to `AntseedEmissionsV2` contract (`setEmissionsContract()` — one-time setter).
 
-### Emission Schedule
+### AntseedEmissionsV2
 
-- Epoch emission: `e_e = e_0 / 2^(e/h)` — halving every ~6 months
+Deployed upgrade of the original `AntseedEmissions`. Backward-compatible with V1 by reading V1's genesis, epoch constants, and combining V1 + V2 points for the migration epoch and all earlier epochs.
+
+- **Base mainnet address:** `0xF13bE52c4A3afC6AE29536f073588d01A0564088`
+- **Genesis:** copied from V1 (`legacyEmissions.genesis()`)
+- **Epoch duration / halving interval:** copied from V1
+
+#### Epochs
+
+Epochs advance automatically via block timestamp:
+
+```
+currentEpoch = (block.timestamp - genesis) / EPOCH_DURATION
+```
+
+No manual `advanceEpoch()` is required. Epoch parameters (share percentages and per-epoch caps) are snapshotted on first V2 touch of each epoch and remain immutable for that epoch.
+
+#### Emission Schedule
+
+- Epoch emission: `e_e = e_0 / 2^(epoch / HALVING_INTERVAL)` — halving every ~6 months
 - Epoch duration: configurable (default 1 week, 26 epochs per halving interval)
-- `advanceEpoch()` callable by anyone when epoch duration has passed
 
-### Emission Split
+#### Emission Split (per-epoch snapshot)
 
 | Bucket | Default | Purpose |
 |---|---|---|
-| Seller share | 65% | Rewards proven delivery |
-| Buyer share | 25% | Rewards network usage and feedback |
-| Reserve share | 10% | Future use (subscription pool staking, liquidity) |
+| Seller share | 50% | Proven delivery (locked rewards pool until unlocked) |
+| Buyer share | 20% | Rewards network usage and feedback |
+| Reserve share | 15% | Protocol Reserve (network sustainability, liquidity) |
+| Team share | 15% | Protocol team |
 
-Reserve accumulates in the emissions contract until `setReserveDestination(address)` is called.
+#### Points Accrual
 
-### Points System
+During `settle()` / `close()`, `AntseedChannels` calls one of:
 
-**Seller points** (accumulated on each `settle()` call):
-```
-sellerPointsDelta = E(P) * V(P) * feedbackMultiplier(P)
+- `accrueSellerPoints(seller, pointsDelta)`
+- `accrueBuyerPoints(buyer, pointsDelta)`
+- `accruePoints(channelId, buyer, seller, pointsDelta)` — optional pair-aware hook for future channels
 
-where:
-  E(P) = min(Q(P), k * S(P))            ← stake-capped qualified proven signs
-  V(P) = qualified token volume           ← real tokens delivered in this settlement
-  feedbackMultiplier(P) =                 ← from ERC-8004 buyer feedback
-    0.5x   if avgFeedback < -50
-    0.75x  if avgFeedback < 0
-    1.0x   if no feedback
-    1.25x  if avgFeedback > 50
-    1.5x   if avgFeedback > 80
-```
+For epochs `<= MIGRATION_EPOCH`, V1 points are combined with V2 points on claim. For later epochs, only V2 points are used.
 
-**Buyer points** (accumulated on each proven session sign + feedback):
-```
-buyerPointsDelta = usagePoints + feedbackPoints + diversityBonus
+#### Points Policy Hook
 
-where:
-  usagePoints    = provenBuyVolume                   ← tokens in this proven sign
-  feedbackPoints = FEEDBACK_WEIGHT per submission     ← flat bonus for on-chain feedback
-  diversityBonus = usagePoints * min(uniqueSellers / BASE_DIVERSITY, MAX_DIVERSITY_MULT)
-```
+An optional `IAntseedPointsPolicy` can be set by owner. If set and its `points()` call succeeds, it returns weighted seller/buyer points. If not set, or if the call reverts, raw points are used.
 
-### Gas-Efficient Distribution (Synthetix Reward-Per-Point)
+#### Per-Epoch Pro-Rata Distribution
 
-No loops. O(1) per interaction. Global accumulator tracks reward-per-point:
+Claiming computes rewards per finalized epoch:
 
 ```
-// On every settle() — O(1):
-rewardPerPointStored += (currentEmissionRate * timeSinceLastUpdate) / totalNetworkPoints;
-seller.pendingReward += seller.points * (rewardPerPointStored - seller.rewardPerPointPaid);
-seller.rewardPerPointPaid = rewardPerPointStored;
-seller.points += pointsDelta;
-totalNetworkPoints += pointsDelta;
+sellerBudget = epochEmission * sellerSharePct / 100
+sellerReward = (userSellerPoints / epochTotalSellerPoints) * sellerBudget
+
+buyerBudget  = epochEmission * buyerSharePct / 100
+buyerReward  = (userBuyerPoints / epochTotalBuyerPoints) * buyerBudget
 ```
 
-Same pattern for buyers with a separate accumulator (`buyerRewardPerPointStored`).
+#### Per-Epoch Caps
 
-**Claiming** (`claimEmissions()`): mints accrued ANTS to caller. 15% per-seller cap enforced — excess redistributed to reserve.
+- **Seller cap:** `maxSellerSharePct` (default 50% of the seller bucket). Excess redirected to reserve.
+- **Buyer cap:** `maxBuyerSharePct` (default 5% of the buyer bucket). Excess redirected to reserve.
 
-**Epoch advancement** (`advanceEpoch()`): callable by anyone. Flushes current epoch accrual, computes new emission rate, updates `epochStart`.
+#### Seller Claiming
+
+Sellers call `claimSellerEmissions(epochs[])` for finalized epochs.
+
+If `sellerUnlockPolicy.canClaimSellerUnlocked(seller)` returns true, ANTS are minted directly to the seller.
+
+If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. They remain locked until the unlock policy later allows release.
+
+#### Buyer Claiming
+
+Anyone can call `claimBuyerEmissions(buyer, epochs[])` provided `msg.sender == Deposits.getOperator(buyer)`. Reward is minted to `msg.sender`.
+
+#### Reserve & Team
+
+Reserve and team shares accumulate in the contract until flushed by owner:
+
+- `flushReserve()` — mints accumulated reserve ANTS to `registry.protocolReserve()`
+- `flushTeam()` — mints accumulated team ANTS to `registry.teamWallet()`
+
+### Legacy V1 Backward Compatibility
+
+`AntseedEmissionsV2` reads the legacy `AntseedEmissions` contract for:
+
+- `genesis`, `EPOCH_DURATION`, `HALVING_INTERVAL`, `INITIAL_EMISSION`
+- Claimed state for epochs `< MIGRATION_EPOCH`
+- User points and total points for epochs `<= MIGRATION_EPOCH`
+
+This ensures sellers and buyers do not lose historical points during the upgrade.
 
 ## 9. Subscription Pool
 
@@ -232,14 +262,16 @@ Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves
 ## 10. Contract Architecture
 
 ```
-ANTSToken (ERC-20)        ── mint restricted to AntseedEmissions
-AntseedDeposits           ── buyer USDC deposits, holds ALL buyer USDC
-AntseedChannels           ── Reserve→Settle/Close lifecycle (holds NO USDC, swappable)
-AntseedStaking            ── seller stake bound to ERC-8004 agentId
-AntseedStats              ── factual per-agent session metrics
-AntseedEmissions          ── USDC volume-based epoch emissions
-AntseedSubPool            ── subscription tiers, daily budgets, revenue distribution
-MockERC8004Registry       ── local testing only (mainnet: deployed ERC-8004)
+ANTSToken (ERC-20)              ── mint restricted to AntseedEmissionsV2
+AntseedDeposits                 ── buyer USDC deposits, holds ALL buyer USDC
+AntseedChannels                 ── Reserve→Settle/Close lifecycle (holds NO USDC, swappable)
+AntseedStaking                  ── seller stake bound to ERC-8004 agentId
+AntseedStats                    ── factual per-agent session metrics
+AntseedEmissionsV2              ── USDC volume-based epoch emissions (backward-compatible with V1)
+AntseedSellerRewardsPool        ── holds locked ANTS for sellers pending unlock policy
+AntseedSellerUnlockPolicy       ── on-chain policy determining if seller can claim unlocked
+AntseedSubPool                  ── subscription tiers, daily budgets, revenue distribution
+MockERC8004Registry             ── local testing only (mainnet: deployed ERC-8004)
 ```
 
 Contracts reference each other by address (set at deployment, updateable by owner). No inheritance between contracts — only interface calls.
@@ -248,9 +280,9 @@ Contracts reference each other by address (set at deployment, updateable by owne
 - `AntseedChannels` calls `AntseedDeposits.lockForChannel()` on reserve
 - `AntseedChannels` calls `AntseedDeposits.chargeAndCreditPayouts()` on settle/close
 - `AntseedChannels` calls `AntseedStats.updateStats()` on settle/close
-- `AntseedChannels` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
+- `AntseedChannels` calls `AntseedEmissionsV2.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
 - `AntseedChannels` reads from `AntseedStaking` (seller stake verification)
-- `AntseedEmissions` calls `ANTSToken.mint()` on claim
+- `AntseedEmissionsV2` calls `ANTSToken.mint()` on claim
 
 ## 11. P2P Messages
 

@@ -41,3 +41,25 @@ test('custom base prompt overrides default', () => {
   assert.ok(prompt.includes(custom));
   assert.ok(!prompt.includes(ANTSTATION_SYSTEM_PROMPT));
 });
+
+test('workspace dir is included when provided', () => {
+  const ws = '/Users/test/Development/myrepo';
+  const prompt = buildAntstationSystemPrompt(undefined, ws);
+  assert.ok(prompt.includes(`Current workspace: ${ws}`));
+});
+
+test('workspace dir is omitted when not provided', () => {
+  const prompt = buildAntstationSystemPrompt(undefined);
+  assert.ok(!prompt.includes('Current workspace:'));
+});
+
+test('workspace dir is omitted when blank', () => {
+  const prompt = buildAntstationSystemPrompt(undefined, '   ');
+  assert.ok(!prompt.includes('Current workspace:'));
+});
+
+test('workspace dir is trimmed before injection', () => {
+  const ws = '/Users/test/Development/myrepo';
+  const prompt = buildAntstationSystemPrompt(undefined, `  ${ws}  `);
+  assert.ok(prompt.includes(`Current workspace: ${ws}`));
+});

@@ -20,6 +20,19 @@
       line-height: 1.7;
     }
 
+    .chat-search-mark {
+      padding: 1px 3px;
+      border-radius: 4px;
+      background: rgba(34, 197, 94, 0.28);
+      color: inherit;
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18);
+    }
+
+    .chat-search-mark-active {
+      background: rgba(34, 197, 94, 0.44);
+      box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.48), inset 0 -2px 0 rgba(22, 163, 74, 0.72);
+    }
+
     .chat-bubble-content h1,
     .chat-bubble-content h2,
     .chat-bubble-content h3 {
@@ -266,41 +279,13 @@
     padding: 0 16px;
 
   :global {
-    /* Tool group */
+    /* Tool group — flat layout in both open and closed states */
     .tool-group {
-      position: relative;
-      margin: 10px 0 12px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--bg-card);
-    }
-
-    .tool-group-header-btn {
-      position: absolute;
-      top: -8px;
-      left: 8px;
-      appearance: none;
-      border: 0;
-      background: var(--bg-primary);
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 0 6px;
-      font-size: 10px;
-      font-weight: 500;
-      color: var(--text-muted);
-      line-height: 16px;
-      cursor: pointer;
-      user-select: none;
-      z-index: 1;
-    }
-
-    .tool-group-header-btn:hover {
-      color: var(--text-secondary);
+      margin: 4px 0;
     }
 
     .tool-group-chevron {
-      font-size: 7px;
+      font-size: 9px;
       line-height: 1;
       transition: transform 0.15s;
       transform: rotate(0deg);
@@ -310,40 +295,6 @@
 
     .tool-group.open .tool-group-chevron {
       transform: rotate(90deg);
-    }
-
-    .tool-group-label {
-      flex-shrink: 0;
-    }
-
-    .tool-group-preview {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 14px 10px 8px;
-      min-width: 0;
-    }
-
-    .tool-group-preview-text {
-      flex: 1;
-      min-width: 0;
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--text-muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tool-group-status {
-      flex-shrink: 0;
-      font-size: 12px;
-      font-weight: 500;
-      padding: 1px 6px;
-      border-radius: 999px;
-      &.running { color: var(--accent-blue);  background: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
-      &.success { color: var(--accent-green); background: color-mix(in srgb, var(--accent-green) 14%, transparent); }
-      &.error   { color: var(--danger);       background: color-mix(in srgb, var(--danger) 14%, transparent); }
     }
 
     /* Collapse animation via CSS grid rows */
@@ -367,17 +318,52 @@
       flex-direction: column;
     }
 
-    .tool-group.open .tool-group-preview {
-      display: none;
+    .tool-group-summary-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 4px 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-muted);
+      text-align: left;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tool-group-summary-btn:hover {
+      color: var(--text-secondary);
+    }
+
+    .tool-group-summary-text {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
+    .tool-group-summary-activity {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text-muted);
+      opacity: 0.75;
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+      font-size: 11.5px;
+    }
+
+    .tool-group-summary-activity::before {
+      content: '—';
+      margin-right: 6px;
+      opacity: 0.6;
     }
 
     .tool-inline {
       overflow: hidden;
-      border-top: 1px solid var(--border);
-    }
-
-    .tool-group-list .tool-inline:first-child {
-      border-top: 0;
     }
 
     .tool-inline-row {
@@ -388,8 +374,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      min-height: 24px;
-      padding: 10px 10px;
+      min-height: 20px;
+      padding: 2px 0;
       text-align: left;
       cursor: default;
     }
@@ -402,9 +388,7 @@
       cursor: pointer;
     }
 
-    .tool-inline-row.expandable:hover {
-      background: var(--bg-hover);
-    }
+
 
     .tool-inline-open {
       flex-shrink: 0;
@@ -519,30 +503,26 @@
       animation: tool-spin 0.8s linear infinite;
     }
 
-    /* Thinking blocks */
+    /* Thinking blocks — flat layout matching tool groups */
     .thinking-block {
-      position: relative;
-      margin: 8px 0;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
+      margin: 4px 0;
     }
 
     .thinking-block-header {
-      position: absolute;
-      top: -8px;
-      left: 8px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 0 6px;
-      background: var(--bg-primary);
+      appearance: none;
       border: 0;
-      cursor: pointer;
-      font-size: 10px;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 4px 0;
+      font-size: 12px;
+      line-height: 1.4;
       color: var(--text-muted);
-      line-height: 16px;
+      text-align: left;
+      cursor: pointer;
       user-select: none;
-      z-index: 1;
     }
 
     .thinking-block-header:hover {
@@ -550,7 +530,9 @@
     }
 
     .thinking-block-triangle {
-      font-size: 7px;
+      font-size: 9px;
+      line-height: 1;
+      flex-shrink: 0;
       transition: transform 0.15s;
     }
 
@@ -558,13 +540,22 @@
       transform: rotate(90deg);
     }
 
+    .thinking-block-label {
+      flex-shrink: 0;
+    }
+
     .thinking-block-preview {
-      padding: 14px 10px 8px;
-      font-size: 12px;
+      flex: 1;
+      min-width: 0;
+      font-size: 11.5px;
       line-height: 1.4;
       color: var(--text-muted);
-      max-height: calc(14px + 1.4em + 8px);
+      opacity: 0.75;
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+      max-height: 1.4em;
       overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
 
       :global(.thinking-block-preview-md) {
         display: inline;
@@ -590,9 +581,23 @@
       display: none;
     }
 
+    .thinking-block-body-wrap {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 0.22s ease;
+    }
+
+    .thinking-block-body-wrap.collapsed {
+      grid-template-rows: 0fr;
+    }
+
+    .thinking-block-body-inner {
+      overflow: hidden;
+      min-height: 0;
+    }
+
     .thinking-block-body {
-      display: none;
-      padding: 14px 10px 8px;
+      padding: 4px 0 8px;
       font-size: 13px;
       line-height: 1.5;
       color: var(--text-secondary);
@@ -601,15 +606,12 @@
       word-break: break-word;
     }
 
-    .thinking-block.open .thinking-block-body {
-      display: block;
-    }
-
     .thinking-dots {
       display: inline-flex;
       align-items: center;
-      gap: 3px;
+      gap: 4px;
       margin-left: 4px;
+      flex-shrink: 0;
     }
 
     .thinking-dots span {

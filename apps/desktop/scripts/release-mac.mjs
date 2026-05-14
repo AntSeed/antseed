@@ -1,22 +1,31 @@
-// Loads .env and spawns electron-builder --mac --publish always.
-// Used by the release:mac script so pnpm can resolve electron-builder
-// from the workspace root node_modules.
+// Runs prepare-dist + electron-builder once per arch so each DMG contains
+// the matching arch's native binaries.
 
 import { config } from 'dotenv';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 
-config(); // loads apps/desktop/.env (APPLE_* and GH_TOKEN)
+config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(__dirname, '..');
+const releaseDir = path.resolve(desktopDir, 'release');
 
-// electron-builder is hoisted to workspace root node_modules by pnpm
-const binPath = path.resolve(desktopDir, '../../node_modules/.bin/electron-builder');
+const electronBuilderBin = path.resolve(desktopDir, '../../node_modules/.bin/electron-builder');
+const prepareDistScript = path.resolve(desktopDir, 'scripts', 'prepare-dist.mjs');
 
-execFileSync(binPath, ['--mac', '--publish', 'always'], {
-  stdio: 'inherit',
-  env: process.env,
-  cwd: desktopDir,
-});
+const publish = process.argv.includes('--no-publish') ? 'never' : 'always';
+
+for (const arch of ['x64', 'arm64']) {
+  console.log(`\n=== [release-mac] arch=${arch} publish=${publish} ===`);
+  const env = { ...process.env, ANTSEED_PACK_ARCH: arch };
+
+  // Wipe any prior arch's output so its artifacts can't get re-uploaded
+  // by the next electron-builder run.
+  rmSync(releaseDir, { recursive: true, force: true });
+
+  execFileSync(process.execPath, [prepareDistScript], { stdio: 'inherit', cwd: desktopDir, env });
+  execFileSync(electronBuilderBin, ['--mac', `--${arch}`, '--publish', publish], { stdio: 'inherit', cwd: desktopDir, env });
+}

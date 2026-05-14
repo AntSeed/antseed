@@ -21,7 +21,7 @@ export function createDefaultConfig(): AntseedConfig {
           outputUsdPerMillion: 100,
         },
       },
-      minPeerReputation: 50,
+      minPeerReputation: 0,
       proxyPort: 8377,
     },
     payments: {

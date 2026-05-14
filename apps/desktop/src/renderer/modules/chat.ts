@@ -34,6 +34,7 @@ type ChatConversationSummary = {
   service?: string;
   provider?: string;
   peerId?: string;
+  workspacePath?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -76,6 +77,7 @@ export type ChatModuleApi = {
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
+  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
@@ -109,6 +111,8 @@ export function initChatModule({
   };
 
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
+  const PAYMENT_AUTO_RETRY_DELAY_MS = 7_000;
+  const PAYMENT_AUTO_RETRY_MAX_ATTEMPTS = 2;
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
@@ -144,9 +148,13 @@ export function initChatModule({
   let serviceRefreshToken = 0;
   let serviceRefreshInProgress = false;
   let serviceSelectFocused = false;
+  let workspaceSwitchToken = 0;
+  let desiredWorkspacePath: string | null = uiState.chatWorkspacePath || null;
   const sendingConversationIds = new Set<string>();
   const streamTurnsByConversation = new Map<string, number>();
   const streamStartedAtByConversation = new Map<string, number>();
+  const streamCompletedAtByConversation = new Map<string, number>();
+  const streamFailedAtByConversation = new Map<string, number>();
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
   let newChatDraftVersion = 0;
@@ -229,7 +237,66 @@ export function initChatModule({
     }
   }
 
-  async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
+  type ChatRetryContext = {
+    convId: string;
+    content?: string;
+    attachments?: PreparedChatAttachment[];
+    selection?: ChatServiceSelection;
+  };
+
+  const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const chatRetryAttempts = new Map<string, number>();
+
+  function clearPaymentRetry(convId: string): void {
+    const timer = chatRetryTimers.get(convId);
+    if (timer) clearTimeout(timer);
+    chatRetryTimers.delete(convId);
+    chatRetryAttempts.delete(convId);
+  }
+
+  function scheduleChatRetry(
+    ctx?: ChatRetryContext,
+    reason: 'payment' | 'request' = 'payment',
+    finalError?: unknown,
+  ): void {
+    const convId = ctx?.convId ?? uiState.chatActiveConversation;
+    if (!convId) return;
+
+    const nextAttempt = (chatRetryAttempts.get(convId) ?? 0) + 1;
+    if (nextAttempt > PAYMENT_AUTO_RETRY_MAX_ATTEMPTS) {
+      if (reason === 'payment') {
+        appendSystemLog('Payment negotiation is still pending. Please retry the request in a moment.');
+      } else {
+        reportChatError(finalError ?? 'Request failed after retry.', 'Request failed');
+      }
+      return;
+    }
+
+    const existing = chatRetryTimers.get(convId);
+    if (existing) clearTimeout(existing);
+    chatRetryAttempts.set(convId, nextAttempt);
+    appendSystemLog(
+      reason === 'payment'
+        ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
+        : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
+    );
+
+    const timer = setTimeout(() => {
+      chatRetryTimers.delete(convId);
+      uiState.chatError = null;
+      if (ctx?.content != null) {
+        setConversationSending(convId, true);
+        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
+      } else if (convId === uiState.chatActiveConversation) {
+        retryAfterPayment();
+      } else {
+        notifyUiStateChanged();
+      }
+    }, PAYMENT_AUTO_RETRY_DELAY_MS);
+    chatRetryTimers.set(convId, timer);
+  }
+
+  async function handlePaymentRequired(amountBaseUnits: string, retryCtx?: ChatRetryContext): Promise<void> {
     const required = Number(amountBaseUnits) / 1_000_000;
     const available = await refreshAvailableCreditsUsdc();
 
@@ -243,7 +310,8 @@ export function initChatModule({
       uiState.chatPaymentApprovalPeerName = null;
       uiState.chatPaymentApprovalPeerInfo = null;
       uiState.chatPaymentApprovalError = null;
-      showChatError('Payment setup failed. Retry the request.');
+      uiState.chatError = null;
+      scheduleChatRetry(retryCtx, 'payment');
       notifyUiStateChanged();
       return;
     }
@@ -785,6 +853,7 @@ export function initChatModule({
       streamStartedAtByConversation.delete(convId);
     }
     syncActiveConversationSendingState();
+    notifyUiStateChangedSync();
   }
 
   function setChatSending(sending: boolean): void {
@@ -818,7 +887,7 @@ export function initChatModule({
   function scrollChatToBottom(): void {
     const container = document.querySelector<HTMLElement>('[data-chat-scroll]');
     if (!container) return;
-    const threshold = 100;
+    const threshold = 40;
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < threshold) {
@@ -918,6 +987,27 @@ export function initChatModule({
       peerId: entry.peerId || undefined,
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
+  }
+
+  function getConversationServiceSelection(convId: string): ChatServiceSelection {
+    const conversation =
+      activeConversation?.id === convId
+        ? activeConversation
+        : (Array.isArray(uiState.chatConversations)
+            ? (uiState.chatConversations as ChatConversationSummary[]).find((conv) => conv.id === convId)
+            : null);
+
+    const conversationModel = normalizeChatServiceId(conversation?.service);
+    if (conversationModel.length > 0) {
+      const conversationPeerId = conversation?.peerId?.trim() || undefined;
+      return {
+        id: conversationModel,
+        provider: normalizeProviderId(conversation?.provider),
+        ...(conversationPeerId ? { peerId: conversationPeerId } : {}),
+      };
+    }
+
+    return getSelectedChatServiceSelection();
   }
 
   function getSelectedChatServiceSelection(): ChatServiceSelection {
@@ -1290,6 +1380,7 @@ export function initChatModule({
       if (result.ok && result.data) {
         uiState.chatWorkspacePath = result.data.current;
         uiState.chatWorkspaceDefaultPath = result.data.default;
+        desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
         await refreshWorkspaceGitStatus();
       }
@@ -1321,6 +1412,42 @@ export function initChatModule({
     }
   }
 
+  async function restoreWorkspace(workspacePath: string): Promise<void> {
+    if (!bridge?.chatAiSetWorkspace) return;
+
+    const token = ++workspaceSwitchToken;
+    desiredWorkspacePath = workspacePath;
+
+    try {
+      const result = await bridge.chatAiSetWorkspace(workspacePath);
+      if (token !== workspaceSwitchToken) {
+        // A newer conversation/manual workspace selection won the race. The IPC
+        // call above may still have persisted this stale workspace in main, so
+        // re-apply the latest requested workspace to keep main and the UI aligned.
+        const latestWorkspacePath = desiredWorkspacePath;
+        if (latestWorkspacePath && latestWorkspacePath !== workspacePath) {
+          void restoreWorkspace(latestWorkspacePath);
+        }
+        return;
+      }
+
+      if (result.ok && result.data) {
+        uiState.chatWorkspacePath = result.data.current;
+        uiState.chatWorkspaceDefaultPath = result.data.default;
+        desiredWorkspacePath = result.data.current;
+        notifyUiStateChanged();
+        await refreshWorkspaceGitStatus();
+      } else {
+        desiredWorkspacePath = uiState.chatWorkspacePath || null;
+      }
+    } catch {
+      if (token === workspaceSwitchToken) {
+        desiredWorkspacePath = uiState.chatWorkspacePath || null;
+      }
+      // Silently fail — the user can still manually set the workspace
+    }
+  }
+
   async function chooseWorkspace(): Promise<void> {
     if (!bridge?.pickDirectory || !bridge.chatAiSetWorkspace) return;
 
@@ -1330,14 +1457,23 @@ export function initChatModule({
         return;
       }
 
+      const token = ++workspaceSwitchToken;
+      desiredWorkspacePath = picked.path;
       const result = await bridge.chatAiSetWorkspace(picked.path);
       if (!result.ok || !result.data) {
+        if (token === workspaceSwitchToken) {
+          desiredWorkspacePath = uiState.chatWorkspacePath || null;
+        }
         showChatError(result.error || 'Failed to set workspace');
+        return;
+      }
+      if (token !== workspaceSwitchToken) {
         return;
       }
 
       uiState.chatWorkspacePath = result.data.current;
       uiState.chatWorkspaceDefaultPath = result.data.default;
+      desiredWorkspacePath = result.data.current;
       uiState.chatError = null;
       startNewChat();
       await refreshChatConversations();
@@ -1350,6 +1486,8 @@ export function initChatModule({
 
   async function openConversation(convId: string): Promise<void> {
     if (!bridge || !bridge.chatAiGetConversation) return;
+
+    const workspacePathAtOpen = uiState.chatWorkspacePath;
 
     uiState.chatActiveConversation = convId;
     uiState.chatRoutedPeerId = '';
@@ -1409,6 +1547,15 @@ export function initChatModule({
         uiState.chatError = null;
         notifyUiStateChanged();
 
+        const convWorkspacePath = conv.workspacePath;
+        if (
+          typeof convWorkspacePath === 'string' &&
+          convWorkspacePath.length > 0 &&
+          convWorkspacePath !== workspacePathAtOpen
+        ) {
+          void restoreWorkspace(convWorkspacePath);
+        }
+
         const peerId = resolveConversationPeerId(activeConversation);
         if (peerId) debouncedFetchMeteringStats(peerId);
       } else {
@@ -1426,10 +1573,15 @@ export function initChatModule({
     setStreamingMessage(null);
     activeConversation = null;
     uiState.chatDeleteVisible = false;
-    uiState.chatInputDisabled = false;
-    uiState.chatSendDisabled = false;
     uiState.chatConversationTitle = 'New Chat';
     uiState.chatError = null;
+    // Re-derive sending flags from the (now null) active conversation so that
+    // the thinking indicator does not leak in from whichever chat the user was
+    // previously viewing while it was still streaming. Without this, the
+    // stale chatSending=true / chatSendingConversationId values would make
+    // ChatView's activeConversationIsSending fall back to chatSending and
+    // render the WalkingAnt inside the empty new-chat screen.
+    syncActiveConversationSendingState();
     updateThreadMeta(null);
     notifyUiStateChanged();
   }
@@ -1877,7 +2029,10 @@ export function initChatModule({
   ): void {
     if (!bridge) return;
 
-    const selection = selectionOverride ?? getSelectedChatServiceSelection();
+    const selection = selectionOverride ?? getConversationServiceSelection(convId);
+    const requestStartedAt = Date.now();
+    streamCompletedAtByConversation.delete(convId);
+    streamFailedAtByConversation.delete(convId);
 
     if (!selection.id) {
       reportChatError('No service is selected for this conversation.', 'Request failed');
@@ -1912,24 +2067,53 @@ export function initChatModule({
           }
 
           if (!result.ok) {
+            if (
+              (streamCompletedAtByConversation.get(convId) ?? 0) >= requestStartedAt
+              || (streamFailedAtByConversation.get(convId) ?? 0) >= requestStartedAt
+            ) {
+              clearPaymentRetry(convId);
+              setConversationSending(convId, false);
+              return;
+            }
+
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch) {
               setConversationSending(convId, false);
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], {
+                convId,
+                content,
+                attachments,
+                selection,
+              });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: the stream-error handler has already
               // finalized the partial message. Don't overwrite with an error.
+              clearPaymentRetry(convId);
+              setConversationSending(convId, false);
+            } else if (result.stopReason?.retryable === false) {
+              reportChatError(result.stopReason.message || result.error, 'Request failed');
               setConversationSending(convId, false);
             } else {
-              if (!uiState.chatError) {
-                reportChatError(result.stopReason?.message ?? result.error, 'Request failed');
-              }
+              scheduleChatRetry(
+                { convId, content, attachments, selection },
+                'request',
+                result.stopReason?.message ?? result.error,
+              );
               setConversationSending(convId, false);
             }
           }
         } catch (err) {
-          reportChatError(err, 'Chat send failed');
+          if (
+            (streamCompletedAtByConversation.get(convId) ?? 0) >= requestStartedAt
+            || (streamFailedAtByConversation.get(convId) ?? 0) >= requestStartedAt
+          ) {
+            clearPaymentRetry(convId);
+            setConversationSending(convId, false);
+            return;
+          }
+
+          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -1960,11 +2144,27 @@ export function initChatModule({
           }
 
           if (!result.ok) {
-            reportChatError(result.error, 'Request failed');
+            const errorMsg = typeof result.error === 'string' ? result.error : '';
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch) {
+              void handlePaymentRequired(paymentMatch[1], {
+                convId,
+                content,
+                attachments,
+                selection,
+              });
+            } else if (errorMsg === 'Request aborted') {
+              // User-initiated abort: don't auto-retry.
+              clearPaymentRetry(convId);
+            } else {
+              scheduleChatRetry({ convId, content, attachments, selection }, 'request', result.error);
+            }
+          } else {
+            clearPaymentRetry(convId);
           }
           setConversationSending(convId, false);
         } catch (err) {
-          reportChatError(err, 'Chat send failed');
+          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -2128,8 +2328,14 @@ export function initChatModule({
       bridge.onChatAiError((data) => {
         setConversationSending(data.conversationId, false);
         if (data.conversationId === uiState.chatActiveConversation) {
-          if (data.error !== 'Request aborted') {
-            showChatError(data.error);
+          const errStr = typeof data.error === 'string' ? data.error : '';
+          const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
+          if (paymentMatch) {
+            void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
+          } else if (data.error === 'Request aborted') {
+            clearPaymentRetry(data.conversationId);
+          } else {
+            scheduleChatRetry({ convId: data.conversationId }, 'request', data.error);
             appendSystemLog(`AI Chat error: ${data.error}`);
           }
         }
@@ -2490,6 +2696,9 @@ export function initChatModule({
           getConversationStreamingMessage(data.conversationId),
         );
 
+        streamCompletedAtByConversation.set(data.conversationId, Date.now());
+        clearPaymentRetry(data.conversationId);
+
         if (data.conversationId === uiState.chatActiveConversation) {
           if (finalizedStreamingMessage) {
             commitAssistantMessage(finalizedStreamingMessage);
@@ -2555,6 +2764,7 @@ export function initChatModule({
           }
         }
         setConversationStreamingMessage(data.conversationId, null);
+        streamFailedAtByConversation.set(data.conversationId, Date.now());
 
         if (data.conversationId === uiState.chatActiveConversation) {
           // Ensure the waiting-for-stream flag is cleared even if the error fires
@@ -2566,14 +2776,23 @@ export function initChatModule({
             setConversationSending(data.conversationId, false);
           }
 
-          if (!isAbort) {
+          if (isAbort) {
+            clearPaymentRetry(data.conversationId);
+          } else {
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              void handlePaymentRequired(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
+            } else if (stopReason?.retryable === false) {
+              clearPaymentRetry(data.conversationId);
+              reportChatError(stopReason.message || data.error, 'Request failed');
             } else {
-              showChatError(stopReason?.message ?? data.error);
+              scheduleChatRetry(
+                { convId: data.conversationId },
+                'request',
+                stopReason?.message ?? data.error,
+              );
             }
             appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
           }
@@ -2638,6 +2857,7 @@ export function initChatModule({
     renameConversation,
     openConversation,
     sendMessage,
+    sendMessageToConversation,
     retryAfterPayment,
     abortChat,
     handleServiceChange,

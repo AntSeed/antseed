@@ -78,6 +78,27 @@
   gap: 16px;
   flex-wrap: wrap;
 }
+.protocolNotice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -14px auto 32px;
+  padding: 10px 16px;
+  border: 1px solid rgba(31, 216, 122, 0.28);
+  border-radius: 999px;
+  background: rgba(31, 216, 122, 0.06);
+  color: #168f54 !important;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none !important;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.protocolNotice:hover {
+  background: rgba(31, 216, 122, 0.1);
+  border-color: rgba(31, 216, 122, 0.45);
+  transform: translateY(-1px);
+}
 
 /* ── BUTTONS ── */
 .ctaPrimary {

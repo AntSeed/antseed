@@ -206,6 +206,11 @@ export class BuyerPaymentManager {
     return this._reserveSalt.has(sellerPeerId);
   }
 
+  clearLockConfirmation(sellerPeerId: string): void {
+    this._confirmedPeers.delete(sellerPeerId);
+    this._rejectedPeers.delete(sellerPeerId);
+  }
+
   async resendCurrentSpendingAuth(
     sellerPeerId: string,
     paymentMux: PaymentMux,
@@ -644,10 +649,8 @@ export class BuyerPaymentManager {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
       const cachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
-      // For cost estimation, split total input into fresh vs cached.
-      // If cached tokens are reported, fresh = total - cached (OpenAI-style totals)
-      // or fresh = total (Anthropic-style where total is already fresh-only).
-      // Since the seller reports the split, trust the cached count and subtract.
+      // For cost estimation, reportedInputTokens is normalized to total logical
+      // input tokens (fresh + cached), so split fresh by subtracting cached.
       const freshInputTokens = cachedInputTokens > 0n
         ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(cachedInputTokens)))
         : estimatedInputTokens;
@@ -789,7 +792,6 @@ export class BuyerPaymentManager {
     }
 
     const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
-    if (payload.requestId) this._requestService.delete(payload.requestId);
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -801,6 +803,7 @@ export class BuyerPaymentManager {
       );
       return;
     }
+    if (payload.requestId) this._requestService.delete(payload.requestId);
 
     // Validate the seller's claimed cost if reported
     if (payload.lastRequestCost) {

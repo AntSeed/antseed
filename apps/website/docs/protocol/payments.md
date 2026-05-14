@@ -128,13 +128,28 @@ USDC on Base. 6 decimal places. All on-chain amounts are in USDC atomic units (1
 ## Smart Contracts
 
 ```text title="contract architecture"
-AntseedRegistry       Central address book for all protocol contracts
-AntseedStaking        Seller staking (holds stake USDC, binds to ERC-8004 agentId)
-AntseedDeposits       Buyer deposits, seller payouts (holds buyer USDC)
-AntseedChannels       Payment channel lifecycle (swappable, holds NO USDC)
-AntseedEmissions      ANTS token emissions (USDC volume-based rewards)
-ANTSToken             ANTS ERC-20 token (52M max supply)
+AntseedRegistry            Central address book for all protocol contracts
+AntseedStaking             Seller staking (holds stake USDC, binds to ERC-8004 agentId)
+AntseedDeposits            Buyer deposits, seller payouts (holds buyer USDC)
+AntseedChannels            Payment channel lifecycle (swappable, holds NO USDC)
+AntseedEmissionsV2         ANTS token emissions (backward-compatible replacement)
+AntseedSellerRewardsPool   Locked ANTS reserves for sellers pending unlock
+AntseedSellerUnlockPolicy  On-chain policy controlling when sellers can claim
+AntseedEmissions (legacy)  Original emissions contract — depleted since epoch 4
+ANTSToken                  ANTS ERC-20 token (1.04B max supply)
 ```
+
+Network fees are set to 4% of settlement and flow to the Protocol Reserve, not to a company. The Protocol Reserve is intended to support long-term network sustainability, trust, utility, and alignment.
+
+### Emissions
+
+`AntseedEmissionsV2` replaced the original `AntseedEmissions` contract at epoch 4. It is backward-compatible: historical points from epochs 1–4 remain claimable through V2, while all new points accrue in V2's own ledger.
+
+Each epoch's ANTS are split: 50% to sellers, 20% to buyers, 15% to the Protocol Reserve, and 15% to the team.
+
+**For sellers:** ANTS rewards from finalized epochs are minted to a locked rewards pool (`AntseedSellerRewardsPool`) by default. Sellers can only claim unlocked tokens when the on-chain `AntseedSellerUnlockPolicy` allows it — typically after stake/activity criteria are met.
+
+**For buyers:** Buyer emissions are claimable via an operator address through `claimBuyerEmissions`.
 
 **Stable contracts** (Staking, Deposits) hold funds and rarely change. The **swappable contract** (Channels) holds no USDC and can be redeployed by re-pointing via the Registry.
 
@@ -159,7 +174,7 @@ Contract addresses are built into the CLI for each chain — no manual configura
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
 | AntseedStats | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
-| AntseedEmissions | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 | ERC-8004 IdentityRegistry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
 

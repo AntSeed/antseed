@@ -41,6 +41,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     authorizeSpending: vi.fn().mockResolvedValue(undefined),
     topUpReserve: vi.fn().mockResolvedValue(undefined),
     cleanupSession: vi.fn(),
+    clearLockConfirmation: vi.fn(),
     getActiveSession: vi.fn().mockReturnValue(null),
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
@@ -213,7 +214,7 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
-    it('extends an active on-chain session instead of replaying the same auth when seller requests more budget', async () => {
+    it('requires a fresh AuthAck when a seller with no local session asks for payment again', async () => {
       // First, lock the peer through successful negotiation
       await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
@@ -228,6 +229,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
+      expect(bpm.clearLockConfirmation).toHaveBeenCalledWith(peer.peerId);
       expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalledWith(
         peer.peerId,
         BigInt(paymentRequiredPayload.minBudgetPerRequest),
@@ -263,6 +265,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(response, peer, conn, makeRequest());
 
+      expect(bpm.clearLockConfirmation).not.toHaveBeenCalled();
       expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalledWith(
         peer.peerId,
         10000n,

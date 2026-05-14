@@ -26,6 +26,7 @@ const EMISSIONS_ABI = [
   'function EPOCH_DURATION() external view returns (uint256)',
   'function INITIAL_EMISSION() external view returns (uint256)',
   'function HALVING_INTERVAL() external view returns (uint256)',
+  'function MIGRATION_EPOCH() external view returns (uint256)',
   'function SELLER_SHARE_PCT() external view returns (uint256)',
   'function BUYER_SHARE_PCT() external view returns (uint256)',
   'function RESERVE_SHARE_PCT() external view returns (uint256)',
@@ -88,6 +89,12 @@ export class EmissionsClient extends BaseEvmClient {
   async getHalvingInterval(): Promise<number> {
     const contract = new Contract(this._contractAddress, EMISSIONS_ABI, this._provider);
     const v = await contract.getFunction('HALVING_INTERVAL')();
+    return Number(v);
+  }
+
+  async getMigrationEpoch(): Promise<number> {
+    const contract = new Contract(this._contractAddress, EMISSIONS_ABI, this._provider);
+    const v = await contract.getFunction('MIGRATION_EPOCH')();
     return Number(v);
   }
 

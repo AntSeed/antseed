@@ -17,6 +17,7 @@ export interface ChainConfig {
   usdcContractAddress: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   subPoolContractAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
@@ -48,7 +49,8 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
     stakingContractAddress: '0x3652E6B22919bd322A25723B94BB207602E5c8e6',
-    emissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
+    emissionsContractAddress: '0xF13bE52c4A3afC6AE29536f073588d01A0564088',
+    legacyEmissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
     antsTokenAddress: '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263',
     identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
     channelsDeployBlock: 44469557,
@@ -108,6 +110,7 @@ export function resolveChainConfig(overrides?: {
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   subPoolContractAddress?: string;
 }): ChainConfig {
@@ -128,6 +131,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
+    ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.subPoolContractAddress ? { subPoolContractAddress: overrides.subPoolContractAddress } : {}),
   };

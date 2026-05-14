@@ -63,7 +63,7 @@ The architecture is completely different.
 
 AI Agents are the unit of value on the network. You wrap your expertise in AI, set your price, and the network handles discovery, payments, and reputation. How you deliver is your business — pick any model, any workflow, any stack. The protocol only measures the quality of what comes back.
 
-**Direct settlement, minimal fees.** Buyers pay providers directly — in USDC or by card. A 2% protocol fee is distributed back to the network, not extracted by a platform. Providers set their own prices. Markets clear through open competition.
+**Direct settlement, minimal fees.** Buyers pay providers directly — in USDC or by card. A 4% protocol fee flows to the Protocol Reserve, not to a company. Providers set their own prices. Markets clear through open competition.
 
 **Reputation is on-chain and provider-sovereign.** Every delivery builds a track record that belongs to your wallet, not a platform that can revoke it. A provider with thousands of verified deliveries charges more than a new entrant. That premium is earned through work, and it compounds.
 
@@ -94,7 +94,7 @@ AntSeed's protocol has five layers, each handling a piece of what centralized ga
 | Permission to join | Company approval | Stake tokens | None required |
 | What you can serve | What they allow | What fits their framework | Anything |
 | API compatibility | OpenAI-compatible | Custom protocols | OpenAI-compatible |
-| Fees | 5.5% (extracted) | Token economics | 2% (returned to network) |
+| Fees | 5.5% (extracted) | Token economics | 4% (to Protocol Reserve) |
 | Payment methods | Card | Crypto wallets + tokens | USDC or Card |
 | Content policy | Platform-enforced | Varies | Provider-level |
 | Data privacy | Third-party proxy | Varies | P2P, no intermediary |
@@ -117,7 +117,7 @@ And it's for agents — software that doesn't care about brands or polished UIs,
 ## Frequently Asked Questions
 
 **Is AntSeed free to use?**
-There's a 2% protocol fee per request, distributed back to the network. No subscription, no account, no platform rake on top of that.
+There's a 4% protocol fee per request, flowing to the Protocol Reserve. No subscription, no account, no platform rake on top of that.
 
 **Does AntSeed work with my existing tools?**
 Yes. Claude Code, Cursor, Aider, Continue.dev, and any app using the OpenAI SDK work without modification — just point them at AntSeed instead of your current endpoint.

@@ -97,10 +97,41 @@ export { DefaultRouter, type DefaultRouterConfig } from './routing/default-route
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
 
 // Reputation
-export { TrustScoreEngine } from './reputation/trust-engine.js';
 export { UptimeTracker } from './reputation/uptime-tracker.js';
-export { computeTrustScore, DEFAULT_TRUST_WEIGHTS } from './reputation/trust-score.js';
-export type { TrustScore, TrustComponents } from './reputation/trust-score.js';
+export {
+  computeOnChainTrust,
+  computeOnChainTrustBreakdown,
+  buildSybilContext,
+  computeOnChainSybilRisk,
+  computeOnChainScore,
+  scoreFromTrust,
+  computeOnChainReputationScore,
+  ON_CHAIN_TRUST_TICKET_TARGET_USDC,
+  ON_CHAIN_TRUST_TICKET_MIN,
+  ON_CHAIN_TRUST_TICKET_MAX,
+  ON_CHAIN_TRUST_RECENCY_FRESH_DAYS,
+  ON_CHAIN_TRUST_RECENCY_STALE_DAYS,
+  ON_CHAIN_TRUST_RECENCY_DORMANT_FACTOR,
+  ON_CHAIN_TRUST_STAKE_THRESHOLD_USDC,
+  ON_CHAIN_TRUST_NO_STAKE_FACTOR,
+  ON_CHAIN_SCORE_LOG_CAP_EXPONENT,
+  SYBIL_WEIGHT_SUBFLOOR_TICKET,
+  SYBIL_WEIGHT_BURN_RATE,
+  SYBIL_WEIGHT_NARROW_CUSTOM,
+  SYBIL_WEIGHT_YOUNG_HIGH_VOL,
+  SYBIL_SUBFLOOR_TICKET_USDC,
+  SYBIL_SUBFLOOR_MIN_CHANNELS,
+  SYBIL_BURN_RATE_THRESHOLD,
+  SYBIL_BURN_RATE_SATURATION,
+  SYBIL_YOUNG_MAX_DAYS,
+  SYBIL_YOUNG_CHANNEL_FLOOR,
+  SYBIL_YOUNG_CHANNEL_SATURATION,
+  SYBIL_ADVERTISED_CHEAP_INPUT_USD_PER_MILLION,
+  type OnChainTrustBreakdown,
+  type SybilContext,
+  type SybilRiskResult,
+  type SybilFlag,
+} from './reputation/on-chain-reputation.js';
 export type { UptimeWindow, PeerUptimeRecord } from './reputation/uptime-tracker.js';
 export { ReportManager } from './reputation/report-manager.js';
 export type { PeerReport, ReportReason, ReportEvidence, ReportStatus } from './types/report.js';

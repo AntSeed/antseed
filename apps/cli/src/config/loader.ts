@@ -215,6 +215,11 @@ function mergeSellerConfig(
   };
 }
 
+function normalizeMinPeerReputation(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return value === 50 ? fallback : value;
+}
+
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -228,9 +233,7 @@ function mergeBuyerConfig(
   }
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
-    minPeerReputation: typeof value['minPeerReputation'] === 'number'
-      ? value['minPeerReputation']
-      : defaults.minPeerReputation,
+    minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
     proxyPort: typeof value['proxyPort'] === 'number'
       ? value['proxyPort']
       : defaults.proxyPort,

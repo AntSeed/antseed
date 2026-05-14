@@ -353,6 +353,7 @@ export class BuyerPaymentNegotiator {
         conn,
         existingSessionBudgetRequest,
         requiredCumulativeTarget,
+        requiredCumulativeTarget == null,
       );
       if (recovered) {
         return { action: 'retry' };
@@ -818,6 +819,7 @@ export class BuyerPaymentNegotiator {
     conn: PeerConnection,
     minBudgetPerRequest: bigint | null = null,
     targetCumulative: bigint | null = null,
+    requireFreshAck = false,
   ): Promise<boolean> {
     const session = this._bpm.getActiveSession(peer.peerId);
     if (!session) {
@@ -865,6 +867,14 @@ export class BuyerPaymentNegotiator {
     }
 
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+    if (requireFreshAck) {
+      // A 402 with only base PaymentRequired fields while the buyer has an
+      // active local session means the seller does not currently recognize
+      // the channel (for example after a seller restart). The previous
+      // AuthAck is stale in that case; require a fresh one before retrying so
+      // we do not immediately replay the request into another 402.
+      this._bpm.clearLockConfirmation(peer.peerId);
+    }
     if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
       const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
       await this._bpm.extendCurrentSpendingAuth(

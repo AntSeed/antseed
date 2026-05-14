@@ -15,9 +15,9 @@
  * packages (e.g. @antseed/node).
  */
 
-import { readdirSync, lstatSync, readlinkSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync, readFileSync } from 'node:fs';
+import { readdirSync, lstatSync, readlinkSync, realpathSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -126,25 +126,178 @@ const electronPkg = JSON.parse(
 const electronVersion = electronPkg.version;
 const betterSqlite3Dir = path.resolve(appDir, '..', '..', 'node_modules', 'better-sqlite3');
 
-// Install the prebuild for the current arch — electron-builder handles
-// cross-arch builds by running the pack step separately for each arch,
-// and better-sqlite3 prebuilds are arch-specific.
-//
-// Resolve prebuild-install's JS entry from better-sqlite3's own deps and
-// invoke it via `node` rather than via `npx`: on Windows `npx` is `npx.cmd`
-// which execFileSync can't run without a shell, and shelling out complicates
-// argument escaping. process.execPath works identically on all platforms.
+// Honors ANTSEED_PACK_ARCH so release scripts can pack arm64 + x64 separately
+// without each DMG inheriting the build host's native binary.
+const targetArch = process.env.ANTSEED_PACK_ARCH || process.arch;
+if (!['x64', 'arm64'].includes(targetArch)) {
+  throw new Error(`[prepare-dist] Unsupported ANTSEED_PACK_ARCH=${targetArch}`);
+}
+
 const prebuildInstallEntry = createRequire(
   path.join(betterSqlite3Dir, 'package.json'),
 ).resolve('prebuild-install/bin.js');
-console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${process.arch})...`);
+console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${targetArch})...`);
 execFileSync(process.execPath, [
   prebuildInstallEntry,
   '--runtime', 'electron',
   '--target', electronVersion,
-  '--arch', process.arch,
+  '--arch', targetArch,
   '--verbose',
 ], { cwd: betterSqlite3Dir, stdio: 'inherit' });
-console.log('[prepare-dist] Native module prebuild installed for Electron.');
+
+if (process.platform === 'darwin') {
+  const nodeFile = path.join(betterSqlite3Dir, 'build', 'Release', 'better_sqlite3.node');
+  if (existsSync(nodeFile)) {
+    const desc = execFileSync('file', [nodeFile], { encoding: 'utf8' });
+    const expected = targetArch === 'arm64' ? 'arm64' : 'x86_64';
+    if (!desc.includes(expected)) {
+      throw new Error(
+        `[prepare-dist] better_sqlite3.node arch mismatch — expected ${expected}, got: ${desc.trim()}`,
+      );
+    }
+    console.log(`[prepare-dist] Verified better_sqlite3.node is ${expected}`);
+  }
+}
+
+// --- 4. Bundle full transitive runtime deps of @antseed/node ---
+// The desktop app must be repairable from its own bundle even on machines that
+// have no Node/npm available (e.g. corp networks where npm registry SSL is
+// blocked). electron-builder asarUnpack does not transparently fix fs.cp from
+// the asar archive, so we materialize the dep tree as real files under
+// bundled-runtime/ and ship it as extraResources.
+
+const BUNDLED_RUNTIME_DIR = path.join(appDir, 'bundled-runtime');
+const EXPLICITLY_BUNDLED_PACKAGES = new Set([
+  '@antseed/router-local',
+  '@antseed/router-core',
+  '@antseed/node',
+  '@antseed/api-adapter',
+]);
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+]);
+
+rmSync(BUNDLED_RUNTIME_DIR, { recursive: true, force: true });
+mkdirSync(BUNDLED_RUNTIME_DIR, { recursive: true });
+
+const desktopRequire = createRequire(path.join(appDir, 'package.json'));
+
+function findPackageDirFromRequire(req, name) {
+  const lookupPaths = req.resolve.paths(name) ?? [];
+  for (const dir of lookupPaths) {
+    const candidate = path.join(dir, ...name.split('/'));
+    const pkgJson = path.join(candidate, 'package.json');
+    if (existsSync(pkgJson)) {
+      try {
+        const parsed = JSON.parse(readFileSync(pkgJson, 'utf8'));
+        if (parsed.name === name) {
+          try { return realpathSync(candidate); } catch { return candidate; }
+        }
+      } catch {}
+    }
+  }
+
+  let entry;
+  try {
+    entry = req.resolve(name);
+  } catch {
+    return null;
+  }
+
+  let cur = entry;
+  for (let i = 0; i < 16; i += 1) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+    const pkgJson = path.join(cur, 'package.json');
+    if (existsSync(pkgJson)) {
+      try {
+        const parsed = JSON.parse(readFileSync(pkgJson, 'utf8'));
+        if (parsed.name === name) {
+          try { return realpathSync(cur); } catch { return cur; }
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function readPackageJson(dir) {
+  try {
+    return JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Walk the dependency graph rooted at `parentSourceDir` and place each
+// transitive dependency into `bundled-runtime/`. Resolution is done from
+// each parent's own perspective (not from the desktop) so that nested
+// version-pinned copies (e.g. default-gateway/node_modules/execa@7) are
+// found correctly. When a package would land at the top of bundled-runtime/
+// but a different version of the same name is already there, it is placed
+// nested under the parent's dest dir instead — mirroring npm/pnpm's
+// hoisting + nesting fallback so `import { execa } from 'execa'` resolves
+// to the version each consumer was paired with at install time.
+function copyDepTree(name, parentSourceDir, parentDestDir, topDestRoot, visited) {
+  if (NODE_BUILTINS.has(name)) return;
+
+  const parentRequire = createRequire(path.join(parentSourceDir, 'package.json'));
+  const sourceDir = findPackageDirFromRequire(parentRequire, name);
+  if (!sourceDir) {
+    console.warn(`[prepare-dist] WARNING: could not resolve "${name}" from ${parentSourceDir}`);
+    return;
+  }
+
+  const pkg = readPackageJson(sourceDir);
+  if (!pkg || !pkg.version) {
+    console.warn(`[prepare-dist] WARNING: invalid package.json at ${sourceDir}`);
+    return;
+  }
+
+  // Default placement: top-level. Nest under parent only on version conflict.
+  let destDir = path.join(topDestRoot, ...name.split('/'));
+  if (existsSync(destDir)) {
+    const existing = readPackageJson(destDir);
+    if (existing && existing.version !== pkg.version) {
+      destDir = path.join(parentDestDir, 'node_modules', ...name.split('/'));
+    }
+  }
+
+  if (visited.has(destDir)) return;
+  visited.add(destDir);
+
+  if (!EXPLICITLY_BUNDLED_PACKAGES.has(name)) {
+    mkdirSync(path.dirname(destDir), { recursive: true });
+    rmSync(destDir, { recursive: true, force: true });
+    cpSync(sourceDir, destDir, { recursive: true, dereference: true });
+
+    // Strip nested node_modules from the freshly copied source — we re-place
+    // any conflicting nested deps ourselves at the next recursion level.
+    const nestedNm = path.join(destDir, 'node_modules');
+    if (existsSync(nestedNm)) {
+      rmSync(nestedNm, { recursive: true, force: true });
+    }
+  }
+
+  for (const depName of Object.keys(pkg.dependencies ?? {})) {
+    copyDepTree(depName, sourceDir, destDir, topDestRoot, visited);
+  }
+}
+
+const nodePackageDir = findPackageDirFromRequire(desktopRequire, '@antseed/node');
+if (!nodePackageDir) {
+  console.warn('[prepare-dist] WARNING: could not locate @antseed/node — bundled runtime will be incomplete');
+} else {
+  const nodePkg = readPackageJson(nodePackageDir);
+  const visited = new Set();
+  // For top-level deps the "parent dest" is the runtime root itself — no
+  // sibling can collide at this layer because each direct dep name is unique.
+  for (const depName of Object.keys(nodePkg.dependencies ?? {})) {
+    copyDepTree(depName, nodePackageDir, BUNDLED_RUNTIME_DIR, BUNDLED_RUNTIME_DIR, visited);
+  }
+  console.log(`[prepare-dist] Bundled ${visited.size} runtime dep(s) for @antseed/node into ${BUNDLED_RUNTIME_DIR}`);
+}
 
 console.log('[prepare-dist] Done.');

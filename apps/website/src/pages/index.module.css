@@ -1155,3 +1155,367 @@ img, video, canvas, svg { max-width: 100%; }
 /* smoother endless model ticker */
 .modelTickerTrack { will-change: transform; animation-duration: 42s; }
 @keyframes modelScroll { from { transform: translate3d(0,0,0); } to { transform: translate3d(-33.333%,0,0); } }
+
+/* ---- two ways in experiment ---- */
+.entryGridTwo { grid-template-columns: minmax(280px, .92fr) minmax(420px, 1.48fr); align-items: stretch; }
+.chatEntryCard { min-height: 250px; }
+.buildEntryCard { min-height: 250px; padding: 0; overflow: hidden; background:
+  radial-gradient(circle at 82% 18%, rgba(31,216,122,.14), transparent 28%),
+  linear-gradient(135deg, rgba(255,255,255,.92), rgba(250,250,246,.74));
+}
+.buildEntryCard::after { top: 28px; right: 28px; }
+.entryTabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  margin: 18px 18px 0;
+  padding: 5px;
+  border: 1px solid #e8e8e3;
+  border-radius: 999px;
+  background: rgba(243,243,239,.78);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+}
+.entryTabs button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #777;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .8px;
+  padding: 8px 14px;
+  text-transform: uppercase;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.entryTabs button:hover { color: #111; }
+.entryTabs .entryTabActive {
+  background: #111;
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(10,14,20,.14);
+}
+.entryTabPanel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 194px;
+  padding: 20px 36px 22px;
+}
+.entryTabPanel .entryContent h3 { max-width: 540px; font-size: clamp(26px, 3vw, 38px); letter-spacing: -1.35px; }
+.entryTabPanel .entryContent p { max-width: 560px; font-size: 14px; }
+.entryTabPanel .toolStack, .entryTabPanel .agentStack { margin-bottom: 16px; }
+.entryTabPanel .toolStack span { width: 42px; height: 42px; border-radius: 14px; }
+.entryTabPanel .toolStack img { width: 22px; height: 22px; }
+.entryTabPanel .toolText { font-size: 12px; }
+.entryTabPanel .agentStack { gap: 10px; flex-wrap: wrap; height: auto; }
+.entryTabPanel .agentStack span { height: 42px; padding: 0 14px 0 10px; font-size: 12px; }
+.entryTabPanel .agentStack img { width: 26px; height: 26px; }
+
+@media (max-width: 900px) {
+  .entryGridTwo { grid-template-columns: 1fr; }
+  .entryTabPanel { padding: 18px; }
+  .entryTabPanel .entryContent h3 { font-size: 25px; }
+}
+
+/* ---- two ways in: equal cards + integrations summary ---- */
+.entryGridTwo { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.chatEntryCard, .buildEntryCard { min-height: 315px; }
+.buildEntryCard { padding: 18px; overflow: hidden; background:
+  radial-gradient(circle at 84% 20%, rgba(31,216,122,.12), transparent 30%),
+  linear-gradient(135deg, rgba(255,255,255,.9), rgba(250,250,246,.78));
+}
+.integrationIconRow { height: 38px; display: flex; align-items: center; margin-bottom: 10px; }
+.integrationIconRow span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 12px; background: #fff; border: 1px solid #e8e8e3; margin-right: -7px; box-shadow: 0 4px 10px rgba(10,14,20,.05); }
+.integrationIconRow img { width: 20px; height: 20px; object-fit: contain; border-radius: 5px; }
+.integrationSummaryGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.integrationSummaryGrid a { display: flex; flex-direction: column; gap: 3px; min-height: 72px; padding: 11px 12px; border: 1px solid #e8e8e3; border-radius: 14px; background: rgba(255,255,255,.72); color: inherit; text-decoration: none; transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease; }
+.integrationSummaryGrid a:hover { border-color: rgba(31,216,122,.38); box-shadow: 0 10px 24px rgba(10,14,20,.055); transform: translateY(-1px); text-decoration: none; }
+.integrationSummaryGrid b { color: #1a1a1a; font-size: 12px; font-weight: 800; letter-spacing: -.2px; }
+.integrationSummaryGrid span { color: #747474; font-size: 11px; line-height: 1.32; }
+.buildEntryCard .entryCta { margin-top: 14px; }
+@media (max-width: 900px) { .entryGridTwo { grid-template-columns: 1fr; } .chatEntryCard, .buildEntryCard { min-height: auto; } }
+@media (max-width: 560px) { .integrationSummaryGrid { grid-template-columns: 1fr; } }
+
+/* AntStation has less content; give more room to integrations summary. */
+.entryGridTwo { grid-template-columns: minmax(260px, .78fr) minmax(440px, 1.22fr); }
+.chatEntryCard { min-height: 280px; }
+.buildEntryCard { min-height: 320px; }
+@media (max-width: 900px) {
+  .entryGridTwo { grid-template-columns: 1fr; }
+  .chatEntryCard, .buildEntryCard { min-height: auto; }
+}
+
+/* ---- merged integration hub section ---- */
+.integrationHubSection { border-top: 1px solid #e8e8e3; border-bottom: 1px solid #e8e8e3; max-width: none; padding-top: 82px; padding-bottom: 88px; padding-left: max(60px, calc((100vw - 1180px)/2 + 60px)); padding-right: max(60px, calc((100vw - 1180px)/2 + 60px)); background:
+  radial-gradient(circle at 82% 52%, rgba(31,216,122,.08), transparent 28%),
+  linear-gradient(180deg, #fff, #fbfbf7);
+}
+.integrationPillGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 22px 0 22px; }
+.integrationPillGrid a { display: flex; flex-direction: column; gap: 4px; min-height: 82px; padding: 13px 14px; border: 1px solid #e8e8e3; border-radius: 16px; background: rgba(255,255,255,.72); color: inherit; text-decoration: none; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.integrationPillGrid a:hover { transform: translateY(-1px); border-color: rgba(31,216,122,.42); box-shadow: 0 12px 28px rgba(10,14,20,.06); text-decoration: none; }
+.integrationPillGrid strong { color: #171717; font-size: 13px; letter-spacing: -.2px; }
+.integrationPillGrid span { color: #747474; font-size: 12px; line-height: 1.35; }
+
+.integrationHubAnimation { position: relative; min-height: 560px; border-radius: 34px; overflow: hidden; background:
+  radial-gradient(circle at 50% 50%, rgba(31,216,122,.16), transparent 23%),
+  radial-gradient(circle at 18% 20%, rgba(255,255,255,.08), transparent 20%),
+  linear-gradient(145deg, #08130e, #050806 58%, #0b1510);
+  border: 1px solid rgba(31,216,122,.16); box-shadow: 0 28px 80px rgba(10,14,20,.18); color: #eafff3;
+}
+.integrationGridGlow { position: absolute; inset: 28px; border-radius: 28px; opacity: .35; background-image:
+  linear-gradient(rgba(31,216,122,.10) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(31,216,122,.10) 1px, transparent 1px);
+  background-size: 38px 38px; mask-image: radial-gradient(circle at center, #000, transparent 72%);
+}
+.integrationRing, .integrationRingTwo { position: absolute; left: 50%; top: 50%; border: 1px solid rgba(31,216,122,.18); border-radius: 50%; transform: translate(-50%, -50%); }
+.integrationRing { width: 410px; height: 410px; animation: hubSpin 18s linear infinite; }
+.integrationRingTwo { width: 295px; height: 295px; border-style: dashed; animation: hubSpinReverse 22s linear infinite; }
+.integrationCore { position: absolute; left: 50%; top: 50%; width: 190px; height: 150px; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-radius: 28px; background: rgba(255,255,255,.94); color: #121512; border: 1px solid rgba(31,216,122,.38); box-shadow: 0 0 0 12px rgba(31,216,122,.05), 0 22px 70px rgba(31,216,122,.20); z-index: 4; }
+.integrationCore img { width: 38px; height: 38px; padding: 7px; border-radius: 13px; background: #111; }
+.integrationCore strong { font-family: 'JetBrains Mono', monospace; font-size: 13px; letter-spacing: -.4px; }
+.integrationCore span { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #16a863; text-transform: uppercase; letter-spacing: 1.2px; }
+.integrationToolNode, .integrationProviderNode { position: absolute; z-index: 5; display: flex; align-items: center; gap: 8px; border-radius: 18px; font-family: 'JetBrains Mono', monospace; box-shadow: 0 12px 34px rgba(0,0,0,.28); }
+.integrationToolNode { min-width: 128px; min-height: 50px; padding: 9px 13px; background: rgba(255,255,255,.96); color: #171717; border: 1px solid rgba(255,255,255,.74); animation: nodeFloat 4.8s ease-in-out infinite; }
+.integrationToolNode img { width: 24px; height: 24px; object-fit: contain; border-radius: 7px; }
+.integrationToolNode b { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: #f1f1ed; color: #111; font-size: 10px; }
+.integrationToolNode span { font-size: 11px; font-weight: 800; white-space: nowrap; }
+.integrationProviderNode { flex-direction: column; justify-content: center; min-width: 118px; min-height: 78px; padding: 14px; background: rgba(255,255,255,.10); border: 1px solid rgba(31,216,122,.28); backdrop-filter: blur(12px); text-align: center; animation: providerPulse 3.6s ease-in-out infinite; }
+.integrationProviderNode b { color: #1FD87A; font-size: 22px; line-height: 1; }
+.integrationProviderNode span { color: rgba(234,255,243,.72); font-size: 10px; text-transform: uppercase; letter-spacing: 1.4px; }
+.integrationToolClaude { left: 38px; top: 58px; }
+.integrationToolCodex { right: 44px; top: 68px; animation-delay: .3s; }
+.integrationToolVs { left: 28px; bottom: 128px; animation-delay: .7s; }
+.integrationToolCurl { right: 32px; bottom: 120px; animation-delay: 1.1s; }
+.integrationToolClaw { left: 50%; top: 30px; transform: translateX(-50%); animation-delay: .45s; }
+.integrationToolHermes { left: 50%; bottom: 28px; transform: translateX(-50%); animation-delay: .9s; }
+.integrationProviderModel { right: 14px; top: 232px; }
+.integrationProviderPrice { left: 14px; top: 232px; animation-delay: .5s; }
+.integrationProviderPrivate { left: 50%; bottom: 118px; transform: translateX(-50%); animation-delay: 1s; }
+.integrationBeamOne, .integrationBeamTwo, .integrationBeamThree { position: absolute; left: 50%; top: 50%; height: 2px; width: 340px; transform-origin: left center; background: linear-gradient(90deg, rgba(31,216,122,0), rgba(31,216,122,.55), rgba(31,216,122,0)); opacity: .55; }
+.integrationBeamOne { transform: rotate(-28deg); }
+.integrationBeamTwo { transform: rotate(24deg); animation-delay: .4s; }
+.integrationBeamThree { transform: rotate(92deg); width: 250px; animation-delay: .8s; }
+.integrationPacketOne, .integrationPacketTwo { display: none; }
+
+/* ---- inbound packet stream: tool → localhost:8377 core ---- */
+.integrationFlowPacket {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: #1FD87A;
+  box-shadow: 0 0 16px rgba(31,216,122,.85);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 0;
+  /* Each tool sets --fx / --fy = the packet's *origin* offset from center.
+     The shared keyframes animate from that origin back to the core (0,0). */
+  --fx: 0px;
+  --fy: 0px;
+  animation: packetFlow 2.6s linear infinite;
+}
+.flowFromClaude  { --fx: -150px; --fy: -185px; animation-delay: 0s;    }
+.flowFromCodex   { --fx:  150px; --fy: -180px; animation-delay: .42s;  }
+.flowFromClaw    { --fx:    0px; --fy: -220px; animation-delay: .84s;  }
+.flowFromCurl    { --fx:  148px; --fy:  160px; animation-delay: 1.26s; }
+.flowFromHermes  { --fx:    0px; --fy:  205px; animation-delay: 1.68s; }
+.flowFromVs      { --fx: -152px; --fy:  152px; animation-delay: 2.10s; }
+@keyframes packetFlow {
+  0%   { transform: translate(var(--fx), var(--fy)) scale(.7); opacity: 0; }
+  12%  { opacity: 1; }
+  85%  { transform: translate(0, 0) scale(1.05); opacity: 1; }
+  100% { transform: translate(0, 0) scale(.4); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .integrationFlowPacket { animation: none; opacity: 0; }
+}
+.integrationSettlement { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); padding: 10px 16px; border-radius: 999px; background: rgba(31,216,122,.12); border: 1px solid rgba(31,216,122,.22); color: #bfffdc; font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: nowrap; z-index: 7; }
+@keyframes hubSpin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes hubSpinReverse { to { transform: translate(-50%, -50%) rotate(-360deg); } }
+@keyframes nodeFloat { 0%,100% { translate: 0 0; } 50% { translate: 0 -8px; } }
+@keyframes providerPulse { 0%,100% { box-shadow: 0 12px 34px rgba(0,0,0,.28), inset 0 0 0 1px rgba(31,216,122,.04); } 50% { box-shadow: 0 16px 44px rgba(31,216,122,.14), inset 0 0 0 1px rgba(31,216,122,.16); } }
+
+@media (max-width: 900px) { .integrationHubAnimation { min-height: 500px; } .integrationPillGrid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .integrationHubAnimation { min-height: 560px; } .integrationToolNode { min-width: 104px; padding: 8px 10px; } .integrationToolNode span { font-size: 10px; } .integrationToolClaude { left: 14px; } .integrationToolCodex { right: 14px; } .integrationToolVs { left: 14px; } .integrationToolCurl { right: 14px; } .integrationProviderPrice { left: 8px; } .integrationProviderModel { right: 8px; } .integrationSettlement { white-space: normal; width: calc(100% - 48px); text-align: center; } }
+
+/* Integration hub animation polish: keep labels clear and mobile-safe. */
+.integrationToolHermes { bottom: 54px; }
+.integrationSettlement { bottom: 18px; max-width: calc(100% - 48px); text-align: center; }
+@media (max-width: 1300px) {
+  .integrationHubSection { padding-left: 60px; padding-right: 60px; }
+}
+@media (max-width: 700px) {
+  .integrationHubSection { padding-left: 20px; padding-right: 20px; }
+}
+@media (max-width: 900px) {
+  .integrationHubSection { padding-top: 56px; padding-bottom: 58px; }
+  .integrationHubAnimation { min-height: 620px; margin-top: 12px; }
+  .integrationRing { width: min(76vw, 380px); height: min(76vw, 380px); }
+  .integrationRingTwo { width: min(58vw, 285px); height: min(58vw, 285px); }
+  .integrationCore { width: 170px; height: 136px; }
+  .integrationToolClaude { left: 22px; top: 54px; }
+  .integrationToolCodex { right: 22px; top: 54px; }
+  .integrationToolClaw { top: 132px; }
+  .integrationToolVs { left: 22px; bottom: 150px; }
+  .integrationToolCurl { right: 22px; bottom: 150px; }
+  .integrationToolHermes { bottom: 78px; }
+  .integrationProviderPrice { left: 12px; top: 280px; }
+  .integrationProviderModel { right: 12px; top: 280px; }
+  .integrationProviderPrivate { bottom: 212px; }
+  .integrationSettlement { bottom: 24px; white-space: normal; }
+  /* Tighter packet origins to match the more compact tablet layout. */
+  .flowFromClaude  { --fx: -130px; --fy: -200px; }
+  .flowFromCodex   { --fx:  130px; --fy: -200px; }
+  .flowFromClaw    { --fx:    0px; --fy: -150px; }
+  .flowFromCurl    { --fx:  130px; --fy:  130px; }
+  .flowFromHermes  { --fx:    0px; --fy:  175px; }
+  .flowFromVs      { --fx: -130px; --fy:  130px; }
+}
+@media (max-width: 560px) {
+  .integrationHubSection { padding-left: 14px; padding-right: 14px; }
+  .integrationHubAnimation { min-height: 700px; border-radius: 24px; }
+  .integrationGridGlow { inset: 16px; }
+  .integrationCore { width: 150px; height: 126px; }
+  .integrationCore strong { font-size: 11px; }
+  .integrationCore span { font-size: 9px; }
+  .integrationToolNode { min-width: 112px; min-height: 44px; }
+  .integrationToolNode img, .integrationToolNode b { width: 21px; height: 21px; }
+  .integrationToolClaude { left: 12px; top: 42px; }
+  .integrationToolCodex { right: 12px; top: 42px; }
+  .integrationToolClaw { left: 12px; top: 112px; transform: none; }
+  .integrationToolHermes { left: auto; right: 12px; bottom: 88px; transform: none; }
+  .integrationToolVs { left: 12px; bottom: 166px; }
+  .integrationToolCurl { right: 12px; bottom: 166px; }
+  .integrationProviderNode { min-width: 98px; min-height: 68px; padding: 10px; }
+  .integrationProviderNode b { font-size: 18px; }
+  .integrationProviderNode span { font-size: 9px; }
+  .integrationProviderPrice { left: 16px; top: 306px; }
+  .integrationProviderModel { right: 16px; top: 306px; }
+  .integrationProviderPrivate { bottom: 256px; }
+  .integrationBeamOne, .integrationBeamTwo { width: 220px; }
+  .integrationBeamThree { width: 180px; }
+  .integrationSettlement { bottom: 18px; width: calc(100% - 32px); font-size: 10px; }
+}
+@media (max-width: 380px) {
+  .integrationHubAnimation { min-height: 730px; }
+  .integrationToolNode { min-width: 102px; }
+  .integrationToolNode span { font-size: 9px; }
+  .integrationCore { width: 138px; }
+}
+
+/* Final mobile pass for homepage changes. */
+.integrationHubSection { overflow-x: clip; }
+.integrationHubSection .audienceCopy,
+.integrationHubAnimation { min-width: 0; }
+.integrationHubAnimation * { box-sizing: border-box; }
+@media (max-width: 1000px) {
+  .integrationHubSection { max-width: none; padding-left: 24px; padding-right: 24px; }
+}
+@media (max-width: 700px) {
+  .integrationHubSection { padding-left: 18px; padding-right: 18px; }
+  .integrationPillGrid { grid-template-columns: 1fr; }
+  .integrationPillGrid a { min-height: 0; }
+  .integrationHubAnimation { width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
+}
+@media (max-width: 430px) {
+  .integrationHubSection { padding-left: 12px; padding-right: 12px; }
+  .integrationHubAnimation { min-height: 760px; border-radius: 22px; }
+  .integrationCore { top: 47%; }
+  .integrationRing { width: 280px; height: 280px; }
+  .integrationRingTwo { width: 210px; height: 210px; }
+  .integrationToolClaude { left: 10px; top: 34px; }
+  .integrationToolCodex { right: 10px; top: 34px; }
+  .integrationToolClaw { left: 10px; top: 102px; }
+  .integrationToolVs { left: 10px; bottom: 188px; }
+  .integrationToolCurl { right: 10px; bottom: 188px; }
+  .integrationToolHermes { right: 10px; bottom: 108px; }
+  .integrationProviderPrice { left: 12px; top: 326px; }
+  .integrationProviderModel { right: 12px; top: 326px; }
+  .integrationProviderPrivate { bottom: 292px; }
+  .integrationSettlement { bottom: 20px; }
+}
+
+/* Replace dense desktop integration animation with a simple mobile flow. */
+.integrationMobileFlow { display: none; }
+@media (max-width: 700px) {
+  .integrationHubAnimation { display: none; }
+  .integrationMobileFlow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    width: 100%;
+    max-width: 420px;
+    margin: 8px auto 0;
+    padding: 16px;
+    border-radius: 24px;
+    background:
+      radial-gradient(circle at 50% 34%, rgba(31,216,122,.16), transparent 34%),
+      linear-gradient(145deg, #08130e, #050806 62%, #0b1510);
+    border: 1px solid rgba(31,216,122,.18);
+    box-shadow: 0 22px 60px rgba(10,14,20,.16);
+  }
+  .mobileFlowGroup,
+  .mobileFlowRoutes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .mobileFlowGroup span,
+  .mobileFlowRoutes span {
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 800;
+    text-align: center;
+  }
+  .mobileFlowGroup span {
+    background: rgba(255,255,255,.96);
+    color: #171717;
+    border: 1px solid rgba(255,255,255,.72);
+  }
+  .mobileFlowGroup img { width: 20px; height: 20px; object-fit: contain; border-radius: 6px; }
+  .mobileFlowGroup b { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px; background: #f1f1ed; font-size: 9px; }
+  .mobileFlowArrow { color: #1FD87A; font-family: 'JetBrains Mono', monospace; font-size: 18px; line-height: 1; text-align: center; text-shadow: 0 0 18px rgba(31,216,122,.5); }
+  .mobileFlowCore {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 118px;
+    border-radius: 20px;
+    background: rgba(255,255,255,.94);
+    border: 1px solid rgba(31,216,122,.38);
+    color: #111;
+    box-shadow: 0 0 0 8px rgba(31,216,122,.06);
+  }
+  .mobileFlowCore img { width: 36px; height: 36px; padding: 7px; border-radius: 12px; background: #111; }
+  .mobileFlowCore strong { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .mobileFlowCore span { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #16a863; text-transform: uppercase; letter-spacing: 1.2px; }
+  .mobileFlowRoutes { grid-template-columns: 1fr; }
+  .mobileFlowRoutes span {
+    min-height: 38px;
+    color: #bfffdc;
+    background: rgba(31,216,122,.10);
+    border: 1px solid rgba(31,216,122,.20);
+    text-transform: uppercase;
+    letter-spacing: .9px;
+  }
+}
+@media (max-width: 380px) {
+  .integrationMobileFlow { padding: 12px; border-radius: 20px; }
+  .mobileFlowGroup { grid-template-columns: 1fr; }
+}

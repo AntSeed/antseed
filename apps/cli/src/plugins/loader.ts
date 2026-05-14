@@ -1,9 +1,21 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { builtinModules } from 'node:module'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey } from '@antseed/node'
+
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+])
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
 
 function resolvePackageName(nameOrPackage: string): string {
   const legacy = LEGACY_PACKAGE_MAP[nameOrPackage]
@@ -34,30 +46,17 @@ async function loadPlugin<T>(
     (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
 
   const isTrusted = TRUSTED_PLUGINS.some(p => p.package === pkgName)
+  if (isTrusted) {
+    await ensureTrustedPluginInstallReady(pkgName, resolved, pluginsDir)
+  }
 
   let mod: { default?: unknown }
   try {
     mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
-    if (isModuleNotFound(err) && isTrusted && !existsSync(resolved)) {
-      console.log(`Plugin "${pkgName}" not installed. Installing...`)
-      try {
-        await installPlugin(pkgName)
-      } catch (installErr) {
-        const cause = installErr instanceof Error ? installErr.message : String(installErr)
-        throw new Error(`Failed to install plugin "${pkgName}".\nCause: ${cause}`)
-      }
-      try {
-        mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
-      } catch (retryErr) {
-        const cause = retryErr instanceof Error ? retryErr.message : String(retryErr)
-        throw new Error(
-          `Plugin "${pkgName}" failed to load after install from ${resolved}.\nCause: ${cause}`
-        )
-      }
-    } else if (isModuleNotFound(err)) {
+    if (isModuleNotFound(err) && !existsSync(resolved)) {
       throw new Error(
-        `Plugin "${pkgName}" not found. Install it first, then retry your command.`
+        `Plugin "${pkgName}" not found. Install it first, then retry your command.\nRun: antseed plugin add ${pkgName}`
       )
     } else {
       const cause = err instanceof Error ? err.message : String(err)
@@ -79,6 +78,64 @@ async function loadPlugin<T>(
   }
 
   return plugin as T
+}
+
+async function ensureTrustedPluginInstallReady(
+  pkgName: string,
+  entryPath: string,
+  pluginsDir: string,
+): Promise<void> {
+  const pkgJsonPath = join(pluginsDir, 'node_modules', ...pkgName.split('/'), 'package.json')
+  const shouldInstall = !existsSync(entryPath)
+    || !existsSync(pkgJsonPath)
+    || hasMissingDeclaredDependencyTree(pkgName, pluginsDir)
+  if (!shouldInstall) return
+  if (isTruthyEnv(process.env['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'])) return
+
+  const action = existsSync(entryPath)
+    ? 'appears incomplete or stale. Reinstalling latest version...'
+    : 'not installed. Installing...'
+  console.log(`Plugin "${pkgName}" ${action}`)
+  try {
+    await installPlugin(`${pkgName}@latest`)
+  } catch (installErr) {
+    const cause = installErr instanceof Error ? installErr.message : String(installErr)
+    throw new Error(`Failed to install plugin "${pkgName}".\nCause: ${cause}`)
+  }
+}
+
+function hasMissingDeclaredDependencyTree(
+  pkgName: string,
+  pluginsDir: string,
+  visited: Set<string> = new Set(),
+): boolean {
+  if (visited.has(pkgName)) return false
+  visited.add(pkgName)
+
+  const pkgJsonPath = path.resolve(join(pluginsDir, 'node_modules', ...pkgName.split('/'), 'package.json'))
+  if (!pkgJsonPath.startsWith(path.resolve(pluginsDir))) return true
+  if (!existsSync(pkgJsonPath)) return true
+
+  try {
+    const raw = readFileSync(pkgJsonPath, 'utf8')
+    const parsed = JSON.parse(raw) as {
+      name?: string
+      dependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+    }
+    const manifestName = typeof parsed.name === 'string' ? parsed.name : pkgName
+    const deps = {
+      ...(parsed.dependencies ?? {}),
+      ...(manifestName.startsWith('@antseed/') ? parsed.peerDependencies ?? {} : {}),
+    }
+    for (const depName of Object.keys(deps)) {
+      if (NODE_BUILTINS.has(depName)) continue
+      if (hasMissingDeclaredDependencyTree(depName, pluginsDir, visited)) return true
+    }
+    return false
+  } catch {
+    return true
+  }
 }
 
 export async function loadProviderPlugin(nameOrPackage: string): Promise<AntseedProviderPlugin> {

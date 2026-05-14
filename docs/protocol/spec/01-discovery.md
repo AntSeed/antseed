@@ -67,7 +67,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 7
+METADATA_VERSION = 8
 ```
 
 ### Data Structures
@@ -77,7 +77,7 @@ METADATA_VERSION = 7
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 40 hex chars (20-byte EVM address)      |
-| version     | number                  | Must equal `METADATA_VERSION` (7)       |
+| version     | number                  | Must equal `METADATA_VERSION` (8)       |
 | displayName | string                  | Optional human-readable node label      |
 | publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
@@ -186,7 +186,7 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (7).
+- `version` must equal `METADATA_VERSION` (8).
 - `peerId` must be exactly 40 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
@@ -287,7 +287,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 
 1. Build a `PeerMetadata` object from the configured providers, current pricing, current load, and region.
-2. Set `version` to `METADATA_VERSION` (7) and `timestamp` to `Date.now()`.
+2. Set `version` to `METADATA_VERSION` (8) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's secp256k1 private key (via EIP-191 personal_sign).
 5. Announce DHT topics in parallel at the configured signaling port (constant in service count):
@@ -302,50 +302,20 @@ Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `a
 
 ## Peer Scoring
 
-**Source:** `node/src/discovery/peer-selector.ts`
+**Source:** `@antseed/router-core/src/peer-scorer.ts`
 
-### Scoring Weights
+Discovery returns signed metadata and on-chain stats; router plugins own final peer selection. The official local router filters candidates by buyer pricing policy, optional minimum reputation, and failure cooldown, then scores remaining candidates with these default weights:
 
 | Dimension   | Default Weight | Description                              |
 |-------------|----------------|------------------------------------------|
-| price       | 0.35           | Preference for lower price               |
-| capacity    | 0.25           | Preference for available capacity        |
-| latency     | 0.25           | Preference for lower latency             |
-| reputation  | 0.15           | Preference for higher reputation         |
+| price       | 0.30           | Lower price scores higher                |
+| latency     | 0.25           | Lower latency scores higher              |
+| capacity    | 0.20           | Preference for available capacity        |
+| reputation  | 0.10           | Higher on-chain reputation scores higher |
+| freshness   | 0.10           | Recently seen peers score higher         |
+| reliability | 0.05           | Lower failure rate and streak scores higher |
 
-### Score Formulas
-
-All individual scores are normalised to the range [0, 1]. The final composite score is clamped to [0, 1].
-
-```
-priceScore    = min(cheapestInputPrice / candidate.inputUsdPerMillion, 1.0)
-                (1.0 if candidate price is 0)
-
-capacityScore = (maxConcurrency - currentLoad) / maxConcurrency
-                (0 if maxConcurrency is 0)
-
-latencyScore  = clamp(1 - latencyMs / 15000, 0, 1)
-
-reputationScore = clamp(candidate.reputation, 0, 1)
-
-score = clamp(
-    price    * priceScore    +
-    capacity * capacityScore +
-    latency  * latencyScore  +
-    reputation * reputationScore,
-    0, 1
-)
-```
-
-The latency baseline is **15 000 ms**. A peer with 0 ms latency scores 1.0; a peer at or above 15 000 ms scores 0.0.
-
-The `cheapestInputPrice` is the minimum positive `inputUsdPerMillion` across all candidates in the pool.
-
-### Selection Strategies
-
-- **`selectBestPeer(candidates, weights)`** -- Returns the single highest-scoring candidate, or `null` if the list is empty.
-- **`rankPeers(candidates, weights)`** -- Returns all candidates sorted by descending score.
-- **`selectDiversePeers(candidates, count, weights)`** -- Returns up to `count` candidates, preferring geographic diversity. First pass picks the best candidate from each unique region; second pass fills remaining slots by score.
+Price, latency, and capacity are normalized across the eligible candidate pool. Reputation is a 0-100 effective reputation score normalized to 0-1: official routers compute it from on-chain settlement stats when available, then fall back to the optional `PeerInfo.reputationScore` field.
 
 ---
 

@@ -31,7 +31,7 @@ The on-chain seller changes from "peerId's derived EVM address" to "the proxy co
        ▼ reserve/topUp/        ▼ operatorClaimEmissions  ▼ getReward()
          settle/close            (epochs[])               (by user)
        ┌─────────────┐       ┌──────────────────┐       ┌──────────────────┐
-       │ AntseedCh-  │       │ AntseedEmissions │       │ USDC / ANTS      │
+       │ AntseedCh-  │       │AntseedEmissionsV2│       │ USDC / ANTS      │
        │ annels      │       │                  │       │ safeTransfer     │
        └──────┬──────┘       └────────┬─────────┘       └──────────────────┘
               │                       │
@@ -125,6 +125,8 @@ Cache TTL: 5 minutes. Rotation detection: when the cached `operator` value no lo
 
 ## Reward accounting
 
+The DIEM pool applies a 10% fee before USDC reaches the staking pool. That fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS. The remaining USDC is streamed pro-rata to stakers.
+
 Two parallel streams: `usdcStream` and `antsStream`. Each uses the Uniswap StakingRewards pattern:
 
 - `rewardRate` (tokens per second), `periodFinish`, `lastUpdateTime`, `rewardPerTokenStored`.
@@ -166,7 +168,7 @@ Prerequisites: Base mainnet (or Sepolia); owner EOA with ETH for gas; operator E
    - `_usdc`: Base USDC (mainnet: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
    - `_ants`: AntSeed ANTS token address (check `packages/node/chain-config.json`)
    - `_channels`: real `AntseedChannels` address (not the proxy itself)
-   - `_emissions`: `AntseedEmissions` address
+   - `_emissions`: `AntseedEmissionsV2` address
    - `_antseedStaking`: `AntseedStaking` address (needed so the owner can later recover the seller stake via `withdrawAntseedStake`)
    - `_operator`: the operator EOA (= the peer identity wallet address)
    - `_usdcRewardsDuration`: `86400` (1 day)
@@ -174,7 +176,7 @@ Prerequisites: Base mainnet (or Sepolia); owner EOA with ETH for gas; operator E
 
 2. **(Optional) transfer ownership to a multisig** via `Ownable.transferOwnership`. Distributes operator-rotation risk across N signers.
 
-3. **Register an ERC-8004 agentId** for the proxy address. Call `IdentityRegistry.register(<proxyAddress>)` (or whatever the deployed registry's signature is) — this is a separate tx targeting the ERC-8004 contract, not the proxy. The returned `agentId` is used by `AntseedStaking` and `AntseedEmissions` to identify the proxy as a seller.
+3. **Register an ERC-8004 agentId** for the proxy address. Call `IdentityRegistry.register(<proxyAddress>)` (or whatever the deployed registry's signature is) — this is a separate tx targeting the ERC-8004 contract, not the proxy. The returned `agentId` is used by `AntseedStaking` and `AntseedEmissionsV2` to identify the proxy as a seller.
 
 4. **Stake minimum on `AntseedStaking`** so the proxy can call `reserve()`:
    - Owner approves USDC to `AntseedStaking` for at least `MIN_SELLER_STAKE`.

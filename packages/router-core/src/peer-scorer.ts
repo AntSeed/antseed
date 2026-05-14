@@ -1,4 +1,4 @@
-import type { PeerInfo } from '@antseed/node'
+import { computeOnChainReputationScore, type PeerInfo } from '@antseed/node'
 
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number
@@ -64,10 +64,7 @@ function normalizedInverted(value: number, min: number, range: number): number {
 }
 
 function effectiveReputation(p: PeerInfo): number {
-  if (p.onChainChannelCount !== undefined) {
-    return p.onChainChannelCount
-  }
-  return p.trustScore ?? p.reputationScore ?? 0
+  return computeOnChainReputationScore(p) ?? p.reputationScore ?? 0
 }
 
 function availableCapacity(p: PeerInfo): number {

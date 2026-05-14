@@ -481,6 +481,10 @@
   gap: 6px;
 }
 
+.filterGroupWide {
+  grid-column: 1 / -1;
+}
+
 .filterHeader {
   display: flex;
   justify-content: space-between;
@@ -603,13 +607,6 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 8px #1FD87A; }
   50% { opacity: 0.5; box-shadow: 0 0 3px #1FD87A; }
-}
-
-.reputation {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #8b949e;
-  margin-top: 2px;
 }
 
 .bestPeer {
@@ -782,7 +779,6 @@
   .statValue {
     font-size: 12px;
   }
-
 
   .tagBadge {
     font-size: 8px;

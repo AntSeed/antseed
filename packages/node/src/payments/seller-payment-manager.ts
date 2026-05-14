@@ -104,6 +104,9 @@ export class SellerPaymentManager {
   /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
 
+  /** channelIds with an in-flight close() tx/estimate. Prevents duplicate close submissions. */
+  private readonly _closingChannels = new Set<string>();
+
   /** channelId -> cumulative amount last successfully settled on-chain by this
    *  process. Lets the idle-settle loop skip the `getSession` RPC when the
    *  local accepted cumulative hasn't moved since our last settle. */
@@ -227,6 +230,7 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
+    this._closingChannels.delete(channelId);
     this._reserveMax.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
     this._releaseAcceptedWaiters(channelId);
@@ -853,11 +857,17 @@ export class SellerPaymentManager {
       }
       return;
     } else {
+      if (this._closingChannels.has(channelId)) {
+        debugLog(`[SellerPayment] Close already in flight for ${channelId.slice(0, 18)}... — skipping duplicate request`);
+        return;
+      }
+
       const retries = this._closeRetryCount.get(channelId) ?? 0;
       if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
         debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
       } else {
         debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${amount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
+        this._closingChannels.add(channelId);
         try {
           await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
           this._channelStore.updateChannelStatus(channelId, 'settled', amount.toString());
@@ -866,6 +876,8 @@ export class SellerPaymentManager {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
           this._closeRetryCount.set(channelId, retries + 1);
           if (!cleanupOnFailure) return;
+        } finally {
+          this._closingChannels.delete(channelId);
         }
       }
     }
@@ -875,6 +887,7 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
+    this._closingChannels.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
     this._releaseAcceptedWaiters(channelId);
     this._activeBuyers.delete(buyerPeerId);
@@ -1040,6 +1053,7 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
+    this._closingChannels.delete(channelId);
     this._reserveMax.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
     this._releaseAcceptedWaiters(channelId);

@@ -111,7 +111,7 @@ antseed seller emissions info
 | AntseedDeposits | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
-| AntseedEmissions | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 
 All contracts verified on [BaseScan](https://basescan.org). For testnet (Base Sepolia), set `payments.crypto.chainId` to `base-sepolia` in your config.

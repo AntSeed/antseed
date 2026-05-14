@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { Wallet } from 'ethers';
+import { AbiCoder, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
@@ -25,6 +25,12 @@ function createTestIdentity(): Identity {
 function fakePeerId(label: string): string {
   const hex = Buffer.from(label).toString('hex').padEnd(40, '0').slice(0, 40);
   return hex;
+}
+
+function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
+  const coder = AbiCoder.defaultAbiCoder();
+  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  return { inputTokens, outputTokens };
 }
 
 function createMockPaymentMux(): PaymentMux & {
@@ -440,6 +446,28 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(payload.cumulativeAmount)).toBe(reportedCost);
   });
 
+  it('signPerRequestAuth includes cached tokens in metadata input total', async () => {
+    const sellerPeerId = fakePeerId('seller-cached-total');
+    const pricing = { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 0.3 };
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, pricing);
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        reportedInputTokens: 1000n,
+        reportedCachedInputTokens: 800n,
+        reportedOutputTokens: 100n,
+      },
+    );
+
+    const meta = decodeMetadataTokens(payload.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(100n);
+    expect(BigInt(payload.cumulativeAmount)).toBe(2340n);
+  });
+
   it('signPerRequestAuth throws if no active session', async () => {
     await expect(
       manager.signPerRequestAuth('nonexistent-peer', { inputBytes: new Uint8Array(0), outputBytes: new Uint8Array(0) }),
@@ -564,6 +592,66 @@ describe('BuyerPaymentManager', () => {
     }, mux);
 
     expect(mux.sentSpendingAuths.length).toBe(0);
+  });
+
+  it('handleNeedAuth does not consume request service mapping for stale auths', async () => {
+    const sellerPeerId = fakePeerId('seller-needauth-service');
+    const channelId = await manager.authorizeSpending(
+      sellerPeerId,
+      mux,
+      10_000n,
+      1_000_000n,
+      { inputUsdPerMillion: 0.36, outputUsdPerMillion: 1.65, cachedInputUsdPerMillion: 0.07 },
+      {
+        defaults: { inputUsdPerMillion: 0.36, outputUsdPerMillion: 1.65, cachedInputUsdPerMillion: 0.07 },
+        services: {
+          'gpt-5.3-codex-spark': { inputUsdPerMillion: 5, outputUsdPerMillion: 30, cachedInputUsdPerMillion: 1 },
+        },
+      },
+    );
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '1000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+    }, mux);
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    mux.sentSpendingAuths.length = 0;
+
+    manager.trackRequestService('req-service-pricing', 'gpt-5.3-codex-spark');
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-service-pricing',
+      requiredCumulativeAmount: '500',
+      currentAcceptedCumulative: '1000',
+      deposit: '1000000',
+      lastRequestCost: '53000',
+      inputTokens: '10000',
+      freshInputTokens: '10000',
+      outputTokens: '100',
+      cachedInputTokens: '0',
+    }, mux);
+    expect(mux.sentSpendingAuths.length).toBe(0);
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-service-pricing',
+      requiredCumulativeAmount: '53000',
+      currentAcceptedCumulative: '1000',
+      deposit: '1000000',
+      lastRequestCost: '53000',
+      inputTokens: '10000',
+      freshInputTokens: '10000',
+      outputTokens: '100',
+      cachedInputTokens: '0',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    expect(sent.cumulativeAmount).toBe('53000');
   });
 
   it('handleNeedAuth ignores unknown seller', async () => {
