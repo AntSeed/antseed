@@ -39,7 +39,7 @@ import { DAYS_PER_YEAR } from '../lib/epoch';
 type Tab = 'stake' | 'unstake' | 'claim';
 
 const DEFAULT_STAKE_AMOUNT = parseEther('10');
-const DIEM_TERMS_URL = 'https://antseed.com/terms/diem-provider-capacity-program';
+const DIEM_TERMS_URL = 'https://diem.antseed.com/terms-of-service.html';
 
 function formatDiemInput(value: bigint): string {
   const formatted = formatEther(value);
