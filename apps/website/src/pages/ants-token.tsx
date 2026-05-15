@@ -317,24 +317,25 @@ export default function AntsToken(): JSX.Element {
   return (
     <Layout
       title="ANTS Token | AntSeed"
-      description="ANTS is the coordination and trust asset of the AntSeed network. Hard-capped at 1.04B with automatic halvings."
+      description="ANTS is intended as a utility and coordination token for the AntSeed ecosystem. Holding ANTS does not represent equity, ownership, debt, or a right to payments."
     >
 
       {/* ── HERO ── */}
       <section className={styles.hero}>
         <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.heroKicker}>$ANTS</a>
         <h1 className={styles.heroTitle}>
-          A network owned by<br />
-          <em>the people who use it.</em>
+          A utility token for<br />
+          <em>open AI coordination.</em>
         </h1>
         <div className={styles.heroStatus}>
           <span className={styles.statusDot} />
           <span className={styles.statusText}>Tokens Restricted</span>
         </div>
         <p className={styles.heroSub}>
-          ANTS is designed to become the coordination and trust asset of the AntSeed network.
-          No pre-mine, no insider allocation, no unfair head start, and no company extracting protocol fees.
-          ANTS distribution is meant for real users and providers who help the network grow.
+          ANTS is intended as a utility and coordination token for the AntSeed ecosystem.
+          Holding ANTS does not represent equity, ownership, debt, profit share, revenue share,
+          claim on assets, or any right to receive payments. ANTS distribution is meant for eligible
+          users and providers who help the network grow.
         </p>
         <a
           href="https://x.com/AntSeedAI/status/2053924623935218044"
@@ -442,8 +443,8 @@ export default function AntsToken(): JSX.Element {
           {[
             {pct: '50%', label: 'Provider Pool', desc: 'Seller emissions are tracked and routed into a locked Provider Pool while stronger validation and proof systems are developed.', accent: true},
             {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Buyer incentives may be capped, filtered, delayed, or excluded for anti-abuse reasons.', accent: false},
-            {pct: '15%', label: 'Protocol Reserve', desc: 'Supports long-term network sustainability, trust, utility, and alignment.', accent: false},
-            {pct: '15%', label: 'Team', desc: 'Vested to core contributors. Aligned with long-term network health.', accent: false},
+            {pct: '15%', label: 'Ecosystem Reserve', desc: 'May support long-term network sustainability, trust, utility, grants, incentives, and alignment. Tokenholders do not own the reserve.', accent: false},
+            {pct: '15%', label: 'Contributors', desc: 'Vested contributor allocation intended to align long-term development and ecosystem health.', accent: false},
           ].map(s => (
             <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
               <div className={styles.splitPct}>{s.pct}</div>
@@ -458,7 +459,7 @@ export default function AntsToken(): JSX.Element {
       <section className={styles.activity}>
         <div className={styles.activityHeader}>
           <h2>Network activity</h2>
-          <p>Real economic activity backing the token. All settlement happens on Base.</p>
+          <p>Network usage and settlement data from Base. No token value, burn, distribution, or return is promised.</p>
         </div>
 
         <a href={DUNE_URL} target="_blank" rel="noopener noreferrer" className={styles.duneBanner}>
@@ -472,7 +473,7 @@ export default function AntsToken(): JSX.Element {
             <div className={styles.duneBannerText}>
               <div className={styles.duneBannerTitle}>Live on Dune Analytics</div>
               <div className={styles.duneBannerSub}>
-                Volume, channels, fees, staking, and deposits, all from on-chain data.
+                Volume, channels, fees, deposits, and protocol activity, all from on-chain data.
                 Open dashboard →
               </div>
             </div>
@@ -499,8 +500,9 @@ export default function AntsToken(): JSX.Element {
             {label: 'Max supply', value: '1,040,000,000 ANTS'},
             {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
             {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '4% of settlement, flowing to the Protocol Reserve — not to a company'},
-            {label: 'DIEM pool fee', value: '10% fee flows to the Protocol Reserve to strengthen the AntSeed ecosystem and ANTS'},
+            {label: 'Network fee', value: '4% of settlement may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses'},
+            {label: 'DIEM program fee', value: '10% program/operator fee may be directed according to applicable DIEM Provider Capacity Program rules'},
+            {label: 'Token rights', value: 'ANTS does not represent equity, ownership, debt, profit share, revenue share, claim on assets, or any right to receive payments'},
             {label: 'Provider Pool', value: 'Seller ANTS emissions are tracked but locked pending stronger validation; future claims may be subject to verification or slashing'},
             {label: 'Anti-abuse policy', value: 'Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing'},
             {label: 'Transfers', value: 'Currently restricted'},

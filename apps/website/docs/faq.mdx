@@ -40,7 +40,7 @@ export const faqLd = {
       name: 'Who runs the AntSeed network?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'No one. The network is decentralized — it runs on the peers that join it. There is no company operating the routing layer. AntSeed (the team) builds the protocol and tools, but does not operate the network or sit between buyers and providers.',
+        text: 'The network runs on the independent peers that join it. AntSeed is open peer-to-peer software; no single hosted service controls every node, provider, model, output, log, or data practice.',
       },
     },
     {
@@ -48,7 +48,7 @@ export const faqLd = {
       name: 'Is my data private on AntSeed?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: "Privacy works in two layers. Layer 1 — network anonymity (default for everyone). Requests go peer-to-peer, like a VPN for AI. Providers never know who you are. Layer 2 — TEE-verified providers, running inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves where not even the node operator can read your prompts. Payments settle on-chain so the money trail stays private too.",
+        text: "AntSeed is designed for anonymous access without a central account, platform-issued API key, or centralized chat database. Requests route peer-to-peer, so providers generally see a peer/wallet rather than a platform identity account, and TEE providers can add hardware-backed confidentiality where available. This is not a promise that every piece of data is hidden from every participant: independent providers and supporting infrastructure may process data needed to deliver and settle requests, and public-chain activity remains visible on-chain.",
       },
     },
     {
@@ -64,7 +64,7 @@ export const faqLd = {
       name: 'Does AntSeed log my requests?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: "AntSeed the protocol does not log requests. We don't operate the nodes — providers do. Each provider has their own data handling practices. For guaranteed no-logging, route to a TEE-verified provider.",
+        text: "AntSeed the protocol does not create a central request log, but independent providers, nodes, interfaces, RPC providers, analytics tools, or other infrastructure may log or observe data. Each provider has its own data handling practices. Prefer TEE-verified providers where stronger confidentiality is required.",
       },
     },
     {
@@ -178,7 +178,7 @@ Yes. The full protocol, CLI, and node implementation are open source on [GitHub]
 
 ### Who runs the network?
 
-No one. The network is decentralized — it runs on the peers that join it. There is no company operating the routing layer. AntSeed (the team) builds the protocol and tools, but does not operate the network or sit between buyers and providers.
+The network runs on the independent peers that join it. AntSeed is open peer-to-peer software; no single hosted service controls every node, provider, model, output, log, or data practice.
 
 ---
 
@@ -188,13 +188,13 @@ No one. The network is decentralized — it runs on the peers that join it. Ther
 
 Privacy on AntSeed works in two layers:
 
-**Layer 1 — Network anonymity (everyone gets this by default).** Requests go peer-to-peer, like a VPN for AI. Providers never know who you are — no accounts, no identity, no IP exposed. Your prompts travel directly to the provider with no corporate server in the middle.
+**Layer 1 — Anonymous access (default).** AntSeed is designed for use without a central account, sign-up, or platform-issued API key. Requests route peer-to-peer, so providers generally see a peer/wallet rather than a platform identity account.
 
-**Layer 2 — TEE-verified providers.** These run inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves where not even the node operator can read your prompts. This is cryptographic proof, not a policy promise. TEE provider verification is being rolled out in a future release.
+**Layer 2 — TEE-verified providers.** These run inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves that can reduce what the node operator can see. This is cryptographic proof, not just a policy promise. TEE provider verification is being rolled out in a future release.
 
-Payments are settled on-chain, so the money trail stays private too.
+AntSeed's privacy model is architectural rather than account-based: users can route requests without a central identity account, platform-issued API key, or centralized chat database, and TEE providers can add hardware-backed confidentiality where available. It is not, however, a promise that every piece of data is hidden from every participant. Independent providers and supporting infrastructure may process data needed to deliver and settle requests, and public-chain activity remains visible on-chain. Users should choose providers and routes appropriate to the sensitivity of their work.
 
-Most users are well-served by Layer 1 alone. Journalists, lawyers, security researchers, and anyone handling sensitive data will want Layer 2.
+Most users are well-served by no-account routing. Journalists, lawyers, security researchers, and anyone handling sensitive data should carefully choose providers and prefer TEE routes where available.
 
 ### Can providers see my prompts?
 
@@ -202,7 +202,7 @@ Standard providers can. TEE-verified providers cannot — the hardware prevents 
 
 ### Does AntSeed log my requests?
 
-AntSeed the protocol does not log requests. We don't operate the nodes — providers do. Each provider has their own data handling practices. For guaranteed no-logging, route to a TEE-verified provider.
+AntSeed the protocol does not create a central request log, but independent providers, nodes, interfaces, RPC providers, analytics tools, or other infrastructure may log or observe data. Each provider has its own data handling practices. Prefer TEE-verified providers where stronger confidentiality is required.
 
 ---
 
@@ -274,7 +274,7 @@ Seller ANTS emissions are currently tracked but routed into a dedicated Provider
 
 ### Where do protocol fees go?
 
-Network fees are set to 4% and flow into the Protocol Reserve, not to a company. The Protocol Reserve is intended to support long-term network sustainability, trust, utility, and alignment. The same applies to the 10% fee from the DIEM pool.
+Network fees are set to 4% and may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses. Any DIEM program/operator fee is governed by the separate DIEM Provider Capacity Program rules. No fee use, burn, distribution, token value, or return is promised.
 
 ### Are ANTS incentives guaranteed?
 

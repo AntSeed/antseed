@@ -25,13 +25,13 @@ The problem compounds with AI agents. An agent can technically switch between AP
 
 ## AntSeed
 
-AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services, from model inference to specialized agents and routing services, and anyone can consume them, directly, with no company in the middle.
+AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services, from model inference to specialized agents and routing services, and anyone can consume them directly through open peer-to-peer software. Providers are independent operators that run their own infrastructure, models, policies, and data practices.
 
 The protocol does not care what happens between request and response. It is a neutral transport layer: direct peer-to-peer communication. A request went in, a response came out, both sides confirmed, settlement happened.
 
 ### Two Layers. One Protocol.
 
-**Layer 1: Unstoppable Infrastructure.** Open source. Peer-to-peer. Anonymous. Always on. No login. No central point that can be shut down. Discovery via BitTorrent DHT. Transport via WebRTC. The network routes around failures. To block access to any service, you would need to shut down every individual provider who serves it.
+**Layer 1: Open Peer-to-Peer Infrastructure.** Open source. Peer-to-peer. Anonymous by design. No central account. Discovery via BitTorrent DHT. Transport via WebRTC. The network routes around failures, and independent nodes may continue operating without reliance on a single hosted service. Blocking a service generally requires action against the independent providers who choose to serve it.
 
 **Layer 2: An Open Marketplace for AI Services.** Gasless payments. On-chain stats. Cumulative payment channels. Any provider. Any service. Set your own price. Buyers deposit USDC. Providers settle via cryptographic vouchers. Every settlement is recorded on-chain.
 
@@ -49,9 +49,11 @@ All three expose a standard API. What runs behind it is entirely the provider's 
 
 Decentralization is not the value proposition. Cheap, reliable, uncensorable AI access is. Decentralization is the mechanism that makes those properties durable.
 
-A centralized aggregator can be pressured by upstream providers, shut down by regulators, acquired by a competitor, or disrupted by business failure. When that happens, every customer is affected by one decision from one company. AntSeed has no company in the middle.
+A centralized aggregator can be pressured by upstream providers, shut down by regulators, acquired by a competitor, or disrupted by business failure. When that happens, every customer is affected by one decision from one company. AntSeed removes the centralized routing intermediary between buyers and independent providers.
 
-Buyers are anonymous by default. No account, no sign-up, no identity. Just a wallet. Providers can operate anonymously too, though most will choose to build a public reputation. For providers running in Trusted Execution Environments, not even the provider operator can see the prompts. Privacy is a structural property of the architecture, not a policy promise.
+Buyers are anonymous by default at the application layer: no central account, no sign-up, and no platform-issued API key. Providers can operate pseudonymously too, though most will choose to build a public reputation. For providers running in Trusted Execution Environments, hardware attestation can reduce what the provider operator can see.
+
+AntSeed's privacy model is architectural rather than account-based: users can route requests without a central identity account, platform-issued API key, or centralized chat database, and TEE providers can add hardware-backed confidentiality where available. It is not, however, a promise that every piece of data is hidden from every participant. Independent providers and supporting infrastructure may process data needed to deliver and settle requests, and public-chain activity remains visible on-chain. Users should choose providers and routes appropriate to the sensitivity of their work.
 
 ## Why Now
 
@@ -111,6 +113,14 @@ The buyer never needs gas. All on-chain actions are either seller-initiated (res
 
 **Everyday users.** AntStation brings the open market to non-technical users through chat and co-work interfaces, powered by the same P2P network underneath.
 
-**Privacy-sensitive organizations.** Law firms, healthcare, finance, journalists who cannot use cloud AI due to confidentiality. TEE-verified providers open this market. Privacy is enforced by hardware, not policy.
+**Privacy-sensitive organizations.** Law firms, healthcare, finance, and journalists who cannot use conventional cloud AI may prefer routes with no central account and TEE-verified providers. TEE can improve confidentiality against a provider operator, but users remain responsible for selecting suitable providers and should not assume all prompts, outputs, metadata, wallet activity, or network information are private.
 
 **Users in underserved markets.** Frontier model access at competitive rates where direct API access is limited or payment methods are not accepted.
+
+## Compliance and Risk
+
+AntSeed is open peer-to-peer software. The protocol may remain technically accessible from many jurisdictions, but technical access does not mean legal permission. Users and Providers are solely responsible for sanctions, export-control, AML/CFT, tax, data-protection, AI, consumer-protection, and other legal compliance in their jurisdictions. Interfaces or hosted services may apply restrictions where technically possible or legally required.
+
+AI outputs are generated by independent models and providers. AntSeed does not guarantee that outputs are accurate, lawful, safe, non-infringing, unbiased, confidential, or suitable for any purpose. Users are responsible for reviewing outputs before relying on or sharing them.
+
+Providers are independent third parties. AntSeed contributors, maintainers, ecosystem participants, and support entities do not control every provider, model, node, output, log, or data practice.

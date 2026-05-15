@@ -241,7 +241,7 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds your earnings until payout. AntSeed removes the aggregator entirely. Requests go peer-to-peer. Payments settle on-chain directly to the provider's wallet. Anyone can provide — no approval needed. The network has no company behind it and no off switch. <a href=\"/vs/openrouter\" style=\"color:#1FD87A;font-weight:500;\">Read the full comparison →</a>"},
+  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer. Payments settle on-chain directly to the provider's wallet. Anyone can provide — no approval needed. Because AntSeed is open peer-to-peer software, independent nodes may continue operating without reliance on a single hosted service. <a href=\"/vs/openrouter\" style=\"color:#1FD87A;font-weight:500;\">Read the full comparison →</a>"},
   {q:'What happens when LLMs become so good that anyone can do anything?', a:"That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers. The supply side grows, not shrinks. But \"anyone can do anything\" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service."},
   {q:"Isn't this just like P2P file sharing? Netflix killed that.", a:"Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. But that logic only applies to humans who care about experience. Agents don't. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability. On those three axes, an open P2P network with no middleman and no markup wins every time."},
   {q:'Is AntSeed built for agents specifically?', a:"It works for humans today and is being used by humans now. But the architecture decisions: USDC-native payments, no account system, open discovery, always-on peers, are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use."},
@@ -296,7 +296,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. Serve or consume AI peer-to-peer. Onchain payments. Verifiable reputation. Anonymous. Private. No gatekeepers."
+      description="The open market for AI inference. Serve or consume AI peer-to-peer. Onchain payments. Verifiable reputation. Anonymous by design, with independent providers and no central account."
       wrapperClassName="homepage-wrapper">
       <Head>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
@@ -336,7 +336,7 @@ export default function Home(): JSX.Element {
               <div className={styles.entryContent}>
                 <span>Chat</span>
                 <h3>AntStation</h3>
-                <p>Sort providers by what you need — video, images, coding, price, privacy — then chat anonymously.</p>
+                <p>Sort providers by what you need — video, images, coding, price, privacy — then chat without creating a central account.</p>
                 <div className={styles.entryBadges}><b>No account</b><b>Desktop app</b></div>
               </div>
               <div className={styles.entryDownloadPair}>
@@ -374,11 +374,11 @@ export default function Home(): JSX.Element {
       <section className={`${styles.audienceSection} ${styles.chatSection}`}>
         <div className={styles.audienceCopy}>
           <span className={styles.kicker}>For chat users</span>
-          <h2>AntStation is the anonymous AI app for the open model market.</h2>
-          <p className={styles.audienceLead}>Open the desktop app, pick a model, chat anonymously, and pay providers in USDC. Providers compete directly, so users get some of the lowest AI prices in the market.</p>
+          <h2>AntStation is the no-account AI app for the open model market.</h2>
+          <p className={styles.audienceLead}>Open the desktop app, pick a model, route through the peer-to-peer network, and pay providers in USDC. AntSeed is designed for anonymous access without a central account, while users remain responsible for what they send to independent providers.</p>
           <div className={styles.conversionGrid}>
-            <div><strong>Anon by default</strong><span>No account wall before you can ask.</span></div>
-            <div><strong>Uncensored market</strong><span>Providers compete; no single policy team controls access.</span></div>
+            <div><strong>Anonymous access</strong><span>No central account wall before you can ask.</span></div>
+            <div><strong>Uncensored market</strong><span>Providers choose their models and policies; users are responsible for lawful use.</span></div>
             <div><strong>Frontier + open source</strong><span>Use the best model for the job, not the one your subscription picked.</span></div>
             <div><strong>Private Providers</strong><span>Prefer TEE providers and direct P2P transport.</span></div>
           </div>

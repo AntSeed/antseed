@@ -26,17 +26,17 @@ const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
   },
   {
     dim: 'Platform fee',
-    antseed: 'No platform cut on inference. Provider sets the price.',
+    antseed: 'Provider sets the price. Network fees may support ecosystem mechanisms.',
     openrouter: 'Platform fee on top of provider pricing.',
   },
   {
     dim: 'Request privacy',
-    antseed: "Prompts go peer-to-peer. The network operator doesn't exist.",
+    antseed: 'Prompts go peer-to-peer without a central platform account. Independent providers and infrastructure may still process or observe data.',
     openrouter: 'Every prompt transits their infrastructure.',
   },
   {
     dim: 'Can be shut down',
-    antseed: 'No central company. No single off switch.',
+    antseed: 'Open peer-to-peer software. Independent nodes may continue without reliance on one hosted service.',
     openrouter: 'Single company can be sued, acquired, or deplatformed.',
   },
   {
@@ -53,7 +53,7 @@ const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
 
 const TITLE = 'OpenRouter Alternative: Permissionless P2P AI Inference | AntSeed';
 const DESCRIPTION =
-  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC — no accounts, no platform fee.';
+  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC — no central account.';
 
 export default function VsOpenRouter(): JSX.Element {
   return (
@@ -116,7 +116,7 @@ export default function VsOpenRouter(): JSX.Element {
           <h1 className={styles.title}>A permissionless, peer-to-peer alternative to OpenRouter.</h1>
           <p className={styles.subtitle}>
             Same OpenAI-compatible API. Any provider can join. Pay per request in USDC.
-            No accounts, no platform fee, no central operator.
+            No central account, independent providers, open peer-to-peer routing.
           </p>
           <div className={styles.ctaRow}>
             <Link to="/docs/install" className={styles.ctaPrimary}>Install AntSeed</Link>
@@ -146,7 +146,7 @@ export default function VsOpenRouter(): JSX.Element {
             <li>You're building an agent that needs to pay for its own inference.</li>
             <li>You want payments to settle per request, on-chain, with no platform holding funds.</li>
             <li>You want to <Link to="/providers">serve</Link> a model and get paid without applying to a platform.</li>
-            <li>You need a routing layer with no central company behind it.</li>
+            <li>You need open peer-to-peer routing that does not rely on one hosted service.</li>
           </ul>
         </section>
 

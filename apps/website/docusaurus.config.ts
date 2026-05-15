@@ -112,7 +112,7 @@ const config: Config = {
         name: 'AntSeed',
         url: 'https://antseed.com',
         description:
-          'The open market for AI inference. Serve or consume AI peer-to-peer. Pay per request in USDC. Anonymous. Private. No gatekeepers.',
+          'The open market for AI inference. Serve or consume AI peer-to-peer. Pay per request in USDC. Anonymous by design, with independent providers and no central account.',
         applicationCategory: 'DeveloperApplication',
         operatingSystem: 'macOS, Linux, Windows',
         offers: {
@@ -152,15 +152,15 @@ const config: Config = {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
       {name: 'keywords', content: 'AI marketplace, OpenRouter alternative, serving AI inference, consuming AI inference, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
-      {name: 'description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Any model, any provider — no gatekeepers.'},
+      {name: 'description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
       {property: 'og:title', content: 'AntSeed — The open market for AI inference'},
-      {property: 'og:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Any model, any provider — no gatekeepers.'},
+      {property: 'og:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
       {property: 'og:type', content: 'website'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
       {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
       {name: 'twitter:title', content: 'AntSeed — The open market for AI inference'},
-      {name: 'twitter:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Any model, any provider — no gatekeepers.'},
+      {name: 'twitter:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
     ],
     colorMode: {
       defaultMode: 'light',

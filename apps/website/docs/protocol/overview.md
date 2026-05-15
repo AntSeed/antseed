@@ -35,7 +35,7 @@ AntSeed is a fully decentralized protocol for buying and selling AI services dir
 
 **No central server** — discovery, negotiation, metering, payments, and reputation are all handled peer-to-peer. To block access to any service on the network, you would need to shut down every individual provider who serves it.
 
-**Nodes ARE the network** — the network is defined entirely by the set of active nodes. No separate infrastructure to deploy or maintain. The protocol has no off switch.
+**Nodes ARE the network** — the network is defined by the set of active independent nodes. No single hosted service controls every node, provider, model, output, log, or data practice.
 
 **Direct communication** — all interactions happen directly between the two parties involved. Communication is encrypted end-to-end. There is no intermediary server collecting requests.
 
@@ -50,5 +50,5 @@ AntSeed is a fully decentralized protocol for buying and selling AI services dir
 **Agent-to-agent commerce** — autonomous agents hold credits, discover providers by capability, evaluate reputation, consume services, and settle payment without human involvement.
 
 :::info Provider Compliance
-AntSeed is designed for providers who build differentiated services on top of AI APIs — not for raw resale of API keys or subscription credentials. Subscription-based provider plugins are for local testing only. Providers are solely responsible for complying with their upstream API provider's terms of service.
+AntSeed is designed for providers who build differentiated services on top of AI APIs — not for raw resale of API keys or subscription credentials. Subscription-based provider plugins are for local testing only. Providers are independent operators and are solely responsible for their infrastructure, outputs, logs, privacy practices, data handling, security, sanctions/export compliance, tax obligations, applicable AI laws, and upstream API provider terms.
 :::

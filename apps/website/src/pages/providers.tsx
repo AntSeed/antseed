@@ -7,11 +7,11 @@ import styles from './providers.module.css';
 const FAQ_DATA = [
   {
     q: 'Does the network see my backend, model choice, or routing logic?',
-    a: 'Never. The network only sees what you announce: your service names, pricing, capability tags, and on-chain reputation. Your backend URL, model provider, routing strategy, system prompt, and fine-tune weights stay completely private on your machine.',
+    a: 'The network only sees what you announce: your service names, pricing, capability tags, and on-chain reputation. Your backend URL, model provider, routing strategy, system prompt, and fine-tune weights are intended to remain under your control. You are responsible for securing your own node, credentials, logs, and provider infrastructure.',
   },
   {
     q: 'What provider types can I run?',
-    a: 'Three: Raw Inference (serve a model or proxy an existing API), Routing Service (select providers on behalf of buyers and earn per request), or AI Agent (wrap domain expertise as a named always-on service). A single node can run all three simultaneously at different price tiers.',
+    a: 'Three: Raw Inference (serve a model or proxy an existing API), Routing Service (select providers on behalf of buyers and receive payment per routed request), or AI Agent (wrap domain expertise as a named always-on service). A single node can run all three simultaneously at different price tiers.',
   },
   {
     q: 'Does my node need to run 24/7?',
@@ -64,7 +64,7 @@ export default function Providers(): JSX.Element {
   return (
     <Layout
       title="Become a Provider | AntSeed"
-      description="Build an AntSeed provider that monetizes your AI capability. Your model, your prompt chain, your RAG — none of it is ever exposed. Buyers get results. You get paid."
+      description="Build an AntSeed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
     >
 
       {/* ── HERO ── */}
@@ -74,7 +74,7 @@ export default function Providers(): JSX.Element {
           <em>No permission needed.</em>
         </h1>
         <p className={styles.heroSub}>
-          Set your price. Announce to the network. Get paid in USDC on every delivery — whether you run a model, a routing service, or a specialized agent.
+          Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration — whether you run a model, a routing service, or a specialized agent.
         </p>
         <div className={styles.heroCtas}>
           <Link to="/docs/guides/become-a-provider" className={styles.ctaPrimary}>Become a provider →</Link>
@@ -99,7 +99,7 @@ export default function Providers(): JSX.Element {
               </svg>
             </div>
             <h3>Raw Inference</h3>
-            <p>You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry, announce it to the network, and start earning. Buyers choose you based on price, latency, and on-chain reputation.</p>
+            <p>You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.</p>
             <ul className={styles.pathList}>
               <li>→ Any model or backend</li>
               <li>→ Set your own price per token</li>
@@ -135,11 +135,11 @@ export default function Providers(): JSX.Element {
               </svg>
             </div>
             <h3>Routing Service</h3>
-            <p>Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, or domain-aware. Earn per request you route without running a single model.</p>
+            <p>Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, or domain-aware. Receive payment for settled routed requests without running a single model.</p>
             <ul className={styles.pathList}>
               <li>→ No model infrastructure required</li>
               <li>→ Latency, cost, TEE, or domain-aware routing</li>
-              <li>→ Earn per request routed</li>
+              <li>→ Payment per settled routed request</li>
             </ul>
             <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
           </div>
@@ -161,8 +161,10 @@ export default function Providers(): JSX.Element {
               intended use and may violate your upstream provider's terms of service.
             </p>
             <p>
-              Providers are solely responsible for complying with their upstream
-              API provider's terms.
+              Providers are independent operators and are solely responsible for their models,
+              infrastructure, outputs, logs, privacy practices, data handling,
+              security, sanctions/export compliance, tax obligations, applicable AI laws,
+              and upstream API provider terms.
             </p>
             <p>
               Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while AntSeed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
@@ -193,7 +195,7 @@ export default function Providers(): JSX.Element {
             </svg>
           </div>
           <div className={styles.privacyCol}>
-            <div className={styles.privacyColLabel + ' ' + styles.private}>Private — never leaves your node</div>
+            <div className={styles.privacyColLabel + ' ' + styles.private}>Under your control — secure your node</div>
             {['Your backend URL or model provider', 'Your routing logic and selection criteria', 'Your system prompt and guardrails', 'Your RAG sources and knowledge base', 'Your prompt engineering', 'Your fine-tune weights'].map(item => (
               <div key={item} className={styles.privacyRow}>
                 <span className={styles.privacyLock}>🔒</span>
@@ -210,7 +212,7 @@ export default function Providers(): JSX.Element {
           <h2>One JSON file. Full control.</h2>
           <p>
             No code to write. Point AntSeed at an OpenAI-compatible endpoint,
-            set your prices and categories, and start earning.{' '}
+            set your prices and categories, and offer capacity to buyers.{' '}
             <Link to="/docs/guides/become-a-provider">Become a provider →</Link>
           </p>
         </div>
@@ -283,8 +285,8 @@ antseed seller start`}</pre>
 }`}</pre>
             </div>
             <p className={styles.codeNote}>
-              Your backend URL, API key, and routing logic never leave your node.
-              The network only sees the service name, price, and categories.{' '}
+              Your backend URL, API key, and routing logic are intended to remain under your control.
+              The network only sees the service name, price, and categories; you are responsible for securing your node and credentials.{' '}
               <Link to="/docs/config">Full config reference →</Link>
             </p>
           </div>
@@ -336,7 +338,7 @@ antseed seller start`}</pre>
           </div>
           <div className={styles.econRow}>
             <span className={styles.econLabel}>Protocol fee</span>
-            <span className={styles.econValue}>4% — flows to the Protocol Reserve, not to a company</span>
+            <span className={styles.econValue}>4% — may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses</span>
           </div>
           <div className={styles.econRow}>
             <span className={styles.econLabel}>Your payout</span>
@@ -396,7 +398,7 @@ antseed seller unstake        # withdraw your stake`}</pre>
         </div>
         <p className={styles.reputationNote}>
           Any buyer can build their own access and routing rules on top of on-chain stats.
-          Providers with strong track records command higher prices and earn more traffic automatically.
+          Providers with strong track records may command higher prices and receive more traffic, depending on buyer and router preferences.
         </p>
       </section>
 
@@ -406,7 +408,7 @@ antseed seller unstake        # withdraw your stake`}</pre>
       {/* ── BOTTOM CTA ── */}
       <section className={styles.bottomCta}>
         <h2>Ready to provide?</h2>
-        <p>Install AntSeed, configure your provider, and start earning.</p>
+        <p>Install AntSeed, configure your provider, and offer AI capacity as an independent operator.</p>
         <div className={styles.bottomCtaBtns}>
           <Link to="/docs/install" className={styles.ctaPrimary}>Get started →</Link>
           <Link to="/docs/guides/become-a-provider" className={styles.ctaSecondary}>Become a provider</Link>
