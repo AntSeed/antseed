@@ -386,6 +386,7 @@ export function Footer({ proxyAddress }: { proxyAddress: string | null }) {
         <a href={ANTSEED_URL}>antseed.com</a>
         <a href={antstationHref} target="_blank" rel="noopener noreferrer">AntStation</a>
         <a href={contractHref} target="_blank" rel="noopener noreferrer">Contract</a>
+        <a href="/terms-of-service.html">Terms</a>
         <a href="#stake">Stake</a>
       </div>
       <div>Live on Base · v0.1</div>

@@ -1,359 +1,148 @@
 ---
 title: Terms of Service
-description: AntSeed Terms of Service
+description: AntSeed Protocol Terms of Service
 slug: /terms-of-service
 ---
 
-# AntSeed Terms of Service
+# AntSeed Protocol — Terms of Service
 
-**Last Updated: May 11, 2026**
+**Last Updated: May 15, 2026**
 
----
+> Important: Token sales, token burns, governance rights, protocol fees, and ecosystem reserves may trigger securities, commodities, financial-services, tax, consumer-protection, sanctions, and other regulatory obligations in different jurisdictions. These Terms do not govern the DIEM Provider Capacity Program at diem.antseed.com, which is subject to [separate terms](https://diem.antseed.com/terms-of-service.html).
 
 ## 1. About These Terms
 
-These Terms of Service ("Terms") govern your access to and use of: the AntSeed open-source Protocol; the AntStation desktop application; the AntSeed CLI; the smart contracts deployed on the Base blockchain (including AntseedDeposits, AntseedChannels, AntseedStaking, AntseedEmissions, and ANTSToken); the DIEM staking pool accessible at diem.antseed.com; and any related documentation, software, or interfaces (collectively, the "Protocol" or "Services").
+These Terms of Service ("Terms") govern access to and use of the AntSeed open-source protocol software, AntStation desktop application, AntSeed CLI, smart contracts deployed on Base or other supported blockchains, documentation, websites, public interfaces, grants programs, token-related programs, and other related software or materials that reference these Terms, excluding the DIEM Provider Capacity Program (collectively, the "Services"). The AntSeed Protocol is open-source, peer-to-peer software and smart-contract infrastructure. The protocol itself is not a company, partnership, investment fund, marketplace operator, broker, dealer, exchange, clearing agency, custodian, fiduciary, issuer, or financial institution. Certain websites, interfaces, repositories, documentation, grants programs, ecosystem reserves, token programs, community initiatives, or other support activities may be maintained, administered, or supported by one or more independent legal entities, foundations, companies, associations, committees, multisigs, contributors, maintainers, or other organizations (each, an "Ecosystem Support Entity"). Any such Ecosystem Support Entity acts only in the specific limited capacity expressly stated for the relevant interface, program, document, or activity. No Ecosystem Support Entity operates, controls, owns, intermediates, or guarantees the peer-to-peer AntSeed network merely because it supports some part of the ecosystem. By installing, accessing, or using any part of the Services, you confirm that you have read, understood, and agree to these Terms. If you do not agree, do not use the Services. These Terms apply to Buyers, Providers, Developers, contributors, grant recipients, tokenholders, voters, interface users, and any other person or entity interacting with the AntSeed ecosystem, except where separate program-specific terms apply.
 
-These Terms are published by the AntSeed open-source project ("AntSeed," "we," "us," or "our"). AntSeed is not incorporated in any jurisdiction. It is a decentralized, open-source protocol with no headquarters, no registered entity, and no jurisdiction-specific legal domicile. These Terms are provided in the same spirit as open-source protocols such as BitTorrent: as a statement of the terms under which the software and interfaces are made available to the public, and as a clear allocation of responsibility between the protocol and its users.
+## 2. Definitions
 
-By installing, accessing, or using any part of the Protocol or any interface operated by AntSeed, you confirm you have read, understood, and agree to be bound by these Terms in their entirety. If you do not agree, do not use the Protocol.
+AntSeed Protocol means the open-source software, peer-to-peer networking components, smart contracts, cryptographic message formats, payment-channel mechanisms, discovery mechanisms, metering mechanisms, and related technical specifications commonly referred to as AntSeed. Buyer means a user or node that consumes AI services from Providers through the AntSeed Protocol. Provider means an independent user or node operator that offers AI inference, routing, agent, workflow, or other services to Buyers through the AntSeed Protocol. Ecosystem Support Entity means any foundation, company, association, committee, multisig, contributor group, maintainer group, grants administrator, reserve administrator, interface publisher, or other organization that supports, funds, documents, promotes, or develops some part of the AntSeed ecosystem. Protocol Reserve or Ecosystem Reserve means any allocation of tokens, fees, assets, or other resources intended to support AntSeed ecosystem development, security, decentralization, adoption, education, research, grants, audits, infrastructure, liquidity-support programs where lawful, token burn programs where lawful, or other ecosystem-support purposes. Tokens means $ANTS or any other cryptographic token associated with or used in connection with the AntSeed ecosystem, excluding DIEM capacity-program participation unless expressly incorporated by separate DIEM terms. Interface means any website, desktop application, CLI, API endpoint, documentation site, dashboard, grants page, or other user-facing access point, excluding diem.antseed.com unless expressly stated otherwise.
 
-These Terms apply to all participants: **Buyers** (consumers of AI services on the network), **Providers** (operators who offer AI services on the network), **Stakers** (participants in the DIEM staking pool), and **Developers** (those who build on or extend the Protocol).
+## 3. What AntSeed Is — And What It Is Not
 
+### 3.1 A Communication Protocol, Not a Service Provider
 
----
+AntSeed is an open-source, peer-to-peer communication protocol. It provides a neutral technical layer through which independent peers may discover each other, negotiate terms, exchange data, meter usage, and settle payments for AI-related services directly. The AntSeed Protocol is intended to function as decentralized infrastructure, not as a centralized marketplace. Like BitTorrent DHT, WebRTC, TCP/IP, and other neutral communication infrastructure, the protocol facilitates technical connectivity but does not itself provide, approve, curate, supervise, or guarantee the substance of what independent peers exchange. Unless expressly stated in separate written terms for a specific hosted product or service, AntSeed and any Ecosystem Support Entity:
 
-## 2. What AntSeed Is — And What It Is Not
+- do not host, store, transmit, process, or inspect peer-to-peer content exchanged between Buyers and Providers;
+- do not operate a centralized broker, marketplace, relay, or server through which all peer traffic must pass;
+- do not know the real-world identity of most Buyers or Providers;
+- do not vet, license, certify, approve, supervise, or endorse Providers or Buyers;
+- do not control what models, APIs, data, prompts, completions, tools, agents, or workflows Providers use;
+- do not control whether a Provider complies with applicable law or upstream terms;
+- are not a party to peer-to-peer transactions between Buyers and Providers; and
+- cannot guarantee the quality, legality, safety, accuracy, privacy, uptime, or availability of any Provider or output.
 
-### 2.1 A Communication Protocol, Not a Service Provider
+Discovery may occur through BitTorrent DHT or other decentralized discovery mechanisms. Transport may occur through WebRTC or other peer-to-peer transport mechanisms. Payments may settle through smart contracts and cryptographic signatures on Base or other supported blockchains. Users interact directly with counterparties and smart contracts at their own risk.
 
-AntSeed is an **open-source, peer-to-peer communication protocol**. It provides a neutral technical layer through which independent peers discover each other, negotiate terms, exchange data, and settle payments for AI inference services — directly, with no company in the middle.
+### 3.2 No Knowledge of Network Activity
 
-AntSeed occupies the same role in the AI services stack as **BitTorrent occupies in file distribution** or **TCP/IP occupies in internet communication**: a neutral transport and coordination mechanism. AntSeed facilitates the connection between peers; it does not participate in, direct, control, or benefit from the substance of what is exchanged between them.
+The AntSeed Protocol is designed so that no central party has general visibility into the content of peer-to-peer requests and responses. AntSeed and Ecosystem Support Entities generally do not know who specific Buyers or Providers are, what services any Provider is delivering, what prompts or outputs are exchanged, or whether any Provider is complying with laws, licenses, export controls, data-protection rules, or upstream terms. You use the network at your own risk, with full awareness that you may transact with anonymous, pseudonymous, or unverified third parties.
 
-Like BitTorrent DHT and similar decentralized infrastructure protocols, AntSeed:
+## 4. Ecosystem Support Entity / Foundation Role
 
-- Does not host, store, transmit, process, or inspect any content exchanged between peers.
-- Does not operate any centralized server, broker, or relay through which peer traffic passes.
-- Does not know the real-world identity of any Provider or Buyer operating on the network.
-- Does not control, screen, approve, endorse, or curate any service offered or consumed by any peer.
-- Has no "off switch" — the network is defined entirely by the set of active nodes running the open-source software. To shut down any service on the network, every individual node serving it would need to be shut down independently.
+One or more Ecosystem Support Entities may be established or used to support the AntSeed ecosystem. Such entities may include a foundation, company, association, nonprofit, limited company, committee, multisig, or other legal or organizational structure. Permitted ecosystem-support activities may include administering grants, funding audits and legal/regulatory analysis, supporting open-source development and education, maintaining public interfaces and documentation, administering a Protocol Reserve, distributing or selling Tokens where lawful, and supporting decentralization and ecosystem adoption. Unless expressly stated otherwise in separate written terms, no Ecosystem Support Entity:
 
-Discovery happens via **BitTorrent DHT**. Transport happens via **WebRTC**, encrypted end-to-end. Payments settle directly on the **Base blockchain** via smart contracts. At no point does any traffic, payment, or negotiation pass through infrastructure controlled or operated by AntSeed.
+- operates or controls the AntSeed Protocol;
+- controls the peer-to-peer network or any independent Provider;
+- intermediates transactions between Buyers and Providers;
+- acts as counterparty to peer-to-peer inference transactions;
+- holds or custodies user funds deposited into non-custodial smart contracts;
+- vets, approves, endorses, certifies, supervises, or guarantees Providers;
+- guarantees any output, service, uptime, token price, liquidity, exchange listing, burn amount, governance outcome, or network activity;
+- acts as broker, dealer, exchange, clearing agency, investment adviser, fund manager, fiduciary, agent, representative, employer, or partner of any user, Provider, Buyer, tokenholder, voter, or contributor;
+- owes tokenholders any dividend, revenue share, profit share, redemption, repayment, liquidation right, buyback right, burn right, grant right, or other economic entitlement.
 
-### 2.2 No Knowledge of Network Activity
+Any grants, incentives, reserve programs, token programs, burn programs, liquidity programs, governance processes, or ecosystem-support activities are discretionary unless separate written terms expressly state otherwise. They may be modified, paused, restricted, or discontinued at any time, subject to applicable law and relevant program terms.
 
-AntSeed has no technical ability to monitor, inspect, log, or intercept the content of any request, response, or communication between peers. We do not know:
+## 5. Protocol Reserve / Ecosystem Reserve
 
-- Who specific Providers or Buyers are.
-- What services any Provider is actually delivering.
-- What prompts, completions, or data are exchanged in any session.
-- Whether any Provider is operating in compliance with any upstream API provider's terms of service or applicable law.
+A portion of token supply, token emissions, protocol fees, assets, or other resources may be allocated to a Protocol Reserve or Ecosystem Reserve. The intended purpose of the reserve is to support the long-term development, security, decentralization, education, adoption, utility, resilience, and sustainability of the AntSeed ecosystem. The reserve may be administered by an Ecosystem Support Entity, foundation, company, committee, multisig, smart contract, governance process, or other mechanism. Permitted uses may include grants, audits, bug bounties, monitoring, incident response, documentation, education, infrastructure, public interfaces, open-source tooling, legal/regulatory/accounting/tax work, contributor incentives, provider incentives, buyer incentives, token repurchase and burn programs where lawful, and other ecosystem-support activities. No Buyer, Provider, contributor, tokenholder, voter, or user has any ownership interest, creditor claim, trust interest, redemption right, distribution right, revenue right, fiduciary claim, or enforceable entitlement in or to any Protocol Reserve or Ecosystem Reserve merely by using the Services, holding Tokens, voting, contributing, or participating in the community. Reserve administration does not create a partnership, joint venture, investment fund, trust, fiduciary relationship, or agency relationship among users, tokenholders, voters, contributors, Providers, Buyers, Ecosystem Support Entities, or other participants.
 
-**You use the network at your own risk, with full awareness that you are transacting directly with anonymous, pseudonymous, or unverified third-party peers.**
+## 6. Protocol Fees, Repurchase, and Burn
 
+Certain protocol-level fees may apply to transactions settled through AntSeed smart contracts. Fee rates, fee recipients, fee allocations, and fee mechanisms may be set, updated, limited, or disabled through smart-contract parameters, multisigs, time locks, governance processes, Ecosystem Support Entity decisions, or other disclosed mechanisms. Protocol fees may be allocated to a Protocol Reserve, Ecosystem Reserve, smart contract, multisig, burn contract, or other address or mechanism. Subject to applicable law and the relevant program terms, protocol fees or reserve assets may be used to repurchase Tokens on the open market, through decentralized exchanges, through other lawful venues, or through other lawful mechanisms, and such Tokens may be burned, locked, recycled into incentives, or otherwise used for ecosystem-support purposes. Any token repurchase or burn program is discretionary unless expressly stated otherwise in separate written terms. No user or tokenholder has any right to require a repurchase, burn, distribution, or fee allocation. No repurchase or burn program is a promise of token price support, token appreciation, liquidity, return, yield, profit, or market value. Repurchase and burn programs may be changed, suspended, delayed, restricted, or terminated at any time. You should not purchase, hold, vote with, or use any Token based on an expectation that fees will be used to repurchase or burn Tokens, that burns will occur at any particular time or amount, or that any burn will affect market price.
 
----
+## 7. Tokens, Emissions, Grants, Transfers, and Possible Sales
 
-## 3. Eligibility
+Tokens associated with the AntSeed ecosystem may be distributed, granted, emitted, transferred, sold, repurchased, burned, locked, vested, or otherwise made available through smart contracts, grants programs, contributor programs, ecosystem programs, private transactions, public transactions, exchanges, liquidity venues, or other mechanisms, subject to applicable law and any separate terms applicable to the relevant transaction or program. These Terms do not constitute an offer to sell, solicitation to buy, recommendation, financial promotion, investment advice, legal advice, tax advice, or public offering of any Token, security, commodity, derivative, financial instrument, or investment product. Unless expressly stated in separate written terms applicable to a specific transaction, Tokens do not represent or confer equity, shares, ownership, dividend rights, revenue share, profit share, interest, yield, repayment, redemption, liquidation proceeds, buybacks, burns, distributions, claims on protocol fees, claims on reserve assets, management rights, or guarantees of liquidity, market price, exchange listing, token value, utility, availability, burn amount, or future functionality. You are solely responsible for determining whether your acquisition, holding, use, sale, transfer, voting, or other activity involving Tokens is lawful in your jurisdiction.
 
-You must be at least 18 years of age (or the age of legal majority in your jurisdiction, whichever is greater) to use the Protocol or participate in the DIEM staking pool. By using any part of the Protocol, you represent and warrant that you meet this requirement.
+## 8. Governance and Voting
 
-If you are using the Protocol on behalf of a legal entity, you represent and warrant that you have authority to bind that entity to these Terms.
+Tokens may be used for governance, signaling, polling, parameter input, grant input, committee election, proposal ranking, ecosystem prioritization, or other voting or participation mechanisms. The scope, effect, eligibility, quorum, thresholds, delegation rules, execution process, and legal status of any vote will depend on the specific governance framework applicable at the time. Unless a separate governance framework expressly states that a vote is binding and technically executable, community votes, tokenholder votes, forum discussions, snapshot votes, polls, signaling processes, and other governance inputs are non-binding expressions of community preference. An Ecosystem Support Entity, multisig, smart contract, committee, or other administrator may consider such input but is not required to implement it unless legally and technically bound to do so. Holding Tokens or voting does not make any tokenholder a partner, general partner, manager, director, officer, agent, fiduciary, trustee, employee, representative, or controller of the AntSeed Protocol, any Ecosystem Support Entity, any reserve, any Provider, or any other participant. No voter is authorized to bind any other participant. Governance must not be used to require or approve unlawful conduct, market manipulation, sanctions evasion, money laundering, fraud, unauthorized securities offerings, misappropriation of assets, infringement, privacy violations, or any activity that would cause an Ecosystem Support Entity, contributor, or participant to violate applicable law. Governance rights, if any, may be limited, changed, suspended, or discontinued where required for legal, regulatory, tax, security, decentralization, or operational reasons.
 
-You further represent that you are not subject to economic or trade sanctions administered by any governmental authority, and that you are not located in a jurisdiction subject to comprehensive sanctions (including OFAC-designated jurisdictions). Your use of the Protocol, including participation in the DIEM staking pool or any on-chain payment activity, must comply fully with all applicable laws and regulations in your jurisdiction.
+## 9. Eligibility, Sanctions, and Legal Compliance
 
----
+You must be at least 18 years old, or the age of legal majority in your jurisdiction, whichever is greater, to use the Services or participate in any token, governance, or grants program. If you use the Services on behalf of a legal entity, you represent that you have authority to bind that entity. You represent and warrant that:
 
-## 4. The Peer-to-Peer Network — Unknown Counterparties and Absence of Vetting
+- you are not subject to sanctions administered by OFAC, the United Nations, the European Union, the United Kingdom, Gibraltar, or any other applicable sanctions authority;
+- you are not located, organized, resident, incorporated, or ordinarily operating in a jurisdiction or territory subject to comprehensive sanctions, embargoes, or similar restrictions;
+- you are not owned or controlled by, acting on behalf of, or providing services to any sanctioned person, blocked person, denied party, or prohibited jurisdiction;
+- you will not use the Services to evade sanctions, export controls, trade restrictions, AML/CFT rules, or other legal restrictions;
+- your use of the Services complies with all applicable laws, including sanctions, export controls, AML/CFT, tax, data protection, consumer protection, securities, commodities, financial-services, AI, and intellectual-property laws.
 
-### 4.1 Anonymous and Unverified Peers
+The AntSeed Protocol is open and peer-to-peer, similar to BitTorrent-style infrastructure. AntSeed and Ecosystem Support Entities do not have the practical ability to block, geofence, suspend, terminate, or prevent all access to the decentralized protocol or to independent peer nodes. Interfaces or hosted services controlled by a specific operator may apply access restrictions where technically possible or legally required, but the protocol itself may remain technically accessible. Technical accessibility does not mean that use is lawful in your jurisdiction. You remain solely responsible for sanctions, export-control, AML/CFT, and other legal compliance.
 
-**The AntSeed network consists entirely of independent, anonymous, and unverified third-party peers.** AntSeed does not vet, license, certify, background-check, or approve any Provider or Buyer. You should treat every counterparty as an unknown third party.
+## 10. Peer-to-Peer Network — Unknown Counterparties and No Vetting
 
-When you connect to a Provider node:
-- You do not know who operates that node or where they are located.
-- You do not know what model, infrastructure, or upstream service that Provider is using.
-- You do not know whether the Provider's service complies with any applicable law or upstream terms of service.
-- You do not know whether any claims the Provider makes about their service are accurate.
+The AntSeed network consists of independent, anonymous, pseudonymous, and unverified third-party peers. AntSeed and Ecosystem Support Entities do not generally vet, license, certify, approve, supervise, or background-check Providers or Buyers. When you connect to a Provider node, you may not know who operates that node, where it is located, what model/API/infrastructure it uses, whether it complies with laws or upstream terms, whether it logs or discloses data, or whether claims made by the Provider are accurate. On-chain reputation, settlement volume, channel history, attestations, metadata, provider profiles, or other signals are not endorsements, certifications, guarantees, or legal compliance confirmations. They are merely technical or economic signals that may be incomplete, inaccurate, manipulated, stale, or misunderstood.
 
-**Exercise extreme caution.** The on-chain reputation system (ghost counts, settlement volume, channel history) provides pseudonymous signals. These are not endorsements by AntSeed and do not verify the legitimacy, safety, or legal compliance of any Provider.
+## 11. Provider Obligations and Prohibited Conduct
 
-### 4.2 No Endorsement of Any Peer, Service, or Output
+Providers are solely and fully responsible for every aspect of the services they offer, including legality, output quality, data protection, confidentiality, privacy, security, compliance with law, compliance with upstream API/model/cloud/data/software/license terms, and all claims, fines, penalties, damages, and disputes arising from Provider operations. Providers must not resell or commercially exploit personal-use, consumer, non-commercial, research-only, or restricted subscriptions, APIs, models, data, or credentials without authorization; circumvent upstream controls; misrepresent material facts; provide unlawful services; or manipulate metering, reputation, pricing, settlement, governance, or token mechanisms. AntSeed and Ecosystem Support Entities are not parties to agreements between Providers and Buyers or between Providers and upstream service providers.
 
-AntSeed does not recommend, endorse, sponsor, promote, or guarantee any Provider, Buyer, service, model, agent, workflow, content, or AI output available on the network. The appearance of any node in DHT discovery results is a technical artifact of the protocol — it is not a listing, a recommendation, or an endorsement by AntSeed. We do not maintain a curated registry of approved providers.
+## 12. General Prohibited Conduct
 
-### 4.3 Provider Privacy Practices Unknown
+All users agree not to use the Services to violate law; generate, transmit, distribute, buy, sell, or facilitate illegal content or services; engage in money laundering, sanctions evasion, terrorist financing, market manipulation, wash trading, fraud, or deception; infringe third-party rights; circumvent export controls; attack or manipulate the Protocol, smart contracts, peer connections, reputation systems, governance, reserves, burns, emissions, or Interfaces; impersonate others; or obtain unauthorized access to systems, keys, wallets, nodes, APIs, data, or accounts.
 
-AntSeed has no knowledge of, and takes no responsibility for, the data handling, logging, retention, or privacy practices of any Provider on the network. **You should assume that Providers may log your prompts and responses** unless you have independent, cryptographic verification (such as a verified Trusted Execution Environment attestation) that they do not.
+## 13. User Content, AI Outputs, Uncensored Services, and Privacy Responsibility
 
+The AntSeed Protocol may be used by independent peers to transmit prompts, files, data, instructions, AI outputs, completions, tool calls, agent actions, model responses, or other content (collectively, "User Content and Outputs"). AntSeed and Ecosystem Support Entities do not create, select, train, fine-tune, moderate, pre-screen, approve, endorse, verify, supervise, store, or control User Content and Outputs exchanged directly between independent Buyers and Providers. You are solely responsible for all User Content and Outputs that you generate, submit, transmit, receive, request, provide, store, process, publish, rely on, or otherwise use through the Services. This includes responsibility for legality, accuracy, safety, privacy, confidentiality, intellectual-property rights, export-control compliance, data-protection compliance, professional-use compliance, and any harm caused to you or others. Some Providers may offer uncensored, minimally filtered, experimental, specialized, jurisdiction-specific, or otherwise unrestricted AI services. Such services may produce offensive, unsafe, inaccurate, unlawful, biased, harmful, private, confidential, infringing, or otherwise objectionable outputs. AntSeed and Ecosystem Support Entities do not guarantee that any Provider will apply moderation, safety filters, privacy controls, data-retention limits, content policies, or legal compliance controls. You must not use the Services to create, request, transmit, distribute, or facilitate illegal content or unlawful activity, including child sexual abuse material, terrorist or extremist activity, unlawful threats, fraud, malware, unauthorized surveillance, doxxing, privacy violations, non-consensual intimate content, illegal weapons activity, sanctions evasion, market manipulation, or content that infringes third-party rights. Providers are solely responsible for the services and outputs they offer; Buyers are solely responsible for the prompts, data, instructions, and use cases they submit and for how they use outputs. Do not submit personal data, sensitive data, confidential information, trade secrets, attorney-client privileged material, healthcare data, financial data, government data, children's data, biometric data, or other regulated information to any Provider unless you have independently verified that the Provider, jurisdiction, contractual terms, technical safeguards, and legal basis are appropriate for that data. You should assume that Providers may log, retain, train on, disclose, misuse, or be compelled to disclose your data unless you have independent contractual, technical, or cryptographic assurances to the contrary. AntSeed and Ecosystem Support Entities are not liable for User Content and Outputs, Provider content policies, Provider privacy practices, moderation failures, lack of moderation, unlawful prompts, unlawful outputs, data leaks, confidentiality breaches, reliance on AI outputs, professional decisions made using outputs, or any dispute between Buyers, Providers, users, rights holders, regulators, or other third parties relating to User Content and Outputs.
 
----
+## 14. Payments, Smart Contracts, and Non-Custody
 
-## 5. Provider Obligations, Liability, and Prohibited Conduct
+Payments on the AntSeed Protocol may use buyer deposits, payment channels, ReserveAuth signatures, SpendingAuth signatures, seller settlement, and other smart-contract mechanisms. Smart contracts are software and may contain bugs, vulnerabilities, or design flaws. Unless expressly stated otherwise, AntSeed and Ecosystem Support Entities do not custody user funds deposited into non-custodial smart contracts, cannot reverse blockchain transactions, cannot refund completed peer-to-peer payments, cannot recover lost private keys, cannot guarantee smart-contract security, and cannot guarantee the solvency, availability, legality, or performance of any blockchain, bridge, stablecoin, wallet, RPC provider, sequencer, validator, oracle, exchange, or other dependency. You are solely responsible for reviewing smart-contract code, contract addresses, transaction details, signatures, approvals, fee parameters, and risks before interacting.
 
-### 5.1 Providers Are Solely and Fully Responsible for What They Provide
+## 15. Token and Market Risk; No Financial Advice
 
-**If you operate as a Provider on the AntSeed network, you bear full and exclusive legal and financial responsibility for every aspect of the services you offer.** This includes, without limitation:
+Token programs, emissions programs, repurchase programs, burn programs, fee-allocation mechanisms, and token-related features are experimental and high risk. Unless expressly stated in separate written terms, no reward, emission, distribution, fee amount, burn amount, return, token value, liquidity, or market outcome is promised or guaranteed. Historical metrics, projected metrics, burn projections, fee projections, volume projections, or other estimates are informational only. Actual results may be zero. Token values may decline significantly or go to zero. Smart-contract exploits, market conditions, regulatory action, low network demand, provider failure, dependency failure, governance changes, or other events may result in loss of funds or no expected outcomes. Nothing in the Services is financial, investment, legal, tax, accounting, or trading advice. Consult qualified advisers before acquiring, voting with, selling, or otherwise using Tokens.
 
-- The legality of your service in every jurisdiction where you serve Buyers.
-- The accuracy, safety, and quality of your outputs.
-- Your compliance with all applicable laws and regulations, including laws governing the provision of AI services, data protection, consumer protection, export controls, and financial regulations.
-- Your compliance with the terms of service, usage policies, and license agreements of any upstream AI API, model provider, cloud service, or infrastructure provider you use to deliver your service.
-- Any harm caused to Buyers or third parties by your service or its outputs.
-- Any claims, fines, penalties, or damages arising from your operation as a Provider.
+## 16. Privacy and Data
 
-AntSeed is a protocol layer. **AntSeed is not a party to any agreement between you and any Buyer, and is not a party to any agreement between you and any upstream service provider.** AntSeed does not direct, control, supervise, or take any share of responsibility for what you provide.
+The AntSeed Protocol is designed for peer-to-peer communication. AntSeed and Ecosystem Support Entities generally do not have access to the content of peer-to-peer prompts, completions, files, or other exchanged data. However, Providers are independent and may log, store, analyze, disclose, or misuse data unless you have independent guarantees or cryptographic assurances. Interfaces may collect limited technical, analytics, telemetry, crash, wallet, or usage data as described in applicable privacy notices. Blockchain activity is public, permanent, and linkable. Wallet addresses, token balances, claims, votes, transfers, burns, approvals, and other on-chain actions may be visible to anyone. Do not submit confidential, regulated, personal, sensitive, privileged, or proprietary data to any Provider unless you have independently assessed the Provider, legal basis, data-processing terms, security controls, and privacy risks.
 
-### 5.2 Upstream API Terms of Service — Explicit Prohibitions
+## 17. Intellectual Property
 
-The following conduct is **expressly prohibited** on the AntSeed network. Engaging in any of these activities is a violation of these Terms and may expose you to legal liability from upstream providers, regulators, or harmed parties:
+The AntSeed Protocol software is open source. Your rights to use, copy, modify, and distribute open-source software are governed by the applicable licenses in the relevant repositories. Nothing in these Terms grants rights to use third-party AI models, APIs, model weights, datasets, trademarks, copyrighted works, confidential information, or other third-party intellectual property. Providers and users must obtain all rights and permissions required for their activities. Ecosystem Support Entities may own or administer trademarks, logos, domains, websites, documentation, or other materials. You may not use AntSeed names, marks, logos, or branding in a misleading way or in a way that implies endorsement, partnership, certification, or authorization without permission.
 
-**5.2.1 Subscription and Credential Resale (Strictly Prohibited)**
-You must not offer services on the AntSeed network that constitute the resale, sublicensing, sharing, or commercial exploitation of any third-party AI provider's personal-use, consumer, or non-commercial subscription tier. Personal and consumer subscriptions offered by AI providers are licensed for individual, non-commercial use only. Reselling or sublicensing access to such subscriptions — regardless of how it is packaged or priced — violates the terms of service of those providers, may constitute breach of contract or unauthorized access under applicable law, and is prohibited on this network.
+## 18. Disclaimers of Warranty
 
-If you operate as a Provider and use any third-party API or service to fulfil requests, you must hold the appropriate commercial API access credentials for that service and comply fully with all applicable usage policies. **The AntSeed subscription-based provider plugin is provided strictly for local development and testing only. It must never be used in production to serve paying network Buyers.**
+THE SERVICES, PROTOCOL, SOFTWARE, SMART CONTRACTS, TOKENS, INTERFACES, DOCUMENTATION, GOVERNANCE MECHANISMS, RESERVES, GRANT PROGRAMS, TOKEN PROGRAMS, REPURCHASE PROGRAMS, BURN PROGRAMS, AND ALL RELATED MATERIALS ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF ANY KIND. TO THE MAXIMUM EXTENT PERMITTED BY LAW, ANTSEED, ECOSYSTEM SUPPORT ENTITIES, CONTRIBUTORS, MAINTAINERS, GRANT RECIPIENTS, MULTISIG SIGNERS, COMMITTEE MEMBERS, AND AGENTS DISCLAIM ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, TITLE, SECURITY, ACCURACY, AVAILABILITY, UPTIME, LEGALITY, COMPLIANCE, AND ERROR-FREE OPERATION. No person or entity warrants that the Protocol or any Interface will be secure, uninterrupted, available, or error-free; any smart contract is free of vulnerabilities; any Provider is legitimate, lawful, safe, private, compliant, or accurate; any Token will have value, liquidity, utility, exchange listing, governance rights, rewards, burns, or future functionality; or any fee, reward, burn, grant, vote, or reserve action will occur.
 
-**5.2.2 Unauthorized Commercial Use of Non-Commercial Licenses**
-You must not use AI models, model weights, or APIs made available under non-commercial, research-only, or restricted licenses to provide commercial inference services on this network without explicit, written authorization from the rights holder.
+## 19. Limitation of Liability
 
-**5.2.3 Misrepresentation**
-You must not falsely represent the model you are serving, the nature or capabilities of your service, your compliance status, the identity of any upstream provider, or any other material fact about your service.
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, ANTSEED, ECOSYSTEM SUPPORT ENTITIES, CONTRIBUTORS, MAINTAINERS, GRANT RECIPIENTS, MULTISIG SIGNERS, COMMITTEE MEMBERS, OFFICERS, DIRECTORS, EMPLOYEES, CONTRACTORS, AND AGENTS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, PUNITIVE, OR SIMILAR DAMAGES, INCLUDING LOSS OF PROFITS, REVENUE, DATA, GOODWILL, TOKENS, DIGITAL ASSETS, USDC, EXPECTED REWARDS, EXPECTED BURNS, EXPECTED VALUE, OR BUSINESS OPPORTUNITY. This limitation applies to damages arising from use of or inability to use the Services; peer-to-peer transactions or Provider conduct; User Content and Outputs; uncensored, unsafe, offensive, inaccurate, unlawful, infringing, private, confidential, or harmful outputs; moderation failures or lack of moderation; privacy breaches, data leaks, data retention, data misuse, or confidentiality breaches by Providers or peers; reliance on AI outputs; smart-contract bugs, exploits, hacks, or failures; wallet compromise, phishing, mistaken transactions, or key loss; token price changes, illiquidity, delistings, or market losses; emissions, fee allocations, repurchases, burns, or governance; regulatory, tax, legal, sanctions, or compliance actions; and actions or omissions of third parties.
 
-**5.2.4 Circumvention of Upstream Controls**
-You must not use the AntSeed network to systematically circumvent authentication, rate limiting, content filtering, access controls, or usage monitoring mechanisms of any upstream API provider.
+## 20. Indemnification
 
-### 5.3 General Prohibited Conduct — All Users
+You agree to indemnify, defend, and hold harmless AntSeed, Ecosystem Support Entities, contributors, maintainers, grant recipients, multisig signers, committee members, officers, directors, employees, contractors, and agents from and against any claims, liabilities, damages, losses, penalties, fines, costs, and expenses, including reasonable legal fees, arising from or relating to your use of the Services, violation of these Terms, violation of law or third-party rights, User Content and Outputs, prompts, files, data, privacy or confidentiality violations, reliance on AI outputs, content or services, operation as a Provider, token/governance/grant/reserve/fee/repurchase/burn/smart-contract activity, or claims by third parties arising from your conduct.
 
-All users (Buyers, Providers, Stakers, and Developers) agree not to use the Protocol to:
+## 21. No Partnership, Agency, Fiduciary Duty, or Collective Enterprise
 
-- Violate any applicable local, national, or international law or regulation.
-- Generate, transmit, or distribute content that is illegal, including but not limited to child sexual abuse material (CSAM), content facilitating terrorism or organized crime, or unlawful threats.
-- Engage in money laundering, fraud, sanctions evasion, or any financial crime.
-- Infringe the intellectual property rights of any third party.
-- Circumvent export controls or trade restrictions applicable to AI technology.
-- Intentionally harm, harass, stalk, or defraud any individual or entity.
-- Interfere with or attack the protocol infrastructure, including attempting to exploit smart contracts, manipulate reputation scores, or disrupt peer connections.
+Use of the Services, holding Tokens, voting, delegating, submitting proposals, receiving grants, contributing code, operating a Provider node, using an Interface, participating in community discussions, or interacting with smart contracts does not create a partnership, general partnership, limited partnership, joint venture, association, agency, franchise, employment relationship, fiduciary relationship, trust, fund, or other collective legal enterprise among users, tokenholders, voters, contributors, Providers, Buyers, maintainers, Ecosystem Support Entities, or other participants. No participant is authorized to bind any other participant, the AntSeed Protocol, any Ecosystem Support Entity, any reserve, any Provider, any Buyer, any tokenholder, or the AntSeed ecosystem. No participant owes fiduciary duties to any other participant merely because of participation in the ecosystem, tokenholding, voting, governance, grants, or use of the Protocol.
 
+## 22. Changes to These Terms and Programs
 
----
+The maintainers or operators of a specific Interface, program, repository, document, grants program, token program, reserve, or Ecosystem Support Entity may update the terms applicable to that specific Interface, program, repository, document, or activity by publishing revised terms or notices. Updates to these Terms do not alter already-executed blockchain transactions and do not modify immutable smart contracts. Continued use of the Services after updated terms are published constitutes acceptance of the updated terms for future use.
 
-## 6. DIEM Staking Pool — diem.antseed.com
+## 23. Severability
 
-### 6.1 What the DIEM Pool Is
+If any provision of these Terms is found invalid, unlawful, or unenforceable, the remaining provisions remain in effect to the maximum extent permitted by law. The invalid provision will be modified to the minimum extent necessary to make it valid and enforceable while preserving its intent as closely as possible.
 
-The DIEM staking pool (accessible at diem.antseed.com) is a smart contract deployed on the Base blockchain that allows holders of $DIEM tokens to stake their tokens in exchange for a pro-rata share of USDC revenue generated by the AntSeed Venice Provider node operating on the network, plus periodic $ANTS token emissions. The pool operates entirely on-chain. Staked $DIEM never leaves the Base blockchain and is never held by AntSeed in any custodial capacity.
+## 24. Contact
 
-The pool is currently in **Alpha**. An owner-set cap limits total staked $DIEM during this phase. This cap may be adjusted at any time at the operator's sole discretion.
+For questions about the open-source Protocol, open an issue or discussion in the official AntSeed repository. For questions about a specific Interface, grants program, token sale, token distribution, reserve, repurchase, burn program, governance process, or Ecosystem Support Entity, use the contact details provided in the applicable program terms, Interface, or entity notice.
 
-### 6.2 How USDC Yield Is Generated
+## Summary Statement
 
-USDC yield distributed to stakers is sourced **exclusively** from real inference revenue: USDC paid by Buyers on the AntSeed network for AI inference requests routed through the AntSeed-operated Venice Provider node. Every USDC that enters the pool represents actual payment by a real buyer for actual inference consumption. It is not synthetic yield, printed rewards, or borrowed liquidity.
-
-The flow is:
-1. Buyers deposit USDC and submit inference requests to the AntSeed Venice Provider node.
-2. The provider node earns USDC per request via on-chain payment channels.
-3. That USDC streams directly from the payment channel into the staking contract in real time.
-4. The contract distributes USDC to stakers pro-rata, continuously, as it arrives.
-
-### 6.3 Protocol Fees — Staking Pool Fee and Network Fee
-
-Two separate protocol fees apply when using the AntSeed network and staking pool. Neither fee goes to the AntSeed team or any individual in any form. Both are returned to the community of network participants.
-
-**Staking Pool Fee**
-A fee of **10% of all USDC inflows** to the staking contract is retained before distribution to stakers. The remaining **90% flows to stakers pro-rata**. This fee is used to sustain and grow the network in a way that drives value back to the community of $ANTS holders and network participants — not to any individual or team member.
-
-**Network Fee**
-A network-level fee is applied to all inference transactions settled on the AntSeed protocol. This fee is currently set at **2% of each settled transaction** and may increase over time up to a maximum of **5.5%**. Like the staking pool fee, this fee does not accrue to the AntSeed team or any individual. It is redirected back to benefit the broader community of network participants and $ANTS holders.
-
-Both fee rates are protocol parameters set by the operator. Any change will be reflected on-chain. **The team does not receive any share of either fee stream, any USDC inflows to the staking pool, or any other direct monetary compensation from the Protocol's operations.**
-
-### 6.4 $ANTS Emissions
-
-In addition to USDC yield, stakers receive $ANTS token emissions each epoch (approximately every 3 days). $ANTS emissions are governed by the AntseedEmissions contract and are distributed based on staked position and epoch parameters. $ANTS emissions are a separate income stream from USDC yield. $ANTS is claimed through AntStation (the AntSeed desktop app) using the same wallet address used for staking.
-
-### 6.5 No Guaranteed APY — Variable and Unpredictable Returns
-
-**ANTSEED MAKES NO PROMISE, REPRESENTATION, OR GUARANTEE OF ANY SPECIFIC APY, YIELD RATE, RETURN, OR INCOME FROM STAKING $DIEM.**
-
-Any APY figure displayed on diem.antseed.com (including the "all-time average" or any projected figures) is a **historical calculation based on past performance only**. It is calculated from actual USDC inflows to the pool divided by total staked value over the measured period. It is displayed for informational purposes only.
-
-Your actual returns will depend entirely on:
-- The actual volume of inference requests processed by the AntSeed Venice Provider node during any given period.
-- The number of $DIEM tokens staked in the pool at the time (your pro-rata share decreases as more tokens are staked).
-- Network demand for AI inference, which fluctuates with market conditions, competition, and usage patterns.
-- Uptime and operational performance of the AntSeed Venice Provider node.
-- Changes to the staking pool fee or the network fee.
-- Changes to $ANTS emission schedules or parameters.
-
-**Past yield is not indicative of future yield. Network demand may be zero at any time. Your USDC yield may be zero at any time.** Do not stake $DIEM expecting a specific return. Only stake what you can afford to hold without any guaranteed income.
-
-### 6.6 $DIEM Token Risk
-
-$DIEM is a cryptographic token on the Base blockchain. Staking $DIEM involves the following risks, among others:
-
-- **Price volatility:** The USD value of your staked $DIEM may decrease significantly or go to zero regardless of USDC yield earned.
-- **Smart contract risk:** The staking contract may contain bugs or vulnerabilities. An exploit could result in partial or total loss of staked tokens.
-- **Liquidity risk:** There may be insufficient market liquidity to sell $DIEM at any given time. Staked $DIEM cannot be sold until unstaked.
-- **Regulatory risk:** Regulators may classify $DIEM, $ANTS, or staking activity as a regulated security or financial product in your jurisdiction. You are responsible for determining your legal obligations.
-- **No lockup, but cooldown applies:** While there is no minimum staking period, unstaking is subject to a cooldown period (currently 1 day for the Venice provider cooldown). AntSeed may adjust cooldown parameters at any time.
-
-### 6.7 Not a Security, Investment Product, or Financial Advice
-
-Nothing on diem.antseed.com, in these Terms, or in any AntSeed communication constitutes:
-- An offer or solicitation to buy or sell any security, investment product, or financial instrument.
-- Financial, investment, legal, or tax advice.
-- A promise of profit or return on investment.
-
-You are solely responsible for your own investment decisions. Consult a qualified financial and legal advisor before staking any funds.
-
-### 6.8 AntSeed Is Not a Counterparty to Stakers
-
-AntSeed does not hold your $DIEM. AntSeed does not owe you any yield. AntSeed is not a financial institution, fund manager, or fiduciary with respect to your staked tokens. Your relationship is with the smart contract, not with AntSeed. AntSeed has no ability to return staked tokens in the event of a contract exploit.
-
-### 6.9 No Refunds or Recovery
-
-AntSeed cannot reverse, pause, or recover any on-chain transaction. If you lose $DIEM or USDC due to a smart contract exploit, a wallet compromise, a mistaken transaction, or any other reason, AntSeed has no ability to restore those funds and will not do so.
-
-
----
-
-## 7. Payments, Smart Contracts, and Security Risks
-
-### 7.1 General Smart Contract Risk
-
-All payments on the AntSeed network — including buyer deposits, payment channel sessions, and DIEM staking — are processed through open-source smart contracts deployed on the Base blockchain. Interacting with any smart contract carries inherent and material risks that you must understand and accept before use:
-
-- **Code vulnerabilities.** Smart contracts are software. Despite design care and any review processes applied, they may contain bugs, logic errors, or vulnerabilities that have not yet been discovered. Any such flaw could be exploited to drain, freeze, or misdirect funds.
-- **Exploits and attacks.** Malicious actors actively search for vulnerabilities in deployed smart contracts. Known attack vectors include reentrancy attacks, integer overflow/underflow, flash loan attacks, oracle manipulation, access control flaws, and upgrade mechanism abuse. AntSeed cannot guarantee that its contracts are immune to any of these.
-- **No audit guarantee.** Even if the smart contracts have been reviewed or audited by third parties, an audit does not guarantee the absence of vulnerabilities. Audits are point-in-time assessments and do not cover all possible attack surfaces.
-- **Irreversibility.** Blockchain transactions are irreversible. If funds are drained through an exploit, there is no mechanism — technical or legal — to reverse the transaction or recover the funds. AntSeed has no ability to pause contracts, freeze funds, or issue refunds in response to an exploit.
-- **Upgrades and parameter changes.** Certain contract parameters (such as the operator fee on the staking pool or the Channels contract address via the Registry) may be updated by the operator. While these mechanisms are designed for protocol maintenance, any upgrade process introduces additional risk surface.
-- **Dependency risk.** The contracts depend on external systems including the Base blockchain network, Circle's USDC contract, and the ERC-8004 IdentityRegistry. Failures, exploits, or changes in any of these dependencies could affect the Protocol's contracts.
-- **Total loss is possible.** In a severe exploit scenario, all funds deposited across all users in an affected contract could be lost in a single transaction. **You should only deposit or stake what you are fully prepared to lose.**
-
-### 7.2 Wallet and Key Security Risk
-
-Your security on the AntSeed network is only as strong as your key management. Risks you must manage independently include:
-
-- **Private key compromise.** If your signing identity key or funding wallet key is compromised, an attacker can drain your deposit balance up to the current balance and sign payment authorizations on your behalf. AntSeed has no mechanism to freeze or recover compromised accounts.
-- **Phishing and social engineering.** Malicious actors may attempt to impersonate AntSeed interfaces, nodes, or team members to obtain your keys or signatures. AntSeed will never ask for your private key.
-- **Malicious provider nodes.** Providers on the network are anonymous and unvetted. A malicious provider could attempt to extract information from your session, provide harmful outputs, or engage in fraudulent payment behavior. The protocol's cryptographic payment controls bound your financial exposure per session, but do not protect against all forms of provider misconduct.
-- **Front-end risk.** If you interact with AntSeed interfaces through a browser or web application, you are exposed to risks including DNS hijacking, BGP hijacking, CDN compromise, and malicious browser extensions that could alter what you see or intercept your signatures.
-
-### 7.3 No Custody
-
-AntSeed does not at any time hold, control, or have access to any user funds. The AntseedDeposits contract is non-custodial. AntSeed holds no admin key or emergency withdrawal capability over deposited user funds.
-
-### 7.4 No Refunds
-
-AntSeed is not a party to any payment channel. We cannot issue refunds, reverse transactions, or resolve disputes. The on-chain `requestClose`/`withdraw` mechanism is the sole recourse for Buyers when a seller is unresponsive.
-
-### 7.5 Blockchain and Stablecoin Risk
-
-AntSeed is not responsible for: network congestion or transaction failures on Base; loss of funds from wallet key compromise; changes to USDC or the Base blockchain; regulatory actions affecting stablecoins or blockchain infrastructure; or the actions or failures of Circle, Coinbase, or any other third party whose infrastructure the Protocol relies upon.
-
----
-
-## 8. Intellectual Property
-
-### 8.1 Open-Source Protocol
-
-The AntSeed Protocol software is open-source. Your rights to use, copy, modify, and distribute the software are governed by the applicable open-source license(s) in the source code. Nothing in these Terms supersedes those license terms.
-
-### 8.2 No License to Third-Party IP
-
-Nothing in these Terms grants any right to use AI models, model weights, training data, or APIs owned by third parties. All such rights must be obtained separately from the applicable rights holder. AntSeed is not responsible for your compliance with third-party intellectual property rights.
-
----
-
-## 9. Privacy
-
-### 9.1 Structural Privacy by Design
-
-The AntSeed Protocol is architected so that Buyers are anonymous by default (no account, no sign-up — just a wallet address), Providers may operate pseudonymously, no central server collects communication data, and TEE-equipped providers offer hardware-enforced prompt privacy. These are structural properties of the architecture, dependent on each node's specific implementation and configuration.
-
-### 9.2 AntSeed's Data Collection
-
-AntSeed may collect limited technical data via AntStation and the AntSeed website (e.g., crash reports, version telemetry, website analytics) as described in a separate Privacy Policy. We do not collect or have access to peer-to-peer communication content.
-
-### 9.3 Staking and On-Chain Data
-
-All staking activity on diem.antseed.com is on-chain and publicly visible. Your wallet address, staked amounts, USDC claims, and $ANTS claims are permanently recorded on the Base blockchain. By participating in the staking pool, you acknowledge and accept that this information is public and immutable.
-
----
-
-## 10. Disclaimers of Warranty
-
-THE PROTOCOL, SOFTWARE, SMART CONTRACTS, STAKING POOL, DOCUMENTATION, AND ALL RELATED SERVICES ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF ANY KIND.
-
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ANTSEED EXPRESSLY DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO:
-
-- WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
-- ANY WARRANTY THAT THE PROTOCOL OR STAKING POOL WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE.
-- ANY WARRANTY REGARDING THE ACCURACY, QUALITY, LEGALITY, OR SAFETY OF ANY SERVICE OR OUTPUT DELIVERED BY ANY PROVIDER ON THE NETWORK.
-- ANY WARRANTY THAT ANY APY, YIELD, RETURN, OR INCOME WILL BE ACHIEVED OR MAINTAINED FROM THE DIEM STAKING POOL.
-- ANY WARRANTY THAT ANY PROVIDER IS OPERATING IN COMPLIANCE WITH ANY UPSTREAM TERMS OF SERVICE, LICENSE, OR APPLICABLE LAW.
-
----
-
-## 11. Limitation of Liability
-
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL ANTSEED, ITS CONTRIBUTORS, MAINTAINERS, OR AGENTS BE LIABLE FOR:
-
-- ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, PUNITIVE, OR EXEMPLARY DAMAGES.
-- LOSS OF PROFITS, REVENUE, DATA, TOKENS, USDC, GOODWILL, OR OTHER INTANGIBLE LOSSES.
-- LOSS OF CRYPTOCURRENCY, STAKED $DIEM, USDC YIELD, OR $ANTS DUE TO ANY CAUSE.
-- DAMAGES ARISING FROM RELIANCE ON ANY PROVIDER OR SERVICE ON THE NETWORK.
-- DAMAGES ARISING FROM THE CONDUCT OF ANY THIRD-PARTY PEER ON THE NETWORK.
-- DAMAGES ARISING FROM ANY SMART CONTRACT BUG, VULNERABILITY, OR EXPLOIT, INCLUDING IN THE STAKING POOL CONTRACT.
-- DAMAGES ARISING FROM REGULATORY ACTION AGAINST $DIEM, $ANTS, OR ANY STAKING ACTIVITY.
-
-THESE LIMITATIONS APPLY REGARDLESS OF THE THEORY OF LIABILITY AND EVEN IF ANTSEED HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
----
-
-## 12. Indemnification
-
-You agree to indemnify, defend, and hold harmless AntSeed and its contributors, maintainers, and agents from and against any claims, liabilities, damages, losses, and expenses (including reasonable legal fees) arising from:
-
-1. Your access to or use of the Protocol or staking pool.
-2. Your violation of these Terms.
-3. Your violation of any third party's rights, including upstream AI provider terms of service or intellectual property rights.
-4. Any content you generate, transmit, or receive through the Protocol.
-5. Your operation as a Provider, including use of any upstream API or service.
-6. Any claim by any upstream AI provider arising from your use of their services via the AntSeed network.
-7. Any regulatory action arising from your participation in the staking pool or use of $DIEM or $ANTS tokens.
-
----
-
-## 13. No Jurisdiction — Nature of the Protocol as Open-Source Infrastructure
-
-AntSeed is not a company. It is not incorporated in any jurisdiction. It has no registered office, no directors, no shareholders, and no legal personality under any national law. It is an open-source protocol — software published for public use — in the same manner as BitTorrent, the Lightning Network, or other decentralized infrastructure protocols.
-
-These Terms are published as a statement of intent and a clear allocation of responsibility between the software and its users. They are not a contract governed by the laws of any specific country. To the extent any court finds these Terms to be a binding agreement, the parties agree that the dispute shall be resolved through good-faith negotiation first, and binding arbitration second, under rules and in a venue mutually agreed upon at the time of the dispute.
-
-Nothing in these Terms creates any employment, partnership, joint venture, agency, franchise, or fiduciary relationship between AntSeed and any user.
-
----
-
-## 14. Modifications to These Terms
-
-AntSeed may modify these Terms at any time by publishing updated Terms at their canonical location. Continued use of the Protocol or staking pool after any update constitutes acceptance of the revised Terms.
-
----
-
-## 15. Severability
-
-If any provision of these Terms is found invalid or unenforceable, the remaining provisions continue in full force. These Terms constitute the entire agreement between you and AntSeed regarding the Protocol and supersede all prior understandings.
-
----
-
-## 16. Contact
-
-For questions about these Terms, open an issue or discussion on the official AntSeed GitHub repository.
-
----
-
-*AntSeed is open-source, decentralized infrastructure. It is a protocol, not a company, not a marketplace, and not a party to any transaction on the network. No service offered by any peer on this network is endorsed, controlled, or guaranteed by AntSeed.*
-
+The AntSeed Protocol is open-source, peer-to-peer infrastructure. Independent Providers and Buyers transact directly and are responsible for their own prompts, data, services, content, outputs, privacy choices, and legal compliance. Ecosystem Support Entities may support grants, reserves, interfaces, token programs, repurchases, burns, governance processes, and other ecosystem activities, but they do not thereby operate or guarantee the peer-to-peer network. Tokens do not, unless separate written terms expressly state otherwise, confer ownership, revenue rights, redemption rights, profit rights, fiduciary rights, or claims on any reserve or entity. The DIEM Provider Capacity Program is subject to separate terms.
