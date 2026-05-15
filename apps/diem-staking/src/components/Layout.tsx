@@ -14,6 +14,8 @@ import { useAntstationDownload, ANTSTATION_RELEASES_URL, type Platform } from '.
 
 const ANTSEED_URL = 'https://antseed.com';
 const DIEM_TERMS_URL = 'https://diem.antseed.com/terms-of-service.html';
+const ZOKYO_URL = 'https://www.zokyo.io';
+const AUDIT_REPORT_URL = '/antseed-zokyo-audit-report-may-14-2026.pdf';
 const CONTRACT_URL_BASE = 'https://basescan.org/address';
 
 // OS glyph for the primary download button. Matches the mark used in
@@ -113,6 +115,17 @@ export function Hero({ diemPrice, apy }: { diemPrice: number | null; apy: number
         <span><strong>{fmtPct(apy)}</strong> <span className="apr-sub">historical USDC activity · all-time avg</span></span>
         <span className="dot" />
         <span><strong>$ANTS</strong> incentives may be available</span>
+        <span className="dot" />
+        <span>
+          Audited by{' '}
+          <a href={ZOKYO_URL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline', textUnderlineOffset: 2 }}>
+            <strong>Zokyo</strong>
+          </a>{' '}
+          ·{' '}
+          <a href={AUDIT_REPORT_URL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline', textUnderlineOffset: 2 }}>
+            View report
+          </a>
+        </span>
       </div>
     </section>
   );
@@ -312,6 +325,14 @@ export function FAQ() {
           </div>
         </details>
         <details className="faq">
+          <summary>Has the smart contract been audited?</summary>
+          <div className="body">
+            Yes. The DIEM staking smart contract was audited by{' '}
+            <a href={ZOKYO_URL} target="_blank" rel="noopener noreferrer">Zokyo</a>.{' '}
+            <a href={AUDIT_REPORT_URL} target="_blank" rel="noopener noreferrer">View the audit report</a>.
+          </div>
+        </details>
+        <details className="faq">
           <summary>How does withdrawing work?</summary>
           <div className="body">
             From Venice's side the proxy is a single participant, so every withdrawal would reset
@@ -383,6 +404,7 @@ export function Footer({ proxyAddress }: { proxyAddress: string | null }) {
         <a href={ANTSEED_URL}>antseed.com</a>
         <a href={antstationHref} target="_blank" rel="noopener noreferrer">AntStation</a>
         <a href={contractHref} target="_blank" rel="noopener noreferrer">Contract</a>
+        <a href={AUDIT_REPORT_URL} target="_blank" rel="noopener noreferrer">Audit</a>
         <a href="#stake">Lock DIEM</a>
         <a href={DIEM_TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>
       </div>

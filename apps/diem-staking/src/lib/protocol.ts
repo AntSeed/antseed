@@ -1,16 +1,10 @@
-// Frontend mirrors of protocol-level on-chain constants. Values that ship
-// baked into the DiemStakingProxy (via `constant` or constructor init) live
-// here so the UI can render sensible defaults before the first on-chain read
-// lands, and to keep a single source of truth for values the UI needs in
-// multiple places.
-//
-// SOURCE OF TRUTH: packages/contracts/DiemStakingProxy.sol. Keep in sync.
+// Frontend fallbacks for protocol-level values. Live on-chain reads are the
+// source of truth; these values are only used before the first read lands or
+// when the proxy isn't deployed in the current environment.
 
 /**
- * Constructor-set default for `maxTotalStake`. Assumes 18-decimal DIEM.
- * Owner can raise or remove (set to 0 for unlimited) via `setMaxTotalStake`.
- * Used as the display fallback when the proxy isn't deployed yet or the
- * live read hasn't returned, so the alpha-strip shows the correct cap
- * from page load even in pre-deploy mode.
+ * Expected owner-set `maxTotalStake` fallback. Assumes 18-decimal DIEM.
+ * The owner can raise or remove the cap (set to 0 for unlimited) via
+ * `setMaxTotalStake`; once the read returns, the UI uses the contract value.
  */
-export const ALPHA_MAX_TOTAL_STAKE_DIEM_BASE = 10n * 10n ** 18n;
+export const ALPHA_MAX_TOTAL_STAKE_DIEM_BASE = 100n * 10n ** 18n;
