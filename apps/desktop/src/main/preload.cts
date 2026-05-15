@@ -221,6 +221,9 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
+  chatAiSetConversationFavorite(id: string, favorite: boolean): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-set-conversation-favorite', id, favorite);
+  },
   chatPrepareAttachments(conversationId: string, attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
     return ipcRenderer.invoke('chat:prepare-attachments', conversationId, attachments);
   },

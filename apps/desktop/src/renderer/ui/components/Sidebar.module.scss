@@ -296,6 +296,10 @@
     .chat-conv-menu-btn {
       display: flex;
     }
+
+    .chat-conv-favorite-btn {
+      opacity: 1;
+    }
   }
 
   &.active {
@@ -381,14 +385,14 @@
   flex-shrink: 0;
 }
 
-.chat-conv-menu-btn {
+.chat-conv-menu-btn,
+.chat-conv-favorite-btn {
   background: none;
   border: none;
   padding: 0;
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-muted);
-  display: none;
   align-items: center;
   justify-content: center;
   width: 16px;
@@ -398,6 +402,33 @@
   &:hover {
     background: none;
     color: var(--text-primary);
+  }
+}
+
+.chat-conv-menu-btn {
+  display: none;
+}
+
+.chat-conv-favorite-btn {
+  display: flex;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+
+  &:focus-visible {
+    opacity: 1;
+  }
+}
+
+.chat-conv-favorite-btn-active {
+  opacity: 1;
+  color: var(--accent-yellow, #facc15);
+
+  svg {
+    fill: currentColor;
+  }
+
+  &:hover {
+    color: var(--accent-yellow, #facc15);
   }
 }
 

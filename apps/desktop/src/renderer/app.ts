@@ -445,6 +445,7 @@ registerActions({
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
   renameConversation: chatApi.renameConversation,
+  setConversationFavorite: chatApi.setConversationFavorite,
   handleServiceChange: chatApi.handleServiceChange,
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,

@@ -7,6 +7,7 @@ import { Settings02Icon } from '@hugeicons/core-free-icons';
 import { CommandLineIcon } from '@hugeicons/core-free-icons';
 import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
 import { Add01Icon } from '@hugeicons/core-free-icons';
+import { StarIcon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
@@ -14,6 +15,7 @@ import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
+import { sortConversationsWithinPeer } from './sidebar-conversation-sort';
 import styles from './Sidebar.module.scss';
 
 type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
@@ -214,6 +216,10 @@ function groupByPeer(conversations: unknown[]): PeerGroup[] {
       conversations: ungrouped,
     });
   }
+  for (const group of result) {
+    group.conversations = sortConversationsWithinPeer(group.conversations);
+  }
+
   return result;
 }
 
@@ -229,6 +235,7 @@ function PeerGroupSection({
   onSelectConv,
   onNewChat,
   onCloseChannel,
+  onToggleFavorite,
   menuOpenId,
   setMenuOpenId,
   menuBtnRefs,
@@ -242,6 +249,7 @@ function PeerGroupSection({
   onSelectConv: (id: string) => void;
   onNewChat: (peerId: string) => void;
   onCloseChannel: () => void;
+  onToggleFavorite: (id: string, favorite: boolean) => void;
   menuOpenId: string | null;
   setMenuOpenId: (id: string | null) => void;
   menuBtnRefs: React.RefObject<Map<string, HTMLButtonElement | null>>;
@@ -316,6 +324,7 @@ function PeerGroupSection({
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
             const isRunning = sendingConvIds.has(id);
+            const isFavorite = conv.favorite === true || Number(conv.favoritedAt) > 0;
             const title = String(conv.title || '');
             const serviceLabel = shortServiceName(conv.service);
             const totalCost = Number(conv.totalEstimatedCostUsd) || 0;
@@ -344,6 +353,18 @@ function PeerGroupSection({
                     />
                   )}
                   <div className={styles.chatConvRight}>
+                    <button
+                      className={`${styles.chatConvFavoriteBtn}${isFavorite ? ` ${styles.chatConvFavoriteBtnActive}` : ''}`}
+                      aria-label={isFavorite ? 'Unfavorite chat' : 'Favorite chat'}
+                      title={isFavorite ? 'Unfavorite chat' : 'Favorite chat'}
+                      aria-pressed={isFavorite}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleFavorite(id, !isFavorite);
+                      }}
+                    >
+                      <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={1.5} />
+                    </button>
                     <button
                       className={styles.chatConvMenuBtn}
                       ref={(el) => { if (el) menuBtnRefs.current?.set(id, el); else menuBtnRefs.current?.delete(id); }}
@@ -463,8 +484,12 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
       // (conv.service matches option.id), otherwise fall back to any option
       // for that peer.
       const group = peerGroups.find((g) => g.peerId === peerId);
-      const recentService = group && group.conversations.length > 0
-        ? String((group.conversations[0] as ConvRecord).service || '').trim()
+      const mostRecentConversation = group?.conversations.reduce<ConvRecord | null>((latest, conv) => {
+        if (!latest) return conv;
+        return Number(conv.updatedAt) > Number(latest.updatedAt) ? conv : latest;
+      }, null);
+      const recentService = mostRecentConversation
+        ? String(mostRecentConversation.service || '').trim()
         : '';
       const options = Array.isArray(chatServiceOptions) ? chatServiceOptions : [];
       const match =
@@ -481,6 +506,10 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
   const handleCloseChannel = useCallback(() => {
     actions.requestChannelClose();
+  }, [actions]);
+
+  const handleToggleFavorite = useCallback((id: string, favorite: boolean) => {
+    void actions.setConversationFavorite(id, favorite);
   }, [actions]);
 
   return (
@@ -504,6 +533,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                 onSelectConv={handleSelectConv}
                 onNewChat={handleNewChat}
                 onCloseChannel={handleCloseChannel}
+                onToggleFavorite={handleToggleFavorite}
                 menuOpenId={menuOpenId}
                 setMenuOpenId={setMenuOpenId}
                 menuBtnRefs={menuBtnRefs}

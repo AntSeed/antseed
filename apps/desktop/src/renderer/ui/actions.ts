@@ -18,6 +18,7 @@ export type AppActions = {
   abortChat: () => Promise<void>;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
+  setConversationFavorite: (convId: string, favorite: boolean) => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;

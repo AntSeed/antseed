@@ -35,6 +35,8 @@ type ChatConversationSummary = {
   provider?: string;
   peerId?: string;
   workspacePath?: string;
+  favorite?: boolean;
+  favoritedAt?: number;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -75,6 +77,7 @@ export type ChatModuleApi = {
   startNewChat: () => void;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
+  setConversationFavorite: (convId: string, favorite: boolean) => Promise<void>;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
@@ -151,6 +154,7 @@ export function initChatModule({
   let workspaceSwitchToken = 0;
   let desiredWorkspacePath: string | null = uiState.chatWorkspacePath || null;
   const sendingConversationIds = new Set<string>();
+  const favoriteUpdateTokens = new Map<string, number>();
   const streamTurnsByConversation = new Map<string, number>();
   const streamStartedAtByConversation = new Map<string, number>();
   const streamCompletedAtByConversation = new Map<string, number>();
@@ -1815,6 +1819,7 @@ export function initChatModule({
       localConversationMessages.delete(convId);
       streamingMessagesByConversation.delete(convId);
       sendingConversationIds.delete(convId);
+      favoriteUpdateTokens.delete(convId);
       streamTurnsByConversation.delete(convId);
       streamStartedAtByConversation.delete(convId);
       // Publish the updated sending set (and resync active-conv UI) before we
@@ -1851,6 +1856,61 @@ export function initChatModule({
       void bridge.chatAiRenameConversation(convId, newTitle).catch((err: unknown) => {
         appendSystemLog(`Failed to persist conversation rename: ${String(err)}`);
       });
+    }
+  }
+
+  async function setConversationFavorite(convId: string, favorite: boolean): Promise<void> {
+    if (!convId || !bridge?.chatAiSetConversationFavorite) return;
+
+    const token = (favoriteUpdateTokens.get(convId) ?? 0) + 1;
+    favoriteUpdateTokens.set(convId, token);
+
+    const favoritedAt = favorite ? Date.now() : undefined;
+    const conversations = Array.isArray(uiState.chatConversations)
+      ? (uiState.chatConversations as ChatConversationSummary[])
+      : [];
+    const conv = conversations.find((c) => c.id === convId);
+    const previousFavorite = conv?.favorite;
+    const previousFavoritedAt = conv?.favoritedAt;
+    if (conv) {
+      conv.favorite = favorite;
+      if (favorite && favoritedAt) {
+        conv.favoritedAt = favoritedAt;
+      } else {
+        delete conv.favoritedAt;
+      }
+      uiState.chatConversations = [...conversations];
+      notifyUiStateChanged();
+    }
+
+    try {
+      const result = await bridge.chatAiSetConversationFavorite(convId, favorite);
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to update favorite');
+      }
+      if (favoriteUpdateTokens.get(convId) !== token) {
+        return;
+      }
+      await refreshChatConversations();
+    } catch (err) {
+      if (favoriteUpdateTokens.get(convId) !== token) {
+        return;
+      }
+      if (conv) {
+        if (previousFavorite != null) {
+          conv.favorite = previousFavorite;
+        } else {
+          delete conv.favorite;
+        }
+        if (previousFavoritedAt != null) {
+          conv.favoritedAt = previousFavoritedAt;
+        } else {
+          delete conv.favoritedAt;
+        }
+        uiState.chatConversations = [...conversations];
+        notifyUiStateChanged();
+      }
+      reportChatError(err, 'Failed to update favorite');
     }
   }
 
@@ -2855,6 +2915,7 @@ export function initChatModule({
     startNewChat,
     deleteConversation,
     renameConversation,
+    setConversationFavorite,
     openConversation,
     sendMessage,
     sendMessageToConversation,

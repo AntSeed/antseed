@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import path from 'node:path';
@@ -148,6 +148,8 @@ type AiConversation = {
   updatedAt: number;
   usage: AiUsageTotals;
   workspacePath?: string;
+  favorite?: boolean;
+  favoritedAt?: number;
 };
 
 type AiConversationSummary = {
@@ -164,6 +166,8 @@ type AiConversationSummary = {
   totalTokens: number;
   totalEstimatedCostUsd: number;
   workspacePath?: string;
+  favorite?: boolean;
+  favoritedAt?: number;
 };
 
 type RegisterPiChatHandlersOptions = {
@@ -1194,7 +1198,10 @@ function extractToolCallFromPartial(
   };
 }
 
+const ANTSEED_FAVORITE_CUSTOM_TYPE = 'antseed:favorite';
+
 type AntseedPeerData = { peerId: string; peerLabel?: string };
+type AntseedFavoriteData = { favorite: boolean; favoritedAt?: number };
 
 function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
   return resolveLatestPeerBinding(
@@ -1202,11 +1209,32 @@ function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null
   );
 }
 
+function extractFavoriteFromEntries(manager: SessionManager): AntseedFavoriteData | null {
+  const entries = manager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (!entry || entry.type !== 'custom' || entry.customType !== ANTSEED_FAVORITE_CUSTOM_TYPE) {
+      continue;
+    }
+
+    const data = entry.data as Record<string, unknown> | undefined;
+    if (data?.favorite !== true) {
+      return null;
+    }
+
+    const favoritedAt = normalizeTokenCount(data.favoritedAt);
+    return favoritedAt > 0 ? { favorite: true, favoritedAt } : { favorite: true };
+  }
+
+  return null;
+}
+
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
   private readonly ready: Promise<void>;
   private readonly pathCache = new Map<string, string>();
   private readonly pendingManagers = new Map<string, SessionManager>();
+  private readonly favoriteUpdateQueue = new Map<string, Promise<AiConversation | null>>();
 
   constructor() {
     this.ready = this.ensureDirs();
@@ -1261,6 +1289,7 @@ class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    const favoriteData = extractFavoriteFromEntries(manager);
     // SessionManager reads the cwd persisted in the session file; restoration
     // across app restarts depends on that value reflecting the session workspace.
     const sessionCwd = manager.getCwd() || undefined;
@@ -1276,6 +1305,8 @@ class PiConversationStore {
       ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
       ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
       ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
+      ...(favoriteData?.favorite ? { favorite: true } : {}),
+      ...(favoriteData?.favoritedAt ? { favoritedAt: favoriteData.favoritedAt } : {}),
     };
   }
 
@@ -1322,6 +1353,8 @@ class PiConversationStore {
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
         ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
+        ...(conversation.favorite ? { favorite: true } : {}),
+        ...(conversation.favoritedAt ? { favoritedAt: conversation.favoritedAt } : {}),
       });
     }
 
@@ -1345,6 +1378,8 @@ class PiConversationStore {
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
         ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
+        ...(conversation.favorite ? { favorite: true } : {}),
+        ...(conversation.favoritedAt ? { favoritedAt: conversation.favoritedAt } : {}),
       });
     }
 
@@ -1401,7 +1436,46 @@ class PiConversationStore {
     manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {});
   }
 
+  async setFavorite(id: string, favorite: boolean): Promise<AiConversation | null> {
+    const previous = this.favoriteUpdateQueue.get(id) ?? Promise.resolve(null);
+    const next = previous
+      .catch(() => null)
+      .then(() => this.setFavoriteUnqueued(id, favorite));
+    this.favoriteUpdateQueue.set(id, next);
+
+    try {
+      return await next;
+    } finally {
+      if (this.favoriteUpdateQueue.get(id) === next) {
+        this.favoriteUpdateQueue.delete(id);
+      }
+    }
+  }
+
+  private async setFavoriteUnqueued(id: string, favorite: boolean): Promise<AiConversation | null> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) return null;
+
+    const sessionPath = manager.getSessionFile();
+    const previousTimes = sessionPath && existsSync(sessionPath)
+      ? await stat(sessionPath).catch(() => null)
+      : null;
+
+    manager.appendCustomEntry(ANTSEED_FAVORITE_CUSTOM_TYPE, favorite
+      ? { favorite: true, favoritedAt: Date.now() } satisfies AntseedFavoriteData
+      : { favorite: false });
+
+    // Favorite metadata should not make the conversation look recently active.
+    // Preserve the session mtime because list ordering derives updatedAt from it.
+    if (sessionPath && previousTimes) {
+      await utimes(sessionPath, previousTimes.atime, previousTimes.mtime).catch(() => undefined);
+    }
+
+    return await this.buildConversationFromManager(manager);
+  }
+
   async delete(id: string): Promise<void> {
+    this.favoriteUpdateQueue.delete(id);
     const pending = this.pendingManagers.get(id);
     const pendingPath = pending?.getSessionFile() ?? null;
     this.pendingManagers.delete(id);
@@ -2523,6 +2597,14 @@ export function registerPiChatHandlers({
     }
     manager.appendSessionInfo(title.trim());
     return { ok: true };
+  });
+
+  ipcMain.handle('chat:ai-set-conversation-favorite', async (_event, id: string, favorite: boolean) => {
+    const conversation = await store.setFavorite(id, Boolean(favorite));
+    if (!conversation) {
+      return { ok: false, error: 'Conversation not found' };
+    }
+    return { ok: true, data: conversation };
   });
 
   ipcMain.handle('chat:prepare-attachments', async (_event, conversationId: string, attachments: RawChatAttachment[]) => {
