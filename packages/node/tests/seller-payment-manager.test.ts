@@ -329,6 +329,43 @@ describe('SellerPaymentManager', () => {
     expect(manager.getAcceptedCumulative(channelId)).toBe(2_000_000n);
   });
 
+  it('validateAndAcceptAuth respects a pending top-up ceiling before the on-chain reserve max is updated', async () => {
+    const channelId = makeChannelId(102);
+
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    const auth900k = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 900_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth900k, mux);
+    manager.recordSpend(channelId, 900_000n);
+
+    vi.spyOn(manager.channelsClient, 'topUp').mockRejectedValue(new Error('TopUpThresholdNotMet'));
+
+    const topUp2m = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '2000000',
+      salt: '0x' + '04'.repeat(32),
+    });
+    expect(await manager.handleSpendingAuth(buyerIdentity.peerId, topUp2m, mux)).toBe('accepted');
+    expect(manager.hasPendingTopUp(channelId)).toBe(true);
+    expect(manager.getReserveMax(channelId)).toBe(1_000_000n);
+    expect(manager.getEffectiveReserveMax(channelId)).toBe(2_000_000n);
+
+    const followUp = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 1_500_000n,
+      reserveMaxAmount: '2000000',
+    });
+
+    expect(await manager.validateAndAcceptAuth(buyerIdentity.peerId, followUp)).toBe(true);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(1_500_000n);
+  });
+
   it('recovers an active on-chain channel when local seller session is missing', async () => {
     const channelId = makeChannelId(21);
     vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue({
