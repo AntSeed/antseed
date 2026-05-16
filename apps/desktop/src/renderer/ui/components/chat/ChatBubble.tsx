@@ -212,10 +212,11 @@ function ThinkingBlockView({ block, highlightQuery, activeHighlight }: { block: 
   if (!hasThinkingText && !block.streaming) return null;
 
   const previewLength = 120;
+  const normalizedThinkingPreview = thinkingText.replace(/\s+/g, ' ').trim();
   const preview = hasThinkingText
-    ? (thinkingText.length > previewLength
-        ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
-        : thinkingText)
+    ? (normalizedThinkingPreview.length > previewLength
+        ? `${normalizedThinkingPreview.slice(0, previewLength).trimEnd()}...`
+        : normalizedThinkingPreview)
     : 'Thinking...';
 
   return (

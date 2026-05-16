@@ -170,7 +170,7 @@ export function TitleBar() {
               </div>
               <div className={styles.creditsDropdownActions}>
                 <button className={styles.creditsDropdownManageBtn} onClick={handleManageCredits}>
-                  Manage
+                  Portal
                 </button>
                 <button className={styles.creditsDropdownAddBtn} onClick={handleDepositCredits}>
                   Deposit
