@@ -80,6 +80,15 @@ export type DiscoverRow = {
   // Peer
   peerId: string;
   peerEvmAddress: string;
+  /**
+   * On-chain seller contract published by the peer via SellerDelegation
+   * (peer metadata codec v8+). When set, this is the address that actually
+   * receives channel settlements — distinct from `peerEvmAddress` which is
+   * derived from the peerId. The renderer uses this to identify known
+   * staking-proxy peers (e.g. the DIEM staking pool) and surface a small
+   * identification badge on the Discover card. See docs/protocol/diem-proxy.md.
+   */
+  sellerContract: string | null;
   peerDisplayName: string | null;
   peerLabel: string;
 

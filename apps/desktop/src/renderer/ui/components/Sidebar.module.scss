@@ -321,6 +321,22 @@
   animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
 }
 
+/* Identification icon: this peer routes settlement through a recognised
+   on-chain pool (e.g. DIEM Staking Pool). Sits inline between the peer
+   name and any per-peer status indicators (running dot, add button). No
+   background / border — it's purely informational and shares the same
+   `--text-muted` color as other sidebar metadata. */
+.peer-group-proxy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  cursor: help;
+}
+
 /* Active indicator on a collapsed peer when one of its chats is running.
    Same visual language as .chat-conv-running-dot so the user reads it as
    the same "working" signal at a different scope. (Issue #461.) */

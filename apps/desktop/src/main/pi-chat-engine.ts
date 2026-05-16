@@ -254,6 +254,7 @@ type DiscoverRowEntry = {
   peerId: string;
   peerEvmAddress: string;
   sellerEvmAddress: string;
+  sellerContract: string | null;
   peerDisplayName: string | null;
   peerLabel: string;
   inputUsdPerMillion: number | null;
@@ -662,6 +663,7 @@ async function buildDiscoverRows(
       peerId,
       peerEvmAddress,
       sellerEvmAddress,
+      sellerContract: /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : null,
       peerDisplayName: entry.peerLabel?.split(' (')[0] ?? null,
       peerLabel: entry.peerLabel ?? peerId.slice(0, 12) + '...',
       inputUsdPerMillion: entry.inputUsdPerMillion ?? null,

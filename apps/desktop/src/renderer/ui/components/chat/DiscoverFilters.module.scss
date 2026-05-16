@@ -206,6 +206,21 @@
   color: var(--text-primary);
 }
 
+/* Tiny inline indicator that a peer settles through a known on-chain pool
+   (e.g. the DIEM Staking Pool). Borrowless / backgroundless so it slots into
+   the existing peer row without competing with the active-check on the
+   right. Sits between the label and the check via natural flow. */
+.peer-proxy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  cursor: help;
+}
+
 /* ── Vertical list (checkboxes / radios) ────────────────────────────── */
 
 .list {

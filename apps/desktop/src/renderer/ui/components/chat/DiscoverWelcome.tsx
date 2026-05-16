@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Copy01Icon, Tick02Icon, ContractsIcon } from '@hugeicons/core-free-icons';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow } from '../../../core/state';
@@ -16,6 +16,8 @@ import {
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
 import { getPeerGradient, getPeerDisplayName, formatPerMillionPrice, getTagTint } from '../../../core/peer-utils';
+import { getKnownProxy, type KnownProxy } from '../../../core/known-proxies';
+import { InfoTooltip } from '../InfoTooltip';
 import styles from './DiscoverWelcome.module.scss';
 
 /**
@@ -26,8 +28,6 @@ import styles from './DiscoverWelcome.module.scss';
  */
 const MAX_VISIBLE_CARD_TAGS = 4;
 const LOW_REPUTATION_SCORE_THRESHOLD = 50;
-const REPUTATION_TOOLTIP_GAP_PX = 8;
-const REPUTATION_TOOLTIP_VIEWPORT_MARGIN_PX = 12;
 
 const SORT_OPTIONS: Array<{ key: DiscoverSortKey; label: string }> = [
   { key: 'reputationDesc',  label: 'Best reputation' },
@@ -55,6 +55,12 @@ type CardItem = {
   tags: string[];
   gradient: string;
   description: string;
+  /**
+   * Identification (not verification) badge for known seller-proxy contracts
+   * — e.g. the DIEM Staking Pool. `null` when the peer settles to its own
+   * derived address or the proxy is not in our known registry.
+   */
+  knownProxy: KnownProxy | null;
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
@@ -136,6 +142,11 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
       tags,
       gradient: getPeerGradient(opt.peerId || opt.peerLabel || opt.provider || opt.id),
       description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
+      // ChatServiceOptionEntry doesn't carry sellerContract — only the
+      // DiscoverRow path (below) does. Cards built from the fallback options
+      // list therefore never light up the badge, which is fine: as soon as
+      // the daemon delivers DiscoverRows the proxy gets surfaced.
+      knownProxy: null,
       inputUsdPerMillion: opt.inputUsdPerMillion,
       outputUsdPerMillion: opt.outputUsdPerMillion,
       cachedInputUsdPerMillion: opt.cachedInputUsdPerMillion ?? null,
@@ -194,6 +205,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       tags,
       gradient: getPeerGradient(row.peerId || peerLabel || row.provider || row.serviceId),
       description: generateDescription(row.serviceId, row.categories, peerLabel || row.provider),
+      knownProxy: getKnownProxy(row.sellerContract),
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
       cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
@@ -634,54 +646,6 @@ function Card({
     && (!hasCachedInput || item.cachedInputUsdPerMillion === 0);
   const lowReputation = isLowReputation(item.reputationScore);
   const reputationTooltip = formatReputationTooltip(item);
-  const scoreBadgeRef = useRef<HTMLSpanElement>(null);
-  const tooltipRef = useRef<HTMLSpanElement>(null);
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({ left: 0, top: 0 });
-
-  const positionReputationTooltip = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const trigger = scoreBadgeRef.current;
-    const tooltip = tooltipRef.current;
-    if (!trigger || !tooltip) return;
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const tooltipRect = tooltip.getBoundingClientRect();
-    const tooltipWidth = tooltipRect.width || 260;
-    const tooltipHeight = tooltipRect.height || 0;
-    const margin = REPUTATION_TOOLTIP_VIEWPORT_MARGIN_PX;
-    const gap = REPUTATION_TOOLTIP_GAP_PX;
-
-    const maxLeft = Math.max(margin, window.innerWidth - tooltipWidth - margin);
-    const left = Math.min(Math.max(margin, triggerRect.right - tooltipWidth), maxLeft);
-    const spaceAbove = triggerRect.top - margin - gap;
-    const spaceBelow = window.innerHeight - triggerRect.bottom - margin - gap;
-    const shouldPlaceAbove = spaceAbove >= tooltipHeight || spaceAbove >= spaceBelow;
-    const top = shouldPlaceAbove
-      ? Math.max(margin, triggerRect.top - tooltipHeight - gap)
-      : Math.max(margin, Math.min(window.innerHeight - tooltipHeight - margin, triggerRect.bottom + gap));
-
-    setTooltipStyle({ left, top });
-  }, []);
-
-  const showReputationTooltip = useCallback(() => {
-    positionReputationTooltip();
-    setTooltipOpen(true);
-  }, [positionReputationTooltip]);
-
-  const hideReputationTooltip = useCallback(() => {
-    setTooltipOpen(false);
-  }, []);
-
-  useEffect(() => {
-    if (!tooltipOpen || typeof window === 'undefined') return undefined;
-    window.addEventListener('resize', positionReputationTooltip);
-    window.addEventListener('scroll', positionReputationTooltip, true);
-    return () => {
-      window.removeEventListener('resize', positionReputationTooltip);
-      window.removeEventListener('scroll', positionReputationTooltip, true);
-    };
-  }, [positionReputationTooltip, tooltipOpen]);
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -769,39 +733,56 @@ function Card({
             <span className={styles.cardProviderBy}>By</span>
             <ProviderAvatar name={providerName} gradient={item.gradient} />
             <span className={styles.cardProviderName}>{providerName}</span>
+            {item.knownProxy && (
+              <InfoTooltip
+                align="left"
+                content={(
+                  <>
+                    <strong>{item.knownProxy.label}</strong>
+                    <span>{item.knownProxy.description}</span>
+                  </>
+                )}
+              >
+                <span
+                  className={styles.proxyBadge}
+                  tabIndex={0}
+                  role="button"
+                  /* The label + description live in the popover; the surface only shows
+                     the icon, but screen readers still get the full sentence. */
+                  aria-label={`${item.knownProxy.label} — ${item.knownProxy.description}`}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <HugeiconsIcon icon={ContractsIcon} size={11} strokeWidth={1.8} />
+                </span>
+              </InfoTooltip>
+            )}
           </div>
           <div className={styles.cardFooterMetrics}>
             <span>{formatCompact(item.channelCount)} session{item.channelCount === 1 ? '' : 's'}</span>
-            <span
-              className={styles.cardScoreWrap}
-              onMouseEnter={showReputationTooltip}
-              onMouseLeave={hideReputationTooltip}
-              onFocus={showReputationTooltip}
-              onBlur={hideReputationTooltip}
+            <InfoTooltip
+              align="right"
+              content={(
+                <>
+                  <strong>On-chain reputation score</strong>
+                  <span>Settled volume: {formatVolumeUsdc(item.volumeUsdc)} USDC.</span>
+                  <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'}.</span>
+                  <span>Avg channel value: {reputationTooltip.avgChannelUsdc} USDC.</span>
+                  {sybilHasSignals(item) && (
+                    <span>
+                      ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
+                    </span>
+                  )}
+                  <span>Score combines settled sessions, volume, recency, stake, and sybil risk.</span>
+                </>
+              )}
             >
-              <span ref={scoreBadgeRef} className={`${styles.cardScoreBadge}${lowReputation ? ` ${styles.cardScoreBadgeWarn}` : ''}`} tabIndex={0}>
+              <span className={`${styles.cardScoreBadge}${lowReputation ? ` ${styles.cardScoreBadgeWarn}` : ''}`} tabIndex={0}>
                 {formatReputationScore(item.reputationScore)}
                 <span className={styles.cardScoreStar} aria-hidden="true">★</span>
                 {lowReputation && <span className={styles.cardScoreLowText}>Low</span>}
               </span>
-              <span
-                ref={tooltipRef}
-                className={`${styles.cardScoreTooltip}${tooltipOpen ? ` ${styles.cardScoreTooltipOpen}` : ''}`}
-                role="tooltip"
-                style={tooltipStyle}
-              >
-                <strong>On-chain reputation score</strong>
-                <span>Settled volume: {formatVolumeUsdc(item.volumeUsdc)} USDC.</span>
-                <span>{formatCompact(item.channelCount)} settled session{item.channelCount === 1 ? '' : 's'}.</span>
-                <span>Avg channel value: {reputationTooltip.avgChannelUsdc} USDC.</span>
-                {sybilHasSignals(item) && (
-                  <span>
-                    ⚠ Sybil risk signals: {item.sybilFlags.map(formatSybilFlag).join(', ')}.
-                  </span>
-                )}
-                <span>Score combines settled sessions, volume, recency, stake, and sybil risk.</span>
-              </span>
-            </span>
+            </InfoTooltip>
           </div>
         </div>
         <div className={`${styles.cardStats}${lowReputation || sybilHasSignals(item) ? ` ${styles.cardStatsWarning}` : ''}`}>

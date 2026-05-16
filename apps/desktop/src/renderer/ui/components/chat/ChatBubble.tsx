@@ -489,12 +489,12 @@ function isRenderableThinkingBlock(block: ContentBlock): boolean {
   return Boolean(block.streaming) || String(block.thinking || '').trim().length > 0;
 }
 
-function mergeThinkingBlocks(blocks: ContentBlock[]): ContentBlock {
+function mergeThinkingBlocks(blocks: ContentBlock[], fallbackIndex = 0): ContentBlock {
   const first = blocks[0] ?? { type: 'thinking' };
   return {
     ...first,
     type: 'thinking',
-    renderKey: String(first.renderKey || first.id || first.tool_use_id || 'thinking-group'),
+    renderKey: String(first.renderKey || first.id || first.tool_use_id || `thinking-group-${fallbackIndex}`),
     thinking: blocks
       .map((block) => String(block.thinking || '').trim())
       .filter(Boolean)
@@ -521,7 +521,7 @@ function renderAssistantBlocks(
     const first = thinkingGroup[0];
     const index = blocks.indexOf(first);
     nodes.push(renderBlock(
-      mergeThinkingBlocks(thinkingGroup),
+      mergeThinkingBlocks(thinkingGroup, index >= 0 ? index : nodes.length),
       index >= 0 ? index : nodes.length,
       streaming,
       messagePrefix,

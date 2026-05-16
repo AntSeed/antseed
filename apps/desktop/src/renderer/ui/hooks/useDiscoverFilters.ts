@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import type { DiscoverRow } from '../../core/state';
 import { getPeerGradient } from '../../core/peer-utils';
+import { getKnownProxy, type KnownProxy } from '../../core/known-proxies';
 import {
   applyFilters, applySort, rowReputationScore,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
@@ -13,6 +14,14 @@ export type DiscoverPeerOption = {
   label: string;
   letter: string;
   gradient: string;
+  /**
+   * Metadata for a recognised on-chain seller-proxy contract (e.g. the DIEM
+   * Staking Pool). Surfaced as a tiny contract icon next to the peer name in
+   * the Discover peer-filter list and the chat sidebar so users can tell at
+   * a glance which peers route settlement through a known pool. `null` for
+   * peers that settle directly to their own derived address.
+   */
+  knownProxy: KnownProxy | null;
 };
 
 export type DiscoverFilterState = {
@@ -96,7 +105,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       const gradient = getPeerGradient(r.peerId || r.peerLabel || r.provider || r.serviceId);
       const letter = (label || '?').charAt(0).toUpperCase();
       seen.set(r.peerId, {
-        opt: { peerId: r.peerId, label, letter, gradient },
+        opt: { peerId: r.peerId, label, letter, gradient, knownProxy: getKnownProxy(r.sellerContract) },
         score: rowReputationScore(r),
         label,
       });

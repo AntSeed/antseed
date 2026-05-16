@@ -10,7 +10,10 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import { ContractsIcon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
+import { getKnownProxy, type KnownProxy } from '../../core/known-proxies';
+import { InfoTooltip } from './InfoTooltip';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
@@ -170,9 +173,18 @@ type PeerGroup = {
   displayName: string;
   gradient: string;
   conversations: ConvRecord[];
+  /**
+   * Identification for a recognised on-chain seller-proxy contract (e.g.
+   * DIEM Staking Pool). Looked up from Discover rows by `peerId` so the
+   * chat sidebar surfaces the same contract icon shown in Discover.
+   */
+  knownProxy: KnownProxy | null;
 };
 
-function groupByPeer(conversations: unknown[]): PeerGroup[] {
+function groupByPeer(
+  conversations: unknown[],
+  knownProxyByPeerId: ReadonlyMap<string, KnownProxy>,
+): PeerGroup[] {
   const groups = new Map<string, PeerGroup>();
   const ungrouped: ConvRecord[] = [];
 
@@ -195,6 +207,7 @@ function groupByPeer(conversations: unknown[]): PeerGroup[] {
         displayName: displayName || peerId.slice(0, 12) + '...',
         gradient: getPeerGradient(peerId),
         conversations: [],
+        knownProxy: knownProxyByPeerId.get(peerId) ?? null,
       };
       groups.set(peerId, group);
     } else if (displayName && group.displayName === peerId.slice(0, 12) + '...') {
@@ -212,6 +225,7 @@ function groupByPeer(conversations: unknown[]): PeerGroup[] {
       displayName: 'Other',
       gradient: 'linear-gradient(180deg, #9a9a96, #6b6b68)',
       conversations: ungrouped,
+      knownProxy: null,
     });
   }
   return result;
@@ -286,6 +300,30 @@ function PeerGroupSection({
           {letter}
         </span>
         <span className={styles.peerGroupName}>{group.displayName}</span>
+        {group.knownProxy && (
+          /* Mirror the Discover card / filter-list affordance: this peer
+             settles through a recognised on-chain pool. Uses the shared
+             `InfoTooltip` so all three call sites render the same panel. */
+          <InfoTooltip
+            align="left"
+            content={(
+              <>
+                <strong>{group.knownProxy.label}</strong>
+                <span>{group.knownProxy.description}</span>
+              </>
+            )}
+          >
+            <span
+              className={styles.peerGroupProxyIcon}
+              aria-label={`${group.knownProxy.label}: ${group.knownProxy.description}`}
+              /* The peer-group header is a clickable expand/collapse target,
+                 so stop click propagation from the icon. */
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HugeiconsIcon icon={ContractsIcon} size={12} strokeWidth={1.8} />
+            </span>
+          </InfoTooltip>
+        )}
         {hasRunningConv && (
           <span
             className={styles.peerGroupRunningDot}
@@ -404,6 +442,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     chatSendingConversationIds,
     chatActiveChannels,
     chatServiceOptions,
+    discoverRows,
   } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
@@ -415,7 +454,27 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   const [expandedPeerIds, setExpandedPeerIds] = useState<Set<string>>(() => new Set());
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
-  const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
+  /**
+   * peerId → known seller-proxy metadata. Built from the same `discoverRows`
+   * stream that powers Discover, so the chat sidebar stays consistent with
+   * the badge shown on the Discover card / peer-filter list. We dedupe by
+   * peerId because one peer can publish many service rows.
+   */
+  const knownProxyByPeerId = useMemo(() => {
+    const map = new Map<string, KnownProxy>();
+    const rows = Array.isArray(discoverRows) ? discoverRows : [];
+    for (const r of rows) {
+      if (!r.peerId || map.has(r.peerId)) continue;
+      const proxy = getKnownProxy(r.sellerContract);
+      if (proxy) map.set(r.peerId, proxy);
+    }
+    return map;
+  }, [discoverRows]);
+
+  const peerGroups = useMemo(
+    () => groupByPeer(conversations, knownProxyByPeerId),
+    [conversations, knownProxyByPeerId],
+  );
 
   // Auto-expand the peer that owns the active conversation — only when the
   // active conversation changes, not on every conversation list refresh.

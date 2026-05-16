@@ -1,6 +1,9 @@
 import { memo } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ContractsIcon } from '@hugeicons/core-free-icons';
 import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
 import { getTagOutlineTint } from '../../../core/peer-utils';
+import { InfoTooltip } from '../InfoTooltip';
 import {
   MAX_INPUT_PRICE_SLIDER_USD, INPUT_PRICE_SLIDER_STEP,
   MAX_OUTPUT_PRICE_SLIDER_USD, OUTPUT_PRICE_SLIDER_STEP,
@@ -47,6 +50,31 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
                     {p.letter}
                   </span>
                   <span className={styles.peerLabel}>{p.label}</span>
+                  {p.knownProxy && (
+                    /* Icon-only identifier: this peer routes settlement through a
+                       recognised on-chain pool. Uses the shared `InfoTooltip` so
+                       the hover panel matches the one on the Discover card. */
+                    <InfoTooltip
+                      align="left"
+                      content={(
+                        <>
+                          <strong>{p.knownProxy.label}</strong>
+                          <span>{p.knownProxy.description}</span>
+                        </>
+                      )}
+                    >
+                      <span
+                        className={styles.peerProxyIcon}
+                        aria-label={`${p.knownProxy.label}: ${p.knownProxy.description}`}
+                        /* The parent <button> handles peer toggle; stop the
+                           click here so hovering the icon doesn't accidentally
+                           toggle the filter. */
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <HugeiconsIcon icon={ContractsIcon} size={12} strokeWidth={1.8} />
+                      </span>
+                    </InfoTooltip>
+                  )}
                   {active && (
                     <svg
                       className={styles.peerCheck}

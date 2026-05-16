@@ -342,12 +342,6 @@
   white-space: nowrap;
 }
 
-.card-score-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
 .card-score-badge {
   display: inline-flex;
   align-items: center;
@@ -384,46 +378,11 @@
   letter-spacing: 0.04em;
 }
 
-.card-score-tooltip {
-  position: fixed;
-  z-index: 200;
-  width: 260px;
-  max-width: calc(100vw - 24px);
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
-  border-radius: 10px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: normal;
-  text-align: left;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.12s ease, visibility 0.12s ease;
-
-  strong,
-  span {
-    display: block;
-  }
-
-  strong {
-    margin-bottom: 4px;
-    color: var(--text-primary);
-    font-size: 12px;
-  }
-
-  span + span {
-    margin-top: 3px;
-  }
-}
-
-.card-score-tooltip-open {
-  opacity: 1;
-  visibility: visible;
-}
+/* `.card-score-tooltip` and `.card-score-tooltip-open` were lifted into the
+   shared `InfoTooltip` component (components/InfoTooltip.module.scss).
+   Every popover on Discover — reputation score, known-proxy identification,
+   plus the matching icons in the chat sidebar and peer-filter list — now
+   renders through that single source of truth. */
 
 .card-stats {
   display: flex;
@@ -642,6 +601,44 @@
   flex-shrink: 0;
 }
 
+/* ── Proxy / pool identification badge ───────────────────────────────
+   Surfaces "this peer settles through a known on-chain pool" (e.g. the
+   DIEM Staking Pool). Intentionally styled as a neutral identifier *icon*,
+   not a verification check — we don't validate the contract here, we just
+   recognise its address. The shared `InfoTooltip` component carries the
+   hover explanation, so this class only needs to size + color the glyph. */
+.proxy-badge {
+  /* Plain icon affordance: no pill background, no border. The icon itself
+     carries the meaning, the hover popover carries the explanation. We keep
+     just enough styling for hit-target sizing, focus ring, and a subtle
+     hover color shift so it still feels interactive. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  line-height: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.12s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
 /* ── Loading / empty states ─────────────────────────────────────────── */
 
 .loading-hint {
@@ -756,10 +753,10 @@
     color: #fbbf24;
   }
 
-  .card-score-tooltip {
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  }
+  /* Dark theme: the base rule for `.proxy-badge` uses `var(--text-muted)` /
+     `var(--text-primary)` which flips automatically, so no color override is
+     needed here. `.card-score-tooltip` lives in InfoTooltip.module.scss and
+     carries its own dark-theme rule. */
 
   .filter-trigger {
     border-color: rgba(255, 255, 255, 0.08) !important;

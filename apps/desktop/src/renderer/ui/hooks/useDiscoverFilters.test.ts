@@ -11,7 +11,7 @@ function mkRow(i: number, chat: boolean): DiscoverRow {
     rowKey: `p${i}:s${i}`,
     serviceId: `s${i}`, serviceLabel: `Svc${i}`, categories: [i % 2 === 0 ? 'math' : 'coding'],
     provider: 'openai', protocol: 'openai-chat-completions',
-    peerId: `p${i}`, peerEvmAddress: `0xp${i}`, peerDisplayName: `P${i}`, peerLabel: `P${i}`,
+    peerId: `p${i}`, peerEvmAddress: `0xp${i}`, sellerContract: null, peerDisplayName: `P${i}`, peerLabel: `P${i}`,
     inputUsdPerMillion: i, outputUsdPerMillion: i * 2, cachedInputUsdPerMillion: null,
     lifetimeSessions: chat ? i : 0, lifetimeRequests: 0, lifetimeInputTokens: 0, lifetimeOutputTokens: 0,
     lifetimeFirstSessionAt: null, lifetimeLastSessionAt: chat ? i * 1000 : null,

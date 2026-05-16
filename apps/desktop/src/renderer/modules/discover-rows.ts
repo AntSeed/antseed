@@ -25,6 +25,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     protocol: String(r.protocol ?? ''),
     peerId,
     peerEvmAddress: String(r.peerEvmAddress ?? ''),
+    sellerContract: typeof r.sellerContract === 'string' && r.sellerContract.length > 0 ? r.sellerContract : null,
     peerDisplayName: typeof r.peerDisplayName === 'string' ? r.peerDisplayName : null,
     peerLabel: String(r.peerLabel ?? ''),
     inputUsdPerMillion: typeof r.inputUsdPerMillion === 'number' ? r.inputUsdPerMillion : null,
