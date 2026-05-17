@@ -107,6 +107,10 @@ export type RawChatAttachment = {
   base64: string;
 };
 
+export type SpeechTranscribeResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string };
+
 export type PreparedChatAttachment = {
   id: string;
   /** Stable server-generated ID for the on-disk copy; used by the
@@ -168,6 +172,7 @@ export type DesktopBridge = {
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
+  speechTranscribeWhisper?: (payload: { dataUrl: string; mimeType?: string; language?: string }) => Promise<SpeechTranscribeResult>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;

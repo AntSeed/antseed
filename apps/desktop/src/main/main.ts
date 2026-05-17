@@ -56,6 +56,7 @@ import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+import { transcribeWithWhisper, type SpeechTranscribePayload, type SpeechTranscribeResult } from './speech-to-text.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -477,6 +478,50 @@ ipcMain.handle('app:get-setup-status', () => ({
 // language list, not the OS UI language, and can disagree on multilingual
 // systems.
 ipcMain.handle('app:get-system-locale', () => app.getLocale());
+
+async function resolveSpeechTranscriptionOptions(): Promise<{
+  apiKey?: string;
+  apiKeyEnvName: string;
+  baseUrl?: string;
+  model?: string;
+}> {
+  let speechConfig: Record<string, unknown> = {};
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    speechConfig = asRecord(asRecord(config['buyer'])['speechToText']);
+  } catch {
+    // Config is optional for transcription; environment variables are enough.
+  }
+
+  const apiKeyEnvName = asString(speechConfig['apiKeyEnv'], 'OPENAI_API_KEY').trim() || 'OPENAI_API_KEY';
+  const configuredApiKey = process.env[apiKeyEnvName]?.trim();
+  const fallbackApiKey = apiKeyEnvName === 'OPENAI_API_KEY'
+    ? undefined
+    : process.env['OPENAI_API_KEY']?.trim();
+  const baseUrl = asString(
+    speechConfig['baseUrl'],
+    process.env['OPENAI_TRANSCRIPTION_BASE_URL'] || '',
+  ).trim();
+  const model = asString(
+    speechConfig['model'],
+    process.env['OPENAI_TRANSCRIPTION_MODEL'] || 'whisper-1',
+  ).trim();
+
+  return {
+    apiKey: configuredApiKey || fallbackApiKey,
+    apiKeyEnvName,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+ipcMain.handle(
+  'speech:transcribe-whisper',
+  async (_event, payload: SpeechTranscribePayload): Promise<SpeechTranscribeResult> => {
+    const options = await resolveSpeechTranscriptionOptions();
+    return transcribeWithWhisper(payload, options);
+  },
+);
 
 ipcMain.handle('identity:get', async () => {
   try {

@@ -87,6 +87,10 @@ type RawChatAttachment = {
   base64: string;
 };
 
+type SpeechTranscribeResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string };
+
 type PreparedChatAttachment = {
   id: string;
   /** Stable server-generated ID for the on-disk copy; used by the
@@ -223,6 +227,9 @@ const api = {
   },
   chatPrepareAttachments(conversationId: string, attachments: RawChatAttachment[]): Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }> {
     return ipcRenderer.invoke('chat:prepare-attachments', conversationId, attachments);
+  },
+  speechTranscribeWhisper(payload: { dataUrl: string; mimeType?: string; language?: string }): Promise<SpeechTranscribeResult> {
+    return ipcRenderer.invoke('speech:transcribe-whisper', payload) as Promise<SpeechTranscribeResult>;
   },
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);

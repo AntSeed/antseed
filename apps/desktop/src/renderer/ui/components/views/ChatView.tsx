@@ -3,6 +3,7 @@ import type { KeyboardEvent, MouseEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
+  AiMicIcon,
   ArrowUp02Icon,
   ArrowRight01Icon,
   ArrowDown02Icon,
@@ -12,6 +13,7 @@ import {
   Folder01Icon,
   GitBranchIcon,
   Search01Icon,
+  StopCircleIcon,
   Tick02Icon
 } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
@@ -29,7 +31,7 @@ import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewe
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
-import type { ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
+import type { ChatWorkspaceGitStatus, DesktopBridge, RawChatAttachment } from '../../../types/bridge';
 import { AntStationStackedLogo } from '../AntStationLogo';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
@@ -47,6 +49,15 @@ const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const NEAR_BOTTOM_PX = 40;
+const RECORDING_MIME_TYPE_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+  'audio/wav',
+];
+
+type VoiceRecordStatus = 'idle' | 'requesting' | 'recording' | 'transcribing';
 
 function isNearScrollBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
@@ -167,6 +178,33 @@ function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
   return details.join('\n');
 }
 
+function getPreferredRecordingMimeType(): string {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return '';
+  }
+  return RECORDING_MIME_TYPE_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read recorded audio.'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function stopMediaStream(stream: MediaStream | null): void {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+function formatRecordingDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
 
 type ChatViewProps = {
   active: boolean;
@@ -194,6 +232,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     text: string;
     attachments: RawChatAttachment[];
   } | null>(null);
+  const [voiceRecordStatus, setVoiceRecordStatus] = useState<VoiceRecordStatus>('idle');
+  const [voiceRecordError, setVoiceRecordError] = useState<string | null>(null);
+  const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   // While the LLM is streaming we still let the user type/paste.
   // Drafts the user confirms (Enter / Send) are parked in this queue as
   // cards above the composer and ship one-per-turn as soon as the current
@@ -223,6 +264,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedAudioChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef<number>(0);
   const approvedLowReputationPeersRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -231,6 +276,26 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const wasActiveRef = useRef<boolean>(active);
   const isUserScrolledUp = useRef(false);
   const isDragging = useRef(false);
+
+  useEffect(() => {
+    if (voiceRecordStatus !== 'recording') return undefined;
+    const timer = window.setInterval(() => {
+      const startedAt = recordingStartedAtRef.current;
+      setRecordingElapsedSeconds(startedAt > 0 ? Math.floor((Date.now() - startedAt) / 1000) : 0);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [voiceRecordStatus]);
+
+  useEffect(() => () => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    stopMediaStream(mediaStreamRef.current);
+  }, []);
+
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
@@ -831,6 +896,131 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, []);
 
+  const appendVoiceTranscript = useCallback((transcript: string) => {
+    const cleaned = transcript.trim();
+    if (!cleaned) return;
+    setInputValue((prev) => {
+      const trimmedPrev = prev.trimEnd();
+      return trimmedPrev ? `${trimmedPrev}\n${cleaned}` : cleaned;
+    });
+    requestAnimationFrame(() => {
+      handleInput();
+      inputRef.current?.focus();
+    });
+  }, [handleInput]);
+
+  const handleStopVoiceRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+  }, []);
+
+  const transcribeRecordedAudio = useCallback(async (blob: Blob) => {
+    const bridge = (window as unknown as { antseedDesktop?: DesktopBridge }).antseedDesktop;
+    if (!bridge?.speechTranscribeWhisper) {
+      setVoiceRecordError('Speech transcription is unavailable in this desktop build.');
+      setVoiceRecordStatus('idle');
+      return;
+    }
+
+    if (blob.size === 0) {
+      setVoiceRecordError('No audio was captured. Please try recording again.');
+      setVoiceRecordStatus('idle');
+      return;
+    }
+
+    setVoiceRecordStatus('transcribing');
+    setVoiceRecordError(null);
+    try {
+      const dataUrl = await readBlobAsDataUrl(blob);
+      const result = await bridge.speechTranscribeWhisper({
+        dataUrl,
+        mimeType: blob.type || undefined,
+      });
+      if (!result.ok) {
+        setVoiceRecordError(result.error || 'Whisper transcription failed.');
+        return;
+      }
+      appendVoiceTranscript(result.text);
+    } catch (error) {
+      setVoiceRecordError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVoiceRecordStatus('idle');
+      setRecordingElapsedSeconds(0);
+    }
+  }, [appendVoiceTranscript]);
+
+  const handleStartVoiceRecording = useCallback(async () => {
+    setVoiceRecordError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVoiceRecordError('Microphone recording is not supported on this system.');
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      setVoiceRecordError('Audio recording is not supported in this desktop runtime.');
+      return;
+    }
+
+    setVoiceRecordStatus('requesting');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredMimeType = getPreferredRecordingMimeType();
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
+        : new MediaRecorder(stream);
+      recordedAudioChunksRef.current = [];
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recordingStartedAtRef.current = Date.now();
+      setRecordingElapsedSeconds(0);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedAudioChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onerror = () => {
+        setVoiceRecordError('Microphone recording failed. Please try again.');
+        setVoiceRecordStatus('idle');
+        stopMediaStream(stream);
+      };
+      recorder.onstop = () => {
+        const mimeType = recorder.mimeType || preferredMimeType || 'audio/webm';
+        const blob = new Blob(recordedAudioChunksRef.current, { type: mimeType });
+        recordedAudioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current = null;
+        stopMediaStream(stream);
+        void transcribeRecordedAudio(blob);
+      };
+
+      recorder.start();
+      setVoiceRecordStatus('recording');
+      inputRef.current?.focus();
+    } catch (error) {
+      stopMediaStream(mediaStreamRef.current);
+      mediaStreamRef.current = null;
+      const message = error instanceof DOMException && error.name === 'NotAllowedError'
+        ? 'Microphone permission was denied. Enable microphone access and try again.'
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      setVoiceRecordError(message);
+      setVoiceRecordStatus('idle');
+    }
+  }, [transcribeRecordedAudio]);
+
+  const handleToggleVoiceRecording = useCallback(() => {
+    if (voiceRecordStatus === 'recording') {
+      handleStopVoiceRecording();
+      return;
+    }
+    if (voiceRecordStatus === 'requesting' || voiceRecordStatus === 'transcribing') return;
+    void handleStartVoiceRecording();
+  }, [handleStartVoiceRecording, handleStopVoiceRecording, voiceRecordStatus]);
+
   const handleClosePreview = useCallback(() => {
     setPreviewOpen(false);
   }, []);
@@ -864,6 +1054,21 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
+  const voiceButtonActive = voiceRecordStatus === 'recording';
+  const voiceButtonTitle = voiceRecordStatus === 'recording'
+    ? 'Stop recording and transcribe with Whisper'
+    : voiceRecordStatus === 'requesting'
+      ? 'Requesting microphone permission...'
+      : voiceRecordStatus === 'transcribing'
+        ? 'Transcribing with Whisper...'
+        : 'Record voice input with Whisper';
+  const voiceStatusLabel = voiceRecordStatus === 'recording'
+    ? `Recording ${formatRecordingDuration(recordingElapsedSeconds)} — click the mic to transcribe`
+    : voiceRecordStatus === 'requesting'
+      ? 'Waiting for microphone permission...'
+      : voiceRecordStatus === 'transcribing'
+        ? 'Transcribing with Whisper...'
+        : null;
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = getPathEnding(workspacePath);
@@ -1161,6 +1366,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
             {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
             {attachmentWarning && <div className={styles.chatWarning}>{attachmentWarning}</div>}
+            {voiceRecordError && <div className={styles.chatWarning}>{voiceRecordError}</div>}
+            {voiceStatusLabel && (
+              <div className={styles.chatVoiceStatus} aria-live="polite">
+                {voiceStatusLabel}
+              </div>
+            )}
             <LowBalanceWarning
               visible={snap.chatLowBalanceWarning}
               availableUsdc={snap.creditsAvailableUsdc}
@@ -1242,19 +1453,33 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
-                <button
-                  className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
-                  title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
-                </button>
+                <div className={styles.chatInputActionsLeft}>
+                  <button
+                    type="button"
+                    className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
+                    title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.chatVoiceBtn}${voiceButtonActive ? ` ${styles.chatVoiceBtnRecording}` : ''}`}
+                    title={voiceButtonTitle}
+                    aria-label={voiceButtonTitle}
+                    aria-pressed={voiceButtonActive}
+                    disabled={voiceRecordStatus === 'requesting' || voiceRecordStatus === 'transcribing'}
+                    onClick={handleToggleVoiceRecording}
+                  >
+                    <HugeiconsIcon icon={voiceButtonActive ? StopCircleIcon : AiMicIcon} size={18} strokeWidth={2} />
+                  </button>
+                </div>
                 {snap.chatAbortVisible ? (
-                  <button className={styles.chatAbortBtn} onClick={handleStop}>
+                  <button type="button" className={styles.chatAbortBtn} onClick={handleStop}>
                     Stop
                   </button>
                 ) : (
-                  <button className={styles.chatSendBtn} disabled={snap.chatSendDisabled && attachedFiles.length === 0} onClick={handleSend}>
+                  <button type="button" className={styles.chatSendBtn} disabled={snap.chatSendDisabled && attachedFiles.length === 0} onClick={handleSend}>
                     <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
                   </button>
                 )}
