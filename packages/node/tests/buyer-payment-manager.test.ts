@@ -544,6 +544,49 @@ describe('BuyerPaymentManager', () => {
     expect(reserveTopUp.reserveMaxAmount).toBe('200000');
   });
 
+  it('handleNeedAuth still sends spending auth first for high-price models that exhaust a small per-request budget', async () => {
+    const expensivePricing = { inputUsdPerMillion: 10, outputUsdPerMillion: 100 };
+
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(
+      identity,
+      makeConfig(tempDir, { maxReserveAmountUsdc: 1_000_000n, maxPerRequestUsdc: 500_000n }),
+      store,
+    );
+    manager.setSigner(Wallet.createRandom());
+    mux = createMockPaymentMux();
+
+    const sellerPeerId = fakePeerId('seller-needauth-expensive-topup');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, expensivePricing);
+
+    // Simulate a very expensive first response: verified cost jumps close to the
+    // reserve ceiling, and the seller asks for just above that ceiling. The buyer
+    // must still sign at the current ceiling first, then top up.
+    (manager as unknown as { _verifiedCost: Map<string, bigint> })._verifiedCost.set(sellerPeerId, 950_000n);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '1100000',
+      currentAcceptedCumulative: '950000',
+      deposit: '1000000',
+      lastRequestCost: '950000',
+      inputTokens: '50000',
+      freshInputTokens: '50000',
+      outputTokens: '4500',
+      cachedInputTokens: '0',
+    }, mux);
+
+    expect(mux.sentSpendingAuths).toHaveLength(2);
+    const spendingFirst = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    const reserveSecond = mux.sentSpendingAuths[1] as Record<string, unknown>;
+    expect(spendingFirst.cumulativeAmount).toBe('1000000');
+    expect(spendingFirst.reserveMaxAmount).toBeUndefined();
+    expect(reserveSecond.cumulativeAmount).toBe('1000000');
+    expect(reserveSecond.reserveMaxAmount).toBe('2000000');
+  });
+
   it('handleNeedAuth allows more after verified cost increases', async () => {
     const sellerPeerId = fakePeerId('seller-needauth-v');
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
