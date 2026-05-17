@@ -438,10 +438,10 @@ export class SellerPaymentManager {
           reserveMaxAmount,
           0n,
           {
-          spendingAuthSig: '',
-          cumulativeAmount: 0n,
-          metadataHash: payload.metadataHash,
-          metadata: payload.metadata,
+            spendingAuthSig: '',
+            cumulativeAmount: 0n,
+            metadataHash: payload.metadataHash,
+            metadata: payload.metadata,
           },
         );
 
@@ -922,10 +922,12 @@ export class SellerPaymentManager {
 
   /**
    * Check for stale sessions and attempt to close them.
-   * The seller can only close() with a valid SpendingAuth — it cannot
-   * requestClose or withdraw (those are buyer-only on-chain).
-   * If the seller has no auths, the session remains open until the buyer
-   * calls requestClose → withdraw on-chain.
+   * - Channels with a buyer SpendingAuth go through `settleSession()`.
+   * - Zombie channels (buyer gone, no auth, deadline elapsed) can be closed
+   *   on-chain with `finalAmount == channel.settled`, which intentionally
+   *   skips SpendingAuth verification and lets the seller release the lock,
+   *   decrement activeChannelCount, and advance channel stats without buyer
+   *   cooperation.
    * Called periodically and on startup for recovery.
    */
   async checkTimeouts(): Promise<void> {
@@ -949,16 +951,55 @@ export class SellerPaymentManager {
         if (accepted > 0n && !this._activeBuyers.has(channel.peerId)) {
           debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
           await this.settleSession(channel.peerId);
+          continue;
         }
-        // If no auths and buyer disconnected, nothing the seller can do on-chain.
-        // The buyer must call requestClose → withdraw. We just clean up locally
-        // after a reasonable period (e.g. deadline passed).
+        // No auths, buyer gone, deadline elapsed: close with the current
+        // on-chain settled amount. The contract skips signature verification
+        // when finalAmount == settled, so this safely cleans up zombie
+        // channels without claiming any unproven spend.
         if (accepted === 0n && !this._activeBuyers.has(channel.peerId) && nowSecs > channel.deadline) {
-          this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline', 'timeout');
+          if (onChainState.status !== 'active') {
+            this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline, on-chain status unknown', 'timeout');
+            continue;
+          }
+          await this._closeWithoutAuth(channel.sessionId, channel.peerId, onChainState.channel.settled);
         }
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to process channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }
+    }
+  }
+
+  /**
+   * Close a zombie channel (buyer gone, no signed auth) using the current
+   * on-chain settled cumulative as finalAmount. This intentionally settles no
+   * additional spend, but still marks the channel closed and releases the
+   * remaining reserved deposit back to the buyer.
+   */
+  private async _closeWithoutAuth(channelId: string, peerId: string, onChainSettled: bigint): Promise<void> {
+    if (this._closingChannels.has(channelId)) {
+      debugLog(`[SellerPayment] Close already in flight for ${channelId.slice(0, 18)}... — skipping zombie close`);
+      return;
+    }
+
+    const retries = this._closeRetryCount.get(channelId) ?? 0;
+    if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
+      debugWarn(`[SellerPayment] Zombie close failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to local eviction`);
+      this._evictStaleChannel(channelId, peerId, 'no auths, past deadline, close retries exhausted', 'timeout');
+      return;
+    }
+
+    this._closingChannels.add(channelId);
+    debugLog(`[SellerPayment] Closing zombie channel ${channelId.slice(0, 18)}... finalAmount=${onChainSettled} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
+    try {
+      await this._channelsClient.close(this._signer, channelId, onChainSettled, '0x', '0x');
+      this._closeRetryCount.delete(channelId);
+      this._evictStaleChannel(channelId, peerId, 'zombie closed on-chain', 'settled');
+    } catch (err) {
+      this._closeRetryCount.set(channelId, retries + 1);
+      debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
+    } finally {
+      this._closingChannels.delete(channelId);
     }
   }
 

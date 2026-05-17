@@ -550,6 +550,36 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
   });
 
+  it('checkTimeouts closes zombie channels on-chain without a SpendingAuth', async () => {
+    const channelId = makeChannelId(70);
+    const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+      deadline: Math.floor(Date.now() / 1000) - 1,
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+
+    vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+      makeOnChainChannel(buyerIdentity, sellerIdentity, {
+        deposit: 1_000_000n,
+        settled: 0n,
+        status: 1,
+      }),
+    );
+
+    await manager.checkTimeouts();
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(closeArgs[1]).toBe(channelId);
+    expect(closeArgs[2]).toBe(0n);
+    expect(closeArgs[3]).toBe('0x');
+    expect(closeArgs[4]).toBe('0x');
+    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+  });
+
   it('test_getPaymentRequirements: returns payment requirements payload', () => {
     const req = manager.getPaymentRequirements('test-req-1');
     expect(req).not.toBeNull();
