@@ -4,6 +4,49 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-05-18 — Seller setup, payment recovery, and peer refresh
+
+### Published
+
+- `@antseed/node@0.2.86`
+- `@antseed/network-stats@0.1.9`
+- `@antseed/payments@0.1.20`
+- `@antseed/cli@0.1.121`
+
+### Added
+
+- Added a buyer peer-refresh configuration option so buyer runtimes can periodically refresh candidate peers instead of relying only on the startup snapshot.
+- Added CLI support for overriding the seller Base RPC endpoint from configuration and seller startup flags.
+- Added default seller setup values for chain/RPC, pricing, limits, and identity fields so `antseed seller setup` produces usable configs with fewer manual edits.
+
+### Fixed
+
+- Fixed seller payment recovery for zombie channels by allowing sellers to close requested/expired channels even when the latest auth was only stored locally.
+- Preserved stored buyer authorization when a seller timeout path needs to settle or close a channel later.
+- Fixed pending top-up race conditions that could prematurely close active payment channels under expensive or concurrent requests.
+- Updated network stats to surface contract-backed seller pricing/volume data for peers that publish on-chain metadata.
+- Clarified buyer data-directory isolation in CLI docs to prevent buyer profiles from sharing state accidentally.
+
+## 2026-05-13 — Metrics, reputation, and portal stats
+
+### Published
+
+- `@antseed/node@0.2.85`
+- `@antseed/payments@0.1.19`
+- `@antseed/cli@0.1.120`
+
+### Added
+
+- Added sybil-aware on-chain trust scoring and exposed the resulting risk signals through peer metadata, CLI network browsing, buyer proxy discovery, and Desktop Discover.
+- Added CLI metrics/exporter commands and documentation for Prometheus-style AntSeed runtime metrics.
+- Added automatic trusted-plugin refresh when bundled core dependency pins drift from the installed CLI.
+
+### Fixed
+
+- Fixed contract-backed seller statistics in pricing and portal views, including legacy emissions compatibility for existing on-chain records.
+- Improved provider HTTP relay handling for streamed usage metadata and cross-protocol no-op request normalization.
+- Updated payment portal modal, drawer, and loading states so deposits, crediting, and DIEM rewards remain usable on smaller screens.
+
 ## 2026-05-10 — Desktop bundled runtime version resolution fix
 
 ### Desktop
