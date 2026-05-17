@@ -30,6 +30,8 @@ export interface SellerRequestHandlerDeps {
 
 /** Debounce interval for metadata refresh after load changes. */
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
+/** Time to wait for a catch-up SpendingAuth before returning 402. */
+const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
 /**
  * Handles all seller-side request processing: provider matching, execution,
  * cost tracking, payment auth checks, and load management.
@@ -192,8 +194,7 @@ export class SellerRequestHandler {
             // operation this wait is a no-op; under pipelined requests (a new
             // request dispatched before the prior NeedAuth → SpendingAuth has
             // completed) it hides the round-trip latency from the buyer.
-            const CATCH_UP_WAIT_MS = 5_000;
-            const caughtUp = await spm.awaitAcceptedAtLeast(session.sessionId, spent, CATCH_UP_WAIT_MS);
+            const caughtUp = await spm.awaitAcceptedAtLeast(session.sessionId, spent, DEFAULT_CATCH_UP_WAIT_MS);
             accepted = spm.getAcceptedCumulative(session.sessionId);
             if (caughtUp && spent <= accepted) {
               debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);

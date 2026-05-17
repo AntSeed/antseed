@@ -105,7 +105,10 @@ export class SellerPaymentManager {
   private readonly _closeRetryCount = new Map<string, number>();
 
   /** channelId -> deferred topUp params when on-chain topUp failed (e.g. TopUpThresholdNotMet).
-   *  Retried after the next SpendingAuth raises the settle amount high enough. */
+   *  Retried after the next SpendingAuth raises the settle amount high enough.
+   *  Latest / largest top-up intent wins: if multiple deferred ReserveAuths arrive
+   *  before a retry succeeds, we keep the most recent higher ceiling because it
+   *  subsumes the older request. */
   private readonly _pendingTopUp = new Map<string, { newMaxAmount: bigint; deadline: number; reserveAuthSig: string }>();
 
   /** channelIds with an in-flight close() tx/estimate. Prevents duplicate close submissions. */
