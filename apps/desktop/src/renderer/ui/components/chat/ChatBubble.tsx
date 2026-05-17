@@ -888,6 +888,22 @@ export function ChatBubble({
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
   }, [message, isStreamingBubble, messagePrefix, onOpenPreview, conversationId, searchQuery, searchActive]);
 
+  const editAttachmentContent = useMemo(() => {
+    if (!isEditing || !Array.isArray(message.content)) return null;
+    const attachmentBlocks = (message.content as ContentBlock[])
+      .filter((block) => block.type !== 'text' && block.type !== 'thinking');
+    if (attachmentBlocks.length === 0) return null;
+    return attachmentBlocks.map((block, index) => renderBlock(
+      block,
+      index,
+      isStreamingBubble,
+      `${messagePrefix}:edit-attachments`,
+      conversationId,
+      searchQuery,
+      searchActive,
+    ));
+  }, [conversationId, isEditing, isStreamingBubble, message.content, messagePrefix, searchActive, searchQuery]);
+
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (
       <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
@@ -918,6 +934,9 @@ export function ChatBubble({
             onKeyDown={handleEditKeyDown}
             autoFocus
           />
+          {editAttachmentContent ? (
+            <div className={styles.inlineEditAttachments}>{editAttachmentContent}</div>
+          ) : null}
           <div className={styles.inlineEditActions}>
             <button type="button" className={styles.inlineEditCancelBtn} onClick={onCancelEdit}>Cancel</button>
             <button type="button" className={styles.inlineEditSaveBtn} onClick={onSubmitEdit}>Send</button>

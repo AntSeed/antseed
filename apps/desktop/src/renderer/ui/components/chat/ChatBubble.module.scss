@@ -805,6 +805,13 @@ button.fileAttachment {
   }
 }
 
+.inlineEditAttachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
 .inlineEditActions {
   display: flex;
   justify-content: flex-end;
