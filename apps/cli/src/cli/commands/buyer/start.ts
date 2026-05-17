@@ -332,6 +332,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
+      console.log(chalk.dim(`  peer refresh interval: ${effectiveBuyerConfig.peerRefreshIntervalMs}ms`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
       if (pinnedPeerId) {
         console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
@@ -383,7 +384,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
-      const proxy = new BuyerProxy({ port: proxyPort, node, pinnedPeerId, dataDir: globalOpts.dataDir })
+      const proxy = new BuyerProxy({
+        port: proxyPort,
+        node,
+        pinnedPeerId,
+        dataDir: globalOpts.dataDir,
+        backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
+      })
       let ownsProxyListener = false
 
       try {

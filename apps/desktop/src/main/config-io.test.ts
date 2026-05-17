@@ -8,6 +8,7 @@ import {
   DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
   DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
   DESKTOP_DEFAULT_MIN_PEER_REPUTATION,
+  DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS,
   ensureConfig,
   readConfig,
 } from './config-io.js';
@@ -37,6 +38,7 @@ test('ensureConfig creates config with desktop buyer max pricing defaults', asyn
   assert.equal(pricing.input, DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION);
   assert.equal(pricing.output, DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION);
   assert.equal((config.buyer as { minPeerReputation?: number }).minPeerReputation, DESKTOP_DEFAULT_MIN_PEER_REPUTATION);
+  assert.equal((config.buyer as { peerRefreshIntervalMs?: number }).peerRefreshIntervalMs, DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS);
 });
 
 test('ensureConfig clamps buyer max pricing above desktop defaults', async (t) => {
@@ -64,6 +66,7 @@ test('ensureConfig clamps buyer max pricing above desktop defaults', async (t) =
   assert.equal(pricing.input, DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION);
   assert.equal(pricing.output, DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION);
   assert.equal((config.buyer as { minPeerReputation?: number }).minPeerReputation, DESKTOP_DEFAULT_MIN_PEER_REPUTATION);
+  assert.equal((config.buyer as { peerRefreshIntervalMs?: number }).peerRefreshIntervalMs, DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS);
   assert.equal((config.identity as { displayName?: string }).displayName, 'Existing User');
 });
 
@@ -110,6 +113,29 @@ test('ensureConfig fills missing buyer max pricing defaults for existing configs
   assert.equal(pricing.output, DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION);
   assert.equal((config.buyer as { proxyPort?: number }).proxyPort, 9123);
   assert.equal((config.buyer as { minPeerReputation?: number }).minPeerReputation, 42);
+  assert.equal((config.buyer as { peerRefreshIntervalMs?: number }).peerRefreshIntervalMs, DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS);
+});
+
+test('ensureConfig preserves valid buyer peer refresh interval', async (t) => {
+  const { dir, configPath } = await makeTempConfigPath();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  await writeFile(configPath, JSON.stringify({
+    buyer: {
+      peerRefreshIntervalMs: 30_000,
+      maxPricing: {
+        defaults: {
+          inputUsdPerMillion: 4,
+          outputUsdPerMillion: 20,
+        },
+      },
+    },
+  }, null, 2));
+
+  await ensureConfig(configPath);
+
+  const config = await readConfig(configPath);
+  assert.equal((config.buyer as { peerRefreshIntervalMs?: number }).peerRefreshIntervalMs, 30_000);
 });
 
 test('ensureConfig preserves buyer max pricing at or below desktop defaults', async (t) => {

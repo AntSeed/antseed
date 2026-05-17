@@ -229,6 +229,7 @@ function mergeBuyerConfig(
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
       proxyPort: defaults.proxyPort,
+      peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
     };
   }
   return {
@@ -237,6 +238,9 @@ function mergeBuyerConfig(
     proxyPort: typeof value['proxyPort'] === 'number'
       ? value['proxyPort']
       : defaults.proxyPort,
+    peerRefreshIntervalMs: typeof value['peerRefreshIntervalMs'] === 'number'
+      ? value['peerRefreshIntervalMs']
+      : defaults.peerRefreshIntervalMs,
   };
 }
 

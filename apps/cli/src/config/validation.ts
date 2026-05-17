@@ -8,6 +8,7 @@ import type {
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
+const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 
 function validatePricingLeaf(
   path: string,
@@ -139,6 +140,10 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isInteger(config.buyer.proxyPort) || config.buyer.proxyPort < 1 || config.buyer.proxyPort > 65535) {
     errors.push('buyer.proxyPort must be an integer in range 1-65535');
+  }
+
+  if (!Number.isInteger(config.buyer.peerRefreshIntervalMs) || config.buyer.peerRefreshIntervalMs < MIN_BUYER_PEER_REFRESH_INTERVAL_MS) {
+    errors.push('buyer.peerRefreshIntervalMs must be an integer >= 1000');
   }
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {

@@ -44,6 +44,7 @@ test('effective seller config precedence is flags > env > config > defaults', ()
 test('effective buyer config precedence is flags > env > config > defaults', () => {
   const config = createDefaultConfig();
   config.buyer.minPeerReputation = 25;
+  config.buyer.peerRefreshIntervalMs = 120_000;
   config.buyer.maxPricing.defaults.inputUsdPerMillion = 70;
   config.buyer.maxPricing.defaults.outputUsdPerMillion = 80;
 
@@ -63,6 +64,7 @@ test('effective buyer config precedence is flags > env > config > defaults', () 
   });
 
   assert.equal(effective.minPeerReputation, 55);
+  assert.equal(effective.peerRefreshIntervalMs, 120_000);
   assert.equal(effective.maxPricing.defaults.inputUsdPerMillion, 90);
   assert.equal(effective.maxPricing.defaults.outputUsdPerMillion, 99);
 });

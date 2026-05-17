@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
+import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import { BuyerProxy, parsePersistedPeers, selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
@@ -89,6 +90,27 @@ async function invokeProxy(proxy: BuyerProxy, req: Readable): Promise<ReturnType
   await (proxy as any)._handleRequest(req, res)
   return res
 }
+
+test('BuyerProxy defaults to the configured 5 min background refresh interval', () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+
+  assert.equal((proxy as any)._bgRefreshIntervalMs, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
+})
+
+test('BuyerProxy accepts a custom background refresh interval', () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+    backgroundRefreshIntervalMs: 15_000,
+  })
+
+  assert.equal((proxy as any)._bgRefreshIntervalMs, 15_000)
+})
 
 test('selectCandidatePeersForRouting enforces explicit provider overrides even without request protocol', () => {
   const peers = [

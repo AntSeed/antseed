@@ -3,6 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from './defaults.js';
 import { loadConfig } from './loader.js';
 import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
@@ -84,6 +85,50 @@ test('loadConfig treats legacy buyer minPeerReputation 50 as the new default', a
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.minPeerReputation, 0);
+    }
+  );
+});
+
+test('loadConfig applies the default buyer peer refresh interval when missing', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        proxyPort: 9123,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.peerRefreshIntervalMs, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS);
+    }
+  );
+});
+
+test('loadConfig preserves explicit buyer peerRefreshIntervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        peerRefreshIntervalMs: 15_000,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.peerRefreshIntervalMs, 15_000);
+    }
+  );
+});
+
+test('loadConfig rejects invalid buyer peerRefreshIntervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        peerRefreshIntervalMs: 999,
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.peerRefreshIntervalMs/
+      );
     }
   );
 });

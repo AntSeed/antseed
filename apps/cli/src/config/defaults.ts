@@ -1,5 +1,7 @@
 import type { AntseedConfig } from './types.js';
 
+export const DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
+
 /**
  * Create a default Antseed configuration with sensible defaults.
  */
@@ -25,6 +27,7 @@ export function createDefaultConfig(): AntseedConfig {
       },
       minPeerReputation: 0,
       proxyPort: 8377,
+      peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
     },
     payments: {
       preferredMethod: 'crypto',

@@ -8,6 +8,7 @@ import { asString, asNumber } from './utils.js';
 export const DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION = 5;
 export const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
 export const DESKTOP_DEFAULT_MIN_PEER_REPUTATION = 0;
+export const DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 const DEFAULT_CONFIG: Record<string, unknown> = {
   identity: { displayName: 'AntSeed Node' },
@@ -26,6 +27,7 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
     },
     minPeerReputation: DESKTOP_DEFAULT_MIN_PEER_REPUTATION,
     proxyPort: 8377,
+    peerRefreshIntervalMs: DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS,
   },
   network: { bootstrapNodes: [] },
   payments: { preferredMethod: 'crypto', platformFeeRate: 0.05 },
@@ -47,7 +49,7 @@ async function writeConfigAtomic(config: Record<string, unknown>, configPath: st
   await rename(tmp, configPath);
 }
 
-function migrateDesktopBuyerMaxPricing(config: Record<string, unknown>): {
+function migrateDesktopBuyerDefaults(config: Record<string, unknown>): {
   config: Record<string, unknown>;
   migrated: boolean;
 } {
@@ -59,6 +61,7 @@ function migrateDesktopBuyerMaxPricing(config: Record<string, unknown>): {
   const output = defaults.outputUsdPerMillion;
 
   const minPeerReputation = buyer.minPeerReputation;
+  const peerRefreshIntervalMs = buyer.peerRefreshIntervalMs;
   const nextDefaults = { ...defaults };
   let migrated = false;
   let nextBuyer = buyer;
@@ -89,6 +92,18 @@ function migrateDesktopBuyerMaxPricing(config: Record<string, unknown>): {
     nextBuyer = {
       ...nextBuyer,
       minPeerReputation: DESKTOP_DEFAULT_MIN_PEER_REPUTATION,
+    };
+    migrated = true;
+  }
+
+  if (
+    typeof peerRefreshIntervalMs !== 'number' ||
+    !Number.isInteger(peerRefreshIntervalMs) ||
+    peerRefreshIntervalMs < 1000
+  ) {
+    nextBuyer = {
+      ...nextBuyer,
+      peerRefreshIntervalMs: DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS,
     };
     migrated = true;
   }
@@ -125,7 +140,7 @@ export async function ensureConfig(configPath = DEFAULT_CONFIG_PATH): Promise<vo
     return;
   }
 
-  const migration = migrateDesktopBuyerMaxPricing(existing);
+  const migration = migrateDesktopBuyerDefaults(existing);
   if (migration.migrated) {
     await writeConfigAtomic(migration.config, configPath);
   }

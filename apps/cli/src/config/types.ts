@@ -102,6 +102,8 @@ export interface BuyerCLIConfig {
   minPeerReputation: number;
   /** Local proxy listen port */
   proxyPort: number;
+  /** How often the buyer refreshes its peer list from the DHT in the background (ms) */
+  peerRefreshIntervalMs: number;
 }
 
 /**

@@ -21,6 +21,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 const DESKTOP_DEV_MODE_KEY = 'antseed.desktop.devMode';
 const DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION = 5;
 const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
+const DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 function loadDesktopDevMode(): boolean {
   try {
@@ -67,6 +68,7 @@ export function initSettingsModule({
 
     applyConfigFormData({
       proxyPort: safeNumber(buyer.proxyPort, 8377),
+      peerRefreshIntervalMs: safeNumber(buyer.peerRefreshIntervalMs, DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS),
       maxInputUsdPerMillion: safeNumber(
         buyerMaxPricingDefaults.inputUsdPerMillion,
         DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
@@ -105,6 +107,7 @@ export function initSettingsModule({
         buyer: {
           ...asRecord(currentConfig.buyer),
           proxyPort: formData.proxyPort,
+          peerRefreshIntervalMs: formData.peerRefreshIntervalMs,
           maxPricing: {
             defaults: {
               inputUsdPerMillion: formData.maxInputUsdPerMillion,

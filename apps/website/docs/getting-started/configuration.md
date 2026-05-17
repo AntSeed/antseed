@@ -63,7 +63,7 @@ Use `config.json` for durable node behavior. Use env vars for secrets and tempor
 | Service list and categories | `ANTSEED_DEBUG=1` |
 | Pricing defaults and per-service pricing | One-off runtime overrides in deployment scripts |
 | `payments.crypto.rpcUrl` for durable RPC config | `ANTSEED_BASE_RPC_URL` for deployment-specific Base RPC endpoints |
-| Buyer proxy port | `ANTSEED_DATA_DIR` for per-process buyer state isolation |
+| Buyer proxy port and peer refresh interval | `ANTSEED_DATA_DIR` for per-process buyer state isolation |
 | Bootstrap nodes | |
 
 For example, this is a normal production pattern:
@@ -139,7 +139,7 @@ Prefer `--data-dir` in service/systemd scripts. `ANTSEED_DATA_DIR` is equivalent
 |---|---|
 | `identity` | Display name |
 | `seller` | Per-provider service offerings (plugin, pricing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
-| `buyer` | Max pricing thresholds, proxy port |
+| `buyer` | Max pricing thresholds, proxy port, DHT peer refresh interval |
 | `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
 
@@ -250,13 +250,19 @@ antseed config seller set providers.together.services.deepseek-v3.1.pricing.inpu
 antseed config seller set providers.together.services.deepseek-v3.1.categories '["chat","math","coding","fast"]'
 ```
 
-## Buyer Pricing
+## Buyer Settings
 
 Buyers can cap what they're willing to pay to avoid expensive providers:
 
 ```bash
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
+```
+
+The buyer proxy refreshes its discovered peer cache from the DHT in the background. The default is 5 minutes, and you can tune it in milliseconds:
+
+```bash
+antseed config buyer set peerRefreshIntervalMs 300000
 ```
 
 ## Identity and Metadata

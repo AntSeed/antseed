@@ -171,7 +171,9 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
         "cachedInputUsdPerMillion": 50,
         "outputUsdPerMillion": 100
       }
-    }
+    },
+    "proxyPort": 8377,
+    "peerRefreshIntervalMs": 300000
   }
 }
 ```
@@ -224,10 +226,11 @@ antseed config seller set publicAddress "peer.example.com:6882"
 # Raise the seller per-request upload cap (bytes) for large Codex-style payloads
 antseed config seller set maxUploadBodyBytes 134217728
 
-# Buyer max pricing
+# Buyer max pricing and DHT peer refresh cadence
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
+antseed config buyer set peerRefreshIntervalMs 300000
 ```
 
 Runtime-only overrides (do not write your config file):

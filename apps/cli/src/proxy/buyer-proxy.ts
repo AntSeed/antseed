@@ -52,6 +52,7 @@ import {
   attachAntseedTelemetryHeaders,
   attachStreamingAntseedHeaders,
 } from './telemetry.js'
+import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -67,8 +68,8 @@ export interface BuyerProxyConfig {
   /**
    * Max age for the in-memory peer cache before it is treated as stale (ms).
    * Stale caches can still be used for routing while background refresh repopulates.
-   * Default: 360000 (6 min) — chosen to exceed `backgroundRefreshIntervalMs`
-   * (5 min) so a healthy proxy never naturally reaches the "stale" threshold.
+   * Default: at least 360000 (6 min), and always above `backgroundRefreshIntervalMs`,
+   * so a healthy proxy never naturally reaches the "stale" threshold.
    */
   peerCacheTtlMs?: number
   /**
@@ -370,8 +371,8 @@ export class BuyerProxy {
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._port = config.port
-    this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
-    this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 6 * 60_000)
+    this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
+    this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null

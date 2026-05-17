@@ -12,6 +12,7 @@ export function ConfigView({ active }: ConfigViewProps) {
 
   // Local form state — initialized from config, edited locally, saved on button click
   const [proxyPort, setProxyPort] = useState('8377');
+  const [peerRefreshIntervalMs, setPeerRefreshIntervalMs] = useState('300000');
   const [minRep, setMinRep] = useState('0');
   const [chainId, setChainId] = useState('base-mainnet');
   const [dirty, setDirty] = useState(false);
@@ -21,6 +22,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   useEffect(() => {
     if (configFormData && !initialized) {
       setProxyPort(String(configFormData.proxyPort));
+      setPeerRefreshIntervalMs(String(configFormData.peerRefreshIntervalMs));
       setMinRep(String(configFormData.minRep));
       setChainId(configFormData.cryptoChainId || 'base-mainnet');
       setInitialized(true);
@@ -41,6 +43,7 @@ export function ConfigView({ active }: ConfigViewProps) {
     await actions.saveConfig({
       ...configFormData,
       proxyPort: parseInt(proxyPort, 10) || 8377,
+      peerRefreshIntervalMs: Math.max(1000, parseInt(peerRefreshIntervalMs, 10) || 300000),
       minRep: parseInt(minRep, 10) || 0,
       cryptoChainId: chainId,
     });
@@ -76,6 +79,20 @@ export function ConfigView({ active }: ConfigViewProps) {
                 className="form-input settings-control"
                 value={proxyPort}
                 onChange={(e) => { setProxyPort(e.target.value); markDirty(); }}
+              />
+            </label>
+            <label className="settings-item">
+              <div className="settings-copy">
+                <h4>Peer Refresh Interval (ms)</h4>
+                <p>How often the buyer refreshes discovered peers from the DHT. Default: 300000.</p>
+              </div>
+              <input
+                type="number"
+                className="form-input settings-control"
+                min="1000"
+                step="1000"
+                value={peerRefreshIntervalMs}
+                onChange={(e) => { setPeerRefreshIntervalMs(e.target.value); markDirty(); }}
               />
             </label>
             <label className="settings-item">
