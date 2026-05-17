@@ -238,6 +238,12 @@
       font-size: 11px;
     }
 
+    .messageActions {
+      justify-content: flex-end;
+      margin-left: 0;
+      margin-top: 4px;
+    }
+
     :global {
       .chat-image-preview {
         max-width: 280px;
@@ -771,6 +777,70 @@ button.fileAttachment {
 
 .copyResponseBtnCopied {
   color: var(--accent-green, #1fd87a);
+}
+
+.inlineEditWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(520px, calc(100vw - 96px));
+}
+
+.inlineEditInput {
+  width: 100%;
+  max-height: 220px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  padding: 8px 10px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+}
+
+.inlineEditActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.inlineEditCancelBtn,
+.inlineEditSaveBtn {
+  appearance: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.inlineEditCancelBtn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.inlineEditSaveBtn {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+
+  &:hover {
+    filter: brightness(1.05);
+  }
 }
 
 /* ===================================================================

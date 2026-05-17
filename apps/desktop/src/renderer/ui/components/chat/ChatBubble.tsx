@@ -1,10 +1,10 @@
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Copy01Icon, Tick02Icon, BrowserIcon } from '@hugeicons/core-free-icons';
+import { Copy01Icon, Tick02Icon, BrowserIcon, PencilEdit02Icon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { ReactNode } from 'react';
-import { MarkdownContent } from './chat-utils.js';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import { extractPlainText, MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
 import type { ChatMessage, ContentBlock } from './chat-shared';
@@ -739,19 +739,37 @@ function formatFileSize(bytes: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function extractPlainText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return (content as ContentBlock[])
-      .filter((block) => block.type === 'text' || block.type === 'thinking')
-      .map((block) => (block.type === 'thinking' ? String(block.thinking || '') : String(block.text || '')))
-      .filter(Boolean)
-      .join('\n\n');
-  }
-  return '';
+function EditMessageButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip.Provider delayDuration={300}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            className={styles.copyResponseBtn}
+            onClick={onClick}
+            aria-label="Edit message"
+          >
+            <HugeiconsIcon
+              icon={PencilEdit02Icon}
+              size={16}
+              color="currentColor"
+              strokeWidth={2}
+            />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content className={styles.tooltipContent} sideOffset={5}>
+            Edit
+            <Tooltip.Arrow className={styles.tooltipArrow} />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
 }
 
-function CopyResponseButton({ content }: { content: unknown }) {
+function CopyMessageButton({ content, ariaLabel }: { content: unknown; ariaLabel: string }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
@@ -779,7 +797,7 @@ function CopyResponseButton({ content }: { content: unknown }) {
             type="button"
             className={`${styles.copyResponseBtn}${copied ? ` ${styles.copyResponseBtnCopied}` : ''}`}
             onClick={handleCopy}
-            aria-label={copied ? 'Copied!' : 'Copy response'}
+            aria-label={copied ? 'Copied!' : ariaLabel}
           >
             <HugeiconsIcon
               icon={copied ? Tick02Icon : Copy01Icon}
@@ -809,9 +827,30 @@ type ChatBubbleProps = {
   conversationId?: string;
   searchQuery?: string;
   searchActive?: boolean;
+  canEdit?: boolean;
+  isEditing?: boolean;
+  editValue?: string;
+  onEditMessage?: (message: ChatMessage) => void;
+  onEditValueChange?: (value: string) => void;
+  onSubmitEdit?: () => void;
+  onCancelEdit?: () => void;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
+export function ChatBubble({
+  message,
+  streaming = false,
+  onOpenPreview,
+  conversationId,
+  searchQuery,
+  searchActive,
+  canEdit = false,
+  isEditing = false,
+  editValue = '',
+  onEditMessage,
+  onEditValueChange,
+  onSubmitEdit,
+  onCancelEdit,
+}: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -854,13 +893,48 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
       <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
+  const handleEditKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancelEdit?.();
+      return;
+    }
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      onSubmitEdit?.();
+    }
+  }, [onCancelEdit, onSubmitEdit]);
+
   return (
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
-      <div>{content}</div>
-      {message.role !== 'user' && !isStreamingBubble ? (
+      {isEditing ? (
+        <div className={styles.inlineEditWrap}>
+          <textarea
+            className={styles.inlineEditInput}
+            value={editValue}
+            rows={Math.max(2, editValue.split('\n').length)}
+            onChange={(event) => onEditValueChange?.(event.target.value)}
+            onKeyDown={handleEditKeyDown}
+            autoFocus
+          />
+          <div className={styles.inlineEditActions}>
+            <button type="button" className={styles.inlineEditCancelBtn} onClick={onCancelEdit}>Cancel</button>
+            <button type="button" className={styles.inlineEditSaveBtn} onClick={onSubmitEdit}>Send</button>
+          </div>
+        </div>
+      ) : (
+        <div>{content}</div>
+      )}
+      {!isEditing && !isStreamingBubble && (message.role === 'user' || message.role === 'assistant') ? (
         <div className={styles.messageActions}>
-          <CopyResponseButton content={message.content} />
+          <CopyMessageButton
+            content={message.content}
+            ariaLabel={message.role === 'user' ? 'Copy message' : 'Copy response'}
+          />
+          {message.role === 'user' && canEdit && onEditMessage ? (
+            <EditMessageButton onClick={() => onEditMessage(message)} />
+          ) : null}
         </div>
       ) : null}
     </div>

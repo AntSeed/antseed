@@ -1773,6 +1773,7 @@ export function registerPiChatHandlers({
     serviceOverride?: string,
     attachments?: PreparedChatAttachment[],
     peerOverride?: string,
+    options?: { branchBeforeLastUserMessage?: boolean },
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
     const attachmentPromptText = buildAttachmentPromptText(attachments);
@@ -1820,6 +1821,21 @@ export function registerPiChatHandlers({
     const sessionManager = await store.openSessionManager(conversationId);
     if (!sessionManager) {
       return { ok: false, error: 'Conversation not found' };
+    }
+
+    if (options?.branchBeforeLastUserMessage) {
+      const branch = sessionManager.getBranch();
+      const lastUserEntry = [...branch]
+        .reverse()
+        .find((entry) => entry.type === 'message' && entry.message?.role === 'user');
+      if (!lastUserEntry) {
+        return { ok: false, error: 'No user message found to edit' };
+      }
+      if (lastUserEntry.parentId) {
+        sessionManager.branch(lastUserEntry.parentId);
+      } else {
+        sessionManager.resetLeaf();
+      }
     }
 
     const context = sessionManager.buildSessionContext();
@@ -2722,6 +2738,18 @@ export function registerPiChatHandlers({
       // renderers but ignored — the buyer proxy resolves the route plan
       // from the pinned peer + the service ID without a provider hint.
       return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
+    },
+  );
+
+  ipcMain.handle(
+    'chat:ai-edit-last-user-message',
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+      // `_provider` is accepted for IPC ABI compatibility with normal sends
+      // but ignored — the buyer proxy resolves the route plan from the pinned
+      // peer + service ID without a provider hint.
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId, {
+        branchBeforeLastUserMessage: true,
+      });
     },
   );
 

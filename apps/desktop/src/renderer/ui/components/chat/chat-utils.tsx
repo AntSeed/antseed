@@ -32,6 +32,19 @@ type MarkdownToken = {
 
 export const isToolResultOnlyMessage = isToolResultOnlyMessageShared;
 
+export function extractPlainText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block): block is { type?: unknown; text?: unknown; thinking?: unknown } => Boolean(block) && typeof block === 'object')
+      .filter((block) => block.type === 'text' || block.type === 'thinking')
+      .map((block) => (block.type === 'thinking' ? String(block.thinking || '') : String(block.text || '')))
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return '';
+}
+
 function isSafeHref(rawHref: string): boolean {
   const trimmed = rawHref.trim();
   if (!trimmed) return false;

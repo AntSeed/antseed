@@ -236,6 +236,9 @@ const api = {
   chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
     return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments, peerId);
   },
+  chatAiEditLastUserMessage(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
+    return ipcRenderer.invoke('chat:ai-edit-last-user-message', conversationId, message, service, provider, attachments, peerId);
+  },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },

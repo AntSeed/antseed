@@ -15,6 +15,7 @@ export type AppActions = {
   openConversation: (id: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  editLastUserMessage: (convId: string, text: string) => void;
   abortChat: () => Promise<void>;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;

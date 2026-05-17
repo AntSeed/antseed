@@ -79,6 +79,7 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  editLastUserMessage: (convId: string, text: string) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
@@ -238,11 +239,16 @@ export function initChatModule({
     }
   }
 
+  type ChatRequestOptions = {
+    editLastUserMessage?: boolean;
+  };
+
   type ChatRetryContext = {
     convId: string;
     content?: string;
     attachments?: PreparedChatAttachment[];
     selection?: ChatServiceSelection;
+    options?: ChatRequestOptions;
   };
 
   const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -287,7 +293,7 @@ export function initChatModule({
       uiState.chatError = null;
       if (ctx?.content != null) {
         setConversationSending(convId, true);
-        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
+        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection, ctx.options);
       } else if (convId === uiState.chatActiveConversation) {
         retryAfterPayment();
       } else {
@@ -1941,6 +1947,81 @@ export function initChatModule({
     sendMessageToConversation(uiState.chatActiveConversation, text, rawAttachments);
   }
 
+  function extractPreparedAttachmentsFromContent(content: unknown): PreparedChatAttachment[] {
+    const attachments: PreparedChatAttachment[] = [];
+    if (!Array.isArray(content)) return attachments;
+    for (const block of content as ContentBlock[]) {
+      if (block.type === 'file' && block.attachment && typeof block.attachment === 'object') {
+        attachments.push(block.attachment as PreparedChatAttachment);
+      }
+    }
+    return attachments;
+  }
+
+  function editLastUserMessage(convId: string, text: string): void {
+    if (isConversationSending(convId)) {
+      showChatError('This conversation already has a request in progress.');
+      return;
+    }
+    if (!bridge?.chatAiEditLastUserMessage) {
+      showChatError('Editing messages is not available in this build.');
+      return;
+    }
+
+    const content = text.trim();
+    if (!content) return;
+
+    const localMessages = getLocalConversationMessages(convId) ?? (
+      convId === uiState.chatActiveConversation
+        ? (uiState.chatMessages as ChatMessage[])
+        : []
+    );
+    let lastUserIndex = -1;
+    for (let index = localMessages.length - 1; index >= 0; index -= 1) {
+      if (localMessages[index]?.role === 'user') {
+        lastUserIndex = index;
+        break;
+      }
+    }
+    if (lastUserIndex < 0) {
+      showChatError('No user message found to edit.');
+      return;
+    }
+
+    uiState.chatError = null;
+    setConversationStreamingMessage(convId, null);
+    setConversationSending(convId, true);
+
+    const originalUserMessage = localMessages[lastUserIndex];
+    const attachments = extractPreparedAttachmentsFromContent(originalUserMessage?.content);
+    const nextMessages = [
+      ...localMessages.slice(0, lastUserIndex),
+      {
+        role: 'user' as const,
+        content: buildUserMessageContent(content, attachments),
+        createdAt: originalUserMessage?.createdAt ?? Date.now(),
+      },
+    ];
+    setLocalConversationMessages(convId, nextMessages);
+    if (convId === uiState.chatActiveConversation) {
+      uiState.chatMessages = nextMessages;
+    }
+    if (activeConversation && activeConversation.id === convId) {
+      activeConversation.messages = nextMessages;
+      activeConversation.updatedAt = Date.now();
+      updateThreadMeta(activeConversation);
+    }
+    notifyUiStateChanged();
+
+    dispatchChatRequest(
+      convId,
+      content,
+      attachments.length > 0 ? attachments : undefined,
+      undefined,
+      { editLastUserMessage: true },
+    );
+  }
+
   function sendMessageToConversation(
     convId: string,
     text: string,
@@ -2027,6 +2108,7 @@ export function initChatModule({
     content: string,
     attachments?: PreparedChatAttachment[],
     selectionOverride?: ChatServiceSelection,
+    options?: ChatRequestOptions,
   ): void {
     if (!bridge) return;
 
@@ -2041,9 +2123,25 @@ export function initChatModule({
       return;
     }
 
-    if (bridge.chatAiSendStream) {
-      const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(
+    if (options?.editLastUserMessage && !bridge.chatAiEditLastUserMessage) {
+      reportChatError('Editing messages is not available in this build.', 'Request failed');
+      setConversationSending(convId, false);
+      return;
+    }
+
+    if (bridge.chatAiSendStream || options?.editLastUserMessage) {
+      const sendStreamRequest = async () => {
+        if (options?.editLastUserMessage) {
+          return await bridge.chatAiEditLastUserMessage!(
+            convId,
+            content || ' ',
+            selection.id || undefined,
+            selection.provider ?? undefined,
+            attachments,
+            selection.peerId,
+          );
+        }
+        return await bridge.chatAiSendStream!(
           convId,
           content || ' ',
           selection.id || undefined,
@@ -2051,6 +2149,7 @@ export function initChatModule({
           attachments,
           selection.peerId,
         );
+      };
 
       void (async () => {
         try {
@@ -2086,6 +2185,7 @@ export function initChatModule({
                 content,
                 attachments,
                 selection,
+                options,
               });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: the stream-error handler has already
@@ -2097,7 +2197,7 @@ export function initChatModule({
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
-                { convId, content, attachments, selection },
+                { convId, content, attachments, selection, options },
                 'request',
                 result.stopReason?.message ?? result.error,
               );
@@ -2114,7 +2214,7 @@ export function initChatModule({
             return;
           }
 
-          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
+          scheduleChatRetry({ convId, content, attachments, selection, options }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -2153,19 +2253,20 @@ export function initChatModule({
                 content,
                 attachments,
                 selection,
+                options,
               });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: don't auto-retry.
               clearPaymentRetry(convId);
             } else {
-              scheduleChatRetry({ convId, content, attachments, selection }, 'request', result.error);
+              scheduleChatRetry({ convId, content, attachments, selection, options }, 'request', result.error);
             }
           } else {
             clearPaymentRetry(convId);
           }
           setConversationSending(convId, false);
         } catch (err) {
-          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
+          scheduleChatRetry({ convId, content, attachments, selection, options }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -2206,14 +2307,7 @@ export function initChatModule({
             .join('\n\n')
         : '';
 
-    const attachments: PreparedChatAttachment[] = [];
-    if (Array.isArray(lastUserMsg.content)) {
-      for (const block of lastUserMsg.content as ContentBlock[]) {
-        if (block.type === 'file' && block.attachment && typeof block.attachment === 'object') {
-          attachments.push(block.attachment as PreparedChatAttachment);
-        }
-      }
-    }
+    const attachments = extractPreparedAttachmentsFromContent(lastUserMsg.content);
 
     const convId = uiState.chatActiveConversation;
     setConversationSending(convId, true);
@@ -2903,6 +2997,7 @@ export function initChatModule({
     openConversation,
     sendMessage,
     sendMessageToConversation,
+    editLastUserMessage,
     retryAfterPayment,
     abortChat,
     handleServiceChange,
