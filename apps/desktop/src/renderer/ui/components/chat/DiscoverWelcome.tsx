@@ -343,16 +343,18 @@ function estimatePageSize(): number {
 }
 
 function buildPaginationTokens(page: number, totalPages: number): PaginationToken[] {
-  if (totalPages <= 5) {
+  if (totalPages <= 7) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
 
+  // All branches below produce exactly 7 tokens so the pagination
+  // container keeps a stable width when navigating between pages.
   if (page <= 3) {
-    return [1, 2, 3, 'ellipsis', totalPages - 1, totalPages];
+    return [1, 2, 3, 4, 'ellipsis', totalPages - 1, totalPages];
   }
 
   if (page >= totalPages - 2) {
-    return [1, 2, 'ellipsis', totalPages - 2, totalPages - 1, totalPages];
+    return [1, 2, 'ellipsis', totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
   }
 
   return [1, 'ellipsis', page - 1, page, page + 1, 'ellipsis', totalPages];

@@ -245,7 +245,11 @@
 }
 
 .page-ellipsis {
-  min-width: 20px;
+  width: 32px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
@@ -253,9 +257,9 @@
 }
 
 .page-btn {
-  min-width: 28px;
+  width: 32px;
   height: 28px;
-  padding: 0 10px;
+  padding: 0;
   border-radius: 6px;
   border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
   background: var(--bg-card);
