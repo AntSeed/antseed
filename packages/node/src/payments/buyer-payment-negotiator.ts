@@ -42,16 +42,6 @@ interface LastResponseCost {
   service?: string;
 }
 
-class InsufficientBuyerDepositsError extends Error {
-  constructor(
-    readonly available: bigint,
-    readonly required: bigint,
-  ) {
-    super(`Buyer deposits available=${available} are below required reserve=${required}`);
-    this.name = 'InsufficientBuyerDepositsError';
-  }
-}
-
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
@@ -448,12 +438,6 @@ export class BuyerPaymentNegotiator {
       return { action: 'retry' };
     } catch (err) {
       this._lockedPeers.delete(peer.peerId);
-      if (err instanceof InsufficientBuyerDepositsError) {
-        return returnPaymentRequired(
-          'insufficient_deposits',
-          `buyer available deposits ${err.available} are below requested reserve ${err.required}`,
-        );
-      }
       throw err;
     }
   }
@@ -725,18 +709,6 @@ export class BuyerPaymentNegotiator {
     }
     if (amount <= 0n) {
       throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
-    }
-
-    if (this._depositsClient) {
-      try {
-        const balance = await this._depositsClient.getBuyerBalance(this._identity.wallet.address);
-        if (balance.available < amount) {
-          throw new InsufficientBuyerDepositsError(balance.available, amount);
-        }
-      } catch (err) {
-        if (err instanceof InsufficientBuyerDepositsError) throw err;
-        debugWarn(`[BuyerNegotiator] Failed to re-check buyer balance before reserve: ${err instanceof Error ? err.message : err}`);
-      }
     }
 
     const sellerEvmAddr = await this._resolveSellerAddr(peer);
