@@ -1,5 +1,5 @@
 import type { ConfigFormData } from '../core/state';
-import type { RawChatAttachment } from '../types/bridge';
+import type { ChatReplyReference, RawChatAttachment } from '../types/bridge';
 
 export type AppActions = {
   startConnect: () => Promise<void>;
@@ -13,8 +13,8 @@ export type AppActions = {
   createNewConversation: () => Promise<void>;
   startNewChat: () => void;
   openConversation: (id: string) => Promise<void>;
-  sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
-  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  sendMessage: (text: string, attachments?: RawChatAttachment[], replyTo?: ChatReplyReference | null) => void;
+  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[], replyTo?: ChatReplyReference | null) => void;
   abortChat: () => Promise<void>;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;

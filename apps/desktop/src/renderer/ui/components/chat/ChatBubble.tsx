@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import { AttachmentViewer, type ViewerAttachment } from './AttachmentViewer';
-import type { ChatMessage, ContentBlock } from './chat-shared';
+import type { ChatMessage, ChatReplyReference, ContentBlock } from './chat-shared';
 import {
   buildChatMetaParts,
   formatToolExecutionLabel,
@@ -800,10 +800,37 @@ function CopyResponseButton({ content }: { content: unknown }) {
   );
 }
 
+function ReplyReference({ replyTo, onJumpToMessage }: { replyTo: ChatReplyReference; onJumpToMessage?: (messageId: string) => void }) {
+  const canJump = Boolean(onJumpToMessage && replyTo.messageId);
+  const content = (
+    <>
+      <span className={styles.replyReferenceLabel}>Replying to {replyTo.senderLabel}</span>
+      <span className={styles.replyReferenceExcerpt}>“{replyTo.excerpt}”</span>
+    </>
+  );
+
+  if (canJump) {
+    return (
+      <button
+        type="button"
+        className={styles.replyReference}
+        onClick={() => onJumpToMessage?.(replyTo.messageId)}
+        title="Jump to original message"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={styles.replyReference}>{content}</div>;
+}
+
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
   onOpenPreview?: (url: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  onJumpToMessage?: (messageId: string) => void;
   /** Identifies the surrounding conversation so file-block previews can
    *  build `antseed-attachment://<conversationId>/<attachmentId>` URLs. */
   conversationId?: string;
@@ -811,7 +838,7 @@ type ChatBubbleProps = {
   searchActive?: boolean;
 };
 
-export function ChatBubble({ message, streaming = false, onOpenPreview, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview, onReply, onJumpToMessage, conversationId, searchQuery, searchActive }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -857,10 +884,22 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, conversa
   return (
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
+      {message.replyTo ? <ReplyReference replyTo={message.replyTo} onJumpToMessage={onJumpToMessage} /> : null}
       <div>{content}</div>
-      {message.role !== 'user' && !isStreamingBubble ? (
+      {!isStreamingBubble ? (
         <div className={styles.messageActions}>
-          <CopyResponseButton content={message.content} />
+          {onReply ? (
+            <button
+              type="button"
+              className={styles.copyResponseBtn}
+              onClick={() => onReply(message)}
+              aria-label="Reply to message"
+              title="Reply"
+            >
+              ↩
+            </button>
+          ) : null}
+          {message.role !== 'user' ? <CopyResponseButton content={message.content} /> : null}
         </div>
       ) : null}
     </div>

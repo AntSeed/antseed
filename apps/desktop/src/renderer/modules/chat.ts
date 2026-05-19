@@ -7,6 +7,7 @@ import type {
   DesktopBridge,
   PreparedChatAttachment,
   RawChatAttachment,
+  ChatReplyReference,
 } from '../types/bridge';
 import type {
   ChatMessage,
@@ -76,8 +77,8 @@ export type ChatModuleApi = {
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
-  sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
-  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  sendMessage: (text: string, attachments?: RawChatAttachment[], replyTo?: ChatReplyReference | null) => void;
+  sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[], replyTo?: ChatReplyReference | null) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string, explicitPeerId?: string) => void;
@@ -242,6 +243,7 @@ export function initChatModule({
     content?: string;
     attachments?: PreparedChatAttachment[];
     selection?: ChatServiceSelection;
+    replyTo?: ChatReplyReference | null;
   };
 
   const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -286,7 +288,7 @@ export function initChatModule({
       uiState.chatError = null;
       if (ctx?.content != null) {
         setConversationSending(convId, true);
-        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
+        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection, ctx.replyTo);
       } else if (convId === uiState.chatActiveConversation) {
         retryAfterPayment();
       } else {
@@ -1905,7 +1907,7 @@ export function initChatModule({
     return result.data ?? [];
   }
 
-  function sendMessage(text: string, rawAttachments?: RawChatAttachment[]): void {
+  function sendMessage(text: string, rawAttachments?: RawChatAttachment[], replyTo?: ChatReplyReference | null): void {
     if (!bridge) return;
 
     // Payment gate for paid services
@@ -1929,7 +1931,7 @@ export function initChatModule({
           if (draftVersion === newChatDraftVersion) {
             await openConversation(convId);
           }
-          sendMessageToConversation(convId, text, rawAttachments, selection);
+          sendMessageToConversation(convId, text, rawAttachments, replyTo, selection);
         } else {
           showChatError('Failed to create a conversation. Please try again.');
         }
@@ -1937,13 +1939,14 @@ export function initChatModule({
       return;
     }
 
-    sendMessageToConversation(uiState.chatActiveConversation, text, rawAttachments);
+    sendMessageToConversation(uiState.chatActiveConversation, text, rawAttachments, replyTo);
   }
 
   function sendMessageToConversation(
     convId: string,
     text: string,
     rawAttachments?: RawChatAttachment[],
+    replyTo?: ChatReplyReference | null,
     selectionOverride?: ChatServiceSelection,
   ): void {
     if (isConversationSending(convId)) {
@@ -1999,7 +2002,7 @@ export function initChatModule({
           ? (uiState.chatMessages as ChatMessage[])
           : []
       );
-      const nextMessages = [...localMessages, { role: 'user' as const, content: messageContent, createdAt: Date.now() }];
+      const nextMessages = [...localMessages, { role: 'user' as const, content: messageContent, createdAt: Date.now(), ...(replyTo ? { replyTo } : {}) }];
       setLocalConversationMessages(convId, nextMessages);
       if (convId === uiState.chatActiveConversation) {
         uiState.chatMessages = nextMessages;
@@ -2012,7 +2015,7 @@ export function initChatModule({
       notifyUiStateChanged();
 
       void refreshWorkspaceGitStatus();
-      dispatchChatRequest(convId, content, preparedAttachments, selectionOverride);
+      dispatchChatRequest(convId, content, preparedAttachments, selectionOverride, replyTo);
     })();
   }
 
@@ -2026,6 +2029,7 @@ export function initChatModule({
     content: string,
     attachments?: PreparedChatAttachment[],
     selectionOverride?: ChatServiceSelection,
+    replyTo?: ChatReplyReference | null,
   ): void {
     if (!bridge) return;
 
@@ -2049,6 +2053,7 @@ export function initChatModule({
           selection.provider ?? undefined,
           attachments,
           selection.peerId,
+          replyTo ?? null,
         );
 
       void (async () => {
@@ -2085,6 +2090,7 @@ export function initChatModule({
                 content,
                 attachments,
                 selection,
+                replyTo,
               });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: the stream-error handler has already
@@ -2096,7 +2102,7 @@ export function initChatModule({
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
-                { convId, content, attachments, selection },
+                { convId, content, attachments, selection, replyTo },
                 'request',
                 result.stopReason?.message ?? result.error,
               );
@@ -2113,7 +2119,7 @@ export function initChatModule({
             return;
           }
 
-          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
+          scheduleChatRetry({ convId, content, attachments, selection, replyTo }, 'request', err);
           setConversationSending(convId, false);
         }
       })();
@@ -2128,6 +2134,7 @@ export function initChatModule({
               selection.provider ?? undefined,
               attachments,
               selection.peerId,
+              replyTo ?? null,
             );
 
           let result = await sendRequest();
@@ -2152,19 +2159,20 @@ export function initChatModule({
                 content,
                 attachments,
                 selection,
+                replyTo,
               });
             } else if (errorMsg === 'Request aborted') {
               // User-initiated abort: don't auto-retry.
               clearPaymentRetry(convId);
             } else {
-              scheduleChatRetry({ convId, content, attachments, selection }, 'request', result.error);
+              scheduleChatRetry({ convId, content, attachments, selection, replyTo }, 'request', result.error);
             }
           } else {
             clearPaymentRetry(convId);
           }
           setConversationSending(convId, false);
         } catch (err) {
-          scheduleChatRetry({ convId, content, attachments, selection }, 'request', err);
+          scheduleChatRetry({ convId, content, attachments, selection, replyTo }, 'request', err);
           setConversationSending(convId, false);
         }
       })();

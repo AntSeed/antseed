@@ -182,11 +182,21 @@ export function renderMarkdownToHtml(text: string): string {
   return blocksHtml(tokens);
 }
 
+export type ChatReplyReference = {
+  messageId: string;
+  role: string;
+  senderLabel: string;
+  excerpt: string;
+  createdAt?: number;
+};
+
 export type ChatMessage = {
+  id?: string;
   role: string;
   content: unknown;
   createdAt?: number;
   meta?: Record<string, unknown>;
+  replyTo?: ChatReplyReference;
   [key: string]: unknown;
 };
 

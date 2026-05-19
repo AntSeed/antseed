@@ -5,7 +5,7 @@ import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import path from 'node:path';
-import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, SessionEntry } from '@mariozechner/pi-coding-agent';
 import { createBrowserPreviewTool, createStartDevServerTool } from './chat-dev-tools.js';
 import {
   classifyChatStreamFailure,
@@ -124,11 +124,21 @@ type AiMessageMeta = {
   estimatedCostUsd?: number;
 };
 
+type ChatReplyReference = {
+  messageId: string;
+  role: string;
+  senderLabel: string;
+  excerpt: string;
+  createdAt?: number;
+};
+
 type AiChatMessage = {
+  id?: string;
   role: 'user' | 'assistant';
   content: string | ContentBlock[];
   createdAt?: number;
   meta?: AiMessageMeta;
+  replyTo?: ChatReplyReference;
 };
 
 type AiUsageTotals = {
@@ -303,6 +313,15 @@ function normalizeTokenCount(value: unknown): number {
   return Math.floor(parsed);
 }
 
+function normalizeTimestamp(value: unknown): number {
+  const numeric = normalizeTokenCount(value);
+  if (numeric > 0) return numeric;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return 0;
+}
 
 function normalizeOptionalNumber(value: unknown): number | undefined {
   const parsed = Number(value);
@@ -929,6 +948,101 @@ function convertPiMessagesToUi(messages: Message[]): AiChatMessage[] {
   return converted;
 }
 
+const ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE = 'antseed.reply_context';
+
+function normalizeReplyReference(value: unknown): ChatReplyReference | null {
+  if (!value || typeof value !== 'object') return null;
+  const data = value as Record<string, unknown>;
+  const messageId = typeof data.messageId === 'string' ? data.messageId.trim() : '';
+  const role = typeof data.role === 'string' ? data.role.trim() : '';
+  const senderLabel = typeof data.senderLabel === 'string' ? data.senderLabel.trim() : '';
+  const excerpt = typeof data.excerpt === 'string' ? data.excerpt.replace(/\s+/g, ' ').trim() : '';
+  if (!messageId || !role || !senderLabel || !excerpt) return null;
+  const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) && data.createdAt > 0
+    ? Math.floor(data.createdAt)
+    : undefined;
+  return {
+    messageId,
+    role,
+    senderLabel,
+    excerpt: excerpt.length > 500 ? `${excerpt.slice(0, 500).trimEnd()}...` : excerpt,
+    ...(createdAt ? { createdAt } : {}),
+  };
+}
+
+function buildReplyContextPrompt(replyTo: ChatReplyReference): string {
+  return [
+    'The next user message is a reply to an earlier chat message.',
+    `Original sender: ${replyTo.senderLabel}`,
+    `Original excerpt: "${replyTo.excerpt}"`,
+    'Use this as local context for the next user message. Do not treat it as a new request by itself.',
+  ].join('\n');
+}
+
+function convertSessionBranchToUi(entries: SessionEntry[]): AiChatMessage[] {
+  const converted: AiChatMessage[] = [];
+  let pendingReplyTo: ChatReplyReference | null = null;
+
+  for (const entry of entries) {
+    if (entry.type === 'custom_message' && entry.customType === ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE) {
+      pendingReplyTo = normalizeReplyReference(entry.details);
+      continue;
+    }
+
+    if (entry.type !== 'message') continue;
+    const message = entry.message as Message;
+    const createdAt = normalizeTimestamp(entry.timestamp) || normalizeTimestamp((message as { timestamp?: unknown }).timestamp);
+
+    if (message.role === 'user') {
+      converted.push({
+        id: entry.id,
+        role: 'user',
+        content: convertPiMessageToUiBlocks(message),
+        createdAt,
+        ...(pendingReplyTo ? { replyTo: pendingReplyTo } : {}),
+      });
+      pendingReplyTo = null;
+      continue;
+    }
+
+    if (message.role === 'assistant') {
+      converted.push({
+        ...convertAssistantMessageForUi(message as AssistantMessage & { meta?: AiMessageMeta }),
+        id: entry.id,
+        createdAt,
+      });
+      continue;
+    }
+
+    if (message.role === 'toolResult') {
+      const toolResultBlocks = convertPiMessageToUiBlocks(message);
+      const last = converted[converted.length - 1];
+      const toolBlocks = Array.isArray(toolResultBlocks)
+        ? toolResultBlocks.filter((toolBlock): toolBlock is ToolResultBlock => toolBlock.type === 'tool_result')
+        : [];
+      if (
+        last
+        && last.role === 'user'
+        && Array.isArray(last.content)
+        && last.content.every((toolBlock) => toolBlock.type === 'tool_result')
+        && toolBlocks.length > 0
+      ) {
+        last.content.push(...toolBlocks);
+      } else {
+        converted.push({
+          id: entry.id,
+          role: 'user',
+          content: toolBlocks,
+          createdAt,
+        });
+      }
+      pendingReplyTo = null;
+    }
+  }
+
+  return converted;
+}
+
 function deriveUsage(messages: AiChatMessage[]): AiUsageTotals {
   let usage: AiUsageTotals = { inputTokens: 0, outputTokens: 0 };
   for (const message of messages) {
@@ -1239,7 +1353,10 @@ class PiConversationStore {
 
   private async buildConversationFromManager(manager: SessionManager): Promise<AiConversation> {
     const context = manager.buildSessionContext();
-    const messages = convertPiMessagesToUi(context.messages as Message[]);
+    const branchMessages = convertSessionBranchToUi(manager.getBranch());
+    const messages = branchMessages.length > 0
+      ? branchMessages
+      : convertPiMessagesToUi(context.messages as Message[]);
     const usage = deriveUsage(messages);
     const header = manager.getHeader();
     const createdAtRaw = header ? Date.parse(header.timestamp) : Date.now();
@@ -1639,8 +1756,10 @@ export function registerPiChatHandlers({
     serviceOverride?: string,
     attachments?: PreparedChatAttachment[],
     peerOverride?: string,
+    replyToInput?: unknown,
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
+    const replyTo = normalizeReplyReference(replyToInput);
     const attachmentPromptText = buildAttachmentPromptText(attachments);
     const attachmentImages = extractAttachmentImages(attachments);
     if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
@@ -2103,6 +2222,14 @@ export function registerPiChatHandlers({
     activeRunsByConversation.set(conversationId, run);
 
     try {
+      if (replyTo) {
+        session.sessionManager.appendCustomMessageEntry(
+          ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE,
+          buildReplyContextPrompt(replyTo),
+          false,
+          replyTo,
+        );
+      }
       const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
       await session.prompt(promptText || ' ', { images: effectiveAttachmentImages.length > 0 ? effectiveAttachmentImages : undefined });
 
@@ -2552,21 +2679,21 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, replyTo?: unknown) => {
       // `_provider` is accepted for IPC ABI compatibility with older
       // renderers but ignored — the buyer proxy resolves the route plan
       // from the pinned peer + the service ID without a provider hint.
-      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId, replyTo);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, replyTo?: unknown) => {
       // `_provider` is accepted for IPC ABI compatibility with older
       // renderers but ignored — the buyer proxy resolves the route plan
       // from the pinned peer + the service ID without a provider hint.
-      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId, replyTo);
     },
   );
 
