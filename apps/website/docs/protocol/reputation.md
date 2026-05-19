@@ -82,9 +82,12 @@ buyerPoints = usagePoints + feedbackPoints + diversityBonus
 
 | Recipient | Share |
 |---|---|
-| Seller | 65% |
-| Buyer | 25% |
-| Protocol reserve | 10% |
+| Seller / Provider Pool | 50% |
+| Buyer | 20% |
+| Protocol reserve | 15% |
+| Contributors / team | 15% |
+
+Seller rewards are capped at 50% of the seller bucket per seller per epoch. Buyer rewards are capped at 5% of the buyer bucket per buyer per epoch. Cap overages are redirected to the Protocol Reserve.
 
 ANTS tokens are non-transferable until network maturity. This prevents early speculation from distorting incentives.
 

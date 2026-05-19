@@ -151,6 +151,8 @@ Each epoch's ANTS are split: 50% to sellers, 20% to buyers, 15% to the Protocol 
 
 **For buyers:** Buyer emissions are claimable via an operator address through `claimBuyerEmissions`.
 
+Per finalized epoch, rewards are subject to recipient caps. Each seller is capped at `maxSellerSharePct` (currently 50% of the seller bucket), and each buyer is capped at `maxBuyerSharePct` (currently 5% of the buyer bucket). Cap overages are redirected to the Protocol Reserve.
+
 **Stable contracts** (Staking, Deposits) hold funds and rarely change. The **swappable contract** (Channels) holds no USDC and can be redeployed by re-pointing via the Registry.
 
 Identity uses the deployed [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) IdentityRegistry on Base.

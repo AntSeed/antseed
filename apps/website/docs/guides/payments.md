@@ -103,10 +103,11 @@ antseed seller unstake
 
 ### ANTS Token Emissions
 
-Providers and buyers earn ANTS tokens based on USDC volume. Emissions are distributed per epoch (1 week):
-- 65% to providers (proportional to USDC earned)
-- 25% to buyers (proportional to USDC spent)
-- 10% to protocol reserve
+Providers and buyers earn ANTS tokens based on eligible USDC volume. Emissions are distributed per epoch (1 week):
+- 50% to providers (proportional to USDC earned, capped at 50% of the seller bucket per seller per epoch)
+- 20% to buyers (proportional to USDC spent, capped at 5% of the buyer bucket per buyer per epoch)
+- 15% to protocol reserve, plus seller and buyer cap overages
+- 15% to contributors/team
 
 Check your pending emissions:
 

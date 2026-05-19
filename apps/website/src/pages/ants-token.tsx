@@ -397,12 +397,12 @@ export default function AntsToken(): JSX.Element {
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>01</div>
             <h3>As a seller</h3>
-            <p>Serve real requests and settle on-chain. Seller ANTS emissions are tracked but currently routed into a dedicated Provider Pool and locked while stronger provider validation, audits, attestations, and proof systems are introduced.</p>
+            <p>Serve real requests and settle on-chain. Seller ANTS emissions come from the 50% Provider Pool and are capped at 50% of that seller bucket per seller per epoch; rewards are currently routed into a locked Provider Pool while stronger validation and proof systems are introduced.</p>
           </div>
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>02</div>
             <h3>As a buyer</h3>
-            <p>Deposit USDC, use the network, and pay for AI services. Buyer incentives are designed for real demand and may be subject to caps, quality filters, and anti-abuse checks.</p>
+            <p>Deposit USDC, use the network, and pay for AI services. Buyer emissions come from the 20% buyer pool and are capped at 5% of that buyer bucket per buyer per epoch, with quality filters and anti-abuse checks for real demand.</p>
           </div>
           <div className={styles.earnCard}>
             <div className={styles.earnStep}>03</div>
@@ -441,9 +441,9 @@ export default function AntsToken(): JSX.Element {
 
         <div className={styles.splitGrid}>
           {[
-            {pct: '50%', label: 'Provider Pool', desc: 'Seller emissions are tracked and routed into a locked Provider Pool while stronger validation and proof systems are developed.', accent: true},
-            {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Buyer incentives may be capped, filtered, delayed, or excluded for anti-abuse reasons.', accent: false},
-            {pct: '15%', label: 'Ecosystem Reserve', desc: 'May support long-term network sustainability, trust, utility, grants, incentives, and alignment. Tokenholders do not own the reserve.', accent: false},
+            {pct: '50%', label: 'Provider Pool', desc: 'Seller emissions are tracked and routed into a locked Provider Pool. Capped at 50% of the seller bucket per seller per epoch; cap overages flow to the reserve.', accent: true},
+            {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Capped at 5% of the buyer bucket per buyer per epoch; cap overages flow to the reserve.', accent: false},
+            {pct: '15%', label: 'Ecosystem Reserve', desc: 'May support long-term network sustainability, trust, utility, grants, incentives, and alignment. Receives seller and buyer cap overages. Tokenholders do not own the reserve.', accent: false},
             {pct: '15%', label: 'Contributors', desc: 'Vested contributor allocation intended to align long-term development and ecosystem health.', accent: false},
           ].map(s => (
             <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
@@ -503,7 +503,9 @@ export default function AntsToken(): JSX.Element {
             {label: 'Network fee', value: '4% of settlement may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses'},
             {label: 'DIEM program fee', value: '10% program/operator fee may be directed according to applicable DIEM Provider Capacity Program rules'},
             {label: 'Token rights', value: 'ANTS does not represent equity, ownership, debt, profit share, revenue share, claim on assets, or any right to receive payments'},
-            {label: 'Provider Pool', value: 'Seller ANTS emissions are tracked but locked pending stronger validation; future claims may be subject to verification or slashing'},
+            {label: 'Provider Pool', value: 'Seller ANTS emissions are tracked but locked pending stronger validation; per-seller rewards are capped at 50% of the seller bucket per epoch'},
+            {label: 'Buyer cap', value: 'Per-buyer rewards are capped at 5% of the buyer bucket per epoch'},
+            {label: 'Cap overages', value: 'Seller and buyer cap overages are redirected to the Ecosystem Reserve'},
             {label: 'Anti-abuse policy', value: 'Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing'},
             {label: 'Transfers', value: 'Currently restricted'},
           ].map(r => (
