@@ -1,5 +1,5 @@
 import type { ConfigFormData } from '../core/state';
-import type { RawChatAttachment } from '../types/bridge';
+import type { ChatPermissionMode, RawChatAttachment, ToolApprovalDecision } from '../types/bridge';
 
 export type AppActions = {
   startConnect: () => Promise<void>;
@@ -22,6 +22,8 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  setChatPermissionMode: (mode: ChatPermissionMode) => void;
+  decideToolApproval: (decision: ToolApprovalDecision) => void;
   rejectPaymentSession: () => void;
   retryAfterPayment: () => void;
   requestChannelClose: () => void;

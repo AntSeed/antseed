@@ -107,6 +107,24 @@ export type RawChatAttachment = {
   base64: string;
 };
 
+export type ChatPermissionMode = 'manual' | 'full';
+export type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
+export type ToolApprovalRequest = {
+  id: string;
+  conversationId: string;
+  toolCallId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  workspacePath: string;
+  peerId: string | null;
+  peerName: string | null;
+  title: string;
+  description: string;
+  subject: string;
+  alwaysAllowLabel: string;
+  canAlwaysAllow: boolean;
+};
+
 export type PreparedChatAttachment = {
   id: string;
   /** Stable server-generated ID for the on-disk copy; used by the
@@ -169,8 +187,9 @@ export type DesktopBridge = {
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
-  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
+  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
+  chatToolApprovalDecision?: (id: string, decision: ToolApprovalDecision) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null }) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
@@ -197,6 +216,8 @@ export type DesktopBridge = {
   onChatAiToolExecuting?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => void) => () => void;
   onChatAiToolUpdate?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => void) => () => void;
   onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void) => () => void;
+  onChatToolApprovalRequested?: (handler: (data: ToolApprovalRequest) => void) => () => void;
+  onChatToolApprovalCleared?: (handler: (data: { id: string; conversationId: string }) => void) => () => void;
   onBrowserPreviewOpen?: (handler: (data: { url: string }) => void) => () => void;
   sendBrowserPreviewElementSelected?: (data: { selector: string; tagName: string; text: string; attributes: Record<string, string> }) => void;
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;

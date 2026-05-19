@@ -7,6 +7,8 @@ import type {
   DesktopBridge,
   PreparedChatAttachment,
   RawChatAttachment,
+  ChatPermissionMode,
+  ToolApprovalDecision,
 } from '../types/bridge';
 import type {
   ChatMessage,
@@ -84,6 +86,8 @@ export type ChatModuleApi = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  setChatPermissionMode: (mode: ChatPermissionMode) => void;
+  decideToolApproval: (decision: ToolApprovalDecision) => void;
   handleLogLineForThinkingPhase: (line: string) => void;
 };
 
@@ -113,6 +117,7 @@ export function initChatModule({
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
   const PAYMENT_AUTO_RETRY_DELAY_MS = 7_000;
   const PAYMENT_AUTO_RETRY_MAX_ATTEMPTS = 2;
+  const CHAT_PERMISSION_MODE_KEY = 'antseed:chatPermissionMode';
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
@@ -158,6 +163,30 @@ export function initChatModule({
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
   let newChatDraftVersion = 0;
+
+  const normalizePermissionMode = (value: unknown): ChatPermissionMode => (
+    value === 'full' ? 'full' : 'manual'
+  );
+
+  if (typeof window !== 'undefined') {
+    uiState.chatPermissionMode = normalizePermissionMode(window.localStorage.getItem(CHAT_PERMISSION_MODE_KEY));
+  }
+
+  function setChatPermissionMode(mode: ChatPermissionMode): void {
+    uiState.chatPermissionMode = normalizePermissionMode(mode);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(CHAT_PERMISSION_MODE_KEY, uiState.chatPermissionMode);
+    }
+    notifyUiStateChanged();
+  }
+
+  function decideToolApproval(decision: ToolApprovalDecision): void {
+    const request = uiState.chatToolApprovalRequest;
+    if (!request) return;
+    uiState.chatToolApprovalRequest = null;
+    notifyUiStateChanged();
+    void bridge?.chatToolApprovalDecision?.(request.id, decision);
+  }
 
   // ---------------------------------------------------------------------------
   // Payment approval helpers
@@ -2049,6 +2078,7 @@ export function initChatModule({
           selection.provider ?? undefined,
           attachments,
           selection.peerId,
+          uiState.chatPermissionMode,
         );
 
       void (async () => {
@@ -2128,6 +2158,7 @@ export function initChatModule({
               selection.provider ?? undefined,
               attachments,
               selection.peerId,
+              uiState.chatPermissionMode,
             );
 
           let result = await sendRequest();
@@ -2665,6 +2696,22 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onChatToolApprovalRequested) {
+      bridge.onChatToolApprovalRequested((request) => {
+        uiState.chatToolApprovalRequest = request;
+        notifyUiStateChanged();
+      });
+    }
+
+    if (bridge.onChatToolApprovalCleared) {
+      bridge.onChatToolApprovalCleared((data) => {
+        if (uiState.chatToolApprovalRequest?.id === data.id) {
+          uiState.chatToolApprovalRequest = null;
+          notifyUiStateChanged();
+        }
+      });
+    }
+
     if (bridge.onBrowserPreviewOpen) {
       bridge.onBrowserPreviewOpen((data) => {
         uiState.browserPreviewUrl = data.url;
@@ -2845,6 +2892,8 @@ export function initChatModule({
 
   return {
     handleLogLineForThinkingPhase,
+    setChatPermissionMode,
+    decideToolApproval,
     refreshChatServiceOptions,
     refreshChatProxyStatus,
     refreshChatConversations,

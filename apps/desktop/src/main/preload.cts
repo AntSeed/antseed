@@ -111,6 +111,24 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+type ChatPermissionMode = 'manual' | 'full';
+type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
+type ToolApprovalRequest = {
+  id: string;
+  conversationId: string;
+  toolCallId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  workspacePath: string;
+  peerId: string | null;
+  peerName: string | null;
+  title: string;
+  description: string;
+  subject: string;
+  alwaysAllowLabel: string;
+  canAlwaysAllow: boolean;
+};
+
 // NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
 // (`ChatStreamStopReason`). This preload runs in a sandboxed context and
 // cannot import from main, so the shape is mirrored here for IPC. Keep the
@@ -227,11 +245,14 @@ const api = {
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
   },
-  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId, permissionMode);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments, peerId);
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments, peerId, permissionMode);
+  },
+  chatToolApprovalDecision(id: string, decision: ToolApprovalDecision): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:tool-approval-decision', { id, decision });
   },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
@@ -338,6 +359,16 @@ const api = {
     const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => handler(data);
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
+  },
+  onChatToolApprovalRequested(handler: (data: ToolApprovalRequest) => void): () => void {
+    const listener = (_: unknown, data: ToolApprovalRequest) => handler(data);
+    ipcRenderer.on('chat:tool-approval-requested', listener);
+    return () => ipcRenderer.off('chat:tool-approval-requested', listener);
+  },
+  onChatToolApprovalCleared(handler: (data: { id: string; conversationId: string }) => void): () => void {
+    const listener = (_: unknown, data: { id: string; conversationId: string }) => handler(data);
+    ipcRenderer.on('chat:tool-approval-cleared', listener);
+    return () => ipcRenderer.off('chat:tool-approval-cleared', listener);
   },
   onBrowserPreviewOpen(handler: (data: { url: string }) => void): () => void {
     const listener = (_: unknown, data: { url: string }) => handler(data);

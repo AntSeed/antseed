@@ -5,6 +5,7 @@ import type {
   RuntimeProcessState,
 } from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
+import type { ChatPermissionMode, ToolApprovalRequest } from '../types/bridge';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -210,6 +211,10 @@ export type RendererUiState = {
   creditsLoading: boolean;
   creditsLastRefreshedAt: number;
 
+  // --- Agent access / tool approval ---
+  chatPermissionMode: ChatPermissionMode;
+  chatToolApprovalRequest: ToolApprovalRequest | null;
+
   // --- Session approval ---
   chatPaymentApprovalVisible: boolean;
   chatPaymentApprovalPeerId: string | null;
@@ -359,6 +364,10 @@ export function createInitialUiState(): RendererUiState {
     creditsOperatorAddress: null,
     creditsLoading: false,
     creditsLastRefreshedAt: 0,
+
+    // Agent access / tool approval
+    chatPermissionMode: 'manual',
+    chatToolApprovalRequest: null,
 
     // Session approval
     chatPaymentApprovalVisible: false,
