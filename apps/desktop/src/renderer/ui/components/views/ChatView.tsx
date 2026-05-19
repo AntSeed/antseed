@@ -1007,6 +1007,17 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 <HugeiconsIcon icon={Search01Icon} size={15} strokeWidth={1.8} />
               </button>
             )}
+            {previewTargetUrl && (
+              <button
+                type="button"
+                className={`${styles.previewToggle}${previewOpen ? ` ${styles.previewToggleActive}` : ''}`}
+                onClick={() => setPreviewOpen((open) => !open)}
+                aria-label={previewOpen ? 'Close browser preview' : 'Open browser preview'}
+                title={previewOpen ? 'Close preview' : 'Open preview'}
+              >
+                <HugeiconsIcon icon={BrowserIcon} size={15} strokeWidth={1.8} />
+              </button>
+            )}
             <ChatSessionStats
               sessionCost={snap.chatSessionAccumulatedCostUsd}
               sessionTokens={snap.chatSessionTotalTokens}
