@@ -15,6 +15,7 @@ import { PeerToPeer02Icon } from '@hugeicons/core-free-icons';
 import { Settings02Icon } from '@hugeicons/core-free-icons';
 import { CommandLineIcon } from '@hugeicons/core-free-icons';
 import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
+import { Add01Icon } from '@hugeicons/core-free-icons';
 import { Search01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
@@ -353,6 +354,8 @@ function ChatListSection({
   onSelectConv,
   onCloseChannel,
   onOpenChatSearch,
+  onStartNewChatWithCurrentPeer,
+  canStartNewChatWithCurrentPeer,
   menuOpenId,
   setMenuOpenId,
   menuBtnRefs,
@@ -366,6 +369,8 @@ function ChatListSection({
   onSelectConv: (id: string) => void;
   onCloseChannel: () => void;
   onOpenChatSearch: () => void;
+  onStartNewChatWithCurrentPeer: () => void;
+  canStartNewChatWithCurrentPeer: boolean;
   menuOpenId: string | null;
   setMenuOpenId: (id: string | null) => void;
   menuBtnRefs: RefObject<Map<string, HTMLButtonElement | null>>;
@@ -381,15 +386,27 @@ function ChatListSection({
             </span>
           )}
         </span>
-        <button
-          type="button"
-          className={styles.recentSessionsSearchBtn}
-          onClick={onOpenChatSearch}
-          aria-label="Search conversations"
-          title="Search conversations"
-        >
-          <HugeiconsIcon icon={Search01Icon} size={13} strokeWidth={1.8} />
-        </button>
+        <span className={styles.recentSessionsActions}>
+          <button
+            type="button"
+            className={styles.recentSessionsSearchBtn}
+            onClick={onStartNewChatWithCurrentPeer}
+            disabled={!canStartNewChatWithCurrentPeer}
+            aria-label="Start a new chat with the current peer and service"
+            title="Start a new chat with the current peer and service"
+          >
+            <HugeiconsIcon icon={Add01Icon} size={13} strokeWidth={1.9} />
+          </button>
+          <button
+            type="button"
+            className={styles.recentSessionsSearchBtn}
+            onClick={onOpenChatSearch}
+            aria-label="Search conversations"
+            title="Search conversations"
+          >
+            <HugeiconsIcon icon={Search01Icon} size={13} strokeWidth={1.8} />
+          </button>
+        </span>
       </div>
       <div className={styles.recentSessionsList}>
         {conversations.length === 0 ? (
@@ -553,6 +570,9 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     chatSendingConversationIds,
     chatActiveChannels,
     discoverRows,
+    chatServiceOptions,
+    chatSelectedServiceValue,
+    chatSelectedPeerId,
   } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
@@ -610,9 +630,50 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     onSelectView('chat');
   }, [actions, onSelectView]);
 
+  const activeConversation = useMemo(
+    () => allConversations.find((conv) => getConversationId(conv) === chatActiveConversation) ?? null,
+    [allConversations, chatActiveConversation],
+  );
+
+  const newChatTarget = useMemo(() => {
+    if (!activeConversation) return null;
+
+    const peerId = String(activeConversation.peerId || chatSelectedPeerId || '').trim();
+    if (!peerId) return null;
+
+    const serviceId = String(activeConversation.service || '').trim();
+    const provider = String(activeConversation.provider || '').trim();
+    const selectedForPeer = chatServiceOptions.find(
+      (option) => option.peerId === peerId && option.value === chatSelectedServiceValue,
+    );
+    const matchingOption = selectedForPeer ?? chatServiceOptions.find((option) => (
+      option.peerId === peerId
+      && (!serviceId || option.id === serviceId)
+      && (!provider || option.provider === provider)
+    )) ?? chatServiceOptions.find((option) => option.peerId === peerId && (!serviceId || option.id === serviceId));
+
+    if (matchingOption?.value) return { peerId, serviceValue: matchingOption.value };
+
+    const matchingRow = discoverRows.find((row) => (
+      row.peerId === peerId
+      && (!serviceId || row.serviceId === serviceId)
+      && (!provider || row.provider === provider)
+    )) ?? discoverRows.find((row) => row.peerId === peerId && (!serviceId || row.serviceId === serviceId));
+
+    return matchingRow?.selectionValue ? { peerId, serviceValue: matchingRow.selectionValue } : null;
+  }, [activeConversation, chatSelectedPeerId, chatServiceOptions, chatSelectedServiceValue, discoverRows]);
+
   const handleCloseChannel = useCallback(() => {
     actions.requestChannelClose();
   }, [actions]);
+
+  const handleStartNewChatWithCurrentPeer = useCallback(() => {
+    actions.startNewChat();
+    if (newChatTarget) {
+      actions.handleServiceChange(newChatTarget.serviceValue, newChatTarget.peerId);
+    }
+    onSelectView('chat');
+  }, [actions, newChatTarget, onSelectView]);
 
   return (
     <aside className={styles.chatSidebar}>
@@ -626,6 +687,8 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
         onSelectConv={handleSelectConv}
         onCloseChannel={handleCloseChannel}
         onOpenChatSearch={() => setChatSearchOpen(true)}
+        onStartNewChatWithCurrentPeer={handleStartNewChatWithCurrentPeer}
+        canStartNewChatWithCurrentPeer={Boolean(newChatTarget)}
         menuOpenId={menuOpenId}
         setMenuOpenId={setMenuOpenId}
         menuBtnRefs={menuBtnRefs}

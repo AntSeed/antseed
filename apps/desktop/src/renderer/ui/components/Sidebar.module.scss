@@ -352,8 +352,15 @@ $collapsed-nav-height: 45px;
   line-height: 1;
 }
 
-/* Icon-only search trigger that replaces the bottom "Search all chats"
-   button. Sits at the right of the section label so the affordance is
+.recent-sessions-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+/* Icon-only actions that replace the bottom "Search all chats" button.
+   They sit at the right of the section label so the affordances are
    discoverable without occupying a row of vertical space. */
 .recent-sessions-search-btn {
   appearance: none;
@@ -371,9 +378,14 @@ $collapsed-nav-height: 45px;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: var(--bg-hover, rgba(255, 255, 255, 0.06));
     color: var(--text-primary);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.35;
   }
 
   &:focus-visible {
