@@ -273,10 +273,10 @@
     align-self: stretch;
     background: transparent;
     color: var(--text-primary);
-    border-left: 0;
+    border-left: 3px solid var(--accent, #1fd87a);
     border-radius: 0;
     width: 100%;
-    padding: 0 16px;
+    padding: 0 16px 0 13px;
 
   :global {
     /* Tool group — flat layout in both open and closed states */
