@@ -882,14 +882,31 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [visibleMessages]);
 
-  const handleJumpToMessage = useCallback((messageId: string) => {
-    const target = messageRefs.current.get(messageId);
+  const findReplyTargetElement = useCallback((replyTo: ChatReplyReference): HTMLDivElement | null => {
+    const direct = messageRefs.current.get(replyTo.messageId);
+    if (direct) return direct;
+
+    const fallback = keyedVisibleMessages.find(({ message }) => (
+      message.role === replyTo.role && getReplyExcerpt(message) === replyTo.excerpt
+    ));
+    return fallback ? messageRefs.current.get(fallback.key) ?? null : null;
+  }, [keyedVisibleMessages]);
+
+  const canJumpToReply = useCallback((replyTo: ChatReplyReference) => {
+    if (messageRefs.current.has(replyTo.messageId)) return true;
+    return keyedVisibleMessages.some(({ message }) => (
+      message.role === replyTo.role && getReplyExcerpt(message) === replyTo.excerpt
+    ));
+  }, [keyedVisibleMessages]);
+
+  const handleJumpToReply = useCallback((replyTo: ChatReplyReference) => {
+    const target = findReplyTargetElement(replyTo);
     if (!target) return;
     isUserScrolledUp.current = true;
     target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
     target.classList.add(styles.chatMessageJumpHighlight);
     window.setTimeout(() => target.classList.remove(styles.chatMessageJumpHighlight), 1400);
-  }, []);
+  }, [findReplyTargetElement]);
 
   const showWelcome =
     snap.chatConversationsLoaded &&
@@ -1122,7 +1139,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                       message={msg}
                       onOpenPreview={handleOpenPreview}
                       onReply={handleReplyToMessage}
-                      onJumpToMessage={handleJumpToMessage}
+                      canJumpToReply={canJumpToReply}
+                      onJumpToReply={handleJumpToReply}
                       conversationId={snap.chatActiveConversation || undefined}
                       searchQuery={isSearchMatch ? messageSearchQuery : undefined}
                       searchActive={isActiveSearchMatch}
@@ -1226,7 +1244,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 <button
                   type="button"
                   className={styles.replyComposerBody}
-                  onClick={() => handleJumpToMessage(replyTarget.messageId)}
+                  onClick={() => handleJumpToReply(replyTarget)}
                   title="Jump to original message"
                 >
                   <span className={styles.replyComposerLabel}>Replying to {replyTarget.senderLabel}</span>

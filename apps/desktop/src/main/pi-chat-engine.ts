@@ -950,13 +950,23 @@ function convertPiMessagesToUi(messages: Message[]): AiChatMessage[] {
 
 const ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE = 'antseed.reply_context';
 
+type ReplyContextDetails = ChatReplyReference & {
+  expectedUserExcerpt?: string;
+};
+
+function normalizeReplyContextExcerpt(value: unknown, maxLength = 500): string {
+  const excerpt = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!excerpt) return '';
+  return excerpt.length > maxLength ? `${excerpt.slice(0, maxLength).trimEnd()}...` : excerpt;
+}
+
 function normalizeReplyReference(value: unknown): ChatReplyReference | null {
   if (!value || typeof value !== 'object') return null;
   const data = value as Record<string, unknown>;
   const messageId = typeof data.messageId === 'string' ? data.messageId.trim() : '';
   const role = typeof data.role === 'string' ? data.role.trim() : '';
   const senderLabel = typeof data.senderLabel === 'string' ? data.senderLabel.trim() : '';
-  const excerpt = typeof data.excerpt === 'string' ? data.excerpt.replace(/\s+/g, ' ').trim() : '';
+  const excerpt = normalizeReplyContextExcerpt(data.excerpt);
   if (!messageId || !role || !senderLabel || !excerpt) return null;
   const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) && data.createdAt > 0
     ? Math.floor(data.createdAt)
@@ -965,9 +975,45 @@ function normalizeReplyReference(value: unknown): ChatReplyReference | null {
     messageId,
     role,
     senderLabel,
-    excerpt: excerpt.length > 500 ? `${excerpt.slice(0, 500).trimEnd()}...` : excerpt,
+    excerpt,
     ...(createdAt ? { createdAt } : {}),
   };
+}
+
+function normalizeReplyContextDetails(value: unknown): ReplyContextDetails | null {
+  const replyTo = normalizeReplyReference(value);
+  if (!replyTo || !value || typeof value !== 'object') return replyTo;
+  const expectedUserExcerpt = normalizeReplyContextExcerpt((value as Record<string, unknown>).expectedUserExcerpt, 240);
+  return {
+    ...replyTo,
+    ...(expectedUserExcerpt ? { expectedUserExcerpt } : {}),
+  };
+}
+
+function buildUserReplyContextDetails(replyTo: ChatReplyReference, userMessage: string): ReplyContextDetails {
+  const expectedUserExcerpt = normalizeReplyContextExcerpt(userMessage, 240);
+  return {
+    ...replyTo,
+    ...(expectedUserExcerpt ? { expectedUserExcerpt } : {}),
+  };
+}
+
+function extractUiContentExcerpt(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return normalizeReplyContextExcerpt(content, 240);
+  const parts = content
+    .filter((block) => block.type === 'text' || block.type === 'file')
+    .map((block) => {
+      if (block.type === 'file') return block.fileName ? `[File: ${block.fileName}]` : '';
+      return String(block.text || '');
+    })
+    .filter(Boolean);
+  return normalizeReplyContextExcerpt(parts.join(' '), 240);
+}
+
+function isExpectedReplyUserMessage(replyTo: ReplyContextDetails, content: string | ContentBlock[]): boolean {
+  if (!replyTo.expectedUserExcerpt) return true;
+  const actualExcerpt = extractUiContentExcerpt(content);
+  return Boolean(actualExcerpt && actualExcerpt === replyTo.expectedUserExcerpt);
 }
 
 function buildReplyContextPrompt(replyTo: ChatReplyReference): string {
@@ -981,11 +1027,11 @@ function buildReplyContextPrompt(replyTo: ChatReplyReference): string {
 
 function convertSessionBranchToUi(entries: SessionEntry[]): AiChatMessage[] {
   const converted: AiChatMessage[] = [];
-  let pendingReplyTo: ChatReplyReference | null = null;
+  let pendingReplyTo: ReplyContextDetails | null = null;
 
   for (const entry of entries) {
     if (entry.type === 'custom_message' && entry.customType === ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE) {
-      pendingReplyTo = normalizeReplyReference(entry.details);
+      pendingReplyTo = normalizeReplyContextDetails(entry.details);
       continue;
     }
 
@@ -994,12 +1040,16 @@ function convertSessionBranchToUi(entries: SessionEntry[]): AiChatMessage[] {
     const createdAt = normalizeTimestamp(entry.timestamp) || normalizeTimestamp((message as { timestamp?: unknown }).timestamp);
 
     if (message.role === 'user') {
+      const content = convertPiMessageToUiBlocks(message);
+      const replyTo = pendingReplyTo && isExpectedReplyUserMessage(pendingReplyTo, content)
+        ? pendingReplyTo
+        : null;
       converted.push({
         id: entry.id,
         role: 'user',
-        content: convertPiMessageToUiBlocks(message),
+        content,
         createdAt,
-        ...(pendingReplyTo ? { replyTo: pendingReplyTo } : {}),
+        ...(replyTo ? { replyTo } : {}),
       });
       pendingReplyTo = null;
       continue;
@@ -2227,7 +2277,7 @@ export function registerPiChatHandlers({
           ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE,
           buildReplyContextPrompt(replyTo),
           false,
-          replyTo,
+          buildUserReplyContextDetails(replyTo, trimmedMessage),
         );
       }
       const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
