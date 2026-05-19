@@ -713,6 +713,19 @@ button.replyReference {
   align-items: center;
   gap: 2px;
   margin-left: -4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.chat-bubble:hover .messageActions,
+.chat-bubble:focus-within .messageActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .messageActions {
+    opacity: 1;
+  }
 }
 
 .fileAttachment {

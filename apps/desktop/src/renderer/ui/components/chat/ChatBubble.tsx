@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Copy01Icon, Tick02Icon, BrowserIcon } from '@hugeicons/core-free-icons';
+import { Copy01Icon, Tick02Icon, BrowserIcon, MessageCircleReplyIcon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
@@ -800,6 +800,36 @@ function CopyResponseButton({ content }: { content: unknown }) {
   );
 }
 
+function ReplyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip.Provider delayDuration={300}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            className={styles.copyResponseBtn}
+            onClick={onClick}
+            aria-label="Reply to message"
+          >
+            <HugeiconsIcon
+              icon={MessageCircleReplyIcon}
+              size={16}
+              color="currentColor"
+              strokeWidth={2}
+            />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content className={styles.tooltipContent} sideOffset={5}>
+            Reply
+            <Tooltip.Arrow className={styles.tooltipArrow} />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
+
 function ReplyReference({
   replyTo,
   canJump,
@@ -902,17 +932,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview, onReply,
       <div>{content}</div>
       {!isStreamingBubble ? (
         <div className={styles.messageActions}>
-          {onReply ? (
-            <button
-              type="button"
-              className={styles.copyResponseBtn}
-              onClick={() => onReply(message)}
-              aria-label="Reply to message"
-              title="Reply"
-            >
-              ↩
-            </button>
-          ) : null}
+          {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
           {message.role !== 'user' ? <CopyResponseButton content={message.content} /> : null}
         </div>
       ) : null}
