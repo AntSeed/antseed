@@ -760,15 +760,19 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
     const fullyCollapsed = progress >= 0.999;
     const fullyExpanded = progress <= 0.001;
     const cache = layoutCacheRef.current;
+    const setStickyOffset = (height: number) => {
+      sidebar.style.setProperty('--sidebar-nav-sticky-offset', `${Math.max(0, height)}px`);
+    };
 
     if (fullyCollapsed) {
       // Snap to the real compact endpoint so hit-testing, hover
-      // backgrounds, and the sticky "Conversations" header below line
-      // up to the actual rendered positions. Clear all inline writes
-      // — CSS owns the static endpoint state.
+      // backgrounds, and the sticky chat-list header below line up to
+      // the actual rendered positions. Clear all inline writes — CSS
+      // owns the static endpoint state.
       sidebar.classList.add(styles.sidebarNavCollapsed);
       nav.style.height = '';
       nav.style.overflow = '';
+      setStickyOffset(cache?.collapsedHeight ?? nav.getBoundingClientRect().height);
       for (const node of navIconRefs.current.values()) node.style.transform = '';
       for (const node of navLabelRefs.current.values()) {
         node.style.opacity = '';
@@ -791,6 +795,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
       // contents. Same reason we clear inline overflow.
       nav.style.height = '';
       nav.style.overflow = '';
+      setStickyOffset(nav.getBoundingClientRect().height);
       for (const node of navIconRefs.current.values()) node.style.transform = '';
       for (const node of navLabelRefs.current.values()) {
         node.style.opacity = '';
@@ -807,6 +812,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
     const height = cache.expandedHeight + (cache.collapsedHeight - cache.expandedHeight) * progress;
     nav.style.height = `${height}px`;
     nav.style.overflow = 'hidden';
+    setStickyOffset(height);
 
     for (const [id, node] of navIconRefs.current) {
       const delta = cache.iconDeltas.get(id);

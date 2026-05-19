@@ -178,17 +178,9 @@ $collapsed-nav-height: 45px;
     pointer-events: none;
   }
 
-  /* When the nav is fully collapsed, the conversations label pins
-     itself flush under the strip so the user always has the search
-     affordance + count visible while scrolling history. */
   .recent-sessions-label {
-    position: sticky;
-    top: $collapsed-nav-height;
-    z-index: 2;
-    background: var(--bg-primary);
-    border-bottom: 1px solid var(--border);
-    padding-top: 8px;
-    padding-bottom: 8px;
+    padding-top: 4px;
+    padding-bottom: 6px;
   }
 }
 
@@ -313,11 +305,20 @@ $collapsed-nav-height: 45px;
 }
 
 .recent-sessions-label {
+  /* Keep the section header (and its search button) visible directly
+     under the sticky nav while the conversation list scrolls. The nav
+     height is animated by Sidebar.tsx, so `top` follows the JS-written
+     variable instead of only pinning at the fully-collapsed endpoint. */
+  position: sticky;
+  top: var(--sidebar-nav-sticky-offset, #{$collapsed-nav-height});
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 12px 16px 6px;
+  padding: 0 16px 4px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
@@ -389,6 +390,7 @@ $collapsed-nav-height: 45px;
   flex: 0 0 auto;
   flex-direction: column;
   gap: 1px;
+  padding-top: 4px;
   padding-bottom: 2px;
 }
 
