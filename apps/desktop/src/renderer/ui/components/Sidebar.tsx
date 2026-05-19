@@ -264,6 +264,28 @@ function PeerGroupSection({
   const convsRef = useRef<HTMLDivElement>(null);
   const letter = (group.displayName || '?').charAt(0).toUpperCase();
 
+  // Per-peer auto-collapse: show the 3 most-recent sessions by default. The
+  // active session is always kept visible — if it sits past the limit we swap
+  // it into the last slot so the user never loses sight of the chat they're
+  // currently in.
+  const MAX_VISIBLE_CONVS = 3;
+  const [showAllConvs, setShowAllConvs] = useState(false);
+  const visibleConvs = useMemo(() => {
+    if (showAllConvs || group.conversations.length <= MAX_VISIBLE_CONVS) {
+      return group.conversations;
+    }
+    const head = group.conversations.slice(0, MAX_VISIBLE_CONVS);
+    if (!activeConvId) return head;
+    const tail = group.conversations.slice(MAX_VISIBLE_CONVS);
+    const activeIdxInTail = tail.findIndex((c) => String(c.id ?? '') === activeConvId);
+    if (activeIdxInTail < 0) return head;
+    return [
+      ...head.slice(0, MAX_VISIBLE_CONVS - 1),
+      tail[activeIdxInTail],
+    ];
+  }, [group.conversations, showAllConvs, activeConvId]);
+  const hiddenCount = group.conversations.length - visibleConvs.length;
+
   // When the group is collapsed, surface a single running indicator on the
   // peer header if any of its conversations is in flight — otherwise a user
   // who collapses a peer can't tell that work is still happening underneath.
@@ -350,7 +372,7 @@ function PeerGroupSection({
         ref={convsRef}
         className={`${styles.peerGroupConvs}${expanded ? ` ${styles.peerGroupConvsOpen}` : ''}`}
       >
-        {group.conversations.map((conv) => {
+        {visibleConvs.map((conv) => {
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
             const isRunning = sendingConvIds.has(id);
@@ -428,6 +450,15 @@ function PeerGroupSection({
               </div>
             );
           })}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            className={styles.chatConvShowMore}
+            onClick={() => setShowAllConvs(true)}
+          >
+            Show {hiddenCount} more
+          </button>
+        )}
       </div>
     </div>
   );

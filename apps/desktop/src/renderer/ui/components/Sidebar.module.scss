@@ -303,6 +303,23 @@
   }
 }
 
+.chat-conv-show-more {
+  margin: 2px 4px 4px 28px;
+  padding: 4px 8px;
+  background: none;
+  border: 0;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+}
+
 .chat-conv-top {
   display: flex;
   align-items: center;
