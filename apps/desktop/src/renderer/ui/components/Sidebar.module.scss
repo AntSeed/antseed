@@ -5,10 +5,57 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  padding: 8px 0;
+  /* Single scroll container for the whole sidebar. The top nav uses
+     position: sticky so Discover / API / Settings stay pinned while the
+     warning, dev section, and chat list scroll underneath as one
+     continuous column. */
+  padding: 0 0 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* CRITICAL: disable scroll anchoring. The nav strip's height is
+     interpolated inline by JS as the user scrolls, which shrinks the
+     scroll content. Without this rule, the browser would compensate
+     by adjusting scrollTop to keep visible content stable — fighting
+     the user's scroll input and creating a feedback loop where the
+     strip grows back as soon as it tries to shrink. The result is
+     scroll "pushing back up" until the user pushes hard enough to
+     overcome the anchoring. Disabling anchoring lets scrollTop track
+     the user's input directly, which is what our progress calculation
+     assumes. */
+  overflow-anchor: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+
+  /* Belt-and-braces: opt every descendant out of being an anchor
+     candidate too. Some engines still pick a child element as the
+     anchor even when the scroll container has overflow-anchor: none. */
+  * {
+    overflow-anchor: none;
+  }
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--border-light, var(--border));
+  }
 }
 
 .sidebar-warning {
+  /* Same flex-shrink pinning as the nav strip — keeps the warning at
+     natural height inside the flex-column sidebar even when the chat
+     list below grows large. */
+  flex: 0 0 auto;
   margin: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
@@ -19,12 +66,130 @@
   line-height: 1.4;
 }
 
+/* Fixed sticky-nav height in the fully collapsed state. Used as the
+   `top:` value for the sticky "Conversations" header below. The
+   matching pixel value is also captured at runtime by
+   measureLayout() so the JS interpolation lands exactly here. */
+$collapsed-nav-height: 45px;
+
 .sidebar-nav {
+  /* Plain vertical nav by default. No CSS interpolation magic — if JS
+     hasn't run yet (or fails to mount), the user still sees a normal
+     menu at full size. Scroll-driven motion is owned entirely by
+     Sidebar.tsx, which:
+       1. Measures the expanded and collapsed icon positions once
+          after mount (and on resize).
+       2. On every scroll frame, writes inline `transform` on each
+          icon wrapper, inline `opacity` on each label, and inline
+          `height` + `overflow:hidden` on this <ul>, interpolated by
+          progress = scrollTop / 56.
+       3. At progress >= 1, snaps to the canonical compact endpoint
+          by toggling .sidebar-nav-collapsed and clearing the inline
+          writes — below.
+     The inline writes always win over these rules, so no calc() /
+     custom-property fallbacks are needed.
+
+     `flex-shrink: 0` is critical — the parent .sidebar is a flex
+     column with overflow-y: auto, so without it the chat list (which
+     can grow to dozens of rows) would squeeze this strip down to
+     nothing and the user would see no menu at all. We want the strip
+     at natural size and the <aside> itself to scroll. */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex: 0 0 auto;
   list-style: none;
-  padding: 4px 8px 8px;
+  margin: 0;
+  padding: 8px 8px;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 2px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid transparent;
+  /* No `overflow: hidden` here at rest — it gets applied inline by JS
+     only while the height is being actively interpolated, so the
+     natural-size strip never clips its own icons. */
+
+  li {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+}
+
+/* Wrapper around the icon glyph. JS writes inline `transform` on this
+   node each frame to slide it from its expanded position to its
+   compact-row position. Kept tightly sized so transform offsets match
+   the measured deltas precisely. */
+.sidebar-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  will-change: transform;
+}
+
+.sidebar-btn-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Fully-collapsed endpoint. JS adds .sidebar-nav-collapsed only when
+   the scroll passes the full range; at that point we clear the inline
+   writes so the canonical compact geometry takes over. */
+.sidebar-nav-collapsed {
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    height: $collapsed-nav-height;
+    border-bottom-color: var(--border);
+
+    li {
+      width: 36px;
+    }
+  }
+
+  .sidebar-nav .sidebar-btn {
+    width: 36px;
+    height: 32px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .sidebar-btn-icon {
+    /* Static endpoint owns the position now — transform must reset to
+       0 so the inline transform JS wrote during the slide doesn't
+       persist. JS also clears it explicitly when it adds this class. */
+    transform: none;
+  }
+
+  .sidebar-btn-label {
+    width: 0;
+    max-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* When the nav is fully collapsed, the conversations label pins
+     itself flush under the strip so the user always has the search
+     affordance + count visible while scrolling history. */
+  .recent-sessions-label {
+    position: sticky;
+    top: $collapsed-nav-height;
+    z-index: 2;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
 }
 
 .sidebar-btn {
@@ -41,7 +206,12 @@
   font-weight: 500;
   text-align: left;
   border-radius: var(--radius-sm);
-  transition: all 0.15s ease;
+  /* Only colors transition — sizing/layout swaps between expanded and
+     collapsed states are owned by the FLIP animation in Sidebar.tsx,
+     so we don't want CSS to interpolate width/padding underneath it. */
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 
   &:hover {
     background: var(--bg-hover);
@@ -123,16 +293,30 @@
   }
 }
 
-/* Chat sidebar (conversation list) */
+/* Chat sidebar (conversation list)
+
+   The chat sidebar no longer owns its own scroll — the outer .sidebar
+   container scrolls the entire column as one, so this block just grows
+   with its content. */
 
 .chat-sidebar {
   display: flex;
   flex-direction: column;
-  flex: 2;
-  overflow-y: auto;
+  flex: 0 0 auto;
 }
 
-.chat-sidebar-label {
+.recent-sessions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  padding-bottom: 6px;
+}
+
+.recent-sessions-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 12px 16px 6px;
   font-size: 11px;
   font-weight: 600;
@@ -140,140 +324,154 @@
   letter-spacing: 0.3px;
 }
 
-.chat-conversation-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-/* ── Peer group ────────────────────────────────────────────────────── */
-
-.peer-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.peer-group-expanded {
-  .peer-group-header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--bg-primary);
-  }
-}
-
-.peer-group-header {
-  display: flex;
+/* "All Chats <count>" pairing. The count is a quiet badge so it reads as
+   metadata, not an action target — the search icon to its right carries
+   the affordance. */
+.recent-sessions-label-text {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  margin: 0 4px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+.recent-sessions-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Icon-only search trigger that replaces the bottom "Search all chats"
+   button. Sits at the right of the section label so the affordance is
+   discoverable without occupying a row of vertical space. */
+.recent-sessions-search-btn {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  width: calc(100% - 8px);
-  text-align: left;
-  font-family: inherit;
-  transition: background 0.1s;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 
   &:hover {
-    background: var(--bg-hover);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+    color: var(--text-primary);
+  }
 
-    .peer-group-add {
-      opacity: 1;
-    }
+  &:focus-visible {
+    outline: none;
+    color: var(--text-primary);
+    box-shadow: 0 0 0 2px rgba(var(--accent-green-rgb, 74, 222, 128), 0.35);
   }
 }
 
-.peer-group-chevron {
-  flex-shrink: 0;
+/* Conversation list — grows with its content; the outer .sidebar owns
+   the scrollbar so the user sees one continuous scrolling column. */
+.recent-sessions-list {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: 2px;
+}
+
+.recent-session-item {
+  margin-inline: 6px;
+  padding-block: 7px;
+}
+
+.recent-session-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   color: var(--text-muted);
-  transition: transform 0.15s ease;
-  transform: rotate(-90deg);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.peer-group-chevron-open {
-  transform: rotate(0deg);
-}
-
-.peer-group-avatar {
-  width: 16px;
-  height: 16px;
+.recent-session-avatar {
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 700;
   color: #fff;
+  font-size: 8px;
+  font-weight: 700;
   line-height: 1;
 }
 
-.peer-group-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  flex: 1;
+.recent-session-peer {
+  flex: 1 1 auto;
   min-width: 0;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.peer-group-add {
-  flex-shrink: 0;
+.recent-session-detail {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  background: none;
-  border-radius: 4px;
-  cursor: pointer;
+  gap: 5px;
+  min-width: 0;
   color: var(--text-muted);
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s;
-
-  &:hover {
-    color: var(--text-primary);
-  }
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  padding-left: 1px;
 }
 
-.peer-group-convs {
-  display: none;
-  flex-direction: column;
-  gap: 1px;
-  padding-left: 4px;
+.recent-session-service {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.peer-group-convs-open {
-  display: flex;
+.recent-session-cost {
+  flex: 0 0 auto;
 }
 
-/* ── Conversation preview with cost ────────────────────────────────── */
-
-.chat-conv-preview-sep {
-  display: inline-block;
-  width: 12px;
-  text-align: center;
-
-  &::before {
-    content: '';
-    display: inline-block;
-    width: 2px;
-    height: 2px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    vertical-align: middle;
-  }
+.recent-session-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
+
+.recent-session-dot {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+  opacity: 0.8;
+}
+
+/* ── Conversation rows ─────────────────────────────────────────────── */
 
 .chat-conv-cost {
   color: var(--text-muted);
@@ -287,7 +485,7 @@
   gap: 2px;
   min-width: 0;
   border-radius: var(--radius-sm);
-  margin: 0 4px;
+  margin: 0 8px;
   position: relative;
 
   &:hover {
@@ -321,36 +519,6 @@
   animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
 }
 
-/* Identification icon: this peer routes settlement through a recognised
-   on-chain pool (e.g. DIEM Staking Pool). Sits inline between the peer
-   name and any per-peer status indicators (running dot, add button). No
-   background / border — it's purely informational and shares the same
-   `--text-muted` color as other sidebar metadata. */
-.peer-group-proxy-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  color: var(--text-muted);
-  cursor: help;
-}
-
-/* Active indicator on a collapsed peer when one of its chats is running.
-   Same visual language as .chat-conv-running-dot so the user reads it as
-   the same "working" signal at a different scope. (Issue #461.) */
-.peer-group-running-dot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent-green, #4ade80);
-  box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.6);
-  animation: chat-conv-running-pulse 1.4s ease-in-out infinite;
-  margin-right: 2px;
-}
-
 @keyframes chat-conv-running-pulse {
   0%, 100% {
     opacity: 1;
@@ -379,22 +547,6 @@
   align-items: center;
   flex-shrink: 0;
   margin-left: auto;
-}
-
-.chat-conv-preview {
-  display: none;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 14px;
-}
-
-.chat-conv-time {
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 
 .chat-conv-menu-btn {
@@ -470,31 +622,6 @@
   outline: none;
 }
 
-.chat-conv-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-  color: var(--text-muted);
-  opacity: 0.8;
-}
-
-.chat-conv-unread {
-  display: inline-block;
-  background: var(--accent);
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  min-width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
-  border-radius: 8px;
-  padding: 0 4px;
-  float: right;
-  margin-top: 2px;
-}
-
 .chat-conv-session {
   display: flex;
   align-items: center;
@@ -540,4 +667,192 @@
   font-size: 14px;
   text-align: center;
   padding: 40px 16px;
+}
+
+/* ── Chat search modal ─────────────────────────────────────────────── */
+
+.chat-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.chat-search-modal {
+  width: min(720px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-card);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+}
+
+.chat-search-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--border);
+
+  h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+
+  p {
+    margin: 5px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
+.chat-search-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    outline: none;
+  }
+}
+
+.chat-search-input {
+  margin: 16px 22px 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  outline: none;
+
+  &:focus {
+    border-color: rgba(var(--accent-green-rgb, 74, 222, 128), 0.55);
+    box-shadow: 0 0 0 3px rgba(var(--accent-green-rgb, 74, 222, 128), 0.12);
+  }
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
+}
+
+.chat-search-summary {
+  padding: 0 22px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.chat-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 0 14px 16px;
+}
+
+.chat-search-result {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    outline: none;
+  }
+}
+
+.chat-search-result-active {
+  background: var(--bg-hover);
+  border-color: rgba(var(--accent-green-rgb, 74, 222, 128), 0.35);
+}
+
+.chat-search-result-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-search-result-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-search-result-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &:not(:last-child)::after {
+      content: '';
+      display: inline-block;
+      width: 2px;
+      height: 2px;
+      margin-left: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      vertical-align: middle;
+      opacity: 0.8;
+    }
+  }
+}
+
+.chat-search-empty {
+  padding: 44px 16px 52px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }

@@ -554,6 +554,20 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     [actions, snap.chatServiceOptions],
   );
 
+  // Start a fresh conversation with the peer currently shown in this view,
+  // pre-selecting the same service so the user can keep working with the
+  // same provider in a clean thread. Available whenever there is an active
+  // conversation with a known peer (issue: new-chat-with-peer affordance).
+  const handleNewChatWithCurrentPeer = useCallback(() => {
+    const peerId = currentPeerId;
+    const serviceValue = snap.chatSelectedServiceValue;
+    actions.startNewChat();
+    if (peerId && serviceValue) {
+      actions.handleServiceChange(serviceValue, peerId);
+    }
+    inputRef.current?.focus();
+  }, [actions, currentPeerId, snap.chatSelectedServiceValue]);
+
   const handleServiceSwitch = useCallback(
     (nextValue: string) => {
       if (!nextValue || nextValue === snap.chatSelectedServiceValue) return;
@@ -913,12 +927,25 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               {headerCopyValue && (
                 <button
                   type="button"
-                  className={`${styles.headerCopyButton}${headerCopied ? ` ${styles.headerCopyButtonCopied}` : ''}`}
+                  className={`${styles.headerActionButton}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
                   onClick={copyHeaderIdentifiers}
                   aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
                   title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
                 >
-                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.7} />
+                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={12} strokeWidth={1.8} />
+                  <span>{headerCopied ? 'Copied' : 'Copy IDs'}</span>
+                </button>
+              )}
+              {snap.chatActiveConversation && currentPeerId && (
+                <button
+                  type="button"
+                  className={`${styles.headerActionButton} ${styles.headerActionButtonAccent}`}
+                  onClick={handleNewChatWithCurrentPeer}
+                  title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                  aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
+                  <span>New chat</span>
                 </button>
               )}
               {!tooltipDismissed && peerServiceOptions.length >= 2 && (
@@ -936,12 +963,25 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               {headerCopyValue && (
                 <button
                   type="button"
-                  className={`${styles.headerCopyButton}${headerCopied ? ` ${styles.headerCopyButtonCopied}` : ''}`}
+                  className={`${styles.headerActionButton}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
                   onClick={copyHeaderIdentifiers}
                   aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
                   title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
                 >
-                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={1.7} />
+                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={12} strokeWidth={1.8} />
+                  <span>{headerCopied ? 'Copied' : 'Copy IDs'}</span>
+                </button>
+              )}
+              {snap.chatActiveConversation && currentPeerId && (
+                <button
+                  type="button"
+                  className={`${styles.headerActionButton} ${styles.headerActionButtonAccent}`}
+                  onClick={handleNewChatWithCurrentPeer}
+                  title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                  aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
+                  <span>New chat</span>
                 </button>
               )}
             </span>
