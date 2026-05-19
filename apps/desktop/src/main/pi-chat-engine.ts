@@ -130,6 +130,7 @@ type ChatReplyReference = {
   senderLabel: string;
   excerpt: string;
   createdAt?: number;
+  conversationId?: string;
 };
 
 type AiChatMessage = {
@@ -865,7 +866,7 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
 
   if (message.role === 'user') {
     if (typeof message.content === 'string') {
-      return convertPersistedAttachmentPromptToBlocks(message.content);
+      return convertPersistedAttachmentPromptToBlocks(parseReplyWrappedPrompt(message.content).visibleText);
     }
     const blocks: ContentBlock[] = [];
     for (const block of message.content) {
@@ -877,7 +878,7 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
         continue;
       }
       if (block.type === 'text') {
-        const converted = convertPersistedAttachmentPromptToBlocks(block.text);
+        const converted = convertPersistedAttachmentPromptToBlocks(parseReplyWrappedPrompt(block.text).visibleText);
         if (Array.isArray(converted)) {
           blocks.push(...converted);
         } else if (converted.trim().length > 0) {
@@ -949,9 +950,20 @@ function convertPiMessagesToUi(messages: Message[]): AiChatMessage[] {
 }
 
 const ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE = 'antseed.reply_context';
+const ANTSEED_REPLY_CONTEXT_JSON_START = '<antseed_reply_context_json>';
+const ANTSEED_REPLY_CONTEXT_JSON_END = '</antseed_reply_context_json>';
+const ANTSEED_REPLY_CONTEXT_START = '<antseed_reply_context>';
+const ANTSEED_REPLY_CONTEXT_END = '</antseed_reply_context>';
+const ANTSEED_REPLY_USER_MESSAGE_START = '<antseed_user_message>';
+const ANTSEED_REPLY_USER_MESSAGE_END = '</antseed_user_message>';
 
 type ReplyContextDetails = ChatReplyReference & {
   expectedUserExcerpt?: string;
+};
+
+type ParsedReplyWrappedPrompt = {
+  visibleText: string;
+  replyTo: ChatReplyReference | null;
 };
 
 function normalizeReplyContextExcerpt(value: unknown, maxLength = 500): string {
@@ -971,12 +983,14 @@ function normalizeReplyReference(value: unknown): ChatReplyReference | null {
   const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) && data.createdAt > 0
     ? Math.floor(data.createdAt)
     : undefined;
+  const conversationId = typeof data.conversationId === 'string' ? data.conversationId.trim() : '';
   return {
     messageId,
     role,
     senderLabel,
     excerpt,
     ...(createdAt ? { createdAt } : {}),
+    ...(conversationId ? { conversationId } : {}),
   };
 }
 
@@ -984,14 +998,6 @@ function normalizeReplyContextDetails(value: unknown): ReplyContextDetails | nul
   const replyTo = normalizeReplyReference(value);
   if (!replyTo || !value || typeof value !== 'object') return replyTo;
   const expectedUserExcerpt = normalizeReplyContextExcerpt((value as Record<string, unknown>).expectedUserExcerpt, 240);
-  return {
-    ...replyTo,
-    ...(expectedUserExcerpt ? { expectedUserExcerpt } : {}),
-  };
-}
-
-function buildUserReplyContextDetails(replyTo: ChatReplyReference, userMessage: string): ReplyContextDetails {
-  const expectedUserExcerpt = normalizeReplyContextExcerpt(userMessage, 240);
   return {
     ...replyTo,
     ...(expectedUserExcerpt ? { expectedUserExcerpt } : {}),
@@ -1016,13 +1022,73 @@ function isExpectedReplyUserMessage(replyTo: ReplyContextDetails, content: strin
   return Boolean(actualExcerpt && actualExcerpt === replyTo.expectedUserExcerpt);
 }
 
-function buildReplyContextPrompt(replyTo: ChatReplyReference): string {
+function extractBetween(value: string, start: string, end: string): string | null {
+  const startIndex = value.indexOf(start);
+  if (startIndex < 0) return null;
+  const contentStart = startIndex + start.length;
+  const endIndex = value.indexOf(end, contentStart);
+  if (endIndex < 0) return null;
+  return value.slice(contentStart, endIndex).trim();
+}
+
+function buildReplyWrappedPrompt(userPrompt: string, replyTo: ChatReplyReference | null): string {
+  if (!replyTo) return userPrompt || ' ';
+  const replyMetadata = JSON.stringify(replyTo);
   return [
-    'The next user message is a reply to an earlier chat message.',
-    `Original sender: ${replyTo.senderLabel}`,
-    `Original excerpt: "${replyTo.excerpt}"`,
-    'Use this as local context for the next user message. Do not treat it as a new request by itself.',
+    ANTSEED_REPLY_CONTEXT_JSON_START,
+    replyMetadata,
+    ANTSEED_REPLY_CONTEXT_JSON_END,
+    '',
+    ANTSEED_REPLY_CONTEXT_START,
+    'You are responding to a user message that is a reply to an earlier chat message.',
+    '',
+    'Earlier message:',
+    `Sender: ${replyTo.senderLabel}`,
+    `Role: ${replyTo.role}`,
+    'Excerpt:',
+    '"""',
+    replyTo.excerpt,
+    '"""',
+    '',
+    'Use the earlier message as immediate local context for interpreting the user message below.',
+    'This is especially important for references like "that", "it", "continue", "explain this", or "what you wrote".',
+    'Do not answer the earlier message by itself. Answer only the user message below.',
+    ANTSEED_REPLY_CONTEXT_END,
+    '',
+    ANTSEED_REPLY_USER_MESSAGE_START,
+    userPrompt || ' ',
+    ANTSEED_REPLY_USER_MESSAGE_END,
   ].join('\n');
+}
+
+function parseReplyWrappedPrompt(text: string): ParsedReplyWrappedPrompt {
+  if (!text.startsWith(ANTSEED_REPLY_CONTEXT_JSON_START)) {
+    return { visibleText: text, replyTo: null };
+  }
+  const replyJson = extractBetween(text, ANTSEED_REPLY_CONTEXT_JSON_START, ANTSEED_REPLY_CONTEXT_JSON_END);
+  const visibleText = extractBetween(text, ANTSEED_REPLY_USER_MESSAGE_START, ANTSEED_REPLY_USER_MESSAGE_END);
+  if (replyJson === null || visibleText === null) {
+    return { visibleText: text, replyTo: null };
+  }
+  let replyTo: ChatReplyReference | null = null;
+  try {
+    replyTo = normalizeReplyReference(JSON.parse(replyJson));
+  } catch {
+    replyTo = null;
+  }
+  return { visibleText, replyTo };
+}
+
+function getReplyWrappedPromptReference(message: Message): ChatReplyReference | null {
+  if (message.role !== 'user') return null;
+  if (typeof message.content === 'string') return parseReplyWrappedPrompt(message.content).replyTo;
+  for (const block of message.content) {
+    if (block.type === 'text') {
+      const replyTo = parseReplyWrappedPrompt(block.text).replyTo;
+      if (replyTo) return replyTo;
+    }
+  }
+  return null;
 }
 
 function convertSessionBranchToUi(entries: SessionEntry[]): AiChatMessage[] {
@@ -1041,9 +1107,11 @@ function convertSessionBranchToUi(entries: SessionEntry[]): AiChatMessage[] {
 
     if (message.role === 'user') {
       const content = convertPiMessageToUiBlocks(message);
-      const replyTo = pendingReplyTo && isExpectedReplyUserMessage(pendingReplyTo, content)
+      const inlineReplyTo = getReplyWrappedPromptReference(message);
+      const legacyReplyTo = pendingReplyTo && isExpectedReplyUserMessage(pendingReplyTo, content)
         ? pendingReplyTo
         : null;
+      const replyTo = inlineReplyTo || legacyReplyTo;
       converted.push({
         id: entry.id,
         role: 'user',
@@ -1809,7 +1877,10 @@ export function registerPiChatHandlers({
     replyToInput?: unknown,
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
-    const replyTo = normalizeReplyReference(replyToInput);
+    const normalizedReplyTo = normalizeReplyReference(replyToInput);
+    const replyTo = normalizedReplyTo && (!normalizedReplyTo.conversationId || normalizedReplyTo.conversationId === conversationId)
+      ? normalizedReplyTo
+      : null;
     const attachmentPromptText = buildAttachmentPromptText(attachments);
     const attachmentImages = extractAttachmentImages(attachments);
     if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
@@ -2272,15 +2343,8 @@ export function registerPiChatHandlers({
     activeRunsByConversation.set(conversationId, run);
 
     try {
-      if (replyTo) {
-        session.sessionManager.appendCustomMessageEntry(
-          ANTSEED_REPLY_CONTEXT_CUSTOM_TYPE,
-          buildReplyContextPrompt(replyTo),
-          false,
-          buildUserReplyContextDetails(replyTo, trimmedMessage),
-        );
-      }
-      const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
+      const userPromptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
+      const promptText = buildReplyWrappedPrompt(userPromptText, replyTo);
       await session.prompt(promptText || ' ', { images: effectiveAttachmentImages.length > 0 ? effectiveAttachmentImages : undefined });
 
       if (terminalStreamFailure !== null) {

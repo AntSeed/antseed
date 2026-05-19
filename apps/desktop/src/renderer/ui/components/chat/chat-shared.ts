@@ -188,6 +188,7 @@ export type ChatReplyReference = {
   senderLabel: string;
   excerpt: string;
   createdAt?: number;
+  conversationId?: string;
 };
 
 export type ChatMessage = {
