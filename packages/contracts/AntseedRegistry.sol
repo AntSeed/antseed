@@ -17,6 +17,7 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
     address public override deposits;
     address public override staking;
     address public override emissions;
+    address public override usageVerification;
     address public override antsToken;
     address public override identityRegistry;
     address public override protocolReserve;
@@ -55,6 +56,12 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
         if (_emissions == address(0)) revert InvalidAddress();
         emissions = _emissions;
         emit AddressUpdated("emissions", _emissions);
+    }
+
+    function setUsageVerification(address _usageVerification) external onlyOwner {
+        if (_usageVerification == address(0)) revert InvalidAddress();
+        usageVerification = _usageVerification;
+        emit AddressUpdated("usageVerification", _usageVerification);
     }
 
     function setAntsToken(address _antsToken) external onlyOwner {

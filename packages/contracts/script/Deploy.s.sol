@@ -100,7 +100,17 @@ contract Deploy is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:     ", emissions);
 
-        // 10. AntseedSubPool(usdc, registry)
+        // 10. AntseedUsageVerification(registry, genesis, epochDuration)
+        bytes memory usageVerificationBytecode = abi.encodePacked(
+            vm.getCode("AntseedUsageVerification.sol:AntseedUsageVerification"),
+            abi.encode(address(antseedRegistry), block.timestamp, uint256(7 days))
+        );
+        address usageVerification;
+        assembly { usageVerification := create(0, add(usageVerificationBytecode, 0x20), mload(usageVerificationBytecode)) }
+        require(usageVerification != address(0), "UsageVerification deploy failed");
+        console.log("UsageVerification:    ", usageVerification);
+
+        // 11. AntseedSubPool(usdc, registry)
         bytes memory subPoolBytecode = abi.encodePacked(
             vm.getCode("AntseedSubPool.sol:AntseedSubPool"),
             abi.encode(usdc, address(antseedRegistry))
@@ -116,6 +126,7 @@ contract Deploy is Script {
         antseedRegistry.setDeposits(deposits);
         antseedRegistry.setStaking(staking);
         antseedRegistry.setEmissions(emissions);
+        antseedRegistry.setUsageVerification(usageVerification);
         antseedRegistry.setAntsToken(antsToken);
         antseedRegistry.setIdentityRegistry(identityRegistry);
         antseedRegistry.setProtocolReserve(protocolReserve);
@@ -127,6 +138,7 @@ contract Deploy is Script {
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
+        ISetRegistry(usageVerification).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
         ISetRegistry(subPool).setRegistry(address(antseedRegistry));
 

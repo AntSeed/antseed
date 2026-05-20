@@ -38,9 +38,19 @@ export {
   signSetOperator,
   makeChannelsDomain,
   makeDepositsDomain,
+  makeUsageVerificationDomain,
+  computeServiceKey,
+  computeUsageClaimHash,
+  computeUsageRevealHash,
+  signUsageCommit,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
+  USAGE_COMMIT_TYPES,
+  USAGE_CLAIM_TYPES,
+  USAGE_CLAIM_VERSION,
+  USAGE_PARTY_BUYER,
+  USAGE_PARTY_SELLER,
   computeMetadataHash,
   encodeMetadata,
   METADATA_VERSION,
@@ -48,7 +58,11 @@ export {
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata } from './evm/signatures.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata, UsageCommitMessage, UsageClaimMessage } from './evm/signatures.js';
+
+// Usage verification
+export { UsageVerificationClient } from './evm/usage-verification-client.js';
+export type { UsageVerificationClientConfig, UsageStatsInfo, UsageCommitPairInput, UsageRevealedEvent } from './evm/usage-verification-client.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';
@@ -77,6 +91,12 @@ export type { BuyerNegotiatorConfig, Handle402Result, NegotiationEmitter } from 
 // Seller payment manager
 export { SellerPaymentManager, DEFAULT_MIN_SETTLE_DELTA_STR } from './seller-payment-manager.js';
 export type { SellerPaymentConfig } from './seller-payment-manager.js';
+
+// Usage verification managers/store
+export { BuyerUsageVerificationManager, SellerUsageVerificationManager, claimPayloadToMessage, computeUsageCostFromTokens } from './usage-verification-manager.js';
+export type { UsageVerificationConfig, SellerUsageRecordInput } from './usage-verification-manager.js';
+export { UsageVerificationStore } from './usage-verification-store.js';
+export type { UsageSnapshotRecord, UsageAttestationRecord, UsageAttestationStatus } from './usage-verification-store.js';
 
 // Pricing utilities
 export { computeCostUsdc, estimateCostFromBytes, estimateTokensFromBytes } from './pricing.js';

@@ -5,8 +5,10 @@ import type {
 } from './interfaces/seller-provider.js';
 import type { SellerSessionTracker } from './metering/seller-session-tracker.js';
 import type { PaymentMux } from './p2p/payment-mux.js';
+import type { VerificationMux } from './p2p/verification-mux.js';
 import type { ChannelsClient } from './payments/evm/channels-client.js';
 import type { SellerPaymentManager } from './payments/seller-payment-manager.js';
+import type { SellerUsageVerificationManager } from './payments/usage-verification-manager.js';
 import { ProxyMux } from './proxy/proxy-mux.js';
 import type { PeerConnection } from './p2p/connection-manager.js';
 import type {
@@ -21,6 +23,7 @@ import { PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
 export interface SellerRequestHandlerDeps {
   providers: Provider[];
   sellerPaymentManager: SellerPaymentManager | null;
+  usageVerificationManager?: SellerUsageVerificationManager | null;
   sessionTracker: SellerSessionTracker | null;
   channelsClient: ChannelsClient | null;
   announcer: PeerAnnouncer | null;
@@ -56,6 +59,7 @@ export class SellerRequestHandler {
     conn: PeerConnection,
     buyerPeerId: string,
     paymentMux: PaymentMux,
+    verificationMux?: VerificationMux,
   ): { mux: ProxyMux } {
     const mux = new ProxyMux(conn, {
       maxUploadBodyBytes: this._deps.maxUploadBodyBytes,
@@ -395,6 +399,24 @@ export class SellerRequestHandler {
               freshInputTokens: String(usage.freshInputTokens),
               service: this._extractRequestedService(request) ?? undefined,
             }, buyerPeerId, 'post-response');
+
+            if (verificationMux && this._deps.usageVerificationManager) {
+              void this._deps.usageVerificationManager.recordAndRequestCommit({
+                requestId: request.requestId,
+                channel: session,
+                providerName: provider.name,
+                serviceName: this._extractRequestedService(request) ?? requestedModel,
+                inputTokens: BigInt(usage.inputTokens),
+                cachedInputTokens: BigInt(usage.cachedInputTokens),
+                freshInputTokens: BigInt(usage.freshInputTokens),
+                outputTokens: BigInt(usage.outputTokens),
+                costUsdc,
+                paymentCumulativeAmount: cumulativeSpend,
+                mux: verificationMux,
+              }).catch((err) => {
+                debugWarn(`[SellerHandler] Usage verification commit skipped: ${err instanceof Error ? err.message : err}`);
+              });
+            }
           }
         }
       } finally {

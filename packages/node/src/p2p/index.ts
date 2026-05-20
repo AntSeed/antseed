@@ -6,4 +6,7 @@ export { KeepaliveManager, buildPongPayload, type KeepaliveConfig, type Keepaliv
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './nat-traversal.js';
 export { PaymentMux } from './payment-mux.js';
 export type { PaymentMessageHandler } from './payment-mux.js';
+export { VerificationMux } from './verification-mux.js';
+export type { VerificationMessageHandler } from './verification-mux.js';
 export * from './payment-codec.js';
+export * from './verification-codec.js';

@@ -105,12 +105,23 @@ contract DeployBaseSepolia is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:     ", emissions);
 
+        // 9. AntseedUsageVerification(registry, genesis, epochDuration)
+        bytes memory usageVerificationBytecode = abi.encodePacked(
+            vm.getCode("AntseedUsageVerification.sol:AntseedUsageVerification"),
+            abi.encode(address(antseedRegistry), block.timestamp, uint256(7 days))
+        );
+        address usageVerification;
+        assembly { usageVerification := create(0, add(usageVerificationBytecode, 0x20), mload(usageVerificationBytecode)) }
+        require(usageVerification != address(0), "UsageVerification deploy failed");
+        console.log("UsageVerification:    ", usageVerification);
+
         // ---- Wire registry ----
         antseedRegistry.setChannels(channels);
         antseedRegistry.setStats(stats);
         antseedRegistry.setDeposits(deposits);
         antseedRegistry.setStaking(staking);
         antseedRegistry.setEmissions(emissions);
+        antseedRegistry.setUsageVerification(usageVerification);
         antseedRegistry.setAntsToken(antsToken);
         antseedRegistry.setIdentityRegistry(IDENTITY_REGISTRY);
         antseedRegistry.setProtocolReserve(protocolReserve);
@@ -121,6 +132,7 @@ contract DeployBaseSepolia is Script {
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
+        ISetRegistry(usageVerification).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
 
         // ---- Authorize Channels as Stats writer ----
@@ -137,6 +149,7 @@ contract DeployBaseSepolia is Script {
         console.log("  channelsContractAddress:", channels);
         console.log("  stakingContractAddress: ", staking);
         console.log("  emissionsContractAddress:", emissions);
+        console.log("  usageVerificationContractAddress:", usageVerification);
         console.log("  identityRegistryAddress:", IDENTITY_REGISTRY);
     }
 }

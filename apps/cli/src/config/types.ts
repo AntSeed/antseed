@@ -163,6 +163,8 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
+    /** Deployed AntseedUsageVerification contract address */
+    usageVerificationContractAddress?: string;
     /** Deployed AntseedSubPool contract address */
     subPoolContractAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
