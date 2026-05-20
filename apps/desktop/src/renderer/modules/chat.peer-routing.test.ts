@@ -937,3 +937,141 @@ test('switching service mid-conversation routes the next send to the new model',
   }
   await waitFor(() => uiState.chatSendingConversationIds.length === 0);
 });
+
+test('edit regenerate retries a stuck in-flight request without branching twice', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-edit';
+  uiState.chatConversations = [{
+    id: 'conv-edit',
+    title: 'Edit',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messageCount: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+    totalTokens: 0,
+    totalEstimatedCostUsd: 0,
+  }];
+  uiState.chatMessages = [{ role: 'user', content: 'original', createdAt: 1 }];
+
+  let editCalls = 0;
+  let streamCalls = 0;
+  let abortCalls = 0;
+  const bridge: DesktopBridge = {
+    chatAiEditLastUserMessage: async () => {
+      editCalls += 1;
+      if (editCalls === 1) {
+        return { ok: false, error: 'Request already in progress', editBranchPrepared: false };
+      }
+      return { ok: true, editBranchPrepared: true };
+    },
+    chatAiSendStream: async () => {
+      streamCalls += 1;
+      return { ok: true };
+    },
+    chatAiAbort: async () => {
+      abortCalls += 1;
+      return { ok: true };
+    },
+  };
+
+  const api = initChatModule({
+    bridge,
+    uiState,
+    appendSystemLog: () => undefined,
+  });
+
+  api.editLastUserMessage('conv-edit', 'edited');
+  await waitFor(() => editCalls === 2);
+
+  assert.equal(abortCalls, 1);
+  assert.equal(editCalls, 2);
+  assert.equal(streamCalls, 0);
+});
+
+test('manual payment retry after edit regenerate reuses edit retry context', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-pay-edit';
+  uiState.chatConversations = [{
+    id: 'conv-pay-edit',
+    title: 'Payment edit',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messageCount: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+    totalTokens: 0,
+    totalEstimatedCostUsd: 0,
+  }];
+
+  const attachment = {
+    id: 'att-1',
+    attachmentId: 'disk-1',
+    name: 'note.txt',
+    mimeType: 'text/plain',
+    size: 4,
+    kind: 'text' as const,
+    status: 'ready' as const,
+    text: 'note',
+  };
+  uiState.chatMessages = [{
+    role: 'user',
+    content: [
+      { type: 'text', text: 'original' },
+      { type: 'file', fileName: 'note.txt', mimeType: 'text/plain', attachment },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'render-only' } },
+    ],
+    createdAt: 1,
+  }];
+
+  let editCalls = 0;
+  const streamSends: Array<{ message: string; attachmentIds: string[] }> = [];
+  const bridge: DesktopBridge = {
+    creditsGetInfo: async () => ({
+      ok: true,
+      data: {
+        evmAddress: null,
+        operatorAddress: null,
+        balanceUsdc: '0',
+        reservedUsdc: '0',
+        availableUsdc: '0',
+        creditLimitUsdc: '0',
+      },
+      error: null,
+    }),
+    chatAiEditLastUserMessage: async () => {
+      editCalls += 1;
+      return { ok: false, error: 'payment_required:1000000', editBranchPrepared: true };
+    },
+    chatAiSendStream: async (_conversationId, message, _service, _provider, attachments) => {
+      streamSends.push({
+        message,
+        attachmentIds: (attachments ?? []).map((item) => item.id),
+      });
+      return { ok: true };
+    },
+  };
+
+  const api = initChatModule({
+    bridge,
+    uiState,
+    appendSystemLog: () => undefined,
+  });
+
+  api.editLastUserMessage('conv-pay-edit', 'edited');
+  await waitFor(() => uiState.chatPaymentApprovalVisible);
+
+  api.retryAfterPayment();
+  await waitFor(() => streamSends.length === 1);
+
+  assert.equal(editCalls, 1);
+  assert.deepEqual(streamSends, [{ message: 'edited', attachmentIds: ['att-1'] }]);
+});

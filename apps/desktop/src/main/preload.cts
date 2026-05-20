@@ -125,6 +125,13 @@ type ChatAiStreamStopReason = {
   errorCode?: string;
 };
 
+type ChatAiSendResult = {
+  ok: boolean;
+  error?: string;
+  stopReason?: ChatAiStreamStopReason;
+  editBranchPrepared?: boolean;
+};
+
 const api = {
   // Synchronous platform info from the Node side of the preload. Renderer
   // code can use this without a round-trip to the main process — useful for
@@ -233,8 +240,11 @@ const api = {
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }> {
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<ChatAiSendResult> {
     return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, attachments, peerId);
+  },
+  chatAiEditLastUserMessage(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string): Promise<ChatAiSendResult> {
+    return ipcRenderer.invoke('chat:ai-edit-last-user-message', conversationId, message, service, provider, attachments, peerId);
   },
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);

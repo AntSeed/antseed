@@ -18,7 +18,7 @@ import {
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
-import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
+import { extractPlainText, hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
@@ -217,6 +217,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     attachments: RawChatAttachment[];
   };
   const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
+  const [editingUserMessageKey, setEditingUserMessageKey] = useState<string | null>(null);
+  const [editingUserMessageDraft, setEditingUserMessageDraft] = useState('');
   const [previewAttachment, setPreviewAttachment] = useState<ViewerAttachment | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [hasNewActivityWhileScrolledUp, setHasNewActivityWhileScrolledUp] = useState(false);
@@ -251,6 +253,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     () => visibleMessages.map((message, index) => ({ message, key: getMessageKey(message, index) })),
     [visibleMessages],
   );
+  const latestUserMessageKey = useMemo(() => {
+    for (let index = keyedVisibleMessages.length - 1; index >= 0; index -= 1) {
+      const item = keyedVisibleMessages[index];
+      if (item?.message.role === 'user') return item.key;
+    }
+    return null;
+  }, [keyedVisibleMessages]);
   const normalizedMessageSearchQuery = getNormalizedSearchQuery(messageSearchQuery);
   const messageSearchResults = useMemo(() => {
     if (!normalizedMessageSearchQuery) return [];
@@ -273,6 +282,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setMessageSearchOpen(false);
     setMessageSearchQuery('');
     setSelectedSearchIndex(0);
+    setEditingUserMessageKey(null);
+    setEditingUserMessageDraft('');
   }, [snap.chatActiveConversation]);
 
   useEffect(() => {
@@ -847,6 +858,27 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, []);
 
+  const handleEditUserMessage = useCallback((message: ChatMessage, key: string) => {
+    const text = extractPlainText(message.content);
+    if (!text.trim()) return;
+    setEditingUserMessageKey(key);
+    setEditingUserMessageDraft(text);
+  }, []);
+
+  const handleCancelEditUserMessage = useCallback(() => {
+    setEditingUserMessageKey(null);
+    setEditingUserMessageDraft('');
+  }, []);
+
+  const handleSubmitEditUserMessage = useCallback(() => {
+    const text = editingUserMessageDraft.trim();
+    if (!text || !snap.chatActiveConversation) return;
+    actions.editLastUserMessage(snap.chatActiveConversation, text);
+    setEditingUserMessageKey(null);
+    setEditingUserMessageDraft('');
+    scrollChatToBottom('smooth');
+  }, [actions, editingUserMessageDraft, scrollChatToBottom, snap.chatActiveConversation]);
+
   const handleVoiceRecord = useCallback(async () => {
     setVoiceError(null);
     try {
@@ -1184,6 +1216,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                       conversationId={snap.chatActiveConversation || undefined}
                       searchQuery={isSearchMatch ? messageSearchQuery : undefined}
                       searchActive={isActiveSearchMatch}
+                      canEdit={msg.role === 'user' && key === latestUserMessageKey && !snap.chatInputDisabled && !snap.chatSending}
+                      isEditing={editingUserMessageKey === key}
+                      editValue={editingUserMessageKey === key ? editingUserMessageDraft : ''}
+                      onEditValueChange={setEditingUserMessageDraft}
+                      onEditMessage={(message) => handleEditUserMessage(message, key)}
+                      onSubmitEdit={handleSubmitEditUserMessage}
+                      onCancelEdit={handleCancelEditUserMessage}
                     />
                   </div>
                 );
