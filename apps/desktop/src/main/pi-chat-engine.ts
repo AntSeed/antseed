@@ -5,7 +5,7 @@ import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import path from 'node:path';
-import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { createBrowserPreviewTool, createStartDevServerTool } from './chat-dev-tools.js';
 import {
   classifyChatStreamFailure,
@@ -34,6 +34,16 @@ import {
 import { webFetchTool } from './chat-web-fetch.js';
 import { fetchNetworkStats } from './fetch-network-stats.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
+import {
+  allowToolForPeer,
+  describeToolApproval,
+  isToolAllowedForPeer,
+  normalizePermissionMode,
+  requiresToolApproval,
+  type ChatPermissionMode,
+  type ToolApprovalDecision,
+  type ToolApprovalRequest,
+} from './chat-tool-permissions.js';
 import {
   CHAT_DATA_DIR,
   CHAT_WORKSPACE_DIR,
@@ -1542,6 +1552,35 @@ export function registerPiChatHandlers({
   const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
+  const pendingToolApprovals = new Map<string, { conversationId: string; resolve: (decision: ToolApprovalDecision) => void }>();
+
+  const requestToolApproval = (request: ToolApprovalRequest): Promise<ToolApprovalDecision> => {
+    return new Promise((resolve) => {
+      pendingToolApprovals.set(request.id, { conversationId: request.conversationId, resolve });
+      sendToRenderer('chat:tool-approval-requested', request);
+    });
+  };
+
+  const cancelPendingToolApprovalsForConversation = (conversationId: string): void => {
+    for (const [id, pending] of pendingToolApprovals) {
+      if (pending.conversationId !== conversationId) continue;
+      pendingToolApprovals.delete(id);
+      pending.resolve('deny');
+      sendToRenderer('chat:tool-approval-cleared', { id, conversationId });
+    }
+  };
+
+  ipcMain.handle('chat:tool-approval-decision', async (_event, payload: { id?: unknown; decision?: unknown }) => {
+    const id = typeof payload?.id === 'string' ? payload.id : '';
+    const decision = payload?.decision === 'allow_once' || payload?.decision === 'always_allow_peer'
+      ? payload.decision
+      : 'deny';
+    const pending = pendingToolApprovals.get(id);
+    if (!pending) return { ok: false, error: 'Approval request not found' };
+    pendingToolApprovals.delete(id);
+    pending.resolve(decision);
+    return { ok: true };
+  });
 
   const cacheFallbackPaymentRequired = (conversationId: string, suggestedAmount: string): void => {
     const peerId = preferredPeerByConversationId.get(conversationId) ?? null;
@@ -1582,6 +1621,8 @@ export function registerPiChatHandlers({
     if (!run) {
       return;
     }
+
+    cancelPendingToolApprovalsForConversation(run.conversationId);
 
     try {
       run.unsubscribe();
@@ -1639,8 +1680,10 @@ export function registerPiChatHandlers({
     serviceOverride?: string,
     attachments?: PreparedChatAttachment[],
     peerOverride?: string,
+    permissionModeInput?: unknown,
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }> => {
     const trimmedMessage = userMessage.trim();
+    const permissionMode: ChatPermissionMode = normalizePermissionMode(permissionModeInput);
     const attachmentPromptText = buildAttachmentPromptText(attachments);
     const attachmentImages = extractAttachmentImages(attachments);
     if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
@@ -1766,10 +1809,57 @@ export function registerPiChatHandlers({
       );
     }
     const settingsManager = SettingsManager.create(chatWorkspaceDir, CHAT_AGENT_DIR);
+    const toolApprovalExtension = (pi: ExtensionAPI) => {
+      pi.on('tool_call', async (event) => {
+        if (!requiresToolApproval(permissionMode, event.toolName)) {
+          return undefined;
+        }
+        if (await isToolAllowedForPeer(preferredPeerId, event.toolName)) {
+          return undefined;
+        }
+
+        const input = event.input && typeof event.input === 'object'
+          ? event.input as Record<string, unknown>
+          : {};
+        const peerName = preferredPeerId
+          ? lastServiceCatalogEntries.find((entry) => entry.peerId === preferredPeerId)?.peerLabel ?? null
+          : null;
+        const description = describeToolApproval(event.toolName, input, preferredPeerId);
+        const decision = await requestToolApproval({
+          id: randomUUID(),
+          conversationId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          input,
+          workspacePath: chatWorkspaceDir,
+          peerId: preferredPeerId,
+          peerName,
+          ...description,
+        });
+
+        if (decision === 'always_allow_peer') {
+          try {
+            await allowToolForPeer(preferredPeerId, event.toolName);
+          } catch (error) {
+            appendSystemLog(`Failed to save peer-scoped tool approval rule: ${asErrorMessage(error)}`);
+          }
+          return undefined;
+        }
+        if (decision === 'allow_once') {
+          return undefined;
+        }
+        return {
+          block: true,
+          reason: 'Tool execution was denied by the user.',
+        };
+      });
+    };
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
+      extensionFactories: [toolApprovalExtension],
       systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, chatWorkspaceDir),
     });
     await resourceLoader.reload();
@@ -2552,21 +2642,21 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: unknown) => {
       // `_provider` is accepted for IPC ABI compatibility with older
       // renderers but ignored — the buyer proxy resolves the route plan
       // from the pinned peer + the service ID without a provider hint.
-      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId, permissionMode);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string) => {
+    async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: unknown) => {
       // `_provider` is accepted for IPC ABI compatibility with older
       // renderers but ignored — the buyer proxy resolves the route plan
       // from the pinned peer + the service ID without a provider hint.
-      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId);
+      return await runStreamingPrompt(conversationId, userMessage, service, attachments, peerId, permissionMode);
     },
   );
 

@@ -746,6 +746,153 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+.chat-input-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.permission-mode-picker {
+  position: relative;
+}
+
+.permission-mode-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: color 0.12s, background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+
+  &:hover,
+  &[aria-expanded='true'] {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+    color: var(--text-secondary);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  }
+
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
+.permission-mode-button-safe {
+  color: var(--accent-green);
+  border-color: color-mix(in srgb, var(--accent-green) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-card));
+}
+
+.permission-mode-button-risk {
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.34);
+  background: rgba(249, 115, 22, 0.08);
+}
+
+.permission-mode-chevron {
+  width: 7px;
+  height: 7px;
+  margin-left: 1px;
+  border-right: 1.7px solid currentColor;
+  border-bottom: 1.7px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  opacity: 0.9;
+  flex: 0 0 auto;
+}
+
+.permission-mode-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: 320px;
+  padding: 6px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+}
+
+.permission-mode-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.permission-mode-option-selected {
+  background: color-mix(in srgb, var(--accent-green) 8%, transparent);
+}
+
+.permission-mode-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.permission-mode-option-icon-safe {
+  color: var(--accent-green);
+}
+
+.permission-mode-option-icon-risk {
+  color: #d97706;
+}
+
+.permission-mode-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.permission-mode-option-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.permission-mode-option-description {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.permission-mode-option-check {
+  color: var(--accent-green);
+  font-size: 13px;
+  line-height: 24px;
+  text-align: center;
 }
 
 .chat-attach-btn {

@@ -449,6 +449,8 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  setChatPermissionMode: chatApi.setChatPermissionMode,
+  decideToolApproval: chatApi.decideToolApproval,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerId = null;
