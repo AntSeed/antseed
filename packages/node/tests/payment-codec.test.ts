@@ -5,6 +5,7 @@ import {
   encodePaymentRequired, decodePaymentRequired,
   encodeNeedAuth, decodeNeedAuth,
 } from '../src/p2p/payment-codec.js';
+import { PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED } from '../src/types/protocol.js';
 
 describe('payment codec round-trips', () => {
   it('SpendingAuth', () => {
@@ -78,6 +79,23 @@ describe('payment codec round-trips', () => {
       channelId: '0x' + 'cd'.repeat(32),
       reserveMaxAmount: '11000000',
       code: 'channel_exhausted' as const,
+    };
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
+  });
+
+  it('PaymentRequired with reserve_headroom_required code', () => {
+    const payload = {
+      minBudgetPerRequest: '500000',
+      suggestedAmount: '1000000',
+      requestId: 'req-headroom',
+      requiredCumulativeAmount: '1184445',
+      currentSpent: '684445',
+      currentAcceptedCumulative: '684445',
+      channelId: '0x' + 'ef'.repeat(32),
+      reserveMaxAmount: '1000000',
+      code: PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
     };
     const encoded = encodePaymentRequired(payload);
     const decoded = decodePaymentRequired(encoded);

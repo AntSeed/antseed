@@ -4,7 +4,7 @@ import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
 import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-codec.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
-import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
+import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED, PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED } from '../src/types/protocol.js';
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
@@ -502,6 +502,125 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(settleSession).toHaveBeenCalledOnce();
     const response = decodeHttpResponse(decodeFrame(sentFrames[0]!)!.message.payload);
     expect(response.statusCode).toBe(402);
+  });
+
+  it('requests a reserve top-up before routing when confirmed headroom is below the seller minimum', async () => {
+    const provider = makeProvider(1, 1, { name: 'paid-tier', services: ['local-test'] });
+    provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ ok: true })) }));
+
+    const sendPaymentRequired = vi.fn();
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({
+        getCumulativeSpend: () => 684_445n,
+        getAcceptedCumulative: () => 684_445n,
+        getReserveMax: () => 1_000_000n,
+        getEffectiveReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '500000', suggestedAmount: '1000000' }),
+      }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = { send(frame: Uint8Array) { sentFrames.push(frame); } } as any;
+    const paymentMux = { sendNeedAuth, sendPaymentRequired } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'req-preflight-min', method: 'POST', path: '/v1/chat/completions', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'local-test', messages: [{ role: 'user', content: 'hi' }] })) }) });
+
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendNeedAuth).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).toHaveBeenCalledWith(expect.objectContaining({
+      code: PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
+      requiredCumulativeAmount: '1184445',
+      currentSpent: '684445',
+      reserveMaxAmount: '1000000',
+    }));
+    const response = decodeHttpResponse(decodeFrame(sentFrames[0]!)!.message.payload);
+    expect(response.statusCode).toBe(402);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    expect(body).toMatchObject({ code: PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED, requiredCumulativeAmount: '1184445', reserveMaxAmount: '1000000' });
+  });
+
+  it('closes for a fresh reserve when max-token estimate exceeds headroom before top-up threshold', async () => {
+    const provider = makeProvider(0, 100, { name: 'paid-tier', services: ['expensive-output'] });
+    provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ ok: true })) }));
+
+    const sendPaymentRequired = vi.fn();
+    const settleSession = vi.fn(async () => {});
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({
+        getCumulativeSpend: () => 100_000n,
+        getAcceptedCumulative: () => 100_000n,
+        getReserveMax: () => 1_000_000n,
+        getEffectiveReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '10000', suggestedAmount: '1000000' }),
+        settleSession,
+      }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = { send(frame: Uint8Array) { sentFrames.push(frame); } } as any;
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'req-preflight-max', method: 'POST', path: '/v1/chat/completions', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'expensive-output', messages: [{ role: 'user', content: 'hi' }], max_tokens: 10_000 })) }) });
+
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(settleSession).toHaveBeenCalledOnce();
+    expect(sendPaymentRequired).toHaveBeenCalledWith(expect.objectContaining({
+      code: PAYMENT_CODE_CHANNEL_EXHAUSTED,
+      requiredCumulativeAmount: '100000',
+      reserveMaxAmount: '1000000',
+    }));
+    const response = decodeHttpResponse(decodeFrame(sentFrames[0]!)!.message.payload);
+    expect(response.statusCode).toBe(402);
+  });
+
+  it('routes when the preflight max-token estimate fits inside confirmed reserve headroom', async () => {
+    const provider = makeProvider(0, 100, { name: 'paid-tier', services: ['bounded-output'] });
+    provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ usage: { prompt_tokens: 0, completion_tokens: 1 } })) }));
+
+    const sendPaymentRequired = vi.fn();
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({
+        getCumulativeSpend: () => 100_000n,
+        getAcceptedCumulative: () => 100_000n,
+        getReserveMax: () => 1_000_000n,
+        getEffectiveReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '10000', suggestedAmount: '1000000' }),
+        awaitAcceptedAtLeast: async () => true,
+      }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = { send(frame: Uint8Array) { sentFrames.push(frame); } } as any;
+    const paymentMux = { sendNeedAuth, sendPaymentRequired } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'req-preflight-fits', method: 'POST', path: '/v1/chat/completions', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'bounded-output', messages: [{ role: 'user', content: 'hi' }], max_tokens: 100 })) }) });
+
+    expect(provider.handleRequest).toHaveBeenCalledOnce();
+    expect(sendPaymentRequired).not.toHaveBeenCalled();
+    expect(sendNeedAuth).toHaveBeenCalledOnce();
+    const responseFrames = sentFrames.map((f) => decodeFrame(f)).filter((d) => d?.message.type === MessageType.HttpResponse);
+    const response = decodeHttpResponse(responseFrames[0]!.message.payload);
+    expect(response.statusCode).toBe(200);
   });
 
   it('stops serving when spend reached the on-chain ceiling even if a higher topUp is pending', async () => {

@@ -3,7 +3,11 @@ import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
+  type PaymentRequiredPayload,
+} from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
 import type { ChannelsClient } from './evm/channels-client.js';
@@ -349,11 +353,47 @@ export class BuyerPaymentNegotiator {
       : responseAlreadyHasRequirements && directPaymentBody?.reserveMaxAmount != null
         ? safeBigInt(String(directPaymentBody.reserveMaxAmount))
         : null;
+    const reserveHeadroomRequired = buffered?.code === PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED
+      || (responseAlreadyHasRequirements && directPaymentBody?.code === PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED);
     const channelExhausted = buffered?.code === PAYMENT_CODE_CHANNEL_EXHAUSTED
       || (responseAlreadyHasRequirements && directPaymentBody?.code === PAYMENT_CODE_CHANNEL_EXHAUSTED)
-      || (requiredCumulativeTarget != null && sellerReserveMax != null && requiredCumulativeTarget > sellerReserveMax);
+      || (!reserveHeadroomRequired && requiredCumulativeTarget != null && sellerReserveMax != null && requiredCumulativeTarget > sellerReserveMax);
 
     const hasActiveSession = hadLockedSession || this._bpm.getActiveSession(peer.peerId) != null;
+
+    if (reserveHeadroomRequired && hasActiveSession) {
+      if (!this._depositsClient) {
+        return returnNegotiationFailure(
+          'deposits_not_configured',
+          'Buyer deposits are not configured, so automatic reserve top-up is unavailable.',
+          503,
+        );
+      }
+
+      try {
+        const balance = await this._depositsClient.getBuyerBalance(this._identity.wallet.address);
+        if (balance.available <= 0n) {
+          return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero before reserve top-up');
+        }
+      } catch (err) {
+        debugWarn(`[BuyerNegotiator] Failed to check buyer balance before reserve top-up: ${err instanceof Error ? err.message : err}`);
+      }
+
+      debugLog(
+        `[BuyerNegotiator] Reserve headroom required for ${peer.peerId.slice(0, 12)}... ` +
+        `(required=${requiredCumulativeTarget ?? 'n/a'} reserveMax=${sellerReserveMax ?? 'n/a'}) — topping up and retrying`,
+      );
+      const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+      try {
+        await this._bpm.topUpReserve(peer.peerId, pmux);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('Insufficient buyer deposits')) {
+          return returnPaymentRequired('insufficient_deposits', err.message);
+        }
+        throw err;
+      }
+      return { action: 'retry' };
+    }
 
     if (channelExhausted && hasActiveSession) {
       debugLog(

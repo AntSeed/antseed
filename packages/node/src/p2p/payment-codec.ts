@@ -1,5 +1,6 @@
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
   type SpendingAuthPayload,
   type AuthAckPayload,
   type PaymentRequiredPayload,
@@ -90,7 +91,7 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
   if (typeof obj.currentAcceptedCumulative === 'string') result.currentAcceptedCumulative = obj.currentAcceptedCumulative;
   if (typeof obj.channelId === 'string') result.channelId = obj.channelId;
   if (typeof obj.reserveMaxAmount === 'string') result.reserveMaxAmount = obj.reserveMaxAmount;
-  if (obj.code === PAYMENT_CODE_CHANNEL_EXHAUSTED) result.code = obj.code;
+  if (obj.code === PAYMENT_CODE_CHANNEL_EXHAUSTED || obj.code === PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED) result.code = obj.code;
   return result;
 }
 

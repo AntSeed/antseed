@@ -14,9 +14,13 @@ import type {
   SerializedHttpResponse,
 } from './types/http.js';
 import { parseResponseUsage } from './utils/response-usage.js';
-import { computeCostUsdc } from './payments/pricing.js';
+import { computeCostUsdc, estimateTokensFromBytes, type ServicePricing } from './payments/pricing.js';
 import { debugLog, debugWarn } from './utils/debug.js';
-import { PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
+  type PaymentRequiredPayload,
+} from './types/protocol.js';
 
 export interface SellerRequestHandlerDeps {
   providers: Provider[];
@@ -32,6 +36,8 @@ export interface SellerRequestHandlerDeps {
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
 /** Time to wait for a catch-up SpendingAuth before returning 402. */
 const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
+/** Mirrors AntseedChannels.TOP_UP_SETTLED_THRESHOLD_BPS. */
+const TOP_UP_SETTLED_THRESHOLD_BPS = 6_500n;
 /**
  * Handles all seller-side request processing: provider matching, execution,
  * cost tracking, payment auth checks, and load management.
@@ -235,26 +241,7 @@ export class SellerRequestHandler {
               const comparator = spent > accepted ? '>' : '==';
               debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} ${comparator} accepted=${accepted}) — returning 402 with requiredCumulativeAmount=${target}, awaiting higher SpendingAuth`);
             }
-            mux.sendProxyResponse({
-              requestId: request.requestId,
-              statusCode: 402,
-              headers: { "content-type": "application/json" },
-              body: new TextEncoder().encode(JSON.stringify({
-                error: 'payment_required',
-                minBudgetPerRequest: requirements.minBudgetPerRequest,
-                suggestedAmount: requirements.suggestedAmount,
-                requiredCumulativeAmount: requirements.requiredCumulativeAmount,
-                currentSpent: requirements.currentSpent,
-                currentAcceptedCumulative: requirements.currentAcceptedCumulative,
-                channelId: requirements.channelId,
-                ...(requirements.reserveMaxAmount != null ? { reserveMaxAmount: requirements.reserveMaxAmount } : {}),
-                ...(requirements.code != null ? { code: requirements.code } : {}),
-                ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-                ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-                ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
-              })),
-            });
-            paymentMux.sendPaymentRequired(requirements);
+            this._sendPaymentRequiredResponse(mux, paymentMux, request, requirements);
             // Auto-sign catch-up via NeedAuth so a transient underfund recovers
             // without the 402 round-tripping to the user.
             if (!isFullyExhausted) {
@@ -267,6 +254,56 @@ export class SellerRequestHandler {
               }, buyerPeerId, 'budget-catch-up');
             }
             return;
+          }
+
+          if (!isBlocked && reserveMax > 0n && spent <= accepted) {
+            const providerPricing = this.resolveProviderPricing(provider, request);
+            const baseRequirements = spm.getPaymentRequirements(
+              request.requestId, buyerPeerId, providerPricing,
+            );
+            const configuredMinimum = this._safeBigInt(baseRequirements.minBudgetPerRequest) ?? 0n;
+            const requestEstimate = this._estimateMaxRequestCostUsdc(request, providerPricing);
+            const estimatedHeadroom = requestEstimate?.cost ?? 0n;
+            const requiredHeadroom = estimatedHeadroom > configuredMinimum ? estimatedHeadroom : configuredMinimum;
+            const remainingHeadroom = reserveMax > spent ? reserveMax - spent : 0n;
+
+            if (requiredHeadroom > 0n && requiredHeadroom > remainingHeadroom) {
+              const canTopUpNow = this._canTopUpAtCurrentAccepted(accepted, reserveMax);
+              const requiredCumulative = canTopUpNow ? spent + requiredHeadroom : spent;
+              const code = canTopUpNow
+                ? PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED
+                : PAYMENT_CODE_CHANNEL_EXHAUSTED;
+              const requirements = {
+                ...baseRequirements,
+                requiredCumulativeAmount: requiredCumulative.toString(),
+                currentSpent: spent.toString(),
+                currentAcceptedCumulative: accepted.toString(),
+                channelId: session.sessionId,
+                reserveMaxAmount: reserveMax.toString(),
+                code,
+              };
+              const estimateText = requestEstimate
+                ? `estimate=${estimatedHeadroom} (inputTokens=${requestEstimate.inputTokens} maxOutputTokens=${requestEstimate.maxOutputTokens})`
+                : `minimum=${configuredMinimum}`;
+              if (canTopUpNow) {
+                debugLog(
+                  `[SellerHandler] Reserve headroom insufficient for ${buyerPeerId.slice(0, 12)}... ` +
+                  `(spent=${spent} accepted=${accepted} reserveMax=${reserveMax} remaining=${remainingHeadroom} ` +
+                  `requiredHeadroom=${requiredHeadroom} ${estimateText}) — requesting top-up before routing`,
+                );
+              } else {
+                debugLog(
+                  `[SellerHandler] Reserve headroom insufficient before top-up threshold for ${buyerPeerId.slice(0, 12)}... ` +
+                  `(spent=${spent} accepted=${accepted} reserveMax=${reserveMax} remaining=${remainingHeadroom} ` +
+                  `requiredHeadroom=${requiredHeadroom} ${estimateText}) — closing and requesting fresh reserve`,
+                );
+                void spm.settleSession(buyerPeerId).catch((err) => {
+                  debugWarn(`[SellerHandler] Failed to close low-headroom session: ${err instanceof Error ? err.message : err}`);
+                });
+              }
+              this._sendPaymentRequiredResponse(mux, paymentMux, request, requirements);
+              return;
+            }
           }
         }
       }
@@ -543,6 +580,95 @@ export class SellerRequestHandler {
       .filter((value) => value.length > 0);
 
     return providers[0] ?? null;
+  }
+
+  private _estimateMaxRequestCostUsdc(
+    request: SerializedHttpRequest,
+    pricing: ServicePricing,
+  ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
+    const contentType = request.headers["content-type"] ?? request.headers["Content-Type"] ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return null;
+    }
+
+    const parsed = this._parseJsonBody(request.body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const body = parsed as Record<string, unknown>;
+    const maxOutputTokens = this._extractMaxOutputTokens(body);
+    const inputTokens = estimateTokensFromBytes(request.body);
+    const cost = computeCostUsdc(inputTokens, maxOutputTokens, pricing);
+    return { cost, inputTokens, maxOutputTokens };
+  }
+
+  private _canTopUpAtCurrentAccepted(accepted: bigint, reserveMax: bigint): boolean {
+    const threshold = (reserveMax * TOP_UP_SETTLED_THRESHOLD_BPS) / 10_000n;
+    return accepted >= threshold;
+  }
+
+  private _extractMaxOutputTokens(body: Record<string, unknown>): number {
+    const candidates = [
+      body["max_tokens"],
+      body["max_completion_tokens"],
+      body["max_output_tokens"],
+      body["maxTokens"],
+      body["maxCompletionTokens"],
+      body["maxOutputTokens"],
+    ];
+
+    for (const value of candidates) {
+      const parsed = this._parsePositiveInteger(value);
+      if (parsed !== null) return parsed;
+    }
+    return 0;
+  }
+
+  private _parsePositiveInteger(value: unknown): number | null {
+    const numeric = typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : NaN;
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    return Math.floor(numeric);
+  }
+
+  private _safeBigInt(value: string): bigint | null {
+    try {
+      return BigInt(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private _sendPaymentRequiredResponse(
+    mux: ProxyMux,
+    paymentMux: PaymentMux,
+    request: SerializedHttpRequest,
+    requirements: PaymentRequiredPayload,
+  ): void {
+    mux.sendProxyResponse({
+      requestId: request.requestId,
+      statusCode: 402,
+      headers: { "content-type": "application/json" },
+      body: new TextEncoder().encode(JSON.stringify({
+        error: 'payment_required',
+        minBudgetPerRequest: requirements.minBudgetPerRequest,
+        suggestedAmount: requirements.suggestedAmount,
+        ...(requirements.requiredCumulativeAmount != null ? { requiredCumulativeAmount: requirements.requiredCumulativeAmount } : {}),
+        ...(requirements.currentSpent != null ? { currentSpent: requirements.currentSpent } : {}),
+        ...(requirements.currentAcceptedCumulative != null ? { currentAcceptedCumulative: requirements.currentAcceptedCumulative } : {}),
+        ...(requirements.channelId != null ? { channelId: requirements.channelId } : {}),
+        ...(requirements.reserveMaxAmount != null ? { reserveMaxAmount: requirements.reserveMaxAmount } : {}),
+        ...(requirements.code != null ? { code: requirements.code } : {}),
+        ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
+        ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
+        ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
+      })),
+    });
+    paymentMux.sendPaymentRequired(requirements);
   }
 
   private async _executeRequest(

@@ -29,9 +29,8 @@ import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './p
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
 /** Fraction of reserve ceiling at which to signal a top-up is needed.
- *  Trigger well before the contract's TOP_UP_SETTLED_THRESHOLD_BPS (85%)
- *  so that by the time the seller calls topUp() on-chain, enough has been
- *  settled to pass the threshold check. */
+ *  Matches the contract's TOP_UP_SETTLED_THRESHOLD_BPS (65%) so the seller
+ *  can top up as soon as the buyer has signed enough settleable spend. */
 const DEFAULT_TOPUP_THRESHOLD = 0.65;
 
 export interface BuyerPaymentConfig {
@@ -907,7 +906,7 @@ export class BuyerPaymentManager {
 
     // When a topUp is needed, first sign at the current ceiling so the seller
     // has a high-enough settled amount to pass the on-chain TopUpThresholdNotMet
-    // check (contract requires 85% of deposit to be settleable before topUp).
+    // check (contract requires 65% of deposit to be settleable before topUp).
     // We cap at the old ceiling here; the topUp is sent AFTER so the seller
     // processes the SpendingAuth first, then the topUp with adequate settle amount.
     const effectiveAmount = needsTopUp
@@ -947,10 +946,9 @@ export class BuyerPaymentManager {
 
     // Send topUp AFTER the SpendingAuth so the seller processes the higher
     // cumulative first — this ensures the on-chain settle amount meets the
-    // contract's TopUpThresholdNotMet requirement (85% of deposit must be
+    // contract's TopUpThresholdNotMet requirement (65% of deposit must be
     // settleable before topUp is allowed). Also proactively send the top-up
-    // once the signed cumulative reaches the buyer's 65% threshold; the seller
-    // may defer the on-chain topUp until the contract's 85% gate is satisfied.
+    // once the signed cumulative reaches that threshold.
     if (needsTopUp || this._needsTopUp(sellerPeerId)) {
       await this._topUpAfterSpendAuthBestEffort(sellerPeerId, paymentMux, 'handleNeedAuth');
     }

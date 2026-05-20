@@ -9,7 +9,7 @@ import type { ChannelStore } from '../src/payments/channel-store.js';
 import type { StoredChannel } from '../src/payments/channel-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
-import type { PaymentRequiredPayload } from '../src/types/protocol.js';
+import { PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED, type PaymentRequiredPayload } from '../src/types/protocol.js';
 
 const enc = new TextEncoder();
 
@@ -273,6 +273,47 @@ describe('BuyerPaymentNegotiator', () => {
         85119n, // <— the catch-up target the seller asked for
       );
       expect(result.action).toBe('retry');
+    });
+
+    it('tops up the active reserve and retries when seller requires reserve headroom', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.topUpReserve as ReturnType<typeof vi.fn>).mockClear();
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+
+      const result = await negotiator.handle402(makeReserveHeadroomResponse(), peer, conn, makeRequest());
+
+      expect(bpm.topUpReserve).toHaveBeenCalledWith(peer.peerId, expect.anything());
+      expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.retireSession).not.toHaveBeenCalled();
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('returns payment_required when reserve-headroom top-up deposits are insufficient', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockClear();
+      (bpm.topUpReserve as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Insufficient buyer deposits for reserve top-up: available=500000 required=1000000'),
+      );
+
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+
+      const result = await negotiator.handle402(makeReserveHeadroomResponse(), peer, conn, makeRequest());
+
+      expect(bpm.topUpReserve).toHaveBeenCalledWith(peer.peerId, expect.anything());
+      expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
+      expect(bpm.retireSession).not.toHaveBeenCalled();
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('return');
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      const body = JSON.parse(new TextDecoder().decode(res.body)) as Record<string, unknown>;
+      expect(body.code).toBe('insufficient_deposits');
     });
 
     it('retires session as settled and renegotiates without retrying extend when seller flags channel_exhausted', async () => {
@@ -847,6 +888,20 @@ function make402Response(body: Record<string, unknown> = {}): SerializedHttpResp
     headers: { 'content-type': 'application/json' },
     body: enc.encode(JSON.stringify(body)),
   };
+}
+
+function makeReserveHeadroomResponse(): SerializedHttpResponse {
+  return make402Response({
+    error: 'payment_required',
+    code: PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED,
+    minBudgetPerRequest: '500000',
+    suggestedAmount: '1000000',
+    requiredCumulativeAmount: '1184445',
+    currentSpent: '684445',
+    currentAcceptedCumulative: '684445',
+    reserveMaxAmount: '1000000',
+    channelId: '0x' + 'cd'.repeat(32),
+  });
 }
 
 function makeRequest(): SerializedHttpRequest {

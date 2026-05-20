@@ -562,7 +562,7 @@ export class SellerPaymentManager {
           if (failureKind === 'retryable-threshold') {
             // TopUpThresholdNotMet is a timing/settlement race: keep the
             // ReserveAuth pending and retry after a later SpendingAuth raises
-            // the settle amount enough to satisfy the contract's 85% gate.
+            // the settle amount enough to satisfy the contract's 65% gate.
             debugWarn(
               `[SellerPayment] Top-up threshold not met: channel=${channelId.slice(0, 18)}... ` +
               `error=${this._formatError(topUpErr)} — ` +

@@ -728,6 +728,10 @@ contract AntseedChannelsTest is Test {
         assertEq(channels.PLATFORM_FEE_BPS(), 300);
     }
 
+    function test_defaultTopUpSettledThresholdBps() public view {
+        assertEq(channels.TOP_UP_SETTLED_THRESHOLD_BPS(), 6500);
+    }
+
     function test_setPlatformFeeBps_revert_aboveMax() public {
         vm.expectRevert(AntseedChannels.InvalidFee.selector);
         channels.setPlatformFeeBps(1001);
@@ -805,8 +809,8 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-topup");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
 
-        // Top up with inline settle of 85 USDC (85% threshold met)
-        uint128 settleAmount = 85_000_000;
+        // Top up with inline settle of 65 USDC (65% threshold met)
+        uint128 settleAmount = 65_000_000;
         bytes memory spendingSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
 
         uint128 newMax = USDC_150;
@@ -823,11 +827,11 @@ contract AntseedChannelsTest is Test {
         assertEq(sSettled, settleAmount);
         assertEq(sDeadline, newDeadline);
 
-        // reserved = 100 - 85 (settle freed) + 50 (topUp locked) = 65
+        // reserved = 100 - 65 (settle freed) + 50 (topUp locked) = 85
         (, uint256 reserved,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 65_000_000);
+        assertEq(reserved, 85_000_000);
 
-        // Seller received 85 USDC minus platform fee directly
+        // Seller received 65 USDC minus platform fee directly
         uint256 platformFee = (uint256(settleAmount) * 200) / 10000;
         assertEq(usdc.balanceOf(seller), settleAmount - platformFee);
     }
@@ -836,7 +840,7 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-topup-fail");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
 
-        // Only settle 50% (50 USDC out of 100) — below 85% threshold
+        // Only settle 50% (50 USDC out of 100) — below 65% threshold
         uint128 settleAmount = USDC_50;
         bytes memory spendingSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 3000, 1000);
 

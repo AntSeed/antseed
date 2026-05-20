@@ -46,7 +46,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     uint256 public PLATFORM_FEE_BPS = 200;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
     uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
-    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 8500;
+    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 6500;
 
     // ─── Enums & Structs ────────────────────────────────────────────
     enum ChannelStatus { None, Active, Settled, TimedOut }
@@ -190,7 +190,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     /**
      * @notice Top up an active channel by increasing the reserve ceiling.
      *         Seller calls this when the buyer's cumulative spending approaches
-     *         the current deposit. Requires at least 85% of the current deposit
+     *         the current deposit. Requires at least 65% of the current deposit
      *         to be settled (proven via SpendingAuth) before allowing more funds.
      *         Accepts the latest SpendingAuth to settle before raising the ceiling.
      *
@@ -223,7 +223,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             _settleSpend(channelId, channel, cumulativeAmount, metadata, spendingSig);
         }
 
-        // Require at least 85% of current deposit to be settled before topping up
+        // Require enough current deposit to be settled before topping up
         uint256 threshold = (uint256(channel.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
         if (channel.settled < threshold) revert TopUpThresholdNotMet();
 

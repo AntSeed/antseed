@@ -89,21 +89,26 @@ export interface PaymentRequiredPayload {
   /** Channel ID for the exhausted session (so buyer can match it locally). */
   channelId?: string;
   /**
-   * On-chain reserve ceiling for this channel. When present and the seller's
-   * `requiredCumulativeAmount` exceeds it, the channel is permanently
-   * exhausted and the buyer must retire it and open a new one — no amount
-   * of additional signing on the same channel will be accepted.
+   * On-chain reserve ceiling for this channel. With `channel_exhausted`, a
+   * `requiredCumulativeAmount` above this ceiling means the buyer must retire
+   * the channel and open a replacement. With `reserve_headroom_required`, the
+   * seller is asking the buyer to top up the existing channel before retrying
+   * the request; the target is a forward-looking headroom estimate, not a
+   * claimable SpendingAuth amount for delivered work.
    */
   reserveMaxAmount?: string;
   /**
    * Stable machine-readable code so callers can switch on it without coupling
-   * to internal phrasing. Only set on irrecoverable 402s today.
+   * to internal phrasing.
    */
   code?: PaymentRequiredCode;
 }
 
 export const PAYMENT_CODE_CHANNEL_EXHAUSTED = 'channel_exhausted' as const;
-export type PaymentRequiredCode = typeof PAYMENT_CODE_CHANNEL_EXHAUSTED;
+export const PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED = 'reserve_headroom_required' as const;
+export type PaymentRequiredCode =
+  | typeof PAYMENT_CODE_CHANNEL_EXHAUSTED
+  | typeof PAYMENT_CODE_RESERVE_HEADROOM_REQUIRED;
 
 /**
  * Seller tells buyer that the current cumulative authorization is insufficient.
