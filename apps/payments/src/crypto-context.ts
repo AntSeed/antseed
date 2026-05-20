@@ -28,8 +28,8 @@ export async function loadCryptoContext(options: {
 
   if (options.identityHex) {
     // Normalize: accept both raw hex and 0x-prefixed values
-const normalizedHex = options.identityHex.replace(/^0x/i, '');
-identity = identityFromPrivateKeyHex(normalizedHex);
+    const normalizedHex = options.identityHex.replace(/^0x/i, '');
+    identity = identityFromPrivateKeyHex(normalizedHex);
   } else {
     const { homedir } = await import('node:os');
     const dataDir = options.dataDir || `${homedir()}/.antseed`;
