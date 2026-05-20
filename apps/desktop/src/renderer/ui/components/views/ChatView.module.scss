@@ -241,6 +241,13 @@
   }
 }
 
+.header-action-button-copy {
+  border: none;
+  border-color: var(--border-light);
+  background: transparent;
+  color: var(--text-muted);
+}
+
 /* Copied confirmation — lock to green while the toast is visible so the
    user gets unambiguous feedback. */
 .header-action-button-copied {
@@ -252,20 +259,6 @@
     color: var(--accent-green);
     border-color: rgba(var(--accent-green-rgb), 0.4);
     background: rgba(var(--accent-green-rgb), 0.08);
-  }
-}
-
-/* Accent variant: tinted chip used for the "New chat" CTA so it reads
-   as a create action rather than another utility. */
-.header-action-button-accent {
-  color: var(--accent-green);
-  border-color: rgba(var(--accent-green-rgb), 0.32);
-  background: rgba(var(--accent-green-rgb), 0.08);
-
-  &:hover {
-    color: var(--accent-green);
-    border-color: rgba(var(--accent-green-rgb), 0.55);
-    background: rgba(var(--accent-green-rgb), 0.16);
   }
 }
 

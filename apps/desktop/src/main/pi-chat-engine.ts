@@ -1525,6 +1525,140 @@ function toConversationTitle(userMessage: string): string {
   return normalized.slice(0, 60) + (normalized.length > 60 ? '...' : '');
 }
 
+function sanitizeGeneratedConversationTitle(value: unknown): string | null {
+  const cleaned = String(value ?? '')
+    .trim()
+    .replace(/^```(?:text)?/i, '')
+    .replace(/```$/i, '')
+    .replace(/^Title:\s*/i, '')
+    .replace(/^['\"]|['\"]$/g, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return null;
+  return cleaned.slice(0, 60).trim();
+}
+
+function extractGeneratedTitleFromResponse(protocol: ChatServiceProtocol, body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const data = body as Record<string, unknown>;
+
+  if (protocol === 'openai-chat-completions') {
+    const choice = Array.isArray(data.choices) ? data.choices[0] as Record<string, unknown> | undefined : undefined;
+    const message = choice?.message as Record<string, unknown> | undefined;
+    return sanitizeGeneratedConversationTitle(message?.content);
+  }
+
+  if (protocol === 'openai-responses') {
+    if (typeof data.output_text === 'string') {
+      return sanitizeGeneratedConversationTitle(data.output_text);
+    }
+    const output = Array.isArray(data.output) ? data.output : [];
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue;
+      const content = Array.isArray((item as Record<string, unknown>).content)
+        ? (item as Record<string, unknown>).content as Record<string, unknown>[]
+        : [];
+      for (const block of content) {
+        const text = block.text ?? block.output_text;
+        const title = sanitizeGeneratedConversationTitle(text);
+        if (title) return title;
+      }
+    }
+    return null;
+  }
+
+  const content = Array.isArray(data.content) ? data.content : [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const title = sanitizeGeneratedConversationTitle((block as Record<string, unknown>).text);
+    if (title) return title;
+  }
+  return null;
+}
+
+async function generateConversationTitleWithModel({
+  proxyPort,
+  serviceId,
+  protocol,
+  peerId,
+  userMessage,
+  assistantMessage,
+}: {
+  proxyPort: number;
+  serviceId: string;
+  protocol: ChatServiceProtocol;
+  peerId: string | null;
+  userMessage: string;
+  assistantMessage?: string;
+}): Promise<string | null> {
+  const prompt = [
+    'Create a concise title for this chat conversation.',
+    'Rules: 3-6 words, no quotes, no period, title case only if natural, return only the title.',
+    '',
+    `User message:\n${userMessage.slice(0, 4000)}`,
+    assistantMessage ? `\nAssistant response summary/context:\n${assistantMessage.slice(0, 2000)}` : '',
+  ].filter(Boolean).join('\n');
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${PROXY_RUNTIME_API_KEY}`,
+    'x-api-key': PROXY_RUNTIME_API_KEY,
+  };
+  if (peerId) headers['x-antseed-pin-peer'] = peerId;
+
+  let url = `http://127.0.0.1:${proxyPort}/v1/messages`;
+  let body: Record<string, unknown> = {
+    model: serviceId,
+    max_tokens: 32,
+    system: 'You write short, accurate chat titles.',
+    messages: [{ role: 'user', content: prompt }],
+  };
+
+  if (protocol === 'openai-chat-completions') {
+    url = `http://127.0.0.1:${proxyPort}/v1/chat/completions`;
+    body = {
+      model: serviceId,
+      max_tokens: 32,
+      messages: [
+        { role: 'system', content: 'You write short, accurate chat titles. Return only the title.' },
+        { role: 'user', content: prompt },
+      ],
+    };
+  } else if (protocol === 'openai-responses') {
+    url = `http://127.0.0.1:${proxyPort}/v1/responses`;
+    body = {
+      model: serviceId,
+      max_output_tokens: 32,
+      input: [
+        { role: 'system', content: 'You write short, accurate chat titles. Return only the title.' },
+        { role: 'user', content: prompt },
+      ],
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+  if (!response.ok) return null;
+  return extractGeneratedTitleFromResponse(protocol, await response.json());
+}
+
+function getMessageTextForTitle(message: AiChatMessage | null | undefined): string {
+  if (!message) return '';
+  if (typeof message.content === 'string') return message.content;
+  return message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+}
+
 export function registerPiChatHandlers({
   ipcMain,
   sendToRenderer,
@@ -1801,7 +1935,8 @@ export function registerPiChatHandlers({
     session.agent.sessionId = conversationId;
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
-    if (existingUserMessages === 0 && (!session.sessionName || session.sessionName.trim().length === 0)) {
+    const shouldGenerateConversationTitle = existingUserMessages === 0;
+    if (shouldGenerateConversationTitle && (!session.sessionName || session.sessionName.trim().length === 0)) {
       session.setSessionName(toConversationTitle(trimmedMessage));
     }
 
@@ -2150,6 +2285,7 @@ export function registerPiChatHandlers({
         }
       }
 
+      const completedAssistantMessage = pendingAssistantMessage;
       if (pendingAssistantMessage) {
         sendToRenderer('chat:ai-done', {
           conversationId,
@@ -2160,6 +2296,25 @@ export function registerPiChatHandlers({
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
+      }
+
+      if (shouldGenerateConversationTitle) {
+        try {
+          const title = await generateConversationTitleWithModel({
+            proxyPort,
+            serviceId,
+            protocol,
+            peerId: preferredPeerId,
+            userMessage: trimmedMessage,
+            assistantMessage: getMessageTextForTitle(completedAssistantMessage),
+          });
+          if (title) {
+            session.setSessionName(title);
+            sendToRenderer('chat:conversation-title-updated', { conversationId, title });
+          }
+        } catch (error) {
+          appendSystemLog(`Conversation title generation failed: ${asErrorMessage(error)}`);
+        }
       }
       return { ok: true };
     } catch (error) {

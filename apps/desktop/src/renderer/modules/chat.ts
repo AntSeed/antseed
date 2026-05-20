@@ -2382,6 +2382,26 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onChatConversationTitleUpdated) {
+      bridge.onChatConversationTitleUpdated((data) => {
+        const title = String(data.title || '').trim();
+        if (!title) return;
+        const conversations = Array.isArray(uiState.chatConversations)
+          ? (uiState.chatConversations as ChatConversationSummary[])
+          : [];
+        const conv = conversations.find((c) => c.id === data.conversationId);
+        if (conv) {
+          conv.title = title;
+          uiState.chatConversations = [...conversations];
+        }
+        if (data.conversationId === uiState.chatActiveConversation) {
+          uiState.chatConversationTitle = title;
+        }
+        notifyUiStateChanged();
+        void refreshChatConversations();
+      });
+    }
+
     // --- Streaming callbacks ---
 
     function getStreamingBlocks(message: ChatMessage | null = uiState.chatStreamingMessage): ContentBlock[] {

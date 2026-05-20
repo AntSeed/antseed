@@ -927,25 +927,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               {headerCopyValue && (
                 <button
                   type="button"
-                  className={`${styles.headerActionButton}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
+                  className={`${styles.headerActionButton} ${styles.headerActionButtonCopy}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
                   onClick={copyHeaderIdentifiers}
                   aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
                   title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
                 >
                   <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={12} strokeWidth={1.8} />
-                  <span>{headerCopied ? 'Copied' : 'Copy IDs'}</span>
-                </button>
-              )}
-              {snap.chatActiveConversation && currentPeerId && (
-                <button
-                  type="button"
-                  className={`${styles.headerActionButton} ${styles.headerActionButtonAccent}`}
-                  onClick={handleNewChatWithCurrentPeer}
-                  title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
-                  aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
-                  <span>New chat</span>
                 </button>
               )}
               {!tooltipDismissed && peerServiceOptions.length >= 2 && (
@@ -989,6 +976,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         </div>
         {snap.chatActiveConversation && (
           <div className={styles.pageHeaderRight}>
+            {snap.chatActiveConversation && currentPeerId && (
+              <button
+                type="button"
+                className={styles.headerActionButton}
+                onClick={handleNewChatWithCurrentPeer}
+                title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+              >
+                <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
+                <span>New chat</span>
+              </button>
+            )}
             {messageSearchOpen ? (
               <div className={styles.messageSearchBar} role="search">
                 <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.8} className={styles.messageSearchIcon} />
