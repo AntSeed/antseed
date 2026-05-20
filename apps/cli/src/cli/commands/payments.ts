@@ -12,7 +12,8 @@ export function registerPaymentsCommand(program: Command): void {
 
       try {
         const { createServer } = await import('@antseed/payments');
-        const identityHex = process.env['ANTSEED_IDENTITY_HEX'] || undefined;
+        const rawHex = process.env['ANTSEED_IDENTITY_HEX'] || undefined;
+        const identityHex = rawHex ? rawHex.replace(/^0x/i, '') : undefined;
         const server = await createServer({ port, dataDir: globalOpts.dataDir, identityHex });
         await server.listen({ port, host: '127.0.0.1' });
 
