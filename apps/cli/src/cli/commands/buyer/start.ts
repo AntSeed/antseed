@@ -274,6 +274,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         depositsContractAddress: cryptoOverrides?.depositsContractAddress,
         channelsContractAddress: cryptoOverrides?.channelsContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
+        usageVerificationContractAddress: cryptoOverrides?.usageVerificationContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true
 
@@ -302,6 +303,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           // as `null` in buyer.state.json).
           ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
           ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
+          ...(chainConfig.usageVerificationContractAddress ? { usageVerificationAddress: chainConfig.usageVerificationContractAddress } : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))

@@ -9,8 +9,10 @@ import type { PeerInfo, PeerId } from "./types/peer.js";
 import type { PeerConnection } from "./p2p/connection-manager.js";
 import type { ProxyMux } from "./proxy/proxy-mux.js";
 import type { PaymentMux } from "./p2p/payment-mux.js";
+import type { VerificationMux } from "./p2p/verification-mux.js";
 import { ConnectionState } from "./types/connection.js";
 import type { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import type { BuyerUsageVerificationManager } from "./payments/usage-verification-manager.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 
 export interface RequestStreamResponseMetadata {
@@ -37,9 +39,12 @@ export interface BuyerRequestHandlerConfig {
 
 export interface BuyerRequestHandlerDeps {
   negotiator: BuyerPaymentNegotiator | null;
+  usageVerification: BuyerUsageVerificationManager | null;
   getConnection: (peer: PeerInfo) => Promise<PeerConnection>;
   getMux: (peerId: PeerId, conn: PeerConnection) => ProxyMux;
+  getVerificationMux?: (peerId: PeerId, conn: PeerConnection) => VerificationMux;
   registerPaymentMux: (peerId: PeerId, mux: PaymentMux) => void;
+  registerVerificationMux?: (peerId: PeerId, mux: VerificationMux) => void;
 }
 
 /**
@@ -78,6 +83,9 @@ export class BuyerRequestHandler {
     if (negotiator) {
       this._deps.registerPaymentMux(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
+    if (this._deps.getVerificationMux && this._deps.registerVerificationMux) {
+      this._deps.registerVerificationMux(peer.peerId, this._deps.getVerificationMux(peer.peerId, conn));
+    }
 
     // Extract and strip x-antseed-spending-auth header if present (external auth compatibility)
     const externalSpendingAuth = req.headers[ANTSEED_SPENDING_AUTH_HEADER] ?? null;
@@ -95,6 +103,9 @@ export class BuyerRequestHandler {
     const requestedService = extractServiceFromBody(req.body);
     if (negotiator && requestedService) {
       negotiator.bpm.trackRequestService(req.requestId, requestedService);
+    }
+    if (requestedService) {
+      this._deps.usageVerification?.trackRequestService(req.requestId, requestedService);
     }
 
     let startTime = Date.now();

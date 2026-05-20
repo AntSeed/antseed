@@ -17,6 +17,7 @@ export interface ChainConfig {
   usdcContractAddress: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  usageVerificationContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   subPoolContractAddress?: string;
@@ -26,6 +27,8 @@ export interface ChainConfig {
   statsContractAddress?: string;
   /** Deployment block of AntseedStats for cold-start indexer backfill. */
   statsDeployBlock?: number;
+  /** Deployment block of AntseedUsageVerification for cold-start indexer backfill. */
+  usageVerificationDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
 }
@@ -110,6 +113,7 @@ export function resolveChainConfig(overrides?: {
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  usageVerificationContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   subPoolContractAddress?: string;
@@ -131,6 +135,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
+    ...(overrides?.usageVerificationContractAddress ? { usageVerificationContractAddress: overrides.usageVerificationContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.subPoolContractAddress ? { subPoolContractAddress: overrides.subPoolContractAddress } : {}),

@@ -8,6 +8,7 @@ interface IAntseedRegistry {
     function deposits() external view returns (address);
     function staking() external view returns (address);
     function emissions() external view returns (address);
+    function usageVerification() external view returns (address);
     function antsToken() external view returns (address);
     function identityRegistry() external view returns (address);
     function protocolReserve() external view returns (address);

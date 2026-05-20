@@ -419,6 +419,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
           emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
+          usageVerificationContractAddress: config.payments.crypto?.usageVerificationContractAddress,
           subPoolContractAddress: config.payments.crypto?.subPoolContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
@@ -572,6 +573,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             usdcAddress: paymentConfig.crypto.usdcAddress,
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
+            usageVerificationAddress: config.payments.crypto?.usageVerificationContractAddress ?? resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).usageVerificationContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },

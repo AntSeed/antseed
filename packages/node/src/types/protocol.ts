@@ -18,6 +18,14 @@ export enum MessageType {
   PaymentRequired = 0x56,
   NeedAuth = 0x58,
 
+  // --- Usage Verification Protocol (0x80-0x8F) ---
+  VerificationCommitRequest = 0x80,
+  VerificationCommitResponse = 0x81,
+  VerificationCommitProof = 0x82,
+  VerificationRevealPackage = 0x83,
+  VerificationRevealResponse = 0x84,
+  VerificationRevealAck = 0x85,
+
   // Report message types
   PeerReport = 0x60,
   ReportAck = 0x61,
@@ -136,4 +144,70 @@ export interface NeedAuthPayload {
   freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
+}
+
+// ─── Service Usage Verification Messages ───────────────────────
+
+export interface VerificationUsageClaimPayload {
+  version: string;
+  channelId: string;
+  buyer: string;
+  seller: string;
+  sellerAgentId: string;
+  serviceKey: string;
+  providerName: string;
+  serviceName: string;
+  cumulativeInputTokens: string;
+  cumulativeCachedInputTokens: string;
+  cumulativeFreshInputTokens: string;
+  cumulativeOutputTokens: string;
+  cumulativeRequestCount: string;
+  cumulativeCostUsdc: string;
+  paymentCumulativeAmount: string;
+}
+
+export interface VerificationCommitRequestPayload {
+  requestId: string;
+  claim: VerificationUsageClaimPayload;
+  claimHash: string;
+  revealHash: string;
+  expectedEpoch: string;
+  sellerSig: string;
+}
+
+export interface VerificationCommitResponsePayload {
+  requestId: string;
+  accepted: boolean;
+  claimHash: string;
+  revealHash?: string;
+  buyerSig?: string;
+  reason?: string;
+}
+
+export interface VerificationCommitProofPayload {
+  requestId: string;
+  claimHash: string;
+  txHash?: string;
+}
+
+export interface VerificationRevealPackagePayload {
+  requestId: string;
+  claim: VerificationUsageClaimPayload;
+  claimHash: string;
+  nonce: string;
+  party: 'buyer' | 'seller';
+}
+
+export interface VerificationRevealResponsePayload {
+  requestId: string;
+  accepted: boolean;
+  claimHash: string;
+  nonce?: string;
+  reason?: string;
+}
+
+export interface VerificationRevealAckPayload {
+  requestId: string;
+  claimHash: string;
+  txHash?: string;
 }

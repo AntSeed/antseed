@@ -44,6 +44,7 @@ import {
 import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
+import { VerificationMux } from "./p2p/verification-mux.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import { MessageType } from "./types/protocol.js";
@@ -71,6 +72,7 @@ import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
+import { BuyerUsageVerificationManager, SellerUsageVerificationManager } from "./payments/usage-verification-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
 import {
@@ -124,6 +126,8 @@ export interface NodePaymentsConfig {
   identityRegistryAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
+  /** AntseedUsageVerification contract address */
+  usageVerificationAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -228,6 +232,7 @@ export class AntseedNode extends EventEmitter {
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
+  private _verificationMuxes = new Map<PeerId, VerificationMux>();
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -238,6 +243,8 @@ export class AntseedNode extends EventEmitter {
   private _buyerHandler: BuyerRequestHandler | null = null;
   /** Seller-side payment manager (initialized when seller has payment config). */
   private _sellerPaymentManager: SellerPaymentManager | null = null;
+  private _buyerUsageVerificationManager: BuyerUsageVerificationManager | null = null;
+  private _sellerUsageVerificationManager: SellerUsageVerificationManager | null = null;
   /** Shared channel store for payment persistence. */
   private _channelStore: ChannelStore | null = null;
   /** Periodic timeout checker interval. */
@@ -397,6 +404,7 @@ export class AntseedNode extends EventEmitter {
     // Close all proxy muxes
     this._muxes.clear();
     this._paymentMuxes.clear();
+    this._verificationMuxes.clear();
     this._decoders.clear();
 
     // Close all connections
@@ -453,6 +461,10 @@ export class AntseedNode extends EventEmitter {
     this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
+    this._buyerUsageVerificationManager?.close();
+    this._sellerUsageVerificationManager?.close();
+    this._buyerUsageVerificationManager = null;
+    this._sellerUsageVerificationManager = null;
     this._buyerHandler = null;
     this._backgroundPeerDiscoveryPromise = null;
     this._sellerPaymentManager = null;
@@ -688,6 +700,7 @@ export class AntseedNode extends EventEmitter {
     if (negotiator) {
       this._paymentMuxes.set(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
+    this._verificationMuxes.set(peer.peerId, this._getOrCreateVerificationMux(peer.peerId, conn, 'buyer'));
   }
 
   /**
@@ -928,6 +941,7 @@ export class AntseedNode extends EventEmitter {
       }
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
+      const verificationMux = this._verificationMuxes.get(peerId);
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
@@ -948,6 +962,11 @@ export class AntseedNode extends EventEmitter {
           paymentMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle payment frame from ${peerId.slice(0, 12)}...: ${message}`);
+          });
+        } else if (verificationMux && VerificationMux.isVerificationMessage(frame.type)) {
+          verificationMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
@@ -974,6 +993,7 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._verificationMuxes.delete(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1053,10 +1073,14 @@ export class AntseedNode extends EventEmitter {
       this.on("session:finalized", (info: { buyerPeerId: string; reason: string }) => {
         if (info.reason === "idle-settle") {
           debugLog(`[Node] Idle settle for buyer ${info.buyerPeerId.slice(0, 12)}... — settling channel (keeping open)`);
-          void spm.settleSession(info.buyerPeerId, { settleOnly: true });
+          void spm.settleSession(info.buyerPeerId, { settleOnly: true })
+            .then(() => this._sellerUsageVerificationManager?.retryCommittedReveals())
+            .catch((err) => debugWarn(`[Node] Idle settle failed: ${err instanceof Error ? err.message : err}`));
         } else if (info.reason === "idle-timeout") {
           debugLog(`[Node] Idle timeout for buyer ${info.buyerPeerId.slice(0, 12)}... — closing channel`);
-          void spm.settleSession(info.buyerPeerId, { cleanupOnFailure: true });
+          void spm.settleSession(info.buyerPeerId, { cleanupOnFailure: true })
+            .then(() => this._sellerUsageVerificationManager?.retryCommittedReveals())
+            .catch((err) => debugWarn(`[Node] Idle close failed: ${err instanceof Error ? err.message : err}`));
         }
       });
     }
@@ -1149,6 +1173,7 @@ export class AntseedNode extends EventEmitter {
     this._sellerHandler = new SellerRequestHandler({
       providers: this._providers,
       sellerPaymentManager: this._sellerPaymentManager,
+      usageVerificationManager: this._sellerUsageVerificationManager,
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,
@@ -1254,9 +1279,12 @@ export class AntseedNode extends EventEmitter {
       },
       {
         negotiator: this._buyerNegotiator,
+        usageVerification: this._buyerUsageVerificationManager,
         getConnection: (peer) => this._getOrCreateConnection(peer),
         getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn),
+        getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn, 'buyer'),
         registerPaymentMux: (peerId, pmux) => this._paymentMuxes.set(peerId, pmux),
+        registerVerificationMux: (peerId, vmux) => this._verificationMuxes.set(peerId, vmux),
       },
     );
 
@@ -1289,8 +1317,9 @@ export class AntseedNode extends EventEmitter {
       });
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
+    const verificationMux = this._getOrCreateVerificationMux(buyerPeerId, conn, 'seller');
 
-    const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux);
+    const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux, verificationMux);
 
     this._muxes.set(buyerPeerId, mux);
     this._wireConnection(conn, buyerPeerId);
@@ -1382,6 +1411,24 @@ export class AntseedNode extends EventEmitter {
         debugLog("[Node] ChannelStore initialized");
       } catch (err) {
         debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (this._identity && payments.rpcUrl && payments.usageVerificationAddress) {
+      const usageConfig = {
+        rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+        contractAddress: payments.usageVerificationAddress,
+        evmChainId: payments.chainId,
+        chainId: payments.chainId ?? 8453,
+        dataDir: paymentsDir,
+      };
+      if (this._config.role === 'buyer') {
+        this._buyerUsageVerificationManager = new BuyerUsageVerificationManager(this._identity, usageConfig);
+        debugLog(`[Node] BuyerUsageVerificationManager initialized (contract=${payments.usageVerificationAddress.slice(0, 10)}...)`);
+      } else {
+        this._sellerUsageVerificationManager = new SellerUsageVerificationManager(this._identity, usageConfig, this._stakingClient ?? undefined);
+        debugLog(`[Node] SellerUsageVerificationManager initialized (contract=${payments.usageVerificationAddress.slice(0, 10)}...)`);
       }
     }
 
@@ -1532,6 +1579,25 @@ export class AntseedNode extends EventEmitter {
       maxUploadBodyBytes: this._config.maxUploadBodyBytes,
     });
     this._muxes.set(peerId, mux);
+    return mux;
+  }
+
+  private _getOrCreateVerificationMux(peerId: PeerId, conn: PeerConnection, role: 'buyer' | 'seller'): VerificationMux {
+    const existing = this._verificationMuxes.get(peerId);
+    if (existing) return existing;
+
+    const mux = new VerificationMux(conn);
+    if (role === 'buyer' && this._buyerUsageVerificationManager) {
+      const manager = this._buyerUsageVerificationManager;
+      mux.onCommitRequest((payload) => manager.handleCommitRequest(payload, mux));
+      mux.onRevealPackage((payload) => manager.handleRevealPackage(payload, mux));
+      mux.onRevealAck((payload) => manager.handleRevealAck(payload));
+    } else if (role === 'seller' && this._sellerUsageVerificationManager) {
+      const manager = this._sellerUsageVerificationManager;
+      mux.onCommitResponse((payload) => manager.handleCommitResponse(payload, mux));
+      mux.onRevealResponse((payload) => manager.handleRevealResponse(payload, mux));
+    }
+    this._verificationMuxes.set(peerId, mux);
     return mux;
   }
 
