@@ -2,6 +2,7 @@ import { type Static, Type } from '@sinclair/typebox';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
+import { LOCALHOST } from './constants.js';
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
 
 type SendToRenderer = (channel: string, payload: unknown) => void;
@@ -109,7 +110,7 @@ function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Pro
     const check = () => {
       if (signal?.aborted) { resolve(false); return; }
       if (Date.now() > deadline) { resolve(false); return; }
-      const sock = createConnection({ host: '127.0.0.1', port });
+      const sock = createConnection({ host: LOCALHOST, port });
       sock.on('connect', () => { sock.destroy(); resolve(true); });
       sock.on('error', () => { setTimeout(check, 500); });
     };

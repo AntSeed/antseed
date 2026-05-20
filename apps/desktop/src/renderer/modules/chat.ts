@@ -1,4 +1,5 @@
 import type { DiscoverRow, RendererUiState } from '../core/state';
+import { LOCALHOST_URL } from '../constants';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
@@ -738,7 +739,7 @@ export function initChatModule({
         ltTokens: uiState.chatLifetimeTotalTokens,
         ltSessions: uiState.chatLifetimeSessions,
       };
-      const url = `http://127.0.0.1:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
+      const url = `${LOCALHOST_URL}:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
       const resp = await fetch(url);
       if (!resp.ok) return;
       const stats = (await resp.json()) as MeteringPeerStats;

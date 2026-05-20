@@ -42,7 +42,7 @@ import {
   loadChatWorkspaceDir,
   persistChatWorkspaceDir,
 } from './chat-workspace.js';
-import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
+import { DEFAULT_BUYER_STATE_PATH, LOCALHOST, LOCALHOST_URL } from './constants.js';
 import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import {
@@ -1004,7 +1004,7 @@ function makeProxyService(
     id: serviceId,
     name: serviceId,
     provider: PROXY_PROVIDER_ID,
-    baseUrl: needsV1 ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`,
+    baseUrl: needsV1 ? `${LOCALHOST_URL}:${port}/v1` : `${LOCALHOST_URL}:${port}`,
     reasoning: true,
     input: inputModalities,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -1099,7 +1099,7 @@ function mergeAssistantMessagesForUi(base: AiChatMessage | null, next: AiChatMes
 
 async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
   return await new Promise((resolve) => {
-    const socket = createConnection({ host: '127.0.0.1', port: Math.floor(port) });
+    const socket = createConnection({ host: LOCALHOST, port: Math.floor(port) });
 
     let settled = false;
     const finish = (ok: boolean): void => {
@@ -1607,7 +1607,7 @@ async function generateConversationTitleWithModel({
   };
   if (peerId) headers['x-antseed-pin-peer'] = peerId;
 
-  let url = `http://127.0.0.1:${proxyPort}/v1/messages`;
+  let url = `${LOCALHOST_URL}:${proxyPort}/v1/messages`;
   let body: Record<string, unknown> = {
     model: serviceId,
     max_tokens: 32,
@@ -1616,7 +1616,7 @@ async function generateConversationTitleWithModel({
   };
 
   if (protocol === 'openai-chat-completions') {
-    url = `http://127.0.0.1:${proxyPort}/v1/chat/completions`;
+    url = `${LOCALHOST_URL}:${proxyPort}/v1/chat/completions`;
     body = {
       model: serviceId,
       max_tokens: 32,
@@ -1626,7 +1626,7 @@ async function generateConversationTitleWithModel({
       ],
     };
   } else if (protocol === 'openai-responses') {
-    url = `http://127.0.0.1:${proxyPort}/v1/responses`;
+    url = `${LOCALHOST_URL}:${proxyPort}/v1/responses`;
     body = {
       model: serviceId,
       max_output_tokens: 32,
@@ -2432,7 +2432,7 @@ export function registerPiChatHandlers({
     params: { port: number; path: string; method: string; headers: Record<string, string>; body: string },
   ) => {
     try {
-      const url = `http://127.0.0.1:${params.port}${params.path}`;
+      const url = `${LOCALHOST_URL}:${params.port}${params.path}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60_000);
       const res = await fetch(url, {
@@ -2473,7 +2473,7 @@ export function registerPiChatHandlers({
       await Promise.all(uniqueCatalogPeerIds.map(async (peerId) => {
         try {
           const resp = await fetch(
-            `http://127.0.0.1:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
+            `${LOCALHOST_URL}:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
           );
           if (!resp.ok) return;
           const body = await resp.json() as Record<string, unknown> | null;
@@ -2758,7 +2758,7 @@ export function registerPiChatHandlers({
     // Eager connection warmup via buyer proxy
     const proxyPort = await resolveProxyPort(configPath);
     try {
-      const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
+      const response = await fetch(`${LOCALHOST_URL}:${proxyPort}/_antseed/connect`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ peerId }),
