@@ -1155,6 +1155,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             />
             <ToolApprovalCard
               request={snap.chatToolApprovalRequest}
+              pendingCount={snap.chatToolApprovalRequests.length}
               onAllowOnce={() => actions.decideToolApproval('allow_once')}
               onAlwaysAllow={() => actions.decideToolApproval('always_allow_peer')}
               onDeny={() => actions.decideToolApproval('deny')}

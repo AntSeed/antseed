@@ -22,7 +22,11 @@ export type ToolApprovalRequest = {
 };
 
 const TOOL_PERMISSION_FILE = path.join(CHAT_DATA_DIR, 'tool-permissions.json');
-const RISKY_TOOLS = new Set(['bash', 'edit', 'write', 'start_dev_server']);
+// Ask-first gates tools that can mutate local state, start processes, or send
+// data to arbitrary external hosts. `open_browser_preview` intentionally stays
+// ungated because it opens the local/user-facing preview panel rather than
+// granting the agent arbitrary background network egress.
+const RISKY_TOOLS = new Set(['bash', 'edit', 'write', 'start_dev_server', 'web_fetch']);
 
 type PersistedToolPermissions = {
   /** Allowances are intentionally peer-scoped. Full access is the only global trust shortcut. */
@@ -132,6 +136,16 @@ export function describeToolApproval(toolName: string, input: Record<string, unk
       description: 'The agent wants to start a long-running development server.',
       subject: typeof input.command === 'string' ? input.command : JSON.stringify(input, null, 2),
       alwaysAllowLabel: `Always allow dev servers ${peerSuffix(peerId)}`,
+      canAlwaysAllow,
+    };
+  }
+  if (toolName === 'web_fetch') {
+    const url = typeof input.url === 'string' ? input.url : typeof input.URL === 'string' ? input.URL : '';
+    return {
+      title: 'Approve web access?',
+      description: 'The agent wants to fetch a web page.',
+      subject: url || JSON.stringify(input, null, 2),
+      alwaysAllowLabel: `Always allow web access ${peerSuffix(peerId)}`,
       canAlwaysAllow,
     };
   }

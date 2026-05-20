@@ -213,6 +213,7 @@ export type RendererUiState = {
 
   // --- Agent access / tool approval ---
   chatPermissionMode: ChatPermissionMode;
+  chatToolApprovalRequests: ToolApprovalRequest[];
   chatToolApprovalRequest: ToolApprovalRequest | null;
 
   // --- Session approval ---
@@ -367,6 +368,7 @@ export function createInitialUiState(): RendererUiState {
 
     // Agent access / tool approval
     chatPermissionMode: 'manual',
+    chatToolApprovalRequests: [],
     chatToolApprovalRequest: null,
 
     // Session approval

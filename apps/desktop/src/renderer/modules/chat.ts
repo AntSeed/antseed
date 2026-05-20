@@ -9,6 +9,7 @@ import type {
   RawChatAttachment,
   ChatPermissionMode,
   ToolApprovalDecision,
+  ToolApprovalRequest,
 } from '../types/bridge';
 import type {
   ChatMessage,
@@ -180,10 +181,15 @@ export function initChatModule({
     notifyUiStateChanged();
   }
 
+  function setToolApprovalRequests(requests: ToolApprovalRequest[]): void {
+    uiState.chatToolApprovalRequests = requests;
+    uiState.chatToolApprovalRequest = requests[0] ?? null;
+  }
+
   function decideToolApproval(decision: ToolApprovalDecision): void {
     const request = uiState.chatToolApprovalRequest;
     if (!request) return;
-    uiState.chatToolApprovalRequest = null;
+    setToolApprovalRequests(uiState.chatToolApprovalRequests.filter((entry) => entry.id !== request.id));
     notifyUiStateChanged();
     void bridge?.chatToolApprovalDecision?.(request.id, decision);
   }
@@ -2698,15 +2704,20 @@ export function initChatModule({
 
     if (bridge.onChatToolApprovalRequested) {
       bridge.onChatToolApprovalRequested((request) => {
-        uiState.chatToolApprovalRequest = request;
+        const existingIndex = uiState.chatToolApprovalRequests.findIndex((entry) => entry.id === request.id);
+        const next = existingIndex >= 0
+          ? uiState.chatToolApprovalRequests.map((entry) => (entry.id === request.id ? request : entry))
+          : [...uiState.chatToolApprovalRequests, request];
+        setToolApprovalRequests(next);
         notifyUiStateChanged();
       });
     }
 
     if (bridge.onChatToolApprovalCleared) {
       bridge.onChatToolApprovalCleared((data) => {
-        if (uiState.chatToolApprovalRequest?.id === data.id) {
-          uiState.chatToolApprovalRequest = null;
+        const next = uiState.chatToolApprovalRequests.filter((entry) => entry.id !== data.id);
+        if (next.length !== uiState.chatToolApprovalRequests.length) {
+          setToolApprovalRequests(next);
           notifyUiStateChanged();
         }
       });
