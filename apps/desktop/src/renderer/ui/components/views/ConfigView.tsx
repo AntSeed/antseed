@@ -6,23 +6,36 @@ type ConfigViewProps = {
   active: boolean;
 };
 
+type VoiceModelStatus = {
+  available: boolean;
+  activeModel: string;
+  error: string | null;
+  models: Array<{ id: string; label: string; size: string; installed: boolean; selected: boolean; bundled: boolean }>;
+};
+
+function isVoiceModelStatus(value: unknown): value is VoiceModelStatus {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  return Boolean(record && Array.isArray(record.models));
+}
+
 export function ConfigView({ active }: ConfigViewProps) {
   const { configFormData, configSaving, devMode, configMessage } = useUiSnapshot();
   const actions = useActions();
 
   // Local form state — initialized from config, edited locally, saved on button click
   const [proxyPort, setProxyPort] = useState('8377');
-  const [peerRefreshIntervalMs, setPeerRefreshIntervalMs] = useState('300000');
   const [minRep, setMinRep] = useState('0');
   const [chainId, setChainId] = useState('base-mainnet');
   const [dirty, setDirty] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceModelStatus | null>(null);
+  const [voiceInstalling, setVoiceInstalling] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
 
   // Sync from config on first load only
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
     if (configFormData && !initialized) {
       setProxyPort(String(configFormData.proxyPort));
-      setPeerRefreshIntervalMs(String(configFormData.peerRefreshIntervalMs));
       setMinRep(String(configFormData.minRep));
       setChainId(configFormData.cryptoChainId || 'base-mainnet');
       setInitialized(true);
@@ -30,6 +43,40 @@ export function ConfigView({ active }: ConfigViewProps) {
   }, [configFormData, initialized]);
 
   const markDirty = useCallback(() => setDirty(true), []);
+
+  const refreshVoiceStatus = useCallback(async () => {
+    const result = await window.antseedDesktop?.voiceGetStatus?.();
+    if (isVoiceModelStatus(result)) setVoiceStatus(result);
+  }, []);
+
+  useEffect(() => {
+    if (active) void refreshVoiceStatus();
+  }, [active, refreshVoiceStatus]);
+
+  async function handleVoiceModelChange(modelId: string) {
+    setVoiceMessage(null);
+    const result = await window.antseedDesktop?.voiceSetModel?.(modelId) as { ok?: boolean; error?: string; status?: unknown } | undefined;
+    if (!result?.ok) {
+      setVoiceMessage(result?.error || 'Could not switch voice model.');
+      return;
+    }
+    if (isVoiceModelStatus(result.status)) setVoiceStatus(result.status);
+  }
+
+  async function handleInstallBaseModel() {
+    setVoiceInstalling(true);
+    setVoiceMessage('Downloading Base multilingual (~142 MB)…');
+    try {
+      const result = await window.antseedDesktop?.voiceInstallModel?.('base') as { ok?: boolean; error?: string; status?: unknown } | undefined;
+      if (!result?.ok) throw new Error(result?.error || 'Install failed.');
+      if (isVoiceModelStatus(result.status)) setVoiceStatus(result.status);
+      setVoiceMessage('Base multilingual installed and selected.');
+    } catch (error) {
+      setVoiceMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVoiceInstalling(false);
+    }
+  }
 
   // Toggles that auto-save (no restart needed)
   function toggleDevMode() {
@@ -43,7 +90,7 @@ export function ConfigView({ active }: ConfigViewProps) {
     await actions.saveConfig({
       ...configFormData,
       proxyPort: parseInt(proxyPort, 10) || 8377,
-      peerRefreshIntervalMs: Math.max(1000, parseInt(peerRefreshIntervalMs, 10) || 300000),
+      peerRefreshIntervalMs: configFormData.peerRefreshIntervalMs,
       minRep: parseInt(minRep, 10) || 0,
       cryptoChainId: chainId,
     });
@@ -79,20 +126,6 @@ export function ConfigView({ active }: ConfigViewProps) {
                 className="form-input settings-control"
                 value={proxyPort}
                 onChange={(e) => { setProxyPort(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Peer Refresh Interval (ms)</h4>
-                <p>How often the buyer refreshes discovered peers from the DHT. Default: 300000.</p>
-              </div>
-              <input
-                type="number"
-                className="form-input settings-control"
-                min="1000"
-                step="1000"
-                value={peerRefreshIntervalMs}
-                onChange={(e) => { setPeerRefreshIntervalMs(e.target.value); markDirty(); }}
               />
             </label>
             <label className="settings-item">
@@ -170,6 +203,48 @@ export function ConfigView({ active }: ConfigViewProps) {
                 <span className="settings-switch-label">{devMode ? 'On' : 'Off'}</span>
               </button>
             </div>
+          </div>
+        </article>
+
+        <article className="panel settings-panel">
+          <div className="panel-head">
+            <h3>Voice Transcription</h3>
+          </div>
+          <div className="settings-stack">
+            <label className="settings-item">
+              <div className="settings-copy">
+                <h4>Local Whisper model</h4>
+                <p>Voice messages are transcribed locally. Tiny is bundled; Base is more accurate and downloads to this device.</p>
+              </div>
+              <select
+                className="form-input settings-control"
+                value={voiceStatus?.activeModel || 'tiny'}
+                onChange={(e) => void handleVoiceModelChange(e.target.value)}
+                disabled={!voiceStatus}
+              >
+                {(voiceStatus?.models || []).map((model) => (
+                  <option key={model.id} value={model.id} disabled={!model.installed}>
+                    {model.label} {model.size}{model.installed ? '' : ' — not installed'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="settings-item">
+              <div className="settings-copy">
+                <h4>Better accuracy</h4>
+                <p>Install Base multilingual for improved transcription quality. It is about 142 MB.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-save-btn"
+                onClick={() => void handleInstallBaseModel()}
+                disabled={voiceInstalling || voiceStatus?.models.some((model) => model.id === 'base' && model.installed)}
+              >
+                {voiceInstalling ? 'Installing…' : voiceStatus?.models.some((model) => model.id === 'base' && model.installed) ? 'Installed' : 'Install Base'}
+              </button>
+            </div>
+            {voiceMessage ? <p className="settings-note">{voiceMessage}</p> : null}
+            {voiceStatus?.error ? <p className="settings-message error">{voiceStatus.error}</p> : null}
           </div>
         </article>
 

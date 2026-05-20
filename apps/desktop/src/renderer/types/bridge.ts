@@ -195,6 +195,10 @@ export type DesktopBridge = {
   chatAiGetWorkspaceGitStatus?: () => Promise<{ ok: boolean; data?: ChatWorkspaceGitStatus; error?: string }>;
   chatAiSetWorkspace?: (workspacePath: string) => Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }>;
   pickDirectory?: () => Promise<{ ok: boolean; path: string | null }>;
+  voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  voiceGetStatus?: () => Promise<unknown>;
+  voiceSetModel?: (modelId: string) => Promise<unknown>;
+  voiceInstallModel?: (modelId: string) => Promise<unknown>;
   onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void) => () => void;
   onChatAiError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
   onChatAiUserPersisted?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void) => () => void;

@@ -1629,11 +1629,10 @@ async function generateConversationTitleWithModel({
     url = `${LOCALHOST_URL}:${proxyPort}/v1/responses`;
     body = {
       model: serviceId,
-      max_output_tokens: 32,
-      input: [
-        { role: 'system', content: 'You write short, accurate chat titles. Return only the title.' },
-        { role: 'user', content: prompt },
-      ],
+      max_output_tokens: 128,
+      reasoning: { effort: 'minimal' },
+      instructions: 'You write short, accurate chat titles. Return only the title.',
+      input: [{ role: 'user', content: prompt }],
     };
   }
 

@@ -11,6 +11,7 @@ import {
   Copy01Icon,
   Folder01Icon,
   GitBranchIcon,
+  Mic01Icon,
   Search01Icon,
   Tick02Icon
 } from '@hugeicons/core-free-icons';
@@ -31,6 +32,7 @@ import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 import type { ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
 import { AntStationStackedLogo } from '../AntStationLogo';
+import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
 const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
@@ -149,6 +151,13 @@ function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
   return parts.join(' ');
 }
 
+function formatVoiceElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
   if (!status.available) {
     return status.error || 'Git status for the selected workspace. This workspace is shared across chats.';
@@ -180,6 +189,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [attachedFiles, setAttachedFiles] = useState<RawChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
@@ -837,16 +849,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, [attachFiles]);
 
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend],
-  );
-
   const handleInput = useCallback(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -876,6 +878,66 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setEditingUserMessageDraft('');
     scrollChatToBottom('smooth');
   }, [actions, editingUserMessageDraft, scrollChatToBottom, snap.chatActiveConversation]);
+
+  const handleVoiceRecord = useCallback(async () => {
+    setVoiceError(null);
+    try {
+      if (voiceState === 'idle') {
+        await startVoiceRecording();
+        setVoiceElapsedMs(0);
+        setVoiceState('recording');
+        return;
+      }
+
+      if (voiceState === 'recording') {
+        setVoiceState('transcribing');
+        const recording = await stopVoiceRecording();
+        if (!recording || recording.durationMs < 300) {
+          setVoiceState('idle');
+          return;
+        }
+        const result = await window.antseedDesktop?.voiceTranscribe?.(recording.audio);
+        if (!result?.ok) throw new Error(result?.error || 'Local transcription failed.');
+        const transcript = result.text?.trim();
+        if (transcript) {
+          setInputValue((prev) => prev.trim() ? `${prev.trimEnd()} ${transcript}` : transcript);
+          requestAnimationFrame(handleInput);
+          inputRef.current?.focus();
+        }
+        setVoiceState('idle');
+      }
+    } catch (error) {
+      await cancelVoiceRecording().catch(() => undefined);
+      setVoiceState('idle');
+      setVoiceError(error instanceof Error ? error.message : String(error));
+    }
+  }, [handleInput, voiceState]);
+
+  useEffect(() => {
+    if (voiceState !== 'recording') return undefined;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setVoiceElapsedMs(Date.now() - startedAt), 250);
+    return () => window.clearInterval(timer);
+  }, [voiceState]);
+
+  useEffect(() => {
+    return () => { void cancelVoiceRecording(); };
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Escape' && voiceState === 'recording') {
+        e.preventDefault();
+        void cancelVoiceRecording().finally(() => setVoiceState('idle'));
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend, voiceState],
+  );
 
   const handleClosePreview = useCallback(() => {
     setPreviewOpen(false);
@@ -1249,6 +1311,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
             {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
+            {voiceError && <div className={styles.chatError}>{voiceError}</div>}
             {attachmentWarning && <div className={styles.chatWarning}>{attachmentWarning}</div>}
             <LowBalanceWarning
               visible={snap.chatLowBalanceWarning}
@@ -1319,9 +1382,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 ref={inputRef}
                 className={styles.chatTextInput}
                 placeholder={
-                  snap.chatInputDisabled
-                    ? 'Type your next message — it will send when the current response finishes…'
-                    : 'Type a message... (Shift+Enter for newline)'
+                  voiceState === 'recording'
+                    ? 'Recording… click the mic again to transcribe, or press Esc to cancel'
+                    : voiceState === 'transcribing'
+                      ? 'Transcribing locally…'
+                      : snap.chatInputDisabled
+                        ? 'Type your next message — it will send when the current response finishes…'
+                        : 'Type a message... (Shift+Enter for newline)'
                 }
                 rows={1}
                 value={inputValue}
@@ -1331,13 +1398,28 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
-                <button
-                  className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
-                  title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
-                </button>
+                <div className={styles.chatInputActionsLeft}>
+                  <button
+                    className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
+                    title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
+                    onClick={() => fileInputRef.current?.click()}
+                    type="button"
+                  >
+                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                  </button>
+                  <button
+                    className={`${styles.chatVoiceBtn} ${voiceState === 'recording' ? styles.chatVoiceBtnRecording : ''}`}
+                    title={voiceState === 'recording' ? 'Stop recording and transcribe' : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Record voice message'}
+                    onClick={() => void handleVoiceRecord()}
+                    disabled={voiceState === 'transcribing'}
+                    type="button"
+                  >
+                    {voiceState === 'transcribing' ? '…' : <HugeiconsIcon icon={Mic01Icon} size={18} strokeWidth={2} />}
+                  </button>
+                  {voiceState === 'recording' ? (
+                    <span className={styles.chatVoiceTimer}>{formatVoiceElapsed(voiceElapsedMs)}</span>
+                  ) : null}
+                </div>
                 {snap.chatAbortVisible ? (
                   <button className={styles.chatAbortBtn} onClick={handleStop}>
                     Stop

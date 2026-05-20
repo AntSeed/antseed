@@ -31,6 +31,10 @@ asarUnpack:
   - "node_modules/keytar/**"
 
 extraResources:
+  - from: resources/whisper/
+    to: whisper/
+    filter:
+      - "**/*"
   - from: cli-dist/
     to: cli-dist/
     filter:
@@ -74,6 +78,8 @@ afterPack: ./scripts/after-pack.js
 mac:
   category: public.app-category.developer-tools
   icon: assets/antseed-dock-icon.png
+  extendInfo:
+    NSMicrophoneUsageDescription: AntStation uses your microphone to record voice messages for local transcription.
   identity: "Shahaf Antwarg (H3M5BXXQR2)"
   hardenedRuntime: true
   gatekeeperAssess: false

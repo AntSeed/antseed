@@ -56,6 +56,12 @@ import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+import {
+  getVoiceTranscriptionStatus,
+  installVoiceTranscriptionModel,
+  setVoiceTranscriptionModel,
+  transcribeVoiceAudio,
+} from './voice-transcription.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -463,6 +469,13 @@ ipcMain.handle('desktop:pick-directory', async () => {
     path: result.canceled ? null : (result.filePaths[0] ?? null),
   };
 });
+
+ipcMain.handle('voice:transcribe', async (_event, audio: ArrayBuffer | Uint8Array) => {
+  return transcribeVoiceAudio(audio);
+});
+ipcMain.handle('voice:get-status', () => getVoiceTranscriptionStatus());
+ipcMain.handle('voice:set-model', (_event, modelId: string) => setVoiceTranscriptionModel(modelId));
+ipcMain.handle('voice:install-model', (_event, modelId: string) => installVoiceTranscriptionModel(modelId));
 
 ipcMain.handle('app:get-setup-status', () => ({
   needed: appSetupNeeded,

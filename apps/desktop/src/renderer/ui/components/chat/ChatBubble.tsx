@@ -32,6 +32,34 @@ function getToolKind(name: unknown): string {
   return String(name || '').trim().toLowerCase();
 }
 
+function getToolInputString(input: unknown, keys: string[]): string {
+  if (!input || typeof input !== 'object') return '';
+  const payload = input as Record<string, unknown>;
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'string') return value;
+  }
+  return '';
+}
+
+function splitContentLinesForDiff(content: string): string[] {
+  if (content.length === 0) return [];
+  const withoutFinalNewline = content.endsWith('\n') ? content.slice(0, -1) : content;
+  return withoutFinalNewline.split('\n');
+}
+
+function buildNewFileDiff(block: ContentBlock): string {
+  const kind = getToolKind(block.name);
+  if (kind !== 'write' && kind !== 'write_file') return '';
+
+  const content = getToolInputString(block.input, ['content', 'text', 'data']);
+  if (content.length === 0) return '';
+
+  const path = getToolInputString(block.input, ['path', 'filePath', 'file', 'target']) || 'new file';
+  const addedLines = splitContentLinesForDiff(content).map((line) => `+${line}`);
+  return [`--- /dev/null`, `+++ ${path}`, '@@', ...addedLines].join('\n');
+}
+
 function extractToolDiff(block: ContentBlock): string {
   const detailsDiff = block.details?.diff;
   if (typeof detailsDiff === 'string' && detailsDiff.trim().length > 0) {
@@ -41,7 +69,7 @@ function extractToolDiff(block: ContentBlock): string {
   if (/^--- .*?\n\+\+\+ .*?\n@@/m.test(output)) {
     return output;
   }
-  return '';
+  return buildNewFileDiff(block);
 }
 
 function countDiffStats(diff: string): { additions: number; removals: number } {
@@ -258,22 +286,59 @@ function ThinkingBlockView({ block, highlightQuery, activeHighlight }: { block: 
   );
 }
 
-function ToolDiffInline({ diff }: { diff: string }) {
+function createCombinedDiffItem(items: ToolRenderItem[]): ToolRenderItem | null {
+  const changedItems = items.filter((item) => item.diff.trim().length > 0);
+  if (changedItems.length === 0) return null;
+
+  const additions = changedItems.reduce((sum, item) => sum + item.additions, 0);
+  const removals = changedItems.reduce((sum, item) => sum + item.removals, 0);
+  const diff = changedItems
+    .map((item) => item.diff.trimEnd())
+    .filter(Boolean)
+    .join('\n\n');
+
+  return {
+    id: 'combined-diff',
+    label: `${changedItems.length} ${changedItems.length === 1 ? 'file' : 'files'} changed this round`,
+    kind: 'edit',
+    status: changedItems.some((item) => item.status === 'error') ? 'error' : 'success',
+    output: '',
+    outputLineCount: 0,
+    diff,
+    additions,
+    removals,
+  };
+}
+
+function DiffStatsText({ additions, removals }: { additions: number; removals: number }) {
   return (
-    <div className={styles.toolInlineDiff}>
-      {diff.split('\n').map((line, index) => {
-        let cls = styles.diffContext;
-        if (line.startsWith('+') && !line.startsWith('+++')) cls = styles.diffAdded;
-        else if (line.startsWith('-') && !line.startsWith('---')) cls = styles.diffRemoved;
-        else if (line.startsWith('@@')) cls = styles.diffHunk;
-        else if (line.startsWith('+++') || line.startsWith('---')) cls = styles.diffFile;
-        return (
-          <div key={`${index}-${line.slice(0, 12)}`} className={`${styles.diffLine} ${cls}`}>
-            {line}
-          </div>
-        );
-      })}
-    </div>
+    <>
+      {additions > 0 ? <span className="diff-additions">+{additions}</span> : null}
+      {additions > 0 && removals > 0 ? <span className="tool-diff-separator">/</span> : null}
+      {removals > 0 ? <span className="diff-removals">-{removals}</span> : null}
+      {additions <= 0 && removals <= 0 ? <span className="diff-additions">+0</span> : null}
+    </>
+  );
+}
+
+function DiffStatsPill({ item, compact = false }: { item: ToolRenderItem; compact?: boolean }) {
+  return (
+    <span className={compact ? 'tool-diff-pill compact' : 'tool-diff-pill'}>
+      <DiffStatsText additions={item.additions} removals={item.removals} />
+    </span>
+  );
+}
+
+function DiffStatsButton({ item, onOpen, compact = false }: { item: ToolRenderItem; onOpen: () => void; compact?: boolean }) {
+  return (
+    <button
+      type="button"
+      className="tool-diff-summary"
+      title="View all changes from this round"
+      onClick={(event) => { event.stopPropagation(); onOpen(); }}
+    >
+      <DiffStatsPill item={item} compact={compact} />
+    </button>
   );
 }
 
@@ -379,6 +444,7 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
 
   const anyRunning = items.some((item) => item.status === 'running');
   const anyError = items.some((item) => item.status === 'error');
+  const combinedDiffItem = useMemo(() => createCombinedDiffItem(items), [items]);
 
   // Auto-collapse when tools finish running
   if (wasRunningRef.current && !anyRunning) {
@@ -404,37 +470,40 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   return (
     <>
       <div className={`tool-group${anyRunning ? ' streaming' : ''}${isOpen ? ' open' : ''} status-${groupStatus}`}>
-        <button
-          type="button"
-          className="tool-group-summary-btn"
-          onClick={toggle}
-        >
-          <span className="tool-group-chevron">›</span>
-          <span className="tool-group-summary-text">
-            {isOpen ? `Tools (${items.length})` : closedLabel}
-          </span>
-          {!isOpen && activityHint ? (
-            <span className="tool-group-summary-activity">{activityHint}</span>
-          ) : null}
-          {anyRunning ? (
-            <span className="thinking-dots" aria-hidden="true">
-              <span /><span /><span />
+        <div className="tool-group-summary-bar">
+          <button
+            type="button"
+            className="tool-group-summary-btn"
+            onClick={toggle}
+          >
+            <span className="tool-group-chevron">›</span>
+            <span className="tool-group-summary-text">
+              {isOpen ? `Tools (${items.length})` : closedLabel}
             </span>
+            {!isOpen && activityHint ? (
+              <span className="tool-group-summary-activity">{activityHint}</span>
+            ) : null}
+            {anyRunning ? (
+              <span className="thinking-dots" aria-hidden="true">
+                <span /><span /><span />
+              </span>
+            ) : null}
+          </button>
+          {combinedDiffItem ? (
+            <DiffStatsButton item={combinedDiffItem} compact onOpen={() => setModalItem(combinedDiffItem)} />
           ) : null}
-        </button>
+        </div>
         <div className={`tool-group-list-wrap${isOpen ? '' : ' collapsed'}`}>
           <div className="tool-group-list-inner">
             <div className="tool-group-list">
               {items.map((item) => {
-                const hasInlineDiff = item.kind === 'edit' && item.diff.length > 0;
-                const hasDetail = !hasInlineDiff && (item.diff.length > 0 || item.output.trim().length > 0);
+                const hasDiff = item.diff.length > 0;
+                const hasDetail = hasDiff || item.output.trim().length > 0;
 
                 const statusNode =
-                  hasInlineDiff ? (
+                  hasDiff ? (
                     <span className={`tool-inline-status ${item.status}`}>
-                      <span className="diff-additions">+{item.additions}</span>
-                      {' / '}
-                      <span className="diff-removals">-{item.removals}</span>
+                      <DiffStatsText additions={item.additions} removals={item.removals} />
                     </span>
                   ) : (
                     <span className={`tool-inline-status ${item.status}`}>
@@ -452,7 +521,7 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
                   <div key={item.id} className="tool-inline">
                     <button
                       type="button"
-                      className={`tool-inline-row${hasDetail ? ' expandable' : ''}${hasInlineDiff ? ' has-inline-diff' : ''}`}
+                      className={`tool-inline-row${hasDetail ? ' expandable' : ''}${hasDiff ? ' has-diff' : ''}`}
                       onClick={() => hasDetail && setModalItem(item)}
                     >
                       <span className={`tool-inline-dot ${item.status}`} />
@@ -471,10 +540,19 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
                         Preview
                       </button>
                     )}
-                    {hasInlineDiff ? <ToolDiffInline diff={item.diff} /> : null}
                   </div>
                 );
               })}
+              {combinedDiffItem ? (
+                <button
+                  type="button"
+                  className="tool-change-summary-row"
+                  onClick={() => setModalItem(combinedDiffItem)}
+                >
+                  <span>View all changes from this round</span>
+                  <DiffStatsPill item={combinedDiffItem} />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
