@@ -117,7 +117,7 @@ const APP_ICON_PATH = resolveAppIconPath();
 // in some surfaces because the underlying bundle is Electron.app.
 app.setName(APP_NAME);
 
-import { DEFAULT_CONFIG_PATH } from './constants.js';
+import { DEFAULT_CONFIG_PATH, LOCALHOST, LOCALHOST_URL } from './constants.js';
 import { asRecord, asString } from './utils.js';
 
 function resolveActiveConfigPath(): string {
@@ -216,7 +216,7 @@ async function requestBuyerPeerRefresh(): Promise<void> {
   const timer = setTimeout(() => controller.abort(), 60_000);
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/_antseed/peers/refresh`, {
+    const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/peers/refresh`, {
       method: 'POST',
       signal: controller.signal,
     });
@@ -308,8 +308,8 @@ async function startPaymentsPortal(): Promise<void> {
       port: PAYMENTS_PORT,
       identityHex,
     });
-    await paymentsServer.listen({ port: PAYMENTS_PORT, host: '127.0.0.1' });
-    console.log(`[desktop] Payments portal running at http://127.0.0.1:${PAYMENTS_PORT}`);
+    await paymentsServer.listen({ port: PAYMENTS_PORT, host: LOCALHOST });
+    console.log(`[desktop] Payments portal running at ${LOCALHOST_URL}:${PAYMENTS_PORT}`);
   } catch (err) {
     console.error('[desktop] Failed to start payments portal:', err instanceof Error ? err.message : String(err));
     paymentsServer = null;
@@ -342,7 +342,7 @@ ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
     // Set ANTSEED_PAYMENTS_DEV_URL to override (default: http://localhost:5175).
     // When dev mode is detected but the dev server is not reachable, we still fall back to the Fastify URL.
     const devUrl = isDev ? (process.env['ANTSEED_PAYMENTS_DEV_URL'] || 'http://localhost:5175') : null;
-    const base = devUrl ?? `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const base = devUrl ?? `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
     const url = qs ? `${base}?${qs}` : base;
     const { default: open } = await import('open');
     await open(url);
