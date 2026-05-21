@@ -325,7 +325,7 @@ function StakePanel(props: StakePanelProps) {
             className="stake-cta"
             disabled={approve.isPending}
             onClick={async () => {
-              await approve.run();
+              await approve.run(props.amt);
               refetchAllowance();
             }}
           >

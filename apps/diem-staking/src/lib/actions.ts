@@ -4,21 +4,28 @@
 
 import { useCallback } from 'react';
 import { useWriteContract } from 'wagmi';
-import { parseEther, maxUint256 } from 'viem';
+import { parseEther } from 'viem';
 
 import { DIEM_TOKEN, DIEM_STAKING_PROXY } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
 
 export function useApproveDiem() {
   const { writeContractAsync, isPending, error, reset } = useWriteContract();
-  const run = useCallback(async () => {
-    return writeContractAsync({
-      address: DIEM_TOKEN,
-      abi: DIEM_TOKEN_ABI,
-      functionName: 'approve',
-      args: [DIEM_STAKING_PROXY, maxUint256],
-    });
-  }, [writeContractAsync]);
+  // Approve exactly the amount the user is about to stake. Avoids prompting the
+  // user to ratify an unlimited DIEM allowance — one approve per stake is the
+  // safer pattern if the proxy is ever upgraded or compromised.
+  const run = useCallback(
+    async (amountDiem: string) => {
+      const amt = parseEther(amountDiem);
+      return writeContractAsync({
+        address: DIEM_TOKEN,
+        abi: DIEM_TOKEN_ABI,
+        functionName: 'approve',
+        args: [DIEM_STAKING_PROXY, amt],
+      });
+    },
+    [writeContractAsync],
+  );
   return { run, isPending, error, reset };
 }
 
