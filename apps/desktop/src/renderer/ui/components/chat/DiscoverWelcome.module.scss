@@ -722,6 +722,33 @@
   padding: 12px 4px 16px;
 }
 
+.tagMore {
+  position: relative;
+  cursor: default;
+}
+
+.tagMoreTooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  opacity: 0;
+  pointer-events: none;
+  white-space: normal;
+  max-width: 220px;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+
+.tagMore:hover .tagMoreTooltip,
+.tagMore:focus-within .tagMoreTooltip {
+  opacity: 1;
+}
+
 @keyframes discover-drawer-in {
   from { transform: translateX(-100%); }
   to   { transform: translateX(0); }
