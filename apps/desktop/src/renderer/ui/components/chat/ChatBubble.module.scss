@@ -207,6 +207,105 @@
       text-decoration: line-through;
     }
 
+    .chat-sensitive-artifact {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      margin: 0 2px;
+      padding: 2px 6px;
+      border: 1px solid color-mix(in srgb, var(--danger) 26%, var(--border));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--danger) 7%, var(--bg-card-alt));
+      color: var(--text-secondary);
+      font-size: 0.92em;
+      line-height: 1.4;
+      vertical-align: baseline;
+    }
+
+    .chat-sensitive-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-sensitive-action {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--danger) 12%, transparent);
+      color: var(--danger);
+      cursor: pointer;
+      flex: 0 0 auto;
+      font: inherit;
+      font-size: 0.86em;
+      font-weight: 700;
+      line-height: 1.2;
+      padding: 2px 6px;
+    }
+
+    .chat-sensitive-action:hover {
+      background: color-mix(in srgb, var(--danger) 18%, transparent);
+    }
+
+    .chat-sensitive-action:focus-visible {
+      outline: 2px solid var(--danger);
+      outline-offset: 2px;
+    }
+
+    .chat-sensitive-value {
+      max-width: min(420px, 70vw);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      color: inherit;
+    }
+
+    .chat-external-link-gated {
+      border-color: color-mix(in srgb, var(--accent-blue) 28%, var(--border));
+      background: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-card-alt));
+    }
+
+    .chat-external-link-gated .chat-sensitive-action {
+      background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+      color: var(--accent-blue);
+    }
+
+    .chat-external-link-gated .chat-sensitive-action:hover {
+      background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
+    }
+
+    .chat-payment-link-hidden,
+    .chat-wallet-hidden {
+      font-weight: 600;
+    }
+
+    .chat-unsafe-payment-block {
+      margin: 8px 0;
+      padding: 12px 14px;
+      border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+      border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--danger) 10%, var(--bg-card));
+      color: var(--text-primary);
+    }
+
+    .chat-unsafe-payment-title {
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .chat-unsafe-payment-body {
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
     .chat-inline-image {
       max-width: 100%;
       border-radius: var(--radius-sm);
