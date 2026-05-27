@@ -209,10 +209,15 @@ export class SellerSessionTracker {
     }
 
     if (this._receiptGenerator) {
+      // Only charge for successful requests (2xx/3xx status codes)
+      // Failed requests (4xx/5xx) get zero-cost receipts for audit trail
+      const isSuccess = statusCode >= 200 && statusCode < 400;
       const estimatedCostUsd =
-        (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
-          tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
-        1_000_000;
+        isSuccess
+          ? (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
+              tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
+            1_000_000
+          : 0;
       const effectiveUsdPerThousandTokens =
         tokens.totalTokens > 0 ? (estimatedCostUsd / tokens.totalTokens) * 1000 : 0;
       const unitPriceCentsPerThousandTokens = Math.max(0, effectiveUsdPerThousandTokens * 100);
@@ -226,7 +231,10 @@ export class SellerSessionTracker {
       );
       try {
         metering.insertReceipt(receipt);
-        session.totalCostCents += receipt.costCents;
+        // Only add to session total for successful requests
+        if (receipt.costCents > 0) {
+          session.totalCostCents += receipt.costCents;
+        }
       } catch (err) {
         debugWarn(`[SessionTracker] Failed to record usage receipt: ${err instanceof Error ? err.message : err}`);
       }
