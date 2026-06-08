@@ -6,6 +6,8 @@
 
 AntSeed is a fully decentralized protocol for peer-to-peer AI services directly between peers, without any central server, marketplace, or intermediary. Nodes discover each other, negotiate terms, stream inference results, meter token usage, settle payments, and build reputation — all through direct peer-to-peer communication. The network exists entirely as the set of participating nodes; there is no infrastructure beyond the nodes themselves.
 
+AntSeed Connect lets web apps request account information from a user's AntSeed Desktop app or CLI, shared only after explicit user consent and signed by the local identity. It is an adjunct to the core peer-to-peer protocol, not part of buyer-seller negotiation or settlement. Funding an on-chain deposit balance is one application of Connect.
+
 ## Architecture
 
 Antseed is **fully decentralized**. There is no central server, coordinator, or registry. Every participating node IS the network. Nodes communicate directly with one another over peer-to-peer connections. When a node joins, it becomes part of the network fabric. When it leaves, the remaining nodes continue operating without disruption.
@@ -91,10 +93,12 @@ See: [06-security-overview.md](./06-security-overview.md)
 | [04-payments.md](./04-payments.md) | Payments | Payment settlement and pricing |
 | [05-reputation.md](./05-reputation.md) | Reputation | Trust and reputation system |
 | [06-security-overview.md](./06-security-overview.md) | Security | Cross-layer security model, controls, and hardening priorities |
+| [07-connect.md](./07-connect.md) | Connect | Web apps request account info; the desktop shares it signed, on consent (funding as an application) |
 
 ## Version History
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.2 | 2026-06-07 | Added AntSeed Connect: consent-based account info sharing for web apps (funding as an application) |
 | 1.1 | 2026-03-01 | Added cross-layer security overview for buyer-seller flow |
 | 1.0 | 2026-02-18 | Initial protocol specification |
