@@ -12,6 +12,7 @@ AntSeed is a peer-to-peer AI services network that enables direct connections be
   - [04-payments.md](spec/04-payments.md) — Settlement, deposits, sessions, and disputes
   - [05-reputation.md](spec/05-reputation.md) — Trust scoring and attestations
   - [06-security-overview.md](spec/06-security-overview.md) — End-to-end security model and hardening guidance
+  - [08-curators.md](spec/08-curators.md) — Curators, curated lists, and the peer curation badge
 - [templates/provider-plugin/](templates/provider-plugin/) — Starter template for building a provider plugin (offer AI services)
 - [templates/router-plugin/](templates/router-plugin/) — Starter template for building a router plugin (consume AI services)
 

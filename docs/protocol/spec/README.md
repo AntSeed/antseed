@@ -91,10 +91,12 @@ See: [06-security-overview.md](./06-security-overview.md)
 | [04-payments.md](./04-payments.md) | Payments | Payment settlement and pricing |
 | [05-reputation.md](./05-reputation.md) | Reputation | Trust and reputation system |
 | [06-security-overview.md](./06-security-overview.md) | Security | Cross-layer security model, controls, and hardening priorities |
+| [08-curators.md](./08-curators.md) | Reputation | Curators, curated lists, and the peer curation badge |
 
 ## Version History
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.3 | 2026-06-08 | Added peer curation via curators and lists |
 | 1.1 | 2026-03-01 | Added cross-layer security overview for buyer-seller flow |
 | 1.0 | 2026-02-18 | Initial protocol specification |
