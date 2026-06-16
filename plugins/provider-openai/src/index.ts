@@ -2,13 +2,13 @@ import type { AntseedProviderPlugin, Provider } from '@antseed/node';
 import {
   BaseProvider,
   StaticTokenProvider,
-  buildServiceApiProtocols,
   parseCsv,
   parseJsonObject,
   parseNonNegativeNumber,
   parseServiceAliasMap,
   parseServicePricingJson,
 } from '@antseed/provider-core';
+import type { ServiceApiProtocol } from '@antseed/node';
 
 const SPECIAL_OPENAI_COMPAT_PROVIDERS = ['openrouter'] as const;
 type OpenAiCompatFlavor = 'generic' | (typeof SPECIAL_OPENAI_COMPAT_PROVIDERS)[number];
@@ -54,6 +54,41 @@ function resolveFlavor(configFlavor: string | undefined, baseUrl: string | undef
   }
 
   return 'generic';
+}
+
+function getAdvertisedServiceProtocol(
+  service: string,
+  flavor: OpenAiCompatFlavor,
+): ServiceApiProtocol | null {
+  const normalized = service.trim().toLowerCase();
+  const isImageModel = /(^|\/)(gpt-image-|dall-e)/.test(normalized);
+  if (isImageModel) {
+    if (flavor === 'openrouter') {
+      return null;
+    }
+    return 'openai-images';
+  }
+  return 'openai-chat-completions';
+}
+
+function buildOpenAiServiceApiProtocols(
+  services: string[],
+  flavor: OpenAiCompatFlavor,
+  serviceRewriteMap?: Record<string, string>,
+): Record<string, ServiceApiProtocol[]> | undefined {
+  if (services.length === 0) return undefined;
+  const entries = services.flatMap((service) => {
+      // Buyers route on the advertised protocol before HttpRelay rewrites the
+      // public service ID to the upstream model. Classify from the rewritten
+      // target too so aliases like `cover-art -> gpt-image-1` are advertised
+      // as images instead of being filtered out as chat-only. OpenRouter image
+      // models are skipped here until we add a real Images API adapter for its
+      // chat/responses-based upstream shape.
+      const upstreamService = serviceRewriteMap?.[service.trim().toLowerCase()] ?? service;
+      const protocol = getAdvertisedServiceProtocol(upstreamService, flavor);
+      return protocol ? [[service, [protocol]]] : [];
+    });
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -119,8 +154,8 @@ const plugin: AntseedProviderPlugin = {
       : (flavor === 'openrouter' ? ['anthropic-', 'x-stainless-'] : []);
 
     const tokenProvider = new StaticTokenProvider(apiKey);
-    const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
+    const serviceApiProtocols = buildOpenAiServiceApiProtocols(allowedServices, flavor, serviceRewriteMap);
     const pathRewrite = parseJsonObject(config['OPENAI_PATH_REWRITE_JSON'], 'OPENAI_PATH_REWRITE_JSON') as Record<string, string> | undefined;
 
     return new BaseProvider({

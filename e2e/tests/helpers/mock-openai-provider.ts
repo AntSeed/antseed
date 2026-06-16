@@ -65,3 +65,63 @@ export class MockOpenAIChatProvider implements Provider {
     return { current: this._active, max: this.maxConcurrency };
   }
 }
+
+export class MockOpenAIImageProvider implements Provider {
+  readonly name = 'openai';
+  readonly services = ['gpt-image-2'];
+  readonly pricing = {
+    defaults: {
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 40,
+    },
+  };
+  readonly serviceApiProtocols = {
+    'gpt-image-2': ['openai-images' as any],
+  };
+  readonly maxConcurrency = 5;
+  private _active = 0;
+  public requestCount = 0;
+  public lastRequest: SerializedHttpRequest | null = null;
+
+  async handleRequest(req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
+    this._active++;
+    this.requestCount++;
+    this.lastRequest = req;
+    try {
+      const body = JSON.stringify({
+        created: Math.floor(Date.now() / 1000),
+        data: [
+          {
+            b64_json: Buffer.from('mock-image-bytes').toString('base64'),
+          },
+        ],
+        usage: {
+          input_tokens: 15,
+          input_tokens_details: {
+            image_tokens: 0,
+            text_tokens: 15,
+          },
+          output_tokens: 196,
+          output_tokens_details: {
+            image_tokens: 196,
+            text_tokens: 0,
+          },
+          total_tokens: 211,
+        },
+      });
+
+      return {
+        requestId: req.requestId,
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(body),
+      };
+    } finally {
+      this._active--;
+    }
+  }
+
+  getCapacity() {
+    return { current: this._active, max: this.maxConcurrency };
+  }
+}

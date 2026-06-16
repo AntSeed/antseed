@@ -132,8 +132,14 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
     expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
-  it('infers openai-style providers', () => {
-    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
+  it('keeps generic openai fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual([
+      'openai-chat-completions',
+    ]);
+  });
+
+  it('keeps local-llm fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('local-llm')).toEqual(['openai-chat-completions']);
   });
 });
 
