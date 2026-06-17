@@ -15,11 +15,11 @@ via_ir = true
 ffi = false
 
 [fuzz]
-runs = 256
+runs = 4096
 
 [invariant]
-runs = 128
-depth = 64
+runs = 512
+depth = 256
 fail_on_revert = false
 call_override = false
 
