@@ -88,6 +88,11 @@ contract ProtocolHandler is Test {
         return 2;
     }
 
+    /// @notice Number of channels ever opened (active or terminal), for enumeration in invariants.
+    function chanCount() external view returns (uint256) {
+        return chans.length;
+    }
+
     /// @notice Expected reserved balance for a buyer = Σ over active channels of (deposit − settled).
     function expectedReservedOf(address buyer) external view returns (uint256 total) {
         for (uint256 i = 0; i < chans.length; i++) {
