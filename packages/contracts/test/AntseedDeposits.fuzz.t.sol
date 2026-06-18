@@ -9,9 +9,10 @@ import {MockUSDC} from "../MockUSDC.sol";
 
 /**
  * @title AntseedDepositsFuzz
- * @notice Stateless fuzz tests for AntseedDeposits custody arithmetic. The test contract
- *         registers itself as `channels` in the registry so it can drive the onlyChannels
- *         entrypoints (lockForChannel / chargeAndCreditPayouts / releaseLock) directly.
+ * @notice Net-new Deposits coverage not in AntseedDeposits.t.sol: the charge fee-split
+ *         arithmetic fuzzed across the full (amount, fee) range, plus a characterization of the
+ *         transferOperator zero-address gap (audit lead). The test contract registers itself as
+ *         `channels` so it can drive the privileged custody entrypoints.
  */
 contract AntseedDepositsFuzz is Test {
     MockUSDC usdc;
@@ -30,18 +31,15 @@ contract AntseedDepositsFuzz is Test {
         registry = new AntseedRegistry();
         deposits = new AntseedDeposits(address(usdc));
 
-        // The test contract acts as Channels so it can call privileged custody fns.
-        registry.setChannels(address(this));
+        registry.setChannels(address(this)); // test acts as Channels for custody calls
         registry.setProtocolReserve(protocolReserve);
         deposits.setRegistry(address(registry));
-
-        // No credit-limit friction for arithmetic-focused fuzzing.
         deposits.setCreditLimitOverride(buyer, type(uint256).max);
 
-        // Set operator so withdraw paths are reachable.
+        // Set operator (needed for the transferOperator characterization).
         uint256 nonce = deposits.getOperatorNonce(buyer);
-        bytes32 structHash = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), operator, nonce));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash));
+        bytes32 sh = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), operator, nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), sh));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, digest);
         deposits.setOperator(buyer, operator, nonce, abi.encodePacked(r, s, v));
     }
@@ -52,46 +50,9 @@ contract AntseedDepositsFuzz is Test {
         deposits.deposit(buyer, amount);
     }
 
-    // ── deposit ───────────────────────────────────────────────────────────
-    function testFuzz_depositTracksCustody(uint256 amount) public {
-        amount = bound(amount, deposits.MIN_BUYER_DEPOSIT(), 1_000_000_000_000);
-        _fund(amount);
-
-        (uint256 balance, uint256 reserved,,,,) = deposits.buyers(buyer);
-        assertEq(balance, amount);
-        assertEq(reserved, 0);
-        assertEq(usdc.balanceOf(address(deposits)), amount);
-    }
-
-    // ── lock / release round trip ──────────────────────────────────────────
-    function testFuzz_lockReleaseRoundTrip(uint256 deposited, uint256 lock) public {
-        deposited = bound(deposited, deposits.MIN_BUYER_DEPOSIT(), 1_000_000_000_000);
-        lock = bound(lock, 1, deposited);
-        _fund(deposited);
-
-        deposits.lockForChannel(buyer, lock);
-        (, uint256 reservedAfterLock,,,,) = deposits.buyers(buyer);
-        assertEq(reservedAfterLock, lock);
-
-        deposits.releaseLock(buyer, lock);
-        (uint256 balance, uint256 reserved,,,,) = deposits.buyers(buyer);
-        assertEq(reserved, 0);
-        assertEq(balance, deposited, "release must not touch balance");
-    }
-
-    /// @notice Locking can never reserve more than the available (balance - reserved) funds.
-    function testFuzz_cannotLockBeyondAvailable(uint256 deposited, uint256 lock) public {
-        deposited = bound(deposited, deposits.MIN_BUYER_DEPOSIT(), 1_000_000_000_000);
-        lock = bound(lock, deposited + 1, type(uint128).max);
-        _fund(deposited);
-
-        vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
-        deposits.lockForChannel(buyer, lock);
-    }
-
-    // ── charge conservation ─────────────────────────────────────────────────
     /// @notice chargeAndCreditPayouts decrements balance & reserved by `amount`, and the USDC
-    ///         that leaves Deposits equals `amount` (fee to reserve + payout to seller).
+    ///         that leaves Deposits equals `amount` (fee to reserve + payout to seller), across
+    ///         the full amount/fee range — exercises the fee-split rounding the unit tests fix.
     function testFuzz_chargeConservation(uint256 deposited, uint256 charge, uint256 feeBps) public {
         deposited = bound(deposited, deposits.MIN_BUYER_DEPOSIT(), 1_000_000_000_000);
         charge = bound(charge, 1, deposited);
@@ -109,44 +70,17 @@ contract AntseedDepositsFuzz is Test {
         (uint256 balance, uint256 reserved,,,,) = deposits.buyers(buyer);
         assertEq(balance, deposited - charge, "balance decremented by charge");
         assertEq(reserved, 0, "reserved decremented by charge");
-
-        // USDC leaving Deposits == charge; split between seller and protocol reserve.
         assertEq(beforeDeposits - usdc.balanceOf(address(deposits)), charge, "custody outflow != charge");
         assertEq(usdc.balanceOf(seller) - beforeSeller, charge - fee, "seller payout wrong");
         assertEq(usdc.balanceOf(protocolReserve) - beforeReserve, fee, "fee payout wrong");
     }
 
-    // ── withdraw ─────────────────────────────────────────────────────────────
-    function testFuzz_withdrawRespectsAvailable(uint256 deposited, uint256 lock, uint256 take) public {
-        deposited = bound(deposited, deposits.MIN_BUYER_DEPOSIT(), 1_000_000_000_000);
-        lock = bound(lock, 0, deposited);
-        _fund(deposited);
-        if (lock > 0) deposits.lockForChannel(buyer, lock);
-
-        uint256 available = deposited - lock;
-        take = bound(take, 1, deposited);
-
+    /// @notice CHARACTERIZATION (audit lead): transferOperator has no zero-address guard (unlike
+    ///         setOperator), so the current operator can brick the buyer by zeroing it. Pins the
+    ///         current behavior so a future fix flips this test red.
+    function test_transferOperator_currentlyAllowsZeroAddress_KNOWN_GAP() public {
         vm.prank(operator);
-        if (take > available) {
-            vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
-            deposits.withdraw(buyer, take);
-        } else {
-            deposits.withdraw(buyer, take);
-            (uint256 balance,,,,,) = deposits.buyers(buyer);
-            assertEq(balance, deposited - take);
-            assertEq(usdc.balanceOf(operator), take);
-        }
-    }
-
-    // ── credit limit bounds ──────────────────────────────────────────────────
-    function testFuzz_creditLimitWithinBounds(uint256 uniqueSellers, uint256 daysElapsed) public {
-        address fresh = address(0xCAFE);
-        uniqueSellers = bound(uniqueSellers, 0, 50);
-        daysElapsed = bound(daysElapsed, 0, 3650);
-
-        // No override → derived limit must sit within [BASE, MAX].
-        uint256 limit = deposits.getBuyerCreditLimit(fresh);
-        assertGe(limit, deposits.BASE_CREDIT_LIMIT());
-        assertLe(limit, deposits.MAX_CREDIT_LIMIT());
+        deposits.transferOperator(buyer, address(0)); // does NOT revert today
+        assertEq(deposits.getOperator(buyer), address(0));
     }
 }
