@@ -5,13 +5,13 @@ import "forge-std/Test.sol";
 
 import {AntseedChannels} from "../../AntseedChannels.sol";
 import {AntseedDeposits} from "../../AntseedDeposits.sol";
-import {AntseedEmissions} from "../../AntseedEmissions.sol";
 import {MockUSDC} from "../../MockUSDC.sol";
 
 /**
  * @title ProtocolHandler
  * @notice Stateful fuzzing handler that drives the AntseedChannels ↔ AntseedDeposits ↔
- *         AntseedEmissions payment lifecycle with a small fixed set of buyers/sellers.
+ *         payment lifecycle (reserve/settle/topUp/close/withdraw) with a small fixed set of
+ *         buyers/sellers. Emissions is left unwired by the fixture, so accrual is skipped.
  *
  *         The invariant test (AntseedProtocol.invariant.t.sol) deploys + wires the protocol,
  *         registers/stakes the actors, sets buyer operators to this handler, then targets the
@@ -25,7 +25,6 @@ import {MockUSDC} from "../../MockUSDC.sol";
 contract ProtocolHandler is Test {
     AntseedChannels public channels;
     AntseedDeposits public deposits;
-    AntseedEmissions public emissions;
     MockUSDC public usdc;
     bool public protocolReserveSet;
 
@@ -57,16 +56,9 @@ contract ProtocolHandler is Test {
     uint256 public ghostToSellers; // USDC paid to sellers on settle/close
     uint256 public ghostToReserve; // USDC paid to protocol reserve as fee
 
-    constructor(
-        AntseedChannels _channels,
-        AntseedDeposits _deposits,
-        AntseedEmissions _emissions,
-        MockUSDC _usdc,
-        bool _protocolReserveSet
-    ) {
+    constructor(AntseedChannels _channels, AntseedDeposits _deposits, MockUSDC _usdc, bool _protocolReserveSet) {
         channels = _channels;
         deposits = _deposits;
-        emissions = _emissions;
         usdc = _usdc;
         protocolReserveSet = _protocolReserveSet;
     }
@@ -234,26 +226,6 @@ contract ProtocolHandler is Test {
         try channels.withdraw(c.id) {
             c.active = false;
         } catch {}
-    }
-
-    function claimSeller(uint256 sellerSeed, uint256 epochSeed) external {
-        address s = vm.addr(sellerPks[sellerSeed % sellerPks.length]);
-        uint256 cur = emissions.currentEpoch();
-        if (cur == 0) return;
-        uint256[] memory arr = new uint256[](1);
-        arr[0] = epochSeed % cur;
-        vm.prank(s);
-        try emissions.claimSellerEmissions(arr) {} catch {}
-    }
-
-    function claimBuyer(uint256 buyerSeed, uint256 epochSeed) external {
-        address b = vm.addr(buyerPks[buyerSeed % buyerPks.length]);
-        uint256 cur = emissions.currentEpoch();
-        if (cur == 0) return;
-        uint256[] memory arr = new uint256[](1);
-        arr[0] = epochSeed % cur;
-        // operator == this handler
-        try emissions.claimBuyerEmissions(b, arr) {} catch {}
     }
 
     function warp(uint256 secs) external {

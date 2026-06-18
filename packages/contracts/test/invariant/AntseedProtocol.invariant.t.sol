@@ -6,12 +6,10 @@ import {ProtocolFixture} from "./ProtocolFixture.sol";
 /**
  * @title AntseedProtocolInvariants
  * @notice Custody & conservation invariants over the live-mainnet payment core:
- *         AntseedDeposits (custody) ↔ AntseedChannels (lifecycle) ↔ AntseedEmissions (points).
+ *         AntseedDeposits (custody) ↔ AntseedChannels (lifecycle).
  *
- *         These hold regardless of the economic/reputation audit findings (wash-trading,
- *         slashing evasion, migration double-claim) — those don't move custody or break point
- *         conservation, so they need a dedicated economic-properties suite (deferred while the
- *         incentive design is in flux).
+ *         Emissions is intentionally out of scope here (and unwired in the fixture) while its
+ *         economics are under revision; these custody invariants don't depend on it.
  */
 contract AntseedProtocolInvariants is ProtocolFixture {
     // ═════════════════════════════════════════════════════════════════════
@@ -56,32 +54,5 @@ contract AntseedProtocolInvariants is ProtocolFixture {
         uint256 paidOut = handler.ghostWithdrawn() + handler.ghostToSellers() + handler.ghostToReserve();
         uint256 seeded = SEED_DEPOSIT * handler.buyerCount();
         assertEq(held + paidOut, handler.ghostDeposited() + seeded, "USDC not conserved");
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    //                  EMISSIONS INVARIANTS (AntseedEmissions)
-    // ═════════════════════════════════════════════════════════════════════
-
-    /// @notice Per epoch, the recorded total seller/buyer points equal the sum over all actors.
-    function invariant_pointsConserved() public view {
-        uint256 cur = emissions.currentEpoch();
-        for (uint256 e = 0; e <= cur; e++) {
-            uint256 sumSeller;
-            for (uint256 i = 0; i < handler.sellerCount(); i++) {
-                sumSeller += emissions.userSellerPoints(handler.sellerAt(i), e);
-            }
-            assertEq(emissions.epochTotalSellerPoints(e), sumSeller, "seller points not conserved");
-
-            uint256 sumBuyer;
-            for (uint256 i = 0; i < handler.buyerCount(); i++) {
-                sumBuyer += emissions.userBuyerPoints(handler.buyerAt(i), e);
-            }
-            assertEq(emissions.epochTotalBuyerPoints(e), sumBuyer, "buyer points not conserved");
-        }
-    }
-
-    /// @notice Minted ANTS never exceeds the hard cap.
-    function invariant_antsWithinMaxSupply() public view {
-        assertLe(ants.totalSupply(), ants.MAX_SUPPLY(), "ANTS over max supply");
     }
 }
