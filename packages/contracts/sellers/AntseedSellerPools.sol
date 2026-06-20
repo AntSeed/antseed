@@ -600,6 +600,11 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         return poolActiveStakeAtEpoch(agentId, epoch);
     }
 
+    function totalActiveStakeAtEpoch(uint256 epoch) public view returns (uint256 activeStake) {
+        (, activeStake) = _powerAndActiveWeightAtEpoch(_totalPowerTree, epoch);
+        activeStake += _totalMaxLockWeightAmount.upperLookupRecent(epoch);
+    }
+
     function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) public view returns (uint256) {
         return poolWeightAtEpoch(agentId, epoch);
     }

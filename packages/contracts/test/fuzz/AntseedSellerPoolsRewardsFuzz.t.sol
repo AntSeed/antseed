@@ -31,8 +31,7 @@ contract MockAgentLookup {
  *
  *         Invariants under any random staker set / usage:
  *           1. The pool epoch settles gross == its share of the controller
- *              budget (single pool => full 45% bucket), claimable == gross while
- *              uncapped, and burned + reserve == gross - claimable.
+ *              dynamic staker budget, and claimable == gross.
  *           2. The controller never mints past its Gate share budget.
  *           3. Stakers collectively claim <= the claimable amount minted to the
  *              controller — it can NEVER become insolvent. Residual is dust.
@@ -52,7 +51,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
     uint256 constant GATE_GENESIS = 1_775_728_461;
     uint256 constant GATE_EPOCH_DURATION = 7 days;
     uint256 constant BPS = 100_000;
-    uint32 constant SELLER_POOLS_SHARE_BPS = 45_000;
+    uint32 constant SELLER_POOLS_SHARE_BPS = 40_000;
     bytes32 constant SELLER_POOLS_MINTER_ID = keccak256("antseed.emissions.seller-pools.v1");
 
     address legacyController = address(0xCAFE);
@@ -118,7 +117,9 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
     ///         recorded for the seller's agent, the pool epoch settles, and all
     ///         positions claim. The controller distributes exactly what it minted
     ///         (minus rounding dust) and never goes insolvent or over budget.
-    function testFuzz_rewardConservationSinglePool(uint256[5] memory amounts, uint8[5] memory durations, uint64 points) public {
+    function testFuzz_rewardConservationSinglePool(uint256[5] memory amounts, uint8[5] memory durations, uint64 points)
+        public
+    {
         // We are at epoch 4. Stake now (activates epoch 5).
         uint256 stakedTotal;
         for (uint256 i = 0; i < 5; i++) {
@@ -149,7 +150,8 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         (bool settled, uint256 gross, uint256 claimable, uint256 burned, uint256 reserveAmt) =
             rewards.poolEpochEmissions(5, agentId);
         assertTrue(settled, "epoch not settled");
-        // Single pool => it owns the whole bucket (minus mulDiv flooring dust).
+        // Single pool => it owns the whole dynamic staker budget.
+        assertEq(gross, rewards.stakerEpochBudget(5), "gross != dynamic staker budget");
         assertLe(gross, controllerBudget, "gross over controller budget");
         assertEq(claimable, gross, "uncapped pool should have claimable == gross");
         assertEq(burned, 0, "no burn while uncapped");

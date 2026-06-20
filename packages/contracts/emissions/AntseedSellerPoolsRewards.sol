@@ -18,24 +18,20 @@ import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.s
  * @notice Lazy seller-pool reward controller for recognized usage.
  *
  *         Usage accounting records raw seller usage and weighted pool points
- *         during each epoch. The pool epoch is settled once, APY cap and
- *         burn/reserve routing are applied at the pool budget level, and
- *         staker positions split the settled claimable budget:
+ *         during each epoch. The pool epoch is settled once, and staker
+ *         positions split the settled claimable budget:
  *
  *         poolReward = sellerPoolsBudget(epoch) * poolWeightedPoints / totalWeightedPoints
- *         poolClaimable = min(poolReward, poolApyCap)
- *         positionReward = poolClaimable * positionWeight / poolWeight
+ *         positionReward = poolReward * positionWeight / poolWeight
  *
- *         Per epoch, burn routing is capped at 30% of the full weekly
- *         emissions; excess over that cap is routed to the protocol reserve.
+ *         Unallocated dynamic staker budget is settled separately through the
+ *         emissions gate, where global burn/reserve routing is enforced.
  *
  *         Important behavior:
  *           - This is the staker pool-reward controller, separate from the
  *             direct seller/operator usage rewards.
  *           - Pool epochs are indexed before staker claim/restake. Settlement
- *             mints pool-level claimable ANTS to this contract, mints capped
- *             pool over-cap amounts to the dead address, and routes the
- *             remaining over-cap amount to the protocol reserve.
+ *             mints pool-level claimable ANTS to this contract.
  *           - Restaking rewards creates a new locked position in the source
  *             agent pool and may receive a configured weight bonus based on lock
  *             length.
@@ -48,10 +44,10 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     using Checkpoints for Checkpoints.Trace256;
 
     // ─── Constants ───────────────────────────────────────────────────
-    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant BURN_CAP_BPS = 3_000;
+    uint256 public constant GATE_BPS_DENOMINATOR = 100_000;
     uint256 public constant INDEX_SCALE = 1e30;
+    uint32 public constant MAX_STAKER_SHARE_BPS = 40_000;
 
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable emissionsGate;
@@ -59,13 +55,18 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     IAntseedUsageAccounting public immutable usageAccounting;
 
     // ─── Claim State ─────────────────────────────────────────────────
-    mapping(uint256 => uint256) public epochBurnedAmount;
+    mapping(uint256 => bool) public epochRemainderSettled;
     mapping(uint256 => mapping(uint256 => PoolEpochEmission)) public poolEpochEmissions;
     mapping(uint256 => uint256) public poolRewardIndexNextEpoch;
     mapping(uint256 => uint256) public positionClaimCursor;
     mapping(uint256 => Checkpoints.Trace256) private _poolCumulativeRewardPerWeight;
     mapping(uint256 => Checkpoints.Trace256) private _poolCumulativeEpochRewardPerWeight;
     uint256 public immutable initialIndexEpoch;
+
+    // ─── Dynamic Share Config ────────────────────────────────────────
+    uint32 public stakerMinShareBps = 2_000;
+    uint32 public stakerMaxShareBps = 40_000;
+    uint256 public stakeShareTarget = 400_000_000e18;
 
     struct ClaimRoute {
         address recipient;
@@ -77,6 +78,8 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         bool settled;
         uint256 grossAmount;
         uint256 claimableAmount;
+        // Retained for event/storage compatibility. Pool-level APY clipping
+        // was removed; burn/reserve routing now happens in settleEpochRemainder.
         uint256 burnedAmount;
         uint256 reserveAmount;
     }
@@ -112,6 +115,10 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 fromEpoch,
         uint256 toEpoch,
         uint256 claimableAmount
+    );
+    event DynamicStakerConfigSet(uint32 minShareBps, uint32 maxShareBps, uint256 stakeShareTarget);
+    event StakerRewardRemainderSettled(
+        uint256 indexed epoch, uint256 unallocatedAmount, uint256 burnedAmount, uint256 reserveAmount
     );
 
     // ─── Custom Errors ───────────────────────────────────────────────
@@ -229,7 +236,6 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         (address owner, uint256 agentId,,,,,,) = sellerPools.positions(positionId);
         if (owner == address(0)) revert InvalidValue();
         (grossAmount, claimableAmount, burnedAmount) = _positionReward(positionId, agentId, epoch);
-        burnedAmount = _previewBurnedAmount(epoch, burnedAmount);
     }
 
     function pendingIndexedStakerReward(uint256 positionId) external view returns (uint256 claimableAmount) {
@@ -266,6 +272,47 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function setDynamicStakerConfig(uint32 minShareBps, uint32 maxShareBps, uint256 _stakeShareTarget)
+        external
+        onlyOwner
+    {
+        if (minShareBps > maxShareBps || maxShareBps > MAX_STAKER_SHARE_BPS || _stakeShareTarget == 0) {
+            revert InvalidValue();
+        }
+        stakerMinShareBps = minShareBps;
+        stakerMaxShareBps = maxShareBps;
+        stakeShareTarget = _stakeShareTarget;
+        emit DynamicStakerConfigSet(minShareBps, maxShareBps, _stakeShareTarget);
+    }
+
+    function stakerEpochBudget(uint256 epoch) public view returns (uint256) {
+        uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
+        uint32 shareBps = _saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
+        if (shareBps == 0) return 0;
+
+        uint256 desiredBudget = Math.mulDiv(emissionsGate.initialEmission(), shareBps, GATE_BPS_DENOMINATOR);
+        uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
+        return desiredBudget < maxBudget ? desiredBudget : maxBudget;
+    }
+
+    function settleEpochRemainder(uint256 epoch)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 burnedAmount, uint256 reserveAmount)
+    {
+        if (epochRemainderSettled[epoch]) revert InvalidValue();
+
+        uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
+        uint256 allocatedBudget = stakerEpochBudget(epoch);
+        if (allocatedBudget >= maxBudget) revert NothingToClaim();
+
+        uint256 unallocatedAmount = maxBudget - allocatedBudget;
+        epochRemainderSettled[epoch] = true;
+        (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _protocolReserve(), unallocatedAmount);
+        emit StakerRewardRemainderSettled(epoch, unallocatedAmount, burnedAmount, reserveAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -396,9 +443,6 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (emission.settled) return (emission, 0, 0);
 
         (uint256 grossAmount, uint256 claimableAmount) = _poolRewardPreview(agentId, epoch);
-        uint256 excessAmount = grossAmount - claimableAmount;
-        (burnedAmount, reserveAmount) = _allocateExcessForEpoch(epoch, excessAmount);
-
         emission.settled = true;
         emission.grossAmount = grossAmount;
         emission.claimableAmount = claimableAmount;
@@ -406,10 +450,6 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         emission.reserveAmount = reserveAmount;
 
         _mint(epoch, address(this), claimableAmount);
-        _mint(epoch, DEAD_ADDRESS, burnedAmount);
-        if (reserveAmount != 0) {
-            _mint(epoch, _protocolReserve(), reserveAmount);
-        }
         emit PoolUsageRewardSettled(agentId, epoch, grossAmount, claimableAmount, burnedAmount, reserveAmount);
     }
 
@@ -426,15 +466,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         grossAmount = _poolGrossReward(agentId, epoch);
         if (grossAmount == 0) return (0, 0);
 
-        IAntseedSellerPools pools = sellerPools;
-        uint256 activeWeight = pools.poolActiveStakeAtEpoch(agentId, epoch);
-        if (activeWeight == 0) return (grossAmount, 0);
-
-        uint256 capBps = pools.apyCapBpsAtEpoch(epoch);
-        if (capBps == 0) return (grossAmount, grossAmount);
-
-        uint256 poolCap = Math.mulDiv(activeWeight, capBps, BPS_DENOMINATOR * 52);
-        claimableAmount = grossAmount < poolCap ? grossAmount : poolCap;
+        claimableAmount = grossAmount;
     }
 
     function _poolGrossReward(uint256 agentId, uint256 epoch) internal view returns (uint256) {
@@ -443,7 +475,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 totalPoints = accounting.totalWeightedPoolPointsByEpoch(epoch);
         if (poolPoints == 0 || totalPoints == 0) return 0;
 
-        uint256 budget = emissionsGate.controllerEpochBudget(address(this), epoch);
+        uint256 budget = stakerEpochBudget(epoch);
         if (budget == 0) return 0;
         return Math.mulDiv(budget, poolPoints, totalPoints);
     }
@@ -458,28 +490,14 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         IERC20(_antsToken()).safeTransfer(recipient, amount);
     }
 
-    function burnCapForEpoch(uint256 epoch) public view returns (uint256) {
-        return Math.mulDiv(emissionsGate.getEpochEmission(epoch), BURN_CAP_BPS, BPS_DENOMINATOR);
-    }
-
-    function _previewBurnedAmount(uint256 epoch, uint256 excessAmount) internal view returns (uint256) {
-        if (excessAmount == 0) return 0;
-        uint256 cap = burnCapForEpoch(epoch);
-        uint256 alreadyBurned = epochBurnedAmount[epoch];
-        if (alreadyBurned >= cap) return 0;
-        uint256 remainingBurn = cap - alreadyBurned;
-        return excessAmount < remainingBurn ? excessAmount : remainingBurn;
-    }
-
-    function _allocateExcessForEpoch(uint256 epoch, uint256 excessAmount)
+    function _saturatingShareBps(uint256 metric, uint32 minShareBps, uint32 maxShareBps, uint256 target)
         internal
-        returns (uint256 burnedAmount, uint256 reserveAmount)
+        pure
+        returns (uint32)
     {
-        burnedAmount = _previewBurnedAmount(epoch, excessAmount);
-        if (burnedAmount != 0) {
-            epochBurnedAmount[epoch] += burnedAmount;
-        }
-        reserveAmount = excessAmount - burnedAmount;
+        if (metric == 0) return 0;
+        if (target == 0) return maxShareBps;
+        return uint32(uint256(minShareBps) + Math.mulDiv(maxShareBps - minShareBps, metric, metric + target));
     }
 
     function _protocolReserve() internal view returns (address reserve) {

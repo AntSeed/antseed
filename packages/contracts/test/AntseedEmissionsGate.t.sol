@@ -107,11 +107,11 @@ contract AntseedEmissionsGateTest is Test {
     uint256 constant GATE_EPOCH_DURATION = 7 days;
     uint256 constant INITIAL_EMISSION = 1_000 ether;
     uint256 constant EPOCH_DURATION = 1 weeks;
-    uint32 constant SELLER_POOLS_SHARE_BPS = 45_000;
-    uint32 constant USAGE_SHARE_BPS = 10_000;
+    uint32 constant SELLER_POOLS_SHARE_BPS = 40_000;
+    uint32 constant USAGE_SHARE_BPS = 20_000;
     uint32 constant TEAM_SHARE_BPS = 15_000;
     uint32 constant RESERVE_SHARE_BPS = 15_000;
-    uint32 constant VERIFICATION_SHARE_BPS = 15_000;
+    uint32 constant VERIFICATION_SHARE_BPS = 10_000;
     bytes32 constant TEAM_MINTER_ID = keccak256("antseed.emissions.team.v1");
     bytes32 constant RESERVE_MINTER_ID = keccak256("antseed.emissions.reserve.v1");
     bytes32 constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
@@ -172,7 +172,7 @@ contract AntseedEmissionsGateTest is Test {
         vm.warp(gate.genesis() + gate.epochDuration() * epoch + 1);
     }
 
-    function _shareBudget(uint16 shareBps, uint256 epoch) internal view returns (uint256) {
+    function _shareBudget(uint32 shareBps, uint256 epoch) internal view returns (uint256) {
         return (gate.getEpochEmission(epoch) * shareBps) / 100_000;
     }
 
@@ -324,7 +324,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(6);
-        uint256 expectedStakerClaim = (_shareBudget(45_000, 5) * 400 ether) / 404 ether;
+        uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
         (uint256 grossReward, uint256 claimableReward, uint256 burnedReward) =
             sellerPoolsRewards.pendingStakerReward(positionId, 5);
         assertEq(grossReward, expectedStakerClaim);
@@ -359,7 +359,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(6);
-        uint256 expectedStakerClaim = (_shareBudget(45_000, 5) * 400 ether) / 404 ether;
+        uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
 
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         vm.prank(staker);
@@ -392,7 +392,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(6);
-        uint256 expectedStakerClaim = (_shareBudget(45_000, 5) * 400 ether) / 404 ether;
+        uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
 
         vm.prank(staker);
         sellerPools.withdrawStake(positionId);
@@ -426,7 +426,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(6);
-        uint256 expectedStakerClaim = (_shareBudget(45_000, 5) * 400 ether) / 404 ether;
+        uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
 
         vm.prank(staker);
         sellerPools.moveStake(positionId, _agentId(otherSeller));
@@ -500,7 +500,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(7);
-        uint256 expectedBudget = _shareBudget(45_000, 6);
+        uint256 expectedBudget = sellerPoolsRewards.stakerEpochBudget(6);
         uint256 maxLockPower = 5_200 ether;
         uint256 normalPower = 300 ether;
         (uint256 maxLockedGross,,) = sellerPoolsRewards.pendingStakerReward(maxLockedPositionId, 6);
@@ -531,7 +531,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         _warpGateEpoch(6);
-        uint256 expectedClaim = (_shareBudget(45_000, 5) * 400 ether) / 404 ether;
+        uint256 expectedClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
 
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         assertEq(sellerPoolsRewards.poolRewardIndexNextEpoch(_agentId(poolSeller)), 6);
@@ -580,8 +580,8 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(7);
         sellerPoolsRewards.indexPoolRewards(agentId, 10);
 
-        uint256 epoch5Budget = _shareBudget(45_000, 5);
-        uint256 epoch6Budget = _shareBudget(45_000, 6);
+        uint256 epoch5Budget = sellerPoolsRewards.stakerEpochBudget(5);
+        uint256 epoch6Budget = sellerPoolsRewards.stakerEpochBudget(6);
         uint256 expectedClaim = (epoch5Budget * 400 ether) / 800 ether + (epoch6Budget * 600 ether) / 900 ether;
 
         assertEq(sellerPoolsRewards.pendingIndexedStakerReward(extendedPositionId), expectedClaim);
@@ -631,11 +631,11 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
         assertEq(gate.BPS_DENOMINATOR(), 100_000);
         _setEmissionMinters(address(this), address(0xBEEF));
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(45_000, 4));
-        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(10_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
+        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(TEAM_MINTER_ID, 4), _shareBudget(15_000, 4));
         assertEq(gate.minterEpochBudget(RESERVE_MINTER_ID, 4), _shareBudget(15_000, 4));
-        assertEq(gate.minterEpochBudget(VERIFICATION_MINTER_ID, 4), _shareBudget(15_000, 4));
+        assertEq(gate.minterEpochBudget(VERIFICATION_MINTER_ID, 4), _shareBudget(VERIFICATION_SHARE_BPS, 4));
 
         vm.expectRevert(AntseedEmissionsGate.InvalidAddress.selector);
         _setVerificationMinter(address(0));
@@ -696,7 +696,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_gateCanRenounceEmissionAdminControl() public {
         _deployGate(4);
         _setEmissionMinters(address(this), address(0xBEEF));
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(45_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
 
         // Renouncing the gate is blocked while the legacy-epoch mint window is
         // still open; it must be closed first.
@@ -706,7 +706,7 @@ contract AntseedEmissionsGateTest is Test {
         gate.disableLegacyEpochMints();
         gate.renounceOwnership();
         assertEq(gate.owner(), address(0));
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(45_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
         assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
 
         vm.expectRevert();
@@ -914,8 +914,8 @@ contract AntseedEmissionsGateTest is Test {
         uint256 positionId = sellerPools.nextPositionId() - 1;
         (uint256 grossReward, uint256 claimableReward, uint256 burnedReward) =
             sellerPoolsRewards.pendingStakerReward(positionId, 5);
-        assertEq(grossReward, _shareBudget(45_000, 5));
-        assertEq(claimableReward, _shareBudget(45_000, 5));
+        assertEq(grossReward, sellerPoolsRewards.stakerEpochBudget(5));
+        assertEq(claimableReward, sellerPoolsRewards.stakerEpochBudget(5));
         assertEq(burnedReward, 0);
 
         assertEq(token.balanceOf(seller), 0);
@@ -990,8 +990,7 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(usageAccounting.totalWeightedPoolPointsByEpoch(5), (1_000 * honestPower) + (1_000_000 * washPower));
     }
 
-    function test_positionApyCapBurnsTinyPoolHighVolumeReward() public {
-        uint16 sellerPoolsShareBps = 45_000;
+    function test_stakerDynamicBudgetDistributesHighVolumeReward() public {
         _deployGate(4);
 
         sellerPools = new AntseedSellerPools(address(realRegistry), 10_000, 2_000, 500);
@@ -1030,21 +1029,22 @@ contract AntseedEmissionsGateTest is Test {
         uint256 totalPoints = usageAccounting.totalWeightedPoolPointsByEpoch(5);
 
         _warpGateEpoch(6);
-        uint256 expectedHonestReward = (_shareBudget(sellerPoolsShareBps, 5) * honestPoints) / totalPoints;
-        uint256 expectedWashReward = (_shareBudget(sellerPoolsShareBps, 5) * washPoints) / totalPoints;
+        uint256 stakerBudget = sellerPoolsRewards.stakerEpochBudget(5);
+        uint256 expectedHonestReward = (stakerBudget * honestPoints) / totalPoints;
+        uint256 expectedWashReward = (stakerBudget * washPoints) / totalPoints;
         (uint256 honestGross, uint256 honestClaimable, uint256 honestBurned) =
             sellerPoolsRewards.pendingStakerReward(honestPositionId, 5);
         (uint256 washGross, uint256 washClaimable, uint256 washBurned) =
             sellerPoolsRewards.pendingStakerReward(washPositionId, 5);
         assertEq(honestGross, expectedHonestReward);
         assertEq(washGross, expectedWashReward);
-        assertGt(honestBurned, 0);
-        assertLe(honestBurned, honestGross - honestClaimable);
-        assertLt(washClaimable, washGross);
-        assertEq(washBurned, washGross - washClaimable);
+        assertEq(honestClaimable, honestGross);
+        assertEq(washClaimable, washGross);
+        assertEq(honestBurned, 0);
+        assertEq(washBurned, 0);
     }
 
-    function test_sellerUsageRewardBurnCapRoutesOverflowToReserve() public {
+    function test_stakerRemainderRoutesThroughGateBurnCapToReserve() public {
         _deployGate(4);
 
         sellerPools = new AntseedSellerPools(address(realRegistry), 10_000, 2_000, 500);
@@ -1061,33 +1061,31 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accruePoints(keccak256("wash"), buyer, otherSeller, 1_000_000_000);
 
         _warpGateEpoch(6);
-        (uint256 grossReward, uint256 claimableReward, uint256 burnedReward) =
-            sellerPoolsRewards.pendingStakerReward(positionId, 5);
-        uint256 burnCap = sellerPoolsRewards.burnCapForEpoch(5);
-        uint256 overCapReward = grossReward - claimableReward;
-
-        assertGt(overCapReward, burnCap);
-        assertEq(burnedReward, burnCap);
+        uint256 maxBudget = gate.controllerEpochBudget(address(sellerPoolsRewards), 5);
+        uint256 allocatedBudget = sellerPoolsRewards.stakerEpochBudget(5);
+        uint256 unallocated = maxBudget - allocatedBudget;
+        uint256 burnCap = gate.getEpochEmission(5) * gate.BURN_CAP_BPS() / gate.BPS_DENOMINATOR();
 
         sellerPoolsRewards.indexPoolRewards(_agentId(otherSeller), 10);
+        sellerPoolsRewards.settleEpochRemainder(5);
         uint256 indexedClaimableReward = sellerPoolsRewards.pendingIndexedStakerReward(positionId);
         vm.prank(otherSeller);
         sellerPoolsRewards.claimStakerRewards(positionId, otherSeller);
 
         assertEq(token.balanceOf(otherSeller), indexedClaimableReward);
-        assertEq(token.balanceOf(sellerPoolsRewards.DEAD_ADDRESS()), burnCap);
-        assertEq(token.balanceOf(reserveDest), overCapReward - burnCap);
-        assertEq(sellerPoolsRewards.epochBurnedAmount(5), burnCap);
+        assertEq(token.balanceOf(gate.DEAD_ADDRESS()), unallocated < burnCap ? unallocated : burnCap);
+        assertEq(token.balanceOf(reserveDest), unallocated > burnCap ? unallocated - burnCap : 0);
+        assertEq(gate.epochBurnedAmount(5), unallocated < burnCap ? unallocated : burnCap);
         (bool settled, uint256 settledGross, uint256 settledClaimable, uint256 settledBurned, uint256 settledReserved) =
             sellerPoolsRewards.poolEpochEmissions(5, _agentId(otherSeller));
         assertTrue(settled);
-        assertEq(settledGross, grossReward);
-        assertEq(settledClaimable, claimableReward);
-        assertEq(settledBurned, burnCap);
-        assertEq(settledReserved, overCapReward - burnCap);
+        assertApproxEqAbs(settledGross, indexedClaimableReward, 1);
+        assertApproxEqAbs(settledClaimable, indexedClaimableReward, 1);
+        assertEq(settledBurned, 0);
+        assertEq(settledReserved, 0);
     }
 
-    function test_stressWashTradingCannotDominateSellerPoolsOrBuyerRewards() public {
+    function test_stressWashTradingBuyerRewardRemainsCappedAfterStakerApyCapRemoval() public {
         address washBuyer = address(0x9999);
         StressRun memory run;
 
@@ -1155,7 +1153,7 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(6);
         {
-            uint256 sellerPoolsBudget = gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5);
+            uint256 sellerPoolsBudget = sellerPoolsRewards.stakerEpochBudget(5);
             (uint256 honestGross, uint256 honestClaimable, uint256 honestBurned) =
                 sellerPoolsRewards.pendingStakerReward(run.firstPositionId, 5);
             (uint256 washGross, uint256 washClaimable, uint256 washBurned) =
@@ -1164,15 +1162,14 @@ contract AntseedEmissionsGateTest is Test {
             run.washClaimable = washClaimable;
             assertEq(honestGross, (sellerPoolsBudget * run.firstWeightedPoints) / run.expectedTotalWeightedPoints);
             assertEq(washGross, (sellerPoolsBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints);
-            uint256 burnCap = sellerPoolsRewards.burnCapForEpoch(5);
-            uint256 washExcess = washGross - washClaimable;
-            uint256 honestExcess = honestGross - honestClaimable;
-            assertEq(washBurned, washExcess < burnCap ? washExcess : burnCap);
-            assertEq(honestBurned, honestExcess < burnCap ? honestExcess : burnCap);
+            assertEq(washClaimable, washGross);
+            assertEq(honestClaimable, honestGross);
+            assertEq(washBurned, 0);
+            assertEq(honestBurned, 0);
         }
 
         {
-            uint256 buyerSideBudget = usageRewards.usageSideEpochBudget(5);
+            uint256 buyerSideBudget = usageRewards.buyerEpochBudget(5);
             uint256 expectedWashBuyerReward =
                 (buyerSideBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints;
             uint256 washBuyerCap =
@@ -1184,7 +1181,8 @@ contract AntseedEmissionsGateTest is Test {
         }
 
         assertGt(run.washWeightedPoints, run.firstWeightedPoints);
-        assertLt(run.washClaimable, run.firstClaimable);
+        assertGt(run.washClaimable, run.firstClaimable);
+        assertLe(run.washClaimable, sellerPoolsRewards.stakerEpochBudget(5));
     }
 
     function test_stressThousandAgentsAndBuyersClaimFromSavedTotals() public {
@@ -1244,7 +1242,7 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(6);
         {
-            uint256 sellerPoolsBudget = gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5);
+            uint256 sellerPoolsBudget = sellerPoolsRewards.stakerEpochBudget(5);
             uint256 expectedFirstGross = (sellerPoolsBudget * run.firstWeightedPoints) / run.expectedTotalWeightedPoints;
             uint256 expectedWashGross = (sellerPoolsBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints;
 
@@ -1256,12 +1254,10 @@ contract AntseedEmissionsGateTest is Test {
             run.washClaimable = washClaimable;
             assertEq(firstGross, expectedFirstGross);
             assertEq(washGross, expectedWashGross);
-            uint256 burnCap = sellerPoolsRewards.burnCapForEpoch(5);
-            uint256 firstExcess = firstGross - firstClaimable;
-            uint256 washExcess = washGross - washClaimable;
-            assertEq(firstBurned, firstExcess < burnCap ? firstExcess : burnCap);
-            assertEq(washBurned, washExcess < burnCap ? washExcess : burnCap);
-            assertLt(washClaimable, washGross);
+            assertEq(firstClaimable, firstGross);
+            assertEq(washClaimable, washGross);
+            assertEq(firstBurned, 0);
+            assertEq(washBurned, 0);
         }
 
         sellerPoolsRewards.indexPoolRewards(firstAgentId, 10);
@@ -1274,12 +1270,11 @@ contract AntseedEmissionsGateTest is Test {
         sellerPoolsRewards.claimStakerRewards(run.washPositionId, washSeller);
         assertEq(token.balanceOf(firstSeller), run.firstClaimable);
         assertEq(token.balanceOf(washSeller), run.washClaimable);
-        assertLe(token.balanceOf(sellerPoolsRewards.DEAD_ADDRESS()), sellerPoolsRewards.burnCapForEpoch(5));
-        assertEq(token.balanceOf(sellerPoolsRewards.DEAD_ADDRESS()), sellerPoolsRewards.epochBurnedAmount(5));
-        assertGt(token.balanceOf(reserveDest), 0);
+        assertEq(token.balanceOf(gate.DEAD_ADDRESS()), 0);
+        assertEq(gate.epochBurnedAmount(5), 0);
 
         {
-            uint256 buyerSideBudget = usageRewards.usageSideEpochBudget(5);
+            uint256 buyerSideBudget = usageRewards.buyerEpochBudget(5);
             uint256 washBuyerGross = (buyerSideBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints;
             uint256 washBuyerCap =
                 (buyerSideBudget * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
@@ -1344,6 +1339,80 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(usageRewards.pendingBuyerReward(secondBuyer, 5), 0);
     }
 
+    function test_usageDynamicBudgetsFollowSameEpochVolume() public {
+        _deployGate(3);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
+        _setUsageMinter(address(usageRewards));
+
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+
+        _warpGateEpoch(4);
+        assertEq(usageRewards.buyerEpochBudget(4), 0);
+        assertEq(usageRewards.sellerEpochBudget(4), 0);
+        assertEq(usageRewards.allocatedEpochBudget(4), 0);
+
+        usageAccounting.accruePoints(keccak256("same-epoch-volume"), buyer, seller, 1_000);
+
+        uint256 expectedSideBudget = _shareBudget(7_500, 4);
+        assertEq(usageRewards.buyerEpochBudget(4), expectedSideBudget);
+        assertEq(usageRewards.sellerEpochBudget(4), expectedSideBudget);
+        assertEq(usageRewards.allocatedEpochBudget(4), expectedSideBudget * 2);
+        assertLt(usageRewards.allocatedEpochBudget(4), gate.controllerEpochBudget(address(usageRewards), 4));
+    }
+
+    function test_usageDynamicBudgetsScaleDownToGateBucket() public {
+        _deployGate(3);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
+        _setUsageMinter(address(usageRewards));
+        gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 10_000, true);
+
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+
+        _warpGateEpoch(4);
+        usageAccounting.accruePoints(keccak256("same-epoch-volume"), buyer, seller, 1_000);
+
+        uint256 maxBudget = gate.controllerEpochBudget(address(usageRewards), 4);
+        assertEq(usageRewards.allocatedEpochBudget(4), maxBudget);
+        assertEq(usageRewards.buyerEpochBudget(4), maxBudget / 2);
+        assertEq(usageRewards.sellerEpochBudget(4), maxBudget - maxBudget / 2);
+    }
+
+    function test_usageRemainderRoutesThroughGlobalBurnCap() public {
+        _deployGate(3);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
+        _setUsageMinter(address(usageRewards));
+
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+        _warpGateEpoch(4);
+        usageAccounting.accruePoints(keccak256("same-epoch-volume"), buyer, seller, 1_000);
+
+        _warpGateEpoch(5);
+        uint256 maxBudget = gate.controllerEpochBudget(address(usageRewards), 4);
+        uint256 allocatedBudget = usageRewards.allocatedEpochBudget(4);
+        uint256 unallocated = maxBudget - allocatedBudget;
+
+        (uint256 burnedAmount, uint256 reserveAmount) = usageRewards.settleEpochRemainder(4);
+        assertEq(burnedAmount, unallocated);
+        assertEq(reserveAmount, 0);
+        assertEq(token.balanceOf(gate.DEAD_ADDRESS()), burnedAmount);
+        assertEq(gate.epochBurnedAmount(4), burnedAmount);
+
+        vm.expectRevert(AntseedUsageRewards.AlreadyClaimed.selector);
+        usageRewards.settleEpochRemainder(4);
+    }
+
     function test_usageRewardsUsePoolWeightedShareAndOperatorRecipient() public {
         address secondBuyer = address(0x21);
         _deployGate(3);
@@ -1353,7 +1422,7 @@ contract AntseedEmissionsGateTest is Test {
 
         usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
         _setUsageMinter(address(usageRewards));
-        assertEq(usageRewards.usageSideEpochBudget(4), _shareBudget(5_000, 4));
+        assertEq(usageRewards.usageSideEpochBudget(4), 0);
 
         deal(address(token), seller, 100 ether);
         deal(address(token), otherSeller, 10 ether);
@@ -1388,12 +1457,12 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(5);
 
-        uint256 grossBuyerReward = (_shareBudget(5_000, 4) * buyerWeightedPoints) / totalWeightedPoints;
-        uint256 grossSecondBuyerReward = (_shareBudget(5_000, 4) * secondBuyerWeightedPoints) / totalWeightedPoints;
+        uint256 buyerSideBudget = usageRewards.buyerEpochBudget(4);
+        uint256 grossBuyerReward = (buyerSideBudget * buyerWeightedPoints) / totalWeightedPoints;
+        uint256 grossSecondBuyerReward = (buyerSideBudget * secondBuyerWeightedPoints) / totalWeightedPoints;
         uint256 buyerReward = usageRewards.pendingBuyerReward(buyer, 4);
         uint256 secondBuyerReward = usageRewards.pendingBuyerReward(secondBuyer, 4);
-        uint256 buyerCap =
-            (_shareBudget(5_000, 4) * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
+        uint256 buyerCap = (buyerSideBudget * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         assertEq(buyerReward, buyerCap);
         assertEq(secondBuyerReward, grossSecondBuyerReward < buyerCap ? grossSecondBuyerReward : buyerCap);
 
@@ -1441,7 +1510,7 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(5);
         usageAccounting.accruePoints(keccak256("buyer-stake-direct"), buyer, seller, 100);
 
-        uint256 grossReward = _shareBudget(5_000, 5);
+        uint256 grossReward = usageRewards.buyerEpochBudget(5);
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         _warpGateEpoch(6);
 
@@ -1518,7 +1587,7 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(5);
         usageAccounting.accruePoints(keccak256("seller-direct"), buyer, seller, 100);
 
-        uint256 grossReward = _shareBudget(5_000, 5);
+        uint256 grossReward = usageRewards.sellerEpochBudget(5);
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         uint256 agentId = _agentId(seller);
         _warpGateEpoch(6);
@@ -1546,7 +1615,7 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(5);
         usageAccounting.accruePoints(keccak256("seller-stake-direct"), buyer, seller, 100);
 
-        uint256 grossReward = _shareBudget(5_000, 5);
+        uint256 grossReward = usageRewards.sellerEpochBudget(5);
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         uint256 rewardAgentId = _agentId(seller);
         uint256 stakeAgentId = rewardAgentId + 1;
@@ -1604,7 +1673,7 @@ contract AntseedEmissionsGateTest is Test {
         vm.prank(seller);
         identityRegistry.transferAgent(agentId, newOwner);
 
-        uint256 grossReward = _shareBudget(5_000, 5);
+        uint256 grossReward = usageRewards.sellerEpochBudget(5);
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         _warpGateEpoch(6);
         assertEq(usageRewards.rewardRecipient(agentId), newOwner);
@@ -1641,9 +1710,9 @@ contract AntseedEmissionsGateTest is Test {
         sellerPoolsRewards.claimStakerRewards(positionId, seller);
 
         uint256 expectedOperatorReward =
-            (_shareBudget(5_000, 5) * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
-        assertEq(token.balanceOf(seller), expectedOperatorReward + _shareBudget(45_000, 5));
-        assertEq(token.balanceOf(reserveDest), _shareBudget(5_000, 5) - expectedOperatorReward);
+            (usageRewards.sellerEpochBudget(5) * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
+        assertEq(token.balanceOf(seller), expectedOperatorReward + sellerPoolsRewards.stakerEpochBudget(5));
+        assertEq(token.balanceOf(reserveDest), usageRewards.sellerEpochBudget(5) - expectedOperatorReward);
     }
 
     function test_gateMintValidationAndPause() public {
@@ -1664,11 +1733,35 @@ contract AntseedEmissionsGateTest is Test {
         vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
         gate.claim(4, seller, 1 ether);
 
-        uint256 bucketBudget = _shareBudget(45_000, 4);
+        uint256 bucketBudget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
         vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
         gate.claim(4, address(this), bucketBudget + 1);
 
         gate.claim(4, address(this), 1 ether);
+    }
+
+    function test_gateRemainderUsesGlobalBurnCapAndRejectsOverBucketClaims() public {
+        _deployGate(4);
+        _setSellerPoolsMinter(address(this));
+
+        _warpGateEpoch(5);
+        uint256 budget = gate.controllerEpochBudget(address(this), 4);
+        uint256 burnCap = _shareBudget(uint32(gate.BURN_CAP_BPS()), 4);
+
+        vm.expectRevert(AntseedEmissionsGate.InvalidAddress.selector);
+        gate.claimRemainder(4, address(0xBEEF), 1);
+
+        (uint256 burnedAmount, uint256 reserveAmount) = gate.claimRemainder(4, reserveDest, budget);
+
+        assertEq(burnedAmount, burnCap);
+        assertEq(reserveAmount, budget - burnCap);
+        assertEq(token.balanceOf(gate.DEAD_ADDRESS()), burnCap);
+        assertEq(token.balanceOf(reserveDest), budget - burnCap);
+        assertEq(gate.epochBurnedAmount(4), burnCap);
+        assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 4), budget);
+
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claimRemainder(4, reserveDest, 1);
     }
 
     function test_fixedBucketSharesSumToPostMigrationEpochBudget() public {
@@ -1680,7 +1773,7 @@ contract AntseedEmissionsGateTest is Test {
             + gate.minterEpochBudget(RESERVE_MINTER_ID, 5) + gate.minterEpochBudget(VERIFICATION_MINTER_ID, 5);
         assertEq(totalBudget, gate.getEpochEmission(5));
 
-        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 5), _shareBudget(5_000, 5) * 2);
+        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 5), _shareBudget(USAGE_SHARE_BPS, 5));
     }
 
     function test_gateCapsTotalBucketMintsByEpochEmission() public {
@@ -1693,8 +1786,8 @@ contract AntseedEmissionsGateTest is Test {
         token.setRegistry(address(gate));
 
         uint256 epochEmission = gate.getEpochEmission(4);
-        uint256 sellerPoolsBudget = _shareBudget(45_000, 4);
-        uint256 usageBudget = _shareBudget(10_000, 4);
+        uint256 sellerPoolsBudget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
+        uint256 usageBudget = _shareBudget(USAGE_SHARE_BPS, 4);
         gate.claim(4, address(this), sellerPoolsBudget);
         vm.prank(usageMinter);
         gate.claim(4, address(this), usageBudget);
@@ -1713,22 +1806,22 @@ contract AntseedEmissionsGateTest is Test {
 
         _setUsageMinter(address(this));
         assertEq(_configuredMinter(USAGE_MINTER_ID), address(this));
-        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(10_000, 4));
-        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 7), _shareBudget(10_000, 7));
+        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
+        assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 7), _shareBudget(USAGE_SHARE_BPS, 7));
 
         _warpGateEpoch(5);
-        gate.claim(4, address(this), _shareBudget(10_000, 4));
-        assertEq(token.balanceOf(address(this)), _shareBudget(10_000, 4));
+        gate.claim(4, address(this), _shareBudget(USAGE_SHARE_BPS, 4));
+        assertEq(token.balanceOf(address(this)), _shareBudget(USAGE_SHARE_BPS, 4));
 
         address newMinter = address(0xBEEF);
         gate.setMinter(USAGE_MINTER_ID, newMinter, USAGE_SHARE_BPS, true);
         assertEq(_configuredMinter(USAGE_MINTER_ID), newMinter);
-        assertEq(gate.minterEpochMinted(USAGE_MINTER_ID, 4), _shareBudget(10_000, 4));
+        assertEq(gate.minterEpochMinted(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
         assertEq(gate.controllerMinterIds(address(this)), bytes32(0));
         assertEq(gate.controllerMinterIds(newMinter), USAGE_MINTER_ID);
 
         _warpGateEpoch(6);
-        uint256 epoch5Budget = _shareBudget(10_000, 5);
+        uint256 epoch5Budget = _shareBudget(USAGE_SHARE_BPS, 5);
         vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
         gate.claim(5, address(this), epoch5Budget);
 
@@ -1741,10 +1834,10 @@ contract AntseedEmissionsGateTest is Test {
         _deployGate(4);
 
         _setSellerPoolsMinter(address(this));
-        assertEq(gate.totalMinterShareBps(), 90_000);
+        assertEq(gate.totalMinterShareBps(), 80_000);
 
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 10_000, true);
-        assertEq(gate.totalMinterShareBps(), 55_000);
+        assertEq(gate.totalMinterShareBps(), 50_000);
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(10_000, 4));
     }
 
@@ -1758,7 +1851,7 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(configuredMinter, customMinter);
         assertEq(shareBps, 7_000);
         assertTrue(editable);
-        assertEq(gate.totalMinterShareBps(), 52_000);
+        assertEq(gate.totalMinterShareBps(), 47_000);
         assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), _shareBudget(7_000, 4));
 
         _warpGateEpoch(5);
@@ -1773,7 +1866,7 @@ contract AntseedEmissionsGateTest is Test {
         gate.claim(4, customMinter, 1);
 
         gate.removeMinter(CUSTOM_MINTER_ID);
-        assertEq(gate.totalMinterShareBps(), 45_000);
+        assertEq(gate.totalMinterShareBps(), 40_000);
         assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), 0);
 
         vm.prank(customMinter);
@@ -1787,7 +1880,7 @@ contract AntseedEmissionsGateTest is Test {
         _setSellerPoolsMinter(address(this));
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 30_000, true);
 
-        assertEq(gate.totalMinterShareBps(), 75_000);
+        assertEq(gate.totalMinterShareBps(), 70_000);
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(30_000, 4));
 
         _warpGateEpoch(5);
@@ -1800,16 +1893,16 @@ contract AntseedEmissionsGateTest is Test {
         _deployGate(4);
 
         _setSellerPoolsMinter(address(this));
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(45_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
 
         _warpGateEpoch(5);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 30_000, true);
 
-        assertEq(gate.totalMinterShareBps(), 75_000);
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(45_000, 4));
+        assertEq(gate.totalMinterShareBps(), 70_000);
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5), _shareBudget(30_000, 5));
 
-        uint256 epoch4Budget = _shareBudget(45_000, 4);
+        uint256 epoch4Budget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
         gate.claim(4, address(this), epoch4Budget);
         assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 4), epoch4Budget);
 
@@ -1911,7 +2004,7 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(5);
         _claim(TEAM_MINTER_ID, newTeamWallet, 4);
         _claim(RESERVE_MINTER_ID, newReserveWallet, 4);
-        uint256 verificationBudgetEpoch4 = _shareBudget(15_000, 4);
+        uint256 verificationBudgetEpoch4 = _shareBudget(VERIFICATION_SHARE_BPS, 4);
         _claim(VERIFICATION_MINTER_ID, newVerificationWallet, 4);
         assertEq(token.balanceOf(newVerificationWallet), verificationBudgetEpoch4);
         assertEq(token.balanceOf(newTeamWallet), _shareBudget(15_000, 4));
@@ -1921,7 +2014,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_verificationBucketFitsDefaultSplitAndPaysItsWallet() public {
         _deployGate(5);
 
-        uint256 verificationBudget = _shareBudget(15_000, 4);
+        uint256 verificationBudget = _shareBudget(VERIFICATION_SHARE_BPS, 4);
 
         _claim(VERIFICATION_MINTER_ID, verificationWallet, 4);
         assertEq(token.balanceOf(verificationWallet), verificationBudget);
@@ -1951,7 +2044,7 @@ contract AntseedEmissionsGateTest is Test {
         sellerPoolsRewards.indexPoolRewards(_agentId(seller), 10);
         vm.prank(seller);
         sellerPoolsRewards.claimStakerRewards(positionId, seller);
-        assertEq(token.balanceOf(seller), _shareBudget(45_000, 5));
+        assertEq(token.balanceOf(seller), sellerPoolsRewards.stakerEpochBudget(5));
 
         vm.expectRevert(AntseedSellerPoolsRewards.NothingToClaim.selector);
         vm.prank(seller);
@@ -1959,6 +2052,53 @@ contract AntseedEmissionsGateTest is Test {
 
         vm.expectRevert(AntseedSellerPoolsRewards.InvalidValue.selector);
         sellerPoolsRewards.pendingStakerReward(0, 5);
+    }
+
+    function test_stakerDynamicBudgetFollowsActiveStakeSmoothly() public {
+        _deployGate(3);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+        sellerPoolsRewards =
+            new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
+        sellerPoolsRewards.setDynamicStakerConfig(2_000, 40_000, 1 ether);
+        _setSellerPoolsMinter(address(sellerPoolsRewards));
+
+        assertEq(sellerPoolsRewards.stakerEpochBudget(4), 0);
+
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+        _warpGateEpoch(4);
+
+        assertEq(sellerPools.totalActiveStakeAtEpoch(4), 1 ether);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(4), _shareBudget(21_000, 4));
+        assertLt(sellerPoolsRewards.stakerEpochBudget(4), gate.controllerEpochBudget(address(sellerPoolsRewards), 4));
+    }
+
+    function test_stakerDynamicBudgetTargetsAmountAndClampsAfterHalving() public {
+        _deployGate(102);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+        sellerPoolsRewards =
+            new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
+        _setSellerPoolsMinter(address(sellerPoolsRewards));
+
+        uint256 stakeAmount = 500_000_000 ether;
+        deal(address(token), seller, stakeAmount);
+        _stakeAgentPool(sellerPools, seller, stakeAmount, 52);
+
+        uint256 shareBpsAtStake = sellerPoolsRewards.stakerMinShareBps()
+            + (uint256(sellerPoolsRewards.stakerMaxShareBps() - sellerPoolsRewards.stakerMinShareBps()) * stakeAmount)
+                / (stakeAmount + sellerPoolsRewards.stakeShareTarget());
+        uint256 desiredBudget = (gate.initialEmission() * shareBpsAtStake) / gate.BPS_DENOMINATOR();
+
+        assertEq(sellerPools.totalActiveStakeAtEpoch(103), stakeAmount);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(103), desiredBudget);
+        assertLt(desiredBudget, gate.controllerEpochBudget(address(sellerPoolsRewards), 103));
+
+        uint256 postHalvingMaxBudget = gate.controllerEpochBudget(address(sellerPoolsRewards), 104);
+        assertLt(postHalvingMaxBudget, desiredBudget);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(104), postHalvingMaxBudget);
     }
 
     function test_sellerPoolsRewardsBatchClaimUsesPositionLogic() public {

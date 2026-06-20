@@ -129,6 +129,7 @@ interface IAntseedSellerPools {
         returns (uint256[] memory);
     function poolActiveStakeAtEpoch(uint256 agentId, uint256 epoch) external view returns (uint256 activeStake);
     function poolActiveStakeAtEpoch(address seller, uint256 epoch) external view returns (uint256 activeStake);
+    function totalActiveStakeAtEpoch(uint256 epoch) external view returns (uint256 activeStake);
     function positions(uint256 positionId)
         external
         view

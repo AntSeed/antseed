@@ -28,6 +28,8 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     uint256 public constant HALVING_INTERVAL = 104;
     uint256 public constant INITIAL_EMISSION = 5_000_000e18;
     uint256 public constant BPS_DENOMINATOR = 100_000;
+    uint256 public constant BURN_CAP_BPS = 30_000;
+    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     bytes32 public constant LEGACY_EMISSIONS_MINTER_ID = keccak256("antseed.emissions.legacy.v1");
     bytes32 public constant TEAM_MINTER_ID = keccak256("antseed.emissions.team.v1");
     bytes32 public constant RESERVE_MINTER_ID = keccak256("antseed.emissions.reserve.v1");
@@ -38,6 +40,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     uint256 public immutable effectiveEpoch;
     bool public legacyEpochMintsDisabled;
     mapping(uint256 epoch => uint256 amount) public epochMinted;
+    mapping(uint256 epoch => uint256 amount) public epochBurnedAmount;
 
     uint32 public totalMinterShareBps;
     mapping(bytes32 minterId => Minter config) private _minters;
@@ -48,6 +51,13 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     event LegacyEpochMintsDisabled();
     event EmissionClaimed(
         bytes32 indexed minterId, address indexed controller, address indexed recipient, uint256 epoch, uint256 amount
+    );
+    event EmissionRemainderClaimed(
+        bytes32 indexed minterId,
+        address indexed controller,
+        uint256 indexed epoch,
+        uint256 burnedAmount,
+        uint256 reserveAmount
     );
     event MinterSet(bytes32 indexed minterId, address indexed controller, uint32 shareBps, bool editable);
     event MinterRemoved(bytes32 indexed minterId, address indexed controller);
@@ -130,6 +140,34 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         bytes32 id = controllerMinterIds[msg.sender];
         if (id == LEGACY_EMISSIONS_MINTER_ID) revert NotEmissionMinter();
         _claimFromMinter(id, msg.sender, epoch, recipient, amount);
+    }
+
+    function claimRemainder(uint256 epoch, address reserveRecipient, uint256 amount)
+        external
+        nonReentrant
+        returns (uint256 burnedAmount, uint256 reserveAmount)
+    {
+        bytes32 id = controllerMinterIds[msg.sender];
+        if (id == LEGACY_EMISSIONS_MINTER_ID) revert NotEmissionMinter();
+        if (amount == 0) revert InvalidValue();
+
+        address protocolReserve = registry.protocolReserve();
+        if (protocolReserve == address(0) || reserveRecipient != protocolReserve) revert InvalidAddress();
+
+        _chargeMinterBudget(id, msg.sender, epoch, amount);
+
+        uint256 burnCap = _shareBudget(epoch, uint32(BURN_CAP_BPS));
+        uint256 alreadyBurned = epochBurnedAmount[epoch];
+        if (alreadyBurned < burnCap) {
+            uint256 remainingBurn = burnCap - alreadyBurned;
+            burnedAmount = amount < remainingBurn ? amount : remainingBurn;
+            epochBurnedAmount[epoch] = alreadyBurned + burnedAmount;
+        }
+        reserveAmount = amount - burnedAmount;
+
+        if (burnedAmount != 0) _antsToken.mint(DEAD_ADDRESS, burnedAmount);
+        if (reserveAmount != 0) _antsToken.mint(reserveRecipient, reserveAmount);
+        emit EmissionRemainderClaimed(id, msg.sender, epoch, burnedAmount, reserveAmount);
     }
 
     function mint(address recipient, uint256 amount) external nonReentrant {
@@ -274,9 +312,17 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     function _claimFromMinter(bytes32 id, address controller, uint256 epoch, address recipient, uint256 amount)
         internal
     {
+        if (recipient == address(0)) revert InvalidAddress();
+
+        _chargeMinterBudget(id, controller, epoch, amount);
+
+        _antsToken.mint(recipient, amount);
+        emit EmissionClaimed(id, controller, recipient, epoch, amount);
+    }
+
+    function _chargeMinterBudget(bytes32 id, address controller, uint256 epoch, uint256 amount) internal {
         Minter memory minter = _minters[id];
         if (minter.controller == address(0) || minter.controller != controller) revert NotEmissionMinter();
-        if (recipient == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidValue();
         if (id == LEGACY_EMISSIONS_MINTER_ID && epoch != effectiveEpoch - 1) revert InvalidLegacyEpoch();
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
@@ -289,9 +335,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         uint256 minted = epochMinted[epoch] + amount;
         if (minted > getEpochEmission(epoch)) revert EpochEmissionExceeded();
         epochMinted[epoch] = minted;
-
-        _antsToken.mint(recipient, amount);
-        emit EmissionClaimed(id, controller, recipient, epoch, amount);
     }
 
     function _shareBudget(uint256 epoch, uint32 shareBps) internal pure returns (uint256) {

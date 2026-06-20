@@ -148,7 +148,7 @@ contract DeployRecognizedUsage is Script {
         console.log("SellerRegistry:       ", address(sellerRegistry));
 
         console.log("EmissionsGate:          ", address(gate));
-        gate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, 15_000, true);
+        gate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, 10_000, true);
 
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
@@ -169,8 +169,8 @@ contract DeployRecognizedUsage is Script {
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(sellerPools), true);
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(usageRewards), true);
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
-        gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 45_000, true);
-        gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 10_000, true);
+        gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 40_000, true);
+        gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 20_000, true);
 
         // Mint authority moves only after every bucket minter is configured: a
         // broadcast that fails before this line leaves the legacy emissions
@@ -188,11 +188,11 @@ contract DeployRecognizedUsage is Script {
         console.log("Token gate is:            ", address(gate));
         console.log("Registry emissions is now:", address(usageAccounting));
         console.log("Registry staking is now:  ", address(sellerRegistry));
-        console.log("Seller pools bucket:      45%");
-        console.log("Usage bucket:             10% (seller/operator 50%, buyer 50%)");
+        console.log("Seller pools bucket:      2-40% dynamic (40% max)");
+        console.log("Usage bucket:             buyer 5-10%, seller/operator 5-10% dynamic (20% max)");
         console.log("Team bucket:              15%");
         console.log("Reserve bucket:           15%");
-        console.log("Verification bucket:      15%");
+        console.log("Verification bucket:      10%");
         console.log("Seller pools minter:      ", address(sellerPoolsRewards));
         console.log("Usage minter:             ", address(usageRewards));
         console.log("Legacy claims minter:     ", existingEmissions);

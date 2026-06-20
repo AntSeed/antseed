@@ -40,7 +40,7 @@ contract MockDeposits {
  * @notice Fuzz tests for the direct seller/operator + buyer usage reward
  *         controller. Invariants:
  *           1. Reward split conserves: claimable + reserve == gross, gross is
- *              capped at the 50/50 usage side budget, claimable capped at 5%.
+ *              capped at the dynamic usage side budget, claimable capped at 5%.
  *           2. The controller never mints past its Gate share budget across
  *              both the seller and buyer side.
  *           3. Double-claim is impossible per (agent/buyer, epoch).
@@ -64,7 +64,7 @@ contract AntseedUsageRewardsFuzzTest is Test {
     uint256 constant GATE_EPOCH_DURATION = 7 days;
     uint256 constant BPS = 100_000;
     uint256 constant MAX_REWARD_SHARE_BPS = 500; // 5% in 1e4 bps
-    uint32 constant USAGE_SHARE_BPS = 10_000;
+    uint32 constant USAGE_SHARE_BPS = 20_000;
     bytes32 constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
 
     address legacyController = address(0xCAFE);
@@ -129,7 +129,7 @@ contract AntseedUsageRewardsFuzzTest is Test {
     }
 
     function _usageSideBudget(uint256 epoch) internal view returns (uint256) {
-        return gate.minterEpochBudget(USAGE_MINTER_ID, epoch) / 2;
+        return usageRewards.sellerEpochBudget(epoch);
     }
 
     /// @notice Seller-side claim: split conserves, claimable capped at 5%, and
@@ -153,7 +153,9 @@ contract AntseedUsageRewardsFuzzTest is Test {
         // Single agent => gross == full side budget; claimable capped at 5%.
         assertLe(toSeller, cap, "claimable above 5% cap");
         assertEq(toSeller + toReserve, sideBudget, "split does not conserve gross");
-        assertLe(gate.minterEpochMinted(USAGE_MINTER_ID, 5), gate.minterEpochBudget(USAGE_MINTER_ID, 5), "over minter budget");
+        assertLe(
+            gate.minterEpochMinted(USAGE_MINTER_ID, 5), gate.minterEpochBudget(USAGE_MINTER_ID, 5), "over minter budget"
+        );
 
         // Double-claim impossible.
         vm.expectRevert(AntseedUsageRewards.AlreadyClaimed.selector);
