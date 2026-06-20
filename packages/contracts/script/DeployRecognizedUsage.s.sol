@@ -160,11 +160,14 @@ contract DeployRecognizedUsage is Script {
 
         AntseedUsageRewards usageRewards =
             new AntseedUsageRewards(address(gate), registryAddress, address(usageAccounting));
+        usageRewards.setSellerPools(address(sellerPools));
         console.log("UsageRewards:       ", address(usageRewards));
 
         // SellerPools must be able to pay out withdrawals and slash to the dead
-        // address even while ANTS transfers are globally disabled.
+        // address. UsageRewards must be able to stake claimed rewards via
+        // stakeFor while ANTS transfers are globally disabled.
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(sellerPools), true);
+        IANTSTokenAdmin(antsToken).setTransferWhitelist(address(usageRewards), true);
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 45_000, true);
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 10_000, true);
