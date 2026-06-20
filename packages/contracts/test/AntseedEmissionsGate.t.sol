@@ -1559,6 +1559,7 @@ contract AntseedEmissionsGateTest is Test {
 
         usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
         _setUsageMinter(address(usageRewards));
+        assertEq(usageRewards.volumeShareTarget(), 1_000_000e6);
 
         vm.expectRevert(AntseedUsageRewards.InvalidAddress.selector);
         usageRewards.claimBuyerReward(address(0), 4);

@@ -59,7 +59,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     uint32 public buyerMaxShareBps = 10_000;
     uint32 public sellerMinShareBps = 5_000;
     uint32 public sellerMaxShareBps = 10_000;
-    uint256 public volumeShareTarget = 1_000_000e18;
+    uint256 public volumeShareTarget = 1_000_000e6;
 
     // ─── Events ──────────────────────────────────────────────────────
     event SellerPoolsSet(address indexed sellerPools);
