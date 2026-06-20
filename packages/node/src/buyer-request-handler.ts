@@ -8,13 +8,14 @@ import {
 import type { PeerInfo, PeerId } from "./types/peer.js";
 import type { PeerConnection } from "./p2p/connection-manager.js";
 import type { ProxyMux } from "./proxy/proxy-mux.js";
-import type { PaymentMux } from "./p2p/payment-mux.js";
+import { PaymentMux } from "./p2p/payment-mux.js";
 import { ConnectionState } from "./types/connection.js";
 import type { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import type { VerificationMux } from "./verification/verification-mux.js";
 import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
+import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
 import { tryParseJsonObject } from "./utils/json-codec.js";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "./types/protocol.js";
@@ -48,6 +49,7 @@ const DEFAULT_RESPONSE_AUTH_GRACE_MS = 30_000;
 export interface BuyerRequestHandlerDeps {
   localPeerId: PeerId;
   negotiator: BuyerPaymentNegotiator | null;
+  freeUsageManager?: BuyerFreeUsageManager | null;
   verificationStorage: VerificationStorage | null;
   verificationSampler: VerificationSampler | null;
   getConnection: (peer: PeerInfo) => Promise<PeerConnection>;
@@ -106,10 +108,27 @@ export class BuyerRequestHandler {
       await negotiator.applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
     }
 
-    // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
+    // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = extractServiceFromBody(req.body);
+    const isFreeService = requestedService ? isPeerServiceFree(peer, requestedService) : false;
     if (negotiator && requestedService) {
-      negotiator.bpm.trackRequestService(req.requestId, requestedService);
+      if (isFreeService) {
+        negotiator.trackFreeUsageRequestService(req.requestId, requestedService);
+        try {
+          await negotiator.prepareFreeUsageOpen(peer, conn);
+        } catch (err) {
+          debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        }
+      } else {
+        negotiator.bpm.trackRequestService(req.requestId, requestedService);
+      }
+    } else if (requestedService && isFreeService && this._deps.freeUsageManager) {
+      this._deps.freeUsageManager.trackRequestService(req.requestId, requestedService);
+      try {
+        this._prepareDirectFreeUsageOpen(peer, conn);
+      } catch (err) {
+        debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     let startTime = Date.now();
@@ -292,17 +311,41 @@ export class BuyerRequestHandler {
       if (result.action === 'return') return result.response;
       startTime = Date.now();
       const retriedResponse = await executeRequest();
-      negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+      if (!isFreeService) {
+        negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+      }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
       return retriedResponse;
     }
 
-    if (negotiator) {
+    if (negotiator && !isFreeService) {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
     return response;
+  }
+
+  private _prepareDirectFreeUsageOpen(peer: PeerInfo, conn: PeerConnection): void {
+    const freeUsage = this._deps.freeUsageManager;
+    if (!freeUsage) return;
+
+    const pmux = new PaymentMux(conn);
+    pmux.onFreeUsageAck((payload) => {
+      freeUsage.handleAck(peer.peerId, payload);
+    });
+    pmux.onNeedFreeUsageAuth((payload) => {
+      const p = freeUsage.handleNeedAuth(peer.peerId, payload, pmux);
+      p.catch((err) => {
+        debugWarn(`[BuyerRequest] Failed to handle free usage auth request from ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      });
+    });
+    this._deps.registerPaymentMux(peer.peerId, pmux);
+    void freeUsage.prepareOpen(peer, pmux)
+      .then(() => freeUsage.waitForOpenAck(peer.peerId))
+      .catch((err) => {
+        debugWarn(`[BuyerRequest] Free usage open ack unavailable for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      });
   }
 
   private _recordResponseAuth(
@@ -389,6 +432,33 @@ function shouldExpectResponseAuth(
   if (!requestedService) return false;
   if (response.statusCode === 402) return false;
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1) === true;
+}
+
+function isPeerServiceFree(peer: PeerInfo, service: string): boolean {
+  const servicePricing = findPeerServicePricing(peer, service);
+  if (!servicePricing) return false;
+  return (servicePricing.inputUsdPerMillion ?? 0) === 0
+    && (servicePricing.outputUsdPerMillion ?? 0) === 0
+    && (servicePricing.cachedInputUsdPerMillion ?? 0) === 0;
+}
+
+function findPeerServicePricing(peer: PeerInfo, service: string): {
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  cachedInputUsdPerMillion?: number;
+} | null {
+  for (const providerPricing of Object.values(peer.providerPricing ?? {})) {
+    const servicePricing = providerPricing.services?.[service];
+    if (servicePricing) return servicePricing;
+  }
+  if (peer.defaultInputUsdPerMillion != null || peer.defaultOutputUsdPerMillion != null) {
+    return {
+      inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+      outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+      cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
+    };
+  }
+  return null;
 }
 
 function concatChunks(chunks: Uint8Array[]): Uint8Array {

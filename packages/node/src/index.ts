@@ -72,6 +72,12 @@ export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
+export {
+  FreeUsageClient,
+  type FreeUsageClientConfig,
+  type FreeUsageChannelInfo,
+  type FreeUsageAgentStats,
+} from './payments/evm/free-usage-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
@@ -85,23 +91,48 @@ export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.
 export {
   signSpendingAuth,
   signReserveAuth,
+  signFreeUsageOpen,
+  signFreeUsageAuth,
   signSetOperator,
   makeChannelsDomain,
   makeDepositsDomain,
+  makeFreeUsageDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
+  FREE_USAGE_OPEN_TYPES,
+  FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  computeFreeUsageMetadataHash,
+  encodeFreeUsageMetadata,
   getServiceMetadataId,
   computeChannelId,
+  computeFreeUsageChannelId,
+  FREE_USAGE_CHANNEL_DOMAIN,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
+  ZERO_FREE_USAGE_METADATA,
+  ZERO_FREE_USAGE_METADATA_HASH,
 } from './payments/evm/signatures.js';
-export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata, SpendingAuthServiceMetadata } from './payments/evm/signatures.js';
+export type {
+  SpendingAuthMessage,
+  ReserveAuthMessage,
+  SetOperatorMessage,
+  FreeUsageOpenMessage,
+  FreeUsageAuthMessage,
+  SpendingAuthMetadata,
+  SpendingAuthServiceMetadata,
+  FreeUsageMetadata,
+  FreeUsageServiceMetadata,
+} from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
+export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
+export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';
+export { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';
+export type { SellerFreeUsageConfig } from './payments/seller-free-usage-manager.js';
 export { SellerPaymentManager } from './payments/seller-payment-manager.js';
 export type { SellerPaymentConfig } from './payments/seller-payment-manager.js';
 export { ChannelStore } from './payments/channel-store.js';

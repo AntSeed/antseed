@@ -277,6 +277,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         rpcUrl: cryptoOverrides?.rpcUrl,
         depositsContractAddress: cryptoOverrides?.depositsContractAddress,
         channelsContractAddress: cryptoOverrides?.channelsContractAddress,
+        freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true
@@ -297,6 +298,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
           depositsAddress: chainConfig.depositsContractAddress,
           channelsAddress: chainConfig.channelsContractAddress,
+          ...(chainConfig.freeUsageContractAddress ? { freeUsageAddress: chainConfig.freeUsageContractAddress } : {}),
           usdcAddress: chainConfig.usdcContractAddress,
           // Staking + identity registry addresses let the buyer-side node wire
           // a StakingClient and IdentityClient. Without stakingAddress, the

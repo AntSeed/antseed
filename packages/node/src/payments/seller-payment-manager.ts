@@ -15,7 +15,7 @@ import {
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
-import { ChannelStore, type StoredChannel } from './channel-store.js';
+import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
 import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
 
 export interface SellerPaymentConfig {
@@ -167,7 +167,7 @@ export class SellerPaymentManager {
       : DEFAULT_MIN_SETTLE_DELTA;
 
     // Hydrate from persisted channels
-    const activeChannels = this._channelStore.getActiveChannels('seller');
+    const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
     for (const channel of activeChannels) {
       this._activeBuyers.add(channel.peerId);
       this._hydratedChannelIds.add(channel.sessionId);
@@ -196,7 +196,7 @@ export class SellerPaymentManager {
    * Must be called after construction (async, cannot run in constructor).
    */
   async validateHydratedChannels(): Promise<void> {
-    const activeChannels = this._channelStore.getActiveChannels('seller');
+    const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
     if (activeChannels.length === 0) return;
 
     const { seller: sellerEvmAddr } = await this._resolvedAddresses!;
@@ -247,7 +247,12 @@ export class SellerPaymentManager {
     }
   }
 
-  private _evictStaleChannel(channelId: string, peerId: string, reason: string, status: 'settled' | 'timeout' = 'settled'): void {
+  private _evictStaleChannel(
+    channelId: string,
+    peerId: string,
+    reason: string,
+    status: typeof CHANNEL_STATUS.SETTLED | typeof CHANNEL_STATUS.TIMEOUT = CHANNEL_STATUS.SETTLED,
+  ): void {
     this._channelStore.updateChannelStatus(channelId, status);
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
@@ -461,7 +466,7 @@ export class SellerPaymentManager {
         const session: StoredChannel = {
           sessionId: channelId,
           peerId: buyerPeerId,
-          role: 'seller',
+          role: CHANNEL_ROLE.SELLER,
           sellerEvmAddr,
           buyerEvmAddr,
           nonce: 0,
@@ -474,7 +479,7 @@ export class SellerPaymentManager {
           reservedAt: now,
           settledAt: null,
           settledAmount: null,
-          status: 'active',
+          status: CHANNEL_STATUS.ACTIVE,
           latestBuyerSig: payload.spendingAuthSig,
           latestSpendingAuthSig: payload.spendingAuthSig,
           latestMetadata: payload.metadata,
@@ -877,7 +882,7 @@ export class SellerPaymentManager {
     const session: StoredChannel = {
       sessionId: channelId,
       peerId: buyerPeerId,
-      role: 'seller',
+      role: CHANNEL_ROLE.SELLER,
       sellerEvmAddr,
       buyerEvmAddr,
       nonce: 0,
@@ -890,7 +895,7 @@ export class SellerPaymentManager {
       reservedAt: now,
       settledAt: null,
       settledAmount: onChain.settled > 0n ? onChain.settled.toString() : null,
-      status: 'active',
+      status: CHANNEL_STATUS.ACTIVE,
       latestBuyerSig: payload.spendingAuthSig,
       latestSpendingAuthSig: payload.spendingAuthSig,
       latestMetadata: payload.metadata,
@@ -944,7 +949,7 @@ export class SellerPaymentManager {
     auth: SpendingAuthPayload,
   ): Promise<boolean> {
     // Look up active session for this buyer
-    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
     if (!session) {
       debugWarn(`[SellerPayment] validateAndAcceptAuth: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
       return false;
@@ -1071,7 +1076,7 @@ export class SellerPaymentManager {
    *   for future requests. No cleanup is performed so the session can resume.
    */
   async settleSession(buyerPeerId: string, { cleanupOnFailure = false, settleOnly = false } = {}): Promise<void> {
-    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
     if (!session) {
       debugWarn(`[SellerPayment] settleSession: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
       return;
@@ -1101,7 +1106,7 @@ export class SellerPaymentManager {
         this._closingChannels.add(channelId);
         try {
           await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
-          this._channelStore.updateChannelStatus(channelId, 'settled', amount.toString());
+          this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
           this._closeRetryCount.delete(channelId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
@@ -1131,7 +1136,7 @@ export class SellerPaymentManager {
   // ── Disconnect handling ───────────────────────────────────────
 
   onBuyerDisconnect(buyerPeerId: string): void {
-    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
     if (!session) return;
 
     const settleOnDisconnect = this._config.settleOnDisconnect ?? true;
@@ -1167,7 +1172,7 @@ export class SellerPaymentManager {
    */
   async checkTimeouts(): Promise<void> {
     const nowSecs = Math.floor(Date.now() / 1000);
-    const activeChannels = this._channelStore.getActiveChannels('seller');
+    const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
 
     for (const channel of activeChannels) {
       let accepted = this._acceptedCumulative.get(channel.sessionId) ?? 0n;
@@ -1204,7 +1209,12 @@ export class SellerPaymentManager {
           if (onChainState.status !== 'active') {
             // 'unknown' means the RPC returned partial data. Evict locally
             // rather than risking a close() against an ambiguous channel.
-            this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline, on-chain status unknown', 'timeout');
+            this._evictStaleChannel(
+              channel.sessionId,
+              channel.peerId,
+              'no auths, past deadline, on-chain status unknown',
+              CHANNEL_STATUS.TIMEOUT,
+            );
             continue;
           }
           await this._closeWithoutAuth(channel.sessionId, channel.peerId, onChainState.channel.settled);
@@ -1230,7 +1240,7 @@ export class SellerPaymentManager {
     const retries = this._closeRetryCount.get(channelId) ?? 0;
     if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
       debugWarn(`[SellerPayment] Zombie close failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to local eviction`);
-      this._evictStaleChannel(channelId, peerId, 'no auths, past deadline, close retries exhausted', 'timeout');
+      this._evictStaleChannel(channelId, peerId, 'no auths, past deadline, close retries exhausted', CHANNEL_STATUS.TIMEOUT);
       return;
     }
 
@@ -1239,7 +1249,7 @@ export class SellerPaymentManager {
     try {
       await this._channelsClient.close(this._signer, channelId, onChainSettled, '0x', '0x');
       this._closeRetryCount.delete(channelId);
-      this._evictStaleChannel(channelId, peerId, 'zombie closed on-chain', 'settled');
+      this._evictStaleChannel(channelId, peerId, 'zombie closed on-chain', CHANNEL_STATUS.SETTLED);
     } catch (err) {
       this._closeRetryCount.set(channelId, retries + 1);
       debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
@@ -1256,7 +1266,7 @@ export class SellerPaymentManager {
 
   /** Get the active session for a buyer peer, or null. */
   getChannelByPeer(buyerPeerId: string): StoredChannel | null {
-    return this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
+    return this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
   }
 
   /** Get total USDC spent for a session (sum of recordSpend calls). */
@@ -1304,7 +1314,7 @@ export class SellerPaymentManager {
     let suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
     if (buyerPeerId) {
       const priorSession = this._channelStore.getLatestChannel(buyerPeerId, 'seller');
-      if (priorSession && priorSession.status === 'settled') {
+      if (priorSession && priorSession.status === CHANNEL_STATUS.SETTLED) {
         // Returning buyer with proven history — could use a different amount
         // For now, use the same default; config can override later
         suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
@@ -1336,7 +1346,7 @@ export class SellerPaymentManager {
       debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${amount}`);
       try {
         await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
-        this._channelStore.updateChannelStatus(channelId, 'settled', amount.toString());
+        this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
         debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
@@ -1346,7 +1356,7 @@ export class SellerPaymentManager {
       // No voucher — seller can't claim anything. Clean up locally;
       // buyer will withdraw after grace period.
       debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — no SpendingAuth, cleaning up locally`);
-      this._channelStore.updateChannelStatus(channelId, 'timeout');
+      this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
     }
 
     // Clean up in-memory state
@@ -1382,7 +1392,7 @@ export class SellerPaymentManager {
 
       for (const event of events) {
         // Only handle channels this seller is actively tracking
-        if (this._acceptedCumulative.has(event.channelId) || this._channelStore.getChannel(event.channelId)?.status === 'active') {
+        if (this._acceptedCumulative.has(event.channelId) || this._channelStore.getChannel(event.channelId)?.status === CHANNEL_STATUS.ACTIVE) {
           await this.handleCloseRequested(event.channelId);
         }
       }

@@ -196,6 +196,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedFreeUsage contract address override */
+    freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
     stakingContractAddress?: string;
     /** USDC token contract address override */

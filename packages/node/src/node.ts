@@ -66,8 +66,12 @@ import {
   type PaymentMethod,
   DepositsClient,
   ChannelsClient,
+  FreeUsageClient,
+  BuyerFreeUsageManager,
+  SellerFreeUsageManager,
   StakingClient,
   ChannelStore,
+  CHANNEL_ROLE,
   CHANNEL_STATUS,
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
@@ -125,6 +129,8 @@ export interface NodePaymentsConfig {
   depositsAddress?: string;
   /** Deployed AntseedChannels contract address */
   channelsAddress?: string;
+  /** Optional deployed AntseedFreeUsage contract address */
+  freeUsageAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** ERC-8004 IdentityRegistry contract address */
@@ -250,6 +256,9 @@ export class AntseedNode extends EventEmitter {
   private _balanceManager: BalanceManager | null = null;
   private _depositsClient: DepositsClient | null = null;
   private _channelsClient: ChannelsClient | null = null;
+  private _freeUsageClient: FreeUsageClient | null = null;
+  private _buyerFreeUsageManager: BuyerFreeUsageManager | null = null;
+  private _sellerFreeUsageManager: SellerFreeUsageManager | null = null;
   private _stakingClient: StakingClient | null = null;
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
@@ -340,6 +349,20 @@ export class AntseedNode extends EventEmitter {
     return this._identityClient;
   }
 
+  /** AntseedFreeUsage client (null if not configured). */
+  get freeUsageClient(): FreeUsageClient | null {
+    return this._freeUsageClient;
+  }
+
+  /** Buyer-side free usage manager (null if free usage is not configured). */
+  get buyerFreeUsageManager(): BuyerFreeUsageManager | null {
+    return this._buyerFreeUsageManager;
+  }
+
+  /** Seller-side free usage manager (null if free usage is not configured). */
+  get sellerFreeUsageManager(): SellerFreeUsageManager | null {
+    return this._sellerFreeUsageManager;
+  }
 
   /** Current connection state for a peer if a connection exists, otherwise null. */
   getPeerConnectionState(peerId: PeerId): ConnectionState | null {
@@ -406,6 +429,9 @@ export class AntseedNode extends EventEmitter {
     // End all active buyer payment sessions before shutdown
     if (this._buyerNegotiator) {
       this._buyerNegotiator.cleanup();
+    }
+    if (this._sellerFreeUsageManager) {
+      await this._sellerFreeUsageManager.flushAllPendingRecords();
     }
 
     if (this._sessionTracker) {
@@ -503,6 +529,9 @@ export class AntseedNode extends EventEmitter {
     this._balanceManager = null;
     this._depositsClient = null;
     this._channelsClient = null;
+    this._freeUsageClient = null;
+    this._buyerFreeUsageManager = null;
+    this._sellerFreeUsageManager = null;
     this._stakingClient = null;
     this._identityClient = null;
     this._sellerAddressResolver = null;
@@ -935,18 +964,18 @@ export class AntseedNode extends EventEmitter {
     const buyerAddress = this._identity?.wallet.address ?? null;
     const channel = (buyerAddress != null)
       ? (
-        this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
-        ?? this._channelStore?.getLatestChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
+        this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
+        ?? this._channelStore?.getLatestChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
       )
       : (
-        this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
-        ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+        this._channelStore?.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER)
+        ?? this._channelStore?.getLatestChannel(sellerPeerId, CHANNEL_ROLE.BUYER)
       )
       ?? null;
 
     const lifetime = (buyerAddress != null)
-      ? this._channelStore?.getTotalsByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
-      : this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer')
+      ? this._channelStore?.getTotalsByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
+      : this._channelStore?.getTotalsByPeer(sellerPeerId, CHANNEL_ROLE.BUYER)
       ?? null;
 
     const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
@@ -1004,7 +1033,7 @@ export class AntseedNode extends EventEmitter {
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
-    const stored = this._channelStore.getActiveChannelsByBuyer('buyer', buyerAddress);
+    const stored = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, buyerAddress);
     return stored.map((c) => {
       const liveReserve = this._buyerPaymentManager?.getReserveCeiling(c.peerId);
       const reserveMax = (liveReserve != null && liveReserve > 0n)
@@ -1202,6 +1231,8 @@ export class AntseedNode extends EventEmitter {
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
+        this._buyerFreeUsageManager?.onPeerDisconnect(peerId);
+        this._sellerFreeUsageManager?.onPeerDisconnect(peerId);
         // Handle buyer disconnect (seller side)
         if (this._sellerPaymentManager) {
           this._sellerPaymentManager.onBuyerDisconnect(peerId);
@@ -1271,6 +1302,7 @@ export class AntseedNode extends EventEmitter {
     );
 
     await this._initializePayments(dataDir);
+    this._warnIfFreeUsageMeteringUnavailable();
 
     // Wire idle session events to on-chain settlement
     if (this._sellerPaymentManager) {
@@ -1376,6 +1408,7 @@ export class AntseedNode extends EventEmitter {
       identity,
       providers: this._providers,
       sellerPaymentManager: this._sellerPaymentManager,
+      sellerFreeUsageManager: this._sellerFreeUsageManager,
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,
@@ -1471,6 +1504,7 @@ export class AntseedNode extends EventEmitter {
           {},
           this,
           this._sellerAddressResolver ?? undefined,
+          this._buyerFreeUsageManager,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);
       }
@@ -1486,6 +1520,7 @@ export class AntseedNode extends EventEmitter {
       {
         localPeerId: identity.peerId,
         negotiator: this._buyerNegotiator,
+        freeUsageManager: this._buyerFreeUsageManager,
         verificationStorage: this._verificationStorage,
         verificationSampler: this._verificationSampler,
         getConnection: (peer) => this._getOrCreateConnection(peer),
@@ -1524,6 +1559,22 @@ export class AntseedNode extends EventEmitter {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
       });
     }
+    if (this._sellerFreeUsageManager) {
+      const freeUsage = this._sellerFreeUsageManager;
+      paymentMux.onFreeUsageOpen((payload) => {
+        freeUsage.handleOpen(buyerPeerId, payload, paymentMux);
+      });
+      paymentMux.onFreeUsageAuth((payload) => {
+        freeUsage.handleAuth(buyerPeerId, payload, paymentMux);
+      });
+    } else {
+      paymentMux.onFreeUsageOpen(() => {
+        debugWarn(`[Node] FreeUsageOpen ignored — SellerFreeUsageManager not configured`);
+      });
+      paymentMux.onFreeUsageAuth(() => {
+        debugWarn(`[Node] FreeUsageAuth ignored — SellerFreeUsageManager not configured`);
+      });
+    }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
     this._verificationMuxes.set(buyerPeerId, verificationMux);
 
@@ -1541,6 +1592,17 @@ export class AntseedNode extends EventEmitter {
     }
 
     const fallbackRpcUrls = payments.fallbackRpcUrls;
+    const paymentsDir = join(dataDir, "payments");
+
+    // Shared store for paid and free channel accounting.
+    if (!this._channelStore) {
+      try {
+        this._channelStore = new ChannelStore(paymentsDir);
+        debugLog("[Node] ChannelStore initialized");
+      } catch (err) {
+        debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
+      }
+    }
 
     // Initialize DepositsClient
     if (payments.rpcUrl && payments.depositsAddress && payments.usdcAddress) {
@@ -1588,6 +1650,39 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] SellerAddressResolver initialized`);
     }
 
+    // Initialize FreeUsageClient
+    if (payments.rpcUrl && payments.freeUsageAddress) {
+      this._freeUsageClient = new FreeUsageClient({
+        rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+        contractAddress: payments.freeUsageAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
+      });
+      debugLog(`[Node] FreeUsageClient initialized (contract=${payments.freeUsageAddress.slice(0, 10)}...)`);
+
+      if (this._identity) {
+        const freeUsageConfig = {
+          rpcUrl: payments.rpcUrl,
+          ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+          freeUsageContractAddress: payments.freeUsageAddress,
+          chainId: payments.chainId ?? 8453,
+        };
+        this._buyerFreeUsageManager = new BuyerFreeUsageManager(
+          this._identity,
+          {
+            chainId: freeUsageConfig.chainId,
+            freeUsageContractAddress: freeUsageConfig.freeUsageContractAddress,
+            defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900,
+          },
+          this._sellerAddressResolver ?? undefined,
+          this._channelStore ?? undefined,
+        );
+        if (this._config.role === 'seller') {
+          this._sellerFreeUsageManager = new SellerFreeUsageManager(this._identity, freeUsageConfig);
+        }
+      }
+    }
+
     // Initialize StakingClient
     if (payments.rpcUrl && payments.stakingAddress && payments.usdcAddress) {
       this._stakingClient = new StakingClient({
@@ -1609,17 +1704,6 @@ export class AntseedNode extends EventEmitter {
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
-    }
-
-    // Initialize ChannelStore for persistent payment channels (shared instance)
-    const paymentsDir = join(dataDir, "payments");
-    if (!this._channelStore) {
-      try {
-        this._channelStore = new ChannelStore(paymentsDir);
-        debugLog("[Node] ChannelStore initialized");
-      } catch (err) {
-        debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
-      }
     }
 
     // Initialize SellerPaymentManager for seller role
@@ -1907,6 +1991,33 @@ export class AntseedNode extends EventEmitter {
     };
   }
 
+  private _warnIfFreeUsageMeteringUnavailable(): void {
+    if (this._sellerFreeUsageManager || !this._hasFreePricedService()) return;
+    const missingAddress = !this._config.payments?.freeUsageAddress;
+    debugWarn(
+      `[Node] Zero-priced service advertised but AntseedFreeUsage is not configured` +
+      `${missingAddress ? ' (payments.freeUsageAddress missing)' : ''}. ` +
+      `Free requests will be served without on-chain usage proofs.`,
+    );
+  }
+
+  private _hasFreePricedService(): boolean {
+    for (const provider of this._providers) {
+      if (provider.services.length === 0 && this._isZeroPricing(provider.pricing.defaults)) return true;
+      for (const service of provider.services) {
+        const servicePricing = provider.pricing.services?.[service] ?? provider.pricing.defaults;
+        if (this._isZeroPricing(servicePricing)) return true;
+      }
+    }
+    return false;
+  }
+
+  private _isZeroPricing(pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }): boolean {
+    const cachedPrice = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
+    return pricing.inputUsdPerMillion === 0
+      && pricing.outputUsdPerMillion === 0
+      && cachedPrice === 0;
+  }
 }
 
 function parsePeerAddress(address: string): { host: string; port: number } {

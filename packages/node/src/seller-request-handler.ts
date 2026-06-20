@@ -8,6 +8,7 @@ import type { PaymentMux } from './p2p/payment-mux.js';
 import type { Identity } from './p2p/identity.js';
 import type { ChannelsClient } from './payments/evm/channels-client.js';
 import type { SellerPaymentManager } from './payments/seller-payment-manager.js';
+import type { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';
 import { ProxyMux } from './proxy/proxy-mux.js';
 import type { PeerConnection } from './p2p/connection-manager.js';
 import type {
@@ -26,6 +27,7 @@ export interface SellerRequestHandlerDeps {
   identity: Identity;
   providers: Provider[];
   sellerPaymentManager: SellerPaymentManager | null;
+  sellerFreeUsageManager?: SellerFreeUsageManager | null;
   sessionTracker: SellerSessionTracker | null;
   channelsClient: ChannelsClient | null;
   announcer: PeerAnnouncer | null;
@@ -454,6 +456,13 @@ export class SellerRequestHandler {
               service: this._extractRequestedService(request) ?? undefined,
             }, buyerPeerId, 'post-response');
           }
+        } else if (isFreeService) {
+          this._deps.sellerFreeUsageManager?.reportUsageRequest(buyerPeerId, paymentMux, {
+            requestId: request.requestId,
+            inputTokens: responseUsage.inputTokens,
+            outputTokens: responseUsage.outputTokens,
+            service: this._extractRequestedService(request) ?? undefined,
+          });
         }
 
         const buyerSupportsResponseAuth = conn.hasRemoteCapability(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1);

@@ -15,6 +15,10 @@ export enum MessageType {
   // --- Payment Protocol (0x50-0x5F) ---
   SpendingAuth = 0x50,
   AuthAck = 0x51,
+  FreeUsageOpen = 0x52,
+  FreeUsageAuth = 0x53,
+  FreeUsageAck = 0x54,
+  NeedFreeUsageAuth = 0x55,
   PaymentRequired = 0x56,
   NeedAuth = 0x58,
 
@@ -68,6 +72,53 @@ export interface SpendingAuthPayload {
  */
 export interface AuthAckPayload {
   channelId: string;
+}
+
+/**
+ * Buyer opens a zero-price usage channel. This does not require deposits.
+ */
+export interface FreeUsageOpenPayload {
+  channelId: string;
+  salt: string;
+  deadline: number;
+  openSig: string;
+}
+
+/**
+ * Buyer authorizes a cumulative zero-price usage record after the seller reports
+ * usage for a served request.
+ */
+export interface FreeUsageAuthPayload {
+  channelId: string;
+  cumulativeInputTokens: string;
+  cumulativeOutputTokens: string;
+  sequence: string;
+  metadataHash: string;
+  metadata: string;
+  deadline: number;
+  usageSig: string;
+}
+
+/**
+ * Seller acknowledges a free usage channel/open or record was accepted for
+ * on-chain reporting.
+ */
+export interface FreeUsageAckPayload {
+  channelId: string;
+  acceptedSequence?: string;
+}
+
+/**
+ * Seller asks the buyer to sign zero-price usage for a completed request.
+ */
+export interface NeedFreeUsageAuthPayload {
+  channelId: string;
+  requiredSequence: string;
+  currentAcceptedSequence: string;
+  requestId?: string;
+  inputTokens?: string;
+  outputTokens?: string;
+  service?: string;
 }
 
 /**

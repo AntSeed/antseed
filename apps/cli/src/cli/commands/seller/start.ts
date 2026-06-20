@@ -432,6 +432,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           fallbackRpcUrls: config.payments.crypto?.fallbackRpcUrls,
           depositsContractAddress: config.payments.crypto?.depositsContractAddress,
           channelsContractAddress: config.payments.crypto?.channelsContractAddress,
+          freeUsageContractAddress: config.payments.crypto?.freeUsageContractAddress,
           stakingContractAddress: config.payments.crypto?.stakingContractAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
@@ -447,6 +448,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
           depositsContractAddress: cc.depositsContractAddress,
           channelsContractAddress: cc.channelsContractAddress,
+          ...(cc.freeUsageContractAddress ? { freeUsageContractAddress: cc.freeUsageContractAddress } : {}),
           usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
@@ -597,6 +599,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             ...(paymentConfig.crypto.fallbackRpcUrls ? { fallbackRpcUrls: paymentConfig.crypto.fallbackRpcUrls } : {}),
             depositsAddress: paymentConfig.crypto.depositsContractAddress,
             channelsAddress: paymentConfig.crypto.channelsContractAddress,
+            ...(paymentConfig.crypto.freeUsageContractAddress ? { freeUsageAddress: paymentConfig.crypto.freeUsageContractAddress } : {}),
             usdcAddress: paymentConfig.crypto.usdcAddress,
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,

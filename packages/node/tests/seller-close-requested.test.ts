@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_STATUS } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { SpendingAuthPayload } from '../src/types/protocol.js';
@@ -167,7 +167,7 @@ describe('SellerPaymentManager — CloseRequested handling', () => {
 
     // Channel should be settled
     const session = store.getChannel(channelId);
-    expect(session!.status).toBe('settled');
+    expect(session!.status).toBe(CHANNEL_STATUS.SETTLED);
 
     // In-memory state cleaned up
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
@@ -191,7 +191,7 @@ describe('SellerPaymentManager — CloseRequested handling', () => {
 
     // Channel should be marked as timeout
     const session = store.getChannel(channelId);
-    expect(session!.status).toBe('timeout');
+    expect(session!.status).toBe(CHANNEL_STATUS.TIMEOUT);
 
     // In-memory state cleaned up
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);

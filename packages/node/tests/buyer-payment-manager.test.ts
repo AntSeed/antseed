@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { AbiCoder, id, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_ROLE } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
@@ -561,7 +561,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeRequestCount: 1n,
     });
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     const storedServices = store.getServiceTotals(channel!.sessionId);
     expect(storedServices).toHaveLength(2);
@@ -1117,7 +1117,7 @@ describe('BuyerPaymentManager', () => {
     expect(totals.requests).toBe(2);
 
     // Persisted in channel store
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('1500');
     expect(channel!.previousConsumption).toBe('350');
@@ -1144,7 +1144,7 @@ describe('BuyerPaymentManager', () => {
 
     // Reopen store and verify persisted data
     const store2 = new ChannelStore(tempDir);
-    const channel = store2.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store2.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('2000');
     expect(channel!.previousConsumption).toBe('800');
@@ -1193,7 +1193,7 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(extended.cumulativeAmount)).toBeGreaterThan(previousCumulative);
     expect(extended.metadata).toBe(previousMetadata);
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.authMax).toBe(extended.cumulativeAmount);
   });
@@ -1354,7 +1354,7 @@ describe('BuyerPaymentManager', () => {
       requests: 2,
     });
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('1500');
     expect(channel!.previousConsumption).toBe('350');

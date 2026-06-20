@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { Wallet, AbiCoder } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_STATUS } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type {
   SpendingAuthPayload,
@@ -244,7 +244,7 @@ describe('Cumulative SpendingAuth Integration', () => {
 
     const session = newStore.getChannel(channelId);
     expect(session).not.toBeNull();
-    expect(session!.status).toBe('active');
+    expect(session!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(BigInt(session!.tokensDelivered)).toBeGreaterThan(0n);
 
     buyerStore = newStore;

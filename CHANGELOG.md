@@ -11,6 +11,10 @@ This project uses selective package publishing. Each release entry lists the pub
 - `@antseed/cli`
 - `@antseed/node`
 
+### Added
+
+- Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
+
 ### Removed
 
 - Removed the legacy subpool/subscription payment surface, including the `antseed buyer subscribe` command, subpool payment client/config exports, and the `AntseedSubPool` contract deployment path.
@@ -18,6 +22,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Changed
 
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
+- Increased the default free-usage on-chain record flush interval from 10 seconds to 5 minutes to reduce background transaction frequency while preserving batch, disconnect, and shutdown flushes.
 
 ### Fixed
 

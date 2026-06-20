@@ -14,17 +14,17 @@ import {
   makeChannelsDomain,
   computeMetadataHash,
   encodeMetadata,
-  getServiceMetadataId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
   computeChannelId,
 } from './evm/signatures.js';
-import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata, SpendingAuthServiceMetadata } from './evm/signatures.js';
+import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress, type PeerId } from '../types/peer.js';
 import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
 import type { PeerMetadata } from '../discovery/peer-metadata.js';
-import { ChannelStore, type StoredChannel } from './channel-store.js';
+import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
+import { advanceUsageMetadata, CountedRequestTracker, RequestServiceTracker } from './channel-usage-accounting.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
@@ -92,7 +92,7 @@ export class BuyerPaymentManager {
   /** requestId -> service/model the buyer requested (from its own request body).
    *  Used in handleNeedAuth to validate cost with the correct pricing tier
    *  without trusting the seller's claim of which service was used. */
-  private readonly _requestService = new Map<string, string>();
+  private readonly _requestService = new RequestServiceTracker();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -130,25 +130,12 @@ export class BuyerPaymentManager {
 
   /** Hydrate cumulative tracking maps from persisted active buyer sessions. */
   private _hydrateFromStore(): void {
-    const activeChannels = this._channelStore.getActiveChannelsByBuyer('buyer', this._identity.wallet.address);
+    const activeChannels = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, this._identity.wallet.address);
     for (const channel of activeChannels) {
       const peerId = channel.peerId;
       const persistedCumulative = BigInt(channel.authMax);
-      const persistedServiceTotals = this._channelStore.getServiceTotals(channel.sessionId);
       this._cumulativeAmount.set(peerId, persistedCumulative);
-      this._metadata.set(peerId, {
-        cumulativeInputTokens: BigInt(channel.tokensDelivered),
-        cumulativeOutputTokens: BigInt(channel.previousConsumption),
-        cumulativeRequestCount: BigInt(channel.requestCount),
-        services: persistedServiceTotals.map((total) => ({
-          serviceId: total.serviceId,
-          cumulativeAmount: BigInt(total.cumulativeAmount),
-          cumulativeInputTokens: BigInt(total.cumulativeInputTokens),
-          cumulativeCachedInputTokens: BigInt(total.cumulativeCachedInputTokens),
-          cumulativeOutputTokens: BigInt(total.cumulativeOutputTokens),
-          cumulativeRequestCount: BigInt(total.cumulativeRequestCount),
-        })),
-      });
+      this._metadata.set(peerId, this._channelStore.getChannelMetadata(channel));
       // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
       // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
       // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
@@ -195,12 +182,12 @@ export class BuyerPaymentManager {
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
-    return this._channelStore.getActiveChannelByPeerAndBuyer(sellerPeerId, 'buyer', this._identity.wallet.address);
+    return this._channelStore.getActiveChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, this._identity.wallet.address);
   }
 
   retireSession(
     sellerPeerId: string,
-    status: Extract<StoredChannel['status'], 'settled' | 'timeout' | 'ghost'>,
+    status: typeof CHANNEL_STATUS.SETTLED | typeof CHANNEL_STATUS.TIMEOUT | typeof CHANNEL_STATUS.GHOST,
     settledAmount?: bigint,
   ): void {
     const session = this.getActiveSession(sellerPeerId);
@@ -380,79 +367,16 @@ export class BuyerPaymentManager {
     return requestedAmount > maxSignable && maxSignable >= ceiling;
   }
 
-  private _withServiceMetadata(
-    metadata: SpendingAuthMetadata,
-    service: string | undefined,
-    delta: {
-      amount: bigint;
-      inputTokens: bigint;
-      cachedInputTokens: bigint;
-      outputTokens: bigint;
-      requests: bigint;
-    },
-  ): SpendingAuthMetadata {
-    if (!service || service.trim().length === 0) return metadata;
-
-    const serviceId = getServiceMetadataId(service);
-    const byServiceId = new Map<string, SpendingAuthServiceMetadata>();
-    for (const entry of metadata.services ?? []) {
-      byServiceId.set(entry.serviceId, { ...entry });
-    }
-
-    const existing = byServiceId.get(serviceId) ?? {
-      serviceId,
-      cumulativeAmount: 0n,
-      cumulativeInputTokens: 0n,
-      cumulativeCachedInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
-      cumulativeRequestCount: 0n,
-    };
-
-    byServiceId.set(serviceId, {
-      serviceId,
-      cumulativeAmount: existing.cumulativeAmount + delta.amount,
-      cumulativeInputTokens: existing.cumulativeInputTokens + delta.inputTokens,
-      cumulativeCachedInputTokens: existing.cumulativeCachedInputTokens + delta.cachedInputTokens,
-      cumulativeOutputTokens: existing.cumulativeOutputTokens + delta.outputTokens,
-      cumulativeRequestCount: existing.cumulativeRequestCount + delta.requests,
-    });
-
-    return {
-      ...metadata,
-      services: [...byServiceId.values()].sort((a, b) =>
-        a.serviceId < b.serviceId ? -1 : a.serviceId > b.serviceId ? 1 : 0,
-      ),
-    };
-  }
-
   /**
    * Both signPerRequestAuth (buyer-initiated) and handleNeedAuth (seller-initiated)
    * can fire for the same request when the proactive auth doesn't fully cover the
    * seller's required cumulative. Whichever path counts a request's tokens first
    * records its requestId here so the other path attributes only the amount delta.
    */
-  private readonly _serviceTokensCounted = new Set<string>();
-
-  private _markServiceTokensCounted(requestId: string): void {
-    if (this._serviceTokensCounted.size >= 512) {
-      const oldest = this._serviceTokensCounted.values().next().value;
-      if (oldest !== undefined) this._serviceTokensCounted.delete(oldest);
-    }
-    this._serviceTokensCounted.add(requestId);
-  }
+  private readonly _serviceTokensCounted = new CountedRequestTracker();
 
   private _persistServiceMetadata(sessionId: string, metadata: SpendingAuthMetadata): void {
-    this._channelStore.replaceServiceTotals(
-      sessionId,
-      (metadata.services ?? []).map((service) => ({
-        serviceId: service.serviceId,
-        cumulativeAmount: service.cumulativeAmount.toString(),
-        cumulativeInputTokens: service.cumulativeInputTokens.toString(),
-        cumulativeCachedInputTokens: service.cumulativeCachedInputTokens.toString(),
-        cumulativeOutputTokens: service.cumulativeOutputTokens.toString(),
-        cumulativeRequestCount: service.cumulativeRequestCount.toString(),
-      })),
-    );
+    this._channelStore.replaceMetadataServiceTotals(sessionId, metadata.services);
   }
 
   private async _sendUpdatedSpendingAuth(
@@ -591,7 +515,7 @@ export class BuyerPaymentManager {
     const session: StoredChannel = {
       sessionId: channelId,
       peerId: sellerPeerId,
-      role: 'buyer',
+      role: CHANNEL_ROLE.BUYER,
       sellerEvmAddr,
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
@@ -604,7 +528,7 @@ export class BuyerPaymentManager {
       reservedAt: now,
       settledAt: null,
       settledAmount: null,
-      status: 'active',
+      status: CHANNEL_STATUS.ACTIVE,
       latestBuyerSig: null,
       latestSpendingAuthSig: null,
       latestMetadata: null,
@@ -851,30 +775,22 @@ export class BuyerPaymentManager {
     const signedDelta = newAmount - prevAmount;
 
     // Update cumulative metadata
-    const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
-    const totalsMeta: SpendingAuthMetadata = {
-      cumulativeInputTokens: prev.cumulativeInputTokens + estimatedInputTokens,
-      cumulativeOutputTokens: prev.cumulativeOutputTokens + estimatedOutputTokens,
-      cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
-      services: prev.services ?? [],
-    };
     // If handleNeedAuth already counted this request (seller-initiated NeedAuth
     // raced ahead), skip service attribution entirely: service totals are
     // documented as lower bounds, so undercounting beats double-counting.
-    const alreadyCounted =
-      responseStats.requestId != null && this._serviceTokensCounted.has(responseStats.requestId);
-    const newMeta = alreadyCounted
-      ? totalsMeta
-      : this._withServiceMetadata(totalsMeta, responseStats.service, {
-          amount: signedDelta,
-          inputTokens: estimatedInputTokens,
-          cachedInputTokens: estimatedCachedInputTokens,
-          outputTokens: estimatedOutputTokens,
-          requests: 1n,
-        });
-    if (responseStats.requestId != null && !alreadyCounted) {
-      this._markServiceTokensCounted(responseStats.requestId);
-    }
+    const alreadyCounted = this._serviceTokensCounted.has(responseStats.requestId);
+    const newMeta = advanceUsageMetadata(
+      this._metadata.get(sellerPeerId),
+      alreadyCounted ? undefined : responseStats.service,
+      {
+        amount: signedDelta,
+        inputTokens: estimatedInputTokens,
+        cachedInputTokens: estimatedCachedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        requests: 1n,
+      },
+    );
+    if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
     this._metadata.set(sellerPeerId, newMeta);
     this._persistServiceMetadata(session.sessionId, newMeta);
 
@@ -938,7 +854,7 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
+    const buyerService = this._requestService.get(payload.requestId);
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -950,8 +866,7 @@ export class BuyerPaymentManager {
       );
       return;
     }
-    if (payload.requestId) this._requestService.delete(payload.requestId);
-
+    this._requestService.take(payload.requestId);
     let acceptedServiceCost = 0n;
     const reportedInputTokens = BigInt(payload.inputTokens ?? '0');
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
@@ -1048,31 +963,23 @@ export class BuyerPaymentManager {
     const serviceAmountDelta = acceptedServiceCost > 0n
       ? (acceptedServiceCost < signedDelta ? acceptedServiceCost : signedDelta)
       : 0n;
-    const prevMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
-    const totalsMeta: SpendingAuthMetadata = {
-      cumulativeInputTokens: prevMeta.cumulativeInputTokens + reportedInputTokens,
-      cumulativeOutputTokens: prevMeta.cumulativeOutputTokens + reportedOutputTokens,
-      cumulativeRequestCount: prevMeta.cumulativeRequestCount + 1n,
-      services: prevMeta.services ?? [],
-    };
     // If signPerRequestAuth already counted this request (buyer-initiated auth
     // raced ahead but didn't fully cover the seller's required cumulative), skip
     // service attribution entirely: service totals are documented as lower
     // bounds, so undercounting beats double-counting.
-    const alreadyCounted =
-      payload.requestId != null && this._serviceTokensCounted.has(payload.requestId);
-    const newMeta = alreadyCounted
-      ? totalsMeta
-      : this._withServiceMetadata(totalsMeta, buyerService, {
-          amount: serviceAmountDelta,
-          inputTokens: reportedInputTokens,
-          cachedInputTokens: reportedCachedInputTokens,
-          outputTokens: reportedOutputTokens,
-          requests: 1n,
-        });
-    if (payload.requestId != null && !alreadyCounted) {
-      this._markServiceTokensCounted(payload.requestId);
-    }
+    const alreadyCounted = this._serviceTokensCounted.has(payload.requestId);
+    const newMeta = advanceUsageMetadata(
+      this._metadata.get(sellerPeerId),
+      alreadyCounted ? undefined : buyerService,
+      {
+        amount: serviceAmountDelta,
+        inputTokens: reportedInputTokens,
+        cachedInputTokens: reportedCachedInputTokens,
+        outputTokens: reportedOutputTokens,
+        requests: 1n,
+      },
+    );
+    if (!alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
     this._metadata.set(sellerPeerId, newMeta);
 
     // Send via PaymentMux
@@ -1241,7 +1148,7 @@ export class BuyerPaymentManager {
 
   /** Register which service the buyer requested for a given requestId. */
   trackRequestService(requestId: string, service: string): void {
-    this._requestService.set(requestId, service);
+    this._requestService.track(requestId, service);
   }
 
   /** Get the live response token totals for a seller, or null if none recorded this session. */

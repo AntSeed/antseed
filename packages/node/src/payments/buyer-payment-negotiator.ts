@@ -5,9 +5,10 @@ import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
 import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
+import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
 import type { ChannelsClient } from './evm/channels-client.js';
-import type { ChannelStore } from './channel-store.js';
+import { CHANNEL_ROLE, CHANNEL_STATUS, type ChannelStore } from './channel-store.js';
 import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
@@ -68,6 +69,7 @@ export class BuyerPaymentNegotiator {
   private readonly _depositsClient: DepositsClient | null;
   private readonly _channelsClient: ChannelsClient | null;
   private readonly _channelStore: ChannelStore | null;
+  private readonly _freeUsageManager: BuyerFreeUsageManager | null;
   private readonly _identity: Identity;
   private readonly _emit: NegotiationEmitter;
   private readonly _sellerAddressResolver?: SellerAddressResolver;
@@ -102,12 +104,14 @@ export class BuyerPaymentNegotiator {
     _config: BuyerNegotiatorConfig,
     emitter: NegotiationEmitter,
     sellerAddressResolver?: SellerAddressResolver,
+    freeUsageManager?: BuyerFreeUsageManager | null,
   ) {
     this._identity = identity;
     this._bpm = bpm;
     this._depositsClient = depositsClient;
     this._channelsClient = channelsClient;
     this._channelStore = channelStore;
+    this._freeUsageManager = freeUsageManager ?? null;
     this._emit = emitter;
     this._sellerAddressResolver = sellerAddressResolver;
   }
@@ -139,6 +143,20 @@ export class BuyerPaymentNegotiator {
       this._bpm.handleAuthAck(peerId, payload);
     });
 
+    pmux.onFreeUsageAck((payload) => {
+      this._freeUsageManager?.handleAck(peerId, payload);
+    });
+
+    pmux.onNeedFreeUsageAuth((payload) => {
+      const p = this._freeUsageManager?.handleNeedAuth(peerId, payload, pmux);
+      if (p) {
+        this._pendingNeedAuth.set(peerId, p);
+        p.finally(() => {
+          if (this._pendingNeedAuth.get(peerId) === p) this._pendingNeedAuth.delete(peerId);
+        });
+      }
+    });
+
     pmux.onNeedAuth((payload) => {
       const p = this._bpm.handleNeedAuth(peerId, payload, pmux);
       this._pendingNeedAuth.set(peerId, p);
@@ -164,6 +182,19 @@ export class BuyerPaymentNegotiator {
 
   getPaymentMux(peerId: PeerId): PaymentMux | undefined {
     return this._muxes.get(peerId);
+  }
+
+  trackFreeUsageRequestService(requestId: string, service: string): void {
+    this._freeUsageManager?.trackRequestService(requestId, service);
+  }
+
+  async prepareFreeUsageOpen(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    if (!this._freeUsageManager) return;
+    const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+    await this._freeUsageManager.prepareOpen(peer, pmux);
+    void this._freeUsageManager.waitForOpenAck(peer.peerId).catch((err) => {
+      debugWarn(`[BuyerNegotiator] Free usage open ack unavailable for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+    });
   }
 
   // ── Pre-request auth ────────────────────────────────────────
@@ -361,7 +392,7 @@ export class BuyerPaymentNegotiator {
       );
       // 'ghost' rather than 'settled' — buyer hasn't observed the on-chain
       // settle land. Matches the other buyer-side give-up-locally callsites.
-      this._bpm.retireSession(peer.peerId, 'ghost');
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       this._lockedPeers.delete(peer.peerId);
       this._firstRequestSent.delete(peer.peerId);
     } else if (hasActiveSession) {
@@ -378,7 +409,7 @@ export class BuyerPaymentNegotiator {
 
       if (this._bpm.getActiveSession(peer.peerId)) {
         if (await this._canRetireStaleSessionWithoutOnChainProof()) {
-          this._bpm.retireSession(peer.peerId, 'ghost');
+          this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
         }
       }
 
@@ -531,7 +562,7 @@ export class BuyerPaymentNegotiator {
       this._channelStore.upsertChannel({
         sessionId: payload.channelId,
         peerId: peer.peerId,
-        role: 'buyer',
+        role: CHANNEL_ROLE.BUYER,
         sellerEvmAddr: sellerEvmAddrExternal,
         buyerEvmAddr: this._identity.wallet.address,
         nonce: 0,
@@ -544,7 +575,7 @@ export class BuyerPaymentNegotiator {
         reservedAt: Date.now(),
         settledAt: null,
         settledAmount: null,
-        status: 'active',
+        status: CHANNEL_STATUS.ACTIVE,
         latestBuyerSig: null,
         latestSpendingAuthSig: null,
         latestMetadata: null,
@@ -846,7 +877,7 @@ export class BuyerPaymentNegotiator {
     }
 
     if (!this._channelsClient) {
-      this._bpm.retireSession(peer.peerId, 'ghost');
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
@@ -866,22 +897,22 @@ export class BuyerPaymentNegotiator {
         return true;
       }
 
-      this._bpm.retireSession(peer.peerId, 'ghost');
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
-    if (onChain.status === 'settled') {
-      this._bpm.retireSession(peer.peerId, 'settled', onChain.channel.settled);
+    if (onChain.status === CHANNEL_STATUS.SETTLED) {
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.SETTLED, onChain.channel.settled);
       return false;
     }
 
-    if (onChain.status === 'timeout') {
-      this._bpm.retireSession(peer.peerId, 'timeout');
+    if (onChain.status === CHANNEL_STATUS.TIMEOUT) {
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.TIMEOUT);
       return false;
     }
 
     if (onChain.status !== 'active') {
-      this._bpm.retireSession(peer.peerId, 'ghost');
+      this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
       return false;
     }
 
@@ -911,7 +942,7 @@ export class BuyerPaymentNegotiator {
           `[BuyerNegotiator] extendCurrentSpendingAuth made no progress for ${peer.peerId.slice(0, 12)}... ` +
           `(cumulative=${cumulativeAfter}); retiring session`,
         );
-        this._bpm.retireSession(peer.peerId, 'ghost');
+        this._bpm.retireSession(peer.peerId, CHANNEL_STATUS.GHOST);
         this._lockedPeers.delete(peer.peerId);
         this._firstRequestSent.delete(peer.peerId);
         return false;

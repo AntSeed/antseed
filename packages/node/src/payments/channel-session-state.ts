@@ -1,6 +1,12 @@
 import type { ChannelInfo } from './evm/channels-client.js';
+import { CHANNEL_STATUS } from './channel-store.js';
 
-export type OnChainChannelStatus = 'missing' | 'active' | 'settled' | 'timeout' | 'unknown';
+export type OnChainChannelStatus =
+  | 'missing'
+  | typeof CHANNEL_STATUS.ACTIVE
+  | typeof CHANNEL_STATUS.SETTLED
+  | typeof CHANNEL_STATUS.TIMEOUT
+  | 'unknown';
 
 export type OnChainChannelState =
   | { exists: false; status: 'missing' }
@@ -19,13 +25,13 @@ export function classifyOnChainChannel(channel: ChannelInfo): OnChainChannelStat
   }
 
   if (channel.status === 1) {
-    return { exists: true, status: 'active', channel };
+    return { exists: true, status: CHANNEL_STATUS.ACTIVE, channel };
   }
   if (channel.status === 2) {
-    return { exists: true, status: 'settled', channel };
+    return { exists: true, status: CHANNEL_STATUS.SETTLED, channel };
   }
   if (channel.status === 3) {
-    return { exists: true, status: 'timeout', channel };
+    return { exists: true, status: CHANNEL_STATUS.TIMEOUT, channel };
   }
 
   return { exists: true, status: 'unknown', channel };
