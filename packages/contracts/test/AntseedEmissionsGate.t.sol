@@ -455,22 +455,22 @@ contract AntseedEmissionsGateTest is Test {
         sellerPools.enableMaxLock(positionId);
 
         assertEq(sellerPools.positionWeightAtEpoch(positionId, 5), 400 ether);
-        assertEq(sellerPools.positionMaxLockPowerAtEpoch(positionId, 6), 5_200 ether);
-        assertEq(sellerPools.positionWeightAtEpoch(positionId, 6), 5_200 ether);
-        assertEq(sellerPools.positionWeightAtEpoch(positionId, 20), 5_200 ether);
-        assertEq(sellerPools.poolWeightAtEpoch(agentId, 6), 5_200 ether);
+        assertEq(sellerPools.positionMaxLockPowerAtEpoch(positionId, 6), 10_400 ether);
+        assertEq(sellerPools.positionWeightAtEpoch(positionId, 6), 10_400 ether);
+        assertEq(sellerPools.positionWeightAtEpoch(positionId, 20), 10_400 ether);
+        assertEq(sellerPools.poolWeightAtEpoch(agentId, 6), 10_400 ether);
         assertEq(sellerPools.poolActiveStakeAtEpoch(agentId, 6), 100 ether);
-        assertEq(sellerPools.totalPowerWeightAtEpoch(6), 5_200 ether);
+        assertEq(sellerPools.totalPowerWeightAtEpoch(6), 10_400 ether);
 
         _warpGateEpoch(7);
         vm.prank(staker);
         sellerPools.disableMaxLock(positionId);
 
-        assertEq(sellerPools.positionWeightAtEpoch(positionId, 7), 5_200 ether);
+        assertEq(sellerPools.positionWeightAtEpoch(positionId, 7), 10_400 ether);
         assertEq(sellerPools.positionMaxLockPowerAtEpoch(positionId, 8), 0);
-        assertEq(sellerPools.positionWeightAtEpoch(positionId, 8), 5_200 ether);
-        assertEq(sellerPools.positionWeightAtEpoch(positionId, 9), 5_100 ether);
-        assertEq(sellerPools.poolWeightAtEpoch(agentId, 9), 5_100 ether);
+        assertEq(sellerPools.positionWeightAtEpoch(positionId, 8), 10_400 ether);
+        assertEq(sellerPools.positionWeightAtEpoch(positionId, 9), 10_300 ether);
+        assertEq(sellerPools.poolWeightAtEpoch(agentId, 9), 10_300 ether);
     }
 
     function test_sellerPoolsRewardsUseMaxLockPowerForEpochShare() public {
@@ -501,7 +501,7 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(7);
         uint256 expectedBudget = sellerPoolsRewards.stakerEpochBudget(6);
-        uint256 maxLockPower = 5_200 ether;
+        uint256 maxLockPower = 10_400 ether;
         uint256 normalPower = 300 ether;
         (uint256 maxLockedGross,,) = sellerPoolsRewards.pendingStakerReward(maxLockedPositionId, 6);
         (uint256 normalGross,,) = sellerPoolsRewards.pendingStakerReward(normalPositionId, 6);
@@ -2221,7 +2221,7 @@ contract AntseedEmissionsGateTest is Test {
 
         (,, uint256 amount, uint256 weightAmount, uint64 startEpoch, uint64 stakeEndEpoch,,) =
             sellerPools.positions(newPositionIds[0]);
-        uint256 expectedBonusBps = (uint256(500) * 2) / 52;
+        uint256 expectedBonusBps = (uint256(500) * 2) / 104;
         uint256 expectedFirstWeightAmount = (firstGross * (10_000 + expectedBonusBps)) / 10_000;
         assertEq(amount, firstGross);
         assertEq(weightAmount, expectedFirstWeightAmount);

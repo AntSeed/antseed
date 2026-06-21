@@ -46,7 +46,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant MAX_APY_BPS_CAP = 10_000;
-    uint256 public constant MAX_STAKE_EPOCHS_CAP = 52;
+    uint256 public constant MAX_STAKE_EPOCHS = 104;
     uint256 public constant MAX_RESTAKED_REWARD_WEIGHT_BONUS_BPS = 2_000;
     uint256 public constant FENWICK_SIZE = 4096;
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -82,7 +82,6 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
     // ─── Configurable Parameters ─────────────────────────────────────
     uint256 public minStakeEpochs = 1;
-    uint256 public maxStakeEpochs = 52;
     uint256 public stakeActivationDelay = 1;
     uint256 public maxSlashBps = 5_000;
     uint256 public minEarlyExitSlashBps = 500;
@@ -179,7 +178,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         if (staker == address(0)) revert InvalidAddress();
         if (agentId == 0) revert InvalidValue();
         if (amount == 0) revert InvalidValue();
-        if (stakeEpochs < minStakeEpochs || stakeEpochs > maxStakeEpochs) revert StakeDurationOutOfBounds();
+        if (stakeEpochs < minStakeEpochs || stakeEpochs > MAX_STAKE_EPOCHS) revert StakeDurationOutOfBounds();
 
         antsToken.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -220,7 +219,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     /**
      * @notice Extend a normal locked position from the next epoch onward.
      *         Historical epochs keep the old lock curve. The new end cannot be
-     *         further than `maxStakeEpochs` from the effective epoch.
+     *         further than `MAX_STAKE_EPOCHS` from the effective epoch.
      */
     function extendLock(uint256 positionId, uint256 additionalEpochs) external nonReentrant {
         if (additionalEpochs == 0) revert InvalidValue();
@@ -237,7 +236,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         uint256 oldEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveEpoch);
         if (oldEndEpoch == 0 || effectiveEpoch >= oldEndEpoch) revert StakeDurationOutOfBounds();
 
-        uint256 maxEndEpoch = effectiveEpoch + maxStakeEpochs;
+        uint256 maxEndEpoch = effectiveEpoch + MAX_STAKE_EPOCHS;
         uint256 requestedEndEpoch = oldEndEpoch + additionalEpochs;
         uint256 newEndEpoch = requestedEndEpoch > maxEndEpoch ? maxEndEpoch : requestedEndEpoch;
         if (newEndEpoch <= oldEndEpoch) revert StakeDurationOutOfBounds();
@@ -275,7 +274,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
         _removePowerRange(position.agentId, effectiveEpoch, normalEndEpoch, position.weightAmount);
 
-        uint256 maxLockPower = position.weightAmount * maxStakeEpochs;
+        uint256 maxLockPower = position.weightAmount * MAX_STAKE_EPOCHS;
         _positionMaxLockPower[positionId].push(effectiveEpoch, maxLockPower);
         _positionNormalStartEpoch[positionId].push(effectiveEpoch, 0);
         _positionNormalEndEpoch[positionId].push(effectiveEpoch, 0);
@@ -299,7 +298,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         uint256 effectiveEpoch = currentEpoch() + 1;
         if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveEpoch) == 0) revert InvalidValue();
 
-        uint256 newStakeEndEpoch = effectiveEpoch + maxStakeEpochs;
+        uint256 newStakeEndEpoch = effectiveEpoch + MAX_STAKE_EPOCHS;
         position.stakeEndEpoch = uint64(newStakeEndEpoch);
         _positionMaxLockPower[positionId].push(effectiveEpoch, 0);
         _positionNormalStartEpoch[positionId].push(effectiveEpoch, effectiveEpoch);
@@ -363,7 +362,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     {
         if (staker == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidValue();
-        if (stakeEpochs < minStakeEpochs || stakeEpochs > maxStakeEpochs) revert StakeDurationOutOfBounds();
+        if (stakeEpochs < minStakeEpochs || stakeEpochs > MAX_STAKE_EPOCHS) revert StakeDurationOutOfBounds();
 
         Position memory sourcePosition = positions[sourcePositionId];
         if (sourcePosition.owner == address(0)) revert InvalidPosition();
@@ -371,7 +370,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
         uint256 startEpoch = currentEpoch() + stakeActivationDelay;
         uint256 stakeEndEpoch = startEpoch + stakeEpochs;
-        uint256 bonusBps = (restakedRewardWeightBonusBps * stakeEpochs) / maxStakeEpochs;
+        uint256 bonusBps = (restakedRewardWeightBonusBps * stakeEpochs) / MAX_STAKE_EPOCHS;
         uint256 weightAmount = (amount * (BPS_DENOMINATOR + bonusBps)) / BPS_DENOMINATOR;
         newPositionId =
             _createWeightedPosition(staker, sourcePosition.agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
@@ -684,22 +683,20 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
     function setPoolConfig(
         uint256 _minStakeEpochs,
-        uint256 _maxStakeEpochs,
         uint256 _stakeActivationDelay,
         uint256 _maxSlashBps,
         uint256 _minEarlyExitSlashBps
     ) external onlyOwner {
         if (
-            _minStakeEpochs == 0 || _maxStakeEpochs < _minStakeEpochs || _maxStakeEpochs > MAX_STAKE_EPOCHS_CAP
-                || _stakeActivationDelay == 0 || _stakeActivationDelay > MAX_STAKE_EPOCHS_CAP
+            _minStakeEpochs == 0 || _minStakeEpochs > MAX_STAKE_EPOCHS || _stakeActivationDelay == 0
+                || _stakeActivationDelay > MAX_STAKE_EPOCHS
         ) revert InvalidValue();
         if (_maxSlashBps > BPS_DENOMINATOR || _minEarlyExitSlashBps > _maxSlashBps) revert InvalidValue();
         minStakeEpochs = _minStakeEpochs;
-        maxStakeEpochs = _maxStakeEpochs;
         stakeActivationDelay = _stakeActivationDelay;
         maxSlashBps = _maxSlashBps;
         minEarlyExitSlashBps = _minEarlyExitSlashBps;
-        emit PoolConfigSet(_minStakeEpochs, _maxStakeEpochs, _stakeActivationDelay, _maxSlashBps, _minEarlyExitSlashBps);
+        emit PoolConfigSet(_minStakeEpochs, _stakeActivationDelay, _maxSlashBps, _minEarlyExitSlashBps);
     }
 
     function setRewardStaker(address rewardStaker, bool allowed) external onlyOwner {
@@ -897,13 +894,13 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         (power, activeWeight) = _powerAndActiveWeightAtEpoch(_poolPowerTree[agentId], epoch);
         uint256 maxLockWeightAmount = _poolMaxLockWeightAmount[agentId].upperLookupRecent(epoch);
         if (maxLockWeightAmount != 0) {
-            power += maxLockWeightAmount * maxStakeEpochs;
+            power += maxLockWeightAmount * MAX_STAKE_EPOCHS;
             activeWeight += maxLockWeightAmount;
         }
     }
 
     function _totalMaxLockPowerAtEpoch(uint256 epoch) internal view returns (uint256) {
-        return _totalMaxLockWeightAmount.upperLookupRecent(epoch) * maxStakeEpochs;
+        return _totalMaxLockWeightAmount.upperLookupRecent(epoch) * MAX_STAKE_EPOCHS;
     }
 
     function _nextCheckpointKeyAfter(Checkpoints.Trace256 storage trace, uint256 epoch)

@@ -107,7 +107,7 @@ contract AntseedSellerPoolsTest is Test {
     }
 
     function test_stakeActivationDelayControlsNewStakeStartEpoch() public {
-        pools.setPoolConfig(1, 52, 2, 5_000, 500);
+        pools.setPoolConfig(1, 2, 5_000, 500);
 
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 
@@ -302,7 +302,7 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(owner, staker);
         assertEq(positionAgentId, agentId);
         assertEq(amount, 400 ether);
-        uint256 expectedBonusBps = (uint256(500) * 3) / 52;
+        uint256 expectedBonusBps = (uint256(500) * 3) / 104;
         uint256 expectedWeightAmount = (uint256(400 ether) * (10_000 + expectedBonusBps)) / 10_000;
         assertEq(weightAmount, expectedWeightAmount);
         assertEq(startEpoch, 1);
@@ -320,13 +320,13 @@ contract AntseedSellerPoolsTest is Test {
         pools.setRewardStaker(address(this), true);
         token.mint(address(pools), 400 ether);
         vm.warp(block.timestamp + EPOCH_DURATION);
-        pools.setPoolConfig(1, 52, 2, 5_000, 500);
+        pools.setPoolConfig(1, 2, 5_000, 500);
 
         uint256 newPositionId = pools.stakeMintedReward(staker, positionId, 400 ether, 4);
 
         (,, uint256 amount, uint256 weightAmount, uint64 startEpoch, uint64 stakeEndEpoch,,) =
             pools.positions(newPositionId);
-        uint256 expectedBonusBps = (uint256(500) * 4) / 52;
+        uint256 expectedBonusBps = (uint256(500) * 4) / 104;
         uint256 expectedWeightAmount = (uint256(400 ether) * (10_000 + expectedBonusBps)) / 10_000;
         assertEq(amount, 400 ether);
         assertEq(weightAmount, expectedWeightAmount);
@@ -343,7 +343,7 @@ contract AntseedSellerPoolsTest is Test {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
         pools.setRewardStaker(address(this), true);
         token.mint(address(pools), 400 ether);
-        uint256 newPositionId = pools.stakeMintedReward(staker, positionId, 400 ether, 52);
+        uint256 newPositionId = pools.stakeMintedReward(staker, positionId, 400 ether, 104);
 
         (,,, uint256 weightAmount,,,,) = pools.positions(newPositionId);
         assertEq(weightAmount, 420 ether);
@@ -421,8 +421,8 @@ contract AntseedSellerPoolsTest is Test {
         pools.extendLock(positionId, 100);
 
         (,,,,, uint64 stakeEndEpoch,,) = pools.positions(positionId);
-        assertEq(stakeEndEpoch, 53);
-        assertEq(pools.positionWeightAtEpoch(positionId, 1), 5_200 ether);
+        assertEq(stakeEndEpoch, 105);
+        assertEq(pools.positionWeightAtEpoch(positionId, 1), 10_400 ether);
 
         vm.expectRevert(IAntseedSellerPools.StakeDurationOutOfBounds.selector);
         vm.prank(staker);
@@ -508,15 +508,15 @@ contract AntseedSellerPoolsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
         uint256 expectedSlashBps = pools.earlyExitSlashBps(positionId);
-        assertEq(expectedSlashBps, (pools.maxSlashBps() * 51) / 52);
+        assertEq(expectedSlashBps, (pools.maxSlashBps() * 103) / 104);
 
         vm.prank(staker);
         pools.withdrawStake(positionId);
 
         uint256 expectedSlash = (100 ether * expectedSlashBps) / 10_000;
-        assertEq(pools.positionWeightAtEpoch(positionId, 3), 5_200 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 3), 10_400 ether);
         assertEq(pools.positionWeightAtEpoch(positionId, 4), 0);
-        assertEq(pools.poolWeightAtEpoch(agentId, 3), 5_200 ether);
+        assertEq(pools.poolWeightAtEpoch(agentId, 3), 10_400 ether);
         assertEq(pools.poolWeightAtEpoch(agentId, 4), 0);
         assertEq(token.balanceOf(pools.DEAD_ADDRESS()), expectedSlash);
         assertEq(token.balanceOf(staker), 1_000 ether + (100 ether - expectedSlash));
@@ -612,12 +612,12 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_stakeActivationDelayConfigValidation() public {
         vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        pools.setPoolConfig(1, 52, 0, 5_000, 500);
+        pools.setPoolConfig(1, 0, 5_000, 500);
 
         vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        pools.setPoolConfig(1, 52, 53, 5_000, 500);
+        pools.setPoolConfig(1, 105, 5_000, 500);
 
-        pools.setPoolConfig(1, 52, 2, 5_000, 500);
+        pools.setPoolConfig(1, 2, 5_000, 500);
         assertEq(pools.stakeActivationDelay(), 2);
     }
 
@@ -627,7 +627,7 @@ contract AntseedSellerPoolsTest is Test {
 
         // Raise the activation delay, then a second staker stakes (power on
         // epochs [2, 6)) and withdraws in the same epoch, before activation.
-        pools.setPoolConfig(1, 52, 2, 5_000, 500);
+        pools.setPoolConfig(1, 2, 5_000, 500);
         uint256 earlyExitPositionId = _stake(recipient, agentId, 100 ether, 4);
 
         vm.prank(recipient);
@@ -652,7 +652,7 @@ contract AntseedSellerPoolsTest is Test {
     }
 
     function test_preActivationMoveKeepsActivationEpochAndPower() public {
-        pools.setPoolConfig(1, 52, 2, 5_000, 500);
+        pools.setPoolConfig(1, 2, 5_000, 500);
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 
         // Moving before activation must not start the new position earlier
@@ -672,16 +672,13 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(pools.poolActiveStakeAtEpoch(otherAgentId, 2), 100 ether);
     }
 
-    function test_setPoolConfigCanLowerMaxStakeEpochs() public {
-        pools.setPoolConfig(1, 26, 1, 5_000, 500);
-        assertEq(pools.maxStakeEpochs(), 26);
-
+    function test_stakeRejectsAboveFixedMaxStakeEpochs() public {
         token.mint(staker, 1 ether);
         token.setTransferWhitelist(staker, true);
         vm.startPrank(staker);
         token.approve(address(pools), 1 ether);
         vm.expectRevert(IAntseedSellerPools.StakeDurationOutOfBounds.selector);
-        pools.stake(agentId, 1 ether, 27);
+        pools.stake(agentId, 1 ether, 105);
         vm.stopPrank();
     }
 

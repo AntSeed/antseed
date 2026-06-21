@@ -97,7 +97,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
     function testFuzz_poolPowerMatchesNaiveSum(uint256[8] memory amounts, uint8[8] memory durations, uint8[8] memory agents, uint8 queryEpoch) public {
         for (uint256 i = 0; i < 8; i++) {
             uint256 amount = bound(amounts[i], 1, 5_000_000 ether);
-            uint256 dur = uint256(bound(durations[i], 1, 52));
+            uint256 dur = uint256(bound(durations[i], 1, 104));
             uint256 agentId = uint256(agents[i]) % 3 + 1; // agents 1..3
 
             positionIds.push(_stake(agentId, amount, dur));
@@ -121,10 +121,10 @@ contract AntseedSellerPoolsFuzzTest is Test {
     ///         lifetime, including the activation-delay gap and after expiry.
     function testFuzz_powerConsistentAcrossLifetime(uint256 amount, uint8 duration, uint8 delay) public {
         amount = bound(amount, 1, 10_000_000 ether);
-        uint256 dur = uint256(bound(duration, 1, 52));
+        uint256 dur = uint256(bound(duration, 1, 104));
         uint256 activationDelay = uint256(bound(delay, 1, 5));
 
-        pools.setPoolConfig(1, 52, activationDelay, 5_000, 500);
+        pools.setPoolConfig(1, activationDelay, 5_000, 500);
 
         uint256 agentId = 7;
         uint256 id = _stake(agentId, amount, dur);
@@ -142,7 +142,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
     /// @notice Withdraw conserves principal exactly and keeps the pool solvent.
     function testFuzz_withdrawConservesPrincipalAndSolvency(uint256 amount, uint8 duration, uint8 warpEpochs) public {
         amount = bound(amount, 1, 100_000_000 ether);
-        uint256 dur = uint256(bound(duration, 1, 52));
+        uint256 dur = uint256(bound(duration, 1, 104));
         uint256 warpE = uint256(bound(warpEpochs, 0, 60));
 
         uint256 poolStartBalance = token.balanceOf(address(pools));
@@ -180,7 +180,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
 
         for (uint256 i = 0; i < 6; i++) {
             uint256 amount = bound(amounts[i], 1, 20_000_000 ether);
-            uint256 dur = uint256(bound(durations[i], 1, 52));
+            uint256 dur = uint256(bound(durations[i], 1, 104));
             positionIds.push(_stake(fixedAgent(), amount, dur));
             totalDeposited += amount;
         }
@@ -206,7 +206,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
     /// @notice moveStake preserves withdrawable principal and never increases weight.
     function testFuzz_moveStakePreservesPrincipal(uint256 amount, uint8 duration, uint16 penaltyBps) public {
         amount = bound(amount, 1 ether, 10_000_000 ether);
-        uint256 dur = uint256(bound(duration, 2, 52));
+        uint256 dur = uint256(bound(duration, 2, 104));
         uint256 penalty = uint256(bound(penaltyBps, 0, 10_000));
         pools.setMoveWeightPenalty(penalty);
 
@@ -226,7 +226,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
 
         // Withdraw the moved position back out: full principal still returns at
         // maturity (penalty only reduces reward weight, never principal).
-        _warpToEpoch(uint256(60));
+        _warpToEpoch(dur + 2);
         uint256 stakerBefore = token.balanceOf(staker);
         vm.prank(staker);
         pools.withdrawStake(newId);

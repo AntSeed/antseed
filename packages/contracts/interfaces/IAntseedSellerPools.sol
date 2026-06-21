@@ -43,7 +43,6 @@ interface IAntseedSellerPools {
     );
     event PoolConfigSet(
         uint256 minStakeEpochs,
-        uint256 maxStakeEpochs,
         uint256 stakeActivationDelay,
         uint256 maxSlashBps,
         uint256 minEarlyExitSlashBps
@@ -90,7 +89,6 @@ interface IAntseedSellerPools {
     function setRewardStaker(address rewardStaker, bool allowed) external;
     function setPoolConfig(
         uint256 minStakeEpochs,
-        uint256 maxStakeEpochs,
         uint256 stakeActivationDelay,
         uint256 maxSlashBps,
         uint256 minEarlyExitSlashBps

@@ -124,7 +124,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         uint256 stakedTotal;
         for (uint256 i = 0; i < 5; i++) {
             uint256 amount = bound(amounts[i], 1 ether, 50_000_000 ether);
-            uint256 dur = uint256(bound(durations[i], 2, 52));
+            uint256 dur = uint256(bound(durations[i], 2, 104));
             address who = address(uint160(0x1000 + i));
             stakers.push(who);
             positionIds.push(_stake(who, amount, dur));

@@ -117,7 +117,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
         deal(address(token), stakerAddr, 100_000_000 ether);
         vm.startPrank(stakerAddr);
         token.approve(address(pools), 100_000_000 ether);
-        pools.stake(agentId, 100_000_000 ether, 52);
+        pools.stake(agentId, 100_000_000 ether, 104);
         vm.stopPrank();
         _warpGateEpoch(5); // pool now active
     }
@@ -181,12 +181,12 @@ contract AntseedUsageAccountingFuzzTest is Test {
     }
 
     /// @notice Realistic-scale points * pool power never overflows on the settle
-    ///         path. Pool power is bounded by total ANTS supply * 52 epochs;
+    ///         path. Pool power is bounded by total ANTS supply * 104 epochs;
     ///         points by any plausible USDC delta. (Documents the M2 bound.)
     function testFuzz_weightedPointsNoOverflowAtRealisticScale(uint256 rawPoints) public {
         rawPoints = bound(rawPoints, 1, 1e30);
         usageAccounting.setPointsPolicy(address(0));
-        // 100M ANTS staked for 52 epochs => poolPower ~ 100M*52 ether. Times
+        // 100M ANTS staked for 104 epochs => poolPower ~ 100M*104 ether. Times
         // points up to 1e30 stays well under 2^256.
         usageAccounting.accruePoints(bytes32(uint256(7)), buyerAddr(), seller, rawPoints);
         assertGt(usageAccounting.weightedPoolPointsByEpoch(uint256(5), agentId), 0, "no weighted points recorded");
