@@ -1422,7 +1422,6 @@ contract AntseedEmissionsGateTest is Test {
 
         usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
         _setUsageMinter(address(usageRewards));
-        assertEq(usageRewards.usageSideEpochBudget(4), 0);
 
         deal(address(token), seller, 100 ether);
         deal(address(token), otherSeller, 10 ether);

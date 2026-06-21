@@ -348,12 +348,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         );
     }
 
-    function usageSideEpochBudget(uint256 epoch) public view returns (uint256) {
-        // Deprecated legacy alias. Use buyerEpochBudget/sellerEpochBudget now
-        // that the two usage sides can have independent dynamic budgets.
-        return sellerEpochBudget(epoch);
-    }
-
     function buyerEpochBudget(uint256 epoch) public view returns (uint256) {
         (uint256 buyerBudget,) = usageEpochBudgets(epoch);
         return buyerBudget;
