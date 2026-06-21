@@ -388,7 +388,7 @@ describe('computeOnChainScore — composed display value', () => {
     expect(ctxScore! / noCtxScore!).toBeCloseTo(0.75, 1);
   });
 
-  it('adds a modest capped bonus for verified domain and GitHub claims', () => {
+  it('adds a capped identity bonus for verified domain and GitHub claims', () => {
     const base = makePeer({
       onChainChannelCount: 100,
       onChainTotalVolumeUsdcMicros: 1_000_000_000,
@@ -428,9 +428,12 @@ describe('computeOnChainScore — composed display value', () => {
     expect(computeVerificationScoreBonus(withDomain)).toBe(ON_CHAIN_VERIFICATION_DOMAIN_POINTS);
     expect(computeVerificationScoreBonus(withGithub)).toBe(ON_CHAIN_VERIFICATION_GITHUB_POINTS);
     expect(computeVerificationScoreBonus(withBoth)).toBe(ON_CHAIN_VERIFICATION_MAX_POINTS);
-    expect(computeOnChainScore(withDomain, undefined, NOW_MS)).toBeCloseTo(baseScore + 5, 6);
-    expect(computeOnChainScore(withGithub, undefined, NOW_MS)).toBeCloseTo(baseScore + 3, 6);
-    expect(computeOnChainScore(withBoth, undefined, NOW_MS)).toBeCloseTo(baseScore + 8, 6);
+    expect(computeOnChainScore(withDomain, undefined, NOW_MS))
+      .toBeCloseTo(baseScore + ON_CHAIN_VERIFICATION_DOMAIN_POINTS, 6);
+    expect(computeOnChainScore(withGithub, undefined, NOW_MS))
+      .toBeCloseTo(baseScore + ON_CHAIN_VERIFICATION_GITHUB_POINTS, 6);
+    expect(computeOnChainScore(withBoth, undefined, NOW_MS))
+      .toBeCloseTo(Math.min(100, baseScore + ON_CHAIN_VERIFICATION_MAX_POINTS), 6);
   });
 
   it('ignores failed verification claims and clamps final score to 100', () => {

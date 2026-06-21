@@ -27,6 +27,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Increased the reputation score contribution from verified domain and GitHub ownership claims so verified sellers receive a clearer identity-based score boost.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
 - Increased the default free-usage on-chain record flush interval from 10 seconds to 5 minutes to reduce background transaction frequency while preserving batch, disconnect, and shutdown flushes.
 
