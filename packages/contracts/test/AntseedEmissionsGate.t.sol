@@ -1838,7 +1838,8 @@ contract AntseedEmissionsGateTest is Test {
 
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 10_000, true);
         assertEq(gate.totalMinterShareBps(), 50_000);
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(10_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5), _shareBudget(10_000, 5));
     }
 
     function test_ownerCanConfigureCustomMinterShare() public {
@@ -1881,10 +1882,11 @@ contract AntseedEmissionsGateTest is Test {
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 30_000, true);
 
         assertEq(gate.totalMinterShareBps(), 70_000);
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(30_000, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5), _shareBudget(30_000, 5));
 
         _warpGateEpoch(5);
-        uint256 budget = _shareBudget(30_000, 4);
+        uint256 budget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
         gate.claim(4, address(this), budget);
         assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 4), budget);
     }
@@ -1900,7 +1902,8 @@ contract AntseedEmissionsGateTest is Test {
 
         assertEq(gate.totalMinterShareBps(), 70_000);
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
-        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5), _shareBudget(30_000, 5));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5), _shareBudget(SELLER_POOLS_SHARE_BPS, 5));
+        assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 6), _shareBudget(30_000, 6));
 
         uint256 epoch4Budget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
         gate.claim(4, address(this), epoch4Budget);
@@ -1910,9 +1913,14 @@ contract AntseedEmissionsGateTest is Test {
         gate.claim(4, address(this), 1);
 
         _warpGateEpoch(6);
-        uint256 epoch5Budget = _shareBudget(30_000, 5);
+        uint256 epoch5Budget = _shareBudget(SELLER_POOLS_SHARE_BPS, 5);
         gate.claim(5, address(this), epoch5Budget);
         assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 5), epoch5Budget);
+
+        _warpGateEpoch(7);
+        uint256 epoch6Budget = _shareBudget(30_000, 6);
+        gate.claim(6, address(this), epoch6Budget);
+        assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 6), epoch6Budget);
     }
 
     function test_lockedMinterCannotBeEditedOrRemoved() public {

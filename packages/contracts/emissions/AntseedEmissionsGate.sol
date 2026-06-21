@@ -272,7 +272,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
         totalMinterShareBps = nextTotalMinterShareBps;
         _minters[id] = Minter({ controller: controller, shareBps: shareBps, editable: editable });
-        uint256 startEpoch = _minterShareCheckpoints[id].length == 0 ? 0 : currentEpoch();
+        uint256 startEpoch = _minterShareCheckpoints[id].length == 0 ? 0 : currentEpoch() + 1;
         _recordMinterShare(id, startEpoch, shareBps);
         emit MinterSet(id, controller, shareBps, editable);
     }
