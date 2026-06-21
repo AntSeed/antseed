@@ -8,6 +8,18 @@ import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
+contract MockAgentLookup {
+    mapping(address => uint256) public agentIdBySeller;
+
+    function setAgent(address seller, uint256 agentId) external {
+        agentIdBySeller[seller] = agentId;
+    }
+
+    function getAgentId(address seller) external view returns (uint256) {
+        return agentIdBySeller[seller];
+    }
+}
+
 /**
  * @title AntseedSellerPoolsFuzz
  * @notice Property/fuzz tests for the seller-pool epoch power model and stake
@@ -33,6 +45,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
     ANTSToken token;
     AntseedRegistry registry;
     MockERC8004Registry identityRegistry;
+    MockAgentLookup agentLookup;
     AntseedSellerPools pools;
 
     address staker = address(0x5742E);
@@ -50,18 +63,20 @@ contract AntseedSellerPoolsFuzzTest is Test {
 
         registry = new AntseedRegistry();
         identityRegistry = new MockERC8004Registry();
+        agentLookup = new MockAgentLookup();
         token = new ANTSToken();
         token.setRegistry(address(registry));
         token.enableTransfers();
         registry.setAntsToken(address(token));
         registry.setEmissions(address(this));
         registry.setIdentityRegistry(address(identityRegistry));
+        registry.setStaking(address(agentLookup));
 
-        identityRegistry.setOwner(1, staker);
-        identityRegistry.setOwner(2, staker);
-        identityRegistry.setOwner(3, staker);
-        identityRegistry.setOwner(7, staker);
-        identityRegistry.setOwner(fixedAgent(), staker);
+        _registerSellerAgent(1);
+        _registerSellerAgent(2);
+        _registerSellerAgent(3);
+        _registerSellerAgent(7);
+        _registerSellerAgent(fixedAgent());
 
         pools = new AntseedSellerPools(address(registry), 0, 0, 0);
         token.setTransferWhitelist(address(pools), true);
@@ -84,6 +99,12 @@ contract AntseedSellerPoolsFuzzTest is Test {
         token.approve(address(pools), amount);
         id = pools.stake(agentId, amount, stakeEpochs);
         vm.stopPrank();
+    }
+
+    function _registerSellerAgent(uint256 agentId) internal {
+        address seller = address(uint160(0xA000 + agentId));
+        identityRegistry.setOwner(agentId, seller);
+        agentLookup.setAgent(seller, agentId);
     }
 
     // ─── Naive O(n) power recomputation, the oracle for the Fenwick tree ──

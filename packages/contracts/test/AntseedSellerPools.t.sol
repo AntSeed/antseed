@@ -874,6 +874,7 @@ contract AntseedSellerPoolsTest is Test {
         identityRegistry.transferAgent(soldAgentId, newOwner);
         vm.prank(newOwner);
         adapter.registerSeller(soldAgentId);
+        registry.setStaking(address(adapter));
 
         assertEq(adapter.getAgentId(newOwner), soldAgentId);
         assertEq(adapter.getAgentId(oldSeller), 0);

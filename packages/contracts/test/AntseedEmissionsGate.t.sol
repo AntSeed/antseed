@@ -442,6 +442,7 @@ contract AntseedEmissionsGateTest is Test {
 
         sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
         uint256 agentId = _agentId(seller);
+        sellerAgentLookup.setAgent(seller, agentId);
         identityRegistry.setOwner(agentId, seller);
 
         vm.startPrank(staker);
@@ -1516,6 +1517,7 @@ contract AntseedEmissionsGateTest is Test {
         uint256 buyerStakeAgentId = _agentId(buyer);
         uint256 otherStakeAgentId = _agentId(otherSeller);
         identityRegistry.setOwner(buyerStakeAgentId, buyer);
+        sellerAgentLookup.setAgent(otherSeller, otherStakeAgentId);
         identityRegistry.setOwner(otherStakeAgentId, otherSeller);
 
         _warpGateEpoch(5);

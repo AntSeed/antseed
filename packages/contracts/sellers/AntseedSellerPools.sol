@@ -177,7 +177,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         returns (uint256 positionId)
     {
         if (staker == address(0)) revert InvalidAddress();
-        _requireRegisteredAgent(agentId);
+        _requireRegisteredSellerAgent(agentId);
         if (amount == 0) revert InvalidValue();
         if (stakeEpochs < minStakeEpochs || stakeEpochs > MAX_STAKE_EPOCHS) revert StakeDurationOutOfBounds();
 
@@ -200,7 +200,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
      *         principal.
      */
     function moveStake(uint256 positionId, uint256 toAgentId) external nonReentrant returns (uint256 newPositionId) {
-        _requireRegisteredAgent(toAgentId);
+        _requireRegisteredSellerAgent(toAgentId);
         newPositionId = _movePosition(positionId, toAgentId, msg.sender, currentEpoch() + 1);
     }
 
@@ -210,7 +210,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         returns (uint256[] memory newPositionIds)
     {
         if (positionIds.length == 0) revert InvalidValue();
-        _requireRegisteredAgent(toAgentId);
+        _requireRegisteredSellerAgent(toAgentId);
         uint256 effectiveEpoch = currentEpoch() + 1;
         newPositionIds = new uint256[](positionIds.length);
         for (uint256 i = 0; i < positionIds.length; i++) {
@@ -803,14 +803,25 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
     }
 
-    function _requireRegisteredAgent(uint256 agentId) internal view {
+    function _requireRegisteredSellerAgent(uint256 agentId) internal view {
         if (agentId == 0) revert InvalidValue();
 
         address identityRegistry = registry.identityRegistry();
         if (identityRegistry == address(0)) revert InvalidAddress();
 
-        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address owner) {
-            if (owner == address(0)) revert InvalidValue();
+        address owner;
+        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
+            owner = agentOwner;
+        } catch {
+            revert InvalidValue();
+        }
+        if (owner == address(0)) revert InvalidValue();
+
+        address staking = registry.staking();
+        if (staking == address(0)) revert InvalidAddress();
+
+        try IAntseedStaking(staking).getAgentId(owner) returns (uint256 registeredAgentId) {
+            if (registeredAgentId != agentId) revert InvalidValue();
         } catch {
             revert InvalidValue();
         }
