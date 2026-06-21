@@ -145,6 +145,7 @@ contract AntseedUsageRewardsFuzzTest is Test {
         uint256 sellerBefore = token.balanceOf(seller);
         uint256 reserveBefore = token.balanceOf(reserve);
 
+        vm.prank(seller);
         usageRewards.claimAgentReward(agentId, 5);
 
         uint256 toSeller = token.balanceOf(seller) - sellerBefore;
@@ -158,6 +159,7 @@ contract AntseedUsageRewardsFuzzTest is Test {
         );
 
         // Double-claim impossible.
+        vm.prank(seller);
         vm.expectRevert(AntseedUsageRewards.AlreadyClaimed.selector);
         usageRewards.claimAgentReward(agentId, 5);
     }
@@ -181,6 +183,7 @@ contract AntseedUsageRewardsFuzzTest is Test {
 
         depositsMock.setOperator(buyer, operator);
         uint256 buyerBefore = token.balanceOf(buyer);
+        vm.prank(operator);
         usageRewards.claimBuyerReward(buyer, 5);
 
         assertEq(token.balanceOf(buyer), buyerBefore, "buyer hot wallet received funds");

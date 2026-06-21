@@ -1283,6 +1283,7 @@ contract AntseedEmissionsGateTest is Test {
 
             address washOperator = address(0x50000);
             deposits.setOperator(washBuyer, washOperator);
+            vm.prank(washOperator);
             usageRewards.claimBuyerReward(washBuyer, 5);
             assertEq(token.balanceOf(washBuyer), 0);
             assertEq(token.balanceOf(washOperator), washBuyerClaimable);
@@ -1465,6 +1466,10 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(buyerReward, buyerCap);
         assertEq(secondBuyerReward, grossSecondBuyerReward < buyerCap ? grossSecondBuyerReward : buyerCap);
 
+        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
+        usageRewards.claimBuyerReward(buyer, 4);
+
+        vm.prank(operator);
         usageRewards.claimBuyerReward(buyer, 4);
         assertEq(token.balanceOf(operator), buyerReward);
         assertEq(token.balanceOf(reserveDest), grossBuyerReward - buyerReward);
@@ -1478,6 +1483,10 @@ contract AntseedEmissionsGateTest is Test {
 
         address secondOperator = address(0x22);
         deposits.setOperator(secondBuyer, secondOperator);
+        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
+        usageRewards.claimBuyerReward(secondBuyer, 4);
+
+        vm.prank(secondOperator);
         usageRewards.claimBuyerReward(secondBuyer, 4);
         assertEq(token.balanceOf(secondBuyer), 0);
         assertEq(token.balanceOf(secondOperator), secondBuyerReward);
@@ -1593,6 +1602,10 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(6);
         assertEq(usageRewards.pendingAgentReward(agentId, 5), expectedReward);
 
+        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
+        usageRewards.claimAgentReward(agentId, 5);
+
+        vm.prank(seller);
         usageRewards.claimAgentReward(agentId, 5);
         assertEq(token.balanceOf(seller), expectedReward);
         assertEq(token.balanceOf(reserveDest), grossReward - expectedReward);
@@ -1679,6 +1692,10 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(usageRewards.rewardRecipient(agentId), newOwner);
         assertEq(usageRewards.pendingAgentReward(agentId, 5), expectedReward);
 
+        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
+        usageRewards.claimAgentReward(agentId, 5);
+
+        vm.prank(newOwner);
         usageRewards.claimAgentReward(agentId, 5);
         assertEq(token.balanceOf(newOwner), expectedReward);
         assertEq(token.balanceOf(seller), 0);
@@ -1704,6 +1721,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accruePoints(keccak256("seller-direct-and-pool"), buyer, seller, 100);
 
         _warpGateEpoch(6);
+        vm.prank(seller);
         usageRewards.claimAgentReward(_agentId(seller), 5);
         sellerPoolsRewards.indexPoolRewards(_agentId(seller), 10);
         vm.prank(seller);

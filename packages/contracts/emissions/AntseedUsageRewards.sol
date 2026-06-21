@@ -258,8 +258,10 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
             _rewardAmounts(sellerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
 
-        agentEpochClaimed[agentId][epoch] = true;
         address seller = _agentOwner(agentId);
+        if (msg.sender != seller) revert NotRewardRecipient();
+
+        agentEpochClaimed[agentId][epoch] = true;
         _mintReward(epoch, seller, claimableAmount, reserveAmount);
 
         emit SellerOperatorRewardClaimed(
@@ -307,8 +309,10 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
             _rewardAmounts(buyerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
 
-        buyerEpochClaimed[buyer][epoch] = true;
         address recipient = _buyerRewardRecipient(buyer);
+        if (msg.sender != recipient) revert NotRewardRecipient();
+
+        buyerEpochClaimed[buyer][epoch] = true;
         _mintReward(epoch, recipient, claimableAmount, reserveAmount);
 
         emit BuyerUsageRewardClaimed(
