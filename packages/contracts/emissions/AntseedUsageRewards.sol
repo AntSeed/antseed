@@ -75,8 +75,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     );
     event SellerOperatorRewardStaked(
         address indexed seller,
-        uint256 indexed rewardAgentId,
-        uint256 indexed stakeAgentId,
+        uint256 indexed agentId,
         uint256 epoch,
         uint256 newPositionId,
         uint256 weightedPoints,
@@ -145,13 +144,13 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         _claimAgentReward(agentId, epoch);
     }
 
-    function stakeAgentReward(uint256 rewardAgentId, uint256 epoch, uint256 stakeAgentId, uint256 stakeEpochs)
+    function stakeAgentReward(uint256 agentId, uint256 epoch, uint256 stakeEpochs)
         external
         nonReentrant
         whenNotPaused
         returns (uint256 newPositionId)
     {
-        newPositionId = _stakeAgentReward(rewardAgentId, epoch, stakeAgentId, stakeEpochs);
+        newPositionId = _stakeAgentReward(agentId, epoch, stakeEpochs);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -269,28 +268,26 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         );
     }
 
-    function _stakeAgentReward(uint256 rewardAgentId, uint256 epoch, uint256 stakeAgentId, uint256 stakeEpochs)
+    function _stakeAgentReward(uint256 agentId, uint256 epoch, uint256 stakeEpochs)
         internal
         returns (uint256 newPositionId)
     {
-        if (rewardAgentId == 0 || stakeAgentId == 0) revert InvalidAddress();
-        if (agentEpochClaimed[rewardAgentId][epoch]) revert AlreadyClaimed();
+        if (agentId == 0) revert InvalidAddress();
+        if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
 
-        (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(rewardAgentId, epoch);
+        (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(agentId, epoch);
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
             _rewardAmounts(sellerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
 
-        address seller = _agentOwner(rewardAgentId);
+        address seller = _agentOwner(agentId);
         if (msg.sender != seller) revert NotRewardRecipient();
-        if (_agentOwner(stakeAgentId) != seller) revert NotRewardRecipient();
 
-        agentEpochClaimed[rewardAgentId][epoch] = true;
-        newPositionId = _stakeClaimedReward(seller, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
+        agentEpochClaimed[agentId][epoch] = true;
+        newPositionId = _stakeClaimedReward(seller, agentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
 
         emit SellerOperatorRewardStaked(
             seller,
-            rewardAgentId,
-            stakeAgentId,
+            agentId,
             epoch,
             newPositionId,
             weightedPoints,
@@ -333,9 +330,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         address operator = _buyerRewardRecipient(buyer);
         if (msg.sender != operator) revert NotRewardRecipient();
-        // The buyer operator chooses the destination pool and owns the
-        // resulting position. Only require the target agent to exist.
-        _agentOwner(stakeAgentId);
 
         buyerEpochClaimed[buyer][epoch] = true;
         newPositionId = _stakeClaimedReward(operator, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);

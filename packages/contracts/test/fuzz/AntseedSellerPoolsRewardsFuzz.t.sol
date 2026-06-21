@@ -9,6 +9,7 @@ import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
 import { AntseedSellerPoolsRewards } from "../../emissions/AntseedSellerPoolsRewards.sol";
+import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract MockAgentLookup {
     mapping(address => uint256) public agentIdBySeller;
@@ -42,6 +43,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
     ANTSToken token;
     AntseedRegistry registry;
     AntseedEmissionsGate gate;
+    MockERC8004Registry identityRegistry;
     AntseedSellerPools pools;
     AntseedUsageAccounting usageAccounting;
     AntseedSellerPoolsRewards rewards;
@@ -71,6 +73,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
         registry = new AntseedRegistry();
+        identityRegistry = new MockERC8004Registry();
         agentLookup = new MockAgentLookup();
         registry.setAntsToken(address(token));
         registry.setEmissions(legacyController);
@@ -78,6 +81,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         registry.setProtocolReserve(reserve);
         registry.setDeposits(deposits);
         registry.setStaking(address(agentLookup));
+        registry.setIdentityRegistry(address(identityRegistry));
 
         token.setRegistry(address(registry));
         token.enableTransfers();
@@ -99,6 +103,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(rewards), SELLER_POOLS_SHARE_BPS, true);
 
         agentLookup.setAgent(seller, agentId);
+        identityRegistry.setOwner(agentId, seller);
     }
 
     function _warpGateEpoch(uint256 epoch) internal {

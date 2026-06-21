@@ -442,6 +442,7 @@ contract AntseedEmissionsGateTest is Test {
 
         sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
         uint256 agentId = _agentId(seller);
+        identityRegistry.setOwner(agentId, seller);
 
         vm.startPrank(staker);
         token.approve(address(sellerPools), 100 ether);
@@ -484,6 +485,7 @@ contract AntseedEmissionsGateTest is Test {
 
         uint256 agentId = _agentId(seller);
         sellerAgentLookup.setAgent(seller, agentId);
+        identityRegistry.setOwner(agentId, seller);
 
         vm.startPrank(staker);
         token.approve(address(sellerPools), 200 ether);
@@ -559,6 +561,7 @@ contract AntseedEmissionsGateTest is Test {
 
         uint256 agentId = _agentId(seller);
         sellerAgentLookup.setAgent(seller, agentId);
+        identityRegistry.setOwner(agentId, seller);
 
         vm.startPrank(staker);
         token.approve(address(sellerPools), 200 ether);
@@ -1627,36 +1630,27 @@ contract AntseedEmissionsGateTest is Test {
         uint256 grossReward = usageRewards.sellerEpochBudget(5);
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         uint256 rewardAgentId = _agentId(seller);
-        uint256 stakeAgentId = rewardAgentId + 1;
-        uint256 otherStakeAgentId = _agentId(otherSeller);
-        identityRegistry.setOwner(stakeAgentId, seller);
-        identityRegistry.setOwner(otherStakeAgentId, otherSeller);
         _warpGateEpoch(6);
 
         vm.prank(otherSeller);
         vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
-        usageRewards.stakeAgentReward(rewardAgentId, 5, stakeAgentId, 4);
+        usageRewards.stakeAgentReward(rewardAgentId, 5, 4);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
-        usageRewards.stakeAgentReward(rewardAgentId, 5, otherStakeAgentId, 4);
-
-        vm.prank(seller);
-        uint256 newPositionId = usageRewards.stakeAgentReward(rewardAgentId, 5, stakeAgentId, 4);
+        uint256 newPositionId = usageRewards.stakeAgentReward(rewardAgentId, 5, 4);
 
         (address owner, uint256 positionAgentId, uint256 amount, uint256 weightAmount, uint64 startEpoch,,,) =
             sellerPools.positions(newPositionId);
         assertEq(owner, seller);
         assertEq(sellerPools.ownerOf(newPositionId), seller);
-        assertEq(positionAgentId, stakeAgentId);
+        assertEq(positionAgentId, rewardAgentId);
         assertEq(amount, expectedReward);
         assertEq(weightAmount, expectedReward);
         assertEq(startEpoch, 7);
         assertEq(token.balanceOf(seller), 0);
         assertEq(token.balanceOf(address(usageRewards)), 0);
         assertEq(token.balanceOf(reserveDest), grossReward - expectedReward);
-        assertEq(sellerPools.stakerAgentActiveStake(seller, rewardAgentId), 1 ether);
-        assertEq(sellerPools.stakerAgentActiveStake(seller, stakeAgentId), expectedReward);
+        assertEq(sellerPools.stakerAgentActiveStake(seller, rewardAgentId), 1 ether + expectedReward);
         assertTrue(usageRewards.agentEpochClaimed(rewardAgentId, 5));
 
         vm.prank(seller);

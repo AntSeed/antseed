@@ -12,6 +12,7 @@ import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
+import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 /**
  * @title AntseedSellerPools
@@ -176,7 +177,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         returns (uint256 positionId)
     {
         if (staker == address(0)) revert InvalidAddress();
-        if (agentId == 0) revert InvalidValue();
+        _requireRegisteredAgent(agentId);
         if (amount == 0) revert InvalidValue();
         if (stakeEpochs < minStakeEpochs || stakeEpochs > MAX_STAKE_EPOCHS) revert StakeDurationOutOfBounds();
 
@@ -199,7 +200,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
      *         principal.
      */
     function moveStake(uint256 positionId, uint256 toAgentId) external nonReentrant returns (uint256 newPositionId) {
-        if (toAgentId == 0) revert InvalidValue();
+        _requireRegisteredAgent(toAgentId);
         newPositionId = _movePosition(positionId, toAgentId, msg.sender, currentEpoch() + 1);
     }
 
@@ -208,7 +209,8 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         nonReentrant
         returns (uint256[] memory newPositionIds)
     {
-        if (toAgentId == 0 || positionIds.length == 0) revert InvalidValue();
+        if (positionIds.length == 0) revert InvalidValue();
+        _requireRegisteredAgent(toAgentId);
         uint256 effectiveEpoch = currentEpoch() + 1;
         newPositionIds = new uint256[](positionIds.length);
         for (uint256 i = 0; i < positionIds.length; i++) {
@@ -799,6 +801,19 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         _increaseActiveStake(owner, agentId, amount);
         _mint(owner, positionId);
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
+    }
+
+    function _requireRegisteredAgent(uint256 agentId) internal view {
+        if (agentId == 0) revert InvalidValue();
+
+        address identityRegistry = registry.identityRegistry();
+        if (identityRegistry == address(0)) revert InvalidAddress();
+
+        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address owner) {
+            if (owner == address(0)) revert InvalidValue();
+        } catch {
+            revert InvalidValue();
+        }
     }
 
     function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {

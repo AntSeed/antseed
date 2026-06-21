@@ -9,6 +9,7 @@ import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
 import { IAntseedPointsPolicy } from "../../interfaces/IAntseedPointsPolicy.sol";
+import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract MockAgentLookup {
     mapping(address => uint256) public agentIdBySeller;
@@ -65,6 +66,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
     ANTSToken token;
     AntseedRegistry registry;
     AntseedEmissionsGate gate;
+    MockERC8004Registry identityRegistry;
     AntseedSellerPools pools;
     AntseedUsageAccounting usageAccounting;
     MockAgentLookup agentLookup;
@@ -89,6 +91,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
         registry = new AntseedRegistry();
+        identityRegistry = new MockERC8004Registry();
         agentLookup = new MockAgentLookup();
         registry.setAntsToken(address(token));
         registry.setEmissions(legacyController);
@@ -96,6 +99,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
         registry.setProtocolReserve(reserve);
         registry.setDeposits(deposits);
         registry.setStaking(address(agentLookup));
+        registry.setIdentityRegistry(address(identityRegistry));
 
         token.setRegistry(address(registry));
         token.enableTransfers();
@@ -112,6 +116,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
 
         policy = new HostilePointsPolicy();
         agentLookup.setAgent(seller, agentId);
+        identityRegistry.setOwner(agentId, seller);
 
         // Seed a real pool with power so the weighted-points multiply path runs.
         deal(address(token), stakerAddr, 100_000_000 ether);

@@ -161,6 +161,32 @@ contract AntseedSellerPoolsTest is Test {
         pools.moveStake(positionId, otherAgentId);
     }
 
+    function test_stakeAndMoveRejectUnregisteredAgents() public {
+        uint256 unregisteredAgentId = otherAgentId + 1_000;
+
+        vm.startPrank(staker);
+        token.approve(address(pools), 1 ether);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.stakeFor(staker, unregisteredAgentId, 1 ether, 1);
+        vm.stopPrank();
+
+        uint256 positionId = _stake(staker, agentId, 100 ether, 4);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.moveStake(positionId, unregisteredAgentId);
+
+        (,,,,,, uint64 closedAtEpoch,) = pools.positions(positionId);
+        assertEq(closedAtEpoch, 0);
+
+        uint256[] memory positionIds = new uint256[](1);
+        positionIds[0] = positionId;
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.moveStakes(positionIds, unregisteredAgentId);
+    }
+
     function test_lantsReceiptTransfersPositionRights() public {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 

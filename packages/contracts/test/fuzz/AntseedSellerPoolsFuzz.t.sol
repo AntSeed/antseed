@@ -6,6 +6,7 @@ import "forge-std/Test.sol";
 import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
+import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 /**
  * @title AntseedSellerPoolsFuzz
@@ -31,6 +32,7 @@ import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 contract AntseedSellerPoolsFuzzTest is Test {
     ANTSToken token;
     AntseedRegistry registry;
+    MockERC8004Registry identityRegistry;
     AntseedSellerPools pools;
 
     address staker = address(0x5742E);
@@ -47,11 +49,19 @@ contract AntseedSellerPoolsFuzzTest is Test {
         genesis = block.timestamp;
 
         registry = new AntseedRegistry();
+        identityRegistry = new MockERC8004Registry();
         token = new ANTSToken();
         token.setRegistry(address(registry));
         token.enableTransfers();
         registry.setAntsToken(address(token));
         registry.setEmissions(address(this));
+        registry.setIdentityRegistry(address(identityRegistry));
+
+        identityRegistry.setOwner(1, staker);
+        identityRegistry.setOwner(2, staker);
+        identityRegistry.setOwner(3, staker);
+        identityRegistry.setOwner(7, staker);
+        identityRegistry.setOwner(fixedAgent(), staker);
 
         pools = new AntseedSellerPools(address(registry), 0, 0, 0);
         token.setTransferWhitelist(address(pools), true);
