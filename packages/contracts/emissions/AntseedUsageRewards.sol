@@ -285,16 +285,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         agentEpochClaimed[rewardAgentId][epoch] = true;
         newPositionId = _stakeClaimedReward(seller, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
 
-        emit SellerOperatorRewardClaimed(
-            seller,
-            rewardAgentId,
-            epoch,
-            weightedPoints,
-            totalWeightedPoints,
-            grossAmount,
-            claimableAmount,
-            reserveAmount
-        );
         emit SellerOperatorRewardStaked(
             seller,
             rewardAgentId,
@@ -344,9 +334,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         buyerEpochClaimed[buyer][epoch] = true;
         newPositionId = _stakeClaimedReward(operator, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
 
-        emit BuyerUsageRewardClaimed(
-            buyer, operator, epoch, weightedPoints, totalWeightedPoints, grossAmount, claimableAmount, reserveAmount
-        );
         emit BuyerUsageRewardStaked(
             buyer,
             operator,
