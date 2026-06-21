@@ -1206,7 +1206,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void processManager.stopAll().finally(() => app.quit());
+    app.quit();
   }
 });
 
@@ -1218,17 +1218,15 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void processManager.stopAll()
-    .then(() => stopPaymentsPortal())
-    .finally(() => {
-      app.quit();
-    });
+  void stopDesktopServices().finally(() => {
+    app.exit(0);
+  });
 });
 
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
+  void stopDesktopServices().finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal
