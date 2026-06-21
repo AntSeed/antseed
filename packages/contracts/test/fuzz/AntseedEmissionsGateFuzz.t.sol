@@ -37,7 +37,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
     uint256 constant GATE_EPOCH_DURATION = 7 days;
     uint256 constant INITIAL_EMISSION = 5_000_000e18;
     uint256 constant HALVING_INTERVAL = 104;
-    uint256 constant BPS = 100_000;
+    uint256 constant SHARE_DENOMINATOR = 100_000;
 
     address legacyController = address(0xCAFE);
     address teamWallet = address(0x7EA3);
@@ -138,8 +138,8 @@ contract AntseedEmissionsGateFuzzTest is Test {
 
         uint256 epoch = 2; // finalized (< currentEpoch 4) and < effectiveEpoch (legacy window)
         uint256 emission = gate.getEpochEmission(epoch);
-        uint256 budgetA = (emission * sA) / BPS;
-        uint256 budgetB = (emission * sB) / BPS;
+        uint256 budgetA = (emission * sA) / SHARE_DENOMINATOR;
+        uint256 budgetB = (emission * sB) / SHARE_DENOMINATOR;
 
         _tryClaim(minterA, epoch, bound(amtA, 0, emission));
         _tryClaim(minterB, epoch, bound(amtB, 0, emission));
@@ -181,7 +181,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
         // New seller-pools minter at 45% of the epoch.
         address poolsMinter = address(0xF00D);
         gate.setMinter(keccak256("pools"), poolsMinter, 45_000, true);
-        uint256 poolsBudget = (emission * 45_000) / BPS;
+        uint256 poolsBudget = (emission * 45_000) / SHARE_DENOMINATOR;
 
         // Legacy consumes between 60% and 100% of the epoch, leaving < poolsBudget.
         uint256 legacyMint = bound(legacyAmount, (emission * 60) / 100, emission);
@@ -221,8 +221,8 @@ contract AntseedEmissionsGateFuzzTest is Test {
         address minter = address(0xC0FFEE);
         gate.setMinter(id, minter, s1, true);
 
-        // Warp forward and change the share, creating a checkpoint at the new
-        // current epoch. The first checkpoint stays at epoch 0.
+        // Warp forward and change the share, creating a checkpoint at the next
+        // epoch. The first checkpoint stays at epoch 0.
         uint256 changeEpoch = uint256(bound(changeEpochSeed, 3, 40));
         _warpGateEpoch(changeEpoch);
         uint32 s2 = uint32(bound(share2, 1, 20_000));
@@ -231,7 +231,11 @@ contract AntseedEmissionsGateFuzzTest is Test {
 
         uint256 e = bound(queryEpoch, 0, 100);
         uint256 emission = gate.getEpochEmission(e);
-        uint256 expectedShare = e < changeEpoch ? s1 : s2;
-        assertEq(gate.minterEpochBudget(id, e), (emission * expectedShare) / BPS, "checkpoint share lookup wrong");
+        uint256 expectedShare = e <= changeEpoch ? s1 : s2;
+        assertEq(
+            gate.minterEpochBudget(id, e),
+            (emission * expectedShare) / SHARE_DENOMINATOR,
+            "checkpoint share lookup wrong"
+        );
     }
 }
