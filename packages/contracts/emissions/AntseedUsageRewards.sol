@@ -333,7 +333,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         address operator = _buyerRewardRecipient(buyer);
         if (msg.sender != operator) revert NotRewardRecipient();
-        if (_agentOwner(stakeAgentId) != buyer) revert NotRewardRecipient();
+        // The buyer operator chooses the destination pool and owns the
+        // resulting position. Only require the target agent to exist.
+        _agentOwner(stakeAgentId);
 
         buyerEpochClaimed[buyer][epoch] = true;
         newPositionId = _stakeClaimedReward(operator, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);

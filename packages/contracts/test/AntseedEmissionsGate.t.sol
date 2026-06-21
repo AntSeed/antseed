@@ -1522,22 +1522,18 @@ contract AntseedEmissionsGateTest is Test {
         uint256 expectedReward = (grossReward * usageRewards.MAX_REWARD_SHARE_BPS()) / usageRewards.BPS_DENOMINATOR();
         _warpGateEpoch(6);
 
-        vm.prank(operator);
-        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
-        usageRewards.stakeBuyerReward(buyer, 5, otherStakeAgentId, 4);
-
         vm.prank(buyer);
         vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
         usageRewards.stakeBuyerReward(buyer, 5, buyerStakeAgentId, 4);
 
         vm.prank(operator);
-        uint256 newPositionId = usageRewards.stakeBuyerReward(buyer, 5, buyerStakeAgentId, 4);
+        uint256 newPositionId = usageRewards.stakeBuyerReward(buyer, 5, otherStakeAgentId, 4);
 
         (address owner, uint256 positionAgentId, uint256 amount, uint256 weightAmount, uint64 startEpoch,,,) =
             sellerPools.positions(newPositionId);
         assertEq(owner, operator);
         assertEq(sellerPools.ownerOf(newPositionId), operator);
-        assertEq(positionAgentId, buyerStakeAgentId);
+        assertEq(positionAgentId, otherStakeAgentId);
         assertEq(amount, expectedReward);
         assertEq(weightAmount, expectedReward);
         assertEq(startEpoch, 7);
@@ -1546,7 +1542,7 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(operator), 0);
         assertEq(token.balanceOf(reserveDest), grossReward - expectedReward);
         assertEq(sellerPools.stakerAgentActiveStake(buyer, buyerStakeAgentId), 0);
-        assertEq(sellerPools.stakerAgentActiveStake(operator, buyerStakeAgentId), expectedReward);
+        assertEq(sellerPools.stakerAgentActiveStake(operator, otherStakeAgentId), expectedReward);
         assertTrue(usageRewards.buyerEpochClaimed(buyer, 5));
 
         vm.expectRevert(AntseedUsageRewards.AlreadyClaimed.selector);
