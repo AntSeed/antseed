@@ -2091,15 +2091,16 @@ contract AntseedEmissionsGateTest is Test {
         uint256 shareBpsAtStake = sellerPoolsRewards.stakerMinShareBps()
             + (uint256(sellerPoolsRewards.stakerMaxShareBps() - sellerPoolsRewards.stakerMinShareBps()) * stakeAmount)
                 / (stakeAmount + sellerPoolsRewards.stakeShareTarget());
-        uint256 desiredBudget = (gate.initialEmission() * shareBpsAtStake) / gate.BPS_DENOMINATOR();
+        uint256 desiredBudget = (gate.getEpochEmission(103) * shareBpsAtStake) / gate.BPS_DENOMINATOR();
+        uint256 postHalvingDesiredBudget = (gate.getEpochEmission(104) * shareBpsAtStake) / gate.BPS_DENOMINATOR();
 
         assertEq(sellerPools.totalActiveStakeAtEpoch(103), stakeAmount);
         assertEq(sellerPoolsRewards.stakerEpochBudget(103), desiredBudget);
         assertLt(desiredBudget, gate.controllerEpochBudget(address(sellerPoolsRewards), 103));
 
         uint256 postHalvingMaxBudget = gate.controllerEpochBudget(address(sellerPoolsRewards), 104);
-        assertLt(postHalvingMaxBudget, desiredBudget);
-        assertEq(sellerPoolsRewards.stakerEpochBudget(104), postHalvingMaxBudget);
+        assertLt(postHalvingDesiredBudget, postHalvingMaxBudget);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(104), postHalvingDesiredBudget);
     }
 
     function test_sellerPoolsRewardsBatchClaimUsesPositionLogic() public {

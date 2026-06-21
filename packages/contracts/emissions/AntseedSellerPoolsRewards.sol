@@ -292,7 +292,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint32 shareBps = _saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
         if (shareBps == 0) return 0;
 
-        uint256 desiredBudget = Math.mulDiv(emissionsGate.initialEmission(), shareBps, GATE_BPS_DENOMINATOR);
+        uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_BPS_DENOMINATOR);
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
         return desiredBudget < maxBudget ? desiredBudget : maxBudget;
     }
