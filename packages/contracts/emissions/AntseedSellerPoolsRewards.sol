@@ -45,7 +45,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant GATE_BPS_DENOMINATOR = 100_000;
+    uint256 public constant GATE_SHARE_DENOMINATOR = 100_000;
     uint256 public constant INDEX_SCALE = 1e30;
     uint32 public constant MAX_STAKER_SHARE_BPS = 40_000;
 
@@ -292,7 +292,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint32 shareBps = _saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
         if (shareBps == 0) return 0;
 
-        uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_BPS_DENOMINATOR);
+        uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
         return desiredBudget < maxBudget ? desiredBudget : maxBudget;
     }

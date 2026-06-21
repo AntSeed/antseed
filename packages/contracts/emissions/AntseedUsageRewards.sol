@@ -38,7 +38,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant GATE_BPS_DENOMINATOR = 100_000;
+    uint256 public constant GATE_SHARE_DENOMINATOR = 100_000;
     uint256 public constant MAX_REWARD_SHARE_BPS = 500;
     uint32 public constant MAX_BUYER_SHARE_BPS = 10_000;
     uint32 public constant MAX_SELLER_SHARE_BPS = 10_000;
@@ -468,7 +468,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _shareBudget(uint256 epoch, uint32 shareBps) internal view returns (uint256) {
         if (shareBps == 0) return 0;
-        return Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_BPS_DENOMINATOR);
+        return Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
     }
 
     function _protocolReserve() internal view returns (address reserve) {

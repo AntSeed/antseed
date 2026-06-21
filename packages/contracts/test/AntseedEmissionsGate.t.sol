@@ -629,7 +629,7 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(gate.initialEmission(), 5_000_000 ether);
         assertEq(gate.effectiveEpoch(), 4);
         assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
-        assertEq(gate.BPS_DENOMINATOR(), 100_000);
+        assertEq(gate.SHARE_DENOMINATOR(), 100_000);
         _setEmissionMinters(address(this), address(0xBEEF));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
@@ -1064,7 +1064,7 @@ contract AntseedEmissionsGateTest is Test {
         uint256 maxBudget = gate.controllerEpochBudget(address(sellerPoolsRewards), 5);
         uint256 allocatedBudget = sellerPoolsRewards.stakerEpochBudget(5);
         uint256 unallocated = maxBudget - allocatedBudget;
-        uint256 burnCap = gate.getEpochEmission(5) * gate.BURN_CAP_BPS() / gate.BPS_DENOMINATOR();
+        uint256 burnCap = gate.getEpochEmission(5) * gate.BURN_CAP_BPS() / gate.SHARE_DENOMINATOR();
 
         sellerPoolsRewards.indexPoolRewards(_agentId(otherSeller), 10);
         sellerPoolsRewards.settleEpochRemainder(5);
@@ -2090,8 +2090,8 @@ contract AntseedEmissionsGateTest is Test {
         uint256 shareBpsAtStake = sellerPoolsRewards.stakerMinShareBps()
             + (uint256(sellerPoolsRewards.stakerMaxShareBps() - sellerPoolsRewards.stakerMinShareBps()) * stakeAmount)
                 / (stakeAmount + sellerPoolsRewards.stakeShareTarget());
-        uint256 desiredBudget = (gate.getEpochEmission(103) * shareBpsAtStake) / gate.BPS_DENOMINATOR();
-        uint256 postHalvingDesiredBudget = (gate.getEpochEmission(104) * shareBpsAtStake) / gate.BPS_DENOMINATOR();
+        uint256 desiredBudget = (gate.getEpochEmission(103) * shareBpsAtStake) / gate.SHARE_DENOMINATOR();
+        uint256 postHalvingDesiredBudget = (gate.getEpochEmission(104) * shareBpsAtStake) / gate.SHARE_DENOMINATOR();
 
         assertEq(sellerPools.totalActiveStakeAtEpoch(103), stakeAmount);
         assertEq(sellerPoolsRewards.stakerEpochBudget(103), desiredBudget);

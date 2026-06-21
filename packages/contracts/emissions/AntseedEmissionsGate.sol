@@ -27,7 +27,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     uint256 public constant EPOCH_DURATION = 7 days;
     uint256 public constant HALVING_INTERVAL = 104;
     uint256 public constant INITIAL_EMISSION = 5_000_000e18;
-    uint256 public constant BPS_DENOMINATOR = 100_000;
+    uint256 public constant SHARE_DENOMINATOR = 100_000;
     uint256 public constant BURN_CAP_BPS = 30_000;
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     bytes32 public constant LEGACY_EMISSIONS_MINTER_ID = keccak256("antseed.emissions.legacy.v1");
@@ -94,8 +94,8 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
         controllerMinterIds[legacyMinter] = LEGACY_EMISSIONS_MINTER_ID;
         _minters[LEGACY_EMISSIONS_MINTER_ID] =
-            Minter({ controller: legacyMinter, shareBps: uint32(BPS_DENOMINATOR), editable: false });
-        _recordMinterShare(LEGACY_EMISSIONS_MINTER_ID, 0, uint32(BPS_DENOMINATOR));
+            Minter({ controller: legacyMinter, shareBps: uint32(SHARE_DENOMINATOR), editable: false });
+        _recordMinterShare(LEGACY_EMISSIONS_MINTER_ID, 0, uint32(SHARE_DENOMINATOR));
         _setMinter(TEAM_MINTER_ID, teamWallet, teamShareBps, false);
         _setMinter(RESERVE_MINTER_ID, protocolReserve, reserveShareBps, false);
     }
@@ -240,7 +240,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     }
 
     function renounceOwnership() public override onlyOwner {
-        if (totalMinterShareBps != BPS_DENOMINATOR) revert MintersNotSet();
+        if (totalMinterShareBps != SHARE_DENOMINATOR) revert MintersNotSet();
         if (registry.deposits() == address(0)) revert DepositsNotConfigured();
         if (!legacyEpochMintsDisabled) revert LegacyEpochMintsStillEnabled();
         super.renounceOwnership();
@@ -263,7 +263,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
         uint32 previousShareBps = existing.controller == address(0) ? 0 : existing.shareBps;
         uint32 nextTotalMinterShareBps = totalMinterShareBps - previousShareBps + shareBps;
-        if (nextTotalMinterShareBps > BPS_DENOMINATOR) revert InvalidValue();
+        if (nextTotalMinterShareBps > SHARE_DENOMINATOR) revert InvalidValue();
 
         if (existing.controller != address(0) && existing.controller != controller) {
             delete controllerMinterIds[existing.controller];
@@ -338,7 +338,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     }
 
     function _shareBudget(uint256 epoch, uint32 shareBps) internal pure returns (uint256) {
-        return (getEpochEmission(epoch) * shareBps) / BPS_DENOMINATOR;
+        return (getEpochEmission(epoch) * shareBps) / SHARE_DENOMINATOR;
     }
 
     function _recordMinterShare(bytes32 id, uint256 startEpoch, uint32 shareBps) internal {
