@@ -64,6 +64,7 @@ interface IAntseedSellerPools {
     error PositionClosed();
     error AlreadyWithdrawn();
     error NotRewardStaker();
+    error EmissionsNotConfigured();
 
     function stake(uint256 agentId, uint256 amount, uint256 stakeEpochs) external returns (uint256 positionId);
     function stakeFor(address staker, uint256 agentId, uint256 amount, uint256 stakeEpochs)

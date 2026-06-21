@@ -153,7 +153,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     // ─── Epoch Helpers ────────────────────────────────────────────────
     function currentEpoch() public view returns (uint256) {
         address emissions = registry.emissions();
-        if (emissions == address(0)) revert InvalidAddress();
+        if (emissions == address(0)) revert EmissionsNotConfigured();
         return IAntseedUsageAccounting(emissions).currentEpoch();
     }
 

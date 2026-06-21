@@ -83,6 +83,15 @@ contract AntseedSellerPoolsTest is Test {
         return (block.timestamp - genesis) / EPOCH_DURATION;
     }
 
+    function test_currentEpochRevertsWhenEmissionsUnset() public {
+        AntseedRegistry unsetRegistry = new AntseedRegistry();
+        unsetRegistry.setAntsToken(address(token));
+        AntseedSellerPools unsetPools = new AntseedSellerPools(address(unsetRegistry), 0, 0, 0);
+
+        vm.expectRevert(IAntseedSellerPools.EmissionsNotConfigured.selector);
+        unsetPools.currentEpoch();
+    }
+
     function test_stakeActivatesNextEpochAndUsesAgentIdWeight() public {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 
