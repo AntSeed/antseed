@@ -2,6 +2,10 @@ import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
   type SpendingAuthPayload,
   type AuthAckPayload,
+  type FreeUsageOpenPayload,
+  type FreeUsageAuthPayload,
+  type FreeUsageAckPayload,
+  type NeedFreeUsageAuthPayload,
   type PaymentRequiredPayload,
   type NeedAuthPayload,
 } from '../types/protocol.js';
@@ -20,6 +24,14 @@ function parsePaymentJson(data: Uint8Array): Record<string, unknown> {
   });
 }
 
+function requireFiniteNumberField(obj: Record<string, unknown>, field: string): number {
+  const value = typeof obj[field] === 'number' ? obj[field] : Number(requireStringField(obj, field));
+  if (!Number.isFinite(value)) {
+    throw new Error(`Payment payload field "${field}" must be a finite number`);
+  }
+  return value;
+}
+
 // --- Encoders ---
 
 export function encodeSpendingAuth(payload: SpendingAuthPayload): Uint8Array {
@@ -27,6 +39,22 @@ export function encodeSpendingAuth(payload: SpendingAuthPayload): Uint8Array {
 }
 
 export function encodeAuthAck(payload: AuthAckPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeFreeUsageOpen(payload: FreeUsageOpenPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeFreeUsageAuth(payload: FreeUsageAuthPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeFreeUsageAck(payload: FreeUsageAckPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeNeedFreeUsageAuth(payload: NeedFreeUsageAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
@@ -61,6 +89,53 @@ export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
   return {
     channelId: requireStringField(obj, 'channelId'),
   };
+}
+
+export function decodeFreeUsageOpen(data: Uint8Array): FreeUsageOpenPayload {
+  const obj = parsePaymentJson(data);
+  return {
+    channelId: requireStringField(obj, 'channelId'),
+    salt: requireStringField(obj, 'salt'),
+    deadline: requireFiniteNumberField(obj, 'deadline'),
+    openSig: requireStringField(obj, 'openSig'),
+  };
+}
+
+export function decodeFreeUsageAuth(data: Uint8Array): FreeUsageAuthPayload {
+  const obj = parsePaymentJson(data);
+  return {
+    channelId: requireStringField(obj, 'channelId'),
+    cumulativeInputTokens: requireStringField(obj, 'cumulativeInputTokens'),
+    cumulativeOutputTokens: requireStringField(obj, 'cumulativeOutputTokens'),
+    sequence: requireStringField(obj, 'sequence'),
+    metadataHash: requireStringField(obj, 'metadataHash'),
+    metadata: requireStringField(obj, 'metadata'),
+    deadline: requireFiniteNumberField(obj, 'deadline'),
+    usageSig: requireStringField(obj, 'usageSig'),
+  };
+}
+
+export function decodeFreeUsageAck(data: Uint8Array): FreeUsageAckPayload {
+  const obj = parsePaymentJson(data);
+  const result: FreeUsageAckPayload = {
+    channelId: requireStringField(obj, 'channelId'),
+  };
+  if (typeof obj.acceptedSequence === 'string') result.acceptedSequence = obj.acceptedSequence;
+  return result;
+}
+
+export function decodeNeedFreeUsageAuth(data: Uint8Array): NeedFreeUsageAuthPayload {
+  const obj = parsePaymentJson(data);
+  const result: NeedFreeUsageAuthPayload = {
+    channelId: requireStringField(obj, 'channelId'),
+    requiredSequence: requireStringField(obj, 'requiredSequence'),
+    currentAcceptedSequence: requireStringField(obj, 'currentAcceptedSequence'),
+  };
+  if (typeof obj.requestId === 'string') result.requestId = obj.requestId;
+  if (typeof obj.inputTokens === 'string') result.inputTokens = obj.inputTokens;
+  if (typeof obj.outputTokens === 'string') result.outputTokens = obj.outputTokens;
+  if (typeof obj.service === 'string') result.service = obj.service;
+  return result;
 }
 
 export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {

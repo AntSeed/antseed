@@ -5,9 +5,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
-import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
-import {IANTSToken} from "./interfaces/IANTSToken.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
+import {IAntseedDeposits} from "../interfaces/IAntseedDeposits.sol";
+import {IANTSToken} from "../interfaces/IANTSToken.sol";
 
 /**
  * @title AntseedEmissions

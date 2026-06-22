@@ -588,6 +588,23 @@
   font-weight: 700;
   color: #fff;
   line-height: 1;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.provider-avatar-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  padding: 0;
+}
+
+.provider-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .card-provider-name {
@@ -708,6 +725,12 @@
   }
 }
 
+.verification-description {
+  max-width: 240px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
 /* ── Loading / empty states ─────────────────────────────────────────── */
 
 .loading-hint {
@@ -787,43 +810,7 @@
 }
 
 .tagMore {
-  position: relative;
   cursor: default;
-}
-
-.tagMoreTooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  opacity: 0;
-  pointer-events: none;
-  white-space: normal;
-  max-width: 220px;
-  transition: opacity 0.15s;
-  z-index: 10;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
-  border-radius: 10px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
-  
-  :global(.dark-theme) {
-    .tooltip {
-      border-color: rgba(255, 255, 255, 0.08);
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-    }
-  }
-  
-}
-
-.tagMore:hover .tagMoreTooltip,
-.tagMore:focus-within .tagMoreTooltip {
-  opacity: 1;
 }
 
 @keyframes discover-drawer-in {

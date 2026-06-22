@@ -91,7 +91,7 @@ function renderWireFormatBlock(i: Integration): string {
     lines.push(
       `${i.name} can send any of AntSeed's supported wire formats. Match the request ` +
         "format against each service's `protocols` array (advertised per service in " +
-        '`providerServiceApiProtocols` / `matchingServices[].protocols`) — when it matches, ' +
+        '`providerServiceApiProtocols`) — when it matches, ' +
         'the request passes through untouched; when it does not, `@antseed/api-adapter` ' +
         'translates on the fly.',
     );
@@ -120,8 +120,8 @@ function renderWireFormatBlock(i: Integration): string {
   );
   lines.push(
     '- **How to check a peer:** run `antseed network peer <peerId> --json` and look at ' +
-      '`matchingServices[].protocols` for each model. The browse command shows the same ' +
-      'data per peer in `providerServiceApiProtocols`.',
+      '`peer.providerServiceApiProtocols[provider].services[service]` for each model. ' +
+      'The browse command exposes the same field per peer.',
   );
   lines.push(
     `- **When protocols differ:** AntSeed's \`@antseed/api-adapter\` translates between ${FORMAT_LABELS[fmt]} ` +
@@ -259,10 +259,10 @@ function renderSkillMarkdown(): string {
   out.push('  a display name, and a list of services. List with `antseed network browse`.');
   out.push('- **Service** — a single model id like `claude-sonnet-4-6` or `deepseek-v4-flash`.');
   out.push("  *This is what you pass as `model` in your tool's config.* Each service has its");
-  out.push('  own `protocols` array and its own `in` / `cachedIn` / `out` pricing.');
+  out.push('  own native protocol list and its own `in` / `cachedIn` / `out` pricing.');
   out.push('- **Protocols** (per service) — the wire formats a service accepts *natively*,');
-  out.push('  advertised on each peer in `providerServiceApiProtocols` (and surfaced per service');
-  out.push('  in `matchingServices[].protocols`). Values are `anthropic-messages`,');
+  out.push('  advertised on each peer in `providerServiceApiProtocols[provider].services[service]`.');
+  out.push('  Values are `anthropic-messages`,');
   out.push('  `openai-chat-completions`, `openai-responses`, `openai-completions`. **This is');
   out.push("  the field to match your tool's wire format against.** If your tool's wire format");
   out.push('  is in this list, the request passes through untouched; if not, the api-adapter');
@@ -332,18 +332,30 @@ function renderSkillMarkdown(): string {
   out.push("      ]");
   out.push("    })'");
   out.push('');
-  out.push('# 5. Inspect one peer in detail. The shape of `matchingServices[]` is the same');
-  out.push('#    as the per-service rows above, with `tags` (capability hints) included.');
+  out.push('# 5. Inspect one peer in detail. Use `matchingServices[]` for pricing/tags and');
+  out.push('#    `peer.providerServiceApiProtocols` for native protocol support.');
   out.push('#    `cachedIn` is typically 4–10× cheaper than `in` and often dominates the');
   out.push('#    cost line for long-running agents and chatbots — always include it when');
   out.push('#    comparing peers.');
   out.push('antseed network peer <peerId> --json \\');
-  out.push("  | jq '.matchingServices[] | {");
-  out.push("      service, protocols,");
-  out.push("      in:       .inputUsdPerMillion,");
-  out.push("      cachedIn: .cachedInputUsdPerMillion,");
-  out.push("      out:      .outputUsdPerMillion,");
-  out.push("      tags");
+  out.push("  | jq '{");
+  out.push("      peer: (.peer | { peerId, name: .displayName,");
+  out.push("                       sessions: .onChainChannelCount,");
+  out.push("                       ghosts:   .onChainGhostCount }),");
+  out.push("      services: [");
+  out.push("        (.peer.providerServiceApiProtocols | to_entries[]) as $p");
+  out.push("        | ($p.value.services | to_entries[]) as $s");
+  out.push("        | (.matchingServices[] | select(.provider == $p.key and .service == $s.key)) as $m");
+  out.push("        | {");
+  out.push("            provider: $p.key,");
+  out.push("            service: $s.key,");
+  out.push("            protocols: $s.value,");
+  out.push("            in:       $m.inputUsdPerMillion,");
+  out.push("            cachedIn: $m.cachedInputUsdPerMillion,");
+  out.push("            out:      $m.outputUsdPerMillion,");
+  out.push("            tags:     $m.tags");
+  out.push("          }");
+  out.push("      ]");
   out.push("    }'");
   out.push('');
   out.push('# 6. Pin a peer (session-wide). Until you do, every request returns');

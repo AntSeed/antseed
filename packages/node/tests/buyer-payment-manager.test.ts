@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { AbiCoder, id, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_ROLE } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
@@ -561,7 +561,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeRequestCount: 1n,
     });
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     const storedServices = store.getServiceTotals(channel!.sessionId);
     expect(storedServices).toHaveLength(2);
@@ -573,6 +573,38 @@ describe('BuyerPaymentManager', () => {
       cumulativeOutputTokens: '75',
       cumulativeRequestCount: '2',
     }));
+  });
+
+  it('signPerRequestAuth suppresses per-service metadata when disabled', async () => {
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir, {
+      disableMetadataV2Services: true,
+    }), store);
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-no-service-meta');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        sellerClaimedCost: 100n,
+        reportedInputTokens: 1000n,
+        reportedCachedInputTokens: 200n,
+        reportedOutputTokens: 50n,
+        service: 'sensitive-model',
+      },
+    );
+
+    const meta = decodeMetadataTokens(payload.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(50n);
+    expect(decodeMetadataServices(payload.metadata)).toEqual([]);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
+    expect(channel).not.toBeNull();
+    expect(store.getServiceTotals(channel!.sessionId)).toEqual([]);
   });
 
   it('signPerRequestAuth hydrates cumulative service metadata after restart', async () => {
@@ -677,6 +709,41 @@ describe('BuyerPaymentManager', () => {
       cumulativeOutputTokens: 100n,
       cumulativeRequestCount: 1n,
     }]);
+  });
+
+  it('handleNeedAuth suppresses per-service metadata when disabled', async () => {
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir, {
+      disableMetadataV2Services: true,
+    }), store);
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-needauth-no-service-meta');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    manager.trackRequestService('req-sensitive-needauth', 'sensitive-model');
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-sensitive-needauth',
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '100',
+      inputTokens: '1000',
+      cachedInputTokens: '200',
+      outputTokens: '50',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    const sent = mux.sentSpendingAuths[0] as Record<string, string>;
+    const meta = decodeMetadataTokens(sent.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(50n);
+    expect(decodeMetadataServices(sent.metadata)).toEqual([]);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
+    expect(channel).not.toBeNull();
+    expect(store.getServiceTotals(channel!.sessionId)).toEqual([]);
   });
 
   it('handleNeedAuth does not double-count service totals for a request already counted by signPerRequestAuth', async () => {
@@ -1117,7 +1184,7 @@ describe('BuyerPaymentManager', () => {
     expect(totals.requests).toBe(2);
 
     // Persisted in channel store
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('1500');
     expect(channel!.previousConsumption).toBe('350');
@@ -1144,7 +1211,7 @@ describe('BuyerPaymentManager', () => {
 
     // Reopen store and verify persisted data
     const store2 = new ChannelStore(tempDir);
-    const channel = store2.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store2.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('2000');
     expect(channel!.previousConsumption).toBe('800');
@@ -1193,7 +1260,7 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(extended.cumulativeAmount)).toBeGreaterThan(previousCumulative);
     expect(extended.metadata).toBe(previousMetadata);
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.authMax).toBe(extended.cumulativeAmount);
   });
@@ -1354,7 +1421,7 @@ describe('BuyerPaymentManager', () => {
       requests: 2,
     });
 
-    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
     expect(channel).not.toBeNull();
     expect(channel!.tokensDelivered).toBe('1500');
     expect(channel!.previousConsumption).toBe('350');

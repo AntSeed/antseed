@@ -24,6 +24,10 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 export { ChannelsClient } from './evm/channels-client.js';
 export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent } from './evm/channels-client.js';
 
+// Free usage client (zero-price signed usage)
+export { FreeUsageClient } from './evm/free-usage-client.js';
+export type { FreeUsageClientConfig, FreeUsageChannelInfo, FreeUsageAgentStats } from './evm/free-usage-client.js';
+
 // Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
 export type { IdentityClientConfig } from './evm/identity-client.js';
@@ -35,21 +39,43 @@ export type { StakingClientConfig } from './evm/staking-client.js';
 export {
   signSpendingAuth,
   signReserveAuth,
+  signFreeUsageOpen,
+  signFreeUsageAuth,
   signSetOperator,
   makeChannelsDomain,
   makeDepositsDomain,
+  makeFreeUsageDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
+  FREE_USAGE_OPEN_TYPES,
+  FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  computeFreeUsageMetadataHash,
+  encodeFreeUsageMetadata,
   getServiceMetadataId,
   METADATA_VERSION,
+  FREE_USAGE_METADATA_VERSION,
   computeChannelId,
+  computeFreeUsageChannelId,
+  FREE_USAGE_CHANNEL_DOMAIN,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
+  ZERO_FREE_USAGE_METADATA,
+  ZERO_FREE_USAGE_METADATA_HASH,
 } from './evm/signatures.js';
-export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata, SpendingAuthServiceMetadata } from './evm/signatures.js';
+export type {
+  SpendingAuthMessage,
+  ReserveAuthMessage,
+  SetOperatorMessage,
+  FreeUsageOpenMessage,
+  FreeUsageAuthMessage,
+  SpendingAuthMetadata,
+  SpendingAuthServiceMetadata,
+  FreeUsageMetadata,
+  FreeUsageServiceMetadata,
+} from './evm/signatures.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';
@@ -60,12 +86,18 @@ export { EmissionsClient } from './evm/emissions-client.js';
 export type { EmissionsClientConfig, EmissionsEpochParams } from './evm/emissions-client.js';
 
 // Channel persistence
-export { ChannelStore, CHANNEL_STATUS } from './channel-store.js';
-export type { StoredChannel, StoredReceipt } from './channel-store.js';
+export { ChannelStore, CHANNEL_KIND, CHANNEL_ROLE, CHANNEL_STATUS } from './channel-store.js';
+export type { ChannelKind, ChannelRole, ChannelStatus, StoredChannel, StoredReceipt } from './channel-store.js';
 
 // Buyer payment manager
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
 export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
+
+// Free usage managers
+export { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
+export type { BuyerFreeUsageConfig } from './buyer-free-usage-manager.js';
+export { SellerFreeUsageManager } from './seller-free-usage-manager.js';
+export type { SellerFreeUsageConfig } from './seller-free-usage-manager.js';
 
 // Buyer payment negotiator (402 handling, SpendingAuth flow, cost tracking)
 export { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';

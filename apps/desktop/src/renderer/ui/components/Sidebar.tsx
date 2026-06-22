@@ -244,6 +244,7 @@ function ConversationListRow({
   approvalConvIds,
   chatActiveChannels,
   peerDisplayNameById,
+  peerIconUrlById,
   onSelectConv,
   onCloseChannel,
   menuOpenId,
@@ -256,6 +257,7 @@ function ConversationListRow({
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   peerDisplayNameById: ReadonlyMap<string, string>;
+  peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onCloseChannel: () => void;
   menuOpenId: string | null;
@@ -282,6 +284,9 @@ function ConversationListRow({
   const avatarGradient = convPeerId
     ? getPeerGradient(convPeerId)
     : 'linear-gradient(180deg, #9a9a96, #6b6b68)';
+  const avatarIconUrl = convPeerId ? peerIconUrlById.get(convPeerId) ?? null : null;
+  const [avatarIconFailed, setAvatarIconFailed] = useState(false);
+  const showAvatarIcon = Boolean(avatarIconUrl) && !avatarIconFailed;
 
   return (
     <div
@@ -312,8 +317,20 @@ function ConversationListRow({
         </div>
       </div>
       <div className={styles.recentSessionMeta}>
-        <span className={styles.recentSessionAvatar} style={{ background: avatarGradient }}>
-          {avatarLetter}
+        <span
+          className={`${styles.recentSessionAvatar}${showAvatarIcon ? ` ${styles.recentSessionAvatarIcon}` : ''}`}
+          style={showAvatarIcon ? undefined : { background: avatarGradient }}
+        >
+          {showAvatarIcon ? (
+            <img
+              className={styles.recentSessionAvatarImage}
+              src={avatarIconUrl ?? undefined}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setAvatarIconFailed(true)}
+            />
+          ) : avatarLetter}
         </span>
         <span className={styles.recentSessionPeer}>{peerName}</span>
         {costLabel && <span className={`${styles.chatConvCost} ${styles.recentSessionCost}`}>{costLabel}</span>}
@@ -355,6 +372,7 @@ function ChatListSection({
   approvalConvIds,
   chatActiveChannels,
   peerDisplayNameById,
+  peerIconUrlById,
   onSelectConv,
   onCloseChannel,
   onOpenChatSearch,
@@ -371,6 +389,7 @@ function ChatListSection({
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   peerDisplayNameById: ReadonlyMap<string, string>;
+  peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onCloseChannel: () => void;
   onOpenChatSearch: () => void;
@@ -426,6 +445,7 @@ function ChatListSection({
               approvalConvIds={approvalConvIds}
               chatActiveChannels={chatActiveChannels}
               peerDisplayNameById={peerDisplayNameById}
+              peerIconUrlById={peerIconUrlById}
               onSelectConv={onSelectConv}
               onCloseChannel={onCloseChannel}
               menuOpenId={menuOpenId}
@@ -627,6 +647,17 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     return map;
   }, [allConversations, discoverRows]);
 
+  const peerIconUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    const rows = Array.isArray(discoverRows) ? discoverRows : [];
+    for (const row of rows) {
+      const peerId = String(row.peerId || '').trim();
+      if (!peerId || map.has(peerId) || !row.peerIconUrl) continue;
+      map.set(peerId, row.peerIconUrl);
+    }
+    return map;
+  }, [discoverRows]);
+
   // Sort the full list — the row itself is scrollable, so we render every
   // conversation rather than slicing. "Recent" (touched in the last 24 h)
   // still floats to the top so the active workstream stays one glance away;
@@ -700,6 +731,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
         approvalConvIds={approvalConvIds}
         chatActiveChannels={chatActiveChannels}
         peerDisplayNameById={peerDisplayNameById}
+        peerIconUrlById={peerIconUrlById}
         onSelectConv={handleSelectConv}
         onCloseChannel={handleCloseChannel}
         onOpenChatSearch={() => setChatSearchOpen(true)}

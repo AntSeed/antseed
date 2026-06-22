@@ -174,7 +174,8 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     },
     "proxyPort": 8377,
     "peerRefreshIntervalMs": 300000,
-    "metadataFetchTimeoutMs": 1500
+    "metadataFetchTimeoutMs": 1500,
+    "disableMetadataV2Services": false
   }
 }
 ```
@@ -233,6 +234,7 @@ antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 antseed config buyer set peerRefreshIntervalMs 300000
 antseed config buyer set metadataFetchTimeoutMs 1500
+antseed config buyer set disableMetadataV2Services true
 ```
 
 Runtime-only overrides (do not write your config file):
@@ -242,6 +244,7 @@ antseed seller start --provider anthropic --input-usd-per-million 10 --cached-in
 antseed seller start --base-rpc-url https://base-mainnet.infura.io/v3/<key>
 antseed buyer start --max-input-usd-per-million 20 --max-cached-input-usd-per-million 10 --max-output-usd-per-million 60
 antseed buyer start --metadata-fetch-timeout-ms 1500
+antseed buyer start --disable-metadata-v2-services
 ```
 
 For production sellers, prefer a dedicated Base JSON-RPC endpoint over public defaults. You can set it durably with `payments.crypto.rpcUrl`, at runtime with `ANTSEED_BASE_RPC_URL`, or for one run with `antseed seller start --base-rpc-url <url>`.
@@ -331,6 +334,7 @@ Use `base-sepolia` for testing with MockUSDC.
 
 - `ANTSEED_BASE_RPC_URL=<url>` — custom Base JSON-RPC endpoint for seller on-chain operations (recommended for production)
 - `ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=<ms>` — runtime override for buyer peer-discovery metadata fetch timeout
+- `ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES=true` — suppress buyer per-service metadata v2 attribution while keeping aggregate usage totals
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)
 - `ANTSEED_DEFAULT_DEPOSIT_USDC=1` — default lock amount per session
 - `ANTSEED_IDENTITY_HEX=<hex>` — inject identity via env (supports 0x prefix)

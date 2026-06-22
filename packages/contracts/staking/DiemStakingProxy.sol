@@ -9,7 +9,7 @@ import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import { AntseedSellerDelegation } from "./AntseedSellerDelegation.sol";
-import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 
 interface IDiemStake {
     function stake(uint256 amount) external;

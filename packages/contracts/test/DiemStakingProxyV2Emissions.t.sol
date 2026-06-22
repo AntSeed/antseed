@@ -3,19 +3,19 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import { MockUSDC } from "../MockUSDC.sol";
-import { MockERC8004Registry } from "../MockERC8004Registry.sol";
-import { ANTSToken } from "../ANTSToken.sol";
-import { AntseedRegistry } from "../AntseedRegistry.sol";
-import { AntseedDeposits } from "../AntseedDeposits.sol";
-import { AntseedStaking } from "../AntseedStaking.sol";
-import { AntseedChannels } from "../AntseedChannels.sol";
-import { AntseedEmissions } from "../AntseedEmissions.sol";
-import { AntseedEmissionsV2 } from "../AntseedEmissionsV2.sol";
-import { AntseedSellerRewardsPool } from "../AntseedSellerRewardsPool.sol";
-import { AntseedSellerUnlockPolicy } from "../AntseedSellerUnlockPolicy.sol";
-import { DiemStakingProxy } from "../DiemStakingProxy.sol";
-import { AntseedSellerDelegation } from "../AntseedSellerDelegation.sol";
+import { MockUSDC } from "./mocks/MockUSDC.sol";
+import { MockERC8004Registry } from "./mocks/MockERC8004Registry.sol";
+import { ANTSToken } from "../core/ANTSToken.sol";
+import { AntseedRegistry } from "../core/AntseedRegistry.sol";
+import { AntseedDeposits } from "../payments/AntseedDeposits.sol";
+import { AntseedStaking } from "../staking/AntseedStaking.sol";
+import { AntseedChannels } from "../payments/AntseedChannels.sol";
+import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
+import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
+import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
+import { AntseedSellerUnlockPolicy } from "../policies/AntseedSellerUnlockPolicy.sol";
+import { DiemStakingProxy } from "../staking/DiemStakingProxy.sol";
+import { AntseedSellerDelegation } from "../staking/AntseedSellerDelegation.sol";
 
 import { MockDiem } from "./mocks/MockDiem.sol";
 

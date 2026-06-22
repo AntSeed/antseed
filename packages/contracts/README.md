@@ -97,6 +97,29 @@ channelId = keccak256(abi.encode(buyer, seller, salt))
 **Owner functions:**
 - `pause()` / `unpause()` — emergency circuit breaker
 
+### AntseedFreeUsage.sol
+
+Zero-price usage channel lifecycle with buyer-signed EIP-712 proofs. Holds NO USDC and never locks or charges buyer funds. Sellers still need to be staked, and each usage update must be signed by the buyer.
+
+**Seller operations:**
+- `open(address buyer, bytes32 salt, uint256 deadline, bytes calldata buyerSig)` — validates `FreeUsageOpen` and starts a free usage channel
+- `record(bytes32 channelId, uint256 sequence, bytes calldata metadata, uint256 deadline, bytes calldata buyerSig)` — validates `FreeUsageAuth`, enforces a monotonic sequence, and stores/emits raw metadata
+- `close(bytes32 channelId, uint256 sequence, bytes calldata metadata, uint256 deadline, bytes calldata buyerSig)` — records the final signed usage and closes the free channel
+
+**EIP-712 types (domain: name="AntseedFreeUsage", version="1"):**
+```
+FreeUsageOpen(bytes32 channelId,uint256 deadline)
+FreeUsageAuth(bytes32 channelId,uint256 sequence,bytes32 metadataHash,uint256 deadline)
+```
+
+Metadata is buyer-signed opaque bytes, bound only by `metadataHash`. Indexers parse the metadata version and service attribution off-chain. If `AntseedStats` is configured and this contract is granted writer access, free usage metadata is forwarded there with the same optional `try/catch` behavior used by paid channels.
+
+Free usage channel IDs are domain-separated from paid channels:
+`keccak256(abi.encode(FREE_USAGE_CHANNEL_DOMAIN, buyer, seller, salt))`.
+Buyers send `FreeUsageOpen` before a free request and answer seller
+`NeedFreeUsageAuth` messages after the response, allowing sellers to report
+buyer signatures on-chain even when the buyer has no USDC deposit.
+
 ### AntseedStats.sol
 
 Optional external metadata sink keyed by ERC-8004 agentId plus buyer address. Writers are managed with `AccessControl`.
@@ -138,7 +161,8 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 2. **MockERC8004Registry** — deploy for local testing (on mainnet use deployed ERC-8004)
 3. **AntseedDeposits** — deploy with `(usdcAddress)`
 4. **AntseedStaking** — deploy with `(usdcAddress, registryAddress)`
-5. **AntseedStats** — optional: deploy, set in `AntseedRegistry`, and grant `WRITER_ROLE` to Channels
+5. **AntseedStats** — optional: deploy, set in `AntseedRegistry`, and grant writer access to Channels and FreeUsage
+6. **AntseedFreeUsage** — optional zero-price signed usage recorder; deploy with the AntseedRegistry address
 6. **AntseedChannels** — deploy with `(registryAddress)`
 7. **AntseedEmissions** — deploy with `(antsTokenAddress, channelsAddress)`, then call `antsToken.setEmissionsContract(emissions)`
 

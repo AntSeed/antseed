@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import { IAntseedSellerUnlockPolicy } from "./interfaces/IAntseedSellerUnlockPolicy.sol";
+import { IAntseedSellerUnlockPolicy } from "../interfaces/IAntseedSellerUnlockPolicy.sol";
 
 /**
  * @title AntseedSellerUnlockPolicy

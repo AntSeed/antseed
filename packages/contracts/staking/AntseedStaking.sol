@@ -6,10 +6,10 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
-import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
-import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
-import {IAntseedSlashing} from "./interfaces/IAntseedSlashing.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
+import {IERC8004Registry} from "../interfaces/IERC8004Registry.sol";
+import {IAntseedChannels} from "../interfaces/IAntseedChannels.sol";
+import {IAntseedSlashing} from "../interfaces/IAntseedSlashing.sol";
 
 /**
  * @title AntseedStaking

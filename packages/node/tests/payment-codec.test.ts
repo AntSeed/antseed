@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   encodeSpendingAuth, decodeSpendingAuth,
   encodeAuthAck, decodeAuthAck,
+  encodeFreeUsageOpen, decodeFreeUsageOpen,
+  encodeFreeUsageAuth, decodeFreeUsageAuth,
+  encodeFreeUsageAck, decodeFreeUsageAck,
+  encodeNeedFreeUsageAuth, decodeNeedFreeUsageAuth,
   encodePaymentRequired, decodePaymentRequired,
   encodeNeedAuth, decodeNeedAuth,
 } from '../src/p2p/payment-codec.js';
@@ -23,6 +27,75 @@ describe('payment codec round-trips', () => {
   it('AuthAck', () => {
     const payload = { channelId: '0x' + 'aa'.repeat(32) };
     expect(decodeAuthAck(encodeAuthAck(payload))).toEqual(payload);
+  });
+
+  it('FreeUsageOpen', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      salt: '0x' + '01'.repeat(32),
+      deadline: 123456,
+      openSig: '0x' + 'ef'.repeat(65),
+    };
+    expect(decodeFreeUsageOpen(encodeFreeUsageOpen(payload))).toEqual(payload);
+  });
+
+  it('rejects FreeUsageOpen with a non-finite deadline', () => {
+    const encoded = new TextEncoder().encode(JSON.stringify({
+      channelId: '0x' + 'ab'.repeat(32),
+      salt: '0x' + '01'.repeat(32),
+      deadline: 'NaN',
+      openSig: '0x' + 'ef'.repeat(65),
+    }));
+    expect(() => decodeFreeUsageOpen(encoded)).toThrow(/finite number/);
+  });
+
+  it('FreeUsageAuth', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      cumulativeInputTokens: '100',
+      cumulativeOutputTokens: '40',
+      sequence: '2',
+      metadataHash: '0x' + 'cd'.repeat(32),
+      metadata: '0x' + '12'.repeat(128),
+      deadline: 123456,
+      usageSig: '0x' + 'ef'.repeat(65),
+    };
+    expect(decodeFreeUsageAuth(encodeFreeUsageAuth(payload))).toEqual(payload);
+  });
+
+  it('rejects FreeUsageAuth with a non-finite deadline', () => {
+    const encoded = new TextEncoder().encode(JSON.stringify({
+      channelId: '0x' + 'ab'.repeat(32),
+      cumulativeInputTokens: '100',
+      cumulativeOutputTokens: '40',
+      sequence: '2',
+      metadataHash: '0x' + 'cd'.repeat(32),
+      metadata: '0x' + '12'.repeat(128),
+      deadline: 'NaN',
+      usageSig: '0x' + 'ef'.repeat(65),
+    }));
+    expect(() => decodeFreeUsageAuth(encoded)).toThrow(/finite number/);
+  });
+
+  it('FreeUsageAck', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      acceptedSequence: '2',
+    };
+    expect(decodeFreeUsageAck(encodeFreeUsageAck(payload))).toEqual(payload);
+  });
+
+  it('NeedFreeUsageAuth', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      requiredSequence: '3',
+      currentAcceptedSequence: '2',
+      requestId: 'req-free',
+      inputTokens: '100',
+      outputTokens: '40',
+      service: 'gpt-free',
+    };
+    expect(decodeNeedFreeUsageAuth(encodeNeedFreeUsageAuth(payload))).toEqual(payload);
   });
 
   it('PaymentRequired', () => {

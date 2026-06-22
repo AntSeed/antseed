@@ -3,6 +3,10 @@ import { MessageType } from '../types/protocol.js';
 import type {
   SpendingAuthPayload,
   AuthAckPayload,
+  FreeUsageOpenPayload,
+  FreeUsageAuthPayload,
+  FreeUsageAckPayload,
+  NeedFreeUsageAuthPayload,
   PaymentRequiredPayload,
   NeedAuthPayload,
 } from '../types/protocol.js';
@@ -14,6 +18,10 @@ import { debugLog } from '../utils/debug.js';
 const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.SpendingAuth]: 'SpendingAuth',
   [MessageType.AuthAck]: 'AuthAck',
+  [MessageType.FreeUsageOpen]: 'FreeUsageOpen',
+  [MessageType.FreeUsageAuth]: 'FreeUsageAuth',
+  [MessageType.FreeUsageAck]: 'FreeUsageAck',
+  [MessageType.NeedFreeUsageAuth]: 'NeedFreeUsageAuth',
   [MessageType.PaymentRequired]: 'PaymentRequired',
   [MessageType.NeedAuth]: 'NeedAuth',
 };
@@ -32,6 +40,10 @@ export class PaymentMux {
   // Handler registrations
   private _onSpendingAuth?: PaymentMessageHandler<SpendingAuthPayload>;
   private _onAuthAck?: PaymentMessageHandler<AuthAckPayload>;
+  private _onFreeUsageOpen?: PaymentMessageHandler<FreeUsageOpenPayload>;
+  private _onFreeUsageAuth?: PaymentMessageHandler<FreeUsageAuthPayload>;
+  private _onFreeUsageAck?: PaymentMessageHandler<FreeUsageAckPayload>;
+  private _onNeedFreeUsageAuth?: PaymentMessageHandler<NeedFreeUsageAuthPayload>;
   private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
   private _onNeedAuth?: PaymentMessageHandler<NeedAuthPayload>;
 
@@ -46,6 +58,18 @@ export class PaymentMux {
   onAuthAck(handler: PaymentMessageHandler<AuthAckPayload>): void {
     this._onAuthAck = handler;
   }
+  onFreeUsageOpen(handler: PaymentMessageHandler<FreeUsageOpenPayload>): void {
+    this._onFreeUsageOpen = handler;
+  }
+  onFreeUsageAuth(handler: PaymentMessageHandler<FreeUsageAuthPayload>): void {
+    this._onFreeUsageAuth = handler;
+  }
+  onFreeUsageAck(handler: PaymentMessageHandler<FreeUsageAckPayload>): void {
+    this._onFreeUsageAck = handler;
+  }
+  onNeedFreeUsageAuth(handler: PaymentMessageHandler<NeedFreeUsageAuthPayload>): void {
+    this._onNeedFreeUsageAuth = handler;
+  }
   onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
     this._onPaymentRequired = handler;
   }
@@ -59,6 +83,18 @@ export class PaymentMux {
   }
   sendAuthAck(payload: AuthAckPayload): void {
     this._send(MessageType.AuthAck, codec.encodeAuthAck(payload));
+  }
+  sendFreeUsageOpen(payload: FreeUsageOpenPayload): void {
+    this._send(MessageType.FreeUsageOpen, codec.encodeFreeUsageOpen(payload));
+  }
+  sendFreeUsageAuth(payload: FreeUsageAuthPayload): void {
+    this._send(MessageType.FreeUsageAuth, codec.encodeFreeUsageAuth(payload));
+  }
+  sendFreeUsageAck(payload: FreeUsageAckPayload): void {
+    this._send(MessageType.FreeUsageAck, codec.encodeFreeUsageAck(payload));
+  }
+  sendNeedFreeUsageAuth(payload: NeedFreeUsageAuthPayload): void {
+    this._send(MessageType.NeedFreeUsageAuth, codec.encodeNeedFreeUsageAuth(payload));
   }
   sendPaymentRequired(payload: PaymentRequiredPayload): void {
     this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
@@ -81,6 +117,18 @@ export class PaymentMux {
         return true;
       case MessageType.AuthAck:
         await this._onAuthAck?.(codec.decodeAuthAck(frame.payload));
+        return true;
+      case MessageType.FreeUsageOpen:
+        await this._onFreeUsageOpen?.(codec.decodeFreeUsageOpen(frame.payload));
+        return true;
+      case MessageType.FreeUsageAuth:
+        await this._onFreeUsageAuth?.(codec.decodeFreeUsageAuth(frame.payload));
+        return true;
+      case MessageType.FreeUsageAck:
+        await this._onFreeUsageAck?.(codec.decodeFreeUsageAck(frame.payload));
+        return true;
+      case MessageType.NeedFreeUsageAuth:
+        await this._onNeedFreeUsageAuth?.(codec.decodeNeedFreeUsageAuth(frame.payload));
         return true;
       case MessageType.PaymentRequired:
         await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));

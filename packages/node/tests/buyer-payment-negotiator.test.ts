@@ -5,8 +5,7 @@ import type { SerializedHttpResponse, SerializedHttpRequest } from '../src/types
 import type { BuyerPaymentManager } from '../src/payments/buyer-payment-manager.js';
 import type { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { ChannelsClient, ChannelInfo } from '../src/payments/evm/channels-client.js';
-import type { ChannelStore } from '../src/payments/channel-store.js';
-import type { StoredChannel } from '../src/payments/channel-store.js';
+import { CHANNEL_ROLE, CHANNEL_STATUS, type ChannelStore, type StoredChannel } from '../src/payments/channel-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import type { PaymentRequiredPayload } from '../src/types/protocol.js';
@@ -305,7 +304,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(response, peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       // Critical: no futile signing on the dead channel.
       expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
       expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
@@ -341,7 +340,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(response, peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.extendCurrentSpendingAuth).not.toHaveBeenCalled();
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
@@ -369,7 +368,7 @@ describe('BuyerPaymentNegotiator', () => {
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
       expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalled();
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -400,7 +399,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -440,7 +439,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -459,7 +458,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -488,7 +487,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, CHANNEL_STATUS.GHOST);
       expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
@@ -864,7 +863,7 @@ function makeActiveSession(peerId: string): StoredChannel {
   return {
     sessionId: '0x' + 'ab'.repeat(32),
     peerId,
-    role: 'buyer',
+    role: CHANNEL_ROLE.BUYER,
     sellerEvmAddr: '0x' + '22'.repeat(20),
     buyerEvmAddr: '0x' + '11'.repeat(20),
     nonce: 0,
@@ -877,7 +876,7 @@ function makeActiveSession(peerId: string): StoredChannel {
     reservedAt: now,
     settledAt: null,
     settledAmount: null,
-    status: 'active',
+    status: CHANNEL_STATUS.ACTIVE,
     latestBuyerSig: null,
     latestSpendingAuthSig: null,
     latestMetadata: null,

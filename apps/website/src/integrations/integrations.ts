@@ -20,8 +20,8 @@
  * Translation is lossless for the common case but adds a small overhead and
  * has a few edge cases (notably: `openai-responses` services REQUIRE streaming,
  * so non-streaming requests against them fail). For best-fit, prefer services
- * whose advertised `protocols` array (in `providerServiceApiProtocols` /
- * `matchingServices[].protocols` on a peer) contains the tool's wire format.
+ * whose advertised `protocols` array in `providerServiceApiProtocols`
+ * contains the tool's wire format.
  *
  * NOTE: a peer's `provider` field is a seller-plugin label (`anthropic`,
  * `openai`, `local-llm`, ...) and is NOT the wire format. Always look at the
@@ -43,7 +43,7 @@ export const FORMAT_ENDPOINT: Record<IntegrationFormat, string> = {
 
 /**
  * The canonical protocol identifier that AntSeed peers advertise per service
- * (in `providerServiceApiProtocols` / `matchingServices[].protocols`) and that
+ * in `providerServiceApiProtocols` and that
  * @antseed/api-adapter uses internally as `ServiceApiProtocol`. This is the
  * value to look for when judging whether a peer is a *native* fit for a tool.
  *

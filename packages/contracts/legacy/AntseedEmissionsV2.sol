@@ -5,12 +5,12 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
-import { IAntseedDeposits } from "./interfaces/IAntseedDeposits.sol";
-import { IANTSToken } from "./interfaces/IANTSToken.sol";
-import { IAntseedSellerRewardsPool } from "./interfaces/IAntseedSellerRewardsPool.sol";
-import { IAntseedSellerUnlockPolicy } from "./interfaces/IAntseedSellerUnlockPolicy.sol";
-import { IAntseedPointsPolicy } from "./interfaces/IAntseedPointsPolicy.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
+import { IANTSToken } from "../interfaces/IANTSToken.sol";
+import { IAntseedSellerRewardsPool } from "../interfaces/IAntseedSellerRewardsPool.sol";
+import { IAntseedSellerUnlockPolicy } from "../interfaces/IAntseedSellerUnlockPolicy.sol";
+import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
 
 interface IAntseedLegacyEmissions {
     function EPOCH_DURATION() external view returns (uint256);

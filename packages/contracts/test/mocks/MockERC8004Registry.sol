@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
+import {IERC8004Registry} from "../../interfaces/IERC8004Registry.sol";
 
 /**
  * @title MockERC8004Registry

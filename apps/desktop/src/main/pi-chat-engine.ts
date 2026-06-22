@@ -71,8 +71,9 @@ import {
   type ChatServiceProtocol,
   type NetworkPeerAddress,
 } from './chat-service-catalog.js';
+import { enrichDomainVerificationLinks, type DesktopVerificationLink } from './domain-site-metadata.js';
 import { resolveChainConfig } from '@antseed/node';
-import { collectPeerVerificationLinks, type PeerVerificationLink } from '@antseed/node/discovery';
+import { collectPeerVerificationLinks } from '@antseed/node/discovery';
 import {
   AuthStorage,
   createAgentSession,
@@ -272,6 +273,7 @@ type DiscoverRowEntry = {
   sellerEvmAddress: string;
   sellerContract: string | null;
   verificationLinks: DiscoverVerificationLink[];
+  peerIconUrl: string | null;
   peerDisplayName: string | null;
   peerLabel: string;
   inputUsdPerMillion: number | null;
@@ -300,7 +302,7 @@ type DiscoverRowEntry = {
   selectionValue: string;
 };
 
-type DiscoverVerificationLink = PeerVerificationLink;
+type DiscoverVerificationLink = DesktopVerificationLink;
 
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
@@ -620,6 +622,7 @@ type BuyerStateDiscoveredPeer = {
   onChainSybilFlags: string[];
   sellerContract?: string;
   verificationLinks: DiscoverVerificationLink[];
+  peerIconUrl: string | null;
   providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
 };
 
@@ -685,6 +688,7 @@ async function buildDiscoverRows(
       sellerEvmAddress,
       sellerContract: /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : null,
       verificationLinks: peerBlob?.verificationLinks ?? [],
+      peerIconUrl: peerBlob?.peerIconUrl ?? null,
       peerDisplayName: entry.peerLabel?.split(' (')[0] ?? null,
       peerLabel: entry.peerLabel ?? peerId.slice(0, 12) + '...',
       inputUsdPerMillion: entry.inputUsdPerMillion ?? null,
@@ -2713,11 +2717,12 @@ export function registerPiChatHandlers({
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
         const arr = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+        const enrichmentTasks: Array<Promise<void>> = [];
         for (const p of arr) {
           if (p && typeof p === 'object' && typeof (p as { peerId?: unknown }).peerId === 'string') {
             const rec = p as Record<string, unknown>;
             const peerId = rec.peerId as string;
-            discoveredPeersMap[peerId] = {
+            const peerRecord: BuyerStateDiscoveredPeer = {
               onChainAgentId: typeof rec.onChainAgentId === 'number' ? rec.onChainAgentId : null,
               onChainStakeUsdcMicros: typeof rec.onChainStakeUsdcMicros === 'number' ? rec.onChainStakeUsdcMicros : null,
               onChainChannelCount: typeof rec.onChainChannelCount === 'number' ? rec.onChainChannelCount : null,
@@ -2732,12 +2737,21 @@ export function registerPiChatHandlers({
                 : [],
               sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               verificationLinks: collectPeerVerificationLinks({ verificationResults: rec.verificationResults }),
+              peerIconUrl: null,
               providerPricing: rec.providerPricing as Record<string, {
                 services?: Record<string, { cachedInputUsdPerMillion?: number }>
               }> | undefined,
             };
+            discoveredPeersMap[peerId] = peerRecord;
+            enrichmentTasks.push(
+              enrichDomainVerificationLinks(peerRecord.verificationLinks).then((links) => {
+                peerRecord.verificationLinks = links;
+                peerRecord.peerIconUrl = links.find((link) => link.kind === 'domain' && link.faviconUrl)?.faviconUrl ?? null;
+              }),
+            );
           }
         }
+        await Promise.all(enrichmentTasks);
       } catch {
         // No state file yet
       }

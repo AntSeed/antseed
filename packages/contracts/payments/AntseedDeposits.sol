@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
 /**
  * @title AntseedDeposits
  * @notice Buyer USDC custody with credit limits and seller payouts.

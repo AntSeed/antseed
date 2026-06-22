@@ -104,8 +104,16 @@ function splitHighlightedText(text: string, query: string | undefined, keyPrefix
   return <>{parts}</>;
 }
 
-function safeOpenExternalUrl(url: string): void {
-  window.open(url, '_blank', 'noopener,noreferrer');
+function isSafeHref(rawHref: string): boolean {
+  const trimmed = rawHref.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed, 'https://antseed.invalid');
+    const protocol = parsed.protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:';
+  } catch {
+    return false;
+  }
 }
 
 function firstArtifactFromText(value: string): SensitiveChatArtifact | null {
@@ -146,23 +154,9 @@ function HiddenWalletAddress({ artifact }: { artifact: SensitiveChatArtifact }) 
   return <code className="chat-wallet-revealed-text">{value}</code>;
 }
 
-function SafeExternalLink({ artifact }: { artifact: SensitiveChatArtifact }) {
-  const label = formatArtifactLabel(artifact);
-  const isPaymentLink = artifact.type === 'url' && ['ethereum', 'bitcoin', 'solana', 'wc'].includes(artifact.scheme);
 
-  return (
-    <span className={`chat-sensitive-artifact${isPaymentLink ? ' chat-payment-link-hidden' : ' chat-external-link-gated'}`}>
-      <span className="chat-sensitive-label">{label}</span>
-      <button type="button" className="chat-sensitive-action" onClick={() => safeOpenExternalUrl(artifact.value)}>
-        {isPaymentLink ? 'Open' : 'Open'}
-      </button>
-    </span>
-  );
-}
-
-function SafeArtifact({ artifact }: { artifact: SensitiveChatArtifact; children?: ReactNode }) {
-  if (artifact.type === 'wallet-address') return <HiddenWalletAddress artifact={artifact} />;
-  return <SafeExternalLink artifact={artifact} />;
+function SafeArtifact({ artifact }: { artifact: SensitiveChatArtifact }) {
+  return <HiddenWalletAddress artifact={artifact} />;
 }
 
 function splitSafeHighlightedText(text: string, query: string | undefined, keyPrefix: string, activeHighlight = false): ReactNode {
@@ -241,35 +235,41 @@ function renderInlineToken(token: MarkdownToken, key: string, highlightQuery?: s
     case 'link': {
       const href = normalizeText(token.href);
       const content = renderInlineTokens(token.tokens, key, highlightQuery, activeHighlight);
-      const artifact = firstArtifactFromText(href);
-      if (!artifact || artifact.type !== 'url') {
+
+      if (!isSafeHref(href)) {
         return (
           <span key={key} className="chat-inline-link-invalid">
             {content}
           </span>
         );
       }
-      return <SafeArtifact key={key} artifact={artifact}>{content}</SafeArtifact>;
+
+      return (
+        <a
+          key={key}
+          href={href}
+          style={{ color: 'var(--accent-blue)', textDecoration: 'underline' }}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={token.title ?? undefined}
+        >
+          {content}
+        </a>
+      );
     }
     case 'image': {
       const href = normalizeText(token.href);
       const alt = flattenPlainText(token.tokens) || normalizeText(token.text) || 'Image';
-      const artifact = firstArtifactFromText(href);
-      if (!artifact || artifact.type !== 'url') {
+
+      if (!isSafeHref(href)) {
         return (
           <span key={key} className="chat-inline-link-invalid">
             {alt}
           </span>
         );
       }
-      return (
-        <span key={key} className="chat-sensitive-artifact chat-external-image-hidden">
-          <span className="chat-sensitive-label">External image hidden: {artifact.display}</span>
-          <button type="button" className="chat-sensitive-action" onClick={() => safeOpenExternalUrl(artifact.value)}>
-            Open
-          </button>
-        </span>
-      );
+
+      return <img key={key} src={href} alt={alt} className="chat-inline-image" />;
     }
     default:
       if (Array.isArray(token.tokens) && token.tokens.length > 0) {

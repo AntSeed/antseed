@@ -2,9 +2,9 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../ANTSToken.sol";
-import "../AntseedEmissions.sol";
-import "../AntseedRegistry.sol";
+import "../core/ANTSToken.sol";
+import "../legacy/AntseedEmissions.sol";
+import "../core/AntseedRegistry.sol";
 
 /// @dev Minimal mock Deposits that only supports getOperator for emission tests.
 contract MockDepositsForEmissions {

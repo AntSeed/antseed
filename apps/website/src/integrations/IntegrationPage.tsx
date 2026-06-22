@@ -170,14 +170,13 @@ function RunFirstBanner() {
               <strong>Service</strong> — a single model id like{' '}
               <code>claude-sonnet-4-6</code> or <code>deepseek-v4-flash</code>. <em>This
               is what you pass as <code>model</code> in your tool's config.</em>
-              Each service has its own <code>protocols</code> and{' '}
+              Each service has its own native protocol list and{' '}
               <code>in</code>/<code>cachedIn</code>/<code>out</code> pricing.
             </li>
             <li>
               <strong>Protocols</strong> (per service) — the wire formats a service
               accepts <em>natively</em>, advertised on each peer in{' '}
-              <code>providerServiceApiProtocols</code> (and surfaced per service in{' '}
-              <code>matchingServices[].protocols</code>). Values:{' '}
+              <code>providerServiceApiProtocols[provider].services[service]</code>. Values:{' '}
               <code>anthropic-messages</code>, <code>openai-chat-completions</code>,{' '}
               <code>openai-responses</code>, <code>openai-completions</code>. <strong>
               This is the field to match your tool against.</strong> If your tool's
@@ -238,8 +237,9 @@ function RunFirstBanner() {
               </p>
               <p className={styles.runFirstHint}>
                 Each peer advertises a list of <strong>services</strong> (model ids).
-                Each service has its own <code>protocols</code> (wire formats it
-                accepts natively) and pricing in USD per 1M tokens. The jq below
+                Each service has its own native protocol list in{' '}
+                <code>providerServiceApiProtocols</code> and pricing in USD per 1M
+                tokens. The jq below
                 projects the raw response down to just those fields.
               </p>
               <CodeBlock
@@ -317,12 +317,19 @@ function RunFirstBanner() {
       peer: (.peer | { peerId, name: .displayName,
                        sessions: .onChainChannelCount,
                        ghosts:   .onChainGhostCount }),
-      services: [.matchingServices[] | {
-        service, protocols,
-        in:       .inputUsdPerMillion,
-        cachedIn: .cachedInputUsdPerMillion,
-        out:      .outputUsdPerMillion,
-        tags
+      services: [
+        (.peer.providerServiceApiProtocols | to_entries[]) as $p
+        | ($p.value.services | to_entries[]) as $s
+        | (.matchingServices[] | select(.provider == $p.key and .service == $s.key)) as $m
+        | {
+            provider: $p.key,
+            service: $s.key,
+            protocols: $s.value,
+            in:       $m.inputUsdPerMillion,
+            cachedIn: $m.cachedInputUsdPerMillion,
+            out:      $m.outputUsdPerMillion,
+            tags:     $m.tags
+          }
       }]
     }'`}
               />
@@ -352,9 +359,10 @@ function RunFirstBanner() {
                   tool's <code>model</code> field.
                 </li>
                 <li>
-                  <code>protocols</code> — the wire formats this service accepts{' '}
-                  <em>natively</em>. Match your tool's wire format against this list:
-                  if it's in there, the request passes through untouched; if not,{' '}
+                  <code>protocols</code> — projected from{' '}
+                  <code>providerServiceApiProtocols</code>; the wire formats this
+                  service accepts <em>natively</em>. Match your tool's wire format
+                  against this list: if it's in there, the request passes through untouched; if not,{' '}
                   <code>@antseed/api-adapter</code> translates on the fly. Note:{' '}
                   <code>openai-responses</code>-only services require streaming.
                 </li>
@@ -479,8 +487,9 @@ function RunFirstBanner() {
  *
  * IMPORTANT: a peer's `provider` field is a seller-side plugin label
  * (`anthropic`, `openai`, `local-llm`, ...). The actual wire format the service
- * accepts natively is in `providerServiceApiProtocols[<service>]` /
- * `matchingServices[].protocols`. This panel is built around that distinction.
+ * accepts natively is in
+ * `providerServiceApiProtocols[provider].services[service]`. This panel is
+ * built around that distinction.
  */
 function WireFormatPanel({i}: {i: Integration}) {
   const fmt = i.format;
@@ -537,8 +546,8 @@ function WireFormatPanel({i}: {i: Integration}) {
         <li>
           <strong>How to check a peer:</strong> run{' '}
           <code>antseed network peer &lt;peerId&gt; --json</code> and look at{' '}
-          <code>matchingServices[].protocols</code> for each model. The browse
-          command shows the same data per peer in <code>providerServiceApiProtocols</code>.
+          <code>providerServiceApiProtocols[provider].services[service]</code>. The
+          browse command exposes the same field per peer.
         </li>
         <li>
           <strong>What happens when protocols don't match:</strong> AntSeed's{' '}

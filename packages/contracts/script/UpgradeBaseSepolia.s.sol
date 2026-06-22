@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Script.sol";
 
 import {ISetRegistry, ISetWriter} from "../interfaces/IAntseedWiring.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
 
 /**
  * @title UpgradeBaseSepolia

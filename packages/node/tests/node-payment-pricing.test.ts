@@ -201,9 +201,11 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendNeedAuth = vi.fn();
     const recordSpend = vi.fn();
+    const reportUsageRequest = vi.fn();
     const handler = new SellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ recordSpend, getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }) }),
+      sellerFreeUsageManager: { reportUsageRequest } as any,
       sessionTracker: null,
       channelsClient: {} as any,
       announcer: null,
@@ -221,6 +223,13 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(sentFrames.length).toBeGreaterThan(0);
     expect(recordSpend).not.toHaveBeenCalled();
     expect(sendNeedAuth).not.toHaveBeenCalled();
+    expect(reportUsageRequest).toHaveBeenCalledOnce();
+    expect(reportUsageRequest).toHaveBeenCalledWith('b'.repeat(40), paymentMux, {
+      requestId: 'req-zero-cost',
+      inputTokens: 0,
+      outputTokens: 0,
+      service: 'local-test',
+    });
   });
 
   it('uses cumulative spend as NeedAuth required amount without double-counting the latest request', async () => {

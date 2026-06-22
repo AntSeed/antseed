@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { SpendingAuthPayload } from '../src/types/protocol.js';
@@ -173,7 +173,7 @@ describe('SellerPaymentManager', () => {
     const session = store.getChannel(channelId);
     expect(session).not.toBeNull();
     expect(session!.role).toBe('seller');
-    expect(session!.status).toBe('active');
+    expect(session!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
@@ -327,7 +327,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasPendingTopUp(channelId)).toBe(false);
     expect(manager.isChannelBlocked(channelId)).toBe(false);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
-    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
   });
 
   it('blocks the channel if permanent top-up failure cannot close immediately', async () => {
@@ -360,7 +360,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasPendingTopUp(channelId)).toBe(false);
     expect(manager.isChannelBlocked(channelId)).toBe(true);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
-    expect(store.getChannel(channelId)!.status).toBe('active');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
   });
 
   it('closes the channel if a deferred top-up retry fails permanently', async () => {
@@ -410,7 +410,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasPendingTopUp(channelId)).toBe(false);
     expect(manager.isChannelBlocked(channelId)).toBe(false);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
-    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
   });
 
   it('serializes a burst of concurrent SpendingAuth updates and ends at the latest cumulative amount', async () => {
@@ -520,7 +520,7 @@ describe('SellerPaymentManager', () => {
 
     const session = store.getChannel(channelId);
     expect(session).not.toBeNull();
-    expect(session!.status).toBe('active');
+    expect(session!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(session!.previousConsumption).toBe('1000000');
     expect(session!.tokensDelivered).toBe('50000');
   });
@@ -641,7 +641,7 @@ describe('SellerPaymentManager', () => {
 
     const session = store.getChannel(channelId);
     expect(session).not.toBeNull();
-    expect(session!.status).toBe('active');
+    expect(session!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager2.channelsClient.close).not.toHaveBeenCalled();
   });
 
@@ -800,7 +800,7 @@ describe('SellerPaymentManager', () => {
     }
     await new Promise<void>((r) => setImmediate(r));
 
-    expect(store.getChannel(channelId)!.status).toBe('active');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
     expect(manager.getAcceptedCumulative(channelId)).toBe(0n);
 
@@ -820,7 +820,7 @@ describe('SellerPaymentManager', () => {
     expect(retryArgs[2]).toBe(300_000n);
     expect(retryArgs[3]).toBe(auth.metadata);
     expect(retryArgs[4]).toBe(auth.spendingAuthSig);
-    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     expect(store.getChannel(channelId)!.settledAmount).toBe('300000');
   });
 
@@ -850,7 +850,7 @@ describe('SellerPaymentManager', () => {
     expect(closeArgs[2]).toBe(0n);
     expect(closeArgs[3]).toBe('0x');
     expect(closeArgs[4]).toBe('0x');
-    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
   });
 
@@ -886,7 +886,7 @@ describe('SellerPaymentManager', () => {
     const closeArgs = (restarted.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(closeArgs[1]).toBe(channelId);
     expect(closeArgs[2]).toBe(0n);
-    expect(store.getChannel(channelId)!.status).toBe('settled');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     expect(restarted.hasSession(buyerIdentity.peerId)).toBe(false);
   });
 
@@ -912,7 +912,7 @@ describe('SellerPaymentManager', () => {
     await manager.checkTimeouts();
 
     expect(manager.channelsClient.close).toHaveBeenCalledOnce();
-    expect(store.getChannel(channelId)!.status).toBe('active');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
   });
 
@@ -941,7 +941,7 @@ describe('SellerPaymentManager', () => {
     await manager.checkTimeouts();
 
     expect(manager.channelsClient.close).toHaveBeenCalledTimes(3);
-    expect(store.getChannel(channelId)!.status).toBe('timeout');
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.TIMEOUT);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
   });
 
@@ -1018,7 +1018,7 @@ describe('SellerPaymentManager', () => {
       const channel: StoredChannel = {
         sessionId: channelId,
         peerId: buyer.peerId,
-        role: 'seller',
+        role: CHANNEL_ROLE.SELLER,
         sellerEvmAddr: seller.wallet.address,
         buyerEvmAddr: buyer.wallet.address,
         nonce: 0,
@@ -1031,7 +1031,7 @@ describe('SellerPaymentManager', () => {
         reservedAt: now,
         settledAt: null,
         settledAmount: null,
-        status: 'active',
+        status: CHANNEL_STATUS.ACTIVE,
         latestBuyerSig: '0xdead',
         latestSpendingAuthSig: '0xdead',
         latestMetadata: null,
@@ -1077,7 +1077,7 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
-      expect(store.getChannel(channelId)!.status).toBe('settled');
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     });
 
     it('evicts channel with settled on-chain status', async () => {
@@ -1092,7 +1092,7 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
-      expect(store.getChannel(channelId)!.status).toBe('settled');
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     });
 
     it('keeps channel and reconciles when active on-chain with higher settled', async () => {
@@ -1190,7 +1190,7 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
-      expect(store.getChannel(channelId)!.status).toBe('active');
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     });
 
     it('evicts channel with mismatched parties', async () => {
@@ -1206,7 +1206,7 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
-      expect(store.getChannel(channelId)!.status).toBe('settled');
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     });
 
     it('keeps channel with unknown on-chain status', async () => {

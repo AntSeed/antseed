@@ -67,6 +67,110 @@ type Conversation = {
   usage: { inputTokens: number; outputTokens: number };
 };
 
+test('discover rows are marked loaded only after a successful catalog response', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const catalog = createDeferred<{ ok: true; data: unknown[] }>();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => catalog.promise,
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.chatDiscoverRowsLoaded, false);
+
+  catalog.resolve({
+    ok: true,
+    data: [
+      {
+        peerId: 'peer-a',
+        serviceId: 'model-a',
+      },
+    ],
+  });
+
+  await waitFor(() => uiState.chatDiscoverRowsLoaded && !uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.discoverRows[0]?.peerId, 'peer-a');
+});
+
+test('empty successful discover response still settles catalog loading', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => ({ ok: true, data: [] }),
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => uiState.chatDiscoverRowsLoaded && !uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.discoverRows.length, 0);
+  assert.equal(uiState.chatServiceStatus.label, 'No services available');
+});
+
+test('failed discover response does not mark catalog loaded', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => ({ ok: false, error: 'offline' }),
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => !uiState.chatServiceSelectDisabled && uiState.chatServiceStatus.label === 'offline');
+  assert.equal(uiState.chatDiscoverRowsLoaded, false);
+});
+
+test('opening a conversation tracks the loading gap before peer binding is restored', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [
+    {
+      id: 'conv-a',
+      title: 'Conversation A',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const conversation: Conversation = {
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+  const conversationLoad = createDeferred<{ ok: true; data: Conversation }>();
+  const bridge: DesktopBridge = {
+    chatAiGetConversation: async () => conversationLoad.promise,
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const openPromise = api.openConversation('conv-a');
+
+  await waitFor(() => uiState.chatOpeningConversationId === 'conv-a');
+  assert.equal(uiState.chatActiveConversation, 'conv-a');
+  assert.equal(uiState.chatSelectedPeerId, '');
+
+  conversationLoad.resolve({ ok: true, data: conversation });
+  await openPromise;
+
+  assert.equal(uiState.chatOpeningConversationId, null);
+  assert.equal(uiState.chatSelectedPeerId, 'peer-a');
+});
+
 test('new chat created while previous response is pending sends to its own peer', async () => {
   installDomTimers();
 

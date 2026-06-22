@@ -141,6 +141,8 @@ export interface BuyerCLIConfig {
   peerRefreshIntervalMs: number;
   /** Timeout in ms for each HTTP metadata fetch during peer discovery */
   metadataFetchTimeoutMs: number;
+  /** Disable per-service attribution in buyer-signed metadata v2. */
+  disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
 }
@@ -196,6 +198,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedFreeUsage contract address override */
+    freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
     stakingContractAddress?: string;
     /** USDC token contract address override */

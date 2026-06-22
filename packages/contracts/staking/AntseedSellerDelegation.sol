@@ -6,10 +6,10 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import { IAntseedRegistry } from "./interfaces/IAntseedRegistry.sol";
-import { IAntseedChannels } from "./interfaces/IAntseedChannels.sol";
-import { IAntseedDeposits } from "./interfaces/IAntseedDeposits.sol";
-import { IAntseedEmissions } from "./interfaces/IAntseedEmissions.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedChannels } from "../interfaces/IAntseedChannels.sol";
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
+import { IAntseedEmissions } from "../interfaces/IAntseedEmissions.sol";
 
 interface IAntseedStakingSellerDelegation {
     function unstake() external;

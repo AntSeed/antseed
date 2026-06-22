@@ -27,6 +27,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [proxyPort, setProxyPort] = useState('8377');
   const [minRep, setMinRep] = useState('0');
   const [chainId, setChainId] = useState('base-mainnet');
+  const [disableMetadataV2Services, setDisableMetadataV2Services] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceModelStatus | null>(null);
   const [voiceInstalling, setVoiceInstalling] = useState(false);
@@ -39,6 +40,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       setProxyPort(String(configFormData.proxyPort));
       setMinRep(String(configFormData.minRep));
       setChainId(configFormData.cryptoChainId || 'base-mainnet');
+      setDisableMetadataV2Services(configFormData.disableMetadataV2Services);
       setInitialized(true);
     }
   }, [configFormData, initialized]);
@@ -93,6 +95,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       proxyPort: parseInt(proxyPort, 10) || 8377,
       peerRefreshIntervalMs: configFormData.peerRefreshIntervalMs,
       minRep: parseInt(minRep, 10) || 0,
+      disableMetadataV2Services,
       cryptoChainId: chainId,
     });
     setDirty(false);
@@ -143,6 +146,27 @@ export function ConfigView({ active }: ConfigViewProps) {
                 onChange={(e) => { setMinRep(e.target.value); markDirty(); }}
               />
             </label>
+            <div className="settings-item">
+              <div className="settings-copy">
+                <h4>Disable Service Metadata Attribution</h4>
+                <p>Omit per-service usage details from paid and free usage metadata.</p>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch${disableMetadataV2Services ? ' is-on' : ''}`}
+                aria-pressed={disableMetadataV2Services}
+                onClick={() => {
+                  setDisableMetadataV2Services((value) => !value);
+                  markDirty();
+                }}
+                disabled={configSaving}
+              >
+                <span className="settings-switch-track">
+                  <span className="settings-switch-thumb" />
+                </span>
+                <span className="settings-switch-label">{disableMetadataV2Services ? 'Enabled' : 'Disabled'}</span>
+              </button>
+            </div>
           </div>
 
         <div className="settings-footer" />

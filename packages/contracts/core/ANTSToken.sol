@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
 
 contract ANTSToken is ERC20, Ownable {
     uint256 public constant MAX_SUPPLY = 1_040_000_000e18; // 1.04B ANTS

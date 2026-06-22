@@ -2,12 +2,12 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedStaking.sol";
-import "../AntseedSlashing.sol";
-import "../AntseedChannels.sol";
-import "../AntseedRegistry.sol";
-import "../MockERC8004Registry.sol";
-import "../MockUSDC.sol";
+import "../staking/AntseedStaking.sol";
+import "../staking/AntseedSlashing.sol";
+import "../payments/AntseedChannels.sol";
+import "../core/AntseedRegistry.sol";
+import "./mocks/MockERC8004Registry.sol";
+import "./mocks/MockUSDC.sol";
 import {IAntseedChannels} from "../interfaces/IAntseedChannels.sol";
 
 /// @dev Minimal mock that exposes activeChannelCount + getAgentStats for Staking tests.

@@ -3,10 +3,10 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import {IAntseedSlashing} from "./interfaces/IAntseedSlashing.sol";
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
-import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
-import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
+import {IAntseedSlashing} from "../interfaces/IAntseedSlashing.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
+import {IAntseedChannels} from "../interfaces/IAntseedChannels.sol";
+import {IAntseedStaking} from "../interfaces/IAntseedStaking.sol";
 
 /**
  * @title AntseedSlashing

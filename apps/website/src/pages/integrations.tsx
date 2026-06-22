@@ -207,7 +207,7 @@ export default function ConnectHub(): JSX.Element {
           OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions — and
           translates between them on the fly. Pick your tool below; AntSeed makes it
           fit. Each <em>service</em> on the network advertises which protocols it
-          accepts <em>natively</em> (in <code>matchingServices[].protocols</code>) —
+          accepts <em>natively</em> in <code>providerServiceApiProtocols</code> —
           matching your tool's wire format to that list is the smoothest path.
         </p>
         <div className={styles.heroCtaRow}>

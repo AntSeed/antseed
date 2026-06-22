@@ -34,6 +34,7 @@ import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 import type { ChatPermissionMode, ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
+import { getPeerDisplayName } from '../../../core/peer-utils';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
 
@@ -459,6 +460,78 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => observer.disconnect();
   }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending, scrollChatToBottom]);
 
+  const activeConversationSummary = useMemo(() => {
+    const activeConversationId = snap.chatActiveConversation;
+    if (!activeConversationId || !Array.isArray(snap.chatConversations)) return null;
+    return snap.chatConversations.find((conv) => (
+      conv
+      && typeof conv === 'object'
+      && String((conv as { id?: unknown }).id || '') === activeConversationId
+    )) as Record<string, unknown> | null;
+  }, [snap.chatActiveConversation, snap.chatConversations]);
+  const activeConversationPeerId =
+    typeof activeConversationSummary?.peerId === 'string'
+      ? activeConversationSummary.peerId.trim()
+      : '';
+  const activeConversationServiceId =
+    typeof activeConversationSummary?.service === 'string'
+      ? activeConversationSummary.service.trim()
+      : '';
+  const activeConversationPeerLabel =
+    typeof activeConversationSummary?.peerLabel === 'string'
+      ? activeConversationSummary.peerLabel.trim()
+      : '';
+  const activeConversationPeerName =
+    getPeerDisplayName(activeConversationPeerLabel)
+    || activeConversationPeerLabel
+    || (activeConversationPeerId ? activeConversationPeerId.slice(0, 8) : '');
+  const openingActiveConversation = Boolean(
+    snap.chatOpeningConversationId
+    && snap.chatOpeningConversationId === snap.chatActiveConversation,
+  );
+
+  // Services filtered to the currently-routed peer — lets the user switch
+  // between services offered by the same peer without going back to Discover.
+  const currentPeerId = snap.chatRoutedPeerId || snap.chatSelectedPeerId || activeConversationPeerId || '';
+  const [headerCopied, setHeaderCopied] = useState(false);
+  const peerServiceOptions = useMemo(
+    () =>
+      currentPeerId
+        ? snap.chatServiceOptions.filter((o) => o.peerId === currentPeerId)
+        : [],
+    [snap.chatServiceOptions, currentPeerId],
+  );
+  const currentServiceOption = useMemo(
+    () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
+    [snap.chatServiceOptions, snap.chatSelectedServiceValue],
+  );
+  const currentPeerNotFound = Boolean(
+    snap.chatActiveConversation
+    && currentPeerId
+    && !openingActiveConversation
+    && snap.chatDiscoverRowsLoaded
+    && !snap.chatServiceSelectDisabled
+    && !snap.discoverRows.some((row) => row.peerId === currentPeerId)
+    && !snap.chatServiceOptions.some((option) => option.peerId === currentPeerId),
+  );
+  const currentServiceKey = currentServiceOption?.id || '';
+  const currentServiceLabel = openingActiveConversation
+    ? activeConversationServiceId || currentServiceOption?.label || 'Loading chat...'
+    : currentServiceOption?.label || activeConversationServiceId || 'No peer selected';
+  const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
+  const hasAttachedImages = useMemo(
+    () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
+    [attachedFiles],
+  );
+  const peerDisplayName =
+    currentPeerNotFound
+      ? ''
+      : openingActiveConversation
+        ? activeConversationPeerName
+        : snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
+
+  const headerCopyValue = currentPeerNotFound ? '' : `${currentPeerId} ${currentServiceKey}`.trim();
+
   const activePendingQueue = useMemo(
     () => pendingQueue.filter((item) => item.conversationId === snap.chatActiveConversation),
     [pendingQueue, snap.chatActiveConversation],
@@ -470,7 +543,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   // in so switching chats while a response streams cannot send the draft in the
   // newly-opened chat.
   useEffect(() => {
-    if (snap.chatInputDisabled) return;
+    if (snap.chatInputDisabled || currentPeerNotFound) return;
     if (inputRef.current) inputRef.current.focus();
     if (activePendingQueue.length === 0) return;
     const head = activePendingQueue[0];
@@ -481,7 +554,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     } else {
       actions.sendMessage(head.text, head.attachments);
     }
-  }, [snap.chatInputDisabled, activePendingQueue, actions]);
+  }, [snap.chatInputDisabled, activePendingQueue, actions, currentPeerNotFound]);
 
   // --- Divider drag (pointer capture — no orphaned listeners) ---
   const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
@@ -531,32 +604,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [permissionMenuOpen]);
-
-  // Services filtered to the currently-routed peer — lets the user switch
-  // between services offered by the same peer without going back to Discover.
-  const currentPeerId = snap.chatRoutedPeerId || snap.chatSelectedPeerId || '';
-  const [headerCopied, setHeaderCopied] = useState(false);
-  const peerServiceOptions = useMemo(
-    () =>
-      currentPeerId
-        ? snap.chatServiceOptions.filter((o) => o.peerId === currentPeerId)
-        : [],
-    [snap.chatServiceOptions, currentPeerId],
-  );
-  const currentServiceOption = useMemo(
-    () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
-    [snap.chatServiceOptions, snap.chatSelectedServiceValue],
-  );
-  const currentServiceKey = currentServiceOption?.id || '';
-  const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
-  const hasAttachedImages = useMemo(
-    () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
-    [attachedFiles],
-  );
-  const peerDisplayName =
-    snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
-
-  const headerCopyValue = `${currentPeerId} ${currentServiceKey}`.trim();
 
   useEffect(() => {
     if (!headerCopied) return undefined;
@@ -692,6 +739,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
     if (!text && attachedFiles.length === 0) return;
+    if (currentPeerNotFound) return;
     // If the current turn is still streaming, park the draft as a pending
     // card above the composer and clear the input so the user can keep
     // typing the next one. The disabled→enabled effect flushes the queue
@@ -723,7 +771,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     resetComposer();
     actions.sendMessage(text, filesToSend);
     scrollChatToBottom('smooth');
-  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length]);
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length, currentPeerNotFound]);
 
   const handleLowReputationContinue = useCallback(() => {
     if (lowReputationPeer) {
@@ -858,23 +906,26 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, [attachFiles]);
 
   const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (currentPeerNotFound) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
-  }, []);
+  }, [currentPeerNotFound]);
 
   const handleFileDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (currentPeerNotFound) return;
     e.preventDefault();
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
     }
-  }, []);
+  }, [currentPeerNotFound]);
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
+    if (currentPeerNotFound) return;
     if (e.dataTransfer.files.length > 0) void attachFiles(e.dataTransfer.files);
-  }, [attachFiles]);
+  }, [attachFiles, currentPeerNotFound]);
 
 
   const handleInput = useCallback(() => {
@@ -887,6 +938,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, []);
 
   const handleVoiceRecord = useCallback(async () => {
+    if (currentPeerNotFound) return;
     setVoiceError(null);
     try {
       if (voiceState === 'idle') {
@@ -918,7 +970,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       setVoiceState('idle');
       setVoiceError(error instanceof Error ? error.message : String(error));
     }
-  }, [handleInput, voiceState]);
+  }, [currentPeerNotFound, handleInput, voiceState]);
 
   useEffect(() => {
     if (voiceState !== 'recording') return undefined;
@@ -992,6 +1044,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
+  const chatComposerDisabled = currentPeerNotFound;
+  const chatSendDisabled = currentPeerNotFound || (snap.chatSendDisabled && attachedFiles.length === 0);
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = getPathEnding(workspacePath);
@@ -1013,7 +1067,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <span className={styles.peerName}>{peerDisplayName}</span>
             </span>
           )}
-          {peerServiceOptions.length > 0 ? (
+          {currentPeerNotFound ? (
+            <span className={styles.headerLabelGroup}>
+              <span className={styles.serviceLabel}>Peer was not found</span>
+            </span>
+          ) : peerServiceOptions.length > 0 ? (
             <div className={styles.serviceSwitcherAnchor}>
               <ServiceDropdown
                 options={peerServiceOptions}
@@ -1042,7 +1100,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           ) : (
             <span className={styles.headerLabelGroup}>
               <span className={styles.serviceLabel}>
-                {currentServiceOption?.label || 'No peer selected'}
+                {currentServiceLabel}
               </span>
               {headerCopyValue && (
                 <button
@@ -1380,12 +1438,15 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileAttach}
+                disabled={chatComposerDisabled}
               />
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
                 placeholder={
-                  voiceState === 'recording'
+                  currentPeerNotFound
+                    ? 'Peer was not found. Choose another service from Discover to continue.'
+                    : voiceState === 'recording'
                     ? 'Recording… click the mic again to transcribe, or press Esc to cancel'
                     : voiceState === 'transcribing'
                       ? 'Transcribing locally…'
@@ -1399,6 +1460,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                disabled={chatComposerDisabled}
               />
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputActionsLeft}>
@@ -1406,6 +1468,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
                     title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
                     onClick={() => fileInputRef.current?.click()}
+                    disabled={chatComposerDisabled}
                     type="button"
                   >
                     <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
@@ -1414,7 +1477,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     className={`${styles.chatVoiceBtn} ${voiceState === 'recording' ? styles.chatVoiceBtnRecording : ''}`}
                     title={voiceState === 'recording' ? 'Stop recording and transcribe' : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Record voice message'}
                     onClick={() => void handleVoiceRecord()}
-                    disabled={voiceState === 'transcribing'}
+                    disabled={chatComposerDisabled || voiceState === 'transcribing'}
                     type="button"
                   >
                     {voiceState === 'transcribing' ? '…' : <HugeiconsIcon icon={Mic01Icon} size={18} strokeWidth={2} />}
@@ -1428,7 +1491,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     Stop
                   </button>
                 ) : (
-                  <button className={styles.chatSendBtn} disabled={snap.chatSendDisabled && attachedFiles.length === 0} onClick={handleSend}>
+                  <button className={styles.chatSendBtn} disabled={chatSendDisabled} onClick={handleSend}>
                     <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
                   </button>
                 )}

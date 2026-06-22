@@ -18,6 +18,10 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
+function safeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 const DESKTOP_DEV_MODE_KEY = 'antseed.desktop.devMode';
 const DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION = 5;
 const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
@@ -78,6 +82,7 @@ export function initSettingsModule({
         DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
       ),
       minRep: safeNumber(buyer.minPeerReputation, 0),
+      disableMetadataV2Services: safeBoolean(buyer.disableMetadataV2Services, false),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,
       cryptoChainId: safeString(crypto.chainId, 'base-mainnet'),
@@ -115,6 +120,7 @@ export function initSettingsModule({
             },
           },
           minPeerReputation: formData.minRep,
+          disableMetadataV2Services: formData.disableMetadataV2Services,
         },
         payments: {
           ...asRecord(currentConfig.payments),

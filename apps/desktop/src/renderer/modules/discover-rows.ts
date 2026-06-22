@@ -21,7 +21,35 @@ function normalizeVerificationLink(raw: unknown): DiscoverVerificationLink | nul
   try {
     const url = new URL(href);
     if (url.protocol !== 'https:') return null;
-    return { kind, label, href: url.toString() };
+    const title = typeof r.title === 'string' ? r.title.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    const description = typeof r.description === 'string' ? r.description.replace(/\s+/g, ' ').trim().slice(0, 280) : '';
+    let faviconUrl = '';
+    if (typeof r.faviconUrl === 'string' && r.faviconUrl.trim().length > 0) {
+      try {
+        const iconUrl = new URL(r.faviconUrl.trim());
+        faviconUrl = iconUrl.protocol === 'https:' ? iconUrl.toString() : '';
+      } catch {
+        faviconUrl = '';
+      }
+    }
+    return {
+      kind,
+      label,
+      href: url.toString(),
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(faviconUrl ? { faviconUrl } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHttpsUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:' ? url.toString() : null;
   } catch {
     return null;
   }
@@ -48,6 +76,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
         .map(normalizeVerificationLink)
         .filter((link): link is DiscoverVerificationLink => link !== null)
       : [],
+    peerIconUrl: normalizeHttpsUrl(r.peerIconUrl),
     peerDisplayName: typeof r.peerDisplayName === 'string' ? r.peerDisplayName : null,
     peerLabel: String(r.peerLabel ?? ''),
     inputUsdPerMillion: typeof r.inputUsdPerMillion === 'number' ? r.inputUsdPerMillion : null,
@@ -100,6 +129,7 @@ export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServic
       peerId: row.peerId,
       peerDisplayName: row.peerDisplayName,
       peerLabel: row.peerLabel,
+      peerIconUrl: row.peerIconUrl,
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
       cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,

@@ -14,6 +14,7 @@ export type DiscoverPeerOption = {
   label: string;
   letter: string;
   gradient: string;
+  iconUrl: string | null;
   /**
    * Metadata for a recognised on-chain seller-proxy contract (e.g. the DIEM
    * Staking Pool). Surfaced as a tiny contract icon next to the peer name in
@@ -105,7 +106,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       const gradient = getPeerGradient(r.peerId || r.peerLabel || r.provider || r.serviceId);
       const letter = (label || '?').charAt(0).toUpperCase();
       seen.set(r.peerId, {
-        opt: { peerId: r.peerId, label, letter, gradient, knownProxy: getKnownProxy(r.sellerContract) },
+        opt: { peerId: r.peerId, label, letter, gradient, iconUrl: r.peerIconUrl, knownProxy: getKnownProxy(r.sellerContract) },
         score: rowReputationScore(r),
         label,
       });

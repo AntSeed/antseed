@@ -13,6 +13,7 @@ export interface BuyerRuntimeOverrides {
   maxInputUsdPerMillion?: number;
   maxOutputUsdPerMillion?: number;
   metadataFetchTimeoutMs?: number;
+  disableMetadataV2Services?: boolean;
 }
 
 export interface ResolveEffectiveConfigInput {
@@ -27,6 +28,15 @@ function parseEnvNumber(env: NodeJS.ProcessEnv, key: string): number | undefined
   if (raw === undefined) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseEnvBoolean(env: NodeJS.ProcessEnv, key: string): boolean | undefined {
+  const raw = env[key];
+  if (raw === undefined) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw new Error(`${key} must be a boolean`);
 }
 
 function assertValidMetadataFetchTimeoutMs(value: number, sourceLabel: string): void {
@@ -100,6 +110,7 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   if (env[envMetadataFetchTimeoutKey] !== undefined && envMetadataFetchTimeoutMs === undefined) {
     throw new Error(`${envMetadataFetchTimeoutKey} must be a finite number`);
   }
+  const envDisableMetadataV2Services = parseEnvBoolean(env, 'ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES');
 
   if (envMinReputation !== undefined) {
     buyer.minPeerReputation = envMinReputation;
@@ -112,6 +123,9 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
   if (envMetadataFetchTimeoutMs !== undefined) {
     buyer.metadataFetchTimeoutMs = envMetadataFetchTimeoutMs;
+  }
+  if (envDisableMetadataV2Services !== undefined) {
+    buyer.disableMetadataV2Services = envDisableMetadataV2Services;
   }
 
   const overrides = input.buyerOverrides;
@@ -129,6 +143,9 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
   if (overrides?.metadataFetchTimeoutMs !== undefined) {
     buyer.metadataFetchTimeoutMs = overrides.metadataFetchTimeoutMs;
+  }
+  if (overrides?.disableMetadataV2Services !== undefined) {
+    buyer.disableMetadataV2Services = overrides.disableMetadataV2Services;
   }
 
   assertValidMetadataFetchTimeoutMs(buyer.metadataFetchTimeoutMs, 'buyer.metadataFetchTimeoutMs');

@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../ANTSToken.sol";
-import { AntseedEmissions } from "../AntseedEmissions.sol";
-import { AntseedEmissionsV2 } from "../AntseedEmissionsV2.sol";
-import { AntseedRegistry } from "../AntseedRegistry.sol";
-import { AntseedSellerRewardsPool } from "../AntseedSellerRewardsPool.sol";
+import "../core/ANTSToken.sol";
+import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
+import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
+import { AntseedRegistry } from "../core/AntseedRegistry.sol";
+import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
 /// @dev Minimal mock Deposits that only supports getOperator for emission tests.
 contract MockDepositsForEmissions {

@@ -7,11 +7,11 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
-import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
-import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
-import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
-import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
+import {IAntseedRegistry} from "../interfaces/IAntseedRegistry.sol";
+import {IAntseedDeposits} from "../interfaces/IAntseedDeposits.sol";
+import {IAntseedStaking} from "../interfaces/IAntseedStaking.sol";
+import {IAntseedEmissions} from "../interfaces/IAntseedEmissions.sol";
+import {IAntseedStats} from "../interfaces/IAntseedStats.sol";
 
 /**
  * @title AntseedChannels

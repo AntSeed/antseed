@@ -319,6 +319,10 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('buyer.metadataFetchTimeoutMs must be an integer >= 100');
   }
 
+  if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
+    errors.push('buyer.disableMetadataV2Services must be a boolean');
+  }
+
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {

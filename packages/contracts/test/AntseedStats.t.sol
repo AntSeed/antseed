@@ -2,9 +2,9 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedStats.sol";
-import "../AntseedRegistry.sol";
-import "../MockERC8004Registry.sol";
+import "../stats/AntseedStats.sol";
+import "../core/AntseedRegistry.sol";
+import "./mocks/MockERC8004Registry.sol";
 
 contract AntseedStatsTest is Test {
     AntseedRegistry public registry;
