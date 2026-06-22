@@ -145,6 +145,8 @@ export interface BuyerCLIConfig {
   disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+  /** Per-service-plugin consent, keyed by plugin name (e.g. "auto-deposit"). */
+  services?: Record<string, { enabled: boolean; approvedAt?: string }>;
 }
 
 /**

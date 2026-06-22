@@ -63,6 +63,20 @@ extraResources:
       - "**/*.js"
   - from: ../../packages/api-adapter/package.json
     to: bundled-plugins/@antseed/api-adapter/package.json
+  # Auto-deposit service plugin + its core. Their non-@antseed runtime deps
+  # (viem, permissionless, ...) ship via bundled-runtime below.
+  - from: ../../plugins/service-auto-deposit/dist
+    to: bundled-plugins/@antseed/service-auto-deposit/dist
+    filter:
+      - "**/*.js"
+  - from: ../../plugins/service-auto-deposit/package.json
+    to: bundled-plugins/@antseed/service-auto-deposit/package.json
+  - from: ../../packages/service-core/dist
+    to: bundled-plugins/@antseed/service-core/dist
+    filter:
+      - "**/*.js"
+  - from: ../../packages/service-core/package.json
+    to: bundled-plugins/@antseed/service-core/package.json
   # bundled-runtime contains the full transitive runtime dependency tree of
   # @antseed/node (ethers, @silentbot1/nat-api, tokenx, ...) materialized as
   # real files by scripts/prepare-dist.mjs. We expose it under bundled-plugins

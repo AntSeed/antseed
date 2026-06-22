@@ -27,6 +27,7 @@ import { parseRuntimeActivityFromLog } from './log-parser.js';
 import {
   setPluginAppendLog,
   ensureDefaultPlugin,
+  ensureOptionalServicePlugin,
   listInstalledPlugins,
   installPluginDependency,
   normalizePluginPackageName,
@@ -142,6 +143,10 @@ let lastRuntimeActivityHash = '';
 
 let appSetupNeeded = false;
 let appSetupComplete = false;
+// Resolves once the router and optional service plugins have been seeded. The
+// buyer spawn waits on this so it never starts before its plugins are installed
+// (otherwise a freshly seeded service shows up only after a manual restart).
+let pluginsReadyPromise: Promise<void> = Promise.resolve();
 
 function isPublicMetadataHost(rawHost: string): boolean {
   const host = rawHost.trim();
@@ -375,6 +380,15 @@ ipcMain.handle('runtime:get-state', async () => {
 
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   await ensureSecureIdentity();
+
+  // Don't spawn the buyer until its plugins are seeded. Capped so a stalled
+  // install can never block startup indefinitely.
+  if (options.mode === 'connect') {
+    await Promise.race([
+      pluginsReadyPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+    ]);
+  }
 
   const startOptions: StartOptions = {
     ...options,
@@ -1015,16 +1029,23 @@ app.whenReady().then(async () => {
 
   // Payments portal starts lazily on first open (via payments:open-portal IPC)
 
-  void ensureDefaultPlugin('@antseed/router-local', {
+  const pluginEnsureContext = {
     getAppSetupNeeded: () => appSetupNeeded,
-    setAppSetupNeeded: (v) => { appSetupNeeded = v; },
+    setAppSetupNeeded: (v: boolean) => { appSetupNeeded = v; },
     getAppSetupComplete: () => appSetupComplete,
-    setAppSetupComplete: (v) => { appSetupComplete = v; },
+    setAppSetupComplete: (v: boolean) => { appSetupComplete = v; },
     getMainWindow,
     appendLog,
-  }).catch(() => {
-    // Failure is already logged via appendLog inside ensureDefaultPlugin.
-  });
+  };
+  pluginsReadyPromise = ensureDefaultPlugin('@antseed/router-local', pluginEnsureContext)
+    // Best-effort, after the required router: seed the optional auto-deposit
+    // service plugin so the Services panel works. Never blocks app setup, but
+    // the buyer spawn waits on this promise so the service loads on first start.
+    .then(() => ensureOptionalServicePlugin('@antseed/service-auto-deposit', pluginEnsureContext))
+    .catch(() => {
+      // Failures are already logged via appendLog inside the ensure functions.
+    });
+  void pluginsReadyPromise;
 
   // Auto-update: check for updates silently on launch and every 30 minutes.
   // If an in-flight download stops emitting progress events for a couple of

@@ -172,7 +172,15 @@ export {
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 
-export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedServicePlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export type {
+  Service,
+  ServiceStatus,
+  ServiceHost,
+  ServiceCapability,
+  ServiceCapabilities,
+  WalletCapability,
+} from './interfaces/service.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';

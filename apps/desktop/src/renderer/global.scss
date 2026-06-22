@@ -874,6 +874,12 @@ select.form-input {
   border: 1px solid rgba(var(--danger-rgb), 0.2);
 }
 
+.settings-message.warning {
+  background: rgba(187, 128, 9, 0.1);
+  color: #d29922;
+  border: 1px solid rgba(187, 128, 9, 0.28);
+}
+
 .settings-footer {
   display: grid;
   gap: 12px;
@@ -886,6 +892,89 @@ select.form-input {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
+}
+
+/* Service status line: separate it from the toggle row above. */
+.settings-service-status {
+  margin-top: 8px;
+}
+
+.settings-service + .settings-service {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.settings-service-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.settings-service-badge.is-active {
+  background: rgba(46, 160, 67, 0.18);
+  color: #3fb950;
+}
+
+.settings-service-badge.is-inactive {
+  background: rgba(187, 128, 9, 0.18);
+  color: #d29922;
+}
+
+.settings-service-badge.is-missing {
+  background: rgba(110, 118, 129, 0.18);
+  color: var(--text-secondary);
+}
+
+.settings-receive {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  margin-top: 12px;
+}
+
+.settings-receive-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card-alt);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  max-width: 100%;
+  word-break: break-all;
+}
+
+.settings-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-copy-button:hover {
+  color: var(--text-primary);
+}
+
+.settings-receive-qr {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  line-height: 0;
 }
 
 .settings-save-btn {

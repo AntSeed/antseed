@@ -4,7 +4,7 @@ import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPluginsDir, installPlugin } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
-import type { AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey } from '@antseed/node'
+import type { AntseedProviderPlugin, AntseedRouterPlugin, AntseedServicePlugin, PluginConfigKey } from '@antseed/node'
 
 const NODE_BUILTINS = new Set([
   ...builtinModules,
@@ -24,12 +24,12 @@ function resolvePackageName(nameOrPackage: string): string {
   return trusted?.package ?? nameOrPackage
 }
 
-type PluginKind = 'provider' | 'router'
+type PluginKind = 'provider' | 'router' | 'service'
 
 async function loadPlugin<T>(
   nameOrPackage: string,
   kind: PluginKind,
-  methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin
+  methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin | keyof AntseedServicePlugin
 ): Promise<T> {
   const pkgName = resolvePackageName(nameOrPackage)
   const pluginsDir = getPluginsDir()
@@ -144,6 +144,10 @@ export async function loadProviderPlugin(nameOrPackage: string): Promise<Antseed
 
 export async function loadRouterPlugin(nameOrPackage: string): Promise<AntseedRouterPlugin> {
   return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter')
+}
+
+export async function loadServicePlugin(nameOrPackage: string): Promise<AntseedServicePlugin> {
+  return loadPlugin<AntseedServicePlugin>(nameOrPackage, 'service', 'createService')
 }
 
 export function buildPluginConfig(

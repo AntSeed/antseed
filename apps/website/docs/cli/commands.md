@@ -37,6 +37,8 @@ antseed buyer start --router <name>   Start the buyer proxy with a non-default r
 antseed buyer deposit <amount>        Deposit USDC for payments
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
 antseed buyer balance                 Check wallet and deposit balance
+antseed buyer enable-service <name>   Turn on a service plugin (e.g. auto-deposit: sweep wallet USDC into deposits)
+antseed buyer disable-service <name>  Turn off a service plugin
 antseed network browse                Browse available services and pricing
 antseed payments                      Launch the payments portal
 ```

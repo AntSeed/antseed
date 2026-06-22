@@ -8,6 +8,7 @@ import { registerBuyerConnectionCommand } from './connection.js';
 import { registerBuyerChannelsCommand } from './channels.js';
 import { registerBuyerMeteringCommand } from './metering.js';
 import { registerBuyerEmissionsCommand } from './emissions.js';
+import { registerBuyerServiceCommands } from './services.js';
 
 export function registerBuyerCommands(program: Command): void {
   const buyerCmd = program
@@ -23,4 +24,5 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerChannelsCommand(buyerCmd);
   registerBuyerMeteringCommand(buyerCmd);
   registerBuyerEmissionsCommand(buyerCmd);
+  registerBuyerServiceCommands(buyerCmd);
 }

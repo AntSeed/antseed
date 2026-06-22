@@ -370,6 +370,7 @@ function mergeBuyerConfig(
       'buyer.disableMetadataV2Services',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
+    ...(normalizeBuyerServices(value['services'])),
   };
 }
 
@@ -377,6 +378,26 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   if (value === undefined) return defaultValue;
   if (typeof value === 'boolean') return value;
   throw new Error(`${path} must be a boolean`);
+}
+
+function normalizeServiceEntry(entry: unknown): { enabled: boolean; approvedAt?: string } | null {
+  if (!isRecord(entry) || typeof entry['enabled'] !== 'boolean') return null;
+  return {
+    enabled: entry['enabled'],
+    ...(typeof entry['approvedAt'] === 'string' ? { approvedAt: entry['approvedAt'] } : {}),
+  };
+}
+
+function normalizeBuyerServices(
+  servicesValue: unknown,
+): { services: NonNullable<AntseedConfig['buyer']['services']> } | Record<string, never> {
+  if (!isRecord(servicesValue)) return {};
+  const out: Record<string, { enabled: boolean; approvedAt?: string }> = {};
+  for (const [name, entry] of Object.entries(servicesValue)) {
+    const normalized = normalizeServiceEntry(entry);
+    if (normalized) out[name] = normalized;
+  }
+  return Object.keys(out).length > 0 ? { services: out } : {};
 }
 
 /**

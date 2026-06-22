@@ -173,6 +173,11 @@ const EXPLICITLY_BUNDLED_PACKAGES = new Set([
   '@antseed/router-core',
   '@antseed/node',
   '@antseed/api-adapter',
+  // The auto-deposit service plugin and its core ship their own dist/package.json
+  // via electron-builder.yml; only their non-@antseed runtime deps (viem,
+  // permissionless, ...) need materializing into bundled-runtime below.
+  '@antseed/service-auto-deposit',
+  '@antseed/service-core',
 ]);
 const NODE_BUILTINS = new Set([
   ...builtinModules,
@@ -287,18 +292,37 @@ function copyDepTree(name, parentSourceDir, parentDestDir, topDestRoot, visited)
   }
 }
 
+// Shared across both walks so a dep needed by node and the service plugin
+// (e.g. a common @noble/* version) is materialized once.
+const visited = new Set();
+
 const nodePackageDir = findPackageDirFromRequire(desktopRequire, '@antseed/node');
 if (!nodePackageDir) {
   console.warn('[prepare-dist] WARNING: could not locate @antseed/node — bundled runtime will be incomplete');
 } else {
   const nodePkg = readPackageJson(nodePackageDir);
-  const visited = new Set();
   // For top-level deps the "parent dest" is the runtime root itself — no
   // sibling can collide at this layer because each direct dep name is unique.
   for (const depName of Object.keys(nodePkg.dependencies ?? {})) {
     copyDepTree(depName, nodePackageDir, BUNDLED_RUNTIME_DIR, BUNDLED_RUNTIME_DIR, visited);
   }
   console.log(`[prepare-dist] Bundled ${visited.size} runtime dep(s) for @antseed/node into ${BUNDLED_RUNTIME_DIR}`);
+}
+
+// Materialize the auto-deposit service plugin's runtime deps (viem, permissionless,
+// and their transitive tree) so the desktop ships it offline alongside the default
+// router. Resolved by explicit monorepo path — like electron-builder.yml — since
+// the desktop itself does not depend on the service plugin.
+const servicePackageDir = path.resolve(appDir, '..', '..', 'plugins', 'service-auto-deposit');
+if (!existsSync(path.join(servicePackageDir, 'package.json'))) {
+  console.warn('[prepare-dist] WARNING: could not locate @antseed/service-auto-deposit — auto-deposit runtime will be incomplete');
+} else {
+  const servicePkg = readPackageJson(servicePackageDir);
+  const before = visited.size;
+  for (const depName of Object.keys(servicePkg?.dependencies ?? {})) {
+    copyDepTree(depName, servicePackageDir, BUNDLED_RUNTIME_DIR, BUNDLED_RUNTIME_DIR, visited);
+  }
+  console.log(`[prepare-dist] Bundled ${visited.size - before} additional runtime dep(s) for auto-deposit into ${BUNDLED_RUNTIME_DIR}`);
 }
 
 console.log('[prepare-dist] Done.');

@@ -1,8 +1,12 @@
 export interface TrustedPlugin {
   name: string
-  type: 'provider' | 'router'
+  type: 'provider' | 'router' | 'service'
   description: string
   package: string
+  /** Human-readable label shown in UIs before the plugin is loaded. */
+  displayName?: string
+  /** Service sub-kind (e.g. 'funding'), surfaced for services not yet loaded. */
+  kind?: string
 }
 
 export const TRUSTED_PLUGINS: TrustedPlugin[] = [
@@ -48,9 +52,21 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
   },
+  {
+    name: 'auto-deposit',
+    type: 'service',
+    displayName: 'Auto Deposit',
+    kind: 'funding',
+    description: 'Gasless auto-deposit: sweeps loose USDC into the network (Circle Paymaster + EIP-7702)',
+    package: '@antseed/service-auto-deposit',
+  },
 ]
 
 export function resolvePluginPackage(nameOrPackage: string): string {
   const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage)
   return trusted?.package ?? nameOrPackage
+}
+
+export function getTrustedServicePlugins(): TrustedPlugin[] {
+  return TRUSTED_PLUGINS.filter((plugin) => plugin.type === 'service')
 }

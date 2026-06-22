@@ -497,3 +497,46 @@ export async function ensureDefaultPlugin(
     throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
   }
 }
+
+/**
+ * Seed an optional service plugin (e.g. the auto-deposit funder) into the plugins
+ * dir so the buyer can load it. Unlike {@link ensureDefaultPlugin} this is
+ * best-effort and never gates app setup or throws: a buyer runs fine without it.
+ *
+ * In production it is normally already present: the default-router ensure copies
+ * the whole app bundle (which includes this plugin) via installPluginFromBundle,
+ * so this returns immediately. Otherwise it installs from the npm registry,
+ * exactly like the router and provider plugins.
+ */
+export async function ensureOptionalServicePlugin(
+  packageName: string,
+  ctx: EnsureDefaultPluginContext,
+): Promise<void> {
+  try {
+    if (isPluginInstalled(packageName) && !hasMissingInstalledDependencyTree(packageName)) {
+      return;
+    }
+    ctx.appendLog('connect', 'system', `Service plugin "${packageName}" not found. Installing.`);
+
+    // 1. App bundle (packaged builds). Normally already done by the router
+    //    ensure, which copies the whole bundle including this plugin.
+    let installedFromBundle = false;
+    try {
+      installedFromBundle = await installPluginFromBundle(packageName);
+    } catch (bundleErr) {
+      const message = bundleErr instanceof Error ? bundleErr.message : String(bundleErr);
+      ctx.appendLog('connect', 'system', `Bundled service plugin copy failed: ${message}`);
+    }
+    if (installedFromBundle) {
+      ctx.appendLog('connect', 'system', `Installed service plugin "${packageName}" from app bundle.`);
+      return;
+    }
+
+    // 2. npm registry, exactly like the router and provider plugins.
+    await installPluginDependencies([`${packageName}@latest`]);
+    ctx.appendLog('connect', 'system', `Installed service plugin "${packageName}".`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.appendLog('connect', 'system', `Optional service plugin "${packageName}" not installed (non-fatal): ${message}`);
+  }
+}

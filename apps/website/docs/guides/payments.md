@@ -31,6 +31,23 @@ The contract's `deposit(buyer, amount)` pulls USDC from your connected wallet an
 Anyone can deposit on behalf of a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
 :::
 
+### Auto-deposit (gasless)
+
+Instead of depositing by hand, you can let your node do it. With auto-deposit on, the node watches your wallet and moves any USDC it finds into the deposits contract on its own, so the funds are ready to spend.
+
+Turn it on from the CLI:
+
+```bash
+antseed buyer enable-service auto-deposit
+antseed buyer disable-service auto-deposit
+```
+
+In AntStation, open Settings and use the toggle in the Funding panel. When it is on, the panel shows your wallet address and a QR code so you can send USDC straight to it from an exchange or another wallet.
+
+You do not need any ETH. Gas is paid in USDC through the Circle Paymaster, and on the first deposit your wallet is upgraded once to a smart account (EIP-7702) at the same address. After that, every top-up is swept automatically.
+
+Send only USDC on Base. To find the address from the CLI, run `antseed buyer balance`.
+
 ### Checking Balance
 
 ```bash
