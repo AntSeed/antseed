@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AntStationStackedLogo } from './AntStationLogo';
 import { TitleBar } from './TitleBar';
-import { useUiSnapshot } from '../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import styles from './SetupScreen.module.scss';
 
 function CheckIcon() {
@@ -45,11 +45,16 @@ function StepRow({ label, done, active }: StepRowProps) {
 type ProgressLevel = 0 | 1 | 2 | 3;
 
 export function SetupScreen() {
-  const snap = useUiSnapshot();
+  const snap = useUiSelector((state) => ({
+    appSetupComplete: state.appSetupComplete,
+    appSetupStep: state.appSetupStep,
+    chatServiceCount: state.chatServiceOptions.length,
+    runtimeActivityMessage: state.runtimeActivity.message,
+  }), shallowEqual);
   const [level, setLevel] = useState<ProgressLevel>(0);
 
-  const hasServices = snap.chatServiceOptions.length > 0;
-  const msg = snap.runtimeActivity.message;
+  const hasServices = snap.chatServiceCount > 0;
+  const msg = snap.runtimeActivityMessage;
 
   // Advance progress level monotonically inside useEffect so mutations
   // only happen during the commit phase (safe in concurrent/strict mode).

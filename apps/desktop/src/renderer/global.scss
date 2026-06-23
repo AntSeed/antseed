@@ -179,6 +179,27 @@ textarea {
   display: block;
 }
 
+.route-loading {
+  display: grid;
+  place-items: center;
+  background: var(--bg-primary);
+}
+
+.route-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent-green);
+  border-radius: 50%;
+  animation: route-loading-spin 0.75s linear infinite;
+}
+
+@keyframes route-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .view-desktop.view {
   overflow: hidden;
 }

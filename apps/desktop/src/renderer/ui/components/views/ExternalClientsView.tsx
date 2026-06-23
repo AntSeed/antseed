@@ -8,7 +8,8 @@ import {
   BookOpen01Icon,
   Loading03Icon,
 } from '@hugeicons/core-free-icons';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { useRetainedState } from '../../hooks/useRetainedState';
 import type { ChatServiceOptionEntry } from '../../../core/state';
 import styles from './ExternalClientsView.module.scss';
 
@@ -268,6 +269,13 @@ type TryState =
   | { kind: 'result'; status: number; body: string }
   | { kind: 'error'; error: string };
 
+// Renderer-lifetime cache: API playground selections and results survive lazy
+// page unmounts while the app stays open.
+const externalClientsViewCache = {
+  tryServiceValue: '',
+  tryState: { kind: 'idle' } as TryState,
+};
+
 export function ExternalClientsView({ active }: ExternalClientsViewProps) {
   const {
     chatProxyStatus,
@@ -275,7 +283,13 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
     chatServiceOptions,
     chatSelectedServiceValue,
     discoverRows,
-  } = useUiSnapshot();
+  } = useUiSelector((state) => ({
+    chatProxyStatus: state.chatProxyStatus,
+    chatProxyPort: state.chatProxyPort,
+    chatServiceOptions: state.chatServiceOptions,
+    chatSelectedServiceValue: state.chatSelectedServiceValue,
+    discoverRows: state.discoverRows,
+  }), shallowEqual);
   const isOnline = chatProxyStatus.tone === 'active' && chatProxyPort > 0;
   const displayPort = isOnline ? chatProxyPort : 8377;
 
@@ -306,7 +320,7 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
     [chatServiceOptions, peerChannelCounts],
   );
 
-  const [tryServiceValue, setTryServiceValue] = useState<string>('');
+  const [tryServiceValue, setTryServiceValue] = useRetainedState(externalClientsViewCache, 'tryServiceValue');
 
   useEffect(() => {
     if (freeOptions.length === 0) {
@@ -325,7 +339,7 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
   const request = useMemo(() => buildRequest(targetOption, displayPort), [targetOption, displayPort]);
   const curl = useMemo(() => formatCurl(displayPort, request), [displayPort, request]);
 
-  const [tryState, setTryState] = useState<TryState>({ kind: 'idle' });
+  const [tryState, setTryState] = useRetainedState(externalClientsViewCache, 'tryState');
   const [openTool, setOpenTool] = useState<Tool | null>(null);
 
   const canTry = Boolean(targetOption) && isOnline && !!window.antseedDesktop?.apiTryProxyRequest;

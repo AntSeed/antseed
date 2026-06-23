@@ -1,7 +1,8 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import type { DiscoverRow } from '../../core/state';
 import { getPeerGradient } from '../../core/peer-utils';
 import { getKnownProxy, type KnownProxy } from '../../core/known-proxies';
+import { useRetainedState } from './useRetainedState';
 import {
   applyFilters, applySort, rowReputationScore,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
@@ -50,15 +51,35 @@ export type DiscoverFilterState = {
   resetAll: () => void;
 };
 
+// Renderer-lifetime cache: discover filters survive lazy page unmounts.
+const discoverFilterCache = {
+  search: '',
+  categorySet: new Set<string>(),
+  peerSet: new Set<string>(),
+  maxInputPrice: MAX_INPUT_PRICE_SLIDER_USD,
+  maxOutputPrice: MAX_OUTPUT_PRICE_SLIDER_USD,
+  minStakeUsdc: 0,
+  minReputationScore: DEFAULT_MIN_REPUTATION_SCORE,
+  sortKey: 'reputationDesc' as DiscoverSortKey,
+};
+
 export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
-  const [search, setSearch] = useState('');
-  const [categorySet, setCategorySet] = useState<Set<string>>(() => new Set());
-  const [peerSet, setPeerSet] = useState<Set<string>>(() => new Set());
-  const [maxInputPrice, setMaxInputPrice] = useState<number>(MAX_INPUT_PRICE_SLIDER_USD);
-  const [maxOutputPrice, setMaxOutputPrice] = useState<number>(MAX_OUTPUT_PRICE_SLIDER_USD);
-  const [minStakeUsdc, setMinStakeUsdc] = useState<number>(0);
-  const [minReputationScore, setMinReputationScore] = useState<number>(DEFAULT_MIN_REPUTATION_SCORE);
-  const [sortKey, setSortKey] = useState<DiscoverSortKey>('reputationDesc');
+  const [search, setSearch] = useRetainedState(discoverFilterCache, 'search');
+  const [categorySet, setCategorySet] = useRetainedState(
+    discoverFilterCache,
+    'categorySet',
+    (value) => new Set(value),
+  );
+  const [peerSet, setPeerSet] = useRetainedState(
+    discoverFilterCache,
+    'peerSet',
+    (value) => new Set(value),
+  );
+  const [maxInputPrice, setMaxInputPrice] = useRetainedState(discoverFilterCache, 'maxInputPrice');
+  const [maxOutputPrice, setMaxOutputPrice] = useRetainedState(discoverFilterCache, 'maxOutputPrice');
+  const [minStakeUsdc, setMinStakeUsdc] = useRetainedState(discoverFilterCache, 'minStakeUsdc');
+  const [minReputationScore, setMinReputationScore] = useRetainedState(discoverFilterCache, 'minReputationScore');
+  const [sortKey, setSortKey] = useRetainedState(discoverFilterCache, 'sortKey');
 
   const toggleCategory = useCallback((cat: string) => {
     setCategorySet((prev) => {
@@ -68,7 +89,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       else next.add(key);
       return next;
     });
-  }, []);
+  }, [setCategorySet]);
 
   const togglePeer = useCallback((peerId: string) => {
     setPeerSet((prev) => {
@@ -77,7 +98,7 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
       else next.add(peerId);
       return next;
     });
-  }, []);
+  }, [setPeerSet]);
 
   const resetAll = useCallback(() => {
     setSearch('');
@@ -88,7 +109,16 @@ export function useDiscoverFilters(rows: DiscoverRow[]): DiscoverFilterState {
     setMinStakeUsdc(0);
     setMinReputationScore(DEFAULT_MIN_REPUTATION_SCORE);
     setSortKey('reputationDesc');
-  }, []);
+  }, [
+    setCategorySet,
+    setMaxInputPrice,
+    setMaxOutputPrice,
+    setMinReputationScore,
+    setMinStakeUsdc,
+    setPeerSet,
+    setSearch,
+    setSortKey,
+  ]);
 
   const availableCategories = useMemo(() => {
     const set = new Set<string>();

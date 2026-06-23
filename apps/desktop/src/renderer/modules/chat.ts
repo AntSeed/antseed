@@ -1937,26 +1937,41 @@ export function initChatModule({
     const convId = targetId || uiState.chatActiveConversation;
     if (!convId || !bridge || !bridge.chatAiDeleteConversation) return;
 
+    const previousConversations = Array.isArray(uiState.chatConversations)
+      ? [...uiState.chatConversations]
+      : [];
+    const nextConversations = previousConversations.filter((conv) => {
+      const candidate = conv as ChatConversationSummary;
+      return candidate.id !== convId;
+    });
+    if (nextConversations.length !== previousConversations.length) {
+      uiState.chatConversations = nextConversations;
+    }
+    localConversationMessages.delete(convId);
+    streamingMessagesByConversation.delete(convId);
+    sendingConversationIds.delete(convId);
+    streamTurnsByConversation.delete(convId);
+    streamStartedAtByConversation.delete(convId);
+    // Publish the updated sending set (and resync active-conv UI) before we
+    // potentially reset to new-chat state. This covers both the active and
+    // non-active delete paths.
+    syncActiveConversationSendingState();
+
+    // If we deleted the active conversation, reset to new-chat state immediately
+    // so the UI does not wait on IPC, storage, or attachment cleanup.
+    if (convId === uiState.chatActiveConversation) {
+      startNewChat();
+    } else {
+      notifyUiStateChanged();
+    }
+
     try {
       await bridge.chatAiDeleteConversation(convId);
-      localConversationMessages.delete(convId);
-      streamingMessagesByConversation.delete(convId);
-      sendingConversationIds.delete(convId);
-      streamTurnsByConversation.delete(convId);
-      streamStartedAtByConversation.delete(convId);
-      // Publish the updated sending set (and resync active-conv UI) before we
-      // potentially reset to new-chat state. This covers both the active and
-      // non-active delete paths.
-      syncActiveConversationSendingState();
-
-      // If we deleted the active conversation, reset to new-chat state
-      if (convId === uiState.chatActiveConversation) {
-        startNewChat();
-      }
-
-      notifyUiStateChanged();
       await refreshChatConversations();
     } catch (err) {
+      uiState.chatConversations = previousConversations;
+      notifyUiStateChanged();
+      void refreshChatConversations();
       reportChatError(err, 'Failed to delete conversation');
     }
   }
@@ -2339,13 +2354,13 @@ export function initChatModule({
 
   async function abortChat(): Promise<void> {
     const convId = uiState.chatActiveConversation;
-    if (bridge && bridge.chatAiAbort) {
-      await bridge.chatAiAbort(convId ?? undefined);
-    }
     if (convId) {
       setConversationSending(convId, false);
     } else {
       setChatSending(false);
+    }
+    if (bridge && bridge.chatAiAbort) {
+      await bridge.chatAiAbort(convId ?? undefined);
     }
   }
 

@@ -5,7 +5,7 @@ import { Copy01Icon, Tick02Icon, ContractsIcon, GithubIcon, Globe02Icon } from '
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow, DiscoverVerificationLink } from '../../../core/state';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useUiSelector } from '../../hooks/useUiSelector';
 import { useDiscoverFilters } from '../../hooks/useDiscoverFilters';
 import {
   type DiscoverSortKey,
@@ -465,8 +465,7 @@ function buildPaginationTokens(page: number, totalPages: number): PaginationToke
 }
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
-  const snap = useUiSnapshot();
-  const rows = snap.discoverRows;
+  const rows = useUiSelector((state) => state.discoverRows);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => estimatePageSize());

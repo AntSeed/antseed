@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useUiSnapshot } from '../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import styles from './StreamingIndicator.module.scss';
 
 declare const __APP_VERSION__: string;
 
 export function StreamingIndicator() {
-  const { chatStreamingIndicatorText, chatStreamingActive, runtimeActivity } = useUiSnapshot();
+  const { chatStreamingIndicatorText, chatStreamingActive, runtimeActivity } = useUiSelector((state) => ({
+    chatStreamingIndicatorText: state.chatStreamingIndicatorText,
+    chatStreamingActive: state.chatStreamingActive,
+    runtimeActivity: state.runtimeActivity,
+  }), shallowEqual);
   const [appVersion, setAppVersion] = useState<string>(typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '');
 
   useEffect(() => {

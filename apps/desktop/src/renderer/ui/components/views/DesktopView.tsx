@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatClock } from '../../../core/format';
 
@@ -19,7 +19,10 @@ function downloadLogs(logs: { timestamp: number; mode: string; stream: string; l
 }
 
 export function DesktopView({ active }: DesktopViewProps) {
-  const { logs, daemonState } = useUiSnapshot();
+  const { logs, daemonState } = useUiSelector((state) => ({
+    logs: state.logs,
+    daemonState: state.daemonState,
+  }), shallowEqual);
   const actions = useActions();
   const logsEndRef = useRef<HTMLDivElement>(null);
 

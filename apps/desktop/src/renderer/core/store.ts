@@ -63,6 +63,10 @@ function getStateRef(): RendererUiState {
   return stateRef;
 }
 
+export function getUiStateRef(): RendererUiState {
+  return getStateRef();
+}
+
 export function getUiSnapshot(): RendererUiState {
   if (cachedSnapshot && cachedSnapshotVersion === version) {
     return cachedSnapshot;

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { formatShortId, formatInt } from '../../../core/format';
 import {
   buildPeerReputationScoreMap,
@@ -23,7 +23,18 @@ export function OverviewView({ active }: OverviewViewProps) {
     ovPeersCount,
     overviewPeers,
     discoverRows,
-  } = useUiSnapshot();
+  } = useUiSelector((state) => ({
+    overviewBadge: state.overviewBadge,
+    ovNodeState: state.ovNodeState,
+    ovPeers: state.ovPeers,
+    ovDhtHealth: state.ovDhtHealth,
+    ovProxyPort: state.ovProxyPort,
+    ovServiceCount: state.ovServiceCount,
+    ovLastScan: state.ovLastScan,
+    ovPeersCount: state.ovPeersCount,
+    overviewPeers: state.overviewPeers,
+    discoverRows: state.discoverRows,
+  }), shallowEqual);
 
   const reputationScoresByPeerId = useMemo(
     () => buildPeerReputationScoreMap(discoverRows),

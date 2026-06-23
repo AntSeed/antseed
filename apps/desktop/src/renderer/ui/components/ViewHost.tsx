@@ -1,29 +1,33 @@
+import { Suspense } from 'react';
 import type { ViewName } from '../types';
-import { ChatView } from './views/ChatView';
-import { ConfigView } from './views/ConfigView';
-import { ConnectionView } from './views/ConnectionView';
-import { DesktopView } from './views/DesktopView';
-import { DiscoverView } from './views/DiscoverView';
-import { ExternalClientsView } from './views/ExternalClientsView';
-import { OverviewView } from './views/OverviewView';
-import { PeersView } from './views/PeersView';
+import { getViewRegistryEntry } from './viewRegistry';
 
 type ViewHostProps = {
   activeView: ViewName;
   onSelectView: (view: ViewName) => void;
 };
 
+function ViewLoadingFallback() {
+  return (
+    <div className="view active route-loading" role="status" aria-live="polite" aria-label="Loading view">
+      <span className="route-loading-spinner" aria-hidden="true" />
+    </div>
+  );
+}
+
 export function ViewHost({ activeView, onSelectView }: ViewHostProps) {
+  const { component: ActiveView, receivesOnSelectView } = getViewRegistryEntry(activeView);
+
   return (
     <section className="view-host">
-      <OverviewView active={activeView === 'overview'} />
-      <PeersView active={activeView === 'peers'} />
-      <ChatView active={activeView === 'chat'} onSelectView={onSelectView} />
-      <ConnectionView active={activeView === 'connection'} />
-      <ConfigView active={activeView === 'config'} />
-      <DesktopView active={activeView === 'desktop'} />
-      <ExternalClientsView active={activeView === 'external-clients'} />
-      <DiscoverView active={activeView === 'discover'} onSelectView={onSelectView} />
+      <Suspense fallback={<ViewLoadingFallback />}>
+        <ActiveView
+          // ViewHost only mounts the active page; legacy view-level `active`
+          // effects can keep using the prop as an always-true invariant.
+          active={true}
+          {...(receivesOnSelectView ? { onSelectView } : {})}
+        />
+      </Suspense>
     </section>
   );
 }
