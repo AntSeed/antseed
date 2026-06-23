@@ -445,6 +445,32 @@ const api = {
   creditsGetInfo() {
     return ipcRenderer.invoke('credits:get-info');
   },
+  // AntSeed Connect: consent-based account info sharing (spec 07-connect.md)
+  onConnectRequest(
+    handler: (data: {
+      id: string;
+      origin: string;
+      appName: string | null;
+      appIcon: string | null;
+      scopes: { id: string; label: string; description: string; value: string }[];
+    }) => void,
+  ): () => void {
+    const listener = (
+      _: unknown,
+      data: {
+        id: string;
+        origin: string;
+        appName: string | null;
+        appIcon: string | null;
+        scopes: { id: string; label: string; description: string; value: string }[];
+      },
+    ) => handler(data);
+    ipcRenderer.on('connect:request', listener);
+    return () => ipcRenderer.off('connect:request', listener);
+  },
+  connectRespond(id: string, approved: boolean): Promise<{ ok: boolean; delivered: boolean; error?: string }> {
+    return ipcRenderer.invoke('connect:respond', { id, approved }) as Promise<{ ok: boolean; delivered: boolean; error?: string }>;
+  },
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),

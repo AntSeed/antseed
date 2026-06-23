@@ -26,9 +26,11 @@
   "dependencies": {
     "@antseed/api-adapter": "workspace:*",
     "@antseed/ant-agent": "workspace:*",
+    "@antseed/connect-core": "workspace:*",
     "@antseed/payments": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",
+    "@antseed/service-auto-deposit": "workspace:*",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
     "commander": "^14.0.3",

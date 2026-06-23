@@ -20,7 +20,9 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
+import { initConnectDeepLink, markConnectReady, type ConnectDeps } from './connect.js';
 import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
+import { readAutoDepositConnectState } from '@antseed/service-auto-deposit';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -1001,6 +1003,42 @@ ipcMain.handle('runtime:scan-network', async () => {
   }
 });
 
+const connectDeps: ConnectDeps = {
+  getMainWindow,
+  ensureWindow: () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+    }
+  },
+  ensureIdentity: ensureSecureIdentity,
+  getIdentity: getSecureIdentity,
+  getAutoDepositState: async (address: string) => {
+    try {
+      const config = await readConfig(ACTIVE_CONFIG_PATH);
+      const crypto = asRecord(asRecord(config.payments).crypto);
+      // Use the configured chain as-is (matches the CLI); an unset/unsupported
+      // chain just yields delegated:false rather than assuming base-mainnet.
+      const chainId = asString(crypto.chainId, '');
+      const services = asRecord(asRecord(config.buyer).services);
+      const enabled = asRecord(services['auto-deposit']).enabled === true;
+      const cryptoConfig = await loadCachedCryptoConfig();
+      return await readAutoDepositConnectState({
+        chainId,
+        rpcUrl: cryptoConfig?.rpcUrl ?? '',
+        address,
+        enabled,
+      });
+    } catch {
+      return undefined;
+    }
+  },
+  log: (line) => appendLog('connect', 'system', line),
+};
+
+// Register the antseed:// open-url listener before app ready so a cold-start
+// launch from a deep link is caught and buffered.
+initConnectDeepLink(connectDeps);
+
 app.whenReady().then(async () => {
   installAttachmentProtocol();
   app.setName(APP_NAME);
@@ -1021,6 +1059,10 @@ app.whenReady().then(async () => {
   await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
   createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+
+  // Window exists and identity preload is kicked off below: flush any deep links
+  // that arrived during cold start.
+  markConnectReady(connectDeps);
 
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {

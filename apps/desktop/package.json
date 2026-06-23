@@ -38,8 +38,10 @@
   },
   "dependencies": {
     "@antseed/api-adapter": "workspace:*",
+    "@antseed/connect-core": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/payments": "workspace:*",
+    "@antseed/service-auto-deposit": "workspace:*",
     "@antseed/ui": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",

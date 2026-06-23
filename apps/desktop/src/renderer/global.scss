@@ -81,6 +81,22 @@ body.dark-theme {
   --drop-overlay-bg: rgba(28, 28, 30, 0.82);
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
+
+  // @antseed/ui maps its --as-* tokens off our base tokens, but it declares them
+  // on :root, so they capture the light values there and don't see this dark
+  // override (which lives on body.dark-theme). Re-map them here so primitives
+  // like Modal recompute with the dark palette. Without this, every as-modal
+  // renders light-on-dark.
+  --as-bg-primary: var(--bg-primary);
+  --as-bg-surface: var(--bg-card);
+  --as-bg-muted: var(--bg-surface);
+  --as-bg-hover: var(--bg-hover);
+  --as-text-primary: var(--text-primary);
+  --as-text-secondary: var(--text-secondary);
+  --as-text-muted: var(--text-muted);
+  --as-border: var(--border);
+  --as-border-strong: var(--border-strong);
+  --as-danger: var(--danger);
 }
 
 /* ===================================================================

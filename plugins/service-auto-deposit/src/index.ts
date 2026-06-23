@@ -12,5 +12,10 @@ export {
   toServiceStatus,
 } from './factory.js';
 export { AUTO_DEPOSIT_CHAINS, type AutoDepositChainConfig } from './chains.js';
+export {
+  readAutoDepositConnectState,
+  type AutoDepositConnectState,
+  type AutoDepositConnectStateInput,
+} from './connect-state.js';
 export type { FundingChainContext } from './chain-context.js';
 export { autoDepositPlugin, default } from './plugin.js';

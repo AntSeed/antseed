@@ -5,6 +5,7 @@ import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
 import { SetupScreen } from './components/SetupScreen';
+import { ConnectConsentDialog } from './components/ConnectConsentDialog';
 import { useUiSnapshot } from './hooks/useUiSnapshot';
 import { useActions } from './hooks/useActions';
 import type { ViewName } from './types';
@@ -122,6 +123,7 @@ export function AppShell() {
         </main>
       </div>
       <StreamingIndicator />
+      <ConnectConsentDialog />
     </>
   );
 }

@@ -262,4 +262,15 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+
+  onConnectRequest?: (
+    handler: (data: {
+      id: string;
+      origin: string;
+      appName: string | null;
+      appIcon: string | null;
+      scopes: { id: string; label: string; description: string; value: string }[];
+    }) => void,
+  ) => () => void;
+  connectRespond?: (id: string, approved: boolean) => Promise<{ ok: boolean; delivered: boolean; error?: string }>;
 };
