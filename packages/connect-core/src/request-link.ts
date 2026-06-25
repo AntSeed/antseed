@@ -26,7 +26,7 @@ function isLoopback(url: URL) {
 }
 
 /**
- * Parse and validate a request link (Section 6). Accepts the `antseed://connect`
+ * Parse and validate a request link. Accepts the `antseed://connect`
  * deep link or its `https`-scheme equivalent carrying the same query.
  *
  * The requesting origin is derived solely from the redirect URL via the WHATWG

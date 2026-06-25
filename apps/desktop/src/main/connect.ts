@@ -1,4 +1,4 @@
-// AntSeed Connect deep-link handler (spec 07-connect.md), macOS.
+// AntSeed Connect deep-link handler, macOS.
 // Parsing, manifest fetch, and signing all happen in the main process.
 // The renderer only shows the request and returns the approval.
 
@@ -21,7 +21,6 @@ export interface ConnectDeps {
   ensureWindow: () => void;
   ensureIdentity: () => Promise<void>;
   getIdentity: () => Identity | null;
-  /** Reads the auto-deposit status to share when the request asks for that scope. */
   getAutoDepositState?: (address: string) => Promise<AutoDepositState | undefined>;
   log?: (line: string) => void;
 }
@@ -37,7 +36,7 @@ let ready = false;
 let pendingUrl: string | null = null;
 const pendingRequests = new Map<string, PendingConnect>();
 
-/** Best-effort, display-only manifest fetch (Section 10). Never a security input. */
+/** Best-effort, display-only manifest fetch. Never a security input. */
 async function fetchManifest(origin: string): Promise<{ name: string; icon?: string } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MANIFEST_TIMEOUT_MS);

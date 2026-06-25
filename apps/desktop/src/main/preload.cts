@@ -445,7 +445,7 @@ const api = {
   creditsGetInfo() {
     return ipcRenderer.invoke('credits:get-info');
   },
-  // AntSeed Connect: consent-based account info sharing (spec 07-connect.md)
+  // AntSeed Connect: consent-based account info sharing
   onConnectRequest(
     handler: (data: {
       id: string;

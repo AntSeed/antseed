@@ -28,7 +28,7 @@ function assertSameOriginHttps(url: string, origin: string, field: string) {
 }
 
 /**
- * Parse and validate a web app manifest (Section 10). The manifest is
+ * Parse and validate a web app manifest. The manifest is
  * display-only: it never carries a security decision. `origin` is the request
  * origin the manifest was fetched from.
  *

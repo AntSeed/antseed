@@ -2,9 +2,7 @@ import type { ScopeId, ScopeAccount } from './types.js';
 
 export interface ScopeDef {
   id: ScopeId;
-  /** Short human label for the consent screen. */
   label: string;
-  /** One line telling the user what the value is and whether it is sensitive. */
   description: string;
   resolve(account: ScopeAccount): string;
 }

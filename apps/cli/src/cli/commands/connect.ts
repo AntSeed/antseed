@@ -19,7 +19,7 @@ import { loadConfig } from '../../config/loader.js';
 const MANIFEST_TIMEOUT_MS = 1500;
 
 /** Resolve the auto-deposit status to share over Connect: consent from config,
- * delegation read on-chain. Best-effort — any failure reports off + undelegated. */
+ * delegation read on-chain. Best-effort: any failure reports off + undelegated. */
 async function autoDepositStateForConnect(configPath: string, address: string): Promise<AutoDepositState> {
   let enabled = false;
   try {
@@ -37,7 +37,7 @@ async function autoDepositStateForConnect(configPath: string, address: string): 
   }
 }
 
-/** Best-effort, display-only manifest fetch (Section 10). Never a security input. */
+/** Best-effort, display-only manifest fetch. Never a security input. */
 async function fetchManifest(origin: string): Promise<ConnectManifest | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MANIFEST_TIMEOUT_MS);

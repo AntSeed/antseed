@@ -14,8 +14,7 @@ export interface AutoDepositConnectStateInput {
   chainId: string;
   rpcUrl: string;
   address: string;
-  /** Whether the user enabled auto-deposit in the seed app — the caller reads
-   * this from config; only the seed app knows it. */
+  /** Consent flag the caller reads from config; only the seed app knows it. */
   enabled: boolean;
 }
 

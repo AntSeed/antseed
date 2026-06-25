@@ -12,7 +12,7 @@ export function decodeResponseFragment(encoded: string): unknown {
 
 /**
  * Build the delivery URL: the redirect URL with the response in the fragment, so
- * it is never sent to the server or leaked through referrers (Section 9).
+ * it is never sent to the server or leaked through referrers.
  */
 export function buildFragmentUrl(redirect: string, response: ConnectResponse): string {
   return `${redirect}#result=${encodeResponseFragment(response)}`;

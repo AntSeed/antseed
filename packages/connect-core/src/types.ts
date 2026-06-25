@@ -1,4 +1,4 @@
-// Types for the AntSeed Connect protocol (spec 07-connect.md).
+// Types for the AntSeed Connect protocol.
 
 export const CONNECT_VERSION = 1 as const;
 
@@ -6,7 +6,7 @@ export type ScopeId = 'address' | 'auto-deposit';
 
 /** Auto-deposit status the seed app reports to a connecting web app. */
 export interface AutoDepositState {
-  /** User has turned auto-deposit on in the seed app (consent). Only the seed app knows this. */
+  /** Consent flag; only the seed app knows it, so the portal cannot derive it on-chain. */
   enabled: boolean;
   /** Wallet carries the EIP-7702 delegation that lets it deposit gaslessly. */
   delegated: boolean;
@@ -40,7 +40,6 @@ export interface ConnectManifest {
   icon?: string;
 }
 
-/** Read-only account view a scope reads its value from. */
 export interface ScopeAccount {
   readonly address: string;
   /** Present only when the request asks for the auto-deposit scope. */

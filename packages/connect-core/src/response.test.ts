@@ -11,7 +11,7 @@ import {
 import { decodeResponseFragment } from './fragment.js';
 import type { ConnectRequest } from './types.js';
 
-// Anvil account #1 — deterministic for golden tests.
+// Anvil account #1: deterministic for golden tests.
 const PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 const ADDRESS = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8';
 const CHALLENGE = 'kJ8s9fK2mNpQrStUvWxYz0123456789AbCdEfGhIjKl';
@@ -27,7 +27,7 @@ function makeRequest(): ConnectRequest {
 }
 
 describe('buildSignedMessage', () => {
-  it('produces the exact Section 9 bytes', () => {
+  it('produces the exact signed-message bytes', () => {
     const req = makeRequest();
     const msg = buildSignedMessage(req, { address: ADDRESS });
     expect(msg).toBe(

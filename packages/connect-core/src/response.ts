@@ -39,9 +39,9 @@ export function resolveScopeValues(
 }
 
 /**
- * Sign a Connect response with the local identity after user approval
- * (Section 9). Validates every value before signing and binds the address
- * scope to the signer.
+ * Sign a Connect response with the local identity after user approval.
+ * Validates every value before signing and binds the address scope to the
+ * signer.
  */
 export async function signConnectResponse(
   signer: ConnectSigner,
@@ -83,8 +83,8 @@ function pickScopeValues(req: ConnectRequest, values: Record<string, string>) {
 }
 
 /**
- * Verify a signed response against the request it answers (Section 9, web-app
- * side). Returns the recovered account address (lowercase). Lives here so a
+ * Verify a signed response against the request it answers (web-app side).
+ * Returns the recovered account address (lowercase). Lives here so a
  * gateway can reuse it and so the tests can round-trip sign against verify.
  *
  * @throws {ConnectResponseError} on any failed check.
