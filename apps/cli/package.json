@@ -30,7 +30,6 @@
     "@antseed/payments": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",
-    "@antseed/service-auto-deposit": "workspace:*",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
     "commander": "^14.0.3",
@@ -39,6 +38,7 @@
     "ora": "^9.3.0"
   },
   "devDependencies": {
+    "@antseed/service-auto-deposit": "workspace:*",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"

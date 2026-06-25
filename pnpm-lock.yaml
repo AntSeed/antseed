@@ -31,9 +31,6 @@ importers:
       '@antseed/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
-      '@antseed/service-auto-deposit':
-        specifier: workspace:*
-        version: link:../../plugins/service-auto-deposit
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
@@ -53,6 +50,9 @@ importers:
         specifier: ^9.3.0
         version: 9.3.0
     devDependencies:
+      '@antseed/service-auto-deposit':
+        specifier: workspace:*
+        version: link:../../plugins/service-auto-deposit
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.33

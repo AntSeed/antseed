@@ -22,7 +22,6 @@ import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-c
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
 import { initConnectDeepLink, markConnectReady, type ConnectDeps } from './connect.js';
 import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
-import { readAutoDepositConnectState } from '@antseed/service-auto-deposit';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -1013,6 +1012,7 @@ const connectDeps: ConnectDeps = {
   ensureIdentity: ensureSecureIdentity,
   getIdentity: getSecureIdentity,
   getAutoDepositState: async (address: string) => {
+    let enabled = false;
     try {
       const config = await readConfig(ACTIVE_CONFIG_PATH);
       const crypto = asRecord(asRecord(config.payments).crypto);
@@ -1020,8 +1020,11 @@ const connectDeps: ConnectDeps = {
       // chain just yields delegated:false rather than assuming base-mainnet.
       const chainId = asString(crypto.chainId, '');
       const services = asRecord(asRecord(config.buyer).services);
-      const enabled = asRecord(services['auto-deposit']).enabled === true;
+      enabled = asRecord(services['auto-deposit']).enabled === true;
       const cryptoConfig = await loadCachedCryptoConfig();
+      // Optional plugin: loaded lazily so a missing or broken copy degrades to
+      // delegated:false instead of crashing the main process at startup.
+      const { readAutoDepositConnectState } = await import('@antseed/service-auto-deposit');
       return await readAutoDepositConnectState({
         chainId,
         rpcUrl: cryptoConfig?.rpcUrl ?? '',
@@ -1029,7 +1032,7 @@ const connectDeps: ConnectDeps = {
         enabled,
       });
     } catch {
-      return undefined;
+      return { enabled, delegated: false };
     }
   },
   log: (line) => appendLog('connect', 'system', line),

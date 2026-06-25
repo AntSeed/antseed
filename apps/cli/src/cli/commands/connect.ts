@@ -11,10 +11,10 @@ import {
   type ConnectManifest,
   type AutoDepositState,
 } from '@antseed/connect-core';
-import { readAutoDepositConnectState } from '@antseed/service-auto-deposit';
 import { getGlobalOptions } from './types.js';
 import { loadCryptoContext, requireCryptoConfig } from '../payment-utils.js';
 import { loadConfig } from '../../config/loader.js';
+import { loadAutoDepositConnectStateReader } from '../../plugins/service-state.js';
 
 const MANIFEST_TIMEOUT_MS = 1500;
 
@@ -26,6 +26,10 @@ async function autoDepositStateForConnect(configPath: string, address: string): 
     const config = await loadConfig(configPath);
     enabled = config.buyer?.services?.['auto-deposit']?.enabled ?? false;
     const crypto = requireCryptoConfig(config);
+    const readAutoDepositConnectState = await loadAutoDepositConnectStateReader();
+    if (!readAutoDepositConnectState) {
+      return { enabled, delegated: false };
+    }
     return await readAutoDepositConnectState({
       chainId: crypto.chainId,
       rpcUrl: crypto.rpcUrl,
@@ -75,7 +79,7 @@ export function registerConnectCommand(program: Command): void {
 
         const manifest = await fetchManifest(request.origin);
 
-        console.log();
+        console.log('');
         if (manifest) {
           console.log(`${chalk.bold('App:')}     ${manifest.name}`);
         }
@@ -86,7 +90,7 @@ export function registerConnectCommand(program: Command): void {
           console.log(`  ${chalk.bold(def.label)}: ${values[scope]}`);
           console.log(`  ${chalk.dim(def.description)}`);
         }
-        console.log();
+        console.log('');
 
         if (!options.yes) {
           const rl = createInterface({ input: process.stdin, output: process.stdout });
