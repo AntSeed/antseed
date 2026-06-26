@@ -47,6 +47,7 @@ import {
   attachStreamingAntseedHeaders,
 } from './telemetry.js'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import { runVerifier, type VerifierPolicy, type SellerReach } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -72,6 +73,8 @@ export interface BuyerProxyConfig {
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
+  /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
+  verifier?: VerifierPolicy
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
@@ -361,6 +364,7 @@ export class BuyerProxy {
   private readonly _stateFile: string
   private _stateFileWatching = false
   private _pinnedPeer: string | null
+  private readonly _verifier?: VerifierPolicy
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -377,6 +381,7 @@ export class BuyerProxy {
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
+    this._verifier = config.verifier
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
@@ -1253,6 +1258,34 @@ export class BuyerProxy {
         + 'Pick a different service in Discover or adjust your buyer pricing/reputation limits.',
       )
       return
+    }
+
+    if (this._verifier) {
+      const reach: SellerReach = async (r) => {
+        const resp = await this._node.sendRequest(selectedPeer, {
+          requestId: randomUUID(),
+          method: r.method,
+          path: r.path,
+          headers: r.headers ?? {},
+          body: r.body ?? new Uint8Array(),
+        })
+        return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
+      }
+      const outcome = await runVerifier(this._verifier, selectedPeer.peerId, selectedPeer.capabilities, reach)
+      const short = selectedPeer.peerId.slice(0, 12)
+      if (outcome.verified) {
+        log(`Verified ${short}... via ${outcome.sdk}`)
+      } else if (outcome.sdk || outcome.reason) {
+        log(`Verification ${outcome.sdk ? `(${outcome.sdk}) ` : ''}did not pass for ${short}...: ${outcome.reason ?? 'failed'}${outcome.ok ? ' (optional — routing anyway)' : ''}`)
+      }
+      if (!outcome.ok) {
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(
+          `Pinned peer ${short}... failed required verification (${outcome.reason ?? 'failed'}). `
+          + 'Pick a different peer, or run without --require-verifier.',
+        )
+        return
+      }
     }
 
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)

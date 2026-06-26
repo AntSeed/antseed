@@ -3,6 +3,7 @@ import type {
   Provider,
   ProviderStreamCallbacks,
 } from './interfaces/seller-provider.js';
+import { ANTSEED_ATTEST_PATH, type Prover } from './interfaces/plugin.js';
 import type { SellerSessionTracker } from './metering/seller-session-tracker.js';
 import type { PaymentMux } from './p2p/payment-mux.js';
 import type { Identity } from './p2p/identity.js';
@@ -26,6 +27,7 @@ import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 export interface SellerRequestHandlerDeps {
   identity: Identity;
   providers: Provider[];
+  provers?: Prover[];
   sellerPaymentManager: SellerPaymentManager | null;
   sellerFreeUsageManager?: SellerFreeUsageManager | null;
   sessionTracker: SellerSessionTracker | null;
@@ -80,6 +82,61 @@ export class SellerRequestHandler {
       if (request.method === 'GET' && (pathOnly === '/v1/models' || pathOnly.startsWith('/v1/models/'))) {
         const modelsResponse = this._handleModelsRequest(request);
         mux.sendProxyResponse(modelsResponse);
+        return;
+      }
+
+      // Free attestation route handled before provider and payment logic.
+      if (pathOnly.startsWith(ANTSEED_ATTEST_PATH + '/')) {
+        let verifierId: string;
+        try {
+          verifierId = decodeURIComponent(pathOnly.slice((ANTSEED_ATTEST_PATH + '/').length));
+        } catch {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 400,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: 'Malformed attestation path.', type: 'invalid_request_error' },
+            })),
+          });
+          return;
+        }
+        const prover = (this._deps.provers ?? []).find((p) => p.name === verifierId);
+        if (!prover) {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 404,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: `No prover for verifier "${verifierId}".`, type: 'verifier_error', code: 'prover_not_found' },
+            })),
+          });
+          return;
+        }
+        try {
+          const resp = await prover.prove({
+            method: request.method,
+            path: request.path,
+            headers: request.headers,
+            body: request.body,
+          });
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: resp.statusCode,
+            headers: resp.headers,
+            body: resp.body,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 500,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: `Prover failed: ${message}`, type: 'verifier_error' },
+            })),
+          });
+        }
         return;
       }
 

@@ -1,8 +1,10 @@
 export interface TrustedPlugin {
   name: string
-  type: 'provider' | 'router'
+  type: 'provider' | 'router' | 'verifier'
   description: string
   package: string
+  /** Exact npm version for trusted verifier packages. */
+  version?: string
 }
 
 export const TRUSTED_PLUGINS: TrustedPlugin[] = [
@@ -47,6 +49,13 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     type: 'router',
     description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
+  },
+  {
+    name: 'refoundhq-antseed-verifier',
+    type: 'verifier',
+    description: 'TEE attestation verifier + prover (Intel TDX, DCAP)',
+    package: '@refoundhq/antseed-verifier',
+    version: '0.1.0',
   },
 ]
 

@@ -5,6 +5,7 @@ import type { Provider } from '../src/interfaces/seller-provider.js';
 import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-codec.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
+import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
@@ -139,6 +140,57 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(new TextDecoder().decode(response.body));
     expect(body.id).toBe('gpt-5.5');
+  });
+
+  it('dispatches attestation requests before provider and payment logic', async () => {
+    const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
+    provider.handleRequest = vi.fn(provider.handleRequest);
+    const prove = vi.fn(async (req: SellerRequest) => ({
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ ok: true, path: req.path })),
+    }));
+    const prover: Prover = {
+      type: 'prover',
+      name: 'refoundhq-antseed-verifier',
+      displayName: 'Refound verifier',
+      version: '0.1.0',
+      description: 'test prover',
+      prove,
+    };
+    const sendPaymentRequired = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      provers: [prover],
+      sellerPaymentManager: makeSpmMock({ hasSession: () => false }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = makeConn(sentFrames);
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-attest',
+        method: 'POST',
+        path: `${ANTSEED_ATTEST_PATH}/refoundhq-antseed-verifier`,
+        headers: {},
+        body: new Uint8Array([1, 2, 3]),
+      }),
+    });
+
+    const decoded = decodeFrame(sentFrames[0]!);
+    const response = decodeHttpResponse(decoded!.message.payload);
+    expect(response.statusCode).toBe(200);
+    expect(prove).toHaveBeenCalledOnce();
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).not.toHaveBeenCalled();
   });
 
   it('matches the requested provider and service pricing instead of using the first provider defaults', () => {
