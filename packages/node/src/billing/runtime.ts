@@ -15,11 +15,12 @@ import {
   validateBillingUsageReportV1,
 } from "./evaluator.js";
 import {
-  normalizeRequestUsage,
-  normalizeResponseUsage,
   type RequestBillingFacts,
   type TokenUsage,
-} from "./usage-normalization.js";
+  extractProviderUsageFacts,
+  extractRequestBillingFacts,
+  parseJsonObject,
+} from "@antseed/api-adapter";
 import { normalizedUsageToBillingReport } from "../types/billing.js";
 
 export interface CapturedBillingContext {
@@ -45,22 +46,31 @@ export function captureBillingContext(args: {
   serviceApiProtocol: ServiceApiProtocol;
   request: SerializedHttpRequest;
 }): CapturedBillingContext {
-  const normalized = normalizeRequestUsage(args.request);
+  const parsed = parseJsonObject(args.request.body);
+  const requestFacts = extractRequestBillingFacts({
+    path: args.request.path,
+    method: args.request.method,
+    body: parsed ?? undefined,
+  });
+  const requestUsage = factsToImageUsage({
+    outputImages: requestFacts.requestedOutputImages,
+    requestFacts,
+  });
   return {
     context: {
       sellerPeerId: args.sellerPeerId,
       provider: args.provider,
       service: args.service,
       serviceApiProtocol: args.serviceApiProtocol,
-      ...(normalized.requestFacts.attributes
-        ? { attributes: normalized.requestFacts.attributes }
+      ...(requestFacts.attributes
+        ? { attributes: requestFacts.attributes }
         : {}),
-      ...(normalized.requestFacts.meterAttributes
-        ? { meterAttributes: normalized.requestFacts.meterAttributes }
+      ...(requestFacts.meterAttributes
+        ? { meterAttributes: requestFacts.meterAttributes }
         : {}),
     },
-    requestUsage: normalized.usage,
-    requestFacts: normalized.requestFacts,
+    requestUsage,
+    requestFacts,
   };
 }
 
@@ -72,12 +82,18 @@ export function computeFinalCost(
   response: SerializedHttpResponse,
   requestFacts?: RequestBillingFacts,
 ): FinalBillingResult {
-  const normalized = normalizeResponseUsage(response, requestFacts);
-  const usage = usageWithTrustedContext(normalized.usage, context);
+  const parsed = parseJsonObject(response.body);
+  const responseFacts = parsed
+    ? extractProviderUsageFacts(parsed)
+    : extractStreamingProviderUsageFacts(response.body);
+  const usage = usageWithTrustedContext(
+    factsToImageUsage({ outputImages: responseFacts.outputImages, requestFacts }),
+    context,
+  );
   const evaluation = evaluateBillingModel(model, usage);
   return {
     usage,
-    tokenUsage: normalized.tokenUsage,
+    tokenUsage: responseFacts.tokenUsage,
     costUsdc: evaluation.costUsdc,
     billingUsage: normalizedUsageToBillingReport(usage, evaluation.costUsdc),
   };
@@ -123,4 +139,44 @@ function usageWithTrustedContext(
       ? { meterAttributes: context.meterAttributes }
       : {}),
   };
+}
+
+function factsToImageUsage(args: {
+  outputImages?: number;
+  requestFacts?: RequestBillingFacts;
+}): NormalizedUsage {
+  return {
+    meters: {
+      ...(args.outputImages !== undefined ? { output_images: args.outputImages } : {}),
+    },
+    ...(args.requestFacts?.attributes ? { attributes: args.requestFacts.attributes } : {}),
+    ...(args.requestFacts?.meterAttributes ? { meterAttributes: args.requestFacts.meterAttributes } : {}),
+  };
+}
+
+function extractStreamingProviderUsageFacts(body: Uint8Array): ReturnType<typeof extractProviderUsageFacts> {
+  const text = new TextDecoder().decode(body);
+  let best: ReturnType<typeof extractProviderUsageFacts> | null = null;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const parsed = JSON.parse(payload) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      const facts = extractProviderUsageFacts(parsed as Record<string, unknown>);
+      if (
+        !best
+        || (facts.outputImages ?? 0) > (best.outputImages ?? 0)
+        || facts.tokenUsage.inputTokens > best.tokenUsage.inputTokens
+        || facts.tokenUsage.outputTokens > best.tokenUsage.outputTokens
+      ) {
+        best = facts;
+      }
+    } catch {
+      // Ignore non-JSON SSE data lines.
+    }
+  }
+  return best ?? extractProviderUsageFacts({});
 }

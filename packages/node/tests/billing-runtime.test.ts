@@ -29,14 +29,15 @@ const imageContext: BuyerRequestBillingContext = {
 };
 
 describe("billing runtime", () => {
-  it("resolves image billing as free without masking token pricing", () => {
+  it("keeps token pricing active for image requests", () => {
     const imageResolution = resolveBillingMode({
       serviceApiProtocol: "openai-images",
       tokenPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 20 },
     });
 
     expect(imageResolution).toMatchObject({
-      kind: "free",
+      kind: "token",
+      pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 20 },
     });
 
     const explicitFreeImageResolution = resolveBillingMode({

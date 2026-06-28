@@ -679,7 +679,7 @@ describe('BuyerPaymentManager', () => {
     }]);
   });
 
-  it('handleNeedAuth rejects positive legacy cost when image unit billingUsage is omitted', async () => {
+  it('handleNeedAuth rejects positive token/image cost when image unit billingUsage is omitted', async () => {
     const sellerPeerId = fakePeerId('seller-image-unit');
     const channelId = await manager.authorizeSpending(
       sellerPeerId,
@@ -707,13 +707,25 @@ describe('BuyerPaymentManager', () => {
         },
       },
     );
-    manager.trackRequestBillingContext('req-image-no-usage', {
-      sellerPeerId,
-      provider: 'openai',
-      service: 'gpt-image-2',
-      serviceApiProtocol: 'openai-images',
-      attributes: { model: 'gpt-image-2' },
-      meterAttributes: { output_images: { size: '1024x1024' } },
+    manager.trackRequestBilling('req-image-no-usage', {
+      context: {
+        sellerPeerId,
+        provider: 'openai',
+        service: 'gpt-image-2',
+        serviceApiProtocol: 'openai-images',
+        attributes: { model: 'gpt-image-2' },
+        meterAttributes: { output_images: { size: '1024x1024' } },
+      },
+      requestFacts: {},
+      mode: {
+        kind: 'unit',
+        model: {
+          version: 1,
+          components: [
+            { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+          ],
+        },
+      },
     });
     mux.sentSpendingAuths.length = 0;
 
@@ -801,6 +813,67 @@ describe('BuyerPaymentManager', () => {
 
     expect(mux.sentSpendingAuths.length).toBe(0);
     expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
+  });
+
+  it('handleNeedAuth accepts token pricing plus validated image unit surcharge', async () => {
+    const sellerPeerId = fakePeerId('seller-image-hybrid');
+    const channelId = await manager.authorizeSpending(
+      sellerPeerId,
+      mux,
+      10_000n,
+      TEST_PRICING,
+    );
+    const imageModel = {
+      version: 1 as const,
+      components: [
+        { meter: 'output_images' as const, unit: 'per_unit' as const, priceUsd: 0.04, match: { size: '1024x1024' } },
+      ],
+    };
+    manager.trackRequestBilling('req-image-hybrid', {
+      context: {
+        sellerPeerId,
+        provider: 'openai',
+        service: 'gpt-image-2',
+        serviceApiProtocol: 'openai-images',
+        attributes: { model: 'gpt-image-2' },
+        meterAttributes: { output_images: { size: '1024x1024' } },
+      },
+      requestFacts: {},
+      mode: {
+        kind: 'token',
+        pricing: TEST_PRICING,
+        unitModel: imageModel,
+      },
+    });
+    mux.sentSpendingAuths.length = 0;
+
+    const tokenCost = 3_750n; // 1000 input at $3/M + 50 output at $15/M
+    const imageCost = 80_000n;
+    const totalCost = tokenCost + imageCost;
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-image-hybrid',
+      requiredCumulativeAmount: totalCost.toString(),
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: totalCost.toString(),
+      inputTokens: '1000',
+      freshInputTokens: '1000',
+      cachedInputTokens: '0',
+      outputTokens: '50',
+      billingUsage: {
+        version: 1,
+        meters: { output_images: '2' },
+        costUsdc: imageCost.toString(),
+      },
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(totalCost);
+    const sent = mux.sentSpendingAuths[0] as Record<string, string>;
+    const totals = decodeMetadataTokens(sent.metadata);
+    expect(totals.inputTokens).toBe(1000n);
+    expect(totals.outputTokens).toBe(50n);
   });
 
   it('handleNeedAuth rejects positive cost for free-default image billing', async () => {

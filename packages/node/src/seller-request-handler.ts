@@ -16,6 +16,7 @@ import type {
 } from './types/http.js';
 import {
   computeCostUsdc,
+  estimateTokensFromBytes,
 } from './payments/pricing.js';
 import { debugLog, debugWarn } from './utils/debug.js';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
@@ -26,13 +27,13 @@ import type { BillingUsageReportV1, BuyerRequestBillingContext, NormalizedUsage,
 import { captureSellerBillingContext as captureSellerBillingRuntimeContext, computeFinalCost } from './billing/runtime.js';
 import { evaluateBillingModel } from './billing/evaluator.js';
 import { resolveBillingMode, type BillingMode } from './billing/mode.js';
-import { normalizeResponseUsage } from './billing/usage-normalization.js';
-import type { RequestBillingFacts } from './billing/usage-normalization.js';
+import type { RequestBillingFacts } from '@antseed/api-adapter';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
+import { parseResponseUsage } from './utils/response-usage.js';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -139,8 +140,9 @@ export class SellerRequestHandler {
       const requestBillingMode = requestBilling
         ? this.resolveProviderBilling(provider, requestBilling.context, requestPricing)
         : null;
+      const imageBillingModel = this._imageBillingModel(requestBillingMode);
       const isFreeService = requestBillingMode?.kind === 'free'
-        || (requestBillingMode?.kind === 'token' && isZeroTokenPricing(requestBillingMode.pricing));
+        || (requestBillingMode?.kind === 'token' && isZeroTokenPricing(requestBillingMode.pricing) && !imageBillingModel);
 
       // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
@@ -242,11 +244,7 @@ export class SellerRequestHandler {
             }
           }
           const requestCostEstimate = requestBilling
-            ? requestBillingMode?.kind === 'unit'
-              ? this._estimateImageRequestCostUsdc(requestBilling, requestBillingMode.model)
-              : requestBillingMode?.kind === 'token'
-                ? this._estimateMaxTokenRequestCostUsdc(request, requestBilling, requestBillingMode.pricing)
-                : null
+            ? this._estimateRequestCostUsdc(request, requestBilling, requestBillingMode)
             : null;
           const estimatedRequestCost = requestCostEstimate?.cost ?? 0n;
           const remainingLockedReserve = reserveMax > spent ? reserveMax - spent : 0n;
@@ -397,12 +395,13 @@ export class SellerRequestHandler {
           } else {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
-          // Unit-billed requests produce verifiable billingUsage; token/free paths only normalize usage.
-          const responseNormalization = requestBilling && requestBillingMode?.kind === 'unit'
-            ? computeFinalCost(requestBillingMode.model, requestBilling.context, response, requestBilling.requestFacts)
-            : normalizeResponseUsage(response);
-          responseUsage = responseNormalization.tokenUsage;
-          billingUsageReport = "billingUsage" in responseNormalization ? responseNormalization.billingUsage : null;
+          if (requestBilling && imageBillingModel) {
+            const imageBilling = computeFinalCost(imageBillingModel, requestBilling.context, response, requestBilling.requestFacts);
+            responseUsage = imageBilling.tokenUsage;
+            billingUsageReport = imageBilling.billingUsage;
+          } else {
+            responseUsage = parseResponseUsage(response.body);
+          }
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
             mux.sendProxyResponse(response);
@@ -452,9 +451,9 @@ export class SellerRequestHandler {
           }
         }
 
-          if (requestBilling && requestBillingMode?.kind === 'unit' && responseForAuth && billingUsageReport === null) {
+          if (requestBilling && imageBillingModel && responseForAuth && billingUsageReport === null) {
             const finalBilling = computeFinalCost(
-              requestBillingMode.model,
+              imageBillingModel,
               requestBilling.context,
               responseForAuth,
               requestBilling.requestFacts,
@@ -484,14 +483,14 @@ export class SellerRequestHandler {
         // The buyer validates the cost independently and responds with SpendingAuth.
         if (!isFreeService && spm?.hasSession(buyerPeerId)) {
           const usage = responseUsage;
-          const costUsdc = requestBillingMode?.kind === 'unit' && billingUsageReport != null
-            ? BigInt(billingUsageReport.costUsdc)
-            : computeCostUsdc(
-                usage.freshInputTokens,
-                usage.outputTokens,
-                requestPricing,
-                usage.cachedInputTokens,
-              );
+          const tokenCostUsdc = computeCostUsdc(
+            usage.freshInputTokens,
+            usage.outputTokens,
+            requestPricing,
+            usage.cachedInputTokens,
+          );
+          const imageCostUsdc = billingUsageReport != null ? BigInt(billingUsageReport.costUsdc) : 0n;
+          const costUsdc = tokenCostUsdc + imageCostUsdc;
           const session = spm.getChannelByPeer(buyerPeerId);
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
@@ -638,6 +637,12 @@ export class SellerRequestHandler {
     });
   }
 
+  private _imageBillingModel(mode: BillingMode | null): ServiceBillingModelV1 | undefined {
+    if (mode?.kind === 'unit') return mode.model;
+    if (mode?.kind === 'token') return mode.unitModel;
+    return undefined;
+  }
+
   // -- Load tracking --
 
   adjustProviderLoad(providerName: string, delta: number): void {
@@ -718,7 +723,6 @@ export class SellerRequestHandler {
     requestBilling: SellerBillingContext,
     model: ServiceBillingModelV1,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
-    const inputTokens = Math.floor(requestBilling.requestUsage.meters.text_input_tokens ?? 0);
     const usage: NormalizedUsage = {
       meters: {
         output_images: Math.floor(requestBilling.requestUsage.meters.output_images ?? 0),
@@ -728,14 +732,36 @@ export class SellerRequestHandler {
     };
     return {
       cost: evaluateBillingModel(model, usage).costUsdc,
-      inputTokens,
+      inputTokens: 0,
       maxOutputTokens: 0,
+    };
+  }
+
+  private _estimateRequestCostUsdc(
+    request: SerializedHttpRequest,
+    requestBilling: SellerBillingContext,
+    mode: BillingMode | null,
+  ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
+    if (!mode || mode.kind === 'free' || mode.kind === 'unsupported') return null;
+
+    const tokenEstimate = mode.kind === 'token'
+      ? this._estimateMaxTokenRequestCostUsdc(request, mode.pricing)
+      : null;
+    const imageModel = this._imageBillingModel(mode);
+    const imageEstimate = imageModel
+      ? this._estimateImageRequestCostUsdc(requestBilling, imageModel)
+      : null;
+
+    if (!tokenEstimate && !imageEstimate) return null;
+    return {
+      cost: (tokenEstimate?.cost ?? 0n) + (imageEstimate?.cost ?? 0n),
+      inputTokens: tokenEstimate?.inputTokens ?? imageEstimate?.inputTokens ?? 0,
+      maxOutputTokens: tokenEstimate?.maxOutputTokens ?? imageEstimate?.maxOutputTokens ?? 0,
     };
   }
 
   private _estimateMaxTokenRequestCostUsdc(
     request: SerializedHttpRequest,
-    requestBilling: SellerBillingContext,
     pricing: ProviderTokenPricing,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
     if (!this._isJsonRequest(request)) {
@@ -746,7 +772,7 @@ export class SellerRequestHandler {
       return null;
     }
 
-    const inputTokens = Math.floor(requestBilling.requestUsage.meters.text_input_tokens ?? 0);
+    const inputTokens = estimateTokensFromBytes(request.body);
     const maxOutputTokens = this._extractMaxOutputTokens(body);
     return {
       cost: computeCostUsdc(inputTokens, maxOutputTokens, pricing),

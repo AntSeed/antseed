@@ -13,13 +13,6 @@ export {
   type BillingMode,
 } from "./mode.js";
 export {
-  factsToNormalizedUsage,
-  normalizeRequestUsage,
-  normalizeResponseUsage,
-  type ProviderUsageFacts,
-  type RequestBillingFacts,
-} from "./usage-normalization.js";
-export {
   captureBillingContext,
   captureSellerBillingContext,
   computeFinalCost,

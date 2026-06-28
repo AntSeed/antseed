@@ -102,6 +102,8 @@ export class PeerAnnouncer {
   private retryAttempt = 0;
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
+  // v11 uses the same structural PeerMetadata type as v10; the version value
+  // controls whether optional serviceBillingModels are encoded and announced.
   private _latestMetadataV10: PeerMetadata | null = null;
   private _latestMetadataV11: PeerMetadata | null = null;
 

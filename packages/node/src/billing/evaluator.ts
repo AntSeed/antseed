@@ -9,8 +9,6 @@ import type {
 import {
   isBillingMatchKeyV1,
   isBillingMeterV1,
-  isTokenBillingMeterV1,
-  isUnitBillingMeterV1,
   isValidBillingComponentV1,
 } from "../types/billing.js";
 
@@ -39,13 +37,7 @@ export function validateServiceBillingModelV1(model: ServiceBillingModelV1): str
       errors.push(`components[${index}].meter is unsupported`);
     }
     if (!isValidBillingComponentV1(component)) {
-      if (isTokenBillingMeterV1(component.meter) && component.unit !== "per_million") {
-        errors.push(`components[${index}].unit must be per_million for token meters`);
-      } else if (isUnitBillingMeterV1(component.meter) && component.unit !== "per_unit") {
-        errors.push(`components[${index}].unit must be per_unit for unit meters`);
-      } else {
-        errors.push(`components[${index}] has an invalid meter/unit combination`);
-      }
+      errors.push(`components[${index}] must use output_images with per_unit pricing`);
     }
     if (!Number.isFinite(component.priceUsd) || component.priceUsd < 0) {
       errors.push(`components[${index}].priceUsd must be a non-negative finite number`);
@@ -89,9 +81,7 @@ export function evaluateBillingModel(
     if (meterCount <= 0) continue;
     if (!componentMatchesUsage(component, usage)) continue;
 
-    const componentUsd = component.unit === "per_million"
-      ? (meterCount * component.priceUsd) / 1_000_000
-      : meterCount * component.priceUsd;
+    const componentUsd = meterCount * component.priceUsd;
     const costUsdc = usdToMicroUsdc(componentUsd);
     totalUsd += componentUsd;
     appliedComponents.push({ component, meterCount, costUsdc });

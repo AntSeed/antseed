@@ -525,12 +525,6 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
             message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
           });
         }
-        if (p.servicePricing?.[serviceName] !== undefined) {
-          errors.push({
-            field: `providers[${i}].serviceBillingModels.${serviceName}`,
-            message: "Service cannot be announced with both token pricing and a unit billing model",
-          });
-        }
         if (!hasWildcardServices && !p.services.includes(serviceName)) {
           errors.push({
             field: `providers[${i}].serviceBillingModels.${serviceName}`,

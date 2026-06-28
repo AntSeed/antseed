@@ -216,7 +216,7 @@ describe('billing fact extraction', () => {
     expect(facts.requestedOutputImages).toBe(1);
   });
 
-  it('extracts supported OpenAI image response facts and ignores image token classes', () => {
+  it('extracts supported OpenAI image response facts without changing token usage', () => {
     const facts = extractProviderUsageFacts({
       usage: {
         input_tokens: 120,
@@ -233,8 +233,8 @@ describe('billing fact extraction', () => {
       },
       data: [{ b64_json: 'a' }, { b64_json: 'b' }],
     });
-    expect(facts.textInputTokens).toBe(20);
-    expect(facts.cachedTextInputTokens).toBeUndefined();
+    expect(facts.tokenUsage.inputTokens).toBe(120);
+    expect(facts.tokenUsage.cachedInputTokens).toBe(10);
     expect(facts.outputImages).toBe(2);
   });
 });

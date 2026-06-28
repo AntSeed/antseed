@@ -92,33 +92,30 @@ describe('pricing utilities', () => {
     expect(result.cost).toBeGreaterThan(0n);
   });
 
-  it('evaluates mixed token and unit billing with exact match attributes', () => {
+  it('evaluates image unit billing with exact match attributes', () => {
     const evaluation = evaluateBillingModel({
       version: 1,
       components: [
-        { meter: 'text_input_tokens', unit: 'per_million', priceUsd: 10 },
         { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
         { meter: 'output_images', unit: 'per_unit', priceUsd: 0.08, match: { size: '2048x2048' } },
       ],
     }, {
-      meters: { text_input_tokens: 1_000, output_images: 2 },
+      meters: { output_images: 2 },
       meterAttributes: { output_images: { size: '1024x1024' } },
     });
-    expect(evaluation.costUsdc).toBe(90_000n);
+    expect(evaluation.costUsdc).toBe(80_000n);
   });
 
   it('validates meter/unit combinations and price shape', () => {
     expect(validateServiceBillingModelV1({
       version: 1,
       components: [
-        { meter: 'text_input_tokens', unit: 'per_unit', priceUsd: 1 } as any,
         { meter: 'output_images', unit: 'per_million', priceUsd: 1 } as any,
         { meter: 'requests', unit: 'per_unit', priceUsd: Number.NaN },
       ],
     })).toEqual(expect.arrayContaining([
       expect.stringContaining('unsupported'),
-      expect.stringContaining('per_million'),
-      expect.stringContaining('per_unit'),
+      expect.stringContaining('output_images'),
       expect.stringContaining('priceUsd'),
     ]));
   });

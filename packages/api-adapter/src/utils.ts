@@ -50,12 +50,11 @@ export function toNonNegativeInt(value: unknown): number {
 }
 
 /**
- * Legacy token-only usage shape.
+ * Token usage shape used by the active token-pricing path.
  *
- * This remains for v10/token pricing compatibility and token accounting. New
- * billing code converts provider responses into ProviderUsageFacts and then
- * into node-side NormalizedUsage, which can include non-token meters such as
- * output_images.
+ * Image billing is additive: provider responses still produce TokenUsage for
+ * input/output token cost, while ProviderUsageFacts can also carry outputImages
+ * for the separate image unit surcharge.
  */
 export interface TokenUsage {
   /** Total logical input tokens, including cached input tokens when reported. */
@@ -73,19 +72,14 @@ export type BillingMatchKey =
   | 'quality'
   | 'resolution';
 
-export type BillingMeter =
-  | 'text_input_tokens'
-  | 'cached_text_input_tokens'
-  | 'output_text_tokens'
-  | 'output_images';
+export type BillingMeter = 'output_images';
 
 /**
  * Request-owned billing facts parsed from provider-compatible HTTP requests.
  *
- * These facts are not a bill. They are trusted buyer/seller request context
- * such as model, size, quality, and requested output count. Node maps them
- * into NormalizedUsage for preflight and uses them again after the response so
- * matched price tiers are selected from request-owned data.
+ * These facts are not a bill. They are trusted request-owned image context
+ * such as model, size, quality, and requested output count. Token pricing
+ * remains on the TokenUsage path.
  */
 export interface RequestBillingFacts {
   attributes?: Partial<Record<BillingMatchKey, string>>;
@@ -96,14 +90,11 @@ export interface RequestBillingFacts {
 /**
  * Provider response facts parsed from OpenAI/Anthropic-compatible responses.
  *
- * This is still API-shape-specific data. Node turns it into NormalizedUsage so
- * billing code does not need to know each provider's raw usage JSON shape.
+ * This is still API-shape-specific data. TokenUsage feeds token pricing;
+ * outputImages is the only extra unit currently billed outside tokens.
  */
 export interface ProviderUsageFacts {
   tokenUsage: TokenUsage;
-  textInputTokens?: number;
-  cachedTextInputTokens?: number;
-  outputTextTokens?: number;
   outputImages?: number;
 }
 
@@ -170,30 +161,10 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
 
 export function extractProviderUsageFacts(parsed: Record<string, unknown>): ProviderUsageFacts {
   const tokenUsage = extractUsage(parsed);
-  const usage = findUsageObject(parsed);
-  const inputDetails = usage.input_tokens_details && typeof usage.input_tokens_details === 'object'
-    ? usage.input_tokens_details as Record<string, unknown>
-    : {};
-  const promptDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
-    ? usage.prompt_tokens_details as Record<string, unknown>
-    : {};
-  const outputDetails = usage.output_tokens_details && typeof usage.output_tokens_details === 'object'
-    ? usage.output_tokens_details as Record<string, unknown>
-    : {};
-  const completionDetails = usage.completion_tokens_details && typeof usage.completion_tokens_details === 'object'
-    ? usage.completion_tokens_details as Record<string, unknown>
-    : {};
-
-  const textInputTokens = toOptionalNonNegativeInt(inputDetails.text_tokens ?? promptDetails.text_tokens);
-  const cachedTextInputTokens = toOptionalNonNegativeInt(inputDetails.cached_text_tokens ?? promptDetails.cached_text_tokens);
-  const outputTextTokens = toOptionalNonNegativeInt(outputDetails.text_tokens ?? completionDetails.text_tokens);
   const data = Array.isArray(parsed.data) ? parsed.data : undefined;
 
   return {
     tokenUsage,
-    ...(textInputTokens !== undefined ? { textInputTokens } : {}),
-    ...(cachedTextInputTokens !== undefined ? { cachedTextInputTokens } : {}),
-    ...(outputTextTokens !== undefined ? { outputTextTokens } : {}),
     ...(data !== undefined ? { outputImages: data.length } : {}),
   };
 }
@@ -226,25 +197,6 @@ export function extractRequestBillingFacts(input: {
     ...(Object.keys(meterAttributes).length > 0 ? { meterAttributes } : {}),
     ...(requestedOutputImages !== undefined ? { requestedOutputImages } : {}),
   };
-}
-
-function findUsageObject(parsed: Record<string, unknown>): Record<string, unknown> {
-  if (parsed.usage && typeof parsed.usage === 'object') {
-    return parsed.usage as Record<string, unknown>;
-  }
-  if (parsed.response && typeof parsed.response === 'object') {
-    const inner = parsed.response as Record<string, unknown>;
-    if (inner.usage && typeof inner.usage === 'object') {
-      return inner.usage as Record<string, unknown>;
-    }
-  }
-  if (parsed.message && typeof parsed.message === 'object') {
-    const inner = parsed.message as Record<string, unknown>;
-    if (inner.usage && typeof inner.usage === 'object') {
-      return inner.usage as Record<string, unknown>;
-    }
-  }
-  return {};
 }
 
 function toOptionalNonNegativeInt(value: unknown): number | undefined {

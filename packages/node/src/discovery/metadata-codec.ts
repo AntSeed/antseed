@@ -13,8 +13,8 @@ import type {
 } from "../types/billing.js";
 import {
   BILLING_MATCH_KEYS_V1,
-  TOKEN_BILLING_METERS_V1,
-  UNIT_BILLING_METERS_V1,
+  BILLING_UNITS_V1,
+  IMAGE_BILLING_METERS_V1,
 } from "../types/billing.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
@@ -29,9 +29,9 @@ const DOMAIN_VERIFICATION_METHOD_IDS: Record<DomainVerificationMethod, number> =
 };
 const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt", "https-well-known"];
 const SERVICE_BILLING_METADATA_VERSION = 11;
-const BILLING_METERS_BY_ID: BillingMeterV1[] = [...TOKEN_BILLING_METERS_V1, ...UNIT_BILLING_METERS_V1];
+const BILLING_METERS_BY_ID: BillingMeterV1[] = [...IMAGE_BILLING_METERS_V1];
 const BILLING_METER_IDS = new Map<BillingMeterV1, number>(BILLING_METERS_BY_ID.map((meter, index) => [meter, index]));
-const BILLING_UNITS_BY_ID: BillingUnitV1[] = ["per_million", "per_unit"];
+const BILLING_UNITS_BY_ID: BillingUnitV1[] = [...BILLING_UNITS_V1];
 const BILLING_UNIT_IDS = new Map<BillingUnitV1, number>(BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
 const BILLING_MATCH_KEYS_BY_ID: BillingMatchKeyV1[] = [...BILLING_MATCH_KEYS_V1];
 const BILLING_MATCH_KEY_IDS = new Map<BillingMatchKeyV1, number>(BILLING_MATCH_KEYS_BY_ID.map((key, index) => [key, index]));

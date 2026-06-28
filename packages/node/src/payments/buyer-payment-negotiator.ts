@@ -490,33 +490,10 @@ export class BuyerPaymentNegotiator {
     service?: string,
     requestId?: string,
   ): void {
-    // Post-response cost estimation feeds the next SpendingAuth. Unit billing
-    // uses the request's cached model; token billing stays on computeCostUsdc.
+    // Post-response cost estimation feeds the next SpendingAuth. Token pricing
+    // stays on computeCostUsdc; image unit billing is an optional surcharge.
     const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
     const requestFacts = billingEntry?.requestFacts;
-    if (billingEntry?.mode.kind === 'unit') {
-      const finalBilling = computeFinalCost(billingEntry.mode.model, billingEntry.context, response, requestFacts);
-      const costUsdc = finalBilling.costUsdc;
-      this._lastResponseCost.set(peer.peerId, {
-        costUsdc,
-        inputTokens: BigInt(finalBilling.tokenUsage.inputTokens),
-        outputTokens: BigInt(finalBilling.tokenUsage.outputTokens),
-        cachedInputTokens: BigInt(finalBilling.tokenUsage.cachedInputTokens),
-        normalizedUsage: finalBilling.usage,
-        cumulativeCost: 0n,
-        inputContent: new Uint8Array(0),
-        outputContent: response.body,
-        latencyMs: 0,
-        service,
-        requestId,
-      });
-      this._bpm.recordAndPersistTokens(peer.peerId, finalBilling.tokenUsage.inputTokens, finalBilling.tokenUsage.outputTokens);
-      debugLog(
-        `[BuyerNegotiator] Estimated unit billing cost for ${peer.peerId.slice(0, 12)}...: ` +
-        `cost=${costUsdc} service=${service ?? 'unknown'}`,
-      );
-      return;
-    }
     if (billingEntry?.mode.kind === 'free') {
       const usage = parseResponseUsage(response.body);
       this._lastResponseCost.set(peer.peerId, {
@@ -541,19 +518,32 @@ export class BuyerPaymentNegotiator {
 
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
-    const usage = parseResponseUsage(response.body);
+    const imageModel = billingEntry?.mode.kind === 'unit'
+      ? billingEntry.mode.model
+      : billingEntry?.mode.kind === 'token'
+        ? billingEntry.mode.unitModel
+        : undefined;
+    const imageBilling = imageModel && billingEntry
+      ? computeFinalCost(imageModel, billingEntry.context, response, requestFacts)
+      : null;
+    const usage = imageBilling?.tokenUsage ?? parseResponseUsage(response.body);
     const pricing = billingEntry?.mode.kind === 'token'
       ? billingEntry.mode.pricing
       : this._bpm.getSessionPricing(peer.peerId, service)
         ?? this._peerDefaultPricing(peer);
-    if (!pricing) return;
-    const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
+    const tokenCostUsdc = pricing
+      ? computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens)
+      : 0n;
+    const imageCostUsdc = imageBilling?.costUsdc ?? 0n;
+    const costUsdc = tokenCostUsdc + imageCostUsdc;
+    if (costUsdc <= 0n && !pricing && !imageBilling) return;
 
     this._lastResponseCost.set(peer.peerId, {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
       cachedInputTokens: BigInt(usage.cachedInputTokens),
+      ...(imageBilling ? { normalizedUsage: imageBilling.usage } : {}),
       cumulativeCost: 0n,
       inputContent: new Uint8Array(0),
       outputContent: response.body,
@@ -564,7 +554,7 @@ export class BuyerPaymentNegotiator {
 
     debugLog(
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
-      `cost=${costUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
+      `cost=${costUsdc} token=${tokenCostUsdc} image=${imageCostUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
     );
 
     this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);

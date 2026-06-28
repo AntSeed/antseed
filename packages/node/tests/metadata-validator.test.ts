@@ -234,7 +234,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('servicePricing.m.outputUsdPerMillion'))).toBe(true);
   });
 
-  it('allows services to be token-priced or unit-priced, but rejects both on the same service', () => {
+  it('allows services to combine token pricing with image unit billing', () => {
     const tokenOnlyErrors = validateMetadata(validMetadata({
       providers: [
         {
@@ -301,14 +301,7 @@ describe('validateMetadata', () => {
         },
       ],
     }));
-    expect(bothErrors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          field: 'providers[0].serviceBillingModels.gpt-image-1',
-          message: expect.stringContaining('both token pricing and a unit billing model'),
-        }),
-      ]),
-    );
+    expect(bothErrors).toEqual([]);
   });
 
   it('rejects non-image service billing models for now', () => {
@@ -330,7 +323,7 @@ describe('validateMetadata', () => {
               'openai-chat-completions': {
                 version: 1,
                 components: [
-                  { meter: 'text_input_tokens', unit: 'per_million', priceUsd: 1 },
+                  { meter: 'requests', unit: 'per_unit', priceUsd: 1 } as any,
                 ],
               },
             },

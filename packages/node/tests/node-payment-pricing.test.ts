@@ -10,6 +10,8 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
   name: string;
   services: string[];
   servicePricing?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }>;
+  serviceApiProtocols?: Provider['serviceApiProtocols'];
+  serviceBillingModels?: Provider['serviceBillingModels'];
 }): Provider {
   return {
     name: opts.name,
@@ -18,6 +20,8 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
       defaults: { inputUsdPerMillion, outputUsdPerMillion },
       ...(opts.servicePricing ? { services: opts.servicePricing } : {}),
     },
+    ...(opts.serviceApiProtocols ? { serviceApiProtocols: opts.serviceApiProtocols } : {}),
+    ...(opts.serviceBillingModels ? { serviceBillingModels: opts.serviceBillingModels } : {}),
     maxConcurrency: 1,
     async handleRequest(_req) {
       return {
@@ -271,6 +275,84 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(recordSpend).toHaveBeenCalledWith('session-1', costUsdc);
     expect(sendNeedAuth).toHaveBeenCalledOnce();
     expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'req-codex-cost', lastRequestCost: costUsdc.toString(), requiredCumulativeAmount: costUsdc.toString(), inputTokens: '30426', cachedInputTokens: '1920', freshInputTokens: '28506', outputTokens: '108' }));
+  });
+
+  it('adds image unit billing on top of existing token pricing', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai',
+      services: ['gpt-image-1'],
+      servicePricing: {
+        'gpt-image-1': { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+      },
+      serviceApiProtocols: {
+        'gpt-image-1': ['openai-images'],
+      },
+      serviceBillingModels: {
+        'gpt-image-1': {
+          'openai-images': {
+            version: 1,
+            components: [
+              { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+            ],
+          },
+        },
+      },
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        usage: { input_tokens: 1000, output_tokens: 500 },
+        data: [{ b64_json: 'a' }, { b64_json: 'b' }],
+      })),
+    }));
+
+    const tokenCostUsdc = 4_000n;
+    const imageCostUsdc = 80_000n;
+    const totalCostUsdc = tokenCostUsdc + imageCostUsdc;
+    let cumulativeSpend = 0n;
+    const sendNeedAuth = vi.fn();
+    const recordSpend = vi.fn((_sessionId: string, cost: bigint) => { cumulativeSpend += cost; });
+    const handler = makeSellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({ recordSpend, getCumulativeSpend: () => cumulativeSpend, awaitAcceptedAtLeast: async () => true }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = makeConn(sentFrames);
+    const paymentMux = { sendNeedAuth, sendPaymentRequired: vi.fn() } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-image-hybrid',
+        method: 'POST',
+        path: '/v1/images/generations',
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-image-1', prompt: 'cube', size: '1024x1024' })),
+      }),
+    });
+
+    expect(recordSpend).toHaveBeenCalledWith('session-1', totalCostUsdc);
+    expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'req-image-hybrid',
+      lastRequestCost: totalCostUsdc.toString(),
+      requiredCumulativeAmount: totalCostUsdc.toString(),
+      inputTokens: '1000',
+      outputTokens: '500',
+      freshInputTokens: '1000',
+      billingUsage: expect.objectContaining({
+        meters: { output_images: '2' },
+        costUsdc: imageCostUsdc.toString(),
+      }),
+    }));
   });
 
   it('keeps post-response NeedAuth below the reserve ceiling when cumulative spend is still covered', async () => {
