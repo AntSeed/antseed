@@ -1,16 +1,20 @@
-import type { PeerInfo, SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node'
+import { shouldEmitDebugLine, type PeerInfo, type SerializedHttpRequest, type SerializedHttpResponse } from '@antseed/node'
 import { parseJsonObject } from '@antseed/api-adapter'
 
-const debugEnabled = ['1', 'true', 'yes', 'on'].includes(
-  (process.env['ANTSEED_DEBUG'] ?? '').trim().toLowerCase(),
-)
+function isTruthyDebugValue(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase())
+}
+
+function shouldEmitProxyLog(args: unknown[]): boolean {
+  return shouldEmitDebugLine(`[proxy] ${args.map((arg) => typeof arg === 'string' ? arg : String(arg)).join(' ')}`)
+}
 
 export function DEBUG(): boolean {
-  return debugEnabled
+  return isTruthyDebugValue(process.env['ANTSEED_DEBUG'])
 }
 
 export function log(...args: unknown[]): void {
-  if (debugEnabled) console.log('[proxy]', ...args)
+  if (DEBUG() && shouldEmitProxyLog(args)) console.log('[proxy]', ...args)
 }
 
 function getHeader(headers: Record<string, string>, name: string): string {
