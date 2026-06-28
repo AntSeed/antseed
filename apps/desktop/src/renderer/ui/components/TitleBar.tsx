@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
@@ -29,6 +29,8 @@ export function TitleBar() {
   >(null);
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [detailsCopied, setDetailsCopied] = useState(false);
+  const updateErrorFromEventRef = useRef(false);
+  const updateErrorWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isDark) {
@@ -44,10 +46,12 @@ export function TitleBar() {
     if (!bridge?.onUpdateStatus) return;
     return bridge.onUpdateStatus((data) => {
       if (data.status === 'error') {
+        updateErrorFromEventRef.current = true;
         setErrorDetailsOpen(true);
         setUpdateState(data);
         return;
       }
+      updateErrorFromEventRef.current = false;
       setErrorDetailsOpen(false);
       setDetailsCopied(false);
       if (data.status === 'downloading') {
@@ -87,6 +91,10 @@ export function TitleBar() {
     try {
       const result = await bridge.installUpdate();
       if (!result.ok) {
+        if (updateErrorFromEventRef.current) {
+          updateErrorFromEventRef.current = false;
+          return;
+        }
         showUpdateError(result.error, result.details, result.hint);
       }
     } catch (err) {
@@ -150,6 +158,19 @@ export function TitleBar() {
     return () => document.removeEventListener('mousedown', handler);
   }, [creditsDropdownOpen]);
 
+  useEffect(() => {
+    if (!errorDetailsOpen || updateState?.status !== 'error') return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (!updateErrorWrapRef.current?.contains(target)) {
+        setErrorDetailsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [errorDetailsOpen, updateState?.status]);
+
   let updateControl: ReactNode = null;
   if (updateState?.status === 'ready') {
     updateControl = (
@@ -194,7 +215,7 @@ export function TitleBar() {
     );
   } else if (updateState?.status === 'error') {
     updateControl = (
-      <div className={styles.titleBarUpdateErrorWrap}>
+      <div className={styles.titleBarUpdateErrorWrap} ref={updateErrorWrapRef}>
         <button
           className={`${styles.titleBarUpdateBadge} ${styles.titleBarUpdateBadgeError}`}
           onClick={() => setErrorDetailsOpen((prev) => !prev)}
