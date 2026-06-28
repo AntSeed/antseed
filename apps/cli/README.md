@@ -126,6 +126,13 @@ or:
 ANTSEED_DEBUG=1 antseed <command>
 ```
 
+Filter debug logs by source or text with:
+
+```bash
+antseed buyer start --log-filter ProxyMux
+ANTSEED_LOG_FILTER=PaymentMux,BuyerPayment ANTSEED_DEBUG=1 antseed buyer start
+```
+
 For dashboard frontend debug logging, set:
 
 ```bash
