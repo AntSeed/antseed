@@ -111,6 +111,16 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 type ChatPermissionMode = 'manual' | 'full';
 type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
 type ToolApprovalRequest = {
@@ -431,13 +441,13 @@ const api = {
   },
 
   // Auto-update
-  onUpdateStatus(handler: (data: { status: string; version: string }) => void): () => void {
-    const listener = (_: unknown, data: { status: string; version: string }) => handler(data);
+  onUpdateStatus(handler: (data: UpdateStatus) => void): () => void {
+    const listener = (_: unknown, data: UpdateStatus) => handler(data);
     ipcRenderer.on('app:update-status', listener);
     return () => ipcRenderer.off('app:update-status', listener);
   },
-  installUpdate(): Promise<void> {
-    return ipcRenderer.invoke('app:install-update') as Promise<void>;
+  installUpdate(): Promise<InstallUpdateResult> {
+    return ipcRenderer.invoke('app:install-update') as Promise<InstallUpdateResult>;
   },
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;

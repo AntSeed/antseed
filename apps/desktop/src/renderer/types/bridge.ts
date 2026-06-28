@@ -73,6 +73,16 @@ export type PluginInstallResult = {
   error: string | null;
 };
 
+export type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+export type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 export type ChatWorkspaceGitStatus = {
   available: boolean;
   rootPath: string | null;
@@ -236,6 +246,8 @@ export type DesktopBridge = {
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
+  onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
+  installUpdate?: () => Promise<InstallUpdateResult>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
 
