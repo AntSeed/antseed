@@ -17,6 +17,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
 - Added Desktop peer favicons from verified domains, showing fetched site icons in Discover and chat peer avatars when available.
 - Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
 - Added a buyer-side metadata v2 service attribution opt-out for CLI and Desktop. Buyers can disable per-service attribution while preserving aggregate usage metadata in paid SpendingAuth and free-usage records.
