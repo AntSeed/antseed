@@ -358,7 +358,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
   const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
-  const wasActiveRef = useRef<boolean>(active);
+  const wasActiveRef = useRef<boolean>(false);
   const isUserScrolledUp = useRef(false);
   const isDragging = useRef(false);
   const permissionMenuRef = useRef<HTMLDivElement>(null);
