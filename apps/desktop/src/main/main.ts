@@ -52,6 +52,7 @@ import {
   type DashboardNetworkPeer,
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
+import { createDesktopTray } from './tray.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
@@ -117,7 +118,23 @@ function resolveAppIconPath(): string | undefined {
   return undefined;
 }
 
+function resolveTrayIconPath(): string | undefined {
+  const candidates = [
+    path.resolve(__dirname, '../../assets/antseed-mark.png'),
+    path.resolve(process.cwd(), 'assets/antseed-mark.png'),
+    path.resolve(__dirname, '../../assets/antseed-dock-icon.png'),
+    path.resolve(process.cwd(), 'assets/antseed-dock-icon.png'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 const APP_ICON_PATH = resolveAppIconPath();
+const TRAY_ICON_PATH = resolveTrayIconPath();
 
 // Set app name as early as possible; on macOS dev runs may still show "Electron"
 // in some surfaces because the underlying bundle is Electron.app.
@@ -1006,7 +1023,18 @@ app.whenReady().then(async () => {
   // buyer runtime which needs config.json to find the router plugin.
   await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
-  createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+  const showMainWindow = () => {
+    const existingWindow = getMainWindow();
+    if (existingWindow) {
+      existingWindow.show();
+      existingWindow.focus();
+      return;
+    }
+    createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+  };
+
+  showMainWindow();
+  createDesktopTray({ appName: APP_NAME, iconPath: TRAY_ICON_PATH, onShow: showMainWindow });
 
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {
@@ -1116,7 +1144,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+      showMainWindow();
     }
   });
 });
