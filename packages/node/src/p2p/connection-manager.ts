@@ -36,6 +36,8 @@ export interface PeerEndpoint {
 }
 
 type TransportMode = "webrtc" | "tcp";
+type MetadataVersion = 10 | 11;
+type MetadataProvider = (version?: MetadataVersion) => object | null;
 type InitialWireMessage =
   | {
       type: "intro";
@@ -298,7 +300,7 @@ export class ConnectionManager extends EventEmitter {
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
   private _transportMode: TransportMode;
-  private _metadataProvider: (() => object | null) | null = null;
+  private _metadataProvider: MetadataProvider | null = null;
   private _ipConnectionCounts = new Map<string, number>();
   private readonly _introReplayGuard = new NonceReplayGuard();
   private static _knownEndpoints = new Map<PeerId, PeerEndpoint>();
@@ -331,7 +333,7 @@ export class ConnectionManager extends EventEmitter {
     return this._listenPort;
   }
 
-  setMetadataProvider(provider: () => object | null): void {
+  setMetadataProvider(provider: MetadataProvider): void {
     this._metadataProvider = provider;
   }
 
@@ -692,17 +694,21 @@ export class ConnectionManager extends EventEmitter {
     let statusLine: string;
     let body: string;
 
-    if (url !== "/metadata") {
+    const metadataVersion = url === "/metadata/v11" ? 11 : 10;
+
+    if (url !== "/metadata" && url !== "/metadata/v10" && url !== "/metadata/v11") {
       statusLine = "404 Not Found";
       body = JSON.stringify({ error: "not found" });
     } else if (!this._metadataProvider) {
       statusLine = "503 Service Unavailable";
       body = JSON.stringify({ error: "metadata not available" });
     } else {
-      const metadata = this._metadataProvider();
+      const metadata = this._metadataProvider(metadataVersion);
       if (!metadata) {
-        statusLine = "503 Service Unavailable";
-        body = JSON.stringify({ error: "metadata not available" });
+        statusLine = url === "/metadata/v11" ? "404 Not Found" : "503 Service Unavailable";
+        body = JSON.stringify({
+          error: url === "/metadata/v11" ? "metadata version not available" : "metadata not available",
+        });
       } else {
         statusLine = "200 OK";
         body = JSON.stringify(metadata);

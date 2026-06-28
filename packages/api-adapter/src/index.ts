@@ -24,7 +24,13 @@ export {
 } from './detect.js';
 
 export {
+  extractProviderUsageFacts,
+  extractRequestBillingFacts,
   extractUsage,
+  type BillingMatchKey,
+  type BillingMeter,
+  type ProviderUsageFacts,
+  type RequestBillingFacts,
   type TokenUsage,
   parseJsonObject,
   toNonNegativeInt,

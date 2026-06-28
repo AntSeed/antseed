@@ -95,4 +95,39 @@ describe('payment codec round-trips', () => {
     const decoded = decodeNeedAuth(encoded);
     expect(decoded).toEqual(payload);
   });
+
+  it('NeedAuth with billingUsage', () => {
+    const payload = {
+      channelId: '0x' + 'aa'.repeat(32),
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '200000',
+      deposit: '1000000',
+      requestId: 'req-image',
+      lastRequestCost: '80000',
+      inputTokens: '0',
+      outputTokens: '0',
+      billingUsage: {
+        version: 1 as const,
+        meters: { output_images: '2' },
+        meterAttributes: { output_images: { size: '1024x1024' } },
+        costUsdc: '80000',
+      },
+    };
+    expect(decodeNeedAuth(encodeNeedAuth(payload))).toEqual(payload);
+  });
+
+  it('rejects malformed NeedAuth billingUsage', () => {
+    const encoded = new TextEncoder().encode(JSON.stringify({
+      channelId: '0x' + 'aa'.repeat(32),
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '200000',
+      deposit: '1000000',
+      billingUsage: {
+        version: 1,
+        meters: { output_images: '-1' },
+        costUsdc: '80000',
+      },
+    }));
+    expect(() => decodeNeedAuth(encoded)).toThrow(/billingUsage/);
+  });
 });

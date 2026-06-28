@@ -7,6 +7,7 @@ export { BaseProvider, type BaseProviderConfig } from './base-provider.js';
 export { parseServiceAliasMap } from './service-alias.js';
 export {
   parseNonNegativeNumber,
+  parseServiceBillingModelsJson,
   parseServicePricingJson,
   parseCsv,
   parseJsonObject,

@@ -72,9 +72,21 @@ describe('provider-openai plugin', () => {
         OPENAI_API_KEY: 'sk-test-key',
         ANTSEED_ALLOWED_SERVICES: 'cover-art',
         ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+        ANTSEED_SERVICE_BILLING_MODELS_JSON: JSON.stringify({
+          'cover-art': {
+            'openai-images': {
+              version: 1,
+              components: [],
+            },
+          },
+        }),
       });
 
       expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
+      expect(provider.serviceBillingModels?.['cover-art']?.['openai-images']).toEqual({
+        version: 1,
+        components: [],
+      });
 
       const response = await provider.handleRequest({
         requestId: 'req-image-1',
@@ -95,6 +107,52 @@ describe('provider-openai plugin', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('allows image services without explicit billing as free/default', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+    });
+
+    expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
+    expect(provider.serviceBillingModels).toBeUndefined();
+  });
+
+  it('advertises image billing only when explicitly configured', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+      ANTSEED_SERVICE_BILLING_MODELS_JSON: JSON.stringify({
+        'cover-art': {
+          'openai-images': {
+            version: 1,
+            components: [
+              {
+                meter: 'output_images',
+                unit: 'per_unit',
+                priceUsd: 0.00816,
+                match: { size: '1024x1024', quality: 'low' },
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    expect(provider.serviceBillingModels?.['cover-art']?.['openai-images']).toEqual({
+      version: 1,
+      components: [
+        {
+          meter: 'output_images',
+          unit: 'per_unit',
+          priceUsd: 0.00816,
+          match: { size: '1024x1024', quality: 'low' },
+        },
+      ],
+    });
   });
 
   it('does not advertise image services for openrouter flavor yet', async () => {

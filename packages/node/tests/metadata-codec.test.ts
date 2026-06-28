@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -150,6 +150,81 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.publicAddress).toBe('peer.example.com:6882');
     expect(decoded.providers[0]!.serviceCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
+  });
+
+  it('round-trips v11 service billing models and signs billing bytes', () => {
+    const original = makeMetadata({
+      version: SERVICE_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [
+                  { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+                ],
+              },
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]!.serviceBillingModels?.['gpt-image-1']?.['openai-images']?.components).toHaveLength(1);
+    expect(decoded.providers[0]!.serviceBillingModels?.['gpt-image-1']?.['openai-images']?.components[0]?.priceUsd).toBeCloseTo(0.04, 5);
+
+    const changed = makeMetadata({
+      ...original,
+      providers: [{
+        ...original.providers[0]!,
+        serviceBillingModels: {
+          'gpt-image-1': {
+            'openai-images': {
+              version: 1,
+              components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.05 }],
+            },
+          },
+        },
+      }],
+    });
+    expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('excludes service billing models from v10 metadata bytes', () => {
+    const original = makeMetadata({
+      version: METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+              },
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+
+    expect(decoded.version).toBe(METADATA_VERSION);
+    expect(decoded.providers[0]?.serviceApiProtocols?.['gpt-image-1']).toEqual(['openai-images']);
+    expect(decoded.providers[0]?.serviceBillingModels).toBeUndefined();
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {

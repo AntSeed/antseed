@@ -80,7 +80,13 @@ export { SellerPaymentManager, DEFAULT_MIN_SETTLE_DELTA_STR } from './seller-pay
 export type { SellerPaymentConfig } from './seller-payment-manager.js';
 
 // Pricing utilities
-export { computeCostUsdc, estimateCostFromBytes, estimateTokensFromBytes } from './pricing.js';
+export {
+  computeCostUsdc,
+  estimateCostFromBytes,
+  estimateTokensFromBytes,
+  isFreeBillingModel,
+  validateServiceBillingModelV1,
+} from './pricing.js';
 export type { ServicePricing } from './pricing.js';
 
 // Readiness checks

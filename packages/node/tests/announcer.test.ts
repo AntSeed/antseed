@@ -24,9 +24,17 @@ function makeBaseConfig(): AnnouncerConfig {
   return {
     identity: mockIdentity,
     dht: mockDht as unknown as AnnouncerConfig['dht'],
-    providers: [],
+    providers: [
+      {
+        provider: 'openai',
+        services: ['gpt-4.1'],
+        maxConcurrency: 5,
+      },
+    ],
     region: 'us',
-    pricing: new Map(),
+    pricing: new Map([
+      ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
+    ]),
     reannounceIntervalMs: 60_000,
     signalingPort: 0,
   };
@@ -60,5 +68,54 @@ describe('PeerAnnouncer capabilities', () => {
     await announcer.announce();
     const meta = announcer.getLatestMetadata();
     expect(meta?.capabilities).toEqual([CONNECTION_CAPABILITY_RESPONSE_AUTH_V1]);
+  });
+});
+
+describe('PeerAnnouncer metadata versions', () => {
+  it('keeps v10 metadata free of billing models and exposes v11 only when configured', async () => {
+    const base = makeBaseConfig();
+    const announcer = new PeerAnnouncer({
+      ...base,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+              },
+            },
+          },
+          maxConcurrency: 5,
+        },
+      ],
+    });
+
+    await announcer.announce();
+
+    const defaultMetadata = announcer.getLatestMetadata();
+    const v10 = announcer.getLatestMetadata(10);
+    const v11 = announcer.getLatestMetadata(11);
+
+    expect(defaultMetadata).toBe(v10);
+    expect(v10?.version).toBe(10);
+    expect(v10?.providers[0]?.serviceBillingModels).toBeUndefined();
+    expect(v11?.version).toBe(11);
+    expect(v11?.providers[0]?.serviceBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
+      version: 1,
+      components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+    });
+    expect(v11?.signature).not.toBe(v10?.signature);
+  });
+
+  it('does not synthesize v11 metadata without configured billing models', async () => {
+    const announcer = new PeerAnnouncer(makeBaseConfig());
+    await announcer.announce();
+
+    expect(announcer.getLatestMetadata()?.version).toBe(10);
+    expect(announcer.getLatestMetadata(11)).toBeNull();
   });
 });

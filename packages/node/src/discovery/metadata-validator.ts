@@ -1,7 +1,8 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
+import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
+import { validateServiceBillingModelV1 } from "../billing/evaluator.js";
 
 // v9 adds signed verification claims and v10 adds peer capabilities. Keep
 // enough room for several normal claims while bounding DHT-served metadata.
@@ -19,6 +20,9 @@ export const MAX_GITHUB_REPOSITORY_LENGTH = 100;
 export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 8;
 export const MAX_SERVICE_CATEGORY_LENGTH = 32;
 export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
+export const MAX_BILLING_COMPONENTS_PER_MODEL = 8;
+export const MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT = 3;
+export const MAX_BILLING_MATCH_VALUE_BYTES = 32;
 export const MAX_PEER_CAPABILITIES = 16;
 export const MAX_PEER_CAPABILITY_LENGTH = 64;
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -62,10 +66,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
   const errors: ValidationError[] = [];
 
   // version
-  if (metadata.version !== METADATA_VERSION) {
+  if (metadata.version !== METADATA_VERSION && metadata.version !== SERVICE_BILLING_METADATA_VERSION) {
     errors.push({
       field: "version",
-      message: `Expected version ${METADATA_VERSION}, got ${metadata.version}`,
+      message: `Expected version ${METADATA_VERSION} or ${SERVICE_BILLING_METADATA_VERSION}, got ${metadata.version}`,
     });
   }
 
@@ -503,6 +507,106 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
           }
           deduped.add(normalized);
         }
+      }
+    }
+
+    if (p.serviceBillingModels !== undefined) {
+      if (metadata.version < SERVICE_BILLING_METADATA_VERSION) {
+        errors.push({
+          field: `providers[${i}].serviceBillingModels`,
+          message: `Service billing models require metadata version ${SERVICE_BILLING_METADATA_VERSION}`,
+        });
+      }
+      let expandedBillingModelCount = 0;
+      for (const [serviceName, protocolModels] of Object.entries(p.serviceBillingModels)) {
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
+          errors.push({
+            field: `providers[${i}].serviceBillingModels.${serviceName}`,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+          });
+        }
+        if (p.servicePricing?.[serviceName] !== undefined) {
+          errors.push({
+            field: `providers[${i}].serviceBillingModels.${serviceName}`,
+            message: "Service cannot be announced with both token pricing and a unit billing model",
+          });
+        }
+        if (!hasWildcardServices && !p.services.includes(serviceName)) {
+          errors.push({
+            field: `providers[${i}].serviceBillingModels.${serviceName}`,
+            message: "Service billing models must reference a service listed in providers[].services",
+          });
+        }
+        if (!protocolModels || typeof protocolModels !== "object" || Array.isArray(protocolModels)) {
+          errors.push({
+            field: `providers[${i}].serviceBillingModels.${serviceName}`,
+            message: "Service billing model entry must be an object keyed by service API protocol",
+          });
+          continue;
+        }
+        for (const [protocol, model] of Object.entries(protocolModels)) {
+          expandedBillingModelCount += 1;
+          const serviceProtocols = p.serviceApiProtocols?.[serviceName];
+          if (!SERVICE_API_PROTOCOL_SET.has(protocol)) {
+            errors.push({
+              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              message: `Unsupported service API protocol "${protocol}"`,
+            });
+          } else if (protocol !== "openai-images") {
+            errors.push({
+              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              message: "Service billing models currently support openai-images only",
+            });
+          } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
+            errors.push({
+              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              message: "Billing model protocol must be announced for the service",
+            });
+          }
+          const modelErrors = validateServiceBillingModelV1(model);
+          for (const message of modelErrors) {
+            errors.push({
+              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              message,
+            });
+          }
+          if (model.components.length > MAX_BILLING_COMPONENTS_PER_MODEL) {
+            errors.push({
+              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components`,
+              message: `Billing component count ${model.components.length} exceeds max ${MAX_BILLING_COMPONENTS_PER_MODEL}`,
+            });
+          }
+          model.components.forEach((component, componentIndex) => {
+            if (component.meter !== "output_images") {
+              errors.push({
+                field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].meter`,
+                message: "Image billing models currently support output_images only",
+              });
+            }
+            const matchEntries = Object.entries(component.match ?? {});
+            if (matchEntries.length > MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT) {
+              errors.push({
+                field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match`,
+                message: `Billing match entry count ${matchEntries.length} exceeds max ${MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT}`,
+              });
+            }
+            for (const [key, value] of matchEntries) {
+              const byteLength = new TextEncoder().encode(value).length;
+              if (byteLength > MAX_BILLING_MATCH_VALUE_BYTES) {
+                errors.push({
+                  field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match.${key}`,
+                  message: `Billing match value length ${byteLength} exceeds max ${MAX_BILLING_MATCH_VALUE_BYTES} bytes`,
+                });
+              }
+            }
+          });
+        }
+      }
+      if (expandedBillingModelCount > MAX_SERVICES_PER_PROVIDER) {
+        errors.push({
+          field: `providers[${i}].serviceBillingModels`,
+          message: `Expanded billing model count ${expandedBillingModelCount} exceeds max ${MAX_SERVICES_PER_PROVIDER}`,
+        });
       }
     }
 

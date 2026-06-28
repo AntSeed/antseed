@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractUsage } from '../src/utils.js';
+import { extractProviderUsageFacts, extractRequestBillingFacts, extractUsage } from '../src/utils.js';
 
 describe('extractUsage', () => {
   it('returns zeros for empty usage', () => {
@@ -192,5 +192,49 @@ describe('extractUsage', () => {
     });
     expect(result.freshInputTokens).toBe(200);   // 1000 - 800
     expect(result.cachedInputTokens).toBe(800);
+  });
+});
+
+describe('billing fact extraction', () => {
+  it('extracts billable OpenAI image generation request attributes and default output count', () => {
+    const facts = extractRequestBillingFacts({
+      path: '/v1/images/generations',
+      method: 'POST',
+      body: {
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        quality: 'high',
+        background: 'transparent',
+        output_format: 'png',
+      },
+    });
+    expect(facts.attributes).toEqual({ model: 'gpt-image-1' });
+    expect(facts.meterAttributes?.output_images).toEqual({
+      size: '1024x1024',
+      quality: 'high',
+    });
+    expect(facts.requestedOutputImages).toBe(1);
+  });
+
+  it('extracts supported OpenAI image response facts and ignores image token classes', () => {
+    const facts = extractProviderUsageFacts({
+      usage: {
+        input_tokens: 120,
+        output_tokens: 300,
+        input_tokens_details: {
+          text_tokens: 20,
+          image_tokens: 100,
+          cached_tokens: 10,
+        },
+        output_tokens_details: {
+          text_tokens: 0,
+          image_tokens: 300,
+        },
+      },
+      data: [{ b64_json: 'a' }, { b64_json: 'b' }],
+    });
+    expect(facts.textInputTokens).toBe(20);
+    expect(facts.cachedTextInputTokens).toBeUndefined();
+    expect(facts.outputImages).toBe(2);
   });
 });

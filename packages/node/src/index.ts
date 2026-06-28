@@ -13,6 +13,7 @@ export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
+export * from './billing/index.js';
 
 // Submodule re-exports (commonly used)
 export {

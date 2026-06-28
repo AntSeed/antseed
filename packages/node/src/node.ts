@@ -7,6 +7,7 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
+import type { ServiceBillingModelsV1 } from "./types/billing.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -1331,6 +1332,7 @@ export class AntseedNode extends EventEmitter {
           services: p.services,
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
+          ...(p.serviceBillingModels ? { serviceBillingModels: { ...p.serviceBillingModels } } : {}),
           maxConcurrency: p.maxConcurrency,
           pricing: {
             defaults: {
@@ -1367,7 +1369,7 @@ export class AntseedNode extends EventEmitter {
 
       // Serve metadata on the signaling port (HTTP requests are auto-detected)
       this._connectionManager!.setMetadataProvider(
-        () => this._announcer?.getLatestMetadata() ?? null,
+        (version) => this._announcer?.getLatestMetadata(version) ?? null,
       );
     }
 
@@ -1814,6 +1816,7 @@ export class AntseedNode extends EventEmitter {
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
     const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
+    const providerServiceBillingModelEntries: NonNullable<PeerInfo["providerServiceBillingModels"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -1868,11 +1871,22 @@ export class AntseedNode extends EventEmitter {
           providerServiceApiProtocolEntries[provName] = { services: newEntries };
         }
       }
+
+      if (providerAnnouncement.serviceBillingModels && Object.keys(providerAnnouncement.serviceBillingModels).length > 0) {
+        const existingBillingModels = providerServiceBillingModelEntries[provName];
+        const newEntries: ServiceBillingModelsV1 = { ...providerAnnouncement.serviceBillingModels };
+        if (existingBillingModels) {
+          Object.assign(existingBillingModels.services, newEntries);
+        } else {
+          providerServiceBillingModelEntries[provName] = { services: newEntries };
+        }
+      }
     }
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
     const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
     const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
+    const hasProviderServiceBillingModels = Object.keys(providerServiceBillingModelEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
@@ -1893,6 +1907,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
       ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
+      ...(hasProviderServiceBillingModels ? { providerServiceBillingModels: providerServiceBillingModelEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

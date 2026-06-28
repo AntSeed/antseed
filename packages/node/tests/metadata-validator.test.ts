@@ -14,7 +14,7 @@ import {
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
-import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -232,6 +232,127 @@ describe('validateMetadata', () => {
       })
     );
     expect(errors.some((e) => e.field.includes('servicePricing.m.outputUsdPerMillion'))).toBe(true);
+  });
+
+  it('allows services to be token-priced or unit-priced, but rejects both on the same service', () => {
+    const tokenOnlyErrors = validateMetadata(validMetadata({
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-4.1'],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 2,
+          },
+          servicePricing: {
+            'gpt-4.1': {
+              inputUsdPerMillion: 3,
+              outputUsdPerMillion: 4,
+            },
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(tokenOnlyErrors).toEqual([]);
+
+    const unitOnlyProvider = {
+      provider: 'openai',
+      services: ['gpt-image-1'],
+      defaultPricing: {
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+      },
+      serviceApiProtocols: {
+        'gpt-image-1': ['openai-images'],
+      },
+      serviceBillingModels: {
+        'gpt-image-1': {
+          'openai-images': {
+            version: 1,
+            components: [
+              { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 },
+            ],
+          },
+        },
+      },
+      maxConcurrency: 1,
+      currentLoad: 0,
+    } satisfies PeerMetadata['providers'][number];
+
+    const unitOnlyErrors = validateMetadata(validMetadata({
+      version: SERVICE_BILLING_METADATA_VERSION,
+      providers: [unitOnlyProvider],
+    }));
+    expect(unitOnlyErrors).toEqual([]);
+
+    const bothErrors = validateMetadata(validMetadata({
+      version: SERVICE_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          ...unitOnlyProvider,
+          servicePricing: {
+            'gpt-image-1': {
+              inputUsdPerMillion: 1,
+              outputUsdPerMillion: 1,
+            },
+          },
+        },
+      ],
+    }));
+    expect(bothErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'providers[0].serviceBillingModels.gpt-image-1',
+          message: expect.stringContaining('both token pricing and a unit billing model'),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects non-image service billing models for now', () => {
+    const errors = validateMetadata(validMetadata({
+      version: SERVICE_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-4.1'],
+          defaultPricing: {
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+          serviceApiProtocols: {
+            'gpt-4.1': ['openai-chat-completions'],
+          },
+          serviceBillingModels: {
+            'gpt-4.1': {
+              'openai-chat-completions': {
+                version: 1,
+                components: [
+                  { meter: 'text_input_tokens', unit: 'per_million', priceUsd: 1 },
+                ],
+              },
+            },
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'providers[0].serviceBillingModels.gpt-4.1.openai-chat-completions',
+          message: expect.stringContaining('openai-images only'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceBillingModels.gpt-4.1.openai-chat-completions.components[0].meter',
+          message: expect.stringContaining('output_images only'),
+        }),
+      ]),
+    );
   });
 
   it('should reject maxConcurrency < 1', () => {

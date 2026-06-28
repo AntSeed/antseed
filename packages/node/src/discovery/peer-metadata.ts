@@ -1,9 +1,11 @@
 import type { PeerId } from "../types/peer.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
+import type { ServiceBillingModelsV1 } from "../types/billing.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
 export const METADATA_VERSION = 10;
+export const SERVICE_BILLING_METADATA_VERSION = 11;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -28,6 +30,7 @@ export interface ProviderAnnouncement {
   servicePricing?: Record<string, TokenPricingUsdPerMillion>;
   serviceCategories?: Record<string, string[]>;
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
+  serviceBillingModels?: ServiceBillingModelsV1;
   maxConcurrency: number;
   currentLoad: number;
 }

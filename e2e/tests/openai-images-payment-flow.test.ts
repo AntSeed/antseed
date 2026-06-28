@@ -252,7 +252,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     rpcCallLog = [];
   }
 
-  async function setupProxyNetwork(): Promise<{
+  async function setupProxyNetwork(provider?: MockOpenAIImageProvider): Promise<{
     provider: MockOpenAIImageProvider;
     port: number;
     discoveredSeller: PeerInfo;
@@ -260,7 +260,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     bootstrap = await createLocalBootstrap();
 
     sellerDataDir = await mkdtemp(join(tmpdir(), 'antseed-seller-images-pay-'));
-    const provider = new MockOpenAIImageProvider();
+    const imageProvider = provider ?? new MockOpenAIImageProvider();
     sellerNode = new AntseedNode({
       role: 'seller',
       dataDir: sellerDataDir,
@@ -271,7 +271,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
       noOfficialBootstrap: true,
       payments: makePaymentsConfig(rpcUrl),
     });
-    sellerNode.registerProvider(provider);
+    sellerNode.registerProvider(imageProvider);
     await sellerNode.start();
 
     buyerDataDir = await mkdtemp(join(tmpdir(), 'antseed-buyer-images-pay-'));
@@ -302,7 +302,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     });
     await proxy.start();
 
-    return { provider, port, discoveredSeller: discoveredSeller! };
+    return { provider: imageProvider, port, discoveredSeller: discoveredSeller! };
   }
 
   it('negotiates payment and records image usage for images.generate', async () => {
@@ -324,13 +324,26 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
       prompt: 'A tiny purple cube',
       size: '1024x1024',
       quality: 'low',
+      n: 2,
     } as any);
 
     // The request should succeed through the buyer proxy and hit the image seller.
     expect(response.created).toBeTypeOf('number');
     expect(response.data?.[0]?.b64_json).toBe(Buffer.from('mock-image-bytes').toString('base64'));
+    expect(response.data).toHaveLength(2);
     expect(provider.requestCount).toBe(1);
     expect(provider.lastRequest?.path).toBe('/v1/images/generations');
+
+    // Discovery should carry the signed v11 billing model all the way into buyer peer info.
+    expect(discoveredSeller.metadata?.version).toBe(11);
+    const billingComponent = discoveredSeller
+      .providerServiceBillingModels?.openai?.services['gpt-image-2']?.['openai-images']?.components[0];
+    expect(billingComponent).toMatchObject({
+      meter: 'output_images',
+      unit: 'per_unit',
+      match: { size: '1024x1024' },
+    });
+    expect(billingComponent?.priceUsd).toBeCloseTo(0.04, 5);
 
     // The first paid request should negotiate automatically: 402 -> auth -> retry -> 200.
     expect(paymentEvents).toContain('required');
@@ -340,21 +353,55 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     const sendRawTxCalls = rpcCallLog.filter((call) => call.method === 'eth_sendRawTransaction');
     expect(sendRawTxCalls.length).toBeGreaterThanOrEqual(1);
 
-    // Verify the buyer recorded the exact image usage and derived cost from the
-    // provider's top-level usage counters.
+    // Verify the buyer recorded the exact image unit-billing cost. Legacy token pricing
+    // and response token usage are both zero, so this fails if billing silently
+    // falls back to token pricing or treats the image service as free.
     const bpm = buyerNode!.buyerPaymentManager;
     expect(bpm).not.toBeNull();
     expect(bpm!.getActiveSession(discoveredSeller.peerId)).not.toBeNull();
-    expect(bpm!.getVerifiedCost(discoveredSeller.peerId)).toBe(7915n);
+    expect(bpm!.getVerifiedCost(discoveredSeller.peerId)).toBe(80_000n);
     expect(bpm!.getCumulativeTokens(discoveredSeller.peerId)).toEqual({
-      inputTokens: 15n,
-      outputTokens: 196n,
+      inputTokens: 0n,
+      outputTokens: 0n,
     });
     expect(bpm!.getResponseTokenTotals(discoveredSeller.peerId)).toEqual({
-      input: 15,
-      output: 196,
+      input: 0,
+      output: 0,
       requests: 1,
     });
-    expect(bpm!.getCumulativeAmount(discoveredSeller.peerId)).toBeGreaterThan(0n);
+    expect(bpm!.getCumulativeAmount(discoveredSeller.peerId)).toBe(80_000n);
+  }, 30_000);
+
+  it('treats image services without explicit unit billing as free', async () => {
+    await setupRpc();
+    const { provider, port, discoveredSeller } = await setupProxyNetwork(
+      new MockOpenAIImageProvider({ serviceBillingModels: null }),
+    );
+
+    const paymentEvents: string[] = [];
+    buyerNode!.on('payment:required', () => paymentEvents.push('required'));
+    buyerNode!.on('payment:signed', () => paymentEvents.push('signed'));
+
+    const client = new OpenAI({
+      apiKey: 'sk-test',
+      baseURL: `http://127.0.0.1:${port}/v1`,
+      defaultHeaders: { 'x-antseed-pin-peer': discoveredSeller.peerId },
+    });
+
+    const response = await client.images.generate({
+      model: 'gpt-image-2',
+      prompt: 'A tiny purple cube',
+      size: '1024x1024',
+      quality: 'low',
+      n: 2,
+    } as any);
+
+    expect(response.data).toHaveLength(2);
+    expect(provider.requestCount).toBe(1);
+    expect(discoveredSeller.providerServiceBillingModels).toBeUndefined();
+    expect(paymentEvents).toEqual([]);
+    expect(rpcCallLog.some((call) => call.method === 'eth_sendRawTransaction')).toBe(false);
+    expect(buyerNode!.buyerPaymentManager?.getActiveSession(discoveredSeller.peerId)).toBeNull();
+    expect(buyerNode!.buyerPaymentManager?.getVerifiedCost(discoveredSeller.peerId)).toBe(0n);
   }, 30_000);
 });

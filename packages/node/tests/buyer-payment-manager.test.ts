@@ -679,6 +679,158 @@ describe('BuyerPaymentManager', () => {
     }]);
   });
 
+  it('handleNeedAuth rejects positive legacy cost when image unit billingUsage is omitted', async () => {
+    const sellerPeerId = fakePeerId('seller-image-unit');
+    const channelId = await manager.authorizeSpending(
+      sellerPeerId,
+      mux,
+      10_000n,
+      10_000_000n,
+      undefined,
+      undefined,
+      undefined,
+      {
+        defaults: { version: 1, components: [] },
+        providers: {
+          openai: {
+            services: {
+              'gpt-image-2': {
+                'openai-images': {
+                  version: 1,
+                  components: [
+                    { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+    manager.trackRequestBillingContext('req-image-no-usage', {
+      sellerPeerId,
+      provider: 'openai',
+      service: 'gpt-image-2',
+      serviceApiProtocol: 'openai-images',
+      attributes: { model: 'gpt-image-2' },
+      meterAttributes: { output_images: { size: '1024x1024' } },
+    });
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-image-no-usage',
+      requiredCumulativeAmount: '40000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '40000',
+      inputTokens: '0',
+      outputTokens: '0',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(0);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
+  });
+
+  it('handleNeedAuth rejects image billingUsage whose tier does not match buyer request context', async () => {
+    const sellerPeerId = fakePeerId('seller-image-tier');
+    const channelId = await manager.authorizeSpending(
+      sellerPeerId,
+      mux,
+      10_000n,
+      10_000_000n,
+      undefined,
+      undefined,
+      undefined,
+      {
+        defaults: { version: 1, components: [] },
+        providers: {
+          openai: {
+            services: {
+              'gpt-image-2': {
+                'openai-images': {
+                  version: 1,
+                  components: [
+                    { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+    manager.trackRequestBilling('req-image-tier-mismatch', {
+      context: {
+        sellerPeerId,
+        provider: 'openai',
+        service: 'gpt-image-2',
+        serviceApiProtocol: 'openai-images',
+        attributes: { model: 'gpt-image-2' },
+        meterAttributes: { output_images: { size: '256x256' } },
+      },
+      requestFacts: {},
+      mode: {
+        kind: 'unit',
+        model: {
+          version: 1,
+          components: [
+            { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+          ],
+        },
+      },
+    });
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-image-tier-mismatch',
+      requiredCumulativeAmount: '40000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '40000',
+      inputTokens: '0',
+      outputTokens: '0',
+      billingUsage: {
+        version: 1,
+        meters: { output_images: '1' },
+        meterAttributes: { output_images: { size: '1024x1024' } },
+        costUsdc: '40000',
+      },
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(0);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
+  });
+
+  it('handleNeedAuth rejects positive cost for free-default image billing', async () => {
+    const sellerPeerId = fakePeerId('seller-image-free');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    manager.trackRequestBillingContext('req-image-free', {
+      sellerPeerId,
+      provider: 'openai',
+      service: 'gpt-image-2',
+      serviceApiProtocol: 'openai-images',
+      attributes: { model: 'gpt-image-2' },
+      meterAttributes: { output_images: { size: '1024x1024' } },
+    });
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-image-free',
+      requiredCumulativeAmount: '40000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '40000',
+      inputTokens: '0',
+      outputTokens: '0',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(0);
+    expect(manager.getVerifiedCost(sellerPeerId)).toBe(0n);
+  });
+
   it('handleNeedAuth does not double-count service totals for a request already counted by signPerRequestAuth', async () => {
     const sellerPeerId = fakePeerId('seller-service-dedup');
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);

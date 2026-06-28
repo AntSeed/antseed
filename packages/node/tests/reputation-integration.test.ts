@@ -95,6 +95,7 @@ describe('Reputation Integration', () => {
       onChainGhostCount: 0,
       onChainTotalVolumeUsdcMicros: 1_000_000_000,
       onChainStakeUsdcMicros: 10_000_000,
+      onChainStakedAtSec: Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60,
       onChainLastSettledAtSec: Math.floor(Date.now() / 1000),
       reputationScore: reportedScore,
     };

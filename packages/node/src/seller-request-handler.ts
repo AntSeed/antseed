@@ -14,13 +14,33 @@ import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
 } from './types/http.js';
-import { parseResponseUsage } from './utils/response-usage.js';
-import { computeCostUsdc, estimateTokensFromBytes, type ServicePricing } from './payments/pricing.js';
+import {
+  computeCostUsdc,
+} from './payments/pricing.js';
 import { debugLog, debugWarn } from './utils/debug.js';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
 import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
+import type { BillingUsageReportV1, BuyerRequestBillingContext, NormalizedUsage, ServiceBillingModelV1 } from './types/billing.js';
+import { captureSellerBillingContext as captureSellerBillingRuntimeContext, computeFinalCost } from './billing/runtime.js';
+import { evaluateBillingModel } from './billing/evaluator.js';
+import { resolveBillingMode, type BillingMode } from './billing/mode.js';
+import { normalizeResponseUsage } from './billing/usage-normalization.js';
+import type { RequestBillingFacts } from './billing/usage-normalization.js';
+import type { ServiceApiProtocol } from './types/service-api.js';
+import {
+  detectRequestServiceApiProtocol,
+  selectTargetProtocolForRequest,
+} from '@antseed/api-adapter';
+
+type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
+
+function isZeroTokenPricing(pricing: ProviderTokenPricing): boolean {
+  return pricing.inputUsdPerMillion === 0
+    && pricing.outputUsdPerMillion === 0
+    && (pricing.cachedInputUsdPerMillion == null || pricing.cachedInputUsdPerMillion === 0);
+}
 
 export interface SellerRequestHandlerDeps {
   identity: Identity;
@@ -32,6 +52,12 @@ export interface SellerRequestHandlerDeps {
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
+}
+
+interface SellerBillingContext {
+  context: BuyerRequestBillingContext;
+  requestUsage: NormalizedUsage;
+  requestFacts: RequestBillingFacts;
 }
 
 /** Debounce interval for metadata refresh after load changes. */
@@ -109,7 +135,12 @@ export class SellerRequestHandler {
       }
 
       const requestPricing = this.resolveProviderPricing(provider, request);
-      const isFreeService = this._isFreePricing(requestPricing);
+      const requestBilling = this._captureSellerBillingContext(provider, request);
+      const requestBillingMode = requestBilling
+        ? this.resolveProviderBilling(provider, requestBilling.context, requestPricing)
+        : null;
+      const isFreeService = requestBillingMode?.kind === 'free'
+        || (requestBillingMode?.kind === 'token' && isZeroTokenPricing(requestBillingMode.pricing));
 
       // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
@@ -210,7 +241,13 @@ export class SellerRequestHandler {
               debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
             }
           }
-          const requestCostEstimate = this._estimateMaxRequestCostUsdc(request, requestPricing);
+          const requestCostEstimate = requestBilling
+            ? requestBillingMode?.kind === 'unit'
+              ? this._estimateImageRequestCostUsdc(requestBilling, requestBillingMode.model)
+              : requestBillingMode?.kind === 'token'
+                ? this._estimateMaxTokenRequestCostUsdc(request, requestBilling, requestBillingMode.pricing)
+                : null
+            : null;
           const estimatedRequestCost = requestCostEstimate?.cost ?? 0n;
           const remainingLockedReserve = reserveMax > spent ? reserveMax - spent : 0n;
           const reserveEstimateOverdraft = this._deps.reserveEstimateOverdraftUsdc;
@@ -328,6 +365,7 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
+      let billingUsageReport: BillingUsageReportV1 | null = null;
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
@@ -359,7 +397,12 @@ export class SellerRequestHandler {
           } else {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
-          responseUsage = parseResponseUsage(responseBody);
+          // Unit-billed requests produce verifiable billingUsage; token/free paths only normalize usage.
+          const responseNormalization = requestBilling && requestBillingMode?.kind === 'unit'
+            ? computeFinalCost(requestBillingMode.model, requestBilling.context, response, requestBilling.requestFacts)
+            : normalizeResponseUsage(response);
+          responseUsage = responseNormalization.tokenUsage;
+          billingUsageReport = "billingUsage" in responseNormalization ? responseNormalization.billingUsage : null;
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
             mux.sendProxyResponse(response);
@@ -409,6 +452,17 @@ export class SellerRequestHandler {
           }
         }
 
+          if (requestBilling && requestBillingMode?.kind === 'unit' && responseForAuth && billingUsageReport === null) {
+            const finalBilling = computeFinalCost(
+              requestBillingMode.model,
+              requestBilling.context,
+              responseForAuth,
+              requestBilling.requestFacts,
+            );
+            responseUsage = finalBilling.tokenUsage;
+            billingUsageReport = finalBilling.billingUsage;
+          }
+
         // Record metering
         const latencyMs = Date.now() - startTime;
         if (this._deps.sessionTracker) {
@@ -430,7 +484,14 @@ export class SellerRequestHandler {
         // The buyer validates the cost independently and responds with SpendingAuth.
         if (!isFreeService && spm?.hasSession(buyerPeerId)) {
           const usage = responseUsage;
-          const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, requestPricing, usage.cachedInputTokens);
+          const costUsdc = requestBillingMode?.kind === 'unit' && billingUsageReport != null
+            ? BigInt(billingUsageReport.costUsdc)
+            : computeCostUsdc(
+                usage.freshInputTokens,
+                usage.outputTokens,
+                requestPricing,
+                usage.cachedInputTokens,
+              );
           const session = spm.getChannelByPeer(buyerPeerId);
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
@@ -452,6 +513,7 @@ export class SellerRequestHandler {
               cachedInputTokens: String(usage.cachedInputTokens),
               freshInputTokens: String(usage.freshInputTokens),
               service: this._extractRequestedService(request) ?? undefined,
+              billingUsage: billingUsageReport ?? undefined,
             }, buyerPeerId, 'post-response');
           }
         }
@@ -553,7 +615,7 @@ export class SellerRequestHandler {
   resolveProviderPricing(
     provider: Provider,
     request: SerializedHttpRequest,
-  ): import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion {
+  ): ProviderTokenPricing {
     const requestedService = this._extractRequestedService(request);
     if (requestedService) {
       const servicePricing = provider.pricing.services?.[requestedService];
@@ -562,6 +624,18 @@ export class SellerRequestHandler {
       }
     }
     return provider.pricing.defaults;
+  }
+
+  resolveProviderBilling(
+    provider: Provider,
+    context: BuyerRequestBillingContext,
+    pricing: ProviderTokenPricing,
+  ): BillingMode {
+    return resolveBillingMode({
+      serviceApiProtocol: context.serviceApiProtocol,
+      tokenPricing: pricing,
+      unitModel: provider.serviceBillingModels?.[context.service]?.[context.serviceApiProtocol],
+    });
   }
 
   // -- Load tracking --
@@ -588,13 +662,6 @@ export class SellerRequestHandler {
 
   // -- Private helpers --
 
-  private _isFreePricing(pricing: import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion): boolean {
-    const cachedPrice = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
-    return pricing.inputUsdPerMillion === 0
-      && pricing.outputUsdPerMillion === 0
-      && cachedPrice === 0;
-  }
-
   private _isJsonRequest(request: SerializedHttpRequest): boolean {
     return hasJsonContentType(request.headers);
   }
@@ -620,9 +687,56 @@ export class SellerRequestHandler {
     return providers[0] ?? null;
   }
 
-  private _estimateMaxRequestCostUsdc(
+  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): SellerBillingContext | null {
+    const service = this._extractRequestedService(request);
+    if (!service) return null;
+    return captureSellerBillingRuntimeContext({
+      sellerPeerId: this._deps.identity.peerId,
+      provider: provider.name,
+      service,
+      serviceApiProtocol: this._selectSellerProtocolForService(provider, service, request),
+      request,
+    });
+  }
+
+  private _selectSellerProtocolForService(
+    provider: Provider,
+    service: string,
     request: SerializedHttpRequest,
-    pricing: ServicePricing,
+  ): ServiceApiProtocol {
+    const protocols = provider.serviceApiProtocols?.[service];
+    const billingProtocols = Object.keys(provider.serviceBillingModels?.[service] ?? {}) as ServiceApiProtocol[];
+    const candidates = protocols ?? billingProtocols;
+    const requestProtocol = detectRequestServiceApiProtocol(request);
+    const selected = selectTargetProtocolForRequest(requestProtocol, candidates);
+    if (selected) return selected.targetProtocol;
+    if (protocols?.[0]) return protocols[0];
+    return billingProtocols[0] ?? "openai-chat-completions";
+  }
+
+  private _estimateImageRequestCostUsdc(
+    requestBilling: SellerBillingContext,
+    model: ServiceBillingModelV1,
+  ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
+    const inputTokens = Math.floor(requestBilling.requestUsage.meters.text_input_tokens ?? 0);
+    const usage: NormalizedUsage = {
+      meters: {
+        output_images: Math.floor(requestBilling.requestUsage.meters.output_images ?? 0),
+      },
+      ...(requestBilling.context.attributes ? { attributes: requestBilling.context.attributes } : {}),
+      ...(requestBilling.context.meterAttributes ? { meterAttributes: requestBilling.context.meterAttributes } : {}),
+    };
+    return {
+      cost: evaluateBillingModel(model, usage).costUsdc,
+      inputTokens,
+      maxOutputTokens: 0,
+    };
+  }
+
+  private _estimateMaxTokenRequestCostUsdc(
+    request: SerializedHttpRequest,
+    requestBilling: SellerBillingContext,
+    pricing: ProviderTokenPricing,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
     if (!this._isJsonRequest(request)) {
       return null;
@@ -632,7 +746,7 @@ export class SellerRequestHandler {
       return null;
     }
 
-    const inputTokens = estimateTokensFromBytes(request.body);
+    const inputTokens = Math.floor(requestBilling.requestUsage.meters.text_input_tokens ?? 0);
     const maxOutputTokens = this._extractMaxOutputTokens(body);
     return {
       cost: computeCostUsdc(inputTokens, maxOutputTokens, pricing),

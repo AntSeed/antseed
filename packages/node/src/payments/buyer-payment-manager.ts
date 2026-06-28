@@ -25,7 +25,16 @@ import { peerIdToAddress, type PeerId } from '../types/peer.js';
 import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
 import type { PeerMetadata } from '../discovery/peer-metadata.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
-import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
+import {
+  estimateCostFromBytes,
+  computeCostUsdc,
+  type ServicePricing,
+} from './pricing.js';
+import type { BuyerRequestBillingContext, NormalizedUsage, ServiceBillingModelV1 } from '../types/billing.js';
+import { validateBillingUsageReport } from '../billing/runtime.js';
+import type { BillingMode } from '../billing/mode.js';
+import type { RequestBillingFacts } from '../billing/usage-normalization.js';
+import { evaluateBillingModel } from '../billing/evaluator.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -34,6 +43,15 @@ const DEFAULT_COST_TOLERANCE = 1.4;
  *  so that by the time the seller calls topUp() on-chain, enough has been
  *  settled to pass the threshold check. */
 const DEFAULT_TOPUP_THRESHOLD = 0.65;
+const REQUEST_BILLING_TTL_MS = 5 * 60_000;
+const MAX_REQUEST_BILLING_ENTRIES = 512;
+
+function validateUnitNormalizedCost(
+  model: ServiceBillingModelV1,
+  usage: NormalizedUsage,
+): bigint {
+  return evaluateBillingModel(model, usage).costUsdc;
+}
 
 export interface BuyerPaymentConfig {
   rpcUrl: string;
@@ -63,6 +81,16 @@ export interface PerRequestAuthResult {
   topUpNeeded: boolean;
 }
 
+export interface BuyerRequestBillingEntry {
+  context: BuyerRequestBillingContext;
+  requestFacts: RequestBillingFacts;
+  mode: BillingMode;
+}
+
+interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
+  createdAtMs: number;
+}
+
 /**
  * Manages buyer-side payment sessions using EIP-712 SpendingAuth
  * with cumulative authorization, bytes/4 cost verification, and overdraft control.
@@ -89,10 +117,16 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
 
-  /** requestId -> service/model the buyer requested (from its own request body).
-   *  Used in handleNeedAuth to validate cost with the correct pricing tier
-   *  without trusting the seller's claim of which service was used. */
+  /** requestId -> service/model the buyer requested (legacy token fallback). */
   private readonly _requestService = new Map<string, string>();
+  /**
+   * requestId -> trusted buyer-owned billing identity, request facts, and mode.
+   *
+   * Used by NeedAuth validation so seller-reported billingUsage cannot choose
+   * the provider, protocol, service, billing model, or size/quality tier after
+   * the fact.
+   */
+  private readonly _requestBillingEntries = new Map<string, StoredBuyerRequestBillingEntry>();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -192,6 +226,7 @@ export class BuyerPaymentManager {
     this._confirmedPeers.delete(sellerPeerId);
     this._rejectedPeers.delete(sellerPeerId);
     this._responseTokenTotals.delete(sellerPeerId);
+    this._clearRequestBillingForSeller(sellerPeerId);
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
@@ -439,6 +474,30 @@ export class BuyerPaymentManager {
       if (oldest !== undefined) this._serviceTokensCounted.delete(oldest);
     }
     this._serviceTokensCounted.add(requestId);
+  }
+
+  private _cleanupRequestBillingCache(now = Date.now()): void {
+    for (const [requestId, entry] of this._requestBillingEntries) {
+      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS) {
+        this.clearRequestBilling(requestId);
+      }
+    }
+  }
+
+  private _trimRequestBillingCache(): void {
+    while (this._requestBillingEntries.size > MAX_REQUEST_BILLING_ENTRIES) {
+      const oldest = this._requestBillingEntries.keys().next().value;
+      if (oldest === undefined) break;
+      this.clearRequestBilling(oldest);
+    }
+  }
+
+  private _clearRequestBillingForSeller(sellerPeerId: string): void {
+    for (const [requestId, entry] of this._requestBillingEntries) {
+      if (entry.context.sellerPeerId === sellerPeerId) {
+        this.clearRequestBilling(requestId);
+      }
+    }
   }
 
   private _persistServiceMetadata(sessionId: string, metadata: SpendingAuthMetadata): void {
@@ -731,11 +790,11 @@ export class BuyerPaymentManager {
   /**
    * Sign an updated SpendingAuth after receiving a response.
    *
-   * The buyer uses the seller's claimed cost to advance the cumulative amount,
-   * but validates it against the buyer's bytes/4 estimate. If the seller's claim
-   * exceeds the buyer's estimate by more than the configured tolerance, the buyer
-   * caps at tolerance * buyerEstimate. The cumulative is also capped at the
-   * overdraft limit (verifiedCost + maxPerRequestUsdc) and the reserve ceiling.
+   * New billing flows pass NormalizedUsage + BuyerRequestBillingContext so the
+   * buyer can evaluate the same unit model used by seller final billing. Older
+   * token-only flows still pass reported token counts or raw bytes and use
+   * legacy token pricing as before. The accepted cumulative amount remains
+   * capped by verifiedCost + maxPerRequestUsdc and the reserve ceiling.
    *
    * @param sellerPeerId Seller peer ID.
    * @param responseStats Byte counts from the last response and seller's claimed cost.
@@ -750,6 +809,7 @@ export class BuyerPaymentManager {
       reportedInputTokens?: bigint;
       reportedOutputTokens?: bigint;
       reportedCachedInputTokens?: bigint;
+      normalizedUsage?: NormalizedUsage;
       service?: string;
       requestId?: string;
     },
@@ -771,7 +831,34 @@ export class BuyerPaymentManager {
     let estimatedCachedInputTokens = 0n;
     let buyerEstimatedRequestCost: bigint;
 
-    if (hasReportedTokens) {
+    const requestBilling = responseStats.requestId != null
+      ? this.getRequestBilling(responseStats.requestId)
+      : undefined;
+
+    if (responseStats.normalizedUsage && requestBilling?.mode.kind === 'unit') {
+      // Unit path: evaluate canonical meters such as output_images using the
+      // request's cached model. Token services stay on computeCostUsdc below.
+      estimatedInputTokens = responseStats.reportedInputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.text_input_tokens ?? 0));
+      estimatedCachedInputTokens = responseStats.reportedCachedInputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.cached_text_input_tokens ?? 0));
+      estimatedOutputTokens = responseStats.reportedOutputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.output_text_tokens ?? 0));
+      buyerEstimatedRequestCost = validateUnitNormalizedCost(requestBilling.mode.model, responseStats.normalizedUsage);
+      this._accumulateVerifiedCost(sellerPeerId, {
+        cost: buyerEstimatedRequestCost,
+        inputTokens: Number(estimatedInputTokens),
+        outputTokens: Number(estimatedOutputTokens),
+      });
+      debugLog(
+        `[BuyerPayment] Billing-estimated cost=${buyerEstimatedRequestCost} service=${responseStats.service ?? 'unknown'}`,
+      );
+    } else if (responseStats.normalizedUsage && requestBilling?.mode.kind === 'free') {
+      estimatedInputTokens = responseStats.reportedInputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.text_input_tokens ?? 0));
+      estimatedCachedInputTokens = responseStats.reportedCachedInputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.cached_text_input_tokens ?? 0));
+      estimatedOutputTokens = responseStats.reportedOutputTokens ?? BigInt(Math.floor(responseStats.normalizedUsage.meters.output_text_tokens ?? 0));
+      buyerEstimatedRequestCost = 0n;
+      debugLog(
+        `[BuyerPayment] Free billing request service=${responseStats.service ?? 'unknown'}`,
+      );
+    } else if (hasReportedTokens) {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
       const cachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
@@ -922,10 +1009,11 @@ export class BuyerPaymentManager {
   // ── NeedAuth handler ───────────────────────────────────────────
 
   /**
-   * Handle seller-initiated NeedAuth messages sent after every served request.
-   * The seller includes the cost of the last request; the buyer validates it
-   * against its own token count and signs a new SpendingAuth for the required
-   * cumulative amount, capped at the reserve ceiling.
+   * Handle seller-initiated NeedAuth messages sent after served requests.
+   *
+   * For unit billing, the seller must include billingUsage evidence and the
+   * buyer recomputes cost from its saved request context before signing. For
+   * legacy token billing, the old lastRequestCost + token fields path remains.
    */
   async handleNeedAuth(
     sellerPeerId: string,
@@ -938,7 +1026,10 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
+    const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
+    const buyerService = requestBilling?.context.service
+      ?? (payload.requestId ? this._requestService.get(payload.requestId) : undefined);
+    const buyerBillingContext = requestBilling?.context;
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -950,16 +1041,54 @@ export class BuyerPaymentManager {
       );
       return;
     }
-    if (payload.requestId) this._requestService.delete(payload.requestId);
-
     let acceptedServiceCost = 0n;
     const reportedInputTokens = BigInt(payload.inputTokens ?? '0');
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
     const reportedOutputTokens = BigInt(payload.outputTokens ?? '0');
 
-    // Validate the seller's claimed cost if reported
-    if (payload.lastRequestCost) {
+    if (payload.billingUsage) {
+      // Unit billing path: validate seller-reported meters against the buyer's
+      // trusted provider/service/protocol and match attributes.
+      try {
+        const sellerCost = BigInt(payload.billingUsage.costUsdc);
+        if (!requestBilling || requestBilling.mode.kind !== 'unit') {
+          if (sellerCost > 0n) {
+            throw new Error(
+              "Positive billingUsage cost is unverifiable without a unit billing model",
+            );
+          }
+          acceptedServiceCost = sellerCost;
+          debugLog(
+            `[BuyerPayment] NeedAuth zero billingUsage accepted without unit model`,
+          );
+        } else {
+          acceptedServiceCost = validateBillingUsageReport(
+            requestBilling.mode.model,
+            requestBilling.context,
+            payload.billingUsage,
+            this._costTolerance,
+          );
+        }
+        this._accumulateVerifiedCost(sellerPeerId, {
+          cost: acceptedServiceCost,
+          inputTokens: Number(reportedInputTokens),
+          outputTokens: Number(reportedOutputTokens),
+        });
+        debugLog(
+          `[BuyerPayment] NeedAuth billingUsage: seller cost=${sellerCost} — validated`,
+        );
+      } catch (err) {
+        debugWarn(`[BuyerPayment] NeedAuth billingUsage rejected: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+    } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
+      if (sellerCost > 0n && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+        debugWarn(
+          `[BuyerPayment] NeedAuth rejected: positive image cost omitted verifiable billingUsage`,
+        );
+        return;
+      }
       const sellerIn = reportedInputTokens;
       const sellerOut = reportedOutputTokens;
       const sellerCached = reportedCachedInputTokens;
@@ -1091,6 +1220,9 @@ export class BuyerPaymentManager {
     // may defer the on-chain topUp until the contract's 85% gate is satisfied.
     if (needsTopUp || this._needsTopUp(sellerPeerId)) {
       await this._topUpAfterSpendAuthBestEffort(sellerPeerId, paymentMux, 'handleNeedAuth');
+    }
+    if (payload.requestId) {
+      this.clearRequestBilling(payload.requestId);
     }
   }
 
@@ -1242,6 +1374,39 @@ export class BuyerPaymentManager {
   /** Register which service the buyer requested for a given requestId. */
   trackRequestService(requestId: string, service: string): void {
     this._requestService.set(requestId, service);
+  }
+
+  trackRequestBilling(requestId: string, entry: BuyerRequestBillingEntry): void {
+    this._cleanupRequestBillingCache();
+    this._requestService.set(requestId, entry.context.service);
+    this._requestBillingEntries.set(requestId, {
+      ...entry,
+      createdAtMs: Date.now(),
+    });
+    this._trimRequestBillingCache();
+  }
+
+  getRequestBilling(requestId: string): BuyerRequestBillingEntry | undefined {
+    this._cleanupRequestBillingCache();
+    const entry = this._requestBillingEntries.get(requestId);
+    if (!entry) return undefined;
+    const { createdAtMs: _createdAtMs, ...publicEntry } = entry;
+    return publicEntry;
+  }
+
+  clearRequestBilling(requestId: string): void {
+    this._requestBillingEntries.delete(requestId);
+    this._requestService.delete(requestId);
+  }
+
+  trackRequestBillingContext(requestId: string, context: BuyerRequestBillingContext): void {
+    this.trackRequestBilling(requestId, {
+      context,
+      requestFacts: {},
+      mode: context.serviceApiProtocol === 'openai-images'
+        ? { kind: 'free' }
+        : { kind: 'unsupported', reason: 'missing-pricing' },
+    });
   }
 
   /** Get the live response token totals for a seller, or null if none recorded this session. */

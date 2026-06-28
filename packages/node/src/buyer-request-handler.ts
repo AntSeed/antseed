@@ -10,13 +10,18 @@ import type { PeerConnection } from "./p2p/connection-manager.js";
 import type { ProxyMux } from "./proxy/proxy-mux.js";
 import type { PaymentMux } from "./p2p/payment-mux.js";
 import { ConnectionState } from "./types/connection.js";
-import type { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import type { BuyerPaymentNegotiator, SelectedBillingRoute } from "./payments/buyer-payment-negotiator.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import type { VerificationMux } from "./verification/verification-mux.js";
 import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
 import { tryParseJsonObject } from "./utils/json-codec.js";
+import type { ServiceApiProtocol } from "./types/service-api.js";
+import {
+  detectRequestServiceApiProtocol,
+  selectTargetProtocolForRequest,
+} from "@antseed/api-adapter";
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -108,7 +113,7 @@ export class BuyerRequestHandler {
     // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
     const requestedService = extractServiceFromBody(req.body);
     if (negotiator && requestedService) {
-      negotiator.bpm.trackRequestService(req.requestId, requestedService);
+      negotiator.trackRequestBillingContext(req, requestedService, selectBillingRoute(peer, req, requestedService));
     }
 
     let startTime = Date.now();
@@ -365,6 +370,106 @@ function extractServiceFromBody(body: Uint8Array): string | undefined {
   const service = parsed?.service ?? parsed?.model;
   if (typeof service === 'string' && service.length > 0) return service;
   return undefined;
+}
+
+function selectBillingRoute(
+  peer: PeerInfo,
+  request: SerializedHttpRequest,
+  service: string,
+): SelectedBillingRoute | null {
+  const provider = selectProviderForService(peer, service, extractRequestedProvider(request));
+  if (!provider) return null;
+  const serviceApiProtocol = selectProtocolForService(peer, provider, service, request);
+  const unitModel = peer.providerServiceBillingModels?.[provider]?.services[service]?.[serviceApiProtocol];
+  const tokenPricing = selectTokenPricing(peer, provider, service);
+  return {
+    sellerPeerId: peer.peerId,
+    provider,
+    service,
+    serviceApiProtocol,
+    ...(unitModel ? { unitModel } : {}),
+    ...(tokenPricing ? { tokenPricing } : {}),
+  };
+}
+
+function selectProviderForService(
+  peer: PeerInfo,
+  service: string,
+  requestedProvider: string | null,
+): string | null {
+  if (requestedProvider) {
+    const provider = peer.providers.find(
+      (candidate) => candidate.toLowerCase() === requestedProvider,
+    );
+    if (provider && providerOffersService(peer, provider, service)) {
+      return provider;
+    }
+    return null;
+  }
+
+  const match = peer.providers.find((provider) =>
+    providerOffersService(peer, provider, service),
+  );
+  return match ?? peer.providers[0] ?? null;
+}
+
+function providerOffersService(peer: PeerInfo, provider: string, service: string): boolean {
+  return Boolean(
+    peer.providerPricing?.[provider]?.services?.[service]
+    || peer.providerServiceBillingModels?.[provider]?.services[service]
+    || peer.providerServiceApiProtocols?.[provider]?.services[service]
+    || peer.providerServiceCategories?.[provider]?.services[service],
+  );
+}
+
+function selectProtocolForService(
+  peer: PeerInfo,
+  provider: string,
+  service: string,
+  request: SerializedHttpRequest,
+): ServiceApiProtocol {
+  const protocols =
+    peer.providerServiceApiProtocols?.[provider]?.services[service];
+  const billingProtocols = Object.keys(
+    peer.providerServiceBillingModels?.[provider]?.services[service] ?? {},
+  ) as ServiceApiProtocol[];
+  const candidates = protocols ?? billingProtocols;
+  const requestProtocol = detectRequestServiceApiProtocol(request);
+  const selected = selectTargetProtocolForRequest(requestProtocol, candidates);
+  if (selected) return selected.targetProtocol;
+  if (protocols?.[0]) return protocols[0];
+  return billingProtocols[0] ?? "openai-chat-completions";
+}
+
+function selectTokenPricing(
+  peer: PeerInfo,
+  provider: string,
+  service: string,
+): SelectedBillingRoute["tokenPricing"] {
+  const providerPricing = peer.providerPricing?.[provider];
+  const pricing = providerPricing?.services?.[service] ?? providerPricing?.defaults;
+  if (pricing) return pricing;
+  return peerDefaultPricing(peer);
+}
+
+function peerDefaultPricing(peer: PeerInfo): SelectedBillingRoute["tokenPricing"] {
+  if (peer.defaultInputUsdPerMillion == null && peer.defaultOutputUsdPerMillion == null) {
+    return undefined;
+  }
+  return {
+    inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+    outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+    cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
+  };
+}
+
+function extractRequestedProvider(request: SerializedHttpRequest): string | null {
+  const providers = Object.entries(request.headers)
+    .filter(([header]) => header.toLowerCase() === "x-antseed-provider")
+    .map(([, value]) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+
+  return providers[0] ?? null;
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {

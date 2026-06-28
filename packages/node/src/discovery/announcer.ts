@@ -11,17 +11,19 @@ import {
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement } from "./peer-metadata.js";
-import { METADATA_VERSION } from "./peer-metadata.js";
+import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
   MAX_DOMAIN_VERIFICATION_CLAIMS,
   MAX_GITHUB_REPOSITORY_LENGTH,
   MAX_GITHUB_USERNAME_LENGTH,
   MAX_GITHUB_VERIFICATION_CLAIMS,
+  validateMetadata,
 } from "./metadata-validator.js";
 
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
+import type { ServiceBillingModelsV1 } from "../types/billing.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
@@ -49,6 +51,7 @@ export interface AnnouncerConfig {
     services: string[];
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
+    serviceBillingModels?: ServiceBillingModelsV1;
     maxConcurrency: number;
     /** Per-instance pricing. Takes precedence over the shared pricing Map. */
     pricing?: {
@@ -99,15 +102,17 @@ export class PeerAnnouncer {
   private retryAttempt = 0;
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
-  private _latestMetadata: PeerMetadata | null = null;
+  private _latestMetadataV10: PeerMetadata | null = null;
+  private _latestMetadataV11: PeerMetadata | null = null;
 
   constructor(config: AnnouncerConfig) {
     this.config = config;
   }
 
   async announce(): Promise<void> {
-    const metadata = await this._buildSignedMetadata(true);
-    this._latestMetadata = metadata;
+    const metadata = await this._buildSignedMetadataSnapshots(true);
+    this._latestMetadataV10 = metadata.v10;
+    this._latestMetadataV11 = metadata.v11 ?? null;
 
     const failures = await this._announceTopics();
     if (failures > 0) {
@@ -123,7 +128,9 @@ export class PeerAnnouncer {
    * Useful for high-frequency fields like current provider load.
    */
   async refreshMetadata(): Promise<void> {
-    this._latestMetadata = await this._buildSignedMetadata(false);
+    const metadata = await this._buildSignedMetadataSnapshots(false);
+    this._latestMetadataV10 = metadata.v10;
+    this._latestMetadataV11 = metadata.v11 ?? null;
   }
 
   startPeriodicAnnounce(): void {
@@ -186,8 +193,11 @@ export class PeerAnnouncer {
     this.loadMap.set(providerName, currentLoad);
   }
 
-  getLatestMetadata(): PeerMetadata | null {
-    return this._latestMetadata;
+  getLatestMetadata(version?: 10 | 11): PeerMetadata | null {
+    if (version === 11) {
+      return this._latestMetadataV11;
+    }
+    return this._latestMetadataV10;
   }
 
   /** Return the configured seller contract as lowercase 40-hex (no 0x). */
@@ -242,8 +252,11 @@ export class PeerAnnouncer {
     };
   }
 
-  private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
-    const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
+  private async _buildSignedMetadataSnapshots(includeOnChainReputation = true): Promise<{
+    v10: PeerMetadata;
+    v11?: PeerMetadata;
+  }> {
+    const providersWithBilling: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
         defaults: {
           inputUsdPerMillion: 0,
@@ -268,30 +281,23 @@ export class PeerAnnouncer {
       if (normalizedServiceApiProtocols) {
         providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
       }
+      const normalizedServiceBillingModels = this._normalizeServiceBillingModels(p.serviceBillingModels, p.services);
+      if (normalizedServiceBillingModels) {
+        providerAnnouncement.serviceBillingModels = normalizedServiceBillingModels;
+      }
       return providerAnnouncement;
     });
+    const providersV10: ProviderAnnouncement[] = providersWithBilling.map((provider) => {
+      const legacyProvider = { ...provider };
+      delete legacyProvider.serviceBillingModels;
+      return legacyProvider;
+    });
+    const hasServiceBillingModels = providersWithBilling.some((provider) => provider.serviceBillingModels !== undefined);
 
-    const metadata: PeerMetadata = {
-      peerId: this.config.identity.peerId,
-      version: METADATA_VERSION,
-      ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
-      ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
-      providers,
-      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
-      region: this.config.region,
-      timestamp: Date.now(),
-      signature: "",
-    };
-    if (this.config.offerings && this.config.offerings.length > 0) {
-      metadata.offerings = this.config.offerings;
-    }
-    if (this.config.stakeAmountUSDC != null) {
-      metadata.stakeAmountUSDC = this.config.stakeAmountUSDC;
-    }
+    const timestamp = Date.now();
+    let onChainChannelCount: number | undefined;
+    let onChainGhostCount: number | undefined;
     const verifications = this._normalizedVerifications();
-    if (verifications) {
-      metadata.verifications = verifications;
-    }
 
     if (this.config.paymentsEnabled) {
       if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
@@ -306,26 +312,58 @@ export class PeerAnnouncer {
           );
           const agentId = await this.config.stakingClient.getAgentId(sellerAddress);
           const stats = await this.config.channelsClient.getAgentStats(agentId);
-          metadata.onChainChannelCount = stats.channelCount;
-          metadata.onChainGhostCount = stats.ghostCount;
+          onChainChannelCount = stats.channelCount;
+          onChainGhostCount = stats.ghostCount;
         } catch {
           // Channels/staking contract lookup failed — skip on-chain stats for this cycle
         }
-      } else if (this._latestMetadata) {
-        metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
-        metadata.onChainGhostCount = this._latestMetadata.onChainGhostCount;
+      } else {
+        const previousMetadata = this._latestMetadataV10 ?? this._latestMetadataV11;
+        onChainChannelCount = previousMetadata?.onChainChannelCount;
+        onChainGhostCount = previousMetadata?.onChainGhostCount;
       }
     }
 
     const sellerContract = this._normalizedSellerContract();
-    if (sellerContract) {
-      metadata.sellerContract = sellerContract;
-    }
 
+    const buildMetadata = (version: 10 | 11, providers: ProviderAnnouncement[]): PeerMetadata => ({
+      peerId: this.config.identity.peerId,
+      version,
+      ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
+      ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
+      providers,
+      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
+      region: this.config.region,
+      timestamp,
+      ...(this.config.offerings && this.config.offerings.length > 0 ? { offerings: this.config.offerings } : {}),
+      ...(this.config.stakeAmountUSDC != null ? { stakeAmountUSDC: this.config.stakeAmountUSDC } : {}),
+      ...(verifications ? { verifications } : {}),
+      ...(onChainChannelCount !== undefined ? { onChainChannelCount } : {}),
+      ...(onChainGhostCount !== undefined ? { onChainGhostCount } : {}),
+      ...(sellerContract ? { sellerContract } : {}),
+      signature: "",
+    });
+
+    return {
+      v10: this._signAndValidateMetadata(buildMetadata(METADATA_VERSION, providersV10)),
+      ...(hasServiceBillingModels
+        ? { v11: this._signAndValidateMetadata(buildMetadata(SERVICE_BILLING_METADATA_VERSION, providersWithBilling)) }
+        : {}),
+    };
+  }
+
+  private _signAndValidateMetadata(metadata: PeerMetadata): PeerMetadata {
     const dataToSign = encodeMetadataForSigning(metadata);
     const signature = signData(this.config.identity.wallet, dataToSign);
-    metadata.signature = bytesToHex(signature);
-    return metadata;
+    const signedMetadata: PeerMetadata = {
+      ...metadata,
+      signature: bytesToHex(signature),
+    };
+    const errors = validateMetadata(signedMetadata);
+    if (errors.length > 0) {
+      throw new Error(`Invalid metadata snapshot: ${errors.map((error) => `${error.field}: ${error.message}`).join("; ")}`);
+    }
+    return signedMetadata;
   }
 
   /**
@@ -457,6 +495,32 @@ export class PeerAnnouncer {
         continue;
       }
       normalized[service] = deduped;
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private _normalizeServiceBillingModels(
+    serviceBillingModels: ServiceBillingModelsV1 | undefined,
+    supportedServices: string[],
+  ): ServiceBillingModelsV1 | undefined {
+    if (!serviceBillingModels) {
+      return undefined;
+    }
+
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
+    const normalized: ServiceBillingModelsV1 = {};
+    for (const [service, protocolModels] of Object.entries(serviceBillingModels)) {
+      if (!hasWildcardServices && !supportedServiceSet.has(service)) {
+        continue;
+      }
+      const entries = Object.entries(protocolModels)
+        .filter(([protocol, model]) => isKnownServiceApiProtocol(protocol) && model?.version === 1 && Array.isArray(model.components));
+      if (entries.length === 0) {
+        continue;
+      }
+      normalized[service] = Object.fromEntries(entries) as ServiceBillingModelsV1[string];
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;

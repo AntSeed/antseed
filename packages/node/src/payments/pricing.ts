@@ -1,6 +1,10 @@
 // ── Buyer-side cost estimation using tokenx ──────────────────────────
 
 import { estimateTokenCount } from 'tokenx';
+import {
+  isFreeBillingModel,
+  validateServiceBillingModelV1,
+} from '../billing/evaluator.js';
 
 /** Token pricing for a service (USDC per million tokens). */
 export interface ServicePricing {
@@ -9,6 +13,11 @@ export interface ServicePricing {
   /** Price per million cached input tokens. Defaults to inputUsdPerMillion (no discount) if not set. */
   cachedInputUsdPerMillion?: number;
 }
+
+export {
+  isFreeBillingModel,
+  validateServiceBillingModelV1,
+};
 
 const textDecoder = new TextDecoder();
 
