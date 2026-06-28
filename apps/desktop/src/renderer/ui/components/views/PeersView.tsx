@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useMemo, useCallback } from 'react';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useRetainedState } from '../../hooks/useRetainedState';
 import { formatShortId, formatInt, formatEndpoint } from '../../../core/format';
 import {
   buildPeerReputationScoreMap,
@@ -81,24 +82,35 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: 'endpoint', label: 'Endpoint', sortable: false },
 ];
 
+// Renderer-lifetime cache: table controls survive lazy page unmounts.
+const peersViewCache = {
+  sortKey: 'reputation',
+  sortDir: 'desc' as SortDirection,
+  filter: '',
+};
+
 export function PeersView({ active }: PeersViewProps) {
-  const { lastPeers, peersMeta, peersMessage, discoverRows } = useUiSnapshot();
+  const { lastPeers, peersMessage, discoverRows } = useUiSelector((state) => ({
+    lastPeers: state.lastPeers,
+    peersMessage: state.peersMessage,
+    discoverRows: state.discoverRows,
+  }), shallowEqual);
   const actions = useActions();
 
-  const [sortKey, setSortKey] = useState('reputation');
-  const [sortDir, setSortDir] = useState<SortDirection>('desc');
-  const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useRetainedState(peersViewCache, 'sortKey');
+  const [sortDir, setSortDir] = useRetainedState(peersViewCache, 'sortDir');
+  const [filter, setFilter] = useRetainedState(peersViewCache, 'filter');
 
   const handleSort = useCallback(
     (key: string) => {
       if (sortKey === key) {
-        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        setSortDir((dir) => dir === 'asc' ? 'desc' : 'asc');
       } else {
         setSortKey(key);
         setSortDir('asc');
       }
     },
-    [sortKey],
+    [setSortDir, setSortKey, sortKey],
   );
 
   const reputationScoresByPeerId = useMemo(

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
 import { createInitialUiState } from '../core/state.js';
@@ -169,6 +169,82 @@ test('opening a conversation tracks the loading gap before peer binding is resto
 
   assert.equal(uiState.chatOpeningConversationId, null);
   assert.equal(uiState.chatSelectedPeerId, 'peer-a');
+});
+
+test('deleting a conversation removes it from the list before IPC settles', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [
+    {
+      id: 'conv-a',
+      title: 'Conversation A',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-b',
+      title: 'Conversation B',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const deletion = createDeferred<{ ok: boolean }>();
+  const bridge: DesktopBridge = {
+    chatAiDeleteConversation: async () => deletion.promise,
+    chatAiListConversations: async () => ({ ok: true, data: [uiState.chatConversations[0]] }),
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const deletePromise = api.deleteConversation('conv-b');
+
+  assert.deepEqual(
+    uiState.chatConversations.map((conv) => (conv as Conversation).id),
+    ['conv-a'],
+  );
+
+  deletion.resolve({ ok: true });
+  await deletePromise;
+});
+
+test('aborting a chat clears sending state before IPC settles', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatSending = true;
+  uiState.chatSendingConversationId = 'conv-a';
+  uiState.chatSendingConversationIds = ['conv-a'];
+  uiState.chatInputDisabled = true;
+  uiState.chatSendDisabled = true;
+  uiState.chatAbortVisible = true;
+
+  const abort = createDeferred<void>();
+  const bridge: DesktopBridge = {
+    chatAiAbort: async () => abort.promise,
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const abortPromise = api.abortChat();
+
+  assert.equal(uiState.chatSending, false);
+  assert.equal(uiState.chatSendingConversationId, null);
+  assert.deepEqual(uiState.chatSendingConversationIds, []);
+  assert.equal(uiState.chatInputDisabled, false);
+  assert.equal(uiState.chatSendDisabled, false);
+  assert.equal(uiState.chatAbortVisible, false);
+
+  abort.resolve();
+  await abortPromise;
 });
 
 test('new chat created while previous response is pending sends to its own peer', async () => {

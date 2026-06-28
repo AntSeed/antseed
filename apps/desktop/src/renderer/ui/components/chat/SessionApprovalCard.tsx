@@ -1,5 +1,5 @@
 import { Alert, Button, Card } from '@antseed/ui';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useUiSelector } from '../../hooks/useUiSelector';
 import styles from './SessionApprovalCard.module.scss';
 
 type SessionApprovalCardProps = {
@@ -29,7 +29,7 @@ export function SessionApprovalCard({
   onRetry,
   onCancel,
 }: SessionApprovalCardProps) {
-  const { creditsAvailableUsdc } = useUiSnapshot();
+  const creditsAvailableUsdc = useUiSelector((state) => state.creditsAvailableUsdc);
   const balance = parseFloat(creditsAvailableUsdc);
   const required = parseFloat(amount || '0');
   const hasCredits = balance > 0 && balance >= required;

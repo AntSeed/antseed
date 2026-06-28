@@ -17,8 +17,9 @@ import {
   Shield01Icon,
   Tick02Icon
 } from '@hugeicons/core-free-icons';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useRetainedState } from '../../hooks/useRetainedState';
 import { ChatBubble } from '../chat/ChatBubble';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
@@ -37,13 +38,12 @@ import type { ChatPermissionMode, ChatWorkspaceGitStatus, RawChatAttachment } fr
 import { getPeerDisplayName } from '../../../core/peer-utils';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
+import styles from './ChatView.module.scss';
+import bubbleStyles from '../chat/ChatBubble.module.scss';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
 const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
 const LOW_REPUTATION_SCORE_THRESHOLD = 50;
-
-import styles from './ChatView.module.scss';
-import bubbleStyles from '../chat/ChatBubble.module.scss';
 
 const MAX_INPUT_HEIGHT = 220;
 const PREVIEW_MIN_WIDTH = 280;
@@ -202,45 +202,142 @@ type ChatViewProps = {
   onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
+type PendingDraft = {
+  id: string;
+  conversationId: string | null;
+  text: string;
+  attachments: RawChatAttachment[];
+};
+
+type ChatViewCache = {
+  inputValue: string;
+  attachedFiles: RawChatAttachment[];
+  attachmentError: string | null;
+  attachmentWarning: string | null;
+  voiceError: string | null;
+  voiceState: 'idle' | 'recording' | 'transcribing';
+  voiceElapsedMs: number;
+  isDragOver: boolean;
+  previewOpen: boolean;
+  previewFraction: number;
+  previewTargetUrl: string | null;
+  switchDialogOpen: boolean;
+  pendingSwitchValue: string | null;
+  messageSearchOpen: boolean;
+  messageSearchQuery: string;
+  selectedSearchIndex: number;
+  lowReputationDialogOpen: boolean;
+  pendingLowReputationSend: { text: string; attachments: RawChatAttachment[] } | null;
+  pendingQueue: PendingDraft[];
+  previewAttachment: ViewerAttachment | null;
+  permissionMenuOpen: boolean;
+  isNearBottom: boolean;
+  hasNewActivityWhileScrolledUp: boolean;
+  approvedLowReputationPeers: Set<string>;
+};
+
+// Renderer-lifetime cache: lazy navigation unmounts ChatView, but drafts and
+// transient composer state should survive until the app process exits.
+const chatViewCache: ChatViewCache = {
+  inputValue: '',
+  attachedFiles: [],
+  attachmentError: null,
+  attachmentWarning: null,
+  voiceError: null,
+  voiceState: 'idle',
+  voiceElapsedMs: 0,
+  isDragOver: false,
+  previewOpen: false,
+  previewFraction: DEFAULT_PREVIEW_FRACTION,
+  previewTargetUrl: null,
+  switchDialogOpen: false,
+  pendingSwitchValue: null,
+  messageSearchOpen: false,
+  messageSearchQuery: '',
+  selectedSearchIndex: 0,
+  lowReputationDialogOpen: false,
+  pendingLowReputationSend: null,
+  pendingQueue: [],
+  previewAttachment: null,
+  permissionMenuOpen: false,
+  isNearBottom: true,
+  hasNewActivityWhileScrolledUp: false,
+  approvedLowReputationPeers: new Set(),
+};
+
 export function ChatView({ active, onSelectView }: ChatViewProps) {
-  const snap = useUiSnapshot();
+  const snap = useUiSelector((state) => ({
+    browserPreviewRequestId: state.browserPreviewRequestId,
+    browserPreviewUrl: state.browserPreviewUrl,
+    chatAbortVisible: state.chatAbortVisible,
+    chatActiveConversation: state.chatActiveConversation,
+    chatConversations: state.chatConversations,
+    chatConversationsLoaded: state.chatConversationsLoaded,
+    chatDiscoverRowsLoaded: state.chatDiscoverRowsLoaded,
+    chatError: state.chatError,
+    chatInputDisabled: state.chatInputDisabled,
+    chatLifetimeSpentUsdc: state.chatLifetimeSpentUsdc,
+    chatLifetimeTotalTokens: state.chatLifetimeTotalTokens,
+    chatLowBalanceWarning: state.chatLowBalanceWarning,
+    chatMessages: state.chatMessages,
+    chatOpeningConversationId: state.chatOpeningConversationId,
+    chatPaymentApprovalAmount: state.chatPaymentApprovalAmount,
+    chatPaymentApprovalError: state.chatPaymentApprovalError,
+    chatPaymentApprovalPeerInfo: state.chatPaymentApprovalPeerInfo,
+    chatPaymentApprovalPeerName: state.chatPaymentApprovalPeerName,
+    chatPaymentApprovalVisible: state.chatPaymentApprovalVisible,
+    chatPermissionMode: state.chatPermissionMode,
+    chatRoutedPeer: state.chatRoutedPeer,
+    chatRoutedPeerId: state.chatRoutedPeerId,
+    chatSelectedPeerId: state.chatSelectedPeerId,
+    chatSelectedServiceValue: state.chatSelectedServiceValue,
+    chatSendDisabled: state.chatSendDisabled,
+    chatSending: state.chatSending,
+    chatSendingConversationId: state.chatSendingConversationId,
+    chatSendingConversationIds: state.chatSendingConversationIds,
+    chatServiceOptions: state.chatServiceOptions,
+    chatServiceSelectDisabled: state.chatServiceSelectDisabled,
+    chatSessionAccumulatedCostUsd: state.chatSessionAccumulatedCostUsd,
+    chatSessionReservedUsdc: state.chatSessionReservedUsdc,
+    chatSessionStarted: state.chatSessionStarted,
+    chatSessionTotalTokens: state.chatSessionTotalTokens,
+    chatStreamingMessage: state.chatStreamingMessage,
+    chatThinkingElapsedMs: state.chatThinkingElapsedMs,
+    chatThinkingPhase: state.chatThinkingPhase,
+    chatToolApprovalRequests: state.chatToolApprovalRequests,
+    chatWorkspaceDefaultPath: state.chatWorkspaceDefaultPath,
+    chatWorkspacePath: state.chatWorkspacePath,
+    creditsAvailableUsdc: state.creditsAvailableUsdc,
+    discoverRows: state.discoverRows,
+  }), shallowEqual);
   const actions = useActions();
-  const [inputValue, setInputValue] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<RawChatAttachment[]>([]);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle');
-  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
-  const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
-  const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
-  const [pendingSwitchValue, setPendingSwitchValue] = useState<string | null>(null);
-  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
-  const [messageSearchQuery, setMessageSearchQuery] = useState('');
-  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
-  const [lowReputationDialogOpen, setLowReputationDialogOpen] = useState(false);
-  const [pendingLowReputationSend, setPendingLowReputationSend] = useState<{
-    text: string;
-    attachments: RawChatAttachment[];
-  } | null>(null);
+  const [inputValue, setInputValue] = useRetainedState(chatViewCache, 'inputValue');
+  const [attachedFiles, setAttachedFiles] = useRetainedState(chatViewCache, 'attachedFiles');
+  const [attachmentError, setAttachmentError] = useRetainedState(chatViewCache, 'attachmentError');
+  const [attachmentWarning, setAttachmentWarning] = useRetainedState(chatViewCache, 'attachmentWarning');
+  const [voiceError, setVoiceError] = useRetainedState(chatViewCache, 'voiceError');
+  const [voiceState, setVoiceState] = useRetainedState(chatViewCache, 'voiceState');
+  const [voiceElapsedMs, setVoiceElapsedMs] = useRetainedState(chatViewCache, 'voiceElapsedMs');
+  const [isDragOver, setIsDragOver] = useRetainedState(chatViewCache, 'isDragOver');
+  const [previewOpen, setPreviewOpen] = useRetainedState(chatViewCache, 'previewOpen');
+  const [previewFraction, setPreviewFraction] = useRetainedState(chatViewCache, 'previewFraction');
+  const [previewTargetUrl, setPreviewTargetUrl] = useRetainedState(chatViewCache, 'previewTargetUrl');
+  const [switchDialogOpen, setSwitchDialogOpen] = useRetainedState(chatViewCache, 'switchDialogOpen');
+  const [pendingSwitchValue, setPendingSwitchValue] = useRetainedState(chatViewCache, 'pendingSwitchValue');
+  const [messageSearchOpen, setMessageSearchOpen] = useRetainedState(chatViewCache, 'messageSearchOpen');
+  const [messageSearchQuery, setMessageSearchQuery] = useRetainedState(chatViewCache, 'messageSearchQuery');
+  const [selectedSearchIndex, setSelectedSearchIndex] = useRetainedState(chatViewCache, 'selectedSearchIndex');
+  const [lowReputationDialogOpen, setLowReputationDialogOpen] = useRetainedState(chatViewCache, 'lowReputationDialogOpen');
+  const [pendingLowReputationSend, setPendingLowReputationSend] = useRetainedState(chatViewCache, 'pendingLowReputationSend');
   // While the LLM is streaming we still let the user type/paste.
   // Drafts the user confirms (Enter / Send) are parked in this queue as
   // cards above the composer and ship one-per-turn as soon as the current
   // stream ends (naturally or via Stop). See issue #59.
-  type PendingDraft = {
-    id: string;
-    conversationId: string | null;
-    text: string;
-    attachments: RawChatAttachment[];
-  };
-  const [pendingQueue, setPendingQueue] = useState<PendingDraft[]>([]);
-  const [previewAttachment, setPreviewAttachment] = useState<ViewerAttachment | null>(null);
-  const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
-  const [isNearBottom, setIsNearBottom] = useState(true);
-  const [hasNewActivityWhileScrolledUp, setHasNewActivityWhileScrolledUp] = useState(false);
+  const [pendingQueue, setPendingQueue] = useRetainedState(chatViewCache, 'pendingQueue');
+  const [previewAttachment, setPreviewAttachment] = useRetainedState(chatViewCache, 'previewAttachment');
+  const [permissionMenuOpen, setPermissionMenuOpen] = useRetainedState(chatViewCache, 'permissionMenuOpen');
+  const [isNearBottom, setIsNearBottom] = useRetainedState(chatViewCache, 'isNearBottom');
+  const [hasNewActivityWhileScrolledUp, setHasNewActivityWhileScrolledUp] = useRetainedState(chatViewCache, 'hasNewActivityWhileScrolledUp');
   const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
@@ -256,12 +353,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const approvedLowReputationPeersRef = useRef<Set<string>>(new Set());
+  const approvedLowReputationPeersRef = useRef<Set<string>>(chatViewCache.approvedLowReputationPeers);
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
   const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
-  const wasActiveRef = useRef<boolean>(active);
+  const wasActiveRef = useRef<boolean>(false);
   const isUserScrolledUp = useRef(false);
   const isDragging = useRef(false);
   const permissionMenuRef = useRef<HTMLDivElement>(null);
@@ -980,7 +1077,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, [voiceState]);
 
   useEffect(() => {
-    return () => { void cancelVoiceRecording(); };
+    return () => {
+      chatViewCache.voiceState = 'idle';
+      chatViewCache.voiceElapsedMs = 0;
+      void cancelVoiceRecording();
+    };
   }, []);
 
   const handleKeyDown = useCallback(

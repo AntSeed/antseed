@@ -21,7 +21,8 @@ import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
 import type { ViewName } from '../types';
-import { useUiSnapshot } from '../hooks/useUiSnapshot';
+import { preloadView } from './viewRegistry';
+import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { useActions } from '../hooks/useActions';
 import styles from './Sidebar.module.scss';
 
@@ -61,7 +62,7 @@ const RECENT_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RECENT_SESSION_CLOCK_MS = 60 * 1000;
 
 const SidebarWarning = memo(function SidebarWarning() {
-  const { connectWarning } = useUiSnapshot();
+  const connectWarning = useUiSelector((state) => state.connectWarning);
   if (!connectWarning) return null;
   return <p className={styles.sidebarWarning}>{connectWarning}</p>;
 });
@@ -600,7 +601,18 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     chatServiceOptions,
     chatSelectedServiceValue,
     chatSelectedPeerId,
-  } = useUiSnapshot();
+  } = useUiSelector((state) => ({
+    chatConversations: state.chatConversations,
+    chatActiveConversation: state.chatActiveConversation,
+    chatSendingConversationIds: state.chatSendingConversationIds,
+    chatToolApprovalRequests: state.chatToolApprovalRequests,
+    chatActiveChannels: state.chatActiveChannels,
+    chatActiveChannelCount: state.chatActiveChannels.size,
+    discoverRows: state.discoverRows,
+    chatServiceOptions: state.chatServiceOptions,
+    chatSelectedServiceValue: state.chatSelectedServiceValue,
+    chatSelectedPeerId: state.chatSelectedPeerId,
+  }), shallowEqual);
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
   const allConversations = conversations as ConvRecord[];
@@ -672,6 +684,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   }, [allConversations, recentNow]);
 
   const handleSelectConv = useCallback((id: string) => {
+    void preloadView('chat');
     void actions.openConversation(id);
     onSelectView('chat');
   }, [actions, onSelectView]);
@@ -714,6 +727,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   }, [actions]);
 
   const handleStartNewChatWithCurrentPeer = useCallback(() => {
+    void preloadView('chat');
     actions.startNewChat();
     if (newChatTarget) {
       actions.handleServiceChange(newChatTarget.serviceValue, newChatTarget.peerId);
@@ -768,10 +782,18 @@ type NavLayoutCache = {
 };
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
-  const { devMode } = useUiSnapshot();
+  const devMode = useUiSelector((state) => state.devMode);
   const navEntries = [...baseEntries, ...configEntries];
   const sidebarRef = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLUListElement | null>(null);
+  const handleSelectView = useCallback((view: ViewName) => {
+    void preloadView(view);
+    onSelectView(view);
+  }, [onSelectView]);
+
+  const handlePreloadView = useCallback((view: ViewName) => {
+    void preloadView(view);
+  }, []);
 
   // Per-button refs. We hand both the icon-wrapper span and the label
   // span their own refs so the scroll-driven interpolation can write
@@ -997,7 +1019,10 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => onSelectView(view)}
+                onPointerEnter={() => handlePreloadView(view)}
+                onFocus={() => handlePreloadView(view)}
+                onPointerDown={() => handlePreloadView(view)}
+                onClick={() => handleSelectView(view)}
                 title={label}
               >
                 <span
@@ -1039,7 +1064,10 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                     data-view={view}
                     role="tab"
                     aria-selected={isActive ? 'true' : 'false'}
-                    onClick={() => onSelectView(view)}
+                    onPointerEnter={() => handlePreloadView(view)}
+                    onFocus={() => handlePreloadView(view)}
+                    onPointerDown={() => handlePreloadView(view)}
+                    onClick={() => handleSelectView(view)}
                   >
                     <HugeiconsIcon icon={icon} size={16} strokeWidth={1.5} />
                     {label}
