@@ -1448,9 +1448,7 @@ export class BuyerPaymentManager {
     this.trackRequestBilling(requestId, {
       context,
       requestFacts: {},
-      mode: context.serviceApiProtocol === 'openai-images'
-        ? { kind: 'free' }
-        : { kind: 'unsupported', reason: 'missing-pricing' },
+      mode: { kind: 'unsupported', reason: 'missing-pricing' },
     });
   }
 

@@ -336,7 +336,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
         method: 'POST',
         path: '/v1/images/generations',
         headers: { 'content-type': 'application/json' },
-        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-image-1', prompt: 'cube', size: '1024x1024' })),
+        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-image-1', prompt: 'cube', size: '1024x1024', n: 2 })),
       }),
     });
 

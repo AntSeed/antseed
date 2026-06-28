@@ -26,6 +26,7 @@ const imageContext: BuyerRequestBillingContext = {
   serviceApiProtocol: "openai-images",
   attributes: { model: "gpt-image-2" },
   meterAttributes: { output_images: { size: "1024x1024", quality: "low" } },
+  meterLimits: { output_images: 1 },
 };
 
 describe("billing runtime", () => {
@@ -47,6 +48,15 @@ describe("billing runtime", () => {
 
     expect(explicitFreeImageResolution).toMatchObject({
       kind: "free",
+    });
+
+    const missingImageModelResolution = resolveBillingMode({
+      serviceApiProtocol: "openai-images",
+    });
+
+    expect(missingImageModelResolution).toMatchObject({
+      kind: "unsupported",
+      reason: "missing-pricing",
     });
 
     const tokenResolution = resolveBillingMode({
@@ -90,7 +100,7 @@ describe("billing runtime", () => {
     ).toThrow(/recomputed to zero/);
   });
 
-  it("computes final output image cost from response data length", () => {
+  it("caps final output image cost to the requested output image count", () => {
     const model: ServiceBillingModelV1 = {
       version: 1,
       components: [
@@ -121,6 +131,66 @@ describe("billing runtime", () => {
 
     expect(result.usage.meters.output_images).toBe(2);
     expect(result.costUsdc).toBe(80_000n);
+  });
+
+  it("caps over-delivered output images to the request limit", () => {
+    const model: ServiceBillingModelV1 = {
+      version: 1,
+      components: [
+        {
+          meter: "output_images",
+          unit: "per_unit",
+          priceUsd: 0.04,
+          match: { size: "1024x1024" },
+        },
+      ],
+    };
+
+    const result = computeFinalCost(
+      model,
+      imageContext,
+      {
+        requestId: "req-1",
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode(JSON.stringify({ data: [{}, {}] })),
+      },
+      {
+        requestedOutputImages: 1,
+        attributes: imageContext.attributes,
+        meterAttributes: imageContext.meterAttributes,
+      },
+    );
+
+    expect(result.usage.meters.output_images).toBe(1);
+    expect(result.costUsdc).toBe(40_000n);
+  });
+
+  it("rejects seller billingUsage above the requested output image count", () => {
+    const model: ServiceBillingModelV1 = {
+      version: 1,
+      components: [
+        {
+          meter: "output_images",
+          unit: "per_unit",
+          priceUsd: 0.04,
+          match: { size: "1024x1024" },
+        },
+      ],
+    };
+
+    expect(() =>
+      validateBillingUsageReport(
+        model,
+        imageContext,
+        {
+          version: 1,
+          meters: { output_images: "2" },
+          costUsdc: "80000",
+        },
+        1.4,
+      ),
+    ).toThrow(/request allowed 1/);
   });
 
   it("rejects non-canonical and unsafe billing meter strings", () => {

@@ -27,8 +27,5 @@ export function resolveBillingMode(args: {
   if (args.unitModel && isFreeBillingModel(args.unitModel)) {
     return { kind: "free" };
   }
-  if (args.serviceApiProtocol === "openai-images") {
-    return { kind: "free" };
-  }
   return { kind: "unsupported", reason: "missing-pricing" };
 }

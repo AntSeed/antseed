@@ -113,7 +113,21 @@ export class BuyerRequestHandler {
     // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
     const requestedService = extractServiceFromBody(req.body);
     if (negotiator && requestedService) {
-      negotiator.trackRequestBillingContext(req, requestedService, selectBillingRoute(peer, req, requestedService));
+      const billingRoute = selectBillingRoute(peer, req, requestedService);
+      const requestProtocol = detectRequestServiceApiProtocol(req);
+      if (
+        requestProtocol === "openai-images"
+        && (
+          !billingRoute
+          || billingRoute.serviceApiProtocol !== "openai-images"
+          || (!billingRoute.unitModel && !isZeroTokenPricing(billingRoute.tokenPricing))
+        )
+      ) {
+        throw new Error(
+          `Cannot send paid openai-images request for service "${requestedService}" without service billing metadata`,
+        );
+      }
+      negotiator.trackRequestBillingContext(req, requestedService, billingRoute);
     }
 
     let startTime = Date.now();
@@ -461,6 +475,15 @@ function peerDefaultPricing(peer: PeerInfo): SelectedBillingRoute["tokenPricing"
     outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
     cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
   };
+}
+
+function isZeroTokenPricing(pricing: SelectedBillingRoute["tokenPricing"]): boolean {
+  return Boolean(
+    pricing
+    && pricing.inputUsdPerMillion === 0
+    && pricing.outputUsdPerMillion === 0
+    && (pricing.cachedInputUsdPerMillion == null || pricing.cachedInputUsdPerMillion === 0),
+  );
 }
 
 function extractRequestedProvider(request: SerializedHttpRequest): string | null {

@@ -69,6 +69,7 @@ export interface BuyerRequestBillingContext {
   serviceApiProtocol: ServiceApiProtocol;
   attributes?: Partial<Record<BillingMatchKeyV1, string>>;
   meterAttributes?: Partial<Record<BillingMeterV1, Partial<Record<BillingMatchKeyV1, string>>>>;
+  meterLimits?: Partial<Record<BillingMeterV1, number>>;
 }
 
 export const GENERATED_IMAGE_OUTPUT_BILLING_METER_V1 = "output_images" satisfies ImageBillingMeterV1;

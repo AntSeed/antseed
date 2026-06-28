@@ -68,6 +68,9 @@ export function captureBillingContext(args: {
       ...(requestFacts.meterAttributes
         ? { meterAttributes: requestFacts.meterAttributes }
         : {}),
+      ...(requestFacts.requestedOutputImages !== undefined
+        ? { meterLimits: { output_images: requestFacts.requestedOutputImages } }
+        : {}),
     },
     requestUsage,
     requestFacts,
@@ -86,8 +89,12 @@ export function computeFinalCost(
   const responseFacts = parsed
     ? extractProviderUsageFacts(parsed)
     : extractStreamingProviderUsageFacts(response.body);
+  const billableOutputImages = capOutputImagesToRequest(
+    responseFacts.outputImages,
+    requestFacts?.requestedOutputImages,
+  );
   const usage = usageWithTrustedContext(
-    factsToImageUsage({ outputImages: responseFacts.outputImages, requestFacts }),
+    factsToImageUsage({ outputImages: billableOutputImages, requestFacts }),
     context,
   );
   const evaluation = evaluateBillingModel(model, usage);
@@ -112,6 +119,7 @@ export function validateBillingUsageReport(
 
   const sellerCost = BigInt(report.costUsdc);
   const usage = usageFromBillingReport(report, context);
+  validateUsageWithinRequestLimits(usage, context);
   const buyerEstimate = evaluateBillingModel(model, usage).costUsdc;
   if (sellerCost > 0n && buyerEstimate <= 0n) {
     throw new Error("Positive billingUsage cost recomputed to zero");
@@ -152,6 +160,33 @@ function factsToImageUsage(args: {
     ...(args.requestFacts?.attributes ? { attributes: args.requestFacts.attributes } : {}),
     ...(args.requestFacts?.meterAttributes ? { meterAttributes: args.requestFacts.meterAttributes } : {}),
   };
+}
+
+function capOutputImagesToRequest(
+  outputImages: number | undefined,
+  requestedOutputImages: number | undefined,
+): number | undefined {
+  if (outputImages === undefined || requestedOutputImages === undefined) {
+    return outputImages;
+  }
+  return Math.min(outputImages, requestedOutputImages);
+}
+
+function validateUsageWithinRequestLimits(
+  usage: NormalizedUsage,
+  context: BuyerRequestBillingContext,
+): void {
+  const outputImageLimit = context.meterLimits?.output_images;
+  const outputImages = usage.meters.output_images;
+  if (
+    outputImageLimit !== undefined
+    && outputImages !== undefined
+    && outputImages > outputImageLimit
+  ) {
+    throw new Error(
+      `Seller reported output_images=${outputImages} but request allowed ${outputImageLimit}`,
+    );
+  }
 }
 
 function extractStreamingProviderUsageFacts(body: Uint8Array): ReturnType<typeof extractProviderUsageFacts> {
