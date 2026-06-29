@@ -1,15 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types.js';
-import {
-  createOpenAIChatToAnthropicStreamingAdapter,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-} from '../src/anthropic.js';
-import {
-  createOpenAIChatToResponsesStreamingAdapter,
-  transformOpenAIChatResponseToOpenAIResponses,
-  transformOpenAIResponsesRequestToOpenAIChat,
-} from '../src/openai-responses.js';
+import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol } from '../src/types.js';
+import { transformRequest } from '../src/request-transform.js';
+import { transformResponse } from '../src/response-transform.js';
+import { createStreamingAdapter } from '../src/stream-transform.js';
 import {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
@@ -91,6 +84,49 @@ function makeOpenAIResponse(overrides?: Partial<SerializedHttpResponse>): Serial
   };
 }
 
+function makeAnthropicResponse(overrides?: Partial<SerializedHttpResponse>): SerializedHttpResponse {
+  return {
+    requestId: 'req-anthropic-1',
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-sonnet',
+      content: [
+        { type: 'text', text: 'Working on it' },
+        { type: 'tool_use', id: 'toolu_1', name: 'write', input: { path: 'hello.txt' } },
+      ],
+      stop_reason: 'tool_use',
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    })),
+    ...overrides,
+  };
+}
+
+function adaptResponseForTest(
+  from: ServiceApiProtocol,
+  to: ServiceApiProtocol,
+  response: SerializedHttpResponse,
+  options: { fallbackModel?: string | null; streamRequested?: boolean } = {},
+): SerializedHttpResponse {
+  const transformed = transformResponse(response, { from, to, ...options });
+  expect(transformed).not.toBeNull();
+  return transformed!;
+}
+
+function createStreamAdapterForTest(
+  from: ServiceApiProtocol,
+  to: ServiceApiProtocol,
+  fallbackModel: string | null,
+) {
+  const adapter = createStreamingAdapter({ from, to, fallbackModel });
+  expect(adapter).not.toBeNull();
+  return adapter!;
+}
+
 function parseSseEvents(sseText: string): Array<{ event: string | null; data: string }> {
   return sseText
     .trim()
@@ -129,6 +165,16 @@ describe('selectTargetProtocolForRequest', () => {
     const selected = selectTargetProtocolForRequest('anthropic-messages', ['openai-chat-completions']);
     expect(selected).toEqual({ targetProtocol: 'openai-chat-completions', requiresTransform: true });
   });
+
+  it('selects transform to openai responses when chat is unavailable', () => {
+    const selected = selectTargetProtocolForRequest('anthropic-messages', ['openai-responses']);
+    expect(selected).toEqual({ targetProtocol: 'openai-responses', requiresTransform: true });
+  });
+
+  it('selects transform to anthropic messages for openai chat requests when needed', () => {
+    const selected = selectTargetProtocolForRequest('openai-chat-completions', ['anthropic-messages']);
+    expect(selected).toEqual({ targetProtocol: 'anthropic-messages', requiresTransform: true });
+  });
 });
 
 describe('inferProviderDefaultServiceApiProtocols', () => {
@@ -141,9 +187,18 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
   });
 });
 
-describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
+describe('transformRequest anthropic to chat', () => {
+  it('returns the original request for same-protocol transforms', () => {
+    const request = makeRequest();
+    const result = transformRequest(request, { from: 'anthropic-messages', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+    expect(result!.request).toBe(request);
+    expect(result!.streamRequested).toBe(true);
+    expect(result!.requestedModel).toBe('claude-sonnet');
+  });
+
   it('rewrites request path/body and strips anthropic-only headers', () => {
-    const transformed = transformAnthropicMessagesRequestToOpenAIChat(makeRequest());
+    const transformed = transformRequest(makeRequest(), { from: 'anthropic-messages', to: 'openai-chat-completions' });
     expect(transformed).not.toBeNull();
     expect(transformed!.request.path).toBe('/v1/chat/completions');
     expect(transformed!.streamRequested).toBe(true);
@@ -162,11 +217,145 @@ describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
       },
     });
   });
+
+  it('preserves mixed assistant text and tool calls in one chat message', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 128,
+        messages: [{
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'I will search.' },
+            { type: 'tool_use', id: 'toolu_1', name: 'search', input: { q: 'antseed' } },
+          ],
+        }],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: 'I will search.',
+      tool_calls: [{
+        id: 'toolu_1',
+        type: 'function',
+        function: { name: 'search', arguments: '{"q":"antseed"}' },
+      }],
+    }]);
+  });
 });
 
-describe('transformOpenAIChatResponseToAnthropicMessage', () => {
+describe('transformRequest anthropic to responses', () => {
+  it('rewrites anthropic messages to responses input and strips anthropic-only headers', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        stream: true,
+        system: 'be helpful',
+        stop_sequences: ['END'],
+        metadata: { trace: 'abc' },
+        user: 'user-123',
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+        tools: [
+          {
+            name: 'write',
+            description: 'Write a file',
+            input_schema: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+        tool_choice: { type: 'tool', name: 'write' },
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+    expect(transformed).not.toBeNull();
+    expect(transformed!.request.path).toBe('/v1/responses');
+    expect(transformed!.streamRequested).toBe(true);
+    expect(transformed!.requestedModel).toBe('claude-sonnet');
+    expect(transformed!.request.headers['anthropic-version']).toBeUndefined();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.model).toBe('claude-sonnet');
+    expect(body.instructions).toBe('be helpful');
+    expect(body.stream).toBe(true);
+    expect(body.max_output_tokens).toBe(256);
+    expect(body.stop).toEqual(['END']);
+    expect(body.metadata).toEqual({ trace: 'abc' });
+    expect(body.user).toBe('user-123');
+    expect(body.tool_choice).toEqual({ type: 'function', name: 'write' });
+    expect(body.tools).toEqual([{
+      type: 'function',
+      name: 'write',
+      description: 'Write a file',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+        },
+        required: ['path'],
+      },
+    }]);
+
+    const input = body.input as Array<Record<string, unknown>>;
+    expect(input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+
+  it('preserves tool calls and tool results through responses input', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 128,
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'I will search.' },
+              { type: 'tool_use', id: 'toolu_1', name: 'search', input: { q: 'antseed' } },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'toolu_1', content: 'found' },
+            ],
+          },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+
+    expect(body.input).toEqual([
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'I will search.' }] },
+      {
+        type: 'function_call',
+        id: 'fc_toolu_1',
+        call_id: 'fc_toolu_1',
+        name: 'search',
+        arguments: '{"q":"antseed"}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'fc_toolu_1',
+        output: 'found',
+      },
+    ]);
+  });
+});
+
+describe('transformResponse chat to anthropic', () => {
   it('maps non-stream openai chat response to anthropic message payload', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: false,
       fallbackModel: 'fallback-model',
     });
@@ -182,7 +371,7 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 
   it('maps to anthropic SSE when stream is requested', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: true,
       fallbackModel: 'fallback-model',
     });
@@ -194,7 +383,7 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 
   it('emits input_json_delta for tool_use blocks in SSE stream', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: true,
       fallbackModel: 'fallback-model',
     });
@@ -232,9 +421,86 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 });
 
-describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
+describe('transformResponse', () => {
+  it('returns the original response for same-protocol transforms', () => {
+    const response = makeOpenAIResponse();
+    const transformed = transformResponse(response, {
+      from: 'openai-chat-completions',
+      to: 'openai-chat-completions',
+    });
+
+    expect(transformed).toBe(response);
+  });
+
+  it('converts through the canonical response format', () => {
+    const transformed = transformResponse(makeOpenAIResponse(), {
+      from: 'openai-chat-completions',
+      to: 'anthropic-messages',
+      streamRequested: false,
+      fallbackModel: 'claude-sonnet',
+    });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(transformed!.body)) as Record<string, unknown>;
+    expect(body.type).toBe('message');
+    expect(body.stop_reason).toBe('tool_use');
+    expect(body.content).toEqual([
+      { type: 'text', text: 'Working on it' },
+      { type: 'tool_use', id: 'call_123', name: 'write', input: { path: 'hello.txt' } },
+    ]);
+  });
+
+  it('can render a non-stream upstream response as target SSE', () => {
+    const transformed = transformResponse(makeAnthropicResponse(), {
+      from: 'anthropic-messages',
+      to: 'openai-chat-completions',
+      streamRequested: true,
+      fallbackModel: 'gpt-4.1',
+    });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.headers['content-type']).toBe('text/event-stream');
+    const sseText = new TextDecoder().decode(transformed!.body);
+    expect(sseText).toContain('chat.completion.chunk');
+    expect(sseText).toContain('"content":"Working on it"');
+    expect(sseText).toContain('"finish_reason":"tool_calls"');
+    expect(sseText).toContain('data: [DONE]');
+  });
+
+  it('normalizes errors to the target response protocol', () => {
+    const transformed = transformResponse({
+      requestId: 'req-error',
+      statusCode: 429,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
+      })),
+    }, {
+      from: 'openai-responses',
+      to: 'anthropic-messages',
+      streamRequested: false,
+    });
+
+    expect(transformed).not.toBeNull();
+    const body = JSON.parse(new TextDecoder().decode(transformed!.body)) as Record<string, unknown>;
+    expect(body).toEqual({
+      type: 'error',
+      error: { type: 'api_error', message: 'Rate limit exceeded' },
+    });
+  });
+
+  it('returns null for unsupported response protocols', () => {
+    expect(transformResponse(makeOpenAIResponse(), {
+      from: 'openai-completions',
+      to: 'anthropic-messages',
+    })).toBeNull();
+  });
+});
+
+describe('createStreamingAdapter chat to anthropic', () => {
   it('converts openai chat deltas into anthropic SSE frames incrementally', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const start = adapter.adaptStart(makeOpenAIResponse({
       headers: { 'content-type': 'text/event-stream' },
       body: new Uint8Array(0),
@@ -259,7 +525,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('converts streamed tool call deltas into anthropic tool_use events', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool',
       data: new TextEncoder().encode(
@@ -281,7 +547,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('uses block index 0 for tool-only anthropic streams', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool-only-index',
       data: new TextEncoder().encode(
@@ -308,7 +574,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('closes the text block before opening a tool block', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-mixed',
       data: new TextEncoder().encode(
@@ -331,7 +597,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('closes the previous tool block before opening the next tool block', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-multi-tool',
       data: new TextEncoder().encode(
@@ -403,15 +669,15 @@ describe('selectTargetProtocolForRequest – responses', () => {
     expect(selected).toEqual({ targetProtocol: 'openai-chat-completions', requiresTransform: true });
   });
 
-  it('returns null when no compatible protocol exists', () => {
+  it('falls back to anthropic messages when responses and chat are unsupported', () => {
     const selected = selectTargetProtocolForRequest('openai-responses', ['anthropic-messages']);
-    expect(selected).toBeNull();
+    expect(selected).toEqual({ targetProtocol: 'anthropic-messages', requiresTransform: true });
   });
 });
 
-describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
+describe('transformRequest responses to chat', () => {
   it('converts string input to chat completions request', () => {
-    const result = transformOpenAIResponsesRequestToOpenAIChat(makeResponsesRequest());
+    const result = transformRequest(makeResponsesRequest(), { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result).not.toBeNull();
     expect(result!.request.path).toBe('/v1/chat/completions');
     expect(result!.requestedModel).toBe('gpt-4.1');
@@ -439,7 +705,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result).not.toBeNull();
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
@@ -459,7 +725,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[0]).toEqual({ role: 'user', content: 'Hello from input_text' });
@@ -473,12 +739,30 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         stream: true,
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result!.streamRequested).toBe(true);
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.stream).toBe(true);
     expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('preserves shared request fields when converting responses to chat', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'test',
+        stop: ['END'],
+        metadata: { trace: 'abc' },
+        user: 'user-123',
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.stop).toEqual(['END']);
+    expect(body.metadata).toEqual({ trace: 'abc' });
+    expect(body.user).toBe('user-123');
   });
 
   it('converts Responses API flat tools to Chat Completions nested format', () => {
@@ -491,7 +775,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tool_choice: 'auto',
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tools).toEqual([{
       type: 'function',
@@ -508,7 +792,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tools: [{ type: 'web_search' }],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tools).toBeUndefined();
   });
@@ -522,7 +806,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tool_choice: { type: 'function', name: 'search' },
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'search' } });
   });
@@ -547,7 +831,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     const messages = body.messages as Array<Record<string, unknown>>;
 
@@ -570,13 +854,62 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     });
   });
 
-  it('returns null for non-responses path', () => {
-    const request = makeResponsesRequest({ path: '/v1/chat/completions' });
-    expect(transformOpenAIResponsesRequestToOpenAIChat(request)).toBeNull();
+  it('returns null for unsupported request protocols', () => {
+    const request = makeResponsesRequest();
+    expect(transformRequest(request, { from: 'openai-completions', to: 'openai-chat-completions' })).toBeNull();
   });
 });
 
-describe('transformOpenAIChatResponseToOpenAIResponses', () => {
+describe('transformRequest responses to anthropic', () => {
+  it('converts responses input, tools, and shared fields to anthropic messages', () => {
+    const result = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+          {
+            type: 'function_call',
+            call_id: 'call_search_1',
+            name: 'search',
+            arguments: '{"q":"antseed"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_search_1',
+            output: 'done',
+          },
+        ],
+        instructions: 'be helpful',
+        max_output_tokens: 64,
+        stop: ['END'],
+        tools: [{ type: 'function', name: 'search', parameters: { type: 'object' } }],
+        tool_choice: { type: 'function', name: 'search' },
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+    expect(result!.request.path).toBe('/v1/messages');
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.system).toBe('be helpful');
+    expect(body.max_tokens).toBe(64);
+    expect(body.stop_sequences).toEqual(['END']);
+    expect(body.tools).toEqual([{ name: 'search', input_schema: { type: 'object' } }]);
+    expect(body.tool_choice).toEqual({ type: 'tool', name: 'search' });
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_search_1', name: 'search', input: { q: 'antseed' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_search_1', content: 'done' }],
+      },
+    ]);
+  });
+});
+
+describe('transformResponse chat to responses', () => {
   it('maps text response to responses format', () => {
     const chatResponse = makeOpenAIResponse({
       body: new TextEncoder().encode(JSON.stringify({
@@ -591,7 +924,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
       })),
     });
 
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, { fallbackModel: 'fallback' });
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'fallback' });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
 
     expect(body.id).toBe('chatcmpl-abc');
@@ -620,7 +953,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 
   it('maps tool calls to function_call items', () => {
-    const result = transformOpenAIChatResponseToOpenAIResponses(makeOpenAIResponse(), {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
       fallbackModel: 'fallback',
     });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -647,7 +980,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         usage: { prompt_tokens: 1, completion_tokens: 1 },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, {
       fallbackModel: 'my-model',
     });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -667,7 +1000,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         usage: { prompt_tokens: 5, completion_tokens: 3 },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, {
       fallbackModel: 'fallback',
       streamRequested: true,
     });
@@ -727,7 +1060,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 
   it('emits correlated function call SSE events', () => {
-    const result = transformOpenAIChatResponseToOpenAIResponses(makeOpenAIResponse(), {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
       fallbackModel: 'fallback',
       streamRequested: true,
     });
@@ -778,7 +1111,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(errorResponse, {});
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', errorResponse, {});
     expect(result.statusCode).toBe(429);
     expect(result.headers['content-type']).toBe('application/json');
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -797,7 +1130,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(errorResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', errorResponse, {
       streamRequested: true,
     });
     expect(result.statusCode).toBe(429);
@@ -810,9 +1143,138 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 });
 
-describe('createOpenAIChatToResponsesStreamingAdapter', () => {
+describe('transformRequest chat to responses', () => {
+  it('preserves shared request fields when converting chat to responses', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-to-resp',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+        stop: ['END'],
+        metadata: { trace: 'abc' },
+        user: 'user-123',
+      })),
+    };
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'openai-responses' });
+    expect(result).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.max_output_tokens).toBe(64);
+    expect(body.stop).toEqual(['END']);
+    expect(body.metadata).toEqual({ trace: 'abc' });
+    expect(body.user).toBe('user-123');
+    expect(body.input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    ]);
+  });
+});
+
+describe('transformRequest chat to anthropic', () => {
+  it('converts chat messages and tool calls to anthropic messages', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-to-anthropic',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        stream: true,
+        messages: [
+          { role: 'system', content: 'be helpful' },
+          { role: 'user', content: 'hello' },
+          {
+            role: 'assistant',
+            content: 'I will search',
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'search', arguments: '{"q":"antseed"}' },
+            }],
+          },
+          { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+        ],
+        max_tokens: 64,
+      })),
+    };
+
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+    expect(result!.request.path).toBe('/v1/messages');
+    expect(result!.streamRequested).toBe(true);
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.system).toBe('be helpful');
+    expect(body.max_tokens).toBe(64);
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'I will search' },
+          { type: 'tool_use', id: 'call_1', name: 'search', input: { q: 'antseed' } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'done' }] },
+    ]);
+  });
+});
+
+describe('transformResponse responses to anthropic', () => {
+  it('maps openai responses payloads to anthropic message payloads', () => {
+    const responsesResponse = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
+      fallbackModel: 'fallback',
+    });
+    const result = adaptResponseForTest('openai-responses', 'anthropic-messages', responsesResponse, {
+      streamRequested: false,
+      fallbackModel: 'claude-sonnet',
+    });
+    expect(result.headers['content-type']).toBe('application/json');
+
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.type).toBe('message');
+    expect(body.role).toBe('assistant');
+    expect(body.model).toBe('gpt-4.1');
+    expect(body.stop_reason).toBe('tool_use');
+
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content).toEqual([
+      { type: 'text', text: 'Working on it' },
+      { type: 'tool_use', id: 'call_123', name: 'write', input: { path: 'hello.txt' } },
+    ]);
+  });
+
+  it('maps openai responses errors to anthropic errors', () => {
+    const result = adaptResponseForTest('openai-responses', 'anthropic-messages', {
+      requestId: 'req-error',
+      statusCode: 429,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
+      })),
+    }, {
+      streamRequested: false,
+      fallbackModel: 'claude-sonnet',
+    });
+
+    expect(result.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body).toEqual({
+      type: 'error',
+      error: {
+        type: 'api_error',
+        message: 'Rate limit exceeded',
+      },
+    });
+  });
+});
+
+describe('createStreamingAdapter chat to responses', () => {
   it('converts openai chat deltas into responses SSE frames incrementally', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const start = adapter.adaptStart(makeOpenAIResponse({
       headers: { 'content-type': 'text/event-stream' },
       body: new Uint8Array(0),
@@ -839,7 +1301,7 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
   });
 
   it('converts streamed tool call deltas into responses function_call events', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool',
       data: new TextEncoder().encode(
@@ -860,7 +1322,7 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool-only',
       data: new TextEncoder().encode(
@@ -910,5 +1372,108 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
 
     expect(events.some((event) => event.event === 'response.output_text.delta')).toBe(false);
     expect(events.some((event) => event.event === 'response.output_text.done')).toBe(false);
+  });
+});
+
+describe('createStreamingAdapter responses to anthropic', () => {
+  it('converts responses SSE frames into anthropic SSE frames incrementally', () => {
+    const adapter = createStreamAdapterForTest('openai-responses', 'anthropic-messages', '');
+    const start = adapter.adaptStart({
+      requestId: 'req-resp-anthropic',
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    });
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-resp-anthropic',
+      data: new TextEncoder().encode(
+        'event: response.created\n'
+        + 'data: {"type":"response.created","response":{"id":"resp_1","object":"response","model":"gpt-4.1","status":"in_progress","output":[],"output_text":"","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+        + 'event: response.output_item.added\n'
+        + 'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress","content":[{"type":"output_text","text":"","annotations":[]}]}}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"Hello","logprobs":[]}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":" world","logprobs":[]}\n\n'
+        + 'event: response.completed\n'
+        + 'data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-4.1","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello world","annotations":[]}]}],"output_text":"Hello world","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: message_start');
+    expect(sseText).toContain('event: content_block_start');
+    expect(sseText).toContain('"text":"Hello"');
+    expect(sseText).toContain('"text":" world"');
+    expect(sseText).toContain('event: message_delta');
+    expect(sseText).toContain('"stop_reason":"end_turn"');
+    expect(sseText).toContain('event: message_stop');
+  });
+
+  it('uses contiguous anthropic block indices for mixed text and tool streams', () => {
+    const adapter = createStreamAdapterForTest('openai-responses', 'anthropic-messages', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-resp-anthropic-tool',
+      data: new TextEncoder().encode(
+        'event: response.created\n'
+        + 'data: {"type":"response.created","response":{"id":"resp_tool","object":"response","model":"gpt-4.1","status":"in_progress","output":[],"output_text":"","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+        + 'event: response.output_item.added\n'
+        + 'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress","content":[{"type":"output_text","text":"","annotations":[]}]}}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"Searching...","logprobs":[]}\n\n'
+        + 'event: response.output_item.added\n'
+        + 'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"fc_1","name":"search","arguments":"","status":"in_progress"}}\n\n'
+        + 'event: response.function_call_arguments.delta\n'
+        + 'data: {"type":"response.function_call_arguments.delta","output_index":1,"item_id":"fc_1","call_id":"fc_1","delta":"{\\"q\\":\\"antseed\\"}"}\n\n'
+        + 'event: response.completed\n'
+        + 'data: {"type":"response.completed","response":{"id":"resp_tool","object":"response","model":"gpt-4.1","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Searching...","annotations":[]}]},{"type":"function_call","id":"fc_1","call_id":"fc_1","name":"search","arguments":"{\\"q\\":\\"antseed\\"}","status":"completed"}],"output_text":"Searching...","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const toolStart = events.find(
+      (event) => event.event === 'content_block_start' && event.data.includes('"type":"tool_use"'),
+    );
+    const toolDelta = events.find(
+      (event) => event.event === 'content_block_delta' && event.data.includes('"input_json_delta"'),
+    );
+    const messageDelta = events.find((event) => event.event === 'message_delta');
+
+    expect(toolStart?.data).toContain('"index":1');
+    expect(toolDelta?.data).toContain('"index":1');
+    expect(toolDelta?.data).toContain('\\"q\\"');
+    expect(messageDelta?.data).toContain('"stop_reason":"tool_use"');
+  });
+});
+
+describe('createStreamingAdapter', () => {
+  it('returns null for same-protocol streams', () => {
+    expect(createStreamingAdapter({
+      from: 'openai-chat-completions',
+      to: 'openai-chat-completions',
+    })).toBeNull();
+  });
+
+  it('selects registered stream adapters by protocol direction', () => {
+    const adapter = createStreamingAdapter({
+      from: 'openai-chat-completions',
+      to: 'anthropic-messages',
+      fallbackModel: 'claude-sonnet',
+    });
+    expect(adapter).not.toBeNull();
+
+    const start = adapter!.adaptStart({
+      requestId: 'req-stream-registry',
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    });
+    expect(start.headers['content-type']).toBe('text/event-stream');
   });
 });

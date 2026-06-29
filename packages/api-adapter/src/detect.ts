@@ -3,6 +3,11 @@ import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
 const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
 const OPENAI_RESPONSES_PROVIDER_NAMES = new Set(['openai-responses']);
+const STANDARD_ADAPTER_FALLBACKS: Partial<Record<ServiceApiProtocol, ServiceApiProtocol[]>> = {
+  'anthropic-messages': ['openai-chat-completions', 'openai-responses'],
+  'openai-chat-completions': ['openai-responses', 'anthropic-messages'],
+  'openai-responses': ['openai-chat-completions', 'anthropic-messages'],
+};
 
 export interface TargetProtocolSelection {
   targetProtocol: ServiceApiProtocol;
@@ -50,14 +55,12 @@ export function selectTargetProtocolForRequest(
   if (supportedProtocols.includes(requestProtocol)) {
     return { targetProtocol: requestProtocol, requiresTransform: false };
   }
-  if (requestProtocol === 'anthropic-messages' && supportedProtocols.includes('openai-chat-completions')) {
-    return { targetProtocol: 'openai-chat-completions', requiresTransform: true };
-  }
-  if (requestProtocol === 'openai-responses' && supportedProtocols.includes('openai-chat-completions')) {
-    return { targetProtocol: 'openai-chat-completions', requiresTransform: true };
-  }
-  if (requestProtocol === 'openai-chat-completions' && supportedProtocols.includes('openai-responses')) {
-    return { targetProtocol: 'openai-responses', requiresTransform: true };
+
+  const fallbackProtocols = STANDARD_ADAPTER_FALLBACKS[requestProtocol] ?? [];
+  for (const targetProtocol of fallbackProtocols) {
+    if (supportedProtocols.includes(targetProtocol)) {
+      return { targetProtocol, requiresTransform: true };
+    }
   }
   return null;
 }

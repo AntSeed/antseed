@@ -15,18 +15,12 @@ import {
   type SerializedHttpResponseChunk,
 } from '@antseed/node'
 import {
-  createOpenAIChatToAnthropicStreamingAdapter,
-  createOpenAIChatToResponsesStreamingAdapter,
-  createOpenAIResponsesToChatStreamingAdapter,
+  createStreamingAdapter,
   detectRequestServiceApiProtocol,
   type ServiceApiProtocol,
   type StreamingResponseAdapter,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatRequestToOpenAIResponses,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIChatResponseToOpenAIResponses,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIResponsesResponseToOpenAIChat,
+  transformRequest,
+  transformResponse,
 } from './service-api-adapter.js'
 import {
   DEBUG,
@@ -105,18 +99,14 @@ type PeerFailureEntry = {
   lastReason: string
 }
 
-type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
-type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
-
 type BuyerPolicyRouter = Router & {
   allowsPeerForPolicy?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
   allowsPeerForPricing?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
 }
 
 type ProtocolTransformStrategy = {
-  transformRequest: (req: SerializedHttpRequest) => TransformResult | null
-  adaptResponse: (res: SerializedHttpResponse, meta: AdaptResponseMeta) => SerializedHttpResponse
-  createStreamAdapter: (opts: { fallbackModel: string | null }) => StreamingResponseAdapter
+  from: ServiceApiProtocol
+  to: ServiceApiProtocol
 }
 
 function adaptOpenAICompatibleErrorResponse(
@@ -202,19 +192,28 @@ function inject402PeerId(
 
 const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
   'anthropic-messages→openai-chat-completions': {
-    transformRequest: transformAnthropicMessagesRequestToOpenAIChat,
-    adaptResponse: (res, meta) => transformOpenAIChatResponseToAnthropicMessage(res, meta),
-    createStreamAdapter: createOpenAIChatToAnthropicStreamingAdapter,
+    from: 'anthropic-messages',
+    to: 'openai-chat-completions',
+  },
+  'anthropic-messages→openai-responses': {
+    from: 'anthropic-messages',
+    to: 'openai-responses',
+  },
+  'openai-chat-completions→anthropic-messages': {
+    from: 'openai-chat-completions',
+    to: 'anthropic-messages',
   },
   'openai-responses→openai-chat-completions': {
-    transformRequest: transformOpenAIResponsesRequestToOpenAIChat,
-    adaptResponse: (res, meta) => transformOpenAIChatResponseToOpenAIResponses(res, meta),
-    createStreamAdapter: createOpenAIChatToResponsesStreamingAdapter,
+    from: 'openai-responses',
+    to: 'openai-chat-completions',
+  },
+  'openai-responses→anthropic-messages': {
+    from: 'openai-responses',
+    to: 'anthropic-messages',
   },
   'openai-chat-completions→openai-responses': {
-    transformRequest: transformOpenAIChatRequestToOpenAIResponses,
-    adaptResponse: (res, meta) => transformOpenAIResponsesResponseToOpenAIChat(res, meta),
-    createStreamAdapter: createOpenAIResponsesToChatStreamingAdapter,
+    from: 'openai-chat-completions',
+    to: 'openai-responses',
   },
 }
 
@@ -1338,7 +1337,7 @@ export class BuyerProxy {
       }
 
       log(`Applying protocol adapter ${transformKey} via provider "${selectedRoutePlan.provider}"`)
-      const transformed = strategy.transformRequest(requestForPeer)
+      const transformed = transformRequest(requestForPeer, { from: strategy.from, to: strategy.to })
       if (!transformed) {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end(`Failed to transform request for ${transformKey}`)
@@ -1352,14 +1351,23 @@ export class BuyerProxy {
         },
       }
       adaptResponse = (response: SerializedHttpResponse) =>
-        strategy.adaptResponse(response, {
+        transformResponse(response, {
+          from: strategy.to,
+          to: strategy.from,
           streamRequested: transformed.streamRequested,
           fallbackModel: transformed.requestedModel,
-        })
+        }) ?? response
       if (transformed.streamRequested) {
-        streamResponseAdapter = strategy.createStreamAdapter({
+        streamResponseAdapter = createStreamingAdapter({
+          from: strategy.to,
+          to: strategy.from,
           fallbackModel: transformed.requestedModel,
         })
+        if (!streamResponseAdapter) {
+          res.writeHead(502, { 'content-type': 'text/plain' })
+          res.end(`Failed to create stream adapter for ${transformKey}`)
+          return { done: true }
+        }
       }
     }
 
