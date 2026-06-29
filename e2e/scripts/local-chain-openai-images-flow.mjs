@@ -3,14 +3,20 @@
 /**
  * local-chain-openai-images-flow.mjs
  *
- * One-command real-chain image generation flow:
+ * One-command real-chain OpenAI-compatible image generation flow:
  *   build required packages -> start fresh Anvil -> deploy contracts ->
  *   fund/register/stake/deposit -> start seller + buyer proxy ->
- *   call OpenAI Images API through AntSeed -> save the generated image ->
+ *   call the Images API through AntSeed -> save the generated image ->
  *   verify settlement and print a summary.
  *
  * Required:
  *   OPENAI_API_KEY=... pnpm --filter @antseed/e2e run flow:local-chain-openai-images
+ *
+ * Example (xAI Grok Imagine):
+ *   OPENAI_API_KEY=... \
+ *   OPENAI_BASE_URL=https://api.x.ai \
+ *   OPENAI_IMAGE_MODEL=grok-imagine-image \
+ *   pnpm --filter @antseed/e2e run flow:local-chain-openai-images
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -30,10 +36,11 @@ const rpcEndpoint = new URL(RPC_URL);
 const ANVIL_HOST = process.env.ANVIL_HOST ?? rpcEndpoint.hostname;
 const ANVIL_PORT = process.env.ANVIL_PORT ?? (rpcEndpoint.port || "18545");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim() ?? "";
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com";
+const OPENAI_PROVIDER_FLAVOR = process.env.OPENAI_PROVIDER_FLAVOR?.trim() || "";
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2";
 const IMAGE_PROMPT = process.env.OPENAI_IMAGE_PROMPT?.trim() || "A tiny purple cube on a white background";
-const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE?.trim() || "1024x1024";
-const IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY?.trim() || "low";
+const IMAGE_COUNT = parseOptionalPositiveInt(process.env.OPENAI_IMAGE_COUNT?.trim()) ?? 1;
 const DEPLOYER_PRIVATE_KEY =
   process.env.DEPLOYER_PRIVATE_KEY ??
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -93,6 +100,154 @@ function formatError(err) {
     return err.stack ?? err.message;
   }
   return String(err);
+}
+
+function parseOptionalPositiveInt(raw) {
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got "${raw}"`);
+  }
+  return parsed;
+}
+
+function isOpenAiNativeImageModel(service) {
+  return /(^|\/)(gpt-image-|dall-e)/.test(service.trim().toLowerCase());
+}
+
+function isGrokImagineImageModel(service) {
+  return /(^|\/)grok-imagine-image/.test(service.trim().toLowerCase());
+}
+
+function usesFlatImageBilling(service) {
+  return isGrokImagineImageModel(service);
+}
+
+function buildKnownImageBillingModel(service) {
+  const normalized = service.trim().toLowerCase();
+  if (normalized.startsWith("grok-imagine-image-quality") || normalized.startsWith("grok-imagine-image-pro")) {
+    return {
+      version: 1,
+      components: [
+        {
+          meter: "output_images",
+          unit: "per_unit",
+          priceUsd: 0.05,
+          match: { model: service },
+        },
+      ],
+    };
+  }
+  if (normalized.startsWith("grok-imagine-image")) {
+    return {
+      version: 1,
+      components: [
+        {
+          meter: "output_images",
+          unit: "per_unit",
+          priceUsd: 0.02,
+          match: { model: service },
+        },
+      ],
+    };
+  }
+  return null;
+}
+
+function buildServiceBillingModelsConfig(service) {
+  const configured = process.env.ANTSEED_SERVICE_BILLING_MODELS_JSON?.trim();
+  if (configured) {
+    return configured;
+  }
+  const knownModel = buildKnownImageBillingModel(service);
+  if (!knownModel) {
+    return undefined;
+  }
+  return JSON.stringify({
+    [service]: {
+      "openai-images": knownModel,
+    },
+  });
+}
+
+function buildImageRequest(model) {
+  const request = {
+    model,
+    prompt: IMAGE_PROMPT,
+    n: IMAGE_COUNT,
+  };
+
+  const explicitSize = process.env.OPENAI_IMAGE_SIZE?.trim();
+  const explicitQuality = process.env.OPENAI_IMAGE_QUALITY?.trim();
+  const explicitResolution = process.env.OPENAI_IMAGE_RESOLUTION?.trim();
+  const explicitResponseFormat = process.env.OPENAI_IMAGE_RESPONSE_FORMAT?.trim();
+
+  if (explicitSize) {
+    request.size = explicitSize;
+  } else if (isOpenAiNativeImageModel(model)) {
+    request.size = "1024x1024";
+  }
+
+  if (explicitQuality) {
+    request.quality = explicitQuality;
+  } else if (isOpenAiNativeImageModel(model)) {
+    request.quality = "low";
+  }
+
+  if (explicitResolution) {
+    request.resolution = explicitResolution;
+  }
+
+  if (explicitResponseFormat) {
+    request.response_format = explicitResponseFormat;
+  }
+
+  return request;
+}
+
+async function saveGeneratedImage(runDir, response) {
+  const firstImage = response.data?.[0];
+  if (!firstImage || typeof firstImage !== "object") {
+    throw new Error("Images response did not include a usable data[0] item");
+  }
+
+  if (typeof firstImage.b64_json === "string" && firstImage.b64_json.length > 0) {
+    const imagePath = join(runDir, "generated-image.png");
+    const imageBytes = Buffer.from(firstImage.b64_json, "base64");
+    await writeFile(imagePath, imageBytes);
+    return {
+      imagePath,
+      bytes: imageBytes.length,
+      source: "b64_json",
+      remoteUrl: null,
+    };
+  }
+
+  if (typeof firstImage.url === "string" && firstImage.url.length > 0) {
+    const download = await fetch(firstImage.url);
+    if (!download.ok) {
+      throw new Error(`Failed to download generated image URL (${download.status} ${download.statusText})`);
+    }
+    const contentType = download.headers.get("content-type") ?? "";
+    const extension = contentType.includes("png")
+      ? ".png"
+      : contentType.includes("jpeg") || contentType.includes("jpg")
+        ? ".jpg"
+        : contentType.includes("webp")
+          ? ".webp"
+          : ".bin";
+    const imageBytes = Buffer.from(await download.arrayBuffer());
+    const imagePath = join(runDir, `generated-image${extension}`);
+    await writeFile(imagePath, imageBytes);
+    return {
+      imagePath,
+      bytes: imageBytes.length,
+      source: "url",
+      remoteUrl: firstImage.url,
+    };
+  }
+
+  throw new Error("Images response did not include data[0].b64_json or data[0].url");
 }
 
 function requireCommand(command) {
@@ -488,11 +643,21 @@ async function main() {
     await bootstrap.start();
     const bootstrapConfig = [{ host: "127.0.0.1", port: bootstrap.getPort() }];
 
+    const serviceBillingModelsJson = buildServiceBillingModelsConfig(IMAGE_MODEL);
+    const defaultTokenPricing = usesFlatImageBilling(IMAGE_MODEL)
+      ? { inputUsdPerMillion: "0", outputUsdPerMillion: "0" }
+      : { inputUsdPerMillion: "5", outputUsdPerMillion: "40" };
+
     const realProvider = openaiPlugin.createProvider({
       OPENAI_API_KEY,
+      OPENAI_BASE_URL,
       ANTSEED_ALLOWED_SERVICES: IMAGE_MODEL,
-      ANTSEED_INPUT_USD_PER_MILLION: "5",
-      ANTSEED_OUTPUT_USD_PER_MILLION: "40",
+      ANTSEED_INPUT_USD_PER_MILLION:
+        process.env.ANTSEED_INPUT_USD_PER_MILLION?.trim() ?? defaultTokenPricing.inputUsdPerMillion,
+      ANTSEED_OUTPUT_USD_PER_MILLION:
+        process.env.ANTSEED_OUTPUT_USD_PER_MILLION?.trim() ?? defaultTokenPricing.outputUsdPerMillion,
+      ...(OPENAI_PROVIDER_FLAVOR ? { OPENAI_PROVIDER_FLAVOR } : {}),
+      ...(serviceBillingModelsJson ? { ANTSEED_SERVICE_BILLING_MODELS_JSON: serviceBillingModelsJson } : {}),
     });
 
     const payments = {
@@ -575,20 +740,10 @@ async function main() {
       defaultHeaders: { "x-antseed-pin-peer": discoveredSeller.peerId },
     });
 
-    const response = await client.images.generate({
-      model: IMAGE_MODEL,
-      prompt: IMAGE_PROMPT,
-      size: IMAGE_SIZE,
-      quality: IMAGE_QUALITY,
-    });
-
-    const b64Image = response.data?.[0]?.b64_json;
-    if (!b64Image) {
-      throw new Error("OpenAI Images response did not include data[0].b64_json");
-    }
-
-    const imagePath = join(runDir, "generated-image.png");
-    await writeFile(imagePath, Buffer.from(b64Image, "base64"));
+    const imageRequest = buildImageRequest(IMAGE_MODEL);
+    const response = await client.images.generate(imageRequest);
+    const savedImage = await saveGeneratedImage(runDir, response);
+    const imagePath = savedImage.imagePath;
     pass(`Generated image saved to ${imagePath}`);
 
     const bpm = buyerNode.buyerPaymentManager;
@@ -633,19 +788,24 @@ async function main() {
       request: {
         model: IMAGE_MODEL,
         prompt: IMAGE_PROMPT,
-        size: IMAGE_SIZE,
-        quality: IMAGE_QUALITY,
+        imageCount: IMAGE_COUNT,
+        openAiBaseUrl: OPENAI_BASE_URL,
+        providerFlavor: OPENAI_PROVIDER_FLAVOR || null,
+        requestBody: imageRequest,
         buyerProxyBaseUrl: `http://127.0.0.1:${buyerProxyPort}/v1`,
         pinnedPeerId: discoveredSeller.peerId,
       },
       advertisedProtocols,
       image: {
         savedPath: imagePath,
-        bytes: Buffer.from(b64Image, "base64").length,
+        bytes: savedImage.bytes,
+        source: savedImage.source,
+        remoteUrl: savedImage.remoteUrl,
       },
       response: {
         created: response.created,
         usage: response.usage ?? null,
+        outputCount: Array.isArray(response.data) ? response.data.length : 0,
       },
       payments: {
         verifiedCost: verifiedCost.toString(),
@@ -654,6 +814,7 @@ async function main() {
           output: cumulativeTokens.outputTokens.toString(),
         },
         responseTotals,
+        serviceBillingModelsJson: serviceBillingModelsJson ?? null,
       },
       balances: {
         buyerBefore: {

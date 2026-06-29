@@ -155,6 +155,17 @@ describe('provider-openai plugin', () => {
     });
   });
 
+  it('advertises grok imagine services as openai-images', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_BASE_URL: 'https://api.x.ai',
+      ANTSEED_ALLOWED_SERVICES: 'grok-imagine-image,grok-imagine-image-quality',
+    });
+
+    expect(provider.serviceApiProtocols?.['grok-imagine-image']).toEqual(['openai-images']);
+    expect(provider.serviceApiProtocols?.['grok-imagine-image-quality']).toEqual(['openai-images']);
+  });
+
   it('does not advertise image services for openrouter flavor yet', async () => {
     const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',

@@ -62,7 +62,7 @@ function getAdvertisedServiceProtocol(
   flavor: OpenAiCompatFlavor,
 ): ServiceApiProtocol | null {
   const normalized = service.trim().toLowerCase();
-  const isImageModel = /(^|\/)(gpt-image-|dall-e)/.test(normalized);
+  const isImageModel = /(^|\/)(gpt-image-|dall-e|grok-imagine-image)/.test(normalized);
   if (isImageModel) {
     if (flavor === 'openrouter') {
       return null;
