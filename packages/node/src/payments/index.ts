@@ -84,8 +84,8 @@ export {
   computeCostUsdc,
   estimateCostFromBytes,
   estimateTokensFromBytes,
-  isFreeBillingModel,
-  validateServiceBillingModelV1,
+  isFreeUnitBillingModel,
+  validateUnitBillingModelV1,
 } from './pricing.js';
 export type { ServicePricing } from './pricing.js';
 

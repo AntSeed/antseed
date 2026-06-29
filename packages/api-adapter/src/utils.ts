@@ -49,13 +49,6 @@ export function toNonNegativeInt(value: unknown): number {
   return Math.floor(parsed);
 }
 
-/**
- * Token usage shape used by the active token-pricing path.
- *
- * Image billing is additive: provider responses still produce TokenUsage for
- * input/output token cost, while ProviderUsageFacts can also carry outputImages
- * for the separate image unit surcharge.
- */
 export interface TokenUsage {
   /** Total logical input tokens, including cached input tokens when reported. */
   inputTokens: number;
@@ -66,34 +59,17 @@ export interface TokenUsage {
   cachedInputTokens: number;
 }
 
-export type BillingMatchKey =
-  | 'model'
-  | 'size'
-  | 'quality'
-  | 'resolution';
-
-export type BillingMeter = 'output_images';
-
-/**
- * Request-owned billing facts parsed from provider-compatible HTTP requests.
- *
- * These facts are not a bill. They are trusted request-owned image context
- * such as model, size, quality, and requested output count. Token pricing
- * remains on the TokenUsage path.
- */
-export interface RequestBillingFacts {
-  attributes?: Partial<Record<BillingMatchKey, string>>;
-  meterAttributes?: Partial<Record<BillingMeter, Partial<Record<BillingMatchKey, string>>>>;
-  requestedOutputImages?: number;
+/** Plain API-shape facts parsed from image generation requests. */
+export interface ImageRequestFacts {
+  model?: string;
+  size?: string;
+  quality?: string;
+  resolution?: string;
+  requestedImages?: number;
 }
 
-/**
- * Provider response facts parsed from OpenAI/Anthropic-compatible responses.
- *
- * This is still API-shape-specific data. TokenUsage feeds token pricing;
- * outputImages is the only extra unit currently billed outside tokens.
- */
-export interface ProviderUsageFacts {
+/** Plain API-shape usage facts parsed from provider responses. */
+export interface ProviderResponseFacts {
   tokenUsage: TokenUsage;
   outputImages?: number;
 }
@@ -159,7 +135,7 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   return { inputTokens, outputTokens, freshInputTokens, cachedInputTokens };
 }
 
-export function extractProviderUsageFacts(parsed: Record<string, unknown>): ProviderUsageFacts {
+export function extractProviderResponseFacts(parsed: Record<string, unknown>): ProviderResponseFacts {
   const tokenUsage = extractUsage(parsed);
   const data = Array.isArray(parsed.data) ? parsed.data : undefined;
 
@@ -169,34 +145,27 @@ export function extractProviderUsageFacts(parsed: Record<string, unknown>): Prov
   };
 }
 
-export function extractRequestBillingFacts(input: {
+export function extractImageRequestFacts(input: {
   path?: string;
   method?: string;
   body?: Record<string, unknown>;
-}): RequestBillingFacts {
+}): ImageRequestFacts {
   const body = input.body ?? {};
-  const attributes: Partial<Record<BillingMatchKey, string>> = {};
-  const outputImageAttributes: Partial<Record<BillingMatchKey, string>> = {};
+  const facts: ImageRequestFacts = {};
 
-  setStringAttr(attributes, 'model', body.model ?? body.service);
+  setStringAttr(facts, 'model', body.model ?? body.service);
   for (const key of ['size', 'quality', 'resolution'] as const) {
-    setStringAttr(outputImageAttributes, key, body[key] ?? body[toCamelCase(key)]);
+    setStringAttr(facts, key, body[key] ?? body[toCamelCase(key)]);
   }
   // OpenAI image generation defaults to one output image when `n` is omitted.
   const looksLikeOpenAiImageGeneration = input.path?.split('?')[0] === '/v1/images/generations'
-    || hasImageOutputAttributes(outputImageAttributes);
-  const requestedOutputImages = toOptionalNonNegativeInt(body.n) ?? (looksLikeOpenAiImageGeneration ? 1 : undefined);
+    || hasImageOutputAttributes(facts);
+  const requestedImages = toOptionalNonNegativeInt(body.n) ?? (looksLikeOpenAiImageGeneration ? 1 : undefined);
 
-  const meterAttributes: Partial<Record<BillingMeter, Partial<Record<BillingMatchKey, string>>>> = {};
-  if (Object.keys(outputImageAttributes).length > 0) {
-    meterAttributes.output_images = outputImageAttributes;
+  if (requestedImages !== undefined) {
+    facts.requestedImages = requestedImages;
   }
-
-  return {
-    ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
-    ...(Object.keys(meterAttributes).length > 0 ? { meterAttributes } : {}),
-    ...(requestedOutputImages !== undefined ? { requestedOutputImages } : {}),
-  };
+  return facts;
 }
 
 function toOptionalNonNegativeInt(value: unknown): number | undefined {
@@ -206,7 +175,7 @@ function toOptionalNonNegativeInt(value: unknown): number | undefined {
   return Math.floor(parsed);
 }
 
-function setStringAttr(target: Partial<Record<BillingMatchKey, string>>, key: BillingMatchKey, value: unknown): void {
+function setStringAttr(target: ImageRequestFacts, key: keyof Omit<ImageRequestFacts, 'requestedImages'>, value: unknown): void {
   if (typeof value === 'string' && value.trim().length > 0) {
     target[key] = value.trim();
   }
@@ -216,7 +185,7 @@ function toCamelCase(key: string): string {
   return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
-function hasImageOutputAttributes(attrs: Partial<Record<BillingMatchKey, string>>): boolean {
+function hasImageOutputAttributes(attrs: ImageRequestFacts): boolean {
   return attrs.size !== undefined
     || attrs.quality !== undefined
     || attrs.resolution !== undefined;

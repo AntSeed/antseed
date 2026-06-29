@@ -5,16 +5,14 @@ import { toPeerId } from "../types/peer.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS, isKnownServiceApiProtocol } from "../types/service-api.js";
 import type {
-  BillingComponentV1,
-  BillingMatchKeyV1,
-  BillingMeterV1,
-  BillingUnitV1,
-  ServiceBillingModelV1,
+  UnitBillingComponentV1,
+  UnitBillingMatchKeyV1,
+  UnitBillingModelV1,
+  UnitBillingUnitV1,
 } from "../types/billing.js";
 import {
-  BILLING_MATCH_KEYS_V1,
-  BILLING_UNITS_V1,
-  IMAGE_BILLING_METERS_V1,
+  UNIT_BILLING_MATCH_KEYS_V1,
+  UNIT_BILLING_UNITS_V1,
 } from "../types/billing.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
@@ -28,13 +26,11 @@ const DOMAIN_VERIFICATION_METHOD_IDS: Record<DomainVerificationMethod, number> =
   "https-well-known": 1,
 };
 const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt", "https-well-known"];
-const SERVICE_BILLING_METADATA_VERSION = 11;
-const BILLING_METERS_BY_ID: BillingMeterV1[] = [...IMAGE_BILLING_METERS_V1];
-const BILLING_METER_IDS = new Map<BillingMeterV1, number>(BILLING_METERS_BY_ID.map((meter, index) => [meter, index]));
-const BILLING_UNITS_BY_ID: BillingUnitV1[] = [...BILLING_UNITS_V1];
-const BILLING_UNIT_IDS = new Map<BillingUnitV1, number>(BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
-const BILLING_MATCH_KEYS_BY_ID: BillingMatchKeyV1[] = [...BILLING_MATCH_KEYS_V1];
-const BILLING_MATCH_KEY_IDS = new Map<BillingMatchKeyV1, number>(BILLING_MATCH_KEYS_BY_ID.map((key, index) => [key, index]));
+const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
+const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
+const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
+const UNIT_BILLING_MATCH_KEYS_BY_ID: UnitBillingMatchKeyV1[] = [...UNIT_BILLING_MATCH_KEYS_V1];
+const UNIT_BILLING_MATCH_KEY_IDS = new Map<UnitBillingMatchKeyV1, number>(UNIT_BILLING_MATCH_KEYS_BY_ID.map((key, index) => [key, index]));
 
 /**
  * Encode metadata into binary format:
@@ -219,8 +215,8 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       }
     }
 
-    if (metadata.version >= SERVICE_BILLING_METADATA_VERSION) {
-      encodeServiceBillingModels(parts, p.serviceBillingModels);
+    if (metadata.version >= SERVICE_UNIT_BILLING_METADATA_VERSION) {
+      encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels);
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -414,12 +410,12 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
   return result;
 }
 
-function encodeServiceBillingModels(
+function encodeServiceUnitBillingModels(
   parts: Uint8Array[],
-  serviceBillingModels: PeerMetadata["providers"][number]["serviceBillingModels"],
+  serviceUnitBillingModels: PeerMetadata["providers"][number]["serviceUnitBillingModels"],
 ): void {
-  const entries: Array<[string, ServiceApiProtocol, ServiceBillingModelV1]> = [];
-  for (const [serviceName, protocolModels] of Object.entries(serviceBillingModels ?? {})) {
+  const entries: Array<[string, ServiceApiProtocol, UnitBillingModelV1]> = [];
+  for (const [serviceName, protocolModels] of Object.entries(serviceUnitBillingModels ?? {})) {
     for (const protocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
       const model = protocolModels?.[protocol];
       if (model) entries.push([serviceName, protocol, model]);
@@ -437,17 +433,16 @@ function encodeServiceBillingModels(
     parts.push(new Uint8Array([model.version]));
     parts.push(new Uint8Array([model.components.length]));
     for (const component of model.components) {
-      parts.push(new Uint8Array([BILLING_METER_IDS.get(component.meter) ?? 255]));
-      parts.push(new Uint8Array([BILLING_UNIT_IDS.get(component.unit) ?? 255]));
+      parts.push(new Uint8Array([UNIT_BILLING_UNIT_IDS.get(component.unit) ?? 255]));
       const priceBuf = new ArrayBuffer(4);
       new DataView(priceBuf).setFloat32(0, component.priceUsd, false);
       parts.push(new Uint8Array(priceBuf));
       const matchEntries = Object.entries(component.match ?? {})
-        .filter((entry): entry is [BillingMatchKeyV1, string] => BILLING_MATCH_KEY_IDS.has(entry[0] as BillingMatchKeyV1))
-        .sort(([a], [b]) => (BILLING_MATCH_KEY_IDS.get(a) ?? 0) - (BILLING_MATCH_KEY_IDS.get(b) ?? 0));
+        .filter((entry): entry is [UnitBillingMatchKeyV1, string] => UNIT_BILLING_MATCH_KEY_IDS.has(entry[0] as UnitBillingMatchKeyV1))
+        .sort(([a], [b]) => (UNIT_BILLING_MATCH_KEY_IDS.get(a) ?? 0) - (UNIT_BILLING_MATCH_KEY_IDS.get(b) ?? 0));
       parts.push(new Uint8Array([matchEntries.length]));
       for (const [key, value] of matchEntries) {
-        parts.push(new Uint8Array([BILLING_MATCH_KEY_IDS.get(key) ?? 255]));
+        parts.push(new Uint8Array([UNIT_BILLING_MATCH_KEY_IDS.get(key) ?? 255]));
         pushUtf8(parts, value);
       }
     }
@@ -463,17 +458,17 @@ function pushUtf8(parts: Uint8Array[], value: string): void {
   parts.push(bytes);
 }
 
-function decodeServiceBillingModels(
+function decodeServiceUnitBillingModels(
   data: Uint8Array,
   getOffset: () => number,
   setOffset: (offset: number) => void,
   checkBounds: (offset: number, needed: number, total: number) => void,
-): PeerMetadata["providers"][number]["serviceBillingModels"] | undefined {
+): PeerMetadata["providers"][number]["serviceUnitBillingModels"] | undefined {
   let offset = getOffset();
   checkBounds(offset, 1, data.length);
   const entryCount = data[offset]!;
   offset += 1;
-  const serviceBillingModels: NonNullable<PeerMetadata["providers"][number]["serviceBillingModels"]> = {};
+  const serviceUnitBillingModels: NonNullable<PeerMetadata["providers"][number]["serviceUnitBillingModels"]> = {};
   for (let i = 0; i < entryCount; i += 1) {
     const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
     offset = serviceOffset;
@@ -481,52 +476,50 @@ function decodeServiceBillingModels(
     const protocol = WELL_KNOWN_SERVICE_API_PROTOCOLS[data[offset]!];
     offset += 1;
     if (!protocol) {
-      throw new Error("Unsupported service billing protocol id");
+      throw new Error("Unsupported service unit billing protocol id");
     }
     checkBounds(offset, 2, data.length);
     const version = data[offset]!;
     offset += 1;
     if (version !== 1) {
-      throw new Error(`Unsupported service billing model version ${version}`);
+      throw new Error(`Unsupported service unit billing model version ${version}`);
     }
     const componentCount = data[offset]!;
     offset += 1;
-    const components: BillingComponentV1[] = [];
+    const components: UnitBillingComponentV1[] = [];
     for (let j = 0; j < componentCount; j += 1) {
-      checkBounds(offset, 7, data.length);
-      const meter = BILLING_METERS_BY_ID[data[offset]!];
+      checkBounds(offset, 6, data.length);
+      const unit = UNIT_BILLING_UNITS_BY_ID[data[offset]!];
       offset += 1;
-      const unit = BILLING_UNITS_BY_ID[data[offset]!];
-      offset += 1;
-      if (!meter || !unit) {
-        throw new Error("Unsupported service billing component meter or unit");
+      if (!unit) {
+        throw new Error("Unsupported service unit billing component unit");
       }
       const priceUsd = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false);
       offset += 4;
       const matchCount = data[offset]!;
       offset += 1;
-      const match: Partial<Record<BillingMatchKeyV1, string>> = {};
+      const match: Partial<Record<UnitBillingMatchKeyV1, string>> = {};
       for (let k = 0; k < matchCount; k += 1) {
         checkBounds(offset, 1, data.length);
-        const key = BILLING_MATCH_KEYS_BY_ID[data[offset]!];
+        const key = UNIT_BILLING_MATCH_KEYS_BY_ID[data[offset]!];
         offset += 1;
         if (!key) {
-          throw new Error("Unsupported service billing match key");
+          throw new Error("Unsupported service unit billing match key");
         }
         const [value, valueOffset] = readUtf8(data, offset, checkBounds);
         offset = valueOffset;
         match[key] = value;
       }
-      const base = { meter, unit, priceUsd, ...(Object.keys(match).length > 0 ? { match } : {}) };
-      components.push(base as BillingComponentV1);
+      const base = { unit, priceUsd, ...(Object.keys(match).length > 0 ? { match } : {}) };
+      components.push(base as UnitBillingComponentV1);
     }
-    serviceBillingModels[serviceName] = {
-      ...(serviceBillingModels[serviceName] ?? {}),
+    serviceUnitBillingModels[serviceName] = {
+      ...(serviceUnitBillingModels[serviceName] ?? {}),
       [protocol]: { version: 1, components },
     };
   }
   setOffset(offset);
-  return Object.keys(serviceBillingModels).length > 0 ? serviceBillingModels : undefined;
+  return Object.keys(serviceUnitBillingModels).length > 0 ? serviceUnitBillingModels : undefined;
 }
 
 function readUtf8(
@@ -734,8 +727,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       }
     }
 
-    const serviceBillingModels = version >= SERVICE_BILLING_METADATA_VERSION
-      ? decodeServiceBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds)
+    const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
+      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds)
       : undefined;
 
     // maxConcurrency: 2 bytes uint16
@@ -761,7 +754,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ...(servicePricingCount > 0 ? { servicePricing } : {}),
       ...(serviceCategories && Object.keys(serviceCategories).length > 0 ? { serviceCategories } : {}),
       ...(serviceApiProtocols && Object.keys(serviceApiProtocols).length > 0 ? { serviceApiProtocols } : {}),
-      ...(serviceBillingModels && Object.keys(serviceBillingModels).length > 0 ? { serviceBillingModels } : {}),
+      ...(serviceUnitBillingModels && Object.keys(serviceUnitBillingModels).length > 0 ? { serviceUnitBillingModels } : {}),
       maxConcurrency,
       currentLoad,
     });

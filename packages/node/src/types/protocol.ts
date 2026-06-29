@@ -34,7 +34,7 @@ export enum MessageType {
   Error = 0xFF,
 }
 
-import type { BillingUsageReportV1 } from "./billing.js";
+import type { UnitBillingUsageReportV1 } from "./billing.js";
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
 
@@ -143,8 +143,8 @@ export interface NeedAuthPayload {
   freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
-  /** Compact v1 billing evidence for unit-pricing cost validation. */
-  billingUsage?: BillingUsageReportV1;
+  /** Compact v1 unit billing evidence for cost validation. */
+  billingUsage?: UnitBillingUsageReportV1;
 }
 
 // ─── Bilateral Verification Messages ───────────────────────────

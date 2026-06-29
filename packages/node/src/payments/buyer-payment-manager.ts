@@ -30,11 +30,9 @@ import {
   computeCostUsdc,
   type ServicePricing,
 } from './pricing.js';
-import type { BuyerRequestBillingContext, NormalizedUsage, ServiceBillingModelV1 } from '../types/billing.js';
-import { validateBillingUsageReport } from '../billing/runtime.js';
-import type { BillingMode } from '../billing/mode.js';
-import type { RequestBillingFacts } from '@antseed/api-adapter';
-import { evaluateBillingModel } from '../billing/evaluator.js';
+import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
+import type { ImageRequestFacts } from '@antseed/api-adapter';
+import { evaluateUnitBilling, validateUnitBillingUsage } from '../billing/unit.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -47,16 +45,11 @@ const REQUEST_BILLING_TTL_MS = 5 * 60_000;
 const MAX_REQUEST_BILLING_ENTRIES = 512;
 
 function validateUnitNormalizedCost(
-  model: ServiceBillingModelV1,
-  usage: NormalizedUsage,
+  model: UnitBillingModelV1,
+  context: UnitBillingContext,
+  usage: UnitBillingUsage,
 ): bigint {
-  return evaluateBillingModel(model, usage).costUsdc;
-}
-
-function imageBillingModelFromMode(mode: BillingMode | undefined): ServiceBillingModelV1 | undefined {
-  if (mode?.kind === 'unit') return mode.model;
-  if (mode?.kind === 'token') return mode.unitModel;
-  return undefined;
+  return evaluateUnitBilling(model, context, usage);
 }
 
 export interface BuyerPaymentConfig {
@@ -88,9 +81,10 @@ export interface PerRequestAuthResult {
 }
 
 export interface BuyerRequestBillingEntry {
-  context: BuyerRequestBillingContext;
-  requestFacts: RequestBillingFacts;
-  mode: BillingMode;
+  context: UnitBillingContext;
+  requestFacts: ImageRequestFacts;
+  unitModel?: UnitBillingModelV1;
+  tokenPricing?: ServicePricing;
 }
 
 interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
@@ -818,7 +812,7 @@ export class BuyerPaymentManager {
       reportedInputTokens?: bigint;
       reportedOutputTokens?: bigint;
       reportedCachedInputTokens?: bigint;
-      normalizedUsage?: NormalizedUsage;
+      unitUsage?: UnitBillingUsage;
       service?: string;
       requestId?: string;
     },
@@ -844,22 +838,22 @@ export class BuyerPaymentManager {
       ? this.getRequestBilling(responseStats.requestId)
       : undefined;
 
-    const imageBillingModel = imageBillingModelFromMode(requestBilling?.mode);
-    if (responseStats.normalizedUsage && imageBillingModel) {
+    const unitBillingModel = requestBilling?.unitModel;
+    if (responseStats.unitUsage && unitBillingModel && requestBilling) {
       // Hybrid image path: token cost is still computed from the token
-      // counts; billingUsage/NormalizedUsage only validates image unit cost.
+      // counts; unit billing only validates non-token unit cost.
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedCachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
       const freshInputTokens = estimatedCachedInputTokens > 0n
         ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(estimatedCachedInputTokens)))
         : estimatedInputTokens;
-      const pricing = this.getSessionPricing(sellerPeerId, responseStats.service);
+      const pricing = requestBilling.tokenPricing ?? this.getSessionPricing(sellerPeerId, responseStats.service);
       const tokenCost = pricing
         ? computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(estimatedCachedInputTokens))
         : 0n;
-      const imageCost = validateUnitNormalizedCost(imageBillingModel, responseStats.normalizedUsage);
-      buyerEstimatedRequestCost = tokenCost + imageCost;
+      const unitCost = validateUnitNormalizedCost(unitBillingModel, requestBilling.context, responseStats.unitUsage);
+      buyerEstimatedRequestCost = tokenCost + unitCost;
       this._accumulateVerifiedCost(sellerPeerId, {
         cost: buyerEstimatedRequestCost,
         inputTokens: Number(estimatedInputTokens),
@@ -867,14 +861,6 @@ export class BuyerPaymentManager {
       });
       debugLog(
         `[BuyerPayment] Hybrid billing-estimated cost=${buyerEstimatedRequestCost} service=${responseStats.service ?? 'unknown'}`,
-      );
-    } else if (responseStats.normalizedUsage && requestBilling?.mode.kind === 'free') {
-      estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
-      estimatedCachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
-      estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
-      buyerEstimatedRequestCost = 0n;
-      debugLog(
-        `[BuyerPayment] Free billing request service=${responseStats.service ?? 'unknown'}`,
       );
     } else if (hasReportedTokens) {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
@@ -1063,43 +1049,43 @@ export class BuyerPaymentManager {
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
     const reportedOutputTokens = BigInt(payload.outputTokens ?? '0');
 
-    const imageBillingModel = imageBillingModelFromMode(requestBilling?.mode);
+    const unitBillingModel = requestBilling?.unitModel;
 
     // Validate the seller's claimed cost if reported
     if (payload.billingUsage) {
       // Image billingUsage is surcharge evidence only. Token cost is still
       // recomputed from the token fields and service pricing below.
       try {
-        const sellerImageCost = BigInt(payload.billingUsage.costUsdc);
-        let acceptedImageCost = 0n;
-        if (!requestBilling || !imageBillingModel) {
-          if (sellerImageCost > 0n) {
+        const sellerTotalCost = BigInt(payload.lastRequestCost ?? '0');
+        let acceptedUnitCost = 0n;
+        if (!requestBilling || !unitBillingModel) {
+          if (sellerTotalCost > 0n) {
             throw new Error(
-              "Positive billingUsage cost is unverifiable without an image billing model",
+              "Positive unit billing cost is unverifiable without a unit billing model",
             );
           }
-          debugLog(`[BuyerPayment] NeedAuth zero billingUsage accepted without image model`);
+          debugLog(`[BuyerPayment] NeedAuth zero unit billing accepted without unit model`);
         } else {
-          acceptedImageCost = validateBillingUsageReport(
-            imageBillingModel,
+          acceptedUnitCost = validateUnitBillingUsage(
+            unitBillingModel,
             requestBilling.context,
             payload.billingUsage,
+            sellerTotalCost,
             this._costTolerance,
           );
         }
 
-        const sellerTotalCost = BigInt(payload.lastRequestCost ?? payload.billingUsage.costUsdc);
         const sellerFreshExplicit = payload.freshInputTokens != null
           ? BigInt(payload.freshInputTokens)
           : null;
         const freshIn = sellerFreshExplicit ?? (reportedCachedInputTokens > 0n
           ? BigInt(Math.max(0, Number(reportedInputTokens) - Number(reportedCachedInputTokens)))
           : reportedInputTokens);
-        const pricing = this.getSessionPricing(sellerPeerId, buyerService);
+        const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
         const tokenEstimate = pricing
           ? computeCostUsdc(Number(freshIn), Number(reportedOutputTokens), pricing, Number(reportedCachedInputTokens))
           : 0n;
-        const buyerEstimate = tokenEstimate + acceptedImageCost;
+        const buyerEstimate = tokenEstimate + acceptedUnitCost;
         if (sellerTotalCost > 0n && buyerEstimate <= 0n) {
           throw new Error("Positive NeedAuth total cost recomputed to zero");
         }
@@ -1114,7 +1100,7 @@ export class BuyerPaymentManager {
           outputTokens: Number(reportedOutputTokens),
         });
         debugLog(
-          `[BuyerPayment] NeedAuth hybrid billing: token=${tokenEstimate} image=${acceptedImageCost} sellerTotal=${sellerTotalCost} — validated`,
+          `[BuyerPayment] NeedAuth hybrid billing: token=${tokenEstimate} unit=${acceptedUnitCost} sellerTotal=${sellerTotalCost} — validated`,
         );
       } catch (err) {
         debugWarn(`[BuyerPayment] NeedAuth billingUsage rejected: ${err instanceof Error ? err.message : err}`);
@@ -1122,9 +1108,9 @@ export class BuyerPaymentManager {
       }
     } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
-      if (sellerCost > 0n && imageBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+      if (sellerCost > 0n && unitBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
         debugWarn(
-          `[BuyerPayment] NeedAuth rejected: positive image cost omitted verifiable billingUsage`,
+          `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
         );
         return;
       }
@@ -1142,7 +1128,7 @@ export class BuyerPaymentManager {
 
       // Use the buyer's own knowledge of which service it requested, not the seller's claim.
       // A malicious seller could set service to a more expensive model to inflate the ceiling.
-      const pricing = this.getSessionPricing(sellerPeerId, buyerService);
+      const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
       if (pricing && sellerCost > 0n) {
         const freshIn = sellerFreshExplicit ?? (sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
@@ -1151,7 +1137,7 @@ export class BuyerPaymentManager {
         const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
         if (buyerEstimate <= 0n && sellerCost > 0n && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
           debugWarn(
-            `[BuyerPayment] NeedAuth rejected: positive image cost recomputed to zero`,
+            `[BuyerPayment] NeedAuth rejected: positive unit cost recomputed to zero`,
           );
           return;
         }
@@ -1444,11 +1430,10 @@ export class BuyerPaymentManager {
     this._requestService.delete(requestId);
   }
 
-  trackRequestBillingContext(requestId: string, context: BuyerRequestBillingContext): void {
+  trackRequestBillingContext(requestId: string, context: UnitBillingContext): void {
     this.trackRequestBilling(requestId, {
       context,
       requestFacts: {},
-      mode: { kind: 'unsupported', reason: 'missing-pricing' },
     });
   }
 

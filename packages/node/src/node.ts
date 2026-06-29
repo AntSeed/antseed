@@ -7,7 +7,7 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
-import type { ServiceBillingModelsV1 } from "./types/billing.js";
+import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -1332,7 +1332,7 @@ export class AntseedNode extends EventEmitter {
           services: p.services,
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
-          ...(p.serviceBillingModels ? { serviceBillingModels: { ...p.serviceBillingModels } } : {}),
+          ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
           maxConcurrency: p.maxConcurrency,
           pricing: {
             defaults: {
@@ -1816,7 +1816,7 @@ export class AntseedNode extends EventEmitter {
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
     const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
-    const providerServiceBillingModelEntries: NonNullable<PeerInfo["providerServiceBillingModels"]> = {};
+    const providerServiceUnitBillingModelEntries: NonNullable<PeerInfo["providerServiceUnitBillingModels"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -1872,13 +1872,13 @@ export class AntseedNode extends EventEmitter {
         }
       }
 
-      if (providerAnnouncement.serviceBillingModels && Object.keys(providerAnnouncement.serviceBillingModels).length > 0) {
-        const existingBillingModels = providerServiceBillingModelEntries[provName];
-        const newEntries: ServiceBillingModelsV1 = { ...providerAnnouncement.serviceBillingModels };
+      if (providerAnnouncement.serviceUnitBillingModels && Object.keys(providerAnnouncement.serviceUnitBillingModels).length > 0) {
+        const existingBillingModels = providerServiceUnitBillingModelEntries[provName];
+        const newEntries: ServiceUnitBillingModelsV1 = { ...providerAnnouncement.serviceUnitBillingModels };
         if (existingBillingModels) {
           Object.assign(existingBillingModels.services, newEntries);
         } else {
-          providerServiceBillingModelEntries[provName] = { services: newEntries };
+          providerServiceUnitBillingModelEntries[provName] = { services: newEntries };
         }
       }
     }
@@ -1886,7 +1886,7 @@ export class AntseedNode extends EventEmitter {
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
     const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
     const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
-    const hasProviderServiceBillingModels = Object.keys(providerServiceBillingModelEntries).length > 0;
+    const hasProviderServiceUnitBillingModels = Object.keys(providerServiceUnitBillingModelEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
@@ -1907,7 +1907,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
       ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
-      ...(hasProviderServiceBillingModels ? { providerServiceBillingModels: providerServiceBillingModelEntries } : {}),
+      ...(hasProviderServiceUnitBillingModels ? { providerServiceUnitBillingModels: providerServiceUnitBillingModelEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

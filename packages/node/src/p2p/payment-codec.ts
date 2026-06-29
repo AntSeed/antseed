@@ -5,8 +5,8 @@ import {
   type PaymentRequiredPayload,
   type NeedAuthPayload,
 } from '../types/protocol.js';
-import type { BillingUsageReportV1 } from '../types/billing.js';
-import { validateBillingUsageReportV1 } from '../billing/evaluator.js';
+import type { UnitBillingUsageReportV1 } from '../types/billing.js';
+import { validateUnitBillingUsageReportV1 } from '../billing/unit.js';
 import { parseJsonObject, requireStringField } from '../utils/json-codec.js';
 
 const encoder = new TextEncoder();
@@ -103,8 +103,8 @@ export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
     if (!obj.billingUsage || typeof obj.billingUsage !== 'object' || Array.isArray(obj.billingUsage)) {
       throw new Error('NeedAuth billingUsage must be an object');
     }
-    const billingUsage = obj.billingUsage as BillingUsageReportV1;
-    const errors = validateBillingUsageReportV1(billingUsage);
+    const billingUsage = obj.billingUsage as UnitBillingUsageReportV1;
+    const errors = validateUnitBillingUsageReportV1(billingUsage);
     if (errors.length > 0) {
       throw new Error(`Invalid NeedAuth billingUsage: ${errors.join('; ')}`);
     }

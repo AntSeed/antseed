@@ -4,10 +4,10 @@ import {
   estimateCostFromBytes,
   estimateTokensFromBytes,
   estimateTokensFromText,
-  isFreeBillingModel,
-  validateServiceBillingModelV1,
+  isFreeUnitBillingModel,
+  validateUnitBillingModelV1,
 } from '../src/payments/pricing.js';
-import { evaluateBillingModel } from '../src/billing/evaluator.js';
+import { evaluateUnitBilling } from '../src/billing/unit.js';
 
 describe('pricing utilities', () => {
   // ── estimateTokensFromBytes ──
@@ -93,38 +93,41 @@ describe('pricing utilities', () => {
   });
 
   it('evaluates image unit billing with exact match attributes', () => {
-    const evaluation = evaluateBillingModel({
+    const costUsdc = evaluateUnitBilling({
       version: 1,
       components: [
-        { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
-        { meter: 'output_images', unit: 'per_unit', priceUsd: 0.08, match: { size: '2048x2048' } },
+        { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+        { unit: 'output_images', priceUsd: 0.08, match: { size: '2048x2048' } },
       ],
     }, {
-      meters: { output_images: 2 },
-      meterAttributes: { output_images: { size: '1024x1024' } },
+      sellerPeerId: 'seller',
+      provider: 'openai',
+      service: 'gpt-image-1',
+      serviceApiProtocol: 'openai-images',
+      attributes: { size: '1024x1024' },
+    }, {
+      units: { output_images: 2 },
     });
-    expect(evaluation.costUsdc).toBe(80_000n);
+    expect(costUsdc).toBe(80_000n);
   });
 
-  it('validates meter/unit combinations and price shape', () => {
-    expect(validateServiceBillingModelV1({
+  it('validates unit and price shape', () => {
+    expect(validateUnitBillingModelV1({
       version: 1,
       components: [
-        { meter: 'output_images', unit: 'per_million', priceUsd: 1 } as any,
-        { meter: 'requests', unit: 'per_unit', priceUsd: Number.NaN },
+        { unit: 'requests', priceUsd: Number.NaN } as any,
       ],
     })).toEqual(expect.arrayContaining([
       expect.stringContaining('unsupported'),
-      expect.stringContaining('output_images'),
       expect.stringContaining('priceUsd'),
     ]));
   });
 
   it('treats non-zero image billing as paid even with free token fallback', () => {
-    expect(isFreeBillingModel({ version: 1, components: [] })).toBe(true);
-    expect(isFreeBillingModel({
+    expect(isFreeUnitBillingModel({ version: 1, components: [] })).toBe(true);
+    expect(isFreeUnitBillingModel({
       version: 1,
-      components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.01 }],
+      components: [{ unit: 'output_images', priceUsd: 0.01 }],
     })).toBe(false);
   });
 });

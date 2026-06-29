@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AntseedNode } from '../src/node.js';
-import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -48,7 +48,7 @@ describe('AntseedNode publicAddress override', () => {
     expect(peer.publicAddress).toBe('34.134.97.133:6882');
   });
 
-  it('maps service billing models only when v11 metadata includes them', () => {
+  it('maps service unit billing models only when v11 metadata includes them', () => {
     const node = new AntseedNode({ role: 'buyer' });
     const v10Peer = (node as any)._lookupResultToPeerInfo({
       host: '34.134.97.133',
@@ -70,18 +70,18 @@ describe('AntseedNode publicAddress override', () => {
       host: '34.134.97.133',
       port: 6882,
       metadata: buildMetadata({
-        version: SERVICE_BILLING_METADATA_VERSION,
+        version: SERVICE_UNIT_BILLING_METADATA_VERSION,
         providers: [
           {
             provider: 'openai',
             services: ['gpt-image-1'],
             defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
             serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
-            serviceBillingModels: {
+            serviceUnitBillingModels: {
               'gpt-image-1': {
                 'openai-images': {
                   version: 1,
-                  components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+                  components: [{ unit: 'output_images', priceUsd: 0.04 }],
                 },
               },
             },
@@ -92,10 +92,10 @@ describe('AntseedNode publicAddress override', () => {
       }),
     });
 
-    expect(v10Peer.providerServiceBillingModels).toBeUndefined();
-    expect(v11Peer.providerServiceBillingModels?.openai?.services['gpt-image-1']?.['openai-images']).toEqual({
+    expect(v10Peer.providerServiceUnitBillingModels).toBeUndefined();
+    expect(v11Peer.providerServiceUnitBillingModels?.openai?.services['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
-      components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+      components: [{ unit: 'output_images', priceUsd: 0.04 }],
     });
   });
 });

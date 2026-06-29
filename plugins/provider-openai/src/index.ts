@@ -5,7 +5,7 @@ import {
   parseCsv,
   parseJsonObject,
   parseNonNegativeNumber,
-  parseServiceBillingModelsJson,
+  parseServiceUnitBillingModelsJson,
   parseServiceAliasMap,
   parseServicePricingJson,
 } from '@antseed/provider-core';
@@ -110,7 +110,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10, description: 'Output price in USD per 1M tokens' },
     { key: 'ANTSEED_CACHED_INPUT_USD_PER_MILLION', label: 'Cached Input Price', type: 'number', required: false, description: 'Cached input price in USD per 1M tokens (defaults to input price)' },
     { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
-    { key: 'ANTSEED_SERVICE_BILLING_MODELS_JSON', label: 'Service Billing Models JSON', type: 'string', required: false, description: 'Per-service/protocol billing model JSON' },
+    { key: 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON', label: 'Service Unit Billing Models JSON', type: 'string', required: false, description: 'Per-service/protocol unit billing model JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
     { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name (generic, works across all providers)' },
@@ -158,7 +158,7 @@ const plugin: AntseedProviderPlugin = {
     const tokenProvider = new StaticTokenProvider(apiKey);
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
     const serviceApiProtocols = buildOpenAiServiceApiProtocols(allowedServices, flavor, serviceRewriteMap);
-    const serviceBillingModels = parseServiceBillingModelsJson(config['ANTSEED_SERVICE_BILLING_MODELS_JSON']);
+    const serviceUnitBillingModels = parseServiceUnitBillingModelsJson(config['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON']);
     const pathRewrite = parseJsonObject(config['OPENAI_PATH_REWRITE_JSON'], 'OPENAI_PATH_REWRITE_JSON') as Record<string, string> | undefined;
 
     return new BaseProvider({
@@ -166,7 +166,7 @@ const plugin: AntseedProviderPlugin = {
       services: allowedServices,
       pricing,
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
-      ...(serviceBillingModels ? { serviceBillingModels } : {}),
+      ...(serviceUnitBillingModels ? { serviceUnitBillingModels } : {}),
       relay: {
         baseUrl,
         authHeaderName: 'authorization',

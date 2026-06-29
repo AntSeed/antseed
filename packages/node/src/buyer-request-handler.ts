@@ -124,7 +124,7 @@ export class BuyerRequestHandler {
         )
       ) {
         throw new Error(
-          `Cannot send paid openai-images request for service "${requestedService}" without service billing metadata`,
+          `Cannot send paid openai-images request for service "${requestedService}" without service unit billing metadata`,
         );
       }
       negotiator.trackRequestBillingContext(req, requestedService, billingRoute);
@@ -394,7 +394,7 @@ function selectBillingRoute(
   const provider = selectProviderForService(peer, service, extractRequestedProvider(request));
   if (!provider) return null;
   const serviceApiProtocol = selectProtocolForService(peer, provider, service, request);
-  const unitModel = peer.providerServiceBillingModels?.[provider]?.services[service]?.[serviceApiProtocol];
+  const unitModel = peer.providerServiceUnitBillingModels?.[provider]?.services[service]?.[serviceApiProtocol];
   const tokenPricing = selectTokenPricing(peer, provider, service);
   return {
     sellerPeerId: peer.peerId,
@@ -430,7 +430,7 @@ function selectProviderForService(
 function providerOffersService(peer: PeerInfo, provider: string, service: string): boolean {
   return Boolean(
     peer.providerPricing?.[provider]?.services?.[service]
-    || peer.providerServiceBillingModels?.[provider]?.services[service]
+    || peer.providerServiceUnitBillingModels?.[provider]?.services[service]
     || peer.providerServiceApiProtocols?.[provider]?.services[service]
     || peer.providerServiceCategories?.[provider]?.services[service],
   );
@@ -445,7 +445,7 @@ function selectProtocolForService(
   const protocols =
     peer.providerServiceApiProtocols?.[provider]?.services[service];
   const billingProtocols = Object.keys(
-    peer.providerServiceBillingModels?.[provider]?.services[service] ?? {},
+    peer.providerServiceUnitBillingModels?.[provider]?.services[service] ?? {},
   ) as ServiceApiProtocol[];
   const candidates = protocols ?? billingProtocols;
   const requestProtocol = detectRequestServiceApiProtocol(request);

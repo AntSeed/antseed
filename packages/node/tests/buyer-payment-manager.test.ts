@@ -698,7 +698,7 @@ describe('BuyerPaymentManager', () => {
                 'openai-images': {
                   version: 1,
                   components: [
-                    { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
                   ],
                 },
               },
@@ -713,18 +713,14 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2' },
-        meterAttributes: { output_images: { size: '1024x1024' } },
+        attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
       requestFacts: {},
-      mode: {
-        kind: 'unit',
-        model: {
-          version: 1,
-          components: [
-            { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
-          ],
-        },
+      unitModel: {
+        version: 1,
+        components: [
+          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+        ],
       },
     });
     mux.sentSpendingAuths.length = 0;
@@ -763,7 +759,7 @@ describe('BuyerPaymentManager', () => {
                 'openai-images': {
                   version: 1,
                   components: [
-                    { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+                    { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
                   ],
                 },
               },
@@ -778,18 +774,14 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2' },
-        meterAttributes: { output_images: { size: '256x256' } },
+        attributes: { model: 'gpt-image-2', size: '256x256' },
       },
       requestFacts: {},
-      mode: {
-        kind: 'unit',
-        model: {
-          version: 1,
-          components: [
-            { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
-          ],
-        },
+      unitModel: {
+        version: 1,
+        components: [
+          { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+        ],
       },
     });
     mux.sentSpendingAuths.length = 0;
@@ -805,9 +797,7 @@ describe('BuyerPaymentManager', () => {
       outputTokens: '0',
       billingUsage: {
         version: 1,
-        meters: { output_images: '1' },
-        meterAttributes: { output_images: { size: '1024x1024' } },
-        costUsdc: '40000',
+        units: { output_images: '1' },
       },
     }, mux);
 
@@ -826,7 +816,7 @@ describe('BuyerPaymentManager', () => {
     const imageModel = {
       version: 1 as const,
       components: [
-        { meter: 'output_images' as const, unit: 'per_unit' as const, priceUsd: 0.04, match: { size: '1024x1024' } },
+        { unit: 'output_images' as const, priceUsd: 0.04, match: { size: '1024x1024' } },
       ],
     };
     manager.trackRequestBilling('req-image-hybrid', {
@@ -835,15 +825,11 @@ describe('BuyerPaymentManager', () => {
         provider: 'openai',
         service: 'gpt-image-2',
         serviceApiProtocol: 'openai-images',
-        attributes: { model: 'gpt-image-2' },
-        meterAttributes: { output_images: { size: '1024x1024' } },
+        attributes: { model: 'gpt-image-2', size: '1024x1024' },
       },
       requestFacts: {},
-      mode: {
-        kind: 'token',
-        pricing: TEST_PRICING,
-        unitModel: imageModel,
-      },
+      tokenPricing: TEST_PRICING,
+      unitModel: imageModel,
     });
     mux.sentSpendingAuths.length = 0;
 
@@ -863,7 +849,7 @@ describe('BuyerPaymentManager', () => {
       outputTokens: '50',
       billingUsage: {
         version: 1,
-        meters: { output_images: '2' },
+        units: { output_images: '2' },
         costUsdc: imageCost.toString(),
       },
     }, mux);
@@ -884,8 +870,7 @@ describe('BuyerPaymentManager', () => {
       provider: 'openai',
       service: 'gpt-image-2',
       serviceApiProtocol: 'openai-images',
-      attributes: { model: 'gpt-image-2' },
-      meterAttributes: { output_images: { size: '1024x1024' } },
+      attributes: { model: 'gpt-image-2', size: '1024x1024' },
     });
     mux.sentSpendingAuths.length = 0;
 

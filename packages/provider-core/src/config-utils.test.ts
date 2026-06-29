@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseServiceBillingModelsJson } from './config-utils.js';
+import { parseServiceUnitBillingModelsJson } from './config-utils.js';
 
-describe('parseServiceBillingModelsJson', () => {
+describe('parseServiceUnitBillingModelsJson', () => {
   it('rejects unknown service API protocol keys', () => {
-    expect(() => parseServiceBillingModelsJson(JSON.stringify({
+    expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({
       'gpt-image-1': {
         'not-a-protocol': {
           version: 1,
@@ -14,7 +14,7 @@ describe('parseServiceBillingModelsJson', () => {
   });
 
   it('accepts known service API protocol keys', () => {
-    expect(parseServiceBillingModelsJson(JSON.stringify({
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify({
       'gpt-image-1': {
         'openai-images': {
           version: 1,

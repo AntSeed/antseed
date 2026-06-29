@@ -119,19 +119,18 @@ function isGrokImagineImageModel(service) {
   return /(^|\/)grok-imagine-image/.test(service.trim().toLowerCase());
 }
 
-function usesFlatImageBilling(service) {
+function usesFlatUnitBilling(service) {
   return isGrokImagineImageModel(service);
 }
 
-function buildKnownImageBillingModel(service) {
+function buildKnownUnitBillingModel(service) {
   const normalized = service.trim().toLowerCase();
   if (normalized.startsWith("grok-imagine-image-quality") || normalized.startsWith("grok-imagine-image-pro")) {
     return {
       version: 1,
       components: [
         {
-          meter: "output_images",
-          unit: "per_unit",
+          unit: "output_images",
           priceUsd: 0.05,
           match: { model: service },
         },
@@ -143,8 +142,7 @@ function buildKnownImageBillingModel(service) {
       version: 1,
       components: [
         {
-          meter: "output_images",
-          unit: "per_unit",
+          unit: "output_images",
           priceUsd: 0.02,
           match: { model: service },
         },
@@ -154,12 +152,12 @@ function buildKnownImageBillingModel(service) {
   return null;
 }
 
-function buildServiceBillingModelsConfig(service) {
-  const configured = process.env.ANTSEED_SERVICE_BILLING_MODELS_JSON?.trim();
+function buildServiceUnitBillingModelsConfig(service) {
+  const configured = process.env.ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON?.trim();
   if (configured) {
     return configured;
   }
-  const knownModel = buildKnownImageBillingModel(service);
+  const knownModel = buildKnownUnitBillingModel(service);
   if (!knownModel) {
     return undefined;
   }
@@ -643,8 +641,8 @@ async function main() {
     await bootstrap.start();
     const bootstrapConfig = [{ host: "127.0.0.1", port: bootstrap.getPort() }];
 
-    const serviceBillingModelsJson = buildServiceBillingModelsConfig(IMAGE_MODEL);
-    const defaultTokenPricing = usesFlatImageBilling(IMAGE_MODEL)
+    const serviceUnitBillingModelsJson = buildServiceUnitBillingModelsConfig(IMAGE_MODEL);
+    const defaultTokenPricing = usesFlatUnitBilling(IMAGE_MODEL)
       ? { inputUsdPerMillion: "0", outputUsdPerMillion: "0" }
       : { inputUsdPerMillion: "5", outputUsdPerMillion: "40" };
 
@@ -657,7 +655,7 @@ async function main() {
       ANTSEED_OUTPUT_USD_PER_MILLION:
         process.env.ANTSEED_OUTPUT_USD_PER_MILLION?.trim() ?? defaultTokenPricing.outputUsdPerMillion,
       ...(OPENAI_PROVIDER_FLAVOR ? { OPENAI_PROVIDER_FLAVOR } : {}),
-      ...(serviceBillingModelsJson ? { ANTSEED_SERVICE_BILLING_MODELS_JSON: serviceBillingModelsJson } : {}),
+      ...(serviceUnitBillingModelsJson ? { ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: serviceUnitBillingModelsJson } : {}),
     });
 
     const payments = {
@@ -814,7 +812,7 @@ async function main() {
           output: cumulativeTokens.outputTokens.toString(),
         },
         responseTotals,
-        serviceBillingModelsJson: serviceBillingModelsJson ?? null,
+        serviceUnitBillingModelsJson: serviceUnitBillingModelsJson ?? null,
       },
       balances: {
         buyerBefore: {

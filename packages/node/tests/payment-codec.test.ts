@@ -108,9 +108,7 @@ describe('payment codec round-trips', () => {
       outputTokens: '0',
       billingUsage: {
         version: 1 as const,
-        meters: { output_images: '2' },
-        meterAttributes: { output_images: { size: '1024x1024' } },
-        costUsdc: '80000',
+        units: { output_images: '2' },
       },
     };
     expect(decodeNeedAuth(encodeNeedAuth(payload))).toEqual(payload);
@@ -124,8 +122,7 @@ describe('payment codec round-trips', () => {
       deposit: '1000000',
       billingUsage: {
         version: 1,
-        meters: { output_images: '-1' },
-        costUsdc: '80000',
+        units: { output_images: '-1' },
       },
     }));
     expect(() => decodeNeedAuth(encoded)).toThrow(/billingUsage/);

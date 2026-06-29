@@ -20,10 +20,9 @@ import {
 } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
-import type { NormalizedUsage } from '../types/billing.js';
+import type { UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
-import { captureBillingContext, computeFinalCost } from '../billing/runtime.js';
-import { resolveBillingMode } from '../billing/mode.js';
+import { captureUnitBillingContext, computeFinalUnitBilling } from '../billing/unit.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -43,7 +42,7 @@ interface LastResponseCost {
   inputTokens: bigint;
   outputTokens: bigint;
   cachedInputTokens: bigint;
-  normalizedUsage?: NormalizedUsage;
+  unitUsage?: UnitBillingUsage;
   cumulativeCost: bigint;
   inputContent: Uint8Array;
   outputContent: Uint8Array;
@@ -57,7 +56,7 @@ export interface SelectedBillingRoute {
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  unitModel?: import('../types/billing.js').ServiceBillingModelV1;
+  unitModel?: UnitBillingModelV1;
   tokenPricing?: ServicePricing;
 }
 
@@ -188,7 +187,7 @@ export class BuyerPaymentNegotiator {
     route: SelectedBillingRoute | null,
   ): void {
     if (route) {
-      const captured = captureBillingContext({
+      const captured = captureUnitBillingContext({
         sellerPeerId: route.sellerPeerId,
         provider: route.provider,
         service: route.service,
@@ -198,11 +197,8 @@ export class BuyerPaymentNegotiator {
       this._bpm.trackRequestBilling(request.requestId, {
         context: captured.context,
         requestFacts: captured.requestFacts,
-        mode: resolveBillingMode({
-          serviceApiProtocol: route.serviceApiProtocol,
-          tokenPricing: route.tokenPricing,
-          unitModel: route.unitModel,
-        }),
+        ...(route.unitModel ? { unitModel: route.unitModel } : {}),
+        ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
       });
     } else {
       this._bpm.trackRequestService(request.requestId, service);
@@ -249,13 +245,13 @@ export class BuyerPaymentNegotiator {
     const reportedInputTokens = lastCost?.inputTokens;
     const reportedOutputTokens = lastCost?.outputTokens;
     const reportedCachedInputTokens = lastCost?.cachedInputTokens;
-    const normalizedUsage = lastCost?.normalizedUsage;
+    const unitUsage = lastCost?.unitUsage;
     const service = lastCost?.service;
     const requestId = lastCost?.requestId;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, normalizedUsage, service, requestId },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, unitUsage, service, requestId },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -494,56 +490,29 @@ export class BuyerPaymentNegotiator {
     // stays on computeCostUsdc; image unit billing is an optional surcharge.
     const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
     const requestFacts = billingEntry?.requestFacts;
-    if (billingEntry?.mode.kind === 'free') {
-      const usage = parseResponseUsage(response.body);
-      this._lastResponseCost.set(peer.peerId, {
-        costUsdc: 0n,
-        inputTokens: BigInt(usage.inputTokens),
-        outputTokens: BigInt(usage.outputTokens),
-        cachedInputTokens: BigInt(usage.cachedInputTokens),
-        cumulativeCost: 0n,
-        inputContent: new Uint8Array(0),
-        outputContent: response.body,
-        latencyMs: 0,
-        service,
-        requestId,
-      });
-      this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
-      debugLog(
-        `[BuyerNegotiator] Billing resolved free for ${peer.peerId.slice(0, 12)}... ` +
-        `service=${service ?? 'unknown'}`,
-      );
-      return;
-    }
-
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
-    const imageModel = billingEntry?.mode.kind === 'unit'
-      ? billingEntry.mode.model
-      : billingEntry?.mode.kind === 'token'
-        ? billingEntry.mode.unitModel
-        : undefined;
-    const imageBilling = imageModel && billingEntry
-      ? computeFinalCost(imageModel, billingEntry.context, response, requestFacts)
+    const unitModel = billingEntry?.unitModel;
+    const unitBilling = unitModel && billingEntry
+      ? computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts)
       : null;
-    const usage = imageBilling?.tokenUsage ?? parseResponseUsage(response.body);
-    const pricing = billingEntry?.mode.kind === 'token'
-      ? billingEntry.mode.pricing
-      : this._bpm.getSessionPricing(peer.peerId, service)
+    const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
+    const pricing = billingEntry?.tokenPricing
+      ?? this._bpm.getSessionPricing(peer.peerId, service)
         ?? this._peerDefaultPricing(peer);
     const tokenCostUsdc = pricing
       ? computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens)
       : 0n;
-    const imageCostUsdc = imageBilling?.costUsdc ?? 0n;
-    const costUsdc = tokenCostUsdc + imageCostUsdc;
-    if (costUsdc <= 0n && !pricing && !imageBilling) return;
+    const unitCostUsdc = unitBilling?.costUsdc ?? 0n;
+    const costUsdc = tokenCostUsdc + unitCostUsdc;
+    if (costUsdc <= 0n && !pricing && !unitBilling) return;
 
     this._lastResponseCost.set(peer.peerId, {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
       cachedInputTokens: BigInt(usage.cachedInputTokens),
-      ...(imageBilling ? { normalizedUsage: imageBilling.usage } : {}),
+      ...(unitBilling ? { unitUsage: unitBilling.usage } : {}),
       cumulativeCost: 0n,
       inputContent: new Uint8Array(0),
       outputContent: response.body,
@@ -554,7 +523,7 @@ export class BuyerPaymentNegotiator {
 
     debugLog(
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
-      `cost=${costUsdc} token=${tokenCostUsdc} image=${imageCostUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
+      `cost=${costUsdc} token=${tokenCostUsdc} unit=${unitCostUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
     );
 
     this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);

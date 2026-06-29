@@ -1,8 +1,8 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
+import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
-import { validateServiceBillingModelV1 } from "../billing/evaluator.js";
+import { validateUnitBillingModelV1 } from "../billing/unit.js";
 
 // v9 adds signed verification claims and v10 adds peer capabilities. Keep
 // enough room for several normal claims while bounding DHT-served metadata.
@@ -66,10 +66,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
   const errors: ValidationError[] = [];
 
   // version
-  if (metadata.version !== METADATA_VERSION && metadata.version !== SERVICE_BILLING_METADATA_VERSION) {
+  if (metadata.version !== METADATA_VERSION && metadata.version !== SERVICE_UNIT_BILLING_METADATA_VERSION) {
     errors.push({
       field: "version",
-      message: `Expected version ${METADATA_VERSION} or ${SERVICE_BILLING_METADATA_VERSION}, got ${metadata.version}`,
+      message: `Expected version ${METADATA_VERSION} or ${SERVICE_UNIT_BILLING_METADATA_VERSION}, got ${metadata.version}`,
     });
   }
 
@@ -510,31 +510,31 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       }
     }
 
-    if (p.serviceBillingModels !== undefined) {
-      if (metadata.version < SERVICE_BILLING_METADATA_VERSION) {
+    if (p.serviceUnitBillingModels !== undefined) {
+      if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION) {
         errors.push({
-          field: `providers[${i}].serviceBillingModels`,
-          message: `Service billing models require metadata version ${SERVICE_BILLING_METADATA_VERSION}`,
+          field: `providers[${i}].serviceUnitBillingModels`,
+          message: `Service unit billing models require metadata version ${SERVICE_UNIT_BILLING_METADATA_VERSION}`,
         });
       }
       let expandedBillingModelCount = 0;
-      for (const [serviceName, protocolModels] of Object.entries(p.serviceBillingModels)) {
+      for (const [serviceName, protocolModels] of Object.entries(p.serviceUnitBillingModels)) {
         if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
           errors.push({
-            field: `providers[${i}].serviceBillingModels.${serviceName}`,
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
             message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
           });
         }
         if (!hasWildcardServices && !p.services.includes(serviceName)) {
           errors.push({
-            field: `providers[${i}].serviceBillingModels.${serviceName}`,
-            message: "Service billing models must reference a service listed in providers[].services",
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
+            message: "Service unit billing models must reference a service listed in providers[].services",
           });
         }
         if (!protocolModels || typeof protocolModels !== "object" || Array.isArray(protocolModels)) {
           errors.push({
-            field: `providers[${i}].serviceBillingModels.${serviceName}`,
-            message: "Service billing model entry must be an object keyed by service API protocol",
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
+            message: "Service unit billing model entry must be an object keyed by service API protocol",
           });
           continue;
         }
@@ -543,44 +543,38 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
           const serviceProtocols = p.serviceApiProtocols?.[serviceName];
           if (!SERVICE_API_PROTOCOL_SET.has(protocol)) {
             errors.push({
-              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: `Unsupported service API protocol "${protocol}"`,
             });
           } else if (protocol !== "openai-images") {
             errors.push({
-              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
-              message: "Service billing models currently support openai-images only",
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
+              message: "Service unit billing models currently support openai-images only",
             });
           } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
             errors.push({
-              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message: "Billing model protocol must be announced for the service",
             });
           }
-          const modelErrors = validateServiceBillingModelV1(model);
+          const modelErrors = validateUnitBillingModelV1(model);
           for (const message of modelErrors) {
             errors.push({
-              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}`,
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
               message,
             });
           }
           if (model.components.length > MAX_BILLING_COMPONENTS_PER_MODEL) {
             errors.push({
-              field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components`,
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components`,
               message: `Billing component count ${model.components.length} exceeds max ${MAX_BILLING_COMPONENTS_PER_MODEL}`,
             });
           }
           model.components.forEach((component, componentIndex) => {
-            if (component.meter !== "output_images") {
-              errors.push({
-                field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].meter`,
-                message: "Image billing models currently support output_images only",
-              });
-            }
             const matchEntries = Object.entries(component.match ?? {});
             if (matchEntries.length > MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT) {
               errors.push({
-                field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match`,
+                field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match`,
                 message: `Billing match entry count ${matchEntries.length} exceeds max ${MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT}`,
               });
             }
@@ -588,7 +582,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
               const byteLength = new TextEncoder().encode(value).length;
               if (byteLength > MAX_BILLING_MATCH_VALUE_BYTES) {
                 errors.push({
-                  field: `providers[${i}].serviceBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match.${key}`,
+                  field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match.${key}`,
                   message: `Billing match value length ${byteLength} exceeds max ${MAX_BILLING_MATCH_VALUE_BYTES} bytes`,
                 });
               }
@@ -598,7 +592,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       }
       if (expandedBillingModelCount > MAX_SERVICES_PER_PROVIDER) {
         errors.push({
-          field: `providers[${i}].serviceBillingModels`,
+          field: `providers[${i}].serviceUnitBillingModels`,
           message: `Expanded billing model count ${expandedBillingModelCount} exceeds max ${MAX_SERVICES_PER_PROVIDER}`,
         });
       }

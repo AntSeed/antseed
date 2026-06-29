@@ -337,10 +337,9 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     // Discovery should carry the signed v11 billing model all the way into buyer peer info.
     expect(discoveredSeller.metadata?.version).toBe(11);
     const billingComponent = discoveredSeller
-      .providerServiceBillingModels?.openai?.services['gpt-image-2']?.['openai-images']?.components[0];
+      .providerServiceUnitBillingModels?.openai?.services['gpt-image-2']?.['openai-images']?.components[0];
     expect(billingComponent).toMatchObject({
-      meter: 'output_images',
-      unit: 'per_unit',
+      unit: 'output_images',
       match: { size: '1024x1024' },
     });
     expect(billingComponent?.priceUsd).toBeCloseTo(0.04, 5);
@@ -375,7 +374,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
   it('treats image services without explicit unit billing as free', async () => {
     await setupRpc();
     const { provider, port, discoveredSeller } = await setupProxyNetwork(
-      new MockOpenAIImageProvider({ serviceBillingModels: null }),
+      new MockOpenAIImageProvider({ serviceUnitBillingModels: null }),
     );
 
     const paymentEvents: string[] = [];
@@ -398,7 +397,7 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
 
     expect(response.data).toHaveLength(2);
     expect(provider.requestCount).toBe(1);
-    expect(discoveredSeller.providerServiceBillingModels).toBeUndefined();
+    expect(discoveredSeller.providerServiceUnitBillingModels).toBeUndefined();
     expect(paymentEvents).toEqual([]);
     expect(rpcCallLog.some((call) => call.method === 'eth_sendRawTransaction')).toBe(false);
     expect(buyerNode!.buyerPaymentManager?.getActiveSession(discoveredSeller.peerId)).toBeNull();

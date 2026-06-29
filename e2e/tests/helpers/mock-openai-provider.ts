@@ -78,7 +78,7 @@ export class MockOpenAIImageProvider implements Provider {
   readonly serviceApiProtocols = {
     'gpt-image-2': ['openai-images' as any],
   };
-  readonly serviceBillingModels?: Provider['serviceBillingModels'];
+  readonly serviceUnitBillingModels?: Provider['serviceUnitBillingModels'];
   readonly maxConcurrency = 5;
   private _active = 0;
   private readonly _imageCount: number;
@@ -86,19 +86,18 @@ export class MockOpenAIImageProvider implements Provider {
   public lastRequest: SerializedHttpRequest | null = null;
 
   constructor(options: {
-    serviceBillingModels?: Provider['serviceBillingModels'] | null;
+    serviceUnitBillingModels?: Provider['serviceUnitBillingModels'] | null;
     imageCount?: number;
   } = {}) {
-    this.serviceBillingModels = options.serviceBillingModels === null
+    this.serviceUnitBillingModels = options.serviceUnitBillingModels === null
       ? undefined
-      : options.serviceBillingModels ?? {
+      : options.serviceUnitBillingModels ?? {
           'gpt-image-2': {
             'openai-images': {
               version: 1 as const,
               components: [
                 {
-                  meter: 'output_images' as const,
-                  unit: 'per_unit' as const,
+                  unit: 'output_images' as const,
                   priceUsd: 0.04,
                   match: { size: '1024x1024' },
                 },

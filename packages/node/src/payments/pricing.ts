@@ -2,9 +2,9 @@
 
 import { estimateTokenCount } from 'tokenx';
 import {
-  isFreeBillingModel,
-  validateServiceBillingModelV1,
-} from '../billing/evaluator.js';
+  isFreeUnitBillingModel,
+  validateUnitBillingModelV1,
+} from '../billing/unit.js';
 
 /** Token pricing for a service (USDC per million tokens). */
 export interface ServicePricing {
@@ -15,8 +15,8 @@ export interface ServicePricing {
 }
 
 export {
-  isFreeBillingModel,
-  validateServiceBillingModelV1,
+  isFreeUnitBillingModel,
+  validateUnitBillingModelV1,
 };
 
 const textDecoder = new TextDecoder();

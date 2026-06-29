@@ -11,7 +11,7 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
   services: string[];
   servicePricing?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }>;
   serviceApiProtocols?: Provider['serviceApiProtocols'];
-  serviceBillingModels?: Provider['serviceBillingModels'];
+  serviceUnitBillingModels?: Provider['serviceUnitBillingModels'];
 }): Provider {
   return {
     name: opts.name,
@@ -21,7 +21,7 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
       ...(opts.servicePricing ? { services: opts.servicePricing } : {}),
     },
     ...(opts.serviceApiProtocols ? { serviceApiProtocols: opts.serviceApiProtocols } : {}),
-    ...(opts.serviceBillingModels ? { serviceBillingModels: opts.serviceBillingModels } : {}),
+    ...(opts.serviceUnitBillingModels ? { serviceUnitBillingModels: opts.serviceUnitBillingModels } : {}),
     maxConcurrency: 1,
     async handleRequest(_req) {
       return {
@@ -287,12 +287,12 @@ describe('SellerRequestHandler payment pricing selection', () => {
       serviceApiProtocols: {
         'gpt-image-1': ['openai-images'],
       },
-      serviceBillingModels: {
+      serviceUnitBillingModels: {
         'gpt-image-1': {
           'openai-images': {
             version: 1,
             components: [
-              { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04, match: { size: '1024x1024' } },
+              { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
             ],
           },
         },
@@ -309,8 +309,8 @@ describe('SellerRequestHandler payment pricing selection', () => {
     }));
 
     const tokenCostUsdc = 4_000n;
-    const imageCostUsdc = 80_000n;
-    const totalCostUsdc = tokenCostUsdc + imageCostUsdc;
+    const unitCostUsdc = 80_000n;
+    const totalCostUsdc = tokenCostUsdc + unitCostUsdc;
     let cumulativeSpend = 0n;
     const sendNeedAuth = vi.fn();
     const recordSpend = vi.fn((_sessionId: string, cost: bigint) => { cumulativeSpend += cost; });
@@ -349,8 +349,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       outputTokens: '500',
       freshInputTokens: '1000',
       billingUsage: expect.objectContaining({
-        meters: { output_images: '2' },
-        costUsdc: imageCostUsdc.toString(),
+        units: { output_images: '2' },
       }),
     }));
   });

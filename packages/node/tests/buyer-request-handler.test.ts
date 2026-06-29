@@ -20,7 +20,7 @@ function makeImageRequest(): SerializedHttpRequest {
 }
 
 describe('BuyerRequestHandler billing guards', () => {
-  it('rejects paid image requests when metadata lacks a service billing model', async () => {
+  it('rejects paid image requests when metadata lacks a service unit billing model', async () => {
     const paymentMux = {};
     const negotiator = {
       getOrCreatePaymentMux: vi.fn(() => paymentMux),
@@ -61,7 +61,7 @@ describe('BuyerRequestHandler billing guards', () => {
     };
 
     await expect(handler.sendRequest(peer, makeImageRequest())).rejects.toThrow(
-      /without service billing metadata/,
+      /without service unit billing metadata/,
     );
     expect(negotiator.trackRequestBillingContext).not.toHaveBeenCalled();
   });

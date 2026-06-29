@@ -81,11 +81,11 @@ describe('PeerAnnouncer metadata versions', () => {
           provider: 'openai',
           services: ['gpt-image-1'],
           serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
-          serviceBillingModels: {
+          serviceUnitBillingModels: {
             'gpt-image-1': {
               'openai-images': {
                 version: 1,
-                components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+                components: [{ unit: 'output_images', priceUsd: 0.04 }],
               },
             },
           },
@@ -102,11 +102,11 @@ describe('PeerAnnouncer metadata versions', () => {
 
     expect(defaultMetadata).toBe(v10);
     expect(v10?.version).toBe(10);
-    expect(v10?.providers[0]?.serviceBillingModels).toBeUndefined();
+    expect(v10?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
     expect(v11?.version).toBe(11);
-    expect(v11?.providers[0]?.serviceBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
+    expect(v11?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
-      components: [{ meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 }],
+      components: [{ unit: 'output_images', priceUsd: 0.04 }],
     });
     expect(v11?.signature).not.toBe(v10?.signature);
   });

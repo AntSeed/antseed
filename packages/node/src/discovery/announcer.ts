@@ -11,7 +11,7 @@ import {
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement } from "./peer-metadata.js";
-import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION } from "./peer-metadata.js";
+import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
   MAX_DOMAIN_VERIFICATION_CLAIMS,
@@ -23,7 +23,7 @@ import {
 
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
-import type { ServiceBillingModelsV1 } from "../types/billing.js";
+import type { ServiceUnitBillingModelsV1 } from "../types/billing.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { getAddress } from "ethers";
 import { debugWarn } from "../utils/debug.js";
@@ -51,7 +51,7 @@ export interface AnnouncerConfig {
     services: string[];
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
-    serviceBillingModels?: ServiceBillingModelsV1;
+    serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
     maxConcurrency: number;
     /** Per-instance pricing. Takes precedence over the shared pricing Map. */
     pricing?: {
@@ -103,7 +103,7 @@ export class PeerAnnouncer {
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
   // v11 uses the same structural PeerMetadata type as v10; the version value
-  // controls whether optional serviceBillingModels are encoded and announced.
+  // controls whether optional serviceUnitBillingModels are encoded and announced.
   private _latestMetadataV10: PeerMetadata | null = null;
   private _latestMetadataV11: PeerMetadata | null = null;
 
@@ -258,7 +258,7 @@ export class PeerAnnouncer {
     v10: PeerMetadata;
     v11?: PeerMetadata;
   }> {
-    const providersWithBilling: ProviderAnnouncement[] = this.config.providers.map((p) => {
+    const providersWithUnitBilling: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
         defaults: {
           inputUsdPerMillion: 0,
@@ -283,18 +283,18 @@ export class PeerAnnouncer {
       if (normalizedServiceApiProtocols) {
         providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
       }
-      const normalizedServiceBillingModels = this._normalizeServiceBillingModels(p.serviceBillingModels, p.services);
-      if (normalizedServiceBillingModels) {
-        providerAnnouncement.serviceBillingModels = normalizedServiceBillingModels;
+      const normalizedServiceUnitBillingModels = this._normalizeServiceUnitBillingModels(p.serviceUnitBillingModels, p.services);
+      if (normalizedServiceUnitBillingModels) {
+        providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
       }
       return providerAnnouncement;
     });
-    const providersV10: ProviderAnnouncement[] = providersWithBilling.map((provider) => {
+    const providersV10: ProviderAnnouncement[] = providersWithUnitBilling.map((provider) => {
       const legacyProvider = { ...provider };
-      delete legacyProvider.serviceBillingModels;
+      delete legacyProvider.serviceUnitBillingModels;
       return legacyProvider;
     });
-    const hasServiceBillingModels = providersWithBilling.some((provider) => provider.serviceBillingModels !== undefined);
+    const hasServiceUnitBillingModels = providersWithUnitBilling.some((provider) => provider.serviceUnitBillingModels !== undefined);
 
     const timestamp = Date.now();
     let onChainChannelCount: number | undefined;
@@ -348,8 +348,8 @@ export class PeerAnnouncer {
 
     return {
       v10: this._signAndValidateMetadata(buildMetadata(METADATA_VERSION, providersV10)),
-      ...(hasServiceBillingModels
-        ? { v11: this._signAndValidateMetadata(buildMetadata(SERVICE_BILLING_METADATA_VERSION, providersWithBilling)) }
+      ...(hasServiceUnitBillingModels
+        ? { v11: this._signAndValidateMetadata(buildMetadata(SERVICE_UNIT_BILLING_METADATA_VERSION, providersWithUnitBilling)) }
         : {}),
     };
   }
@@ -502,18 +502,18 @@ export class PeerAnnouncer {
     return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 
-  private _normalizeServiceBillingModels(
-    serviceBillingModels: ServiceBillingModelsV1 | undefined,
+  private _normalizeServiceUnitBillingModels(
+    serviceUnitBillingModels: ServiceUnitBillingModelsV1 | undefined,
     supportedServices: string[],
-  ): ServiceBillingModelsV1 | undefined {
-    if (!serviceBillingModels) {
+  ): ServiceUnitBillingModelsV1 | undefined {
+    if (!serviceUnitBillingModels) {
       return undefined;
     }
 
     const hasWildcardServices = supportedServices.length === 0;
     const supportedServiceSet = new Set(supportedServices);
-    const normalized: ServiceBillingModelsV1 = {};
-    for (const [service, protocolModels] of Object.entries(serviceBillingModels)) {
+    const normalized: ServiceUnitBillingModelsV1 = {};
+    for (const [service, protocolModels] of Object.entries(serviceUnitBillingModels)) {
       if (!hasWildcardServices && !supportedServiceSet.has(service)) {
         continue;
       }
@@ -522,7 +522,7 @@ export class PeerAnnouncer {
       if (entries.length === 0) {
         continue;
       }
-      normalized[service] = Object.fromEntries(entries) as ServiceBillingModelsV1[string];
+      normalized[service] = Object.fromEntries(entries) as ServiceUnitBillingModelsV1[string];
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;

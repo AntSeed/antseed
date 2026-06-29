@@ -14,7 +14,7 @@ import {
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
-import { METADATA_VERSION, SERVICE_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -267,12 +267,12 @@ describe('validateMetadata', () => {
       serviceApiProtocols: {
         'gpt-image-1': ['openai-images'],
       },
-      serviceBillingModels: {
+      serviceUnitBillingModels: {
         'gpt-image-1': {
           'openai-images': {
             version: 1,
             components: [
-              { meter: 'output_images', unit: 'per_unit', priceUsd: 0.04 },
+              { unit: 'output_images', priceUsd: 0.04 },
             ],
           },
         },
@@ -282,13 +282,13 @@ describe('validateMetadata', () => {
     } satisfies PeerMetadata['providers'][number];
 
     const unitOnlyErrors = validateMetadata(validMetadata({
-      version: SERVICE_BILLING_METADATA_VERSION,
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [unitOnlyProvider],
     }));
     expect(unitOnlyErrors).toEqual([]);
 
     const bothErrors = validateMetadata(validMetadata({
-      version: SERVICE_BILLING_METADATA_VERSION,
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
         {
           ...unitOnlyProvider,
@@ -304,9 +304,9 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects non-image service billing models for now', () => {
+  it('rejects non-image service unit billing models for now', () => {
     const errors = validateMetadata(validMetadata({
-      version: SERVICE_BILLING_METADATA_VERSION,
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
         {
           provider: 'openai',
@@ -318,12 +318,12 @@ describe('validateMetadata', () => {
           serviceApiProtocols: {
             'gpt-4.1': ['openai-chat-completions'],
           },
-          serviceBillingModels: {
+          serviceUnitBillingModels: {
             'gpt-4.1': {
               'openai-chat-completions': {
                 version: 1,
                 components: [
-                  { meter: 'requests', unit: 'per_unit', priceUsd: 1 } as any,
+                  { unit: 'requests', priceUsd: 1 } as any,
                 ],
               },
             },
@@ -337,12 +337,12 @@ describe('validateMetadata', () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          field: 'providers[0].serviceBillingModels.gpt-4.1.openai-chat-completions',
+          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
           message: expect.stringContaining('openai-images only'),
         }),
         expect.objectContaining({
-          field: 'providers[0].serviceBillingModels.gpt-4.1.openai-chat-completions.components[0].meter',
-          message: expect.stringContaining('output_images only'),
+          field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
+          message: expect.stringContaining('components[0].unit is unsupported'),
         }),
       ]),
     );

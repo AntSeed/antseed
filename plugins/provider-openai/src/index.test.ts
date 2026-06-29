@@ -72,7 +72,7 @@ describe('provider-openai plugin', () => {
         OPENAI_API_KEY: 'sk-test-key',
         ANTSEED_ALLOWED_SERVICES: 'cover-art',
         ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
-        ANTSEED_SERVICE_BILLING_MODELS_JSON: JSON.stringify({
+        ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
           'cover-art': {
             'openai-images': {
               version: 1,
@@ -83,7 +83,7 @@ describe('provider-openai plugin', () => {
       });
 
       expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
-      expect(provider.serviceBillingModels?.['cover-art']?.['openai-images']).toEqual({
+      expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
         version: 1,
         components: [],
       });
@@ -117,7 +117,7 @@ describe('provider-openai plugin', () => {
     });
 
     expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
-    expect(provider.serviceBillingModels).toBeUndefined();
+    expect(provider.serviceUnitBillingModels).toBeUndefined();
   });
 
   it('advertises image billing only when explicitly configured', async () => {
@@ -125,14 +125,13 @@ describe('provider-openai plugin', () => {
       OPENAI_API_KEY: 'sk-test-key',
       ANTSEED_ALLOWED_SERVICES: 'cover-art',
       ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
-      ANTSEED_SERVICE_BILLING_MODELS_JSON: JSON.stringify({
+      ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
         'cover-art': {
           'openai-images': {
             version: 1,
             components: [
               {
-                meter: 'output_images',
-                unit: 'per_unit',
+                unit: 'output_images',
                 priceUsd: 0.00816,
                 match: { size: '1024x1024', quality: 'low' },
               },
@@ -142,12 +141,11 @@ describe('provider-openai plugin', () => {
       }),
     });
 
-    expect(provider.serviceBillingModels?.['cover-art']?.['openai-images']).toEqual({
+    expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
       version: 1,
       components: [
         {
-          meter: 'output_images',
-          unit: 'per_unit',
+          unit: 'output_images',
           priceUsd: 0.00816,
           match: { size: '1024x1024', quality: 'low' },
         },

@@ -1,114 +1,93 @@
 import type { ServiceApiProtocol } from "./service-api.js";
 
-export const IMAGE_BILLING_METERS_V1 = [
+export const UNIT_BILLING_UNITS_V1 = [
   "output_images",
 ] as const;
 
-export const BILLING_MATCH_KEYS_V1 = [
+export const UNIT_BILLING_MATCH_KEYS_V1 = [
   "model",
   "size",
   "quality",
   "resolution",
 ] as const;
 
-export const BILLING_UNITS_V1 = ["per_unit"] as const;
+export type UnitBillingUnitV1 = (typeof UNIT_BILLING_UNITS_V1)[number];
+export type UnitBillingMatchKeyV1 = (typeof UNIT_BILLING_MATCH_KEYS_V1)[number];
 
-export type ImageBillingMeterV1 = (typeof IMAGE_BILLING_METERS_V1)[number];
-export type BillingMeterV1 = ImageBillingMeterV1;
-export type BillingMatchKeyV1 = (typeof BILLING_MATCH_KEYS_V1)[number];
-export type BillingUnitV1 = (typeof BILLING_UNITS_V1)[number];
-
-export interface BillingComponentV1 {
-  meter: ImageBillingMeterV1;
-  unit: "per_unit";
+export interface UnitBillingComponentV1 {
+  unit: UnitBillingUnitV1;
   priceUsd: number;
-  match?: Partial<Record<BillingMatchKeyV1, string>>;
+  match?: Partial<Record<UnitBillingMatchKeyV1, string>>;
 }
 
-export interface ServiceBillingModelV1 {
+export interface UnitBillingModelV1 {
   version: 1;
-  components: BillingComponentV1[];
+  components: UnitBillingComponentV1[];
 }
 
-export type ServiceBillingModelsV1 = Record<
+export type ServiceUnitBillingModelsV1 = Record<
   string,
-  Partial<Record<ServiceApiProtocol, ServiceBillingModelV1>>
+  Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>
 >;
 
 /**
- * Canonical billable usage consumed by the billing evaluator.
- *
- * Image usage consumed by the unit billing evaluator. Token pricing stays on
- * the TokenUsage + computeCostUsdc path.
+ * Canonical non-token usage consumed by unit billing.
+ * Token pricing stays on the TokenUsage + computeCostUsdc path.
  */
-export interface NormalizedUsage {
-  meters: Partial<Record<BillingMeterV1, number>>;
-  attributes?: Partial<Record<BillingMatchKeyV1, string>>;
-  meterAttributes?: Partial<Record<BillingMeterV1, Partial<Record<BillingMatchKeyV1, string>>>>;
+export interface UnitBillingUsage {
+  units: Partial<Record<UnitBillingUnitV1, number>>;
 }
 
 /**
- * Compact billing evidence carried in NeedAuth.
- *
- * Counts are strings because payment messages are serialized over the wire and
- * validated before conversion. Buyers recompute the cost from this report plus
- * their trusted BuyerRequestBillingContext before signing more spend.
+ * Compact unit billing evidence carried in NeedAuth.
+ * Buyers recompute cost from this report plus their trusted UnitBillingContext.
  */
-export interface BillingUsageReportV1 {
+export interface UnitBillingUsageReportV1 {
   version: 1;
-  meters: Partial<Record<BillingMeterV1, string>>;
-  attributes?: Partial<Record<BillingMatchKeyV1, string>>;
-  meterAttributes?: Partial<Record<BillingMeterV1, Partial<Record<BillingMatchKeyV1, string>>>>;
-  costUsdc: string;
+  units: Partial<Record<UnitBillingUnitV1, string>>;
 }
 
-export interface BuyerRequestBillingContext {
+export interface UnitBillingContext {
   sellerPeerId: string;
   provider: string;
   service: string;
   serviceApiProtocol: ServiceApiProtocol;
-  attributes?: Partial<Record<BillingMatchKeyV1, string>>;
-  meterAttributes?: Partial<Record<BillingMeterV1, Partial<Record<BillingMatchKeyV1, string>>>>;
-  meterLimits?: Partial<Record<BillingMeterV1, number>>;
+  attributes?: Partial<Record<UnitBillingMatchKeyV1, string>>;
+  unitLimits?: Partial<Record<UnitBillingUnitV1, number>>;
 }
 
-export const GENERATED_IMAGE_OUTPUT_BILLING_METER_V1 = "output_images" satisfies ImageBillingMeterV1;
+export const GENERATED_IMAGE_OUTPUT_UNIT_V1 = "output_images" satisfies UnitBillingUnitV1;
 
-export const FREE_SERVICE_BILLING_MODEL_V1: ServiceBillingModelV1 = {
+export const FREE_UNIT_BILLING_MODEL_V1: UnitBillingModelV1 = {
   version: 1,
   components: [],
 };
 
-export const BILLING_METER_SET_V1 = new Set<string>(IMAGE_BILLING_METERS_V1);
-export const BILLING_MATCH_KEY_SET_V1 = new Set<string>(BILLING_MATCH_KEYS_V1);
-export const BILLING_UNIT_SET_V1 = new Set<string>(BILLING_UNITS_V1);
+export const UNIT_BILLING_UNIT_SET_V1 = new Set<string>(UNIT_BILLING_UNITS_V1);
+export const UNIT_BILLING_MATCH_KEY_SET_V1 = new Set<string>(UNIT_BILLING_MATCH_KEYS_V1);
 
-export function isBillingMeterV1(value: string): value is BillingMeterV1 {
-  return BILLING_METER_SET_V1.has(value);
+export function isUnitBillingUnitV1(value: string): value is UnitBillingUnitV1 {
+  return UNIT_BILLING_UNIT_SET_V1.has(value);
 }
 
-export function isBillingMatchKeyV1(value: string): value is BillingMatchKeyV1 {
-  return BILLING_MATCH_KEY_SET_V1.has(value);
+export function isUnitBillingMatchKeyV1(value: string): value is UnitBillingMatchKeyV1 {
+  return UNIT_BILLING_MATCH_KEY_SET_V1.has(value);
 }
 
-export function isValidBillingComponentV1(component: BillingComponentV1): boolean {
-  return isBillingMeterV1(component.meter) && component.unit === "per_unit";
+export function isValidUnitBillingComponentV1(component: UnitBillingComponentV1): boolean {
+  return isUnitBillingUnitV1(component.unit);
 }
 
-export function normalizedUsageToBillingReport(
-  usage: NormalizedUsage,
-  costUsdc: bigint,
-): BillingUsageReportV1 {
-  const meters: Partial<Record<BillingMeterV1, string>> = {};
-  for (const [meter, count] of Object.entries(usage.meters)) {
-    if (!isBillingMeterV1(meter) || count === undefined) continue;
-    meters[meter] = String(count);
+export function unitUsageToBillingReport(
+  usage: UnitBillingUsage,
+): UnitBillingUsageReportV1 {
+  const units: Partial<Record<UnitBillingUnitV1, string>> = {};
+  for (const [unit, count] of Object.entries(usage.units)) {
+    if (!isUnitBillingUnitV1(unit) || count === undefined) continue;
+    units[unit] = String(count);
   }
   return {
     version: 1,
-    meters,
-    ...(usage.attributes ? { attributes: usage.attributes } : {}),
-    ...(usage.meterAttributes ? { meterAttributes: usage.meterAttributes } : {}),
-    costUsdc: costUsdc.toString(),
+    units,
   };
 }
