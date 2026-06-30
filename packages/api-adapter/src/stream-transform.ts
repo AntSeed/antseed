@@ -256,7 +256,15 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
       }
 
       if (chunk.done && emitted.length === 0) {
-        return [{ type: 'response_done', id: responseId, model: responseModel, finishReason, inputTokens, outputTokens, toolCalls: sortedToolCalls(toolCalls) }];
+        return [{
+          type: 'response_done',
+          id: responseId,
+          model: responseModel,
+          finishReason: finishReason ?? 'stop',
+          inputTokens,
+          outputTokens,
+          toolCalls: sortedToolCalls(toolCalls),
+        }];
       }
 
       return emitted;
@@ -602,6 +610,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
   let textBuffer = '';
   let responseId = '';
   let responseModel = options.fallbackModel ?? 'unknown';
+  const createdAt = Math.floor(Date.now() / 1000);
   const toolCalls = new Map<number, CanonicalStreamToolCall>();
 
   const pushEvent = (
@@ -631,7 +640,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
         object: 'response',
         model: responseModel,
         status: 'in_progress',
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: createdAt,
         output: [],
         output_text: '',
         usage: { input_tokens: event?.inputTokens ?? 0, output_tokens: 0, total_tokens: event?.inputTokens ?? 0 },
@@ -786,7 +795,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
               object: 'response',
               model: responseModel,
               status: 'completed',
-              created_at: Math.floor(Date.now() / 1000),
+              created_at: createdAt,
               output: [
                 ...(outputStarted ? [{
                   type: 'message' as const,

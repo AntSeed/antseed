@@ -1523,6 +1523,44 @@ describe('createStreamingAdapter responses to anthropic', () => {
   });
 });
 
+describe('createStreamingAdapter responses to chat', () => {
+  it('converts responses SSE frames into chat completion chunks incrementally', () => {
+    const adapter = createStreamAdapterForTest('openai-responses', 'openai-chat-completions', '');
+    const start = adapter.adaptStart({
+      requestId: 'req-resp-chat',
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    });
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-resp-chat',
+      data: new TextEncoder().encode(
+        'event: response.created\n'
+        + 'data: {"type":"response.created","response":{"id":"resp_chat","object":"response","model":"gpt-4.1","status":"in_progress","output":[],"output_text":"","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"Hello","logprobs":[]}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":" world","logprobs":[]}\n\n'
+        + 'event: response.completed\n'
+        + 'data: {"type":"response.completed","response":{"id":"resp_chat","object":"response","model":"gpt-4.1","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello world","annotations":[]}]}],"output_text":"Hello world","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('"object":"chat.completion.chunk"');
+    expect(sseText).toContain('"id":"resp_chat"');
+    expect(sseText).toContain('"model":"gpt-4.1"');
+    expect(sseText).toContain('"content":"Hello"');
+    expect(sseText).toContain('"content":" world"');
+    expect(sseText).toContain('"finish_reason":"stop"');
+    expect(sseText).toContain('data: [DONE]');
+  });
+});
+
 describe('createStreamingAdapter anthropic to responses', () => {
   it('composes anthropic SSE frames into responses SSE frames incrementally', () => {
     const adapter = createStreamAdapterForTest('anthropic-messages', 'openai-responses', '');
