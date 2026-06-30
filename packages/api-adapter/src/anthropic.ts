@@ -149,6 +149,7 @@ function createChatStreamAdapterFromAnthropic(
   const toolBlockIndexes = new Map<number, number>();
   const emitted: Array<{ data: string }> = [];
   const createdTimestamp = Math.floor(Date.now() / 1000);
+  const fallbackId = `chatcmpl-${createdTimestamp}`;
 
   const pushChatChunk = (
     delta: Record<string, unknown>,
@@ -156,7 +157,7 @@ function createChatStreamAdapterFromAnthropic(
     usage?: Record<string, unknown>,
   ): void => {
     const chunk: Record<string, unknown> = {
-      id: responseId || `chatcmpl-${Date.now()}`,
+      id: responseId || fallbackId,
       object: 'chat.completion.chunk',
       model: responseModel,
       created: createdTimestamp,

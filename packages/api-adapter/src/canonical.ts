@@ -224,8 +224,12 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
   if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
-  if (request.metadata) body.metadata = request.metadata;
-  if (request.user) body.user = request.user;
+  if (request.metadata || request.user) {
+    body.metadata = {
+      ...(request.metadata ?? {}),
+      ...(request.user ? { user_id: request.user } : {}),
+    };
+  }
   return body;
 }
 
@@ -264,9 +268,11 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
   const toolChoice = normalizeAnthropicToolChoice(body.tool_choice);
   if (toolChoice !== undefined) request.toolChoice = toolChoice;
   if (body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)) {
-    request.metadata = body.metadata as Record<string, unknown>;
+    const metadata = body.metadata as Record<string, unknown>;
+    request.metadata = metadata;
+    if (typeof metadata.user_id === 'string') request.user = metadata.user_id;
   }
-  if (typeof body.user === 'string') request.user = body.user;
+  if (request.user === undefined && typeof body.user === 'string') request.user = body.user;
   return request;
 }
 
@@ -466,8 +472,24 @@ export function normalizeOpenAIResponsesResponseBody(
   }
 
   const { inputTokens, outputTokens } = extractUsage(body);
-  const stopReason = output.some((item) => item.type === 'function_call') ? 'tool_calls' : 'stop';
+  const stopReason = openAIResponsesStopReason(body, output);
   return { id, model, output, stopReason, usage: { inputTokens, outputTokens } };
+}
+
+function openAIResponsesStopReason(
+  body: Record<string, unknown>,
+  output: CanonicalOutputItem[],
+): string | null {
+  if (body.status === 'incomplete') {
+    const details = body.incomplete_details && typeof body.incomplete_details === 'object'
+      ? body.incomplete_details as Record<string, unknown>
+      : {};
+    if (details.reason === 'max_output_tokens') return 'length';
+    if (details.reason === 'content_filter') return 'content_filter';
+    return null;
+  }
+
+  return output.some((item) => item.type === 'function_call') ? 'tool_calls' : 'stop';
 }
 
 export function normalizeAnthropicMessagesResponseBody(

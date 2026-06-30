@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol } from '../src/types.js';
 import { transformRequest } from '../src/request-transform.js';
 import { transformResponse } from '../src/response-transform.js';
@@ -626,6 +626,38 @@ describe('createStreamingAdapter chat to anthropic', () => {
   });
 });
 
+describe('createStreamingAdapter anthropic to chat', () => {
+  it('uses one fallback response id when message_start has not supplied an id yet', () => {
+    const dateNow = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(3000);
+
+    try {
+      const adapter = createStreamAdapterForTest('anthropic-messages', 'openai-chat-completions', '');
+      const chunks = adapter.adaptChunk({
+        requestId: 'req-anthropic-chat',
+        data: new TextEncoder().encode(
+          'event: content_block_delta\n'
+          + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n'
+          + 'event: content_block_delta\n'
+          + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}\n\n',
+        ),
+        done: false,
+      });
+
+      const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+      const ids = events
+        .filter((event) => event.data !== '[DONE]')
+        .map((event) => (JSON.parse(event.data) as Record<string, unknown>).id);
+
+      expect(ids).toEqual(['chatcmpl-1', 'chatcmpl-1']);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // OpenAI Responses API tests
 // ---------------------------------------------------------------------------
@@ -882,6 +914,8 @@ describe('transformRequest responses to anthropic', () => {
         instructions: 'be helpful',
         max_output_tokens: 64,
         stop: ['END'],
+        metadata: { trace: 'abc' },
+        user: 'user-123',
         tools: [{ type: 'function', name: 'search', parameters: { type: 'object' } }],
         tool_choice: { type: 'function', name: 'search' },
       })),
@@ -893,6 +927,8 @@ describe('transformRequest responses to anthropic', () => {
     expect(body.system).toBe('be helpful');
     expect(body.max_tokens).toBe(64);
     expect(body.stop_sequences).toEqual(['END']);
+    expect(body.metadata).toEqual({ trace: 'abc', user_id: 'user-123' });
+    expect(body.user).toBeUndefined();
     expect(body.tools).toEqual([{ name: 'search', input_schema: { type: 'object' } }]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: 'search' });
     expect(body.messages).toEqual([
@@ -1247,6 +1283,40 @@ describe('transformResponse responses to anthropic', () => {
     ]);
   });
 
+  it('maps incomplete responses stop reasons to anthropic stop reasons', () => {
+    const cases: Array<{ reason: string; expectedStopReason: string }> = [
+      { reason: 'max_output_tokens', expectedStopReason: 'max_tokens' },
+      { reason: 'content_filter', expectedStopReason: 'content_filter' },
+    ];
+
+    for (const { reason, expectedStopReason } of cases) {
+      const result = adaptResponseForTest('openai-responses', 'anthropic-messages', {
+        requestId: `req-incomplete-${reason}`,
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({
+          id: `resp_${reason}`,
+          model: 'gpt-4.1',
+          status: 'incomplete',
+          incomplete_details: { reason },
+          output: [{
+            type: 'message',
+            id: 'msg_1',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'Partial answer' }],
+          }],
+          usage: { input_tokens: 8, output_tokens: 4 },
+        })),
+      }, {
+        streamRequested: false,
+        fallbackModel: 'claude-sonnet',
+      });
+
+      const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+      expect(body.stop_reason).toBe(expectedStopReason);
+    }
+  });
+
   it('maps openai responses errors to anthropic errors', () => {
     const result = adaptResponseForTest('openai-responses', 'anthropic-messages', {
       requestId: 'req-error',
@@ -1449,6 +1519,47 @@ describe('createStreamingAdapter responses to anthropic', () => {
     expect(toolDelta?.data).toContain('"index":1');
     expect(toolDelta?.data).toContain('\\"q\\"');
     expect(messageDelta?.data).toContain('"stop_reason":"tool_use"');
+  });
+});
+
+describe('createStreamingAdapter anthropic to responses', () => {
+  it('composes anthropic SSE frames into responses SSE frames incrementally', () => {
+    const adapter = createStreamAdapterForTest('anthropic-messages', 'openai-responses', '');
+    const start = adapter.adaptStart({
+      requestId: 'req-anthropic-resp',
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    });
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-anthropic-resp',
+      data: new TextEncoder().encode(
+        'event: message_start\n'
+        + 'data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet","usage":{"input_tokens":5,"output_tokens":0}}}\n\n'
+        + 'event: content_block_start\n'
+        + 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
+        + 'event: content_block_delta\n'
+        + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n'
+        + 'event: content_block_delta\n'
+        + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}\n\n'
+        + 'event: message_delta\n'
+        + 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n'
+        + 'event: message_stop\n'
+        + 'data: {"type":"message_stop"}\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: response.created');
+    expect(sseText).toContain('event: response.output_text.delta');
+    expect(sseText).toContain('"delta":"Hello"');
+    expect(sseText).toContain('"delta":" world"');
+    expect(sseText).toContain('event: response.completed');
+    expect(sseText).toContain('"status":"completed"');
+    expect(sseText).toContain('data: [DONE]');
   });
 });
 
