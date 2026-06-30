@@ -16,7 +16,8 @@ HTTP-level format translation between LLM API protocols. Converts requests and r
 Request transforms use a small internal canonical request model so shared
 fields, messages, tools, and tool results are normalized once and rendered to
 the target protocol. Response success payloads use the same canonical response
-shape where possible; streaming adapters remain protocol-specific.
+shape where possible. Streaming adapters use the same hub pattern with
+protocol-specific stream normalizers and renderers.
 
 ```
 anthropic-messages  ⟷  openai-chat-completions
@@ -121,8 +122,8 @@ const outChunks = adapter.adaptChunk(incomingChunk);
 // outChunks is an array of SerializedHttpResponseChunk in Anthropic SSE format
 ```
 
-The same pattern applies for any registered stream path between Anthropic Messages,
-OpenAI Chat Completions, and OpenAI Responses.
+The same pattern applies for any supported stream transform between Anthropic
+Messages, OpenAI Chat Completions, and OpenAI Responses.
 
 ## API Reference
 
