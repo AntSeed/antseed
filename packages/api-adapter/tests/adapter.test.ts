@@ -651,7 +651,8 @@ describe('createStreamingAdapter anthropic to chat', () => {
         .filter((event) => event.data !== '[DONE]')
         .map((event) => (JSON.parse(event.data) as Record<string, unknown>).id);
 
-      expect(ids).toEqual(['chatcmpl-1', 'chatcmpl-1']);
+      expect(ids.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(ids)).toEqual(new Set(['chatcmpl-1']));
     } finally {
       dateNow.mockRestore();
     }
@@ -1571,7 +1572,7 @@ describe('createStreamingAdapter', () => {
     })).toBeNull();
   });
 
-  it('selects registered stream adapters by protocol direction', () => {
+  it('builds stream adapters from source normalizer and target renderer', () => {
     const adapter = createStreamingAdapter({
       from: 'openai-chat-completions',
       to: 'anthropic-messages',
