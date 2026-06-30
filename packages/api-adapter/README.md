@@ -13,11 +13,15 @@ HTTP-level format translation between LLM API protocols. Converts requests and r
 
 ## Transform Matrix
 
-OpenAI Chat Completions is the hub format. All transforms go through it.
+Request transforms use a small internal canonical request model so shared
+fields, messages, tools, and tool results are normalized once and rendered to
+the target protocol. Response success payloads use the same canonical response
+shape where possible; streaming adapters remain protocol-specific.
 
 ```
 anthropic-messages  ⟷  openai-chat-completions
 openai-responses    ⟷  openai-chat-completions
+anthropic-messages  ⟷  openai-responses
 ```
 
 ## Usage
@@ -42,36 +46,53 @@ const selection = selectTargetProtocolForRequest('anthropic-messages', ['openai-
 const passthrough = selectTargetProtocolForRequest('anthropic-messages', ['anthropic-messages']);
 // → { targetProtocol: 'anthropic-messages', requiresTransform: false }
 
-const incompatible = selectTargetProtocolForRequest('openai-responses', ['anthropic-messages']);
-// → null  (no compatible transform exists)
+const reverse = selectTargetProtocolForRequest('openai-responses', ['anthropic-messages']);
+// → { targetProtocol: 'anthropic-messages', requiresTransform: true }
 ```
 
 ### Transform a request before forwarding to a provider
 
 ```ts
 import {
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIResponsesRequestToOpenAIChat,
+  transformRequest,
 } from '@antseed/api-adapter';
 
 // Buyer sent an Anthropic request; provider only speaks OpenAI Chat
-const result = transformAnthropicMessagesRequestToOpenAIChat(incomingRequest);
+const result = transformRequest(incomingRequest, {
+  from: 'anthropic-messages',
+  to: 'openai-chat-completions',
+});
 if (result) {
   const { request, streamRequested, requestedModel } = result;
   // forward `request` to the provider
 }
+
+// Buyer sent an Anthropic request; provider only speaks OpenAI Responses
+const responsesResult = transformRequest(incomingRequest, {
+  from: 'anthropic-messages',
+  to: 'openai-responses',
+});
 ```
 
 ### Transform a non-streaming response back to the original protocol
 
 ```ts
 import {
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIChatResponseToOpenAIResponses,
+  transformResponse,
 } from '@antseed/api-adapter';
 
 // Provider returned an OpenAI Chat response; buyer expects Anthropic
-const adapted = transformOpenAIChatResponseToAnthropicMessage(providerResponse, {
+const adapted = transformResponse(providerResponse, {
+  from: 'openai-chat-completions',
+  to: 'anthropic-messages',
+  streamRequested: false,
+  fallbackModel: 'claude-sonnet',
+});
+
+// Provider returned an OpenAI Responses response; buyer expects Anthropic
+const adaptedFromResponses = transformResponse(providerResponse, {
+  from: 'openai-responses',
+  to: 'anthropic-messages',
   streamRequested: false,
   fallbackModel: 'claude-sonnet',
 });
@@ -82,9 +103,14 @@ const adapted = transformOpenAIChatResponseToAnthropicMessage(providerResponse, 
 For streaming responses, create an adapter once per request and feed it chunks as they arrive.
 
 ```ts
-import { createOpenAIChatToAnthropicStreamingAdapter } from '@antseed/api-adapter';
+import { createStreamingAdapter } from '@antseed/api-adapter';
 
-const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+const adapter = createStreamingAdapter({
+  from: 'openai-chat-completions',
+  to: 'anthropic-messages',
+  fallbackModel: 'claude-sonnet',
+});
+if (!adapter) throw new Error('Unsupported stream transform');
 
 // On first response headers:
 const startResponse = adapter.adaptStart(providerResponse);
@@ -95,7 +121,8 @@ const outChunks = adapter.adaptChunk(incomingChunk);
 // outChunks is an array of SerializedHttpResponseChunk in Anthropic SSE format
 ```
 
-The same pattern applies for `createOpenAIChatToResponsesStreamingAdapter`.
+The same pattern applies for any registered stream path between Anthropic Messages,
+OpenAI Chat Completions, and OpenAI Responses.
 
 ## API Reference
 
@@ -109,21 +136,29 @@ selectTargetProtocolForRequest(requestProtocol, supportedProtocols): TargetProto
 
 `inferProviderDefaultServiceApiProtocols` maps well-known provider names (`'anthropic'`, `'claude-code'`, `'claude-oauth'`, `'openai'`, `'local-llm'`) to their default protocols.
 
-### Anthropic Messages ↔ OpenAI Chat Completions
+### Requests
 
 ```ts
-transformAnthropicMessagesRequestToOpenAIChat(request): AnthropicToOpenAIRequestTransformResult | null
-transformOpenAIChatResponseToAnthropicMessage(response, options): SerializedHttpResponse
-createOpenAIChatToAnthropicStreamingAdapter(options): StreamingResponseAdapter
+transformRequest(request, { from, to }): ServiceApiRequestTransformResult | null
 ```
 
-### OpenAI Responses ↔ OpenAI Chat Completions
+`from` and `to` currently support `anthropic-messages`, `openai-chat-completions`, and `openai-responses`. Unsupported protocols return `null`.
+
+### Responses
 
 ```ts
-transformOpenAIResponsesRequestToOpenAIChat(request): ResponsesToOpenAIRequestTransformResult | null
-transformOpenAIChatResponseToOpenAIResponses(response, options): SerializedHttpResponse
-createOpenAIChatToResponsesStreamingAdapter(options): StreamingResponseAdapter
+transformResponse(response, { from, to, streamRequested, fallbackModel }): SerializedHttpResponse | null
 ```
+
+`from` and `to` currently support `anthropic-messages`, `openai-chat-completions`, and `openai-responses`. Unsupported protocols return `null`. When `streamRequested` is true, a successful non-stream provider response is rendered as target-protocol SSE.
+
+### Streaming
+
+```ts
+createStreamingAdapter({ from, to, fallbackModel }): StreamingResponseAdapter | null
+```
+
+Returns a per-request adapter for streaming response chunks, or `null` for unsupported or same-protocol paths.
 
 ### Types
 
@@ -159,6 +194,8 @@ interface StreamingResponseAdapter {
 
 ```
 src/
+  canonical.ts        Internal normalized request/response shape + protocol renderers
+  request-transform.ts Generic request transform entry point
   utils.ts            Shared helpers: encode/decode, SSE parsing, toStringContent
   detect.ts           Protocol detection and target selection
   anthropic.ts        Anthropic Messages ↔ OpenAI Chat transforms + streaming adapter
