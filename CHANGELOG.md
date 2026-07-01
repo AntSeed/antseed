@@ -18,6 +18,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Added `@antseed/topup`, a hosted x402 top-up gateway that lets any x402-compatible agent fund AntSeed buyer deposits gaslessly through Meridian's x402 facilitator on Base. Agents receive a standard HTTP 402 challenge, pay with a signed EIP-3009 authorization, and the gateway settles via Meridian and relays the net amount into `AntseedDeposits.deposit(buyer, amount)` — with credit-limit-aware quoting, idempotent settlement records, startup recovery, and automatic refunds when a deposit can no longer be credited.
 - Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
 - Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
 - Added Desktop runtime log source filters and buyer debug log filtering via `antseed buyer start --log-filter` / `ANTSEED_LOG_FILTER`.
