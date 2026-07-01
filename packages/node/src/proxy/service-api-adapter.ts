@@ -1,17 +1,16 @@
 // Re-export everything from @antseed/api-adapter for backward compatibility.
 // The adapter source now lives in packages/api-adapter.
 export {
-  createOpenAIChatToAnthropicStreamingAdapter,
-  createOpenAIChatToResponsesStreamingAdapter,
+  createStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
+  transformRequest,
+  transformResponse,
   type TargetProtocolSelection,
-  type AnthropicToOpenAIRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
+  type ServiceApiRequestTransformOptions,
+  type ServiceApiRequestTransformResult,
+  type ServiceApiResponseTransformOptions,
+  type ServiceApiStreamTransformOptions,
   type StreamingResponseAdapter,
 } from '@antseed/api-adapter';

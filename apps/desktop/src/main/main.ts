@@ -943,6 +943,16 @@ const APP_NAME = 'AntStation Desktop';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
+type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 function isTruthyEnv(value: string | undefined): boolean {
   if (!value) {
     return false;
@@ -960,7 +970,43 @@ function hasDesktopDebugFlag(argv: string[]): boolean {
   return false;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  return 'Unknown updater error';
+}
+
+function errorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message || String(error);
+  }
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function getMacUpdateInstallHint(): string | undefined {
+  if (process.platform !== 'darwin') return undefined;
+
+  const executablePath = process.execPath;
+  if (executablePath.includes('/AppTranslocation/')) {
+    return 'Quit AntSeed, move it to Applications, reopen, and try again.';
+  }
+  if (executablePath.startsWith('/Volumes/')) {
+    return 'Quit AntSeed, move it from the disk image to Applications, reopen, and try again.';
+  }
+  if (executablePath.includes('.app/') && !executablePath.startsWith('/Applications/')) {
+    return 'Quit AntSeed, move it to Applications, reopen, and try again.';
+  }
+  return undefined;
+}
+
 let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+let isQuitting = false;
+let isInstallingUpdate = false;
 
 // The `antseed-attachment://` scheme must be registered as privileged
 // *before* `app.whenReady()` fires. The actual request handler is wired
@@ -1531,6 +1577,10 @@ async function stopPaymentsPortal(): Promise<void> {
     // Already closed
   }
   paymentsServer = null;
+}
+
+async function stopDesktopServices(): Promise<void> {
+  await Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]);
 }
 
 ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
@@ -2519,6 +2569,11 @@ app.whenReady().then(async () => {
   let downloadStallInterval: ReturnType<typeof setInterval> | null = null;
   let lastDownloadProgressAt: number | null = null;
   let lastDownloadPercent = 0;
+  let updateVersion: string | null = null;
+
+  const sendUpdateStatus = (status: UpdateStatus) => {
+    getMainWindow()?.webContents.send('app:update-status', status);
+  };
 
   const clearStallWatchdog = () => {
     if (downloadStallInterval) {
@@ -2529,11 +2584,27 @@ app.whenReady().then(async () => {
     lastDownloadPercent = 0;
   };
 
+  const reportUpdateError = (error: unknown, context: string): InstallUpdateResult => {
+    const message = errorMessage(error);
+    const details = errorDetails(error);
+    const hint = getMacUpdateInstallHint();
+    console.error(`[auto-update] ${context}:`, details);
+    appendLog('connect', 'system', `Auto-update ${context}: ${message}`);
+    clearStallWatchdog();
+    if (isInstallingUpdate) {
+      isQuitting = false;
+    }
+    isInstallingUpdate = false;
+    sendUpdateStatus({ status: 'error', version: updateVersion, message, details, hint });
+    updateVersion = null;
+    return { ok: false, error: message, details, hint };
+  };
+
   const startStallWatchdog = () => {
     clearStallWatchdog();
     lastDownloadProgressAt = Date.now();
     downloadStallInterval = setInterval(() => {
-      if (!pendingUpdateVersion || lastDownloadProgressAt === null) return;
+      if (!updateVersion || lastDownloadProgressAt === null) return;
       // Once bytes are done electron-updater still spends time verifying the
       // file (sha512 / code-sign) and emits no progress — don't treat that as
       // a stall, just wait for update-downloaded.
@@ -2542,43 +2613,40 @@ app.whenReady().then(async () => {
       if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
       console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
       clearStallWatchdog();
-      pendingUpdateVersion = null;
+      updateVersion = null;
       void autoUpdater.checkForUpdates().catch((err) => {
-        console.error('[auto-update] stall-retry failed:', err?.message ?? err);
+        reportUpdateError(err, 'stall-retry failed');
       });
     }, DOWNLOAD_STALL_POLL_MS);
   };
 
-  let pendingUpdateVersion: string | null = null;
   autoUpdater.on('update-available', (info) => {
-    pendingUpdateVersion = info.version;
+    updateVersion = info.version;
     startStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'downloading', version: info.version, percent: 0 });
+    sendUpdateStatus({ status: 'downloading', version: info.version, percent: 0 });
   });
   autoUpdater.on('download-progress', (progress) => {
-    if (!pendingUpdateVersion) return;
+    if (!updateVersion) return;
     lastDownloadProgressAt = Date.now();
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
     lastDownloadPercent = percent;
-    getMainWindow()?.webContents.send('app:update-status', {
+    sendUpdateStatus({
       status: 'downloading',
-      version: pendingUpdateVersion,
+      version: updateVersion,
       percent,
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
-    pendingUpdateVersion = null;
+    updateVersion = info.version;
     clearStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    sendUpdateStatus({ status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
     }
   });
   autoUpdater.on('error', (err) => {
-    console.error('[auto-update] error:', err?.message ?? err);
-    clearStallWatchdog();
-    pendingUpdateVersion = null;
+    reportUpdateError(err, 'error');
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
@@ -2587,8 +2655,23 @@ app.whenReady().then(async () => {
     void autoUpdater.checkForUpdates().catch(() => {});
   }, UPDATE_CHECK_INTERVAL_MS);
 
-  ipcMain.handle('app:install-update', () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle('app:install-update', async (): Promise<InstallUpdateResult> => {
+    if (isInstallingUpdate) {
+      return { ok: true };
+    }
+
+    isInstallingUpdate = true;
+    sendUpdateStatus({ status: 'installing', version: updateVersion });
+
+    try {
+      await stopDesktopServices();
+      isQuitting = true;
+      autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch (err) {
+      isQuitting = false;
+      return reportUpdateError(err, 'install failed');
+    }
   });
 
   app.on('activate', () => {
@@ -2600,11 +2683,9 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void stopManagedRuntimes().finally(() => app.quit());
+    app.quit();
   }
 });
-
-let isQuitting = false;
 
 app.on('before-quit', (event) => {
   if (isQuitting) {
@@ -2614,20 +2695,19 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void Promise.all([stopManagedRuntimes(), stopPaymentsPortal()])
-    .finally(() => {
-      app.quit();
-    });
+  void stopDesktopServices().finally(() => {
+    app.exit(0);
+  });
 });
 
 // Ensure child processes are cleaned up if the main process receives a terminal
 // stop signal before before-quit fires.
 process.on('SIGINT', () => {
-  void Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]).finally(() => process.exit(0));
+  void stopDesktopServices().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
-  void Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]).finally(() => process.exit(0));
+  void stopDesktopServices().finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal
