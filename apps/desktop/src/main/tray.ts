@@ -1,14 +1,32 @@
-import { Menu, nativeImage, Tray } from 'electron';
+import { Menu, nativeImage, Tray, type MenuItemConstructorOptions } from 'electron';
 
 let tray: Tray | null = null;
+let currentOptions: DesktopTrayOptions | null = null;
 
 export type DesktopTrayOptions = {
   appName: string;
   iconPath: string | undefined;
   onShow: () => void;
+  buildMenu?: () => MenuItemConstructorOptions[];
 };
 
-export function createDesktopTray({ appName, iconPath, onShow }: DesktopTrayOptions): void {
+function defaultMenu({ appName, onShow }: Pick<DesktopTrayOptions, 'appName' | 'onShow'>): MenuItemConstructorOptions[] {
+  return [
+    { label: `Show ${appName}`, click: onShow },
+    { type: 'separator' },
+    { role: 'quit', label: `Quit ${appName}` },
+  ];
+}
+
+function rebuildMenu(): void {
+  if (!tray || !currentOptions) return;
+  tray.setContextMenu(Menu.buildFromTemplate(
+    currentOptions.buildMenu?.() ?? defaultMenu(currentOptions),
+  ));
+}
+
+export function createDesktopTray(options: DesktopTrayOptions): void {
+  const { appName, iconPath } = options;
   if (process.platform !== 'darwin' || tray || !iconPath) {
     return;
   }
@@ -19,14 +37,19 @@ export function createDesktopTray({ appName, iconPath, onShow }: DesktopTrayOpti
   }
 
   const image = sourceImage.resize({ width: 18, height: 18 });
-  image.setTemplateImage(true);
+  image.setTemplateImage(false);
 
   tray = new Tray(image);
+  currentOptions = options;
   tray.setToolTip(appName);
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `Show ${appName}`, click: onShow },
-    { type: 'separator' },
-    { role: 'quit', label: `Quit ${appName}` },
-  ]));
-  tray.on('click', onShow);
+  rebuildMenu();
+  tray.on('click', () => {
+    tray?.popUpContextMenu();
+  });
+}
+
+export function updateDesktopTray(options: Partial<Omit<DesktopTrayOptions, 'iconPath'>> = {}): void {
+  if (!currentOptions) return;
+  currentOptions = { ...currentOptions, ...options };
+  rebuildMenu();
 }

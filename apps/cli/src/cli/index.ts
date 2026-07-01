@@ -12,6 +12,7 @@ import { registerDevCommand } from './commands/dev.js';
 import { registerPaymentsCommand } from './commands/payments.js';
 import { registerMetricsCommand } from './commands/metrics.js';
 import { registerWrappedToolCommands } from './commands/wrapped-tools.js';
+import { registerSystemProxyCommands } from './commands/system-proxy/index.js';
 
 loadEnvFromFiles();
 
@@ -38,5 +39,6 @@ registerAgentCommand(program);
 registerPaymentsCommand(program);
 registerMetricsCommand(program);
 registerWrappedToolCommands(program);
+registerSystemProxyCommands(program);
 
 program.parse(process.argv);

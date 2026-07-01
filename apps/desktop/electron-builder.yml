@@ -31,6 +31,8 @@ asarUnpack:
   - "node_modules/keytar/**"
 
 extraResources:
+  - from: build/system-proxy-profiles.json
+    to: system-proxy-profiles.json
   - from: resources/whisper/
     to: whisper/
     filter:

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const { dirname, join, resolve } = path;
 
-export type RuntimeMode = 'connect';
+export type RuntimeMode = 'connect' | 'system-proxy';
 
 export interface RuntimeProcessState {
   mode: RuntimeMode;
@@ -24,6 +24,13 @@ export interface StartOptions {
   configPath?: string;
   verbose?: boolean;
   env?: Record<string, string>;
+  // system-proxy-mode options
+  systemProxyPeerId?: string;
+  systemProxyPort?: number;
+  systemProxyProfiles?: string[];
+  systemProxyDefaultModel?: string;
+  systemProxyServedModels?: string[];
+  setSystemProxy?: boolean;
 }
 
 export interface DaemonStateSnapshot {
@@ -287,7 +294,7 @@ function resolveConfigPath(configPath?: string): string {
   return resolve(configPath);
 }
 
-function resolveConnectDataDir(): string {
+export function resolveConnectDataDir(): string {
   const envDir = process.env[CONNECT_DATA_DIR_ENV]?.trim();
   if (envDir && envDir.length > 0) {
     if (envDir.startsWith('~/')) {
@@ -348,6 +355,28 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
         }
       }
       break;
+    case 'system-proxy':
+      args.push('--data-dir', resolveConnectDataDir());
+      args.push('system-proxy', 'start');
+      if (opts.systemProxyPeerId) {
+        args.push('--peer', opts.systemProxyPeerId);
+      }
+      if (opts.systemProxyPort) {
+        args.push('--port', String(opts.systemProxyPort));
+      }
+      for (const profile of opts.systemProxyProfiles ?? []) {
+        args.push('--profile', profile);
+      }
+      if (opts.systemProxyDefaultModel) {
+        args.push('--default-model', opts.systemProxyDefaultModel);
+      }
+      for (const model of opts.systemProxyServedModels ?? []) {
+        args.push('--served-model', model);
+      }
+      if (opts.setSystemProxy) {
+        args.push('--system-proxy');
+      }
+      break;
     default:
       throw new Error(`Unsupported runtime mode: ${String(opts.mode)}`);
   }
@@ -361,6 +390,7 @@ export class ProcessManager {
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
     ['connect', { mode: 'connect', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
+    ['system-proxy', { mode: 'system-proxy', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
   ]);
 
   constructor(
@@ -703,16 +733,24 @@ export class ProcessManager {
     }
 
     await new Promise<void>((resolveStop) => {
-      const timeout = setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL');
+      let resolved = false;
+      const finish = () => {
+        if (resolved) {
+          return;
         }
-      }, 5_000);
-
-      child.once('exit', () => {
-        clearTimeout(timeout);
+        resolved = true;
+        clearTimeout(forceKillTimeout);
+        clearTimeout(resolveTimeout);
         resolveStop();
-      });
+      };
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, 5_000);
+      const forceKillTimeout = timeout;
+      const resolveTimeout = setTimeout(finish, 7_500);
+
+      child.once('exit', finish);
 
       child.kill('SIGTERM');
     });
@@ -721,6 +759,9 @@ export class ProcessManager {
   }
 
   async stopAll(): Promise<void> {
-    await this.stop('connect');
+    await Promise.all([
+      this.stop('system-proxy'),
+      this.stop('connect'),
+    ]);
   }
 }

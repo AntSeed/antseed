@@ -89,6 +89,10 @@ export {
 } from './payments/evm/stats-client.js';
 export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
 export {
+  getDebugFilters,
+  shouldEmitDebugLine,
+} from './utils/debug.js';
+export {
   signSpendingAuth,
   signReserveAuth,
   signFreeUsageOpen,

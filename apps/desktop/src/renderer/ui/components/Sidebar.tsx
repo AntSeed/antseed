@@ -19,6 +19,7 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { Search01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
+import { Route01Icon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
 import type { ViewName } from '../types';
 import { preloadView } from './viewRegistry';
@@ -44,6 +45,7 @@ type ConvRecord = Record<string, unknown>;
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
+  { label: 'System Proxy', view: 'system-proxy', icon: Route01Icon },
 ];
 
 const configEntries: NavEntry[] = [
