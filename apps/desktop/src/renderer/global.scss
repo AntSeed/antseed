@@ -261,6 +261,16 @@ textarea {
   min-height: 0;
 }
 
+.view-system-proxy.view {
+  overflow: hidden;
+}
+
+.view-system-proxy.view.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* ===================================================================
    Badges
    =================================================================== */

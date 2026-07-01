@@ -34,3 +34,30 @@ test('resolveCommandArgs forwards non-default routers', () => {
     'buyer', 'start', '--router', 'custom-router',
   ]);
 });
+
+test('resolveCommandArgs launches the System Proxy runtime with selected profiles and models', () => {
+  const args = resolveCommandArgs({
+    mode: 'system-proxy',
+    configPath: '/tmp/antseed-config.json',
+    systemProxyPeerId: '0123456789abcdef0123456789abcdef01234567',
+    systemProxyPort: 8378,
+    systemProxyProfiles: ['editor', 'browser'],
+    systemProxyDefaultModel: 'model-a',
+    systemProxyServedModels: ['model-a', 'model-b'],
+    setSystemProxy: true,
+  });
+
+  assert.deepEqual(args, [
+    '--config', resolve('/tmp/antseed-config.json'),
+    '--data-dir', join(homedir(), '.antseed'),
+    'system-proxy', 'start',
+    '--peer', '0123456789abcdef0123456789abcdef01234567',
+    '--port', '8378',
+    '--profile', 'editor',
+    '--profile', 'browser',
+    '--default-model', 'model-a',
+    '--served-model', 'model-a',
+    '--served-model', 'model-b',
+    '--system-proxy',
+  ]);
+});

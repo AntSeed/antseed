@@ -98,6 +98,11 @@ export function AppShell() {
     });
   }, [showSetup]);
 
+  useEffect(() => {
+    if (showSetup) return;
+    void window.antseedDesktop?.applyWindowView?.(activeView);
+  }, [activeView, showSetup]);
+
   if (showSetup) {
     return <SetupScreen />;
   }

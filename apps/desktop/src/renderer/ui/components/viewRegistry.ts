@@ -63,6 +63,10 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/DiscoverView')).DiscoverView as ComponentType<RoutedViewProps>,
     true,
   ),
+  'system-proxy': createViewEntry(
+    async () => (await import('./views/SystemProxyView')).SystemProxyView as ComponentType<RoutedViewProps>,
+    false,
+  ),
 } satisfies Record<ViewName, ViewRegistryEntry>;
 
 export function getViewRegistryEntry(view: ViewName): ViewRegistryEntry {
