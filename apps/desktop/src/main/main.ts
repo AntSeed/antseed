@@ -16,7 +16,7 @@ const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, isIP } from 'node:net';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -63,6 +63,7 @@ import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
 import {
   getVoiceTranscriptionStatus,
   installVoiceTranscriptionModel,
@@ -83,15 +84,6 @@ const SYSTEM_PROXY_PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON';
 const SYSTEM_PROXY_PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE';
 const PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE = 'system-proxy-profiles.json';
 
-type ConfigPatchDef = {
-  readonly configPath: string;
-  readonly providerKey: string;
-  readonly npm: string;
-  readonly providerName: string;
-  readonly baseURL: string;
-  readonly modelFormat: 'peer-routed';
-};
-
 type DesktopSystemProxyProfile = {
   readonly name: string;
   readonly label: string;
@@ -106,8 +98,6 @@ type DesktopSystemProxyProfile = {
 };
 
 const SYSTEM_PROXY_PROFILES = loadDesktopSystemProxyProfiles();
-
-type JsonObject = Record<string, unknown>;
 
 function loadDesktopSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): readonly DesktopSystemProxyProfile[] {
   const envJson = env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim();
@@ -207,236 +197,6 @@ function readAppAction(value: unknown): DesktopSystemProxyProfile['appAction'] {
   return value === 'open-url' || value === 'open-tool' || value === 'restart-app' || value === 'none'
     ? value
     : undefined;
-}
-
-function expandTilde(p: string): string {
-  return p.startsWith('~/') ? path.join(homedir(), p.slice(2)) : p;
-}
-
-function isBuyerProxyRoutablePeerId(peerId: string): boolean {
-  const normalized = peerId.trim().toLowerCase().replace(/^0x/, '');
-  return /^[0-9a-f]{40}$/.test(normalized);
-}
-
-function stripJsoncComments(raw: string): string {
-  let result = '';
-  let inString = false;
-  let quote = '';
-  let escaped = false;
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i]!;
-    const next = raw[i + 1];
-    if (inString) {
-      result += ch;
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === quote) {
-        inString = false;
-        quote = '';
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      inString = true;
-      quote = ch;
-      result += ch;
-      continue;
-    }
-    if (ch === '/' && next === '/') {
-      while (i < raw.length && raw[i] !== '\n') i++;
-      if (i < raw.length) result += '\n';
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      i += 2;
-      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) {
-        result += raw[i] === '\n' ? '\n' : ' ';
-        i++;
-      }
-      i++;
-      continue;
-    }
-    result += ch;
-  }
-  return result;
-}
-
-function stripJsoncTrailingCommas(raw: string): string {
-  let result = '';
-  let inString = false;
-  let quote = '';
-  let escaped = false;
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i]!;
-    if (inString) {
-      result += ch;
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === quote) {
-        inString = false;
-        quote = '';
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      inString = true;
-      quote = ch;
-      result += ch;
-      continue;
-    }
-    if (ch === ',') {
-      let j = i + 1;
-      while (j < raw.length && /\s/.test(raw[j]!)) j++;
-      if (raw[j] === '}' || raw[j] === ']') {
-        continue;
-      }
-    }
-    result += ch;
-  }
-  return result;
-}
-
-function parseJsoncObject(raw: string, filePath: string): JsonObject {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripJsoncTrailingCommas(stripJsoncComments(raw)));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Unable to parse JSONC config at ${filePath}: ${message}`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`JSONC config at ${filePath} must be an object`);
-  }
-  return parsed as JsonObject;
-}
-
-function readJsoncFile(filePath: string): JsonObject | null {
-  try {
-    const raw = readFileSync(filePath, 'utf8');
-    return parseJsoncObject(raw, filePath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw err;
-  }
-}
-
-function readConfigPatchFile(filePath: string): JsonObject {
-  if (!existsSync(filePath)) {
-    return {};
-  }
-  return readJsoncFile(filePath) ?? {};
-}
-
-function tryReadConfigPatchFile(filePath: string): JsonObject | null {
-  if (!existsSync(filePath)) {
-    return null;
-  }
-  return readJsoncFile(filePath);
-}
-
-function writeJsonFile(filePath: string, data: JsonObject): void {
-  const dir = path.dirname(filePath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-}
-
-function backupConfigFile(filePath: string): void {
-  if (!existsSync(filePath)) return;
-  const backupPath = `${filePath}.antseed.bak`;
-  if (existsSync(backupPath)) return;
-  copyFileSync(filePath, backupPath);
-}
-
-/** Remove a value from a top-level string array (e.g. drop "antseed" from disabled_providers). */
-function removeFromStringArray(config: JsonObject, key: string, value: string): void {
-  const arr = config[key];
-  if (!Array.isArray(arr)) return;
-  const filtered = arr.filter((item) => item !== value);
-  if (filtered.length === 0) delete config[key];
-  else config[key] = filtered;
-}
-
-function buildConfigPatchModels(
-  patch: ConfigPatchDef,
-  peerId: string,
-  model: string,
-  servedModels: string[],
-): JsonObject {
-  const models: JsonObject = {};
-  if (patch.modelFormat === 'peer-routed') {
-    for (const svc of servedModels) {
-      const key = peerId ? `${peerId}@${svc}` : svc;
-      models[key] = { name: svc };
-    }
-    if (model) {
-      const key = peerId ? `${peerId}@${model}` : model;
-      if (!models[key]) models[key] = { name: model };
-    }
-  }
-  return models;
-}
-
-function routedModelKey(peerId: string, model: string): string {
-  return peerId ? `${peerId}@${model}` : model;
-}
-
-function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: string, buyerPort: number, servedModels: string[]): void {
-  if (!isBuyerProxyRoutablePeerId(peerId)) {
-    throw new Error('Config-based routing requires a 40-character hex peer ID. Select a chain-backed peer before enabling this tool.');
-  }
-  const filePath = expandTilde(patch.configPath);
-  backupConfigFile(filePath);
-  const selectedModel = routedModelKey(peerId, model);
-  const config = readConfigPatchFile(filePath);
-
-  const providers = (config['provider'] && typeof config['provider'] === 'object' && !Array.isArray(config['provider']))
-    ? config['provider'] as JsonObject
-    : {};
-  providers[patch.providerKey] = {
-    name: patch.providerName,
-    npm: patch.npm,
-    options: {
-      baseURL: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
-      apiKey: 'antseed',
-    },
-    models: buildConfigPatchModels(patch, peerId, model, servedModels),
-  };
-  config['provider'] = providers;
-  config['model'] = `${patch.providerKey}/${selectedModel}`;
-  // Some tools hide providers listed in disabled_providers; make sure ours is enabled.
-  removeFromStringArray(config, 'disabled_providers', patch.providerKey);
-
-  writeJsonFile(filePath, config);
-}
-
-function removeConfigPatch(patch: ConfigPatchDef): boolean {
-  const filePath = expandTilde(patch.configPath);
-  const config = tryReadConfigPatchFile(filePath);
-  if (!config) return false;
-  backupConfigFile(filePath);
-
-  let changed = false;
-  const providers = config['provider'];
-  if (providers && typeof providers === 'object' && !Array.isArray(providers) && (patch.providerKey in (providers as JsonObject))) {
-    delete (providers as JsonObject)[patch.providerKey];
-    changed = true;
-  }
-  // Drop our default-model selection if it points at our provider.
-  if (typeof config['model'] === 'string' && config['model'].startsWith(`${patch.providerKey}/`)) {
-    delete config['model'];
-    changed = true;
-  }
-  if (!changed) return false;
-  writeJsonFile(filePath, config);
-  return true;
 }
 
 function removeAllConfigPatches(): void {

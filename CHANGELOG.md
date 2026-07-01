@@ -19,6 +19,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Added
 
 - Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
+- Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
 - Added Desktop runtime log source filters and buyer debug log filtering via `antseed buyer start --log-filter` / `ANTSEED_LOG_FILTER`.
 - Added Desktop peer favicons from verified domains, showing fetched site icons in Discover and chat peer avatars when available.
 - Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
