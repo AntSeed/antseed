@@ -14,7 +14,8 @@ import {
   injectedWallet,
 } from '@rainbow-me/rainbowkit/wallets';
 import { createConfig, http, fallback } from 'wagmi';
-import { base } from 'wagmi/chains';
+
+import { DIEM_CHAIN } from './lib/network';
 
 const projectId = '9a1851410cb5589bc351a6dabf17140e';
 
@@ -54,9 +55,9 @@ const connectors = connectorsForWallets(
 // — a shared `packages/wallet-config` is the next step if a third app adopts it.
 export const wagmiConfig = createConfig({
   connectors,
-  chains: [base],
+  chains: [DIEM_CHAIN],
   transports: {
-    [base.id]: fallback([
+    [DIEM_CHAIN.id]: fallback([
       http('https://base-rpc.publicnode.com'),
       http('https://base.gateway.tenderly.co'),
       http('https://base-public.nodies.app'),

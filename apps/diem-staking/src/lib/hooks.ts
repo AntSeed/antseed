@@ -6,6 +6,7 @@ import type { Address } from 'viem';
 import { DIEM_TOKEN, DIEM_STAKING_PROXY, isAddressSet } from './addresses';
 import { DIEM_STAKING_PROXY_ABI, DIEM_TOKEN_ABI } from './abi';
 import { computeEpochClock, type EpochClock } from './epoch';
+import { DIEM_CHAIN_ID } from './network';
 
 // First Staked event on the deployed proxy: tx
 // 0x02dd13f8d519d7ac81eceaacd40c3e485f76b2a7f584b094fb7e816b44f822a4
@@ -121,16 +122,16 @@ export function usePoolStats(): PoolStats {
   const { data, isLoading } = useReadContracts({
     allowFailure: true,
     contracts: [
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalStaked' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'stakerCount' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalUsdcDistributedEver' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'maxTotalStake' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'syncedRewardEpoch' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'finalizedRewardEpoch' },
-      { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minUnstakeBatchOpenSecs' },
-      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'flushableAt' },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalStaked', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'stakerCount', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'totalUsdcDistributedEver', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'maxTotalStake', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'firstRewardEpoch', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'syncedRewardEpoch', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'finalizedRewardEpoch', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'cooldownDuration', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'minUnstakeBatchOpenSecs', chainId: DIEM_CHAIN_ID },
+      { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'flushableAt', chainId: DIEM_CHAIN_ID },
     ],
     query: { enabled: deployed, refetchInterval: POLL_MS },
   });
@@ -187,10 +188,10 @@ export function useUserStats(): UserStats {
     allowFailure: true,
     contracts: enabled
       ? [
-          { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'balanceOf', args: [address!] },
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'staked',    args: [address!] },
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'earnedUsdc', args: [address!] },
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'userLastClaimedEpoch', args: [address!] },
+          { address: DIEM_TOKEN,         abi: DIEM_TOKEN_ABI,         functionName: 'balanceOf', args: [address!], chainId: DIEM_CHAIN_ID },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'staked',    args: [address!], chainId: DIEM_CHAIN_ID },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'earnedUsdc', args: [address!], chainId: DIEM_CHAIN_ID },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'userLastClaimedEpoch', args: [address!], chainId: DIEM_CHAIN_ID },
         ]
       : [],
     query: { enabled, refetchInterval: POLL_MS },
@@ -255,6 +256,7 @@ function usePendingAnts(
       address: DIEM_STAKING_PROXY,
       abi: DIEM_STAKING_PROXY_ABI,
       functionName: 'pendingAntsForEpoch' as const,
+      chainId: DIEM_CHAIN_ID,
       args: [user!, e] as const,
     })),
     query: { enabled: epochsToRead.length > 0, refetchInterval: POLL_MS },
@@ -266,6 +268,7 @@ function usePendingAnts(
       address: DIEM_STAKING_PROXY,
       abi: DIEM_STAKING_PROXY_ABI,
       functionName: 'userEpochClaimed' as const,
+      chainId: DIEM_CHAIN_ID,
       args: [user!, e] as const,
     })),
     query: { enabled: epochsToRead.length > 0, refetchInterval: POLL_MS },
@@ -305,8 +308,8 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
     allowFailure: true,
     contracts: deployed
       ? [
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentUnstakeBatch' },
-          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'oldestUnclaimedUnstakeBatch' },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'currentUnstakeBatch', chainId: DIEM_CHAIN_ID },
+          { address: DIEM_STAKING_PROXY, abi: DIEM_STAKING_PROXY_ABI, functionName: 'oldestUnclaimedUnstakeBatch', chainId: DIEM_CHAIN_ID },
         ]
       : [],
     query: { enabled: deployed, refetchInterval: POLL_MS },
@@ -336,6 +339,7 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
             address: DIEM_STAKING_PROXY,
             abi: DIEM_STAKING_PROXY_ABI,
             functionName: 'unstakeBatchUserAmount' as const,
+            chainId: DIEM_CHAIN_ID,
             args: [batch, address] as const,
           }))
         : [],
@@ -359,6 +363,7 @@ export function useUnstakeState(): { state: UnstakeState; isLoading: boolean } {
     address: DIEM_STAKING_PROXY,
     abi: DIEM_STAKING_PROXY_ABI,
     functionName: 'unstakeBatches',
+    chainId: DIEM_CHAIN_ID,
     args: activeBatchId != null ? [activeBatchId] : undefined,
     query: { enabled: deployed && activeBatchId != null, refetchInterval: POLL_MS },
   });
@@ -406,6 +411,7 @@ export function useDiemAllowance(): { allowance: bigint | null; refetch: () => v
     address: DIEM_TOKEN,
     abi: DIEM_TOKEN_ABI,
     functionName: 'allowance',
+    chainId: DIEM_CHAIN_ID,
     args: enabled ? [address!, DIEM_STAKING_PROXY] : undefined,
     query: { enabled, refetchInterval: POLL_MS },
   });
