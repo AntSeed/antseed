@@ -92,7 +92,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
         token.setRegistry(address(gate));
 
-        pools = new AntseedSellerPools(address(registry), 0, 0, 0); // uncapped APY
+        pools = new AntseedSellerPools(address(registry)); // uncapped APY
         token.setTransferWhitelist(address(pools), true);
 
         usageAccounting = new AntseedUsageAccounting(address(pools), address(this), address(gate));

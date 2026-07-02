@@ -231,8 +231,11 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         if (address(rewards) == address(0)) return (0, 0);
         uint256 agentId = _sellerPoolAgentId(account);
         if (agentId == 0) return (0, 0);
+        if (!_isAgentRewardRecipient(rewards, agentId, account)) return (0, 0);
+        uint256 firstGateEpoch = emissionsGate.effectiveEpoch();
 
         for (uint256 i = 0; i < epochs.length; i++) {
+            if (epochs[i] < firstGateEpoch) continue;
             if (rewards.agentEpochClaimed(agentId, epochs[i])) continue;
             totalSeller += rewards.pendingAgentReward(agentId, epochs[i]);
         }
@@ -241,17 +244,23 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     /// @notice Legacy `IAntseedEmissions.claimSellerEmissions`. Claims the
     ///         caller's agent usage rewards from AntseedUsageRewards; rewards
     ///         are paid to the caller (verified as the agent owner by the
-    ///         rewards controller). Epochs already claimed or with nothing to
-    ///         claim are skipped so a batch never reverts partway, mirroring
-    ///         the legacy claim semantics.
+    ///         rewards controller). Epochs already claimed, with nothing to
+    ///         claim, predating the gate, or belonging to an agent the caller
+    ///         no longer owns are skipped so a batch never reverts partway,
+    ///         mirroring the legacy claim semantics.
     function claimSellerEmissions(uint256[] calldata epochs) external {
         IAntseedUsageRewards rewards = usageRewards;
         if (address(rewards) == address(0)) revert UsageRewardsNotSet();
         uint256 agentId = _sellerPoolAgentId(msg.sender);
         if (agentId == 0) return;
+        if (!_isAgentRewardRecipient(rewards, agentId, msg.sender)) return;
+        uint256 firstGateEpoch = emissionsGate.effectiveEpoch();
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
+            // Pre-effective epochs belong to the legacy stack (settled via
+            // the legacy escrow); the gate refuses them.
+            if (epoch < firstGateEpoch) continue;
             if (rewards.agentEpochClaimed(agentId, epoch)) continue;
             if (rewards.pendingAgentReward(agentId, epoch) == 0) continue;
             rewards.claimAgentRewardFor(msg.sender, agentId, epoch);
@@ -262,6 +271,21 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         IAntseedSellerPools pools = sellerPools;
         if (address(pools) == address(0)) return 0;
         return pools.agentIdForSeller(seller);
+    }
+
+    /// @dev A stale seller→agent binding (agent NFT moved to a new owner who
+    ///      hasn't re-registered) must degrade to a no-op, not a revert:
+    ///      deployed delegation contracts batch these calls with no try/catch.
+    function _isAgentRewardRecipient(IAntseedUsageRewards rewards, uint256 agentId, address account)
+        internal
+        view
+        returns (bool)
+    {
+        try rewards.rewardRecipient(agentId) returns (address recipient) {
+            return recipient == account;
+        } catch {
+            return false;
+        }
     }
 
     // ─── Internal Recording ───────────────────────────────────────────

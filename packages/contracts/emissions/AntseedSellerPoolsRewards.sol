@@ -57,6 +57,12 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── Claim State ─────────────────────────────────────────────────
     mapping(uint256 => bool) public epochRemainderSettled;
+    /// @dev Budget frozen at first settlement use (stored as budget + 1 so a
+    ///      frozen zero is distinguishable from unset). Later dynamic-config
+    ///      changes must not retroactively resize a finalized epoch's budget:
+    ///      remainder settlement and lazy pool settlement share one gate
+    ///      bucket, and a mid-flight resize would over-commit it.
+    mapping(uint256 => uint256) private _frozenStakerBudgets;
     mapping(uint256 => mapping(uint256 => PoolEpochEmission)) public poolEpochEmissions;
     mapping(uint256 => uint256) public poolRewardIndexNextEpoch;
     mapping(uint256 => uint256) public positionClaimCursor;
@@ -118,6 +124,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 claimableAmount
     );
     event DynamicStakerConfigSet(uint32 minShareBps, uint32 maxShareBps, uint256 stakeShareTarget);
+    event StakerEpochBudgetFrozen(uint256 indexed epoch, uint256 budget);
     event StakerRewardRemainderSettled(
         uint256 indexed epoch, uint256 unallocatedAmount, uint256 burnedAmount, uint256 reserveAmount
     );
@@ -125,6 +132,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     // ─── Custom Errors ───────────────────────────────────────────────
     error InvalidAddress();
     error InvalidValue();
+    error AlreadyClaimed();
     error NothingToClaim();
     error NotPositionOwner();
 
@@ -289,6 +297,12 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function stakerEpochBudget(uint256 epoch) public view returns (uint256) {
+        uint256 frozen = _frozenStakerBudgets[epoch];
+        if (frozen != 0) return frozen - 1;
+        return _liveStakerEpochBudget(epoch);
+    }
+
+    function _liveStakerEpochBudget(uint256 epoch) internal view returns (uint256) {
         uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
         uint32 shareBps = _saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
         if (shareBps == 0) return 0;
@@ -298,16 +312,28 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return desiredBudget < maxBudget ? desiredBudget : maxBudget;
     }
 
+    function _freezeStakerEpochBudget(uint256 epoch) internal returns (uint256 budget) {
+        uint256 frozen = _frozenStakerBudgets[epoch];
+        if (frozen != 0) return frozen - 1;
+        budget = _liveStakerEpochBudget(epoch);
+        _frozenStakerBudgets[epoch] = budget + 1;
+        emit StakerEpochBudgetFrozen(epoch, budget);
+    }
+
     function settleEpochRemainder(uint256 epoch)
         external
         nonReentrant
         whenNotPaused
         returns (uint256 burnedAmount, uint256 reserveAmount)
     {
-        if (epochRemainderSettled[epoch]) revert InvalidValue();
+        if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
 
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 allocatedBudget = stakerEpochBudget(epoch);
+        // An epoch with no weighted usage can never mint through pool
+        // settlement, so its whole bucket is remainder — the stake-based
+        // budget would otherwise be stranded outside the burn/reserve route.
+        uint256 allocatedBudget =
+            usageAccounting.totalWeightedPoolPointsByEpoch(epoch) == 0 ? 0 : _freezeStakerEpochBudget(epoch);
         if (allocatedBudget >= maxBudget) revert NothingToClaim();
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
@@ -443,6 +469,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         emission = poolEpochEmissions[epoch][agentId];
         if (emission.settled) return (emission, 0, 0);
 
+        _freezeStakerEpochBudget(epoch);
         (uint256 grossAmount, uint256 claimableAmount) = _poolRewardPreview(agentId, epoch);
         emission.settled = true;
         emission.grossAmount = grossAmount;

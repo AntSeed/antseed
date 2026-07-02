@@ -84,7 +84,7 @@ contract AntseedUsageAccountingGasTest is Test {
         usageAccounting = new AntseedUsageAccounting(address(0), address(this), address(gate));
         registry.setEmissions(address(usageAccounting));
 
-        sellerPools = new AntseedSellerPools(address(registry), 0, 0, 0);
+        sellerPools = new AntseedSellerPools(address(registry));
         usageAccounting.setSellerPools(address(sellerPools));
 
         _stakeAgentPool(seller, 1 ether, 4);

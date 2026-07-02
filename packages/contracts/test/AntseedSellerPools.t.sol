@@ -60,7 +60,7 @@ contract AntseedSellerPoolsTest is Test {
         registry.setEmissions(address(this));
         registry.setIdentityRegistry(address(identityRegistry));
 
-        pools = new AntseedSellerPools(address(registry), 0, 0, 0);
+        pools = new AntseedSellerPools(address(registry));
         token.setTransferWhitelist(address(pools), true);
         sellerRegistry = new AntseedSellerRegistry(address(registry), address(pools), address(0));
         registry.setStaking(address(sellerRegistry));
@@ -86,7 +86,7 @@ contract AntseedSellerPoolsTest is Test {
     function test_currentEpochRevertsWhenEmissionsUnset() public {
         AntseedRegistry unsetRegistry = new AntseedRegistry();
         unsetRegistry.setAntsToken(address(token));
-        AntseedSellerPools unsetPools = new AntseedSellerPools(address(unsetRegistry), 0, 0, 0);
+        AntseedSellerPools unsetPools = new AntseedSellerPools(address(unsetRegistry));
 
         vm.expectRevert(IAntseedSellerPools.EmissionsNotConfigured.selector);
         unsetPools.currentEpoch();
@@ -591,22 +591,6 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(pools.poolWeightAtEpoch(agentId, 1), 400 ether);
     }
 
-    function test_apyCapBurnsExcessReward() public {
-        AntseedSellerPools cappedPools = new AntseedSellerPools(address(registry), 1_000, 1_000, 0);
-        token.setTransferWhitelist(address(cappedPools), true);
-        token.mint(seller, 1_000 ether);
-        token.setTransferWhitelist(seller, true);
-        vm.startPrank(seller);
-        token.approve(address(cappedPools), 1_000 ether);
-        uint256 positionId = cappedPools.stake(agentId, 1_000 ether, 4);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + EPOCH_DURATION);
-        uint256 expectedCap = (uint256(1_000 ether) * 1_000) / (10_000 * 52);
-
-        assertEq(cappedPools.positionRewardCapAtEpoch(positionId, 1), expectedCap);
-    }
-
     function test_validationAndAdmin() public {
         vm.startPrank(staker);
         token.approve(address(pools), 1 ether);
@@ -706,133 +690,6 @@ contract AntseedSellerPoolsTest is Test {
         vm.expectRevert(IAntseedSellerPools.StakeDurationOutOfBounds.selector);
         pools.stake(agentId, 1 ether, 105);
         vm.stopPrank();
-    }
-
-    function test_apyCapDecaysDeterministicallyToFloor() public {
-        // Production parameters fixed at deployment: start 100%, floor 20%,
-        // 5 points per epoch. The trajectory is a pure function of the epoch.
-        AntseedSellerPools prodPools = new AntseedSellerPools(address(registry), 10_000, 2_000, 500);
-        token.setTransferWhitelist(address(prodPools), true);
-
-        // Flat at the start cap until the decay is anchored.
-        assertEq(prodPools.apyCapBpsAtEpoch(0), 10_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(100), 10_000);
-
-        prodPools.startApyDecay(3);
-        assertEq(prodPools.apyCapBpsAtEpoch(2), 10_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(3), 10_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(4), 9_500);
-        assertEq(prodPools.apyCapBpsAtEpoch(11), 6_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(19), 2_000); // 16 epochs of decay reach the floor
-        assertEq(prodPools.apyCapBpsAtEpoch(100), 2_000); // floor holds forever
-
-        // Position caps follow the epoch's deterministic bps.
-        token.mint(staker, 5_200 ether);
-        token.setTransferWhitelist(staker, true);
-        vm.startPrank(staker);
-        token.approve(address(prodPools), 5_200 ether);
-        uint256 positionId = prodPools.stake(agentId, 5_200 ether, 52);
-        vm.stopPrank();
-        assertEq(prodPools.positionRewardCapAtEpoch(positionId, 1), 100 ether); // 100% / 52 epochs
-        assertEq(prodPools.positionRewardCapAtEpoch(positionId, 4), 95 ether);
-        assertEq(prodPools.positionRewardCapAtEpoch(positionId, 19), 20 ether);
-    }
-
-    function test_apyDecayStartIsOneTimeAndFutureOnly() public {
-        AntseedSellerPools prodPools = new AntseedSellerPools(address(registry), 10_000, 2_000, 500);
-
-        vm.warp(block.timestamp + 3 * EPOCH_DURATION); // now at epoch 3
-
-        // The anchor must be a future epoch: caps for the current epoch and
-        // anything already earned can never change.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.startApyDecay(0);
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.startApyDecay(3);
-
-        prodPools.startApyDecay(5);
-        assertEq(prodPools.apyDecayStartEpoch(), 5);
-        assertEq(prodPools.apyCapBpsAtEpoch(4), 10_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(6), 9_500);
-        assertEq(prodPools.apyCapBpsAtEpoch(21), 2_000);
-
-        // One-way: the decay cannot be re-aimed once scheduled.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.startApyDecay(8);
-
-        // An uncapped or flat deployment has no decay to start.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        pools.startApyDecay(10);
-
-        // Constructor validation: floor above start, decay rate of zero with
-        // distinct start/floor, start above 100%.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        new AntseedSellerPools(address(registry), 2_000, 3_000, 500);
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        new AntseedSellerPools(address(registry), 10_000, 2_000, 0);
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        new AntseedSellerPools(address(registry), 10_001, 2_000, 500);
-    }
-
-    function test_apyCapAdjustableOnlyAfterLaunchDecayCompletes() public {
-        AntseedSellerPools prodPools = new AntseedSellerPools(address(registry), 10_000, 2_000, 500);
-
-        // No overrides at all until the decay has been anchored.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.setApyCapBps(3_000, 30);
-
-        prodPools.startApyDecay(2);
-        assertEq(prodPools.apyDecayEndEpoch(), 18); // 2 + (8000 / 500)
-
-        // The launch curve is untouchable: overrides cannot land inside it.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.setApyCapBps(3_000, 17);
-
-        // From the floor epoch onward the cap is adjustable, future-only.
-        prodPools.setApyCapBps(3_000, 18);
-        assertEq(prodPools.apyCapBpsAtEpoch(17), 2_500); // still the formula
-        assertEq(prodPools.apyCapBpsAtEpoch(18), 3_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(100), 3_000);
-
-        // Later adjustments append; a pending one can be overwritten before it
-        // activates; ordering is enforced.
-        prodPools.setApyCapBps(5_000, 20);
-        prodPools.setApyCapBps(4_000, 20);
-        assertEq(prodPools.apyCapBpsAtEpoch(19), 3_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(20), 4_000);
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.setApyCapBps(1_000, 19);
-
-        // Future-only also against the clock: at epoch 21 nothing at or
-        // before 21 can be scheduled, and earned epochs keep their caps.
-        vm.warp(block.timestamp + 21 * EPOCH_DURATION);
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.setApyCapBps(1_000, 21);
-        prodPools.setApyCapBps(1_000, 25);
-        assertEq(prodPools.apyCapBpsAtEpoch(20), 4_000);
-        assertEq(prodPools.apyCapBpsAtEpoch(25), 1_000);
-
-        // A flat (no-decay) deployment has no launch curve to protect:
-        // overrides only need to be future epochs. 0 = uncapped.
-        assertEq(pools.apyCapBpsAtEpoch(22), 0);
-        pools.setApyCapBps(1_500, 23);
-        assertEq(pools.apyCapBpsAtEpoch(22), 0);
-        assertEq(pools.apyCapBpsAtEpoch(23), 1_500);
-    }
-
-    function test_apyCapOverrideRejectsEpochsBeyondUint64() public {
-        AntseedSellerPools prodPools = new AntseedSellerPools(address(registry), 10_000, 2_000, 500);
-        prodPools.startApyDecay(2);
-        vm.warp(block.timestamp + 20 * EPOCH_DURATION); // past decay end (18)
-
-        // 2^64 + 5 passes the future-only and ordering checks on the full
-        // uint256 but would store as epoch 5 — inside the launch curve.
-        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
-        prodPools.setApyCapBps(1, uint256(type(uint64).max) + 1 + 5);
-
-        // The uint64 boundary itself is a valid (if absurd) future epoch.
-        prodPools.setApyCapBps(1_000, type(uint64).max);
-        assertEq(prodPools.apyCapBpsAtEpoch(10), 6_000); // curve untouched
     }
 
     function test_sellerRegistryLegacyStakeFallbackKeepsSellersEligible() public {

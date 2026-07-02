@@ -78,7 +78,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
         _registerSellerAgent(7);
         _registerSellerAgent(fixedAgent());
 
-        pools = new AntseedSellerPools(address(registry), 0, 0, 0);
+        pools = new AntseedSellerPools(address(registry));
         token.setTransferWhitelist(address(pools), true);
 
         token.mint(staker, 1_000_000_000 ether);
@@ -262,36 +262,6 @@ contract AntseedSellerPoolsFuzzTest is Test {
         vm.prank(staker);
         pools.withdrawStake(newId);
         assertEq(token.balanceOf(staker) - stakerBefore, amount, "principal lost across move");
-    }
-
-    /// @notice The deterministic launch APY curve stays inside [floor, start],
-    ///         is non-increasing, and lands exactly on the floor after decay.
-    function testFuzz_apyCapCurveBounds(uint16 startBps, uint16 floorBps, uint16 decayBps, uint8 decayStart, uint8 queryEpoch) public {
-        uint256 start = bound(startBps, 1, 10_000);
-        uint256 floor = bound(floorBps, 0, start);
-        uint256 decay = start == floor ? 0 : bound(decayBps, 1, 10_000);
-
-        AntseedSellerPools p = new AntseedSellerPools(address(registry), start, floor, decay);
-
-        uint256 anchor = uint256(decayStart) + 1; // must be a future epoch (>0)
-        if (start != floor) {
-            p.startApyDecay(anchor);
-        }
-
-        uint256 epoch = uint256(queryEpoch);
-        uint256 cap = p.apyCapBpsAtEpoch(epoch);
-        assertLe(cap, start, "cap above start");
-        assertGe(cap, floor, "cap below floor");
-
-        // Monotonic non-increasing over epochs.
-        uint256 capNext = p.apyCapBpsAtEpoch(epoch + 1);
-        assertLe(capNext, cap, "cap not monotonic");
-
-        if (start != floor) {
-            uint256 end = p.apyDecayEndEpoch();
-            assertEq(p.apyCapBpsAtEpoch(end), floor, "did not land on floor at decay end");
-            assertEq(p.apyCapBpsAtEpoch(end + 50), floor, "drifted off floor");
-        }
     }
 
     function fixedAgent() internal pure returns (uint256) {

@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 
 import { AntseedUsageRewards } from "../emissions/AntseedUsageRewards.sol";
 import { AntseedEmissionsGate } from "../emissions/AntseedEmissionsGate.sol";
+import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmissionsEscrow.sol";
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
@@ -47,12 +48,6 @@ interface IAntseedLegacyEmissionsAdmin {
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
  *                                     on the new v2 registry. Unset = ANTS reserve
  *                                     flows fall back to protocolReserve (fees).
- *   POOL_APY_START_BPS                Initial APY cap, immutable at deploy. Defaults to 10000 (100%).
- *   POOL_APY_FLOOR_BPS                Terminal APY cap after decay, immutable. Defaults to 2000 (20%).
- *   POOL_APY_DECAY_PER_EPOCH_BPS      Linear decay per epoch, immutable. Defaults to 500 (5 points).
- *   POOL_APY_DECAY_START_EPOCH        Epoch the decay begins. Defaults to 0 =
- *                                     not started; fire it later with the
- *                                     one-time startApyDecay(futureEpoch).
  *
  * Usage:
  *   cd packages/contracts
@@ -90,10 +85,6 @@ contract DeployRecognizedUsage is Script {
         address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
         require(verificationWallet != address(0), "verification wallet not set");
         address emissionsReserveWallet = vm.envOr("EMISSIONS_RESERVE_WALLET", address(0));
-        uint256 poolApyStartBps = vm.envOr("POOL_APY_START_BPS", uint256(10_000));
-        uint256 poolApyFloorBps = vm.envOr("POOL_APY_FLOOR_BPS", uint256(2_000));
-        uint256 poolApyDecayPerEpochBps = vm.envOr("POOL_APY_DECAY_PER_EPOCH_BPS", uint256(500));
-        uint256 poolApyDecayStartEpoch = vm.envOr("POOL_APY_DECAY_START_EPOCH", uint256(0));
         address teamWallet = registry.teamWallet();
         address protocolReserve = registry.protocolReserve();
         require(teamWallet != address(0), "team wallet not set");
@@ -130,9 +121,9 @@ contract DeployRecognizedUsage is Script {
         uint256 epochDuration = gate.epochDuration();
 
         // SellerPools resolves epochs via registry.emissions(): the legacy
-        // clock until the pointer flip below, the gate's clock after. The
-        // startApyDecay future-only check below runs against the legacy
-        // clock, so the two clocks must agree.
+        // clock until the pointer flip below, the gate's clock after — and
+        // the escrow funding below settles pre-effective epochs on the
+        // gate's schedule, so the two clocks must agree.
         require(
             IAntseedLegacyEmissionsClock(existingEmissions).genesis() == genesis
                 && IAntseedLegacyEmissionsClock(existingEmissions).EPOCH_DURATION() == epochDuration,
@@ -155,20 +146,8 @@ contract DeployRecognizedUsage is Script {
         console.log("Effective Epoch:        ", effectiveEpoch);
         console.log("");
 
-        // The APY cap trajectory is immutable from deployment:
-        //   cap(e) = max(floor, start - decayPerEpoch * (e - decayStartEpoch))
-        // The only lever is the one-time startApyDecay(futureEpoch) call.
-        AntseedSellerPools sellerPools =
-            new AntseedSellerPools(address(registryV2), poolApyStartBps, poolApyFloorBps, poolApyDecayPerEpochBps);
+        AntseedSellerPools sellerPools = new AntseedSellerPools(address(registryV2));
         console.log("SellerPools:          ", address(sellerPools));
-
-        if (poolApyDecayStartEpoch != 0) {
-            sellerPools.startApyDecay(poolApyDecayStartEpoch);
-        }
-        console.log("Pool APY start (bps):   ", poolApyStartBps);
-        console.log("Pool APY floor (bps):   ", poolApyFloorBps);
-        console.log("Pool APY decay (bps/ep):", poolApyDecayPerEpochBps);
-        console.log("Pool APY decay epoch:   ", poolApyDecayStartEpoch);
 
         AntseedSellerRegistry sellerRegistry =
             new AntseedSellerRegistry(address(registryV2), address(sellerPools), existingStaking);
@@ -198,11 +177,24 @@ contract DeployRecognizedUsage is Script {
         usageAccounting.setUsageRewards(address(usageRewards));
         usageRewards.setClaimForwarder(address(usageAccounting));
 
+        // Legacy emissions escrow: the deployed legacy emissions contract is
+        // re-pointed at this registry facade whose antsToken() is the escrow
+        // itself, so its unchanged mint() claims draw from a fixed pre-minted
+        // pot instead of minting. The gate then refuses pre-effective epochs
+        // unconditionally.
+        AntseedLegacyEmissionsEscrow legacyEscrow =
+            new AntseedLegacyEmissionsEscrow(registryAddress, existingEmissions);
+        console.log("LegacyEmissionsEscrow:  ", address(legacyEscrow));
+
         // SellerPools must be able to pay out withdrawals and slash to the dead
         // address. UsageRewards must be able to stake claimed rewards via
-        // stakeFor while ANTS transfers are globally disabled.
+        // stakeFor, SellerPoolsRewards to pay out and restake indexed staker
+        // rewards, and the escrow to pay legacy claims — all while ANTS
+        // transfers are globally disabled.
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(sellerPools), true);
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(usageRewards), true);
+        IANTSTokenAdmin(antsToken).setTransferWhitelist(address(sellerPoolsRewards), true);
+        IANTSTokenAdmin(antsToken).setTransferWhitelist(address(legacyEscrow), true);
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 40_000, true);
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 20_000, true);
@@ -210,15 +202,19 @@ contract DeployRecognizedUsage is Script {
         // Mint authority moves only after every bucket minter is configured: a
         // broadcast that fails before this line leaves the legacy emissions
         // path untouched, and one that fails after it leaves the new path
-        // fully mintable. Both registries flip: the v2 registry serves the
-        // new stack, the legacy registry keeps serving deployed contracts
-        // (Channels accruals + Diem adapter, Channels seller eligibility).
+        // fully mintable. The escrow is funded and wired immediately after so
+        // legacy claims never touch a token that only accepts the gate. Both
+        // registries flip: the v2 registry serves the new stack, the legacy
+        // registry keeps serving deployed contracts (Channels accruals + Diem
+        // adapter, Channels seller eligibility).
         IANTSTokenAdmin(antsToken).setRegistry(address(gate));
+        uint256 escrowAmount = gate.fundLegacyEscrow(address(legacyEscrow));
+        IAntseedLegacyEmissionsAdmin(existingEmissions).setRegistry(address(legacyEscrow));
+        console.log("Legacy escrow funded:   ", escrowAmount);
         registryV2.setEmissions(address(usageAccounting));
         registryV2.setStaking(address(sellerRegistry));
         registry.setEmissions(address(usageAccounting));
         registry.setStaking(address(sellerRegistry));
-        IAntseedLegacyEmissionsAdmin(existingEmissions).setRegistry(address(gate));
 
         vm.stopBroadcast();
 
@@ -247,15 +243,19 @@ contract DeployRecognizedUsage is Script {
         console.log("  only after seller pools are seeded with ANTS stake.");
         console.log("- Sellers cannot stake ANTS into pools until they are transfer-");
         console.log("  whitelisted or transfers are enabled.");
-        console.log("- Legacy EmissionsV2 is now registered against the gate facade.");
-        console.log("  Old finalized claims can mint through gate.mint().");
-        console.log("- After any one-off gate bucket claims for pre-effective epochs are");
-        console.log("  handled, call gate.disableLegacyEpochMints().");
-        console.log("- BEFORE this cutover, deployed seller delegation contracts");
-        console.log("  (DiemStakingProxy) must claim all pending legacy emission epochs:");
-        console.log("  their legacy claims only work while registry.emissions() is the");
-        console.log("  legacy contract. Afterwards their claims resolve to agent usage");
-        console.log("  rewards via the adapter, which requires an ANTS seller pool for");
-        console.log("  their agent id (usage of pool-less agents is not accounted).");
+        console.log("- Legacy EmissionsV2 is registered against the escrow: all its");
+        console.log("  claims and team/reserve flushes (any epoch, any time) pay from");
+        console.log("  the pre-minted pot. Sweep the escrow leftovers only after legacy");
+        console.log("  claim activity has wound down.");
+        console.log("- The epoch in flight at cutover finalizes AFTER the flip. Deployed");
+        console.log("  delegation contracts (DiemStakingProxy) resolve claims via");
+        console.log("  registry.emissions(), so once that epoch finalizes: temporarily");
+        console.log("  registry.setEmissions(legacy EmissionsV2), have the proxy claim");
+        console.log("  it (pays from the escrow), then flip back to UsageAccounting.");
+        console.log("  Do the same window for sellers whose legacy claims route through");
+        console.log("  AntseedSellerRewardsPool (its auth reads registry.emissions()).");
+        console.log("- Afterwards proxy claims resolve to agent usage rewards via the");
+        console.log("  adapter, which requires an ANTS seller pool for their agent id");
+        console.log("  (usage of pool-less agents is not accounted).");
     }
 }

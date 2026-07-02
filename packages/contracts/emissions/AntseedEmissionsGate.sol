@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IANTSToken } from "../interfaces/IANTSToken.sol";
@@ -30,7 +31,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     uint256 public constant SHARE_DENOMINATOR = 100_000;
     uint256 public constant BURN_CAP_BPS = 30_000;
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
-    bytes32 public constant LEGACY_EMISSIONS_MINTER_ID = keccak256("antseed.emissions.legacy.v1");
     bytes32 public constant TEAM_MINTER_ID = keccak256("antseed.emissions.team.v1");
     bytes32 public constant RESERVE_MINTER_ID = keccak256("antseed.emissions.reserve.v1");
 
@@ -38,7 +38,11 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     IAntseedRegistryV2 public immutable registry;
 
     uint256 public immutable effectiveEpoch;
-    bool public legacyEpochMintsDisabled;
+    /// @notice Escrow holding the one-time pre-minted backlog covering every
+    ///         epoch before `effectiveEpoch`. Once funded, the gate refuses
+    ///         pre-effective epochs unconditionally: past epochs belong to the
+    ///         escrow, present and future epochs to the minter buckets.
+    address public legacyEscrow;
     mapping(uint256 epoch => uint256 amount) public epochMinted;
     mapping(uint256 epoch => uint256 amount) public epochBurnedAmount;
 
@@ -48,7 +52,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     mapping(bytes32 minterId => ShareCheckpoint[] checkpoints) private _minterShareCheckpoints;
     mapping(bytes32 minterId => mapping(uint256 epoch => uint256 amount)) public minterEpochMinted;
 
-    event LegacyEpochMintsDisabled();
+    event LegacyEscrowFunded(address indexed escrow, uint256 amount);
     event EmissionClaimed(
         bytes32 indexed minterId, address indexed controller, address indexed recipient, uint256 epoch, uint256 amount
     );
@@ -61,22 +65,20 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     );
     event MinterSet(bytes32 indexed minterId, address indexed controller, uint32 shareBps, bool editable);
     event MinterRemoved(bytes32 indexed minterId, address indexed controller);
-    event LegacyEmissionMinted(address indexed recipient, uint256 amount);
 
     error InvalidAddress();
     error InvalidValue();
     error EpochNotFinalized();
     error NotEmissionMinter();
-    error NotLegacyEmissionsMinter();
     error MinterNotEditable();
     error BucketBudgetExceeded();
     error EpochEmissionExceeded();
-    error LegacyEpochMintingDisabled();
-    error LegacyEpochMintsStillEnabled();
+    error PreEffectiveEpoch();
+    error LegacyEscrowAlreadyFunded();
+    error LegacyEscrowNotFunded();
     error MintersNotSet();
     error DepositsNotConfigured();
     error InvalidMinterId();
-    error InvalidLegacyEpoch();
 
     constructor(address registry_, uint32 teamShareBps, uint32 reserveShareBps) Ownable(msg.sender) {
         if (registry_ == address(0)) revert InvalidAddress();
@@ -85,17 +87,12 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         uint256 epoch = block.timestamp <= GENESIS ? 0 : (block.timestamp - GENESIS) / EPOCH_DURATION;
         effectiveEpoch = epoch + 1;
 
-        address legacyMinter = registry.emissions();
         address teamWallet = registry.teamWallet();
         address protocolReserve = registry.protocolReserve();
-        if (legacyMinter == address(0) || teamWallet == address(0) || protocolReserve == address(0)) {
+        if (teamWallet == address(0) || protocolReserve == address(0)) {
             revert InvalidAddress();
         }
 
-        controllerMinterIds[legacyMinter] = LEGACY_EMISSIONS_MINTER_ID;
-        _minters[LEGACY_EMISSIONS_MINTER_ID] =
-            Minter({ controller: legacyMinter, shareBps: uint32(SHARE_DENOMINATOR), editable: false });
-        _recordMinterShare(LEGACY_EMISSIONS_MINTER_ID, 0, uint32(SHARE_DENOMINATOR));
         _setMinter(TEAM_MINTER_ID, teamWallet, teamShareBps, false);
         _setMinter(RESERVE_MINTER_ID, _emissionsReserve(), reserveShareBps, false);
     }
@@ -137,9 +134,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     // ═══════════════════════════════════════════════════════════════════
 
     function claim(uint256 epoch, address recipient, uint256 amount) external nonReentrant {
-        bytes32 id = controllerMinterIds[msg.sender];
-        if (id == LEGACY_EMISSIONS_MINTER_ID) revert NotEmissionMinter();
-        _claimFromMinter(id, msg.sender, epoch, recipient, amount);
+        _claimFromMinter(controllerMinterIds[msg.sender], msg.sender, epoch, recipient, amount);
     }
 
     function claimRemainder(uint256 epoch, address reserveRecipient, uint256 amount)
@@ -148,7 +143,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         returns (uint256 burnedAmount, uint256 reserveAmount)
     {
         bytes32 id = controllerMinterIds[msg.sender];
-        if (id == LEGACY_EMISSIONS_MINTER_ID) revert NotEmissionMinter();
         if (amount == 0) revert InvalidValue();
 
         address emissionsReserve = _emissionsReserve();
@@ -168,13 +162,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         if (burnedAmount != 0) _antsToken.mint(DEAD_ADDRESS, burnedAmount);
         if (reserveAmount != 0) _antsToken.mint(reserveRecipient, reserveAmount);
         emit EmissionRemainderClaimed(id, msg.sender, epoch, burnedAmount, reserveAmount);
-    }
-
-    function mint(address recipient, uint256 amount) external nonReentrant {
-        if (msg.sender != _minters[LEGACY_EMISSIONS_MINTER_ID].controller) revert NotLegacyEmissionsMinter();
-
-        _claimFromMinter(LEGACY_EMISSIONS_MINTER_ID, msg.sender, effectiveEpoch - 1, recipient, amount);
-        emit LegacyEmissionMinted(recipient, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -229,20 +216,41 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         return INITIAL_EMISSION;
     }
 
+    /// @notice Total scheduled emission for epochs `0..epochExclusive-1`.
+    function cumulativeEmissionThrough(uint256 epochExclusive) public pure returns (uint256 total) {
+        uint256 fullPeriods = epochExclusive / HALVING_INTERVAL;
+        for (uint256 period = 0; period < fullPeriods; period++) {
+            total += (INITIAL_EMISSION >> period) * HALVING_INTERVAL;
+        }
+        total += (INITIAL_EMISSION >> fullPeriods) * (epochExclusive % HALVING_INTERVAL);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        ONE-TIME WIRING
     // ═══════════════════════════════════════════════════════════════════
 
-    function disableLegacyEpochMints() external onlyOwner {
-        if (legacyEpochMintsDisabled) revert LegacyEpochMintingDisabled();
-        legacyEpochMintsDisabled = true;
-        emit LegacyEpochMintsDisabled();
+    /// @notice One-time mint of the entire pre-effective backlog into the
+    ///         legacy emissions escrow: everything the schedule owes for
+    ///         epochs before `effectiveEpoch` that is not already circulating.
+    ///         Must run after the token's registry points at this gate. Once
+    ///         funded, past epochs are settled in full and no gate minter can
+    ///         ever touch them.
+    function fundLegacyEscrow(address escrow) external onlyOwner nonReentrant returns (uint256 amount) {
+        if (escrow == address(0)) revert InvalidAddress();
+        if (legacyEscrow != address(0)) revert LegacyEscrowAlreadyFunded();
+        legacyEscrow = escrow;
+
+        uint256 scheduled = cumulativeEmissionThrough(effectiveEpoch);
+        uint256 supply = IERC20(ANTS_TOKEN).totalSupply();
+        amount = scheduled > supply ? scheduled - supply : 0;
+        if (amount != 0) _antsToken.mint(escrow, amount);
+        emit LegacyEscrowFunded(escrow, amount);
     }
 
     function renounceOwnership() public override onlyOwner {
         if (totalMinterShareBps != SHARE_DENOMINATOR) revert MintersNotSet();
         if (registry.deposits() == address(0)) revert DepositsNotConfigured();
-        if (!legacyEpochMintsDisabled) revert LegacyEpochMintsStillEnabled();
+        if (legacyEscrow == address(0)) revert LegacyEscrowNotFunded();
         super.renounceOwnership();
     }
 
@@ -303,7 +311,12 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         if (!existing.editable) revert MinterNotEditable();
 
         totalMinterShareBps -= existing.shareBps;
-        _recordMinterShare(id, currentEpoch(), 0);
+        // Removal takes effect from the NEXT epoch, matching _setMinter: the
+        // in-progress epoch keeps its share so already-earned claims stay
+        // mintable, and the checkpoint array stays sorted even when a
+        // same-epoch _setMinter already scheduled a checkpoint at
+        // currentEpoch() + 1.
+        _recordMinterShare(id, currentEpoch() + 1, 0);
         delete controllerMinterIds[existing.controller];
         delete _minters[id];
         emit MinterRemoved(id, existing.controller);
@@ -324,9 +337,10 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         Minter memory minter = _minters[id];
         if (minter.controller == address(0) || minter.controller != controller) revert NotEmissionMinter();
         if (amount == 0) revert InvalidValue();
-        if (id == LEGACY_EMISSIONS_MINTER_ID && epoch != effectiveEpoch - 1) revert InvalidLegacyEpoch();
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
-        if (epoch < effectiveEpoch && legacyEpochMintsDisabled) revert LegacyEpochMintingDisabled();
+        // Pre-effective epochs are the legacy escrow's, settled in full at
+        // funding time — never mintable through a bucket.
+        if (epoch < effectiveEpoch) revert PreEffectiveEpoch();
 
         uint256 newMinterMinted = minterEpochMinted[id][epoch] + amount;
         if (newMinterMinted > _shareBudget(epoch, _minterShareBpsAt(id, epoch))) revert BucketBudgetExceeded();

@@ -136,7 +136,8 @@ contract AntseedEmissionsGateFuzzTest is Test {
         gate.setMinter(keccak256("A"), minterA, sA, true);
         gate.setMinter(keccak256("B"), minterB, sB, true);
 
-        uint256 epoch = 2; // finalized (< currentEpoch 4) and < effectiveEpoch (legacy window)
+        _warpGateEpoch(5);
+        uint256 epoch = 4; // finalized (< currentEpoch 5) and >= effectiveEpoch (4)
         uint256 emission = gate.getEpochEmission(epoch);
         uint256 budgetA = (emission * sA) / SHARE_DENOMINATOR;
         uint256 budgetB = (emission * sB) / SHARE_DENOMINATOR;
@@ -162,47 +163,49 @@ contract AntseedEmissionsGateFuzzTest is Test {
     }
 
     // ───────────────────────────────────────────────────────────────────
-    //  3. Global cap is the binding backstop (legacy + new-minter overlap)
+    //  3. Global cap is the binding backstop (minter-rotation overlap)
     // ───────────────────────────────────────────────────────────────────
 
-    /// @notice The legacy minter (100% share, off the totalMinterShareBps books)
-    ///         plus a new minter can together over-subscribe an epoch. When the
-    ///         legacy mint has consumed enough of the epoch emission, a new
-    ///         minter claim that is within its OWN budget but pushes the epoch
-    ///         total over getEpochEmission must revert EpochEmissionExceeded
-    ///         (the global backstop), not BucketBudgetExceeded.
-    function testFuzz_globalCapBacksLegacyOverlap(uint256 legacyAmount) public {
+    /// @notice A rotated-out minter's minted amounts stay on the books while a
+    ///         replacement id gets a fresh checkpoint from epoch 0, so two ids
+    ///         can together over-subscribe a finalized epoch. A claim that is
+    ///         within the replacement's OWN budget but pushes the epoch total
+    ///         over getEpochEmission must revert EpochEmissionExceeded (the
+    ///         global backstop), not BucketBudgetExceeded.
+    function testFuzz_globalCapBacksMinterRotationOverlap(uint256 firstAmount) public {
         _deployGate(4);
-        uint256 legacyEpoch = gate.effectiveEpoch() - 1; // == 3
-        _warpGateEpoch(legacyEpoch + 1); // finalize the legacy epoch
+        uint256 epoch = gate.effectiveEpoch(); // == 4
+        _warpGateEpoch(epoch + 1); // finalize it
 
-        uint256 emission = gate.getEpochEmission(legacyEpoch);
+        uint256 emission = gate.getEpochEmission(epoch);
 
-        // New seller-pools minter at 45% of the epoch.
-        address poolsMinter = address(0xF00D);
-        gate.setMinter(keccak256("pools"), poolsMinter, 45_000, true);
-        uint256 poolsBudget = (emission * 45_000) / SHARE_DENOMINATOR;
+        // First minter consumes 60-70% of the epoch, then is rotated out.
+        address firstMinter = address(0xF00D);
+        gate.setMinter(keccak256("first"), firstMinter, 70_000, true);
+        uint256 firstMint = bound(firstAmount, (emission * 60) / 100, (emission * 70_000) / SHARE_DENOMINATOR);
+        vm.prank(firstMinter);
+        gate.claim(epoch, firstMinter, firstMint);
+        assertEq(gate.epochMinted(epoch), firstMint, "first mint not recorded");
+        gate.removeMinter(keccak256("first"));
 
-        // Legacy consumes between 60% and 100% of the epoch, leaving < poolsBudget.
-        uint256 legacyMint = bound(legacyAmount, (emission * 60) / 100, emission);
-        vm.prank(legacyController);
-        gate.mint(legacyController, legacyMint);
-        assertEq(gate.epochMinted(legacyEpoch), legacyMint, "legacy mint not recorded");
+        // Replacement id: fresh books, checkpoint from epoch 0, 45% budget.
+        address secondMinter = address(0xBEEF);
+        gate.setMinter(keccak256("second"), secondMinter, 45_000, true);
+        uint256 secondBudget = (emission * 45_000) / SHARE_DENOMINATOR;
 
-        uint256 remaining = emission - legacyMint;
-        // Claim exactly poolsBudget: within the minter budget, but pushes the
-        // epoch total over the emission whenever poolsBudget > remaining.
-        uint256 claimAmount = poolsBudget;
-        vm.prank(poolsMinter);
-        if (claimAmount > remaining) {
+        uint256 remaining = emission - firstMint;
+        // Claim exactly secondBudget: within the minter budget, but pushes the
+        // epoch total over the emission whenever secondBudget > remaining.
+        vm.prank(secondMinter);
+        if (secondBudget > remaining) {
             vm.expectRevert(AntseedEmissionsGate.EpochEmissionExceeded.selector);
-            gate.claim(legacyEpoch, poolsMinter, claimAmount);
+            gate.claim(epoch, secondMinter, secondBudget);
         } else {
-            gate.claim(legacyEpoch, poolsMinter, claimAmount);
+            gate.claim(epoch, secondMinter, secondBudget);
         }
 
         // No matter what, the epoch can never be over-minted.
-        assertLe(gate.epochMinted(legacyEpoch), emission, "global cap breached");
+        assertLe(gate.epochMinted(epoch), emission, "global cap breached");
     }
 
     // ───────────────────────────────────────────────────────────────────

@@ -47,8 +47,6 @@ interface IAntseedSellerPools {
         uint256 maxSlashBps,
         uint256 minEarlyExitSlashBps
     );
-    event ApyDecayScheduled(uint256 indexed startEpoch);
-    event ApyCapOverrideScheduled(uint256 indexed fromEpoch, uint256 capBps);
     event RestakedRewardWeightBonusSet(uint256 bonusBps);
     event MoveWeightPenaltySet(uint256 penaltyBps);
     event StakerActiveStakeUpdated(
@@ -107,8 +105,6 @@ interface IAntseedSellerPools {
         external
         view
         returns (uint256 normalEndEpoch, uint256 maxLockPower, uint256 nextChangeEpoch);
-    function positionRewardCapAtEpoch(uint256 positionId, uint256 epoch) external view returns (uint256 cap);
-    function apyCapBpsAtEpoch(uint256 epoch) external view returns (uint256 capBps);
     function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) external view returns (uint256 weight);
     function poolPowerWeightAtEpoch(address seller, uint256 epoch) external view returns (uint256 weight);
     function totalPowerWeightAtEpoch(uint256 epoch) external view returns (uint256 weight);

@@ -57,6 +57,18 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     address public claimForwarder;
 
     // ─── Claim State ─────────────────────────────────────────────────
+    /// @dev Budgets frozen at first claim/settlement use of an epoch. Later
+    ///      dynamic-config changes must not retroactively resize a finalized
+    ///      epoch's budgets: claims and remainder settlement share one gate
+    ///      bucket, and a mid-flight resize would over-commit it or skew
+    ///      early vs late claimants.
+    struct FrozenUsageBudgets {
+        bool frozen;
+        uint256 buyerBudget;
+        uint256 sellerBudget;
+    }
+
+    mapping(uint256 => FrozenUsageBudgets) private _frozenUsageBudgets;
     mapping(uint256 => mapping(uint256 => bool)) public agentEpochClaimed;
     mapping(address => mapping(uint256 => bool)) public buyerEpochClaimed;
     mapping(uint256 => bool) public epochRemainderSettled;
@@ -121,6 +133,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint32 sellerMaxShareBps,
         uint256 volumeShareTarget
     );
+    event UsageEpochBudgetsFrozen(uint256 indexed epoch, uint256 buyerBudget, uint256 sellerBudget);
     event UsageRewardRemainderSettled(
         uint256 indexed epoch, uint256 unallocatedAmount, uint256 burnedAmount, uint256 reserveAmount
     );
@@ -278,8 +291,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
 
         (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(agentId, epoch);
+        (, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(sellerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
+            _rewardAmounts(sellerBudget, weightedPoints, totalWeightedPoints);
 
         address seller = _agentOwner(agentId);
         if (claimant != seller) revert NotRewardRecipient();
@@ -300,8 +314,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
 
         (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(agentId, epoch);
+        (, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(sellerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
+            _rewardAmounts(sellerBudget, weightedPoints, totalWeightedPoints);
 
         address seller = _agentOwner(agentId);
         if (msg.sender != seller) revert NotRewardRecipient();
@@ -327,8 +342,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (buyerEpochClaimed[buyer][epoch]) revert AlreadyClaimed();
 
         (uint256 weightedPoints, uint256 totalWeightedPoints) = _buyerShare(buyer, epoch);
+        (uint256 buyerBudget,) = _freezeUsageEpochBudgets(epoch);
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(buyerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
+            _rewardAmounts(buyerBudget, weightedPoints, totalWeightedPoints);
 
         address recipient = _buyerRewardRecipient(buyer);
         if (msg.sender != recipient) revert NotRewardRecipient();
@@ -349,8 +365,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (buyerEpochClaimed[buyer][epoch]) revert AlreadyClaimed();
 
         (uint256 weightedPoints, uint256 totalWeightedPoints) = _buyerShare(buyer, epoch);
+        (uint256 buyerBudget,) = _freezeUsageEpochBudgets(epoch);
         (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(buyerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
+            _rewardAmounts(buyerBudget, weightedPoints, totalWeightedPoints);
 
         address operator = _buyerRewardRecipient(buyer);
         if (msg.sender != operator) revert NotRewardRecipient();
@@ -383,6 +400,12 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function usageEpochBudgets(uint256 epoch) public view returns (uint256 buyerBudget, uint256 sellerBudget) {
+        FrozenUsageBudgets memory frozen = _frozenUsageBudgets[epoch];
+        if (frozen.frozen) return (frozen.buyerBudget, frozen.sellerBudget);
+        return _liveUsageEpochBudgets(epoch);
+    }
+
+    function _liveUsageEpochBudgets(uint256 epoch) internal view returns (uint256 buyerBudget, uint256 sellerBudget) {
         uint256 desiredBuyerBudget = _shareBudget(epoch, _buyerShareBpsAt(epoch));
         uint256 desiredSellerBudget = _shareBudget(epoch, _sellerShareBpsAt(epoch));
         uint256 desiredTotal = desiredBuyerBudget + desiredSellerBudget;
@@ -408,13 +431,25 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
 
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 allocatedBudget = allocatedEpochBudget(epoch);
+        (uint256 buyerBudget, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
+        uint256 allocatedBudget = buyerBudget + sellerBudget;
         if (allocatedBudget >= maxBudget) revert NothingToClaim();
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
         epochRemainderSettled[epoch] = true;
         (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _emissionsReserve(), unallocatedAmount);
         emit UsageRewardRemainderSettled(epoch, unallocatedAmount, burnedAmount, reserveAmount);
+    }
+
+    function _freezeUsageEpochBudgets(uint256 epoch) internal returns (uint256 buyerBudget, uint256 sellerBudget) {
+        FrozenUsageBudgets storage frozen = _frozenUsageBudgets[epoch];
+        if (frozen.frozen) return (frozen.buyerBudget, frozen.sellerBudget);
+
+        (buyerBudget, sellerBudget) = _liveUsageEpochBudgets(epoch);
+        frozen.frozen = true;
+        frozen.buyerBudget = buyerBudget;
+        frozen.sellerBudget = sellerBudget;
+        emit UsageEpochBudgetsFrozen(epoch, buyerBudget, sellerBudget);
     }
 
     function _rewardAmounts(uint256 epochBudget, uint256 weightedPoints, uint256 totalWeightedPoints)
