@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
+import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 
@@ -311,7 +312,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
         epochRemainderSettled[epoch] = true;
-        (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _protocolReserve(), unallocatedAmount);
+        (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _emissionsReserve(), unallocatedAmount);
         emit StakerRewardRemainderSettled(epoch, unallocatedAmount, burnedAmount, reserveAmount);
     }
 
@@ -500,8 +501,14 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return uint32(uint256(minShareBps) + Math.mulDiv(maxShareBps - minShareBps, metric, metric + target));
     }
 
-    function _protocolReserve() internal view returns (address reserve) {
-        reserve = sellerPools.registry().protocolReserve();
+    /// @dev ANTS reserve flows go to the registry's dedicated emissions
+    ///      reserve; while the split is unset they fall back to the fee
+    ///      reserve (`protocolReserve`). The seller pools this controller is
+    ///      wired to must live on a v2 registry.
+    function _emissionsReserve() internal view returns (address reserve) {
+        IAntseedRegistryV2 registry = IAntseedRegistryV2(address(sellerPools.registry()));
+        reserve = registry.emissionsReserve();
+        if (reserve == address(0)) reserve = registry.protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }
 

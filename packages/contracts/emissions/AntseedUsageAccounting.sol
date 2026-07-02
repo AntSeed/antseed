@@ -5,9 +5,11 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
+import { IAntseedPoolWeightPolicy } from "../interfaces/IAntseedPoolWeightPolicy.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
+import { IAntseedUsageRewards } from "../interfaces/IAntseedUsageRewards.sol";
 
 /**
  * @title AntseedUsageAccounting
@@ -49,7 +51,13 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     IAntseedEmissionsGate public immutable emissionsGate;
     IAntseedSellerPools public sellerPools;
     IAntseedPointsPolicy public pointsPolicy;
+    IAntseedPoolWeightPolicy public poolWeightPolicy;
     uint256 public minimumAccountedPoolPower = 1;
+
+    /// @notice Usage rewards controller behind the seller delegation adapter
+    ///         below. Unset disables the adapter (views return zero, claims
+    ///         revert).
+    IAntseedUsageRewards public usageRewards;
 
     // ─── Legacy Two-Call Settlement Pairing ──────────────────────────
     struct PendingSellerAccrual {
@@ -165,6 +173,19 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         emit PointsPolicySet(policy);
     }
 
+    /// @notice Set the pool weight policy converting raw pool power into the
+    ///         effective weight applied to usage points. Unset preserves the
+    ///         default linear behavior (weight = raw pool power).
+    function setPoolWeightPolicy(address policy) external onlyOwner {
+        poolWeightPolicy = IAntseedPoolWeightPolicy(policy);
+        emit PoolWeightPolicySet(policy);
+    }
+
+    function setUsageRewards(address rewards) external onlyOwner {
+        usageRewards = IAntseedUsageRewards(rewards);
+        emit UsageRewardsSet(rewards);
+    }
+
     function setMinimumAccountedPoolPower(uint256 minimumPoolPower) external onlyOwner {
         if (minimumPoolPower == 0) revert InvalidValue();
         minimumAccountedPoolPower = minimumPoolPower;
@@ -183,6 +204,64 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                    SELLER DELEGATION ADAPTER
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Already-deployed seller delegation contracts (e.g. DiemStakingProxy)
+    // resolve registry.emissions() live and call the legacy IAntseedEmissions
+    // selectors on it. These adapters keep that surface answering: seller
+    // emission amounts come from the AntseedUsageRewards agent bucket, keyed
+    // by the caller's seller-pool agent id, and claims pay the caller (the
+    // agent owner) through `claimAgentRewardFor`.
+
+    /// @notice Legacy `IAntseedEmissions.pendingEmissions` view. `totalSeller`
+    ///         is the account's unclaimed agent usage reward for `epochs`;
+    ///         `totalBuyer` is always zero (delegation contracts only consume
+    ///         the seller side).
+    function pendingEmissions(address account, uint256[] calldata epochs)
+        external
+        view
+        returns (uint256 totalSeller, uint256 totalBuyer)
+    {
+        totalBuyer = 0;
+        IAntseedUsageRewards rewards = usageRewards;
+        if (address(rewards) == address(0)) return (0, 0);
+        uint256 agentId = _sellerPoolAgentId(account);
+        if (agentId == 0) return (0, 0);
+
+        for (uint256 i = 0; i < epochs.length; i++) {
+            if (rewards.agentEpochClaimed(agentId, epochs[i])) continue;
+            totalSeller += rewards.pendingAgentReward(agentId, epochs[i]);
+        }
+    }
+
+    /// @notice Legacy `IAntseedEmissions.claimSellerEmissions`. Claims the
+    ///         caller's agent usage rewards from AntseedUsageRewards; rewards
+    ///         are paid to the caller (verified as the agent owner by the
+    ///         rewards controller). Epochs already claimed or with nothing to
+    ///         claim are skipped so a batch never reverts partway, mirroring
+    ///         the legacy claim semantics.
+    function claimSellerEmissions(uint256[] calldata epochs) external {
+        IAntseedUsageRewards rewards = usageRewards;
+        if (address(rewards) == address(0)) revert UsageRewardsNotSet();
+        uint256 agentId = _sellerPoolAgentId(msg.sender);
+        if (agentId == 0) return;
+
+        for (uint256 i = 0; i < epochs.length; i++) {
+            uint256 epoch = epochs[i];
+            if (rewards.agentEpochClaimed(agentId, epoch)) continue;
+            if (rewards.pendingAgentReward(agentId, epoch) == 0) continue;
+            rewards.claimAgentRewardFor(msg.sender, agentId, epoch);
+        }
+    }
+
+    function _sellerPoolAgentId(address seller) internal view returns (uint256) {
+        IAntseedSellerPools pools = sellerPools;
+        if (address(pools) == address(0)) return 0;
+        return pools.agentIdForSeller(seller);
     }
 
     // ─── Internal Recording ───────────────────────────────────────────
@@ -204,8 +283,21 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         uint256 poolPower = pools.poolPowerWeightAtEpoch(agentId, epoch);
         if (poolPower < minimumAccountedPoolPower) return;
 
+        (uint256 poolWeight, bool poolWeightOk) = _policyPoolWeight(agentId, epoch, poolPower);
+        if (!poolWeightOk) return;
+
         (uint256 sellerPoints, uint256 buyerPoints) = _policyPoints(channelId, buyer, seller, rawPoints);
         if (sellerPoints == 0 && buyerPoints == 0) return;
+
+        // An absurd policy output overflowing the weighted-points multiply
+        // below must not block settlement either: skip the whole record (no
+        // partial raw-points write) instead of bubbling the revert into
+        // AntseedChannels' settle path.
+        uint256 maxPoints = sellerPoints > buyerPoints ? sellerPoints : buyerPoints;
+        if (poolWeight != 0 && maxPoints > type(uint256).max / poolWeight) {
+            emit WeightedPointsOverflowSkipped(agentId, epoch, sellerPoints, buyerPoints, poolWeight);
+            return;
+        }
 
         {
             UsageTotals storage totalUsage_ = _totalUsage;
@@ -224,8 +316,8 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         _agentEpochUsage[epoch][agentId].points += sellerPoints;
         if (_sellerAgentIdByEpoch[epoch][seller] == 0) _sellerAgentIdByEpoch[epoch][seller] = agentId;
 
-        uint256 sellerWeightedPoints = sellerPoints * poolPower;
-        uint256 buyerWeightedPoints = buyerPoints * poolPower;
+        uint256 sellerWeightedPoints = sellerPoints * poolWeight;
+        uint256 buyerWeightedPoints = buyerPoints * poolWeight;
 
         {
             UsageTotals storage totalUsage_ = _totalUsage;
@@ -255,6 +347,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
             buyerPoints,
             sellerPoints,
             poolPower,
+            poolWeight,
             buyerWeightedPoints,
             sellerWeightedPoints
         );
@@ -369,6 +462,25 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     // ═══════════════════════════════════════════════════════════════════
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
+
+    /// @dev Convert raw pool power into the effective reward weight. With no
+    ///      policy set the curve stays linear (weight = raw pool power). A
+    ///      broken or reverting policy must not block settlement: the usage
+    ///      record is skipped (no emissions credit) instead of bubbling the
+    ///      revert into AntseedChannels' settle path.
+    function _policyPoolWeight(uint256 agentId, uint256 epoch, uint256 poolPower)
+        internal
+        returns (uint256 poolWeight, bool ok)
+    {
+        IAntseedPoolWeightPolicy policy = poolWeightPolicy;
+        if (address(policy) == address(0)) return (poolPower, true);
+        try policy.poolWeight(agentId, epoch, poolPower) returns (uint256 weight) {
+            return (weight, true);
+        } catch {
+            emit PoolWeightPolicyFailed(agentId, epoch, poolPower);
+            return (0, false);
+        }
+    }
 
     function _policyPoints(bytes32 channelId, address buyer, address seller, uint256 rawPoints)
         internal

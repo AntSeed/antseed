@@ -20,6 +20,7 @@ interface IAntseedUsageAccounting {
 
     event SellerPoolsSet(address indexed sellerPools);
     event PointsPolicySet(address indexed policy);
+    event PoolWeightPolicySet(address indexed policy);
     event MinimumAccountedPoolPowerSet(uint256 minimumPoolPower);
     event UsageRecorderSet(address indexed recorder, bool allowed);
     event LegacySellerAccrualPending(address indexed seller, uint256 indexed epoch, uint256 pointsDelta);
@@ -32,12 +33,18 @@ interface IAntseedUsageAccounting {
         uint256 buyerPoints,
         uint256 sellerPoints,
         uint256 poolPower,
+        uint256 poolWeight,
         uint256 weightedBuyerPoints,
         uint256 weightedSellerPoints
     );
     event PendingSellerAccrualCleared(address indexed seller, uint256 pointsDelta);
     event AccrualSkippedWhilePaused(address indexed seller, address indexed buyer, uint256 pointsDelta);
     event PointsPolicyFailed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 rawPoints);
+    event PoolWeightPolicyFailed(uint256 indexed agentId, uint256 indexed epoch, uint256 poolPower);
+    event WeightedPointsOverflowSkipped(
+        uint256 indexed agentId, uint256 indexed epoch, uint256 sellerPoints, uint256 buyerPoints, uint256 poolWeight
+    );
+    event UsageRewardsSet(address indexed usageRewards);
 
     error InvalidAddress();
     error InvalidValue();
@@ -45,6 +52,7 @@ interface IAntseedUsageAccounting {
     error PendingSellerAccrualExists();
     error NoPendingSellerAccrual();
     error AccrualDeltaMismatch();
+    error UsageRewardsNotSet();
 
     function currentEpoch() external view returns (uint256);
     function pendingSellerAccrual() external view returns (address seller, uint256 pointsDelta);
@@ -54,8 +62,16 @@ interface IAntseedUsageAccounting {
     function accruePoints(bytes32 channelId, address buyer, address seller, uint256 pointsDelta) external;
     function clearPendingSellerAccrual() external;
     function setPointsPolicy(address policy) external;
+    function setPoolWeightPolicy(address policy) external;
     function setMinimumAccountedPoolPower(uint256 minimumPoolPower) external;
     function minimumAccountedPoolPower() external view returns (uint256);
+
+    function setUsageRewards(address rewards) external;
+    function pendingEmissions(address account, uint256[] calldata epochs)
+        external
+        view
+        returns (uint256 totalSeller, uint256 totalBuyer);
+    function claimSellerEmissions(uint256[] calldata epochs) external;
 
     function totalUsage() external view returns (UsageTotals memory);
     function epochUsage(uint256 epoch) external view returns (UsageTotals memory);

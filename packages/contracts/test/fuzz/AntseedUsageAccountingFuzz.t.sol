@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { ANTSToken } from "../../core/ANTSToken.sol";
-import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
+import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
@@ -64,7 +64,7 @@ contract HostilePointsPolicy is IAntseedPointsPolicy {
  */
 contract AntseedUsageAccountingFuzzTest is Test {
     ANTSToken token;
-    AntseedRegistry registry;
+    AntseedRegistryV2 registry;
     AntseedEmissionsGate gate;
     MockERC8004Registry identityRegistry;
     AntseedSellerPools pools;
@@ -90,7 +90,7 @@ contract AntseedUsageAccountingFuzzTest is Test {
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
-        registry = new AntseedRegistry();
+        registry = new AntseedRegistryV2();
         identityRegistry = new MockERC8004Registry();
         agentLookup = new MockAgentLookup();
         registry.setAntsToken(address(token));
@@ -197,18 +197,19 @@ contract AntseedUsageAccountingFuzzTest is Test {
         assertGt(usageAccounting.weightedPoolPointsByEpoch(uint256(5), agentId), 0, "no weighted points recorded");
     }
 
-    /// @notice DOCUMENTS the M2 owner-trust boundary: the points-policy output is
-    ///         multiplied by pool power OUTSIDE the policy try/catch. An owner who
-    ///         sets a policy returning absurd (>~1e50) point values can overflow
-    ///         that multiply and brick settlement. This is unreachable with any
-    ///         realistic policy, but it shows the points policy must be trusted.
-    function test_m2_adversarialPolicyCanOverflowAndBrickSettle() public {
+    /// @notice The former M2 owner-trust boundary is now defended: a policy
+    ///         returning absurd (>~1e50) point values used to overflow the
+    ///         points * weight multiply outside the policy try/catch and brick
+    ///         settlement. The overflow guard now skips the record instead.
+    function test_m2_adversarialPolicyOverflowSkipsInsteadOfBrickingSettle() public {
         usageAccounting.setPointsPolicy(address(policy));
         policy.set(HostilePointsPolicy.Mode.Huge, 1e60); // absurd; no real policy does this
 
-        // poolPower ~ 5.2e27; 1e60 * 5.2e27 overflows uint256 -> arithmetic panic.
-        vm.expectRevert(stdError.arithmeticError);
+        // poolPower ~ 5.2e27; 1e60 * 5.2e27 overflows uint256. The settle path
+        // must survive it and record nothing.
         usageAccounting.accruePoints(bytes32(uint256(9)), buyerAddr(), seller, 1_000);
+        assertEq(usageAccounting.sellerPointsByEpoch(uint256(5), seller), 0, "overflowing record not skipped");
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(uint256(5), agentId), 0, "weighted points recorded");
     }
 
     function buyerAddr() internal pure returns (address) {

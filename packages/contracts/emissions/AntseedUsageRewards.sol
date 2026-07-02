@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
@@ -45,9 +45,16 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable emissionsGate;
-    IAntseedRegistry public immutable registry;
+    IAntseedRegistryV2 public immutable registry;
     IAntseedUsageAccounting public immutable usageAccounting;
     IAntseedSellerPools public sellerPools;
+
+    /// @notice Contract allowed to initiate agent reward claims on a seller's
+    ///         behalf via `claimAgentRewardFor`. Rewards still pay the agent
+    ///         owner, so the forwarder can only trigger a claim, never divert
+    ///         it. Used by the registry-emissions adapter that serves
+    ///         deployed seller delegation contracts (e.g. DiemStakingProxy).
+    address public claimForwarder;
 
     // ─── Claim State ─────────────────────────────────────────────────
     mapping(uint256 => mapping(uint256 => bool)) public agentEpochClaimed;
@@ -63,6 +70,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── Events ──────────────────────────────────────────────────────
     event SellerPoolsSet(address indexed sellerPools);
+    event ClaimForwarderSet(address indexed claimForwarder);
     event SellerOperatorRewardClaimed(
         address indexed seller,
         uint256 indexed agentId,
@@ -124,6 +132,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     error NothingToClaim();
     error NotRewardRecipient();
     error RewardRecipientUnavailable();
+    error NotClaimForwarder();
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(address _emissionsGate, address _registry, address _usageAccounting) Ownable(msg.sender) {
@@ -132,7 +141,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         }
 
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
-        registry = IAntseedRegistry(_registry);
+        registry = IAntseedRegistryV2(_registry);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
     }
 
@@ -141,7 +150,15 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function claimAgentReward(uint256 agentId, uint256 epoch) external nonReentrant whenNotPaused {
-        _claimAgentReward(agentId, epoch);
+        _claimAgentReward(agentId, epoch, msg.sender);
+    }
+
+    /// @notice Claim an agent's reward on the seller's behalf. Restricted to
+    ///         the configured claim forwarder; the reward is verified against
+    ///         and paid to the agent owner exactly as in `claimAgentReward`.
+    function claimAgentRewardFor(address seller, uint256 agentId, uint256 epoch) external nonReentrant whenNotPaused {
+        if (msg.sender != claimForwarder || claimForwarder == address(0)) revert NotClaimForwarder();
+        _claimAgentReward(agentId, epoch, seller);
     }
 
     function stakeAgentReward(uint256 agentId, uint256 epoch, uint256 stakeEpochs)
@@ -215,6 +232,13 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         _unpause();
     }
 
+    /// @notice Set (or clear) the contract allowed to initiate owner-destined
+    ///         claims via `claimAgentRewardFor`.
+    function setClaimForwarder(address _claimForwarder) external onlyOwner {
+        claimForwarder = _claimForwarder;
+        emit ClaimForwarderSet(_claimForwarder);
+    }
+
     function setSellerPools(address _sellerPools) external onlyOwner {
         if (_sellerPools == address(0)) revert InvalidAddress();
         sellerPools = IAntseedSellerPools(_sellerPools);
@@ -249,7 +273,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
-    function _claimAgentReward(uint256 agentId, uint256 epoch) internal {
+    function _claimAgentReward(uint256 agentId, uint256 epoch, address claimant) internal {
         if (agentId == 0) revert InvalidAddress();
         if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
 
@@ -258,7 +282,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
             _rewardAmounts(sellerEpochBudget(epoch), weightedPoints, totalWeightedPoints);
 
         address seller = _agentOwner(agentId);
-        if (msg.sender != seller) revert NotRewardRecipient();
+        if (claimant != seller) revert NotRewardRecipient();
 
         agentEpochClaimed[agentId][epoch] = true;
         _mintReward(epoch, seller, claimableAmount, reserveAmount);
@@ -389,7 +413,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
         epochRemainderSettled[epoch] = true;
-        (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _protocolReserve(), unallocatedAmount);
+        (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, _emissionsReserve(), unallocatedAmount);
         emit UsageRewardRemainderSettled(epoch, unallocatedAmount, burnedAmount, reserveAmount);
     }
 
@@ -414,9 +438,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
             emissionsGate.claim(epoch, recipient, claimableAmount);
         }
         if (reserveAmount != 0) {
-            address reserve = registry.protocolReserve();
-            if (reserve == address(0)) revert InvalidAddress();
-            emissionsGate.claim(epoch, reserve, reserveAmount);
+            emissionsGate.claim(epoch, _emissionsReserve(), reserveAmount);
         }
     }
 
@@ -471,8 +493,12 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
     }
 
-    function _protocolReserve() internal view returns (address reserve) {
-        reserve = registry.protocolReserve();
+    /// @dev ANTS reserve flows go to the registry's dedicated emissions
+    ///      reserve; while the split is unset they fall back to the fee
+    ///      reserve (`protocolReserve`).
+    function _emissionsReserve() internal view returns (address reserve) {
+        reserve = registry.emissionsReserve();
+        if (reserve == address(0)) reserve = registry.protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }
 

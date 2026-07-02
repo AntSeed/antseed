@@ -11,10 +11,12 @@ import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
-import { AntseedRegistry } from "../core/AntseedRegistry.sol";
+import { AntseedRegistryV2 } from "../core/AntseedRegistryV2.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
+import { IAntseedPoolWeightPolicy } from "../interfaces/IAntseedPoolWeightPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
+import { AntseedSellerDelegation } from "../staking/AntseedSellerDelegation.sol";
 import { MockERC8004Registry } from "./mocks/MockERC8004Registry.sol";
 
 contract MockDepositsForEmissionsGate {
@@ -69,6 +71,50 @@ contract MockSellerAgentLookup {
     }
 }
 
+// Test-only wrapper around the real delegation base class. The deployed
+// DiemStakingProxy inherits this same (unchanged) code, so exposing the
+// internal helpers here hits the exact call path the live proxy uses against
+// registry.emissions().
+contract SellerDelegationHarness is AntseedSellerDelegation {
+    constructor(address registry_, address operator_) AntseedSellerDelegation(registry_, operator_) { }
+
+    function pendingSellerEmissions(address account, uint256[] memory epochs) external view returns (uint256) {
+        return _pendingSellerEmissions(account, epochs);
+    }
+
+    function claimSellerEmissions(uint256[] memory epochs) external returns (uint256) {
+        return _claimSellerEmissions(epochs);
+    }
+
+    function currentEmissionsEpoch() external view returns (uint256) {
+        return _currentEmissionsEpoch();
+    }
+}
+
+contract MockCappedPoolWeightPolicy is IAntseedPoolWeightPolicy {
+    uint256 public immutable cap;
+
+    constructor(uint256 cap_) {
+        cap = cap_;
+    }
+
+    function poolWeight(uint256, uint256, uint256 poolPower) external view returns (uint256) {
+        return poolPower > cap ? cap : poolPower;
+    }
+}
+
+contract MockRevertingPoolWeightPolicy is IAntseedPoolWeightPolicy {
+    function poolWeight(uint256, uint256, uint256) external pure returns (uint256) {
+        revert("broken policy");
+    }
+}
+
+contract MockHugePoolWeightPolicy is IAntseedPoolWeightPolicy {
+    function poolWeight(uint256, uint256, uint256) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+}
+
 contract AntseedEmissionsGateTest is Test {
     struct StressRun {
         uint256 firstPositionId;
@@ -81,7 +127,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     ANTSToken token;
-    AntseedRegistry realRegistry;
+    AntseedRegistryV2 realRegistry;
     MockDepositsForEmissionsGate deposits;
     AntseedEmissions legacyV1;
     AntseedEmissionsV2 legacyV2;
@@ -101,6 +147,7 @@ contract AntseedEmissionsGateTest is Test {
     address reserveDest = address(0x70);
     address teamWallet = address(0x80);
     address verificationWallet = address(0x90);
+    address emissionsReserveDest = address(0xA1);
 
     address constant KNOWN_ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
     uint256 constant GATE_GENESIS = 1_775_728_461;
@@ -125,7 +172,7 @@ contract AntseedEmissionsGateTest is Test {
 
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
-        realRegistry = new AntseedRegistry();
+        realRegistry = new AntseedRegistryV2();
         deposits = new MockDepositsForEmissionsGate();
 
         realRegistry.setChannels(address(this));
@@ -300,6 +347,220 @@ contract AntseedEmissionsGateTest is Test {
 
         vm.expectRevert(AntseedEmissionsGate.NotLegacyEmissionsMinter.selector);
         gate.mint(buyer, 1 ether);
+    }
+
+    function _setupUsagePool() internal returns (uint256 agentId) {
+        return _setupUsagePool(seller);
+    }
+
+    function _setupUsagePool(address poolSeller_) internal returns (uint256 agentId) {
+        _deployGate(4);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry), 0, 0, 0);
+        usageAccounting.setSellerPools(address(sellerPools));
+
+        address poolSeller = _createSellerPool(sellerPools, poolSeller_, 5_000, keccak256("terms"));
+        agentId = _agentId(poolSeller);
+
+        vm.startPrank(staker);
+        token.approve(address(sellerPools), 100 ether);
+        sellerPools.stake(agentId, 100 ether, 4);
+        vm.stopPrank();
+
+        _warpGateEpoch(5);
+    }
+
+    function _setupDelegationUsageRewards()
+        internal
+        returns (SellerDelegationHarness delegation, uint256 agentId)
+    {
+        // The delegation contract is the on-chain seller, exactly like the
+        // deployed DiemStakingProxy: it owns the agent and earns the usage.
+        delegation = new SellerDelegationHarness(address(realRegistry), operator);
+        agentId = _setupUsagePool(address(delegation));
+
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setSellerPools(address(sellerPools));
+        _setUsageMinter(address(usageRewards));
+
+        // Mirrors DeployRecognizedUsage.s.sol adapter wiring.
+        usageAccounting.setUsageRewards(address(usageRewards));
+        usageRewards.setClaimForwarder(address(usageAccounting));
+
+        usageAccounting.accrueSellerPoints(address(delegation), 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+        _warpGateEpoch(6);
+    }
+
+    function test_emissionsReserveReceivesAntsReserveFlowsWhenSplit() public {
+        // Configure the reserve split before the gate is constructed so the
+        // reserve bucket minter binds to the emissions reserve wallet.
+        realRegistry.setEmissionsReserve(emissionsReserveDest);
+        (SellerDelegationHarness delegation, uint256 agentId) = _setupDelegationUsageRewards();
+
+        (address reserveController,,) = gate.minters(RESERVE_MINTER_ID);
+        assertEq(reserveController, emissionsReserveDest);
+
+        // A single dominant agent overflows the 5% per-agent cap; the
+        // overflow must land on the emissions reserve, not the fee reserve.
+        uint256 claimable = usageRewards.pendingAgentReward(agentId, 5);
+        uint256 sellerBudget = usageRewards.sellerEpochBudget(5);
+        assertGt(sellerBudget, claimable);
+        delegation.claimSellerEmissions(_epochList(5));
+
+        assertEq(token.balanceOf(emissionsReserveDest), sellerBudget - claimable);
+        assertEq(token.balanceOf(reserveDest), 0);
+
+        // Clearing the split falls back to the fee reserve for later flows.
+        realRegistry.setEmissionsReserve(address(0));
+        usageAccounting.accrueSellerPoints(address(delegation), 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+        _warpGateEpoch(7);
+        delegation.claimSellerEmissions(_epochList(6));
+        assertGt(token.balanceOf(reserveDest), 0);
+    }
+
+    function test_deployedSellerDelegationClaimsUsageRewardsViaRegistryEmissions() public {
+        (SellerDelegationHarness delegation, uint256 agentId) = _setupDelegationUsageRewards();
+
+        // The deployed delegation bytecode resolves the emissions clock and
+        // seller emission claims through registry.emissions().
+        assertEq(delegation.currentEmissionsEpoch(), gate.currentEpoch());
+
+        uint256 claimable = usageRewards.pendingAgentReward(agentId, 5);
+        assertGt(claimable, 0);
+
+        uint256[] memory epochs = _epochList(5);
+        (uint256 adapterSeller, uint256 adapterBuyer) =
+            usageAccounting.pendingEmissions(address(delegation), epochs);
+        assertEq(adapterSeller, claimable);
+        assertEq(adapterBuyer, 0);
+        assertEq(delegation.pendingSellerEmissions(address(delegation), epochs), (claimable * 9_000) / 10_000);
+
+        uint256 netPayout = delegation.claimSellerEmissions(epochs);
+
+        assertEq(netPayout, (claimable * 9_000) / 10_000);
+        assertEq(token.balanceOf(address(delegation)), netPayout);
+        assertEq(token.balanceOf(operator), claimable - netPayout);
+
+        // The claimed epoch is masked and a repeat claim is a harmless no-op.
+        assertEq(delegation.pendingSellerEmissions(address(delegation), epochs), 0);
+        assertEq(delegation.claimSellerEmissions(epochs), 0);
+        assertEq(token.balanceOf(address(delegation)), netPayout);
+    }
+
+    function test_usageRewardsClaimForwarderIsAuthenticated() public {
+        (SellerDelegationHarness delegation, uint256 agentId) = _setupDelegationUsageRewards();
+
+        // Only the configured forwarder may initiate owner-destined claims.
+        vm.prank(operator);
+        vm.expectRevert(AntseedUsageRewards.NotClaimForwarder.selector);
+        usageRewards.claimAgentRewardFor(address(delegation), agentId, 5);
+
+        // The forwarder cannot divert rewards: the claimant must still be the
+        // agent owner.
+        vm.prank(address(usageAccounting));
+        vm.expectRevert(AntseedUsageRewards.NotRewardRecipient.selector);
+        usageRewards.claimAgentRewardFor(operator, agentId, 5);
+
+        // With the forwarder cleared, adapter claims stop working.
+        usageRewards.setClaimForwarder(address(0));
+        vm.expectRevert(AntseedUsageRewards.NotClaimForwarder.selector);
+        delegation.claimSellerEmissions(_epochList(5));
+    }
+
+    function test_registryEmissionsAdapterHandlesUnsetAndUnknownSellers() public {
+        (SellerDelegationHarness delegation,) = _setupDelegationUsageRewards();
+        uint256[] memory epochs = _epochList(5);
+
+        // A seller without a pool agent binding sees zero pending and claims
+        // are a silent no-op, mirroring the legacy no-points behavior.
+        (uint256 pendingUnknown,) = usageAccounting.pendingEmissions(otherSeller, epochs);
+        assertEq(pendingUnknown, 0);
+        vm.prank(otherSeller);
+        usageAccounting.claimSellerEmissions(epochs);
+        assertEq(token.balanceOf(otherSeller), 0);
+
+        // With no rewards controller configured the adapter reports zero and
+        // claims revert loudly instead of silently stranding rewards.
+        usageAccounting.setUsageRewards(address(0));
+        assertEq(delegation.pendingSellerEmissions(address(delegation), epochs), 0);
+        vm.expectRevert(IAntseedUsageAccounting.UsageRewardsNotSet.selector);
+        delegation.claimSellerEmissions(epochs);
+    }
+
+    function test_poolWeightPolicyDefaultsToLinearPoolPower() public {
+        uint256 agentId = _setupUsagePool();
+
+        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        assertGt(poolPower, 0);
+
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * poolPower);
+        assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 100 * poolPower);
+    }
+
+    function test_poolWeightPolicyConvertsRawPoolPowerToEffectiveWeight() public {
+        uint256 agentId = _setupUsagePool();
+
+        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 cappedWeight = 7;
+        assertGt(poolPower, cappedWeight);
+        usageAccounting.setPoolWeightPolicy(address(new MockCappedPoolWeightPolicy(cappedWeight)));
+
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        // Raw points are unaffected; only the pool multiplier changes.
+        assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 100);
+        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * cappedWeight);
+        assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 100 * cappedWeight);
+    }
+
+    function test_poolWeightPolicyClearedRestoresLinearWeighting() public {
+        uint256 agentId = _setupUsagePool();
+
+        usageAccounting.setPoolWeightPolicy(address(new MockCappedPoolWeightPolicy(7)));
+        usageAccounting.setPoolWeightPolicy(address(0));
+
+        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * poolPower);
+    }
+
+    function test_revertingPoolWeightPolicySkipsAccrualWithoutBlockingSettlement() public {
+        uint256 agentId = _setupUsagePool();
+
+        usageAccounting.setPoolWeightPolicy(address(new MockRevertingPoolWeightPolicy()));
+
+        // The settlement-facing accrual path must not revert even when the
+        // policy is broken; the usage record is skipped instead.
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 0);
+        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 0);
+        assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 0);
+    }
+
+    function test_overflowingPoolWeightPolicySkipsAccrualWithoutBlockingSettlement() public {
+        uint256 agentId = _setupUsagePool();
+
+        usageAccounting.setPoolWeightPolicy(address(new MockHugePoolWeightPolicy()));
+
+        // A policy output that would overflow points * weight must skip the
+        // whole record (raw points included) instead of reverting into
+        // AntseedChannels' settle path.
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 0);
+        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 0);
+        assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 0);
     }
 
     function test_sellerPoolsRewardsUsePostMigrationBucketAndPools() public {

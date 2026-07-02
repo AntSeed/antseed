@@ -14,6 +14,9 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Added
 
 - Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
+- Added a swappable `IAntseedPoolWeightPolicy` hook to `AntseedUsageAccounting` that converts raw pool stake power into the effective reward weight applied to usage points. With no policy set, weighting stays linear (current behavior); a policy contract can later introduce capped, square-root, log, or other curves without redeploying the accounting contract.
+- Added a seller delegation adapter so the already-deployed `DiemStakingProxy` keeps earning ANTS after the recognized-usage cutover: `AntseedUsageAccounting` (the `registry.emissions()` endpoint) now answers the legacy `pendingEmissions` / `claimSellerEmissions` selectors by resolving the caller's seller-pool agent id and routing to `AntseedUsageRewards`, which lets the accounting contract initiate owner-destined claims via `claimAgentRewardFor` (gated by `setClaimForwarder`; rewards always pay the agent owner).
+- Added `AntseedRegistryV2`: the deployed registry stays in place as the legacy address book for already-deployed contracts, while the recognized-usage stack deploys against a new v2 registry that adds `emissionsReserve` — a dedicated destination for ANTS emission reserve flows (reserve bucket, reward-cap overflow, epoch remainders), separate from `protocolReserve` which keeps receiving USDC transaction fees and slash proceeds. While `emissionsReserve` is unset (or on a legacy registry), emission flows fall back to `protocolReserve`.
 
 ### Removed
 

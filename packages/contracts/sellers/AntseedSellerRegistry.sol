@@ -143,6 +143,14 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
         revert UnsupportedStakeOperation();
     }
 
+    /// @dev Legacy USDC stake stays in the legacy staking contract and is
+    ///      msg.sender-attributed there, so it cannot be forwarded from here.
+    ///      To unstake a seller contract's legacy deposit, temporarily point
+    ///      registry.staking back at the legacy contract.
+    function unstake() external pure {
+        revert UnsupportedStakeOperation();
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════

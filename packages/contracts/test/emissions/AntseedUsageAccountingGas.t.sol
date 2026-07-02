@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 
 import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
-import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
+import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
 import { IAntseedPointsPolicy } from "../../interfaces/IAntseedPointsPolicy.sol";
@@ -45,7 +45,7 @@ contract MockUsagePointsPolicyForUsageAccountingGas is IAntseedPointsPolicy {
 
 contract AntseedUsageAccountingGasTest is Test {
     ANTSToken token;
-    AntseedRegistry registry;
+    AntseedRegistryV2 registry;
     AntseedEmissionsGate gate;
     AntseedSellerPools sellerPools;
     AntseedUsageAccounting usageAccounting;
@@ -67,7 +67,7 @@ contract AntseedUsageAccountingGasTest is Test {
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
-        registry = new AntseedRegistry();
+        registry = new AntseedRegistryV2();
         registry.setAntsToken(address(token));
         identityRegistry = new MockERC8004Registry();
         registry.setIdentityRegistry(address(identityRegistry));
