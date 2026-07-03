@@ -201,11 +201,6 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     function _legacyAgentId(address seller) internal view returns (uint256) {
         IAntseedStaking legacy = legacyStaking;
         if (address(legacy) == address(0)) return 0;
-
-        try legacy.getAgentId(seller) returns (uint256 agentId) {
-            return agentId;
-        } catch {
-            return 0;
-        }
+        return legacy.getAgentId(seller);
     }
 }

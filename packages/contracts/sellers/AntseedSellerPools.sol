@@ -438,12 +438,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         if (seller == address(0)) return 0;
         address staking = registry.staking();
         if (staking == address(0)) return 0;
-
-        try IAntseedStaking(staking).getAgentId(seller) returns (uint256 agentId) {
-            return agentId;
-        } catch {
-            return 0;
-        }
+        return IAntseedStaking(staking).getAgentId(seller);
     }
 
     function hasPoolAtEpoch(uint256 agentId, uint256 epoch) public view returns (bool) {

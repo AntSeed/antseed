@@ -40,20 +40,16 @@ interface IAntseedUsageAccounting {
     event AccrualSkippedWhilePaused(address indexed seller, address indexed buyer, uint256 pointsDelta);
     event PointsPolicyFailed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 rawPoints);
     event PoolWeightPolicyFailed(uint256 indexed agentId, uint256 indexed epoch, uint256 poolPower);
-    event WeightedPointsOverflowSkipped(
-        uint256 indexed agentId, uint256 indexed epoch, uint256 sellerPoints, uint256 buyerPoints, uint256 poolWeight
-    );
     event UsageRewardsSet(address indexed usageRewards);
 
     error InvalidAddress();
     error InvalidValue();
     error NotUsageRecorder();
     error NoPendingSellerAccrual();
-    error AccrualDeltaMismatch();
     error UsageRewardsNotSet();
 
     function currentEpoch() external view returns (uint256);
-    function pendingSellerAccrual() external view returns (address seller, uint256 pointsDelta);
+    function pendingSellerAccrual() external view returns (address seller);
 
     function accrueSellerPoints(address seller, uint256 pointsDelta) external;
     function accrueBuyerPoints(address buyer, uint256 pointsDelta) external;

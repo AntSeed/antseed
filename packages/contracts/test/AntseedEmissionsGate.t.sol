@@ -774,20 +774,17 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 0);
     }
 
-    function test_overflowingPoolWeightPolicySkipsAccrualWithoutBlockingSettlement() public {
-        uint256 agentId = _setupUsagePool();
+    function test_overflowingPoolWeightPolicyReverts() public {
+        _setupUsagePool();
 
         usageAccounting.setPoolWeightPolicy(address(new MockHugePoolWeightPolicy()));
 
-        // A policy output that would overflow points * weight must skip the
-        // whole record (raw points included) instead of reverting into
-        // AntseedChannels' settle path.
+        // Owner-trust boundary: a policy returning an absurd weight overflows
+        // the points * weight multiply and reverts. No defensive guard — the
+        // owner sets the policy, and any real policy returns a bounded weight.
         usageAccounting.accrueSellerPoints(seller, 100);
+        vm.expectRevert();
         usageAccounting.accrueBuyerPoints(buyer, 100);
-
-        assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 0);
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 0);
-        assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 0);
     }
 
     function test_sellerPoolsRewardsUsePostMigrationBucketAndPools() public {
@@ -1111,8 +1108,7 @@ contract AntseedEmissionsGateTest is Test {
         // Seller-pools and usage minters are wired in the deploy epoch so
         // their shares are active at epoch 4 (== effectiveEpoch).
         _deployGate(4, address(this), address(0xBEEF));
-        assertEq(gate.antsToken(), address(gate));
-        assertEq(gate.deposits(), address(deposits));
+        assertEq(gate.emissions(), address(gate));
         assertEq(gate.controllerMinterIds(address(legacyV2)), bytes32(0));
         assertEq(_configuredMinter(TEAM_MINTER_ID), teamWallet);
         assertEq(_configuredMinter(RESERVE_MINTER_ID), reserveDest);
@@ -1203,14 +1199,10 @@ contract AntseedEmissionsGateTest is Test {
         _deployGate(5);
 
         usageAccounting.accrueSellerPoints(seller, 123);
-        (address pendingSeller, uint256 pendingDelta) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, seller);
-        assertEq(pendingDelta, 123);
+        assertEq(usageAccounting.pendingSellerAccrual(), seller);
 
         usageAccounting.accrueBuyerPoints(buyer, 123);
-        (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, address(0));
-        assertEq(pendingDelta, 0);
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0));
 
         assertEq(usageAccounting.totalSellerPointsByEpoch(5), 0);
         assertEq(usageAccounting.totalBuyerPointsByEpoch(5), 0);
@@ -1236,12 +1228,10 @@ contract AntseedEmissionsGateTest is Test {
         // this runs inline in the Channels settle path.
         usageAccounting.accrueSellerPoints(seller, 10);
 
-        vm.expectRevert(IAntseedUsageAccounting.AccrualDeltaMismatch.selector);
-        usageAccounting.accrueBuyerPoints(buyer, 9);
-
         // Completing the pair clears the slot (no pools set, so nothing is
-        // recorded).
-        usageAccounting.accrueBuyerPoints(buyer, 10);
+        // recorded); the buyer leg's delta is used, unchecked against the
+        // seller leg.
+        usageAccounting.accrueBuyerPoints(buyer, 9);
         vm.expectRevert(IAntseedUsageAccounting.NoPendingSellerAccrual.selector);
         usageAccounting.accrueBuyerPoints(buyer, 10);
 

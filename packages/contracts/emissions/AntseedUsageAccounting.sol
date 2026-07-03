@@ -66,12 +66,11 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     IAntseedUsageRewards public usageRewards;
 
     // ─── Legacy Two-Call Settlement Pairing ──────────────────────────
-    struct PendingSellerAccrual {
-        address seller;
-        uint256 pointsDelta;
-    }
-
-    PendingSellerAccrual public pendingSellerAccrual;
+    /// @notice Seller stashed by the legacy `accrueSellerPoints` leg, paired
+    ///         with the next `accrueBuyerPoints` in the same settle tx. The
+    ///         points delta is not stored: both legacy calls carry the same
+    ///         delta, and the record uses the buyer leg's.
+    address public pendingSellerAccrual;
 
     // ─── Usage Recorder Permissions ─────────────────────────────────
     mapping(address => bool) public usageRecorders;
@@ -129,7 +128,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         // Plain overwrite: the settle path always pairs this with
         // accrueBuyerPoints in the same tx, so a dangling entry cannot occur
         // — and this call must never revert settlement either way.
-        pendingSellerAccrual = PendingSellerAccrual({ seller: seller, pointsDelta: pointsDelta });
+        pendingSellerAccrual = seller;
         emit LegacySellerAccrualPending(seller, currentEpoch(), pointsDelta);
     }
 
@@ -142,12 +141,11 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         if (buyer == address(0)) revert InvalidAddress();
         if (pointsDelta == 0) revert InvalidValue();
 
-        PendingSellerAccrual memory pending = pendingSellerAccrual;
-        if (pending.seller == address(0)) revert NoPendingSellerAccrual();
-        if (pending.pointsDelta != pointsDelta) revert AccrualDeltaMismatch();
+        address pendingSeller = pendingSellerAccrual;
+        if (pendingSeller == address(0)) revert NoPendingSellerAccrual();
 
         delete pendingSellerAccrual;
-        _recordUsage(buyer, pending.seller, pointsDelta);
+        _recordUsage(buyer, pendingSeller, pointsDelta);
     }
 
     function accruePoints(bytes32 channelId, address buyer, address seller, uint256 pointsDelta)
@@ -318,16 +316,6 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
 
         (uint256 sellerPoints, uint256 buyerPoints) = _policyPoints(channelId, buyer, seller, rawPoints);
         if (sellerPoints == 0 && buyerPoints == 0) return;
-
-        // An absurd policy output overflowing the weighted-points multiply
-        // below must not block settlement either: skip the whole record (no
-        // partial raw-points write) instead of bubbling the revert into
-        // AntseedChannels' settle path.
-        uint256 maxPoints = sellerPoints > buyerPoints ? sellerPoints : buyerPoints;
-        if (poolWeight != 0 && maxPoints > type(uint256).max / poolWeight) {
-            emit WeightedPointsOverflowSkipped(agentId, epoch, sellerPoints, buyerPoints, poolWeight);
-            return;
-        }
 
         {
             UsageTotals storage totalUsage_ = _totalUsage;

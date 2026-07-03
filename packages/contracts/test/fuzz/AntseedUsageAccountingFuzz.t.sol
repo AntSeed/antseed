@@ -179,10 +179,8 @@ contract AntseedUsageAccountingFuzzTest is Test {
         usageAccounting.accrueSellerPoints(seller, rawPoints);
         usageAccounting.accrueBuyerPoints(buyerAddr(), rawPoints);
 
-        // After a matched pair the pending slot is always cleared, so the next
-        // settlement's seller leg can never hit PendingSellerAccrualExists.
-        (address pendingSeller,) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, address(0), "pending accrual stuck after matched pair");
+        // After a matched pair the pending slot is always cleared.
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0), "pending accrual stuck after matched pair");
     }
 
     /// @notice Realistic-scale points * pool power never overflows on the settle
@@ -197,19 +195,18 @@ contract AntseedUsageAccountingFuzzTest is Test {
         assertGt(usageAccounting.weightedPoolPointsByEpoch(uint256(5), agentId), 0, "no weighted points recorded");
     }
 
-    /// @notice The former M2 owner-trust boundary is now defended: a policy
-    ///         returning absurd (>~1e50) point values used to overflow the
-    ///         points * weight multiply outside the policy try/catch and brick
-    ///         settlement. The overflow guard now skips the record instead.
-    function test_m2_adversarialPolicyOverflowSkipsInsteadOfBrickingSettle() public {
+    /// @notice Owner-trust boundary: only a policy returning absurd (>~1e50)
+    ///         point values can overflow the points * weight multiply. No
+    ///         defensive guard exists — the owner sets the policy, and any
+    ///         real policy returns USDC-scaled points that stay far under the
+    ///         bound (see testFuzz_weightedPointsNoOverflowAtRealisticScale).
+    function test_adversarialPolicyOverflowReverts() public {
         usageAccounting.setPointsPolicy(address(policy));
         policy.set(HostilePointsPolicy.Mode.Huge, 1e60); // absurd; no real policy does this
 
-        // poolPower ~ 5.2e27; 1e60 * 5.2e27 overflows uint256. The settle path
-        // must survive it and record nothing.
+        // poolPower ~ 5.2e27; 1e60 * 5.2e27 overflows uint256.
+        vm.expectRevert();
         usageAccounting.accruePoints(bytes32(uint256(9)), buyerAddr(), seller, 1_000);
-        assertEq(usageAccounting.sellerPointsByEpoch(uint256(5), seller), 0, "overflowing record not skipped");
-        assertEq(usageAccounting.weightedPoolPointsByEpoch(uint256(5), agentId), 0, "weighted points recorded");
     }
 
     function buyerAddr() internal pure returns (address) {

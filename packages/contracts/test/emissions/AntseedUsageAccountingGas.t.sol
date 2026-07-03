@@ -185,17 +185,13 @@ contract AntseedUsageAccountingGasTest is Test {
 
         vm.prank(recorder);
         usageAccounting.accrueSellerPoints(seller, 10);
-        (address pendingSeller, uint256 pendingDelta) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, seller);
-        assertEq(pendingDelta, 10);
+        assertEq(usageAccounting.pendingSellerAccrual(), seller);
 
         // A repeated seller accrual is a plain overwrite, never a revert:
         // this runs inline in the Channels settle path.
         vm.prank(recorder);
         usageAccounting.accrueSellerPoints(seller, 11);
-        (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, seller);
-        assertEq(pendingDelta, 11);
+        assertEq(usageAccounting.pendingSellerAccrual(), seller);
 
         vm.prank(recorder);
         vm.expectRevert(IAntseedUsageAccounting.InvalidAddress.selector);
@@ -205,19 +201,14 @@ contract AntseedUsageAccountingGasTest is Test {
         vm.expectRevert(IAntseedUsageAccounting.InvalidValue.selector);
         usageAccounting.accrueBuyerPoints(buyer, 0);
 
-        vm.prank(recorder);
-        vm.expectRevert(IAntseedUsageAccounting.AccrualDeltaMismatch.selector);
-        usageAccounting.accrueBuyerPoints(buyer, 9);
-
         // Completing the pair clears the slot (sellerPools unset, so nothing
-        // is recorded).
+        // is recorded); the buyer leg's delta is used, unchecked against the
+        // seller leg.
         usageAccounting.setSellerPools(address(0));
         vm.prank(recorder);
-        usageAccounting.accrueBuyerPoints(buyer, 11);
+        usageAccounting.accrueBuyerPoints(buyer, 9);
         usageAccounting.setSellerPools(address(sellerPools));
-        (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, address(0));
-        assertEq(pendingDelta, 0);
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0));
 
         vm.prank(recorder);
         vm.expectRevert(IAntseedUsageAccounting.NoPendingSellerAccrual.selector);
@@ -291,8 +282,7 @@ contract AntseedUsageAccountingGasTest is Test {
         usageAccounting.pause();
         usageAccounting.accruePoints(keccak256("paused"), buyer, seller, 1);
         usageAccounting.accrueSellerPoints(seller, 1);
-        (address pendingSeller,) = usageAccounting.pendingSellerAccrual();
-        assertEq(pendingSeller, address(0));
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0));
         usageAccounting.accrueBuyerPoints(buyer, 1);
         assertEq(usageAccounting.totalBuyerPointsByEpoch(5), buyerPointsBefore);
         usageAccounting.unpause();

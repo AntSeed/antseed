@@ -14,6 +14,7 @@ import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
+import { AntseedShareMath } from "./AntseedShareMath.sol";
 
 /**
  * @title AntseedUsageRewards
@@ -499,11 +500,11 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _buyerShareBpsAt(uint256 epoch) internal view returns (uint32) {
-        return _saturatingShareBps(_epochVolume(epoch), buyerMinShareBps, buyerMaxShareBps, volumeShareTarget);
+        return AntseedShareMath.saturatingShareBps(_epochVolume(epoch), buyerMinShareBps, buyerMaxShareBps, volumeShareTarget);
     }
 
     function _sellerShareBpsAt(uint256 epoch) internal view returns (uint32) {
-        return _saturatingShareBps(_epochVolume(epoch), sellerMinShareBps, sellerMaxShareBps, volumeShareTarget);
+        return AntseedShareMath.saturatingShareBps(_epochVolume(epoch), sellerMinShareBps, sellerMaxShareBps, volumeShareTarget);
     }
 
     function _epochVolume(uint256 epoch) internal view returns (uint256) {
@@ -511,16 +512,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 buyerPoints = accounting.totalBuyerPointsByEpoch(epoch);
         uint256 sellerPoints = accounting.totalSellerPointsByEpoch(epoch);
         return buyerPoints > sellerPoints ? buyerPoints : sellerPoints;
-    }
-
-    function _saturatingShareBps(uint256 metric, uint32 minShareBps, uint32 maxShareBps, uint256 target)
-        internal
-        pure
-        returns (uint32)
-    {
-        if (metric == 0) return 0;
-        if (target == 0) return maxShareBps;
-        return uint32(uint256(minShareBps) + Math.mulDiv(maxShareBps - minShareBps, metric, metric + target));
     }
 
     function _shareBudget(uint256 epoch, uint32 shareBps) internal view returns (uint256) {
@@ -573,12 +564,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         address depositsAddress = registry.deposits();
         if (depositsAddress == address(0)) revert RewardRecipientUnavailable();
 
-        address operator;
-        try IAntseedDeposits(depositsAddress).getOperator(buyer) returns (address resolvedOperator) {
-            operator = resolvedOperator;
-        } catch {
-            revert RewardRecipientUnavailable();
-        }
+        address operator = IAntseedDeposits(depositsAddress).getOperator(buyer);
         if (operator == address(0)) revert RewardRecipientUnavailable();
         return operator;
     }

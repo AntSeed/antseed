@@ -101,16 +101,10 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     //                        TOKEN AUTH FACADE
     // ═══════════════════════════════════════════════════════════════════
 
+    /// @notice The gate is set as the ANTS token's registry; its mint guard
+    ///         reads `registry.emissions()` and must resolve to the gate.
     function emissions() external view returns (address) {
         return address(this);
-    }
-
-    function antsToken() external view returns (address) {
-        return address(this);
-    }
-
-    function deposits() external view returns (address) {
-        return registry.deposits();
     }
 
     // ═══════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
+import { AntseedShareMath } from "./AntseedShareMath.sol";
 
 /**
  * @title AntseedSellerPoolsRewards
@@ -304,7 +305,8 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _liveStakerEpochBudget(uint256 epoch) internal view returns (uint256) {
         uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
-        uint32 shareBps = _saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
+        uint32 shareBps =
+            AntseedShareMath.saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
         if (shareBps == 0) return 0;
 
         uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
@@ -516,16 +518,6 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     function _transferReward(address recipient, uint256 amount) internal {
         if (amount == 0) return;
         IERC20(_antsToken()).safeTransfer(recipient, amount);
-    }
-
-    function _saturatingShareBps(uint256 metric, uint32 minShareBps, uint32 maxShareBps, uint256 target)
-        internal
-        pure
-        returns (uint32)
-    {
-        if (metric == 0) return 0;
-        if (target == 0) return maxShareBps;
-        return uint32(uint256(minShareBps) + Math.mulDiv(maxShareBps - minShareBps, metric, metric + target));
     }
 
     /// @dev ANTS reserve flows go to the registry's dedicated emissions
