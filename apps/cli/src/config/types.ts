@@ -208,9 +208,50 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
+    /** Deployed AntseedVerifierRegistry contract address */
+    verifierRegistryAddress?: string;
+    /** Deployed AntseedVerifierRewards contract address */
+    verifierRewardsAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };
+}
+
+/**
+ * Verifier-specific configuration within the Antseed config.
+ * Used by `antseed verifier start` — a whitelisted verifier probes sellers
+ * advertising the configured services and attests model-identity verdicts
+ * on-chain.
+ */
+export interface VerifierCLIConfig {
+  /** Advertised services (model IDs) to verify, e.g. ["kimi-k2", "deepseek-v3.1"]. */
+  services: string[];
+  /** Max credited audits this verifier attempts per emissions epoch. Default: 50. */
+  maxAuditsPerEpoch?: number;
+  /** Numeric probes per audited seller. Default: 24. */
+  probesPerAudit?: number;
+  /**
+   * Max probes woven into a single stealth chat request. Lower = more organic
+   * (harder for a seller to detect probing) but more requests per audit, each
+   * incurring the per-request minimum fee. Default: 3.
+   */
+  maxProbesPerRequest?: number;
+  /** Minimum sellers advertising the same service required for a cohort audit. Default: 3. */
+  cohortMinSize?: number;
+  /** Maximum sellers probed per cohort round. Default: 10. */
+  cohortMaxSize?: number;
+  /** Pause between audit rounds in ms. Default: 300000 (5 min). */
+  auditIntervalMs?: number;
+  /** Skip sellers audited on-chain within this many seconds. Default: on-chain auditCooldown. */
+  stalenessWindowSecs?: number;
+  /**
+   * Directory of trusted KBF reference files (JSON, spec 07 reference schema).
+   * When a reference matches an audited service, reference-based KBF verdicts
+   * are computed in addition to cohort consensus. Default: <dataDir>/fingerprints/references.
+   */
+  referencesDir?: string;
+  /** Directory where evidence bundles are written. Default: <dataDir>/fingerprints/evidence. */
+  evidenceDir?: string;
 }
 
 /**
@@ -236,6 +277,8 @@ export interface AntseedConfig {
   buyer: BuyerCLIConfig;
   /** Payment settings */
   payments: PaymentsCLIConfig;
+  /** Verifier mode settings (model-verification network) */
+  verifier?: VerifierCLIConfig;
   /** Network / DHT settings */
   network: NetworkCLIConfig;
   /** Installed plugins */

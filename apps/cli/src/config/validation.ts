@@ -294,6 +294,49 @@ function validateBuyerVerification(
   }
 }
 
+function validateVerifierConfig(
+  path: string,
+  verifier: AntseedConfig['verifier'],
+  errors: string[],
+): void {
+  if (verifier === undefined) return;
+  if (!verifier || typeof verifier !== 'object' || Array.isArray(verifier)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  if (!Array.isArray(verifier.services) || verifier.services.length === 0) {
+    errors.push(`${path}.services must be a non-empty string array`);
+  } else {
+    for (let i = 0; i < verifier.services.length; i += 1) {
+      const service = verifier.services[i];
+      if (typeof service !== 'string' || service.trim().length === 0) {
+        errors.push(`${path}.services[${i}] must be a non-empty string`);
+      }
+    }
+  }
+  const positiveInts: Array<[string, number | undefined]> = [
+    ['maxAuditsPerEpoch', verifier.maxAuditsPerEpoch],
+    ['probesPerAudit', verifier.probesPerAudit],
+    ['maxProbesPerRequest', verifier.maxProbesPerRequest],
+    ['cohortMinSize', verifier.cohortMinSize],
+    ['cohortMaxSize', verifier.cohortMaxSize],
+    ['auditIntervalMs', verifier.auditIntervalMs],
+    ['stalenessWindowSecs', verifier.stalenessWindowSecs],
+  ];
+  for (const [key, value] of positiveInts) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+      errors.push(`${path}.${key} must be an integer >= 1`);
+    }
+  }
+  if (
+    verifier.cohortMinSize !== undefined &&
+    verifier.cohortMaxSize !== undefined &&
+    verifier.cohortMaxSize < verifier.cohortMinSize
+  ) {
+    errors.push(`${path}.cohortMaxSize must be >= ${path}.cohortMinSize`);
+  }
+}
+
 /**
  * Validate the full config and return all issues.
  */
@@ -366,6 +409,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateVerifications('seller.verifications', config.seller.verifications, errors);
+
+  validateVerifierConfig('verifier', config.verifier, errors);
 
   return errors;
 }

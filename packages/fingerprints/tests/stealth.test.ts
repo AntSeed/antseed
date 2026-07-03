@@ -1,0 +1,290 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildStealthChatRequests,
+  extractAnswersFreeText,
+  renderStealthQuestion,
+} from '../src/verifiers/kbf/stealth.js';
+import { computeMatchVector } from '../src/verifiers/kbf/scoring.js';
+import { computeCohortVerdicts } from '../src/cohort.js';
+import { generateProbeSet, PROBE_BANK_DOMAINS } from '../src/probe-bank.js';
+import type { KbfProbe, ProbeSet, SellerObservation } from '../src/types.js';
+
+const AT = '2026-07-03T00:00:00.000Z';
+
+function probeSet(seed: string, count = 24): ProbeSet {
+  return generateProbeSet({ service: 'kimi-k2', count, seed, createdAt: AT });
+}
+
+/** A natural "answer" response: restate the cloze with the value in place. */
+function synthResponse(probes: readonly KbfProbe[]): string {
+  return probes
+    .map((p) => {
+      const rendered = p.template.includes('{name}')
+        ? p.template.split('{name}').join(p.name)
+        : p.template;
+      return rendered.replace('___', String(p.consensus));
+    })
+    .join('\n');
+}
+
+function P(
+  id: string,
+  name: string,
+  template: string,
+  consensus: number,
+  range: [number, number],
+  value = Math.max(Math.abs(consensus) * 0.01, 1),
+): KbfProbe {
+  return { id, name, domain: 'test', template, consensus, range, tolerance: { mode: 'absolute', value } };
+}
+
+const TANTALUM = P(
+  'chemistry_mp:tantalum-carbide',
+  'tantalum carbide',
+  'The melting point of tantalum carbide is ___°C.',
+  3880,
+  [-300, 4500],
+  60,
+);
+const HUMAN = P(
+  'biology_2n:human',
+  'human',
+  'The diploid chromosome number (2n) of humans is ___.',
+  46,
+  [2, 500],
+  0.5,
+);
+const MARS = P(
+  'astronomy:mars-orbital-days',
+  'Mars',
+  'The orbital period of Mars is ___ Earth days.',
+  687,
+  [0, 100000],
+  3,
+);
+const LIGHT = P(
+  'physics_const:speed-of-light-kms',
+  'speed of light',
+  'The speed of light in vacuum is ___ km/s.',
+  299792.458,
+  [0, 500000],
+  2,
+);
+
+describe('buildStealthChatRequests — determinism', () => {
+  it('same probe set → byte-identical plans', () => {
+    const ps = probeSet('determinism');
+    const a = buildStealthChatRequests('kimi-k2', ps);
+    const b = buildStealthChatRequests('kimi-k2', ps);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('a different nonce → different framings/partitioning', () => {
+    const a = buildStealthChatRequests('kimi-k2', probeSet('nonce-a'));
+    const b = buildStealthChatRequests('kimi-k2', probeSet('nonce-b'));
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+  });
+
+  it('threads the model through to every request body', () => {
+    const plans = buildStealthChatRequests('some-model-v3', probeSet('model'));
+    for (const plan of plans) {
+      expect(plan.body.model).toBe('some-model-v3');
+    }
+  });
+});
+
+describe('buildStealthChatRequests — partitioning & coverage', () => {
+  it('covers every probe exactly once, in set order', () => {
+    const ps = probeSet('coverage', 30);
+    const plans = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest: 3 });
+    const covered = plans.flatMap((p) => p.probeIndices);
+    expect(covered).toEqual([...Array(ps.probes.length).keys()]);
+    // probes array matches the indices
+    for (const plan of plans) {
+      expect(plan.probes).toEqual(plan.probeIndices.map((i) => ps.probes[i]));
+    }
+  });
+
+  it('respects maxProbesPerRequest bounds (default 3, and clamps min to 1)', () => {
+    const ps = probeSet('bounds', 30);
+    for (const max of [1, 2, 3, 5]) {
+      const plans = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest: max });
+      for (const plan of plans) {
+        expect(plan.probes.length).toBeGreaterThanOrEqual(1);
+        expect(plan.probes.length).toBeLessThanOrEqual(max);
+      }
+    }
+    // A degenerate max (0 or negative) is clamped to 1.
+    const single = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest: 0 });
+    for (const plan of single) {
+      expect(plan.probes.length).toBe(1);
+    }
+  });
+});
+
+describe('buildStealthChatRequests — stealth invariants', () => {
+  it('50+ requests contain no probe-signature strings', () => {
+    const forbidden = ['(1)', 'TASK', 'RULES', 'ONLY in', 'format'];
+    let requestCount = 0;
+    let withSystem = 0;
+    for (const seed of ['a', 'b', 'c', 'd', 'e', 'f']) {
+      const plans = buildStealthChatRequests('kimi-k2', probeSet(seed, 60), {
+        maxProbesPerRequest: 3,
+      });
+      for (const plan of plans) {
+        requestCount++;
+        const serialized = JSON.stringify(plan.body.messages);
+        for (const needle of forbidden) {
+          expect(serialized).not.toContain(needle);
+        }
+        // temperature and max_tokens are omitted (organic clients set neither).
+        expect(plan.body).not.toHaveProperty('temperature');
+        expect(plan.body.max_tokens).toBeUndefined();
+        const roles = plan.body.messages.map((m) => m.role);
+        expect(roles[roles.length - 1]).toBe('user');
+        if (roles[0] === 'system') withSystem++;
+      }
+    }
+    expect(requestCount).toBeGreaterThanOrEqual(50);
+    // Most requests carry no system message; only a minority do.
+    expect(withSystem).toBeGreaterThan(0);
+    expect(withSystem).toBeLessThan(requestCount / 2);
+  });
+});
+
+describe('cloze → natural question transformer', () => {
+  it('renders every bank domain without "___" or the raw template', () => {
+    const ps = probeSet('transform', 70);
+    for (const domain of PROBE_BANK_DOMAINS) {
+      const sample = ps.probes.find((p) => p.domain === domain);
+      expect(sample, `sample for ${domain}`).toBeDefined();
+      const q = renderStealthQuestion(sample!);
+      expect(q).not.toContain('___');
+      expect(q).not.toContain(sample!.template);
+      expect(q.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is deterministic given a seed', () => {
+    expect(renderStealthQuestion(TANTALUM, 'x')).toBe(renderStealthQuestion(TANTALUM, 'x'));
+    expect(renderStealthQuestion(TANTALUM, 'x')).not.toBe(renderStealthQuestion(TANTALUM, 'y'));
+  });
+});
+
+describe('extractAnswersFreeText', () => {
+  it('extracts a number from a prose sentence', () => {
+    expect(
+      extractAnswersFreeText('The melting point of tantalum carbide is about 3,880°C.', [TANTALUM]),
+    ).toEqual([3880]);
+  });
+
+  it('handles ≈ and unit suffixes', () => {
+    expect(extractAnswersFreeText('The speed of light is ≈ 299,792.458 km/s.', [LIGHT])).toEqual([
+      299792.458,
+    ]);
+  });
+
+  it('reads markdown lists in any order', () => {
+    const md = '- Mars orbital period: **687** days\n- Humans: 46 chromosomes';
+    expect(extractAnswersFreeText(md, [HUMAN, MARS])).toEqual([46, 687]);
+  });
+
+  it('handles bold markdown around the number', () => {
+    expect(
+      extractAnswersFreeText('The melting point of tantalum carbide is **3880°C**.', [TANTALUM]),
+    ).toEqual([3880]);
+  });
+
+  it('mixes correct and missing answers (prefers null over a wrong grab)', () => {
+    const text = 'I know tantalum carbide melts at 3880°C. I forget the Mars figure though.';
+    expect(extractAnswersFreeText(text, [TANTALUM, MARS])).toEqual([3880, null]);
+  });
+
+  it('vetoes wildly out-of-range candidates via probe.range', () => {
+    const text = 'Someone claimed tantalum carbide melts at 9999999 degrees, which is nonsense.';
+    expect(extractAnswersFreeText(text, [TANTALUM])).toEqual([null]);
+  });
+
+  it('extracts several probes from one multi-sentence response', () => {
+    const text =
+      'The melting point of tantalum carbide is 3880°C. ' +
+      'Humans have 46 chromosomes. Mars orbits in 687 days.';
+    expect(extractAnswersFreeText(text, [TANTALUM, HUMAN, MARS])).toEqual([3880, 46, 687]);
+  });
+
+  it('falls back to answer-order alignment when nothing is named', () => {
+    expect(extractAnswersFreeText('Sure! 3880, then 46.', [TANTALUM, HUMAN])).toEqual([3880, 46]);
+  });
+
+  it('returns all null and never throws on junk input', () => {
+    expect(extractAnswersFreeText('no numbers here at all', [TANTALUM])).toEqual([null]);
+    expect(extractAnswersFreeText('', [TANTALUM])).toEqual([null]);
+    // @ts-expect-error — defensive: must not throw on a non-string input
+    expect(extractAnswersFreeText(null, [TANTALUM])).toEqual([null]);
+    expect(extractAnswersFreeText('42', [])).toEqual([]);
+  });
+});
+
+describe('round-trip: build → synth prose response → extract → score', () => {
+  it('yields all-1 match vectors across seeds and request sizes', () => {
+    for (const seed of ['rt-a', 'rt-b', 'rt-c', 'rt-d']) {
+      for (const maxProbesPerRequest of [1, 2, 3]) {
+        const ps = probeSet(seed, 40);
+        const plans = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest });
+        const answers = new Array<number | null>(ps.probes.length).fill(null);
+        for (const plan of plans) {
+          const extracted = extractAnswersFreeText(synthResponse(plan.probes), plan.probes);
+          plan.probeIndices.forEach((globalIndex, k) => {
+            answers[globalIndex] = extracted[k]!;
+          });
+        }
+        const mv = computeMatchVector(answers, ps.probes);
+        expect(mv.every((entry) => entry === 1), `${seed} / max ${maxProbesPerRequest}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe('end-to-end cohort verification via the stealth pipeline', () => {
+  it('flags the liar DIFF while honest sellers are SAME', () => {
+    const ps = probeSet('cohort-e2e', 30);
+    const plans = buildStealthChatRequests('kimi-k2', ps);
+
+    const answersFor = (transform: (p: KbfProbe) => number): Array<number | null> => {
+      const answers = new Array<number | null>(ps.probes.length).fill(null);
+      for (const plan of plans) {
+        const shifted = plan.probes.map((p) => ({ ...p, consensus: transform(p) }));
+        const extracted = extractAnswersFreeText(synthResponse(shifted), plan.probes);
+        plan.probeIndices.forEach((globalIndex, k) => {
+          answers[globalIndex] = extracted[k]!;
+        });
+      }
+      return answers;
+    };
+
+    const observations: SellerObservation[] = [];
+    for (let s = 0; s < 6; s++) {
+      observations.push({
+        sellerPeerId: `0xhonest${s}`,
+        agentId: s + 1,
+        answers: answersFor((p) => p.consensus),
+        requestIds: [`req-${s}`],
+      });
+    }
+    // The substitute model answers a consistently different value everywhere.
+    observations.push({
+      sellerPeerId: '0xliar',
+      agentId: 99,
+      answers: answersFor((p) => p.consensus * 1.4 + 7),
+      requestIds: ['req-liar'],
+    });
+
+    const result = computeCohortVerdicts(observations, ps.probes);
+    const liar = result.verdicts.find((v) => v.sellerPeerId === '0xliar')!;
+    expect(liar.verdict).toBe('DIFF');
+    for (const v of result.verdicts.filter((x) => x.sellerPeerId !== '0xliar')) {
+      expect(v.verdict).toBe('SAME');
+      expect(v.stats.agreementRate).toBe(1);
+    }
+  });
+});

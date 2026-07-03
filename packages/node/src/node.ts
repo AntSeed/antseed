@@ -48,7 +48,7 @@ import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
-import { VerificationStorage } from "./verification/storage.js";
+import { VerificationStorage, type StoredResponseAuth } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
@@ -82,6 +82,8 @@ import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
+import { VerifierRegistryClient } from "./payments/evm/verifier-client.js";
+import { toPeerModelVerification } from "./routing/verification-score.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
 import {
   BuyerRequestHandler,
@@ -137,6 +139,8 @@ export interface NodePaymentsConfig {
   identityRegistryAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
+  /** Optional AntseedVerifierRegistry address. Enables per-(peer, model) verification reputation on discovered peers. */
+  verifierRegistryAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -264,6 +268,7 @@ export class AntseedNode extends EventEmitter {
   private _stakingClient: StakingClient | null = null;
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
+  private _verifierRegistryClient: VerifierRegistryClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
   /** Seller-side request handler (provider matching, execution, load tracking). */
@@ -536,6 +541,7 @@ export class AntseedNode extends EventEmitter {
     this._sellerFreeUsageManager = null;
     this._stakingClient = null;
     this._identityClient = null;
+    this._verifierRegistryClient = null;
     this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
@@ -587,6 +593,7 @@ export class AntseedNode extends EventEmitter {
     // On-chain enrichment runs after the metadata filter so we don't waste
     // RPC calls on peers we'll discard.
     await this._enrichPeersWithOnChainStats(filtered);
+    await this._enrichPeersWithVerification(filtered, service);
 
     for (const p of filtered) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
@@ -907,6 +914,56 @@ export class AntseedNode extends EventEmitter {
     this._applyTrustAndSybil(peers);
   }
 
+  /**
+   * Attach model-verification reputation to discovered peers. For each peer
+   * with an on-chain agent id, read the verifier registry's per-service stats
+   * (when discovery filtered on a service) plus the per-agent aggregate, and
+   * compute a buyer-local authenticity score. No-op when no verifier registry
+   * is configured. Failures are per-peer and non-fatal.
+   */
+  private async _enrichPeersWithVerification(peers: PeerInfo[], service?: string): Promise<void> {
+    const client = this._verifierRegistryClient;
+    if (!client || peers.length === 0) return;
+
+    const VERIFICATION_RPC_CONCURRENCY = 8;
+    const queue = peers.filter((p) => typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0);
+    const enrichOne = async (p: PeerInfo): Promise<void> => {
+      const agentId = p.onChainAgentId!;
+      const modelVerification: Record<string, ReturnType<typeof toPeerModelVerification>> = {};
+      try {
+        // The service the buyer asked for is the one that matters for routing.
+        if (service) {
+          const stats = await client.verificationStats(agentId, service);
+          modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(stats);
+        }
+        // Also expose the cross-service aggregate under the '*' key so callers
+        // that route without a specific service still see a substitution flag.
+        const agentStats = await client.agentVerificationStats(agentId);
+        modelVerification['*'] = toPeerModelVerification(agentStats);
+      } catch {
+        // Verifier registry unreachable for this peer — leave modelVerification
+        // unset rather than fabricating a score.
+        return;
+      }
+      if (Object.keys(modelVerification).length > 0) {
+        p.modelVerification = modelVerification;
+      }
+    };
+
+    const workers: Array<Promise<void>> = [];
+    const pending = queue.slice();
+    for (let i = 0; i < Math.min(VERIFICATION_RPC_CONCURRENCY, pending.length); i++) {
+      workers.push((async () => {
+        for (;;) {
+          const next = pending.shift();
+          if (!next) return;
+          await enrichOne(next);
+        }
+      })());
+    }
+    await Promise.all(workers);
+  }
+
   private _applyTrustAndSybil(peers: PeerInfo[]): void {
     if (peers.length === 0) return;
     const ctx: SybilContext | undefined = peers.length >= 2
@@ -1149,6 +1206,14 @@ export class AntseedNode extends EventEmitter {
   ): Promise<SerializedHttpResponse> {
     if (!this._buyerHandler) throw new Error("Node not started or not in buyer mode");
     return this._buyerHandler.sendRequest(peer, req, callbacks, options);
+  }
+
+  /**
+   * Look up the stored ResponseAuth record for a buyer request. Returns null
+   * when the seller sent no auth (or verification storage is not initialized).
+   */
+  getResponseAuth(requestId: string): StoredResponseAuth | null {
+    return this._verificationStorage?.getResponseAuth(requestId) ?? null;
   }
 
   private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
@@ -1708,6 +1773,18 @@ export class AntseedNode extends EventEmitter {
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize VerifierRegistryClient (model-verification reputation). Read
+    // only — the buyer never writes attestations, it just scores sellers.
+    if (payments.rpcUrl && payments.verifierRegistryAddress) {
+      this._verifierRegistryClient = new VerifierRegistryClient({
+        rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+        contractAddress: payments.verifierRegistryAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
+      });
+      debugLog(`[Node] VerifierRegistryClient initialized (contract=${payments.verifierRegistryAddress.slice(0, 10)}...)`);
     }
 
     // Initialize SellerPaymentManager for seller role

@@ -379,6 +379,25 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   throw new Error(`${path} must be a boolean`);
 }
 
+function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
+  if (!isRecord(value)) return undefined;
+  const services = Array.isArray(value['services'])
+    ? value['services'].filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : [];
+  return {
+    services,
+    ...(typeof value['maxAuditsPerEpoch'] === 'number' ? { maxAuditsPerEpoch: value['maxAuditsPerEpoch'] } : {}),
+    ...(typeof value['probesPerAudit'] === 'number' ? { probesPerAudit: value['probesPerAudit'] } : {}),
+    ...(typeof value['maxProbesPerRequest'] === 'number' ? { maxProbesPerRequest: value['maxProbesPerRequest'] } : {}),
+    ...(typeof value['cohortMinSize'] === 'number' ? { cohortMinSize: value['cohortMinSize'] } : {}),
+    ...(typeof value['cohortMaxSize'] === 'number' ? { cohortMaxSize: value['cohortMaxSize'] } : {}),
+    ...(typeof value['auditIntervalMs'] === 'number' ? { auditIntervalMs: value['auditIntervalMs'] } : {}),
+    ...(typeof value['stalenessWindowSecs'] === 'number' ? { stalenessWindowSecs: value['stalenessWindowSecs'] } : {}),
+    ...(typeof value['referencesDir'] === 'string' ? { referencesDir: value['referencesDir'] } : {}),
+    ...(typeof value['evidenceDir'] === 'string' ? { evidenceDir: value['evidenceDir'] } : {}),
+  };
+}
+
 /**
  * Load configuration from a JSON file.
  * Returns default configuration if the file does not exist.
@@ -425,6 +444,10 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
       ...(isRecord(parsed['network']) ? parsed['network'] : {}),
     },
   };
+
+  const verifier = mergeVerifierConfig(parsed['verifier']);
+  if (verifier) merged.verifier = verifier;
+  else delete merged.verifier;
 
   assertValidConfig(merged);
   return merged;

@@ -10,6 +10,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - `@antseed/api-adapter`
 - `@antseed/cli`
+- `@antseed/fingerprints`
 - `@antseed/node`
 
 ### Desktop
@@ -18,6 +19,9 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Added the model-verification verifier network: whitelisted verifiers probe sellers advertising the same model with private numeric probe sets, compare response distributions across the cohort (plus optional KBF references), and attest SAME/DIFF verdicts on-chain backed by ResponseAuth-signed evidence bundles. Includes the `AntseedVerifierRegistry` (approvals, probe-set commit-reveal, attestations, per-(agent,service) and per-agent verification stats, per-epoch audit credits) and `AntseedVerifierRewards` (verification emissions bucket controller; verifiers claim per-epoch ANTS pro rata to credited audits) contracts, the new `@antseed/fingerprints` package (KBF verifier math, cohort consensus, deterministic probe bank, canonical evidence hashing), verifier contract clients in `@antseed/node`, and the `antseed verifier start|status|claim` CLI commands with a `verifier` config section.
+- Added per-(peer, model) verification reputation: buyers enrich discovered peers with on-chain verification stats and a locally-computed authenticity score (`PeerInfo.modelVerification`), so routers can avoid sellers flagged for model substitution. Added `AntseedVerifierPointsPolicy`, a swappable recognized-usage points policy that zeroes (or partially discounts) a seller's usage-emission points while it carries a DIFF substitution flag, wireable via `AntseedUsageAccounting.setPointsPolicy`.
+- Added a stealth probe engine to `@antseed/fingerprints`: verifier probe requests are generated to read like organic user chat (varied framings and phrasing, 1–3 facts per message, free-text numeric answer extraction) instead of a recognizable numbered test battery, so a cheating seller cannot cheaply classify and special-case probe traffic. The stealth/cost trade-off is tunable via `verifier.maxProbesPerRequest`.
 - Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
 - Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
 - Added Desktop runtime log source filters and buyer debug log filtering via `antseed buyer start --log-filter` / `ANTSEED_LOG_FILTER`.

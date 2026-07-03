@@ -29,6 +29,10 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** AntseedVerifierRegistry contract address (model-verification attestations). */
+  verifierRegistryAddress?: string;
+  /** AntseedVerifierRewards contract address (verifier emissions bucket controller). */
+  verifierRewardsAddress?: string;
 }
 
 /**
@@ -114,6 +118,8 @@ export function resolveChainConfig(overrides?: {
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
+  verifierRegistryAddress?: string;
+  verifierRewardsAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
   // If the caller overrode the primary rpcUrl without providing their own
@@ -135,6 +141,8 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
+    ...(overrides?.verifierRegistryAddress ? { verifierRegistryAddress: overrides.verifierRegistryAddress } : {}),
+    ...(overrides?.verifierRewardsAddress ? { verifierRewardsAddress: overrides.verifierRewardsAddress } : {}),
   };
 }
 

@@ -10,6 +10,8 @@ import {
   IdentityClient,
   EmissionsClient,
   ChannelStore,
+  VerifierRegistryClient,
+  VerifierRewardsClient,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 import type { AntseedConfig } from '../config/types.js';
@@ -105,6 +107,8 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  verifierRegistryAddress?: string;
+  verifierRewardsAddress?: string;
   evmChainId: number;
 };
 
@@ -152,6 +156,8 @@ export function requireCryptoConfig(
     stakingContractAddress: crypto.stakingContractAddress || resolved.stakingContractAddress,
     emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
+    verifierRegistryAddress: crypto.verifierRegistryAddress || resolved.verifierRegistryAddress,
+    verifierRewardsAddress: crypto.verifierRewardsAddress || resolved.verifierRewardsAddress,
     evmChainId: resolved.evmChainId,
   };
 }
@@ -234,6 +240,38 @@ export function createEmissionsClient(config: AntseedConfig, overrides?: CryptoC
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.emissionsContractAddress,
+    evmChainId: crypto.evmChainId,
+  });
+}
+
+/**
+ * Create a VerifierRegistryClient from the CLI config.
+ */
+export function createVerifierRegistryClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): VerifierRegistryClient {
+  const crypto = requireCryptoConfig(config, overrides);
+  if (!crypto.verifierRegistryAddress) {
+    throw new Error('No verifier registry address configured. Set payments.crypto.verifierRegistryAddress in your config file.');
+  }
+  return new VerifierRegistryClient({
+    rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
+    contractAddress: crypto.verifierRegistryAddress,
+    evmChainId: crypto.evmChainId,
+  });
+}
+
+/**
+ * Create a VerifierRewardsClient from the CLI config.
+ */
+export function createVerifierRewardsClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): VerifierRewardsClient {
+  const crypto = requireCryptoConfig(config, overrides);
+  if (!crypto.verifierRewardsAddress) {
+    throw new Error('No verifier rewards address configured. Set payments.crypto.verifierRewardsAddress in your config file.');
+  }
+  return new VerifierRewardsClient({
+    rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
+    contractAddress: crypto.verifierRewardsAddress,
     evmChainId: crypto.evmChainId,
   });
 }
