@@ -289,6 +289,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         channelsContractAddress: cryptoOverrides?.channelsContractAddress,
         freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
+        verifierRegistryAddress: cryptoOverrides?.verifierRegistryAddress,
       })
       let settlementEnabled = settlementEnv ?? true
 
@@ -318,6 +319,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           // as `null` in buyer.state.json).
           ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
           ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
+          // Enables per-(peer, model) verification reputation on discovered
+          // peers so routers can avoid substitution-flagged sellers.
+          ...(chainConfig.verifierRegistryAddress ? { verifierRegistryAddress: chainConfig.verifierRegistryAddress } : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))

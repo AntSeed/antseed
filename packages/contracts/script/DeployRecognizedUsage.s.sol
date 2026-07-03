@@ -12,6 +12,8 @@ import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedRegistryV2 } from "../core/AntseedRegistryV2.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
+import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
+import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
 
 interface IAntseedRegistryRecognizedUsageAdmin is IAntseedRegistry {
     function setEmissions(address emissions) external;
@@ -42,7 +44,6 @@ interface IAntseedLegacyEmissionsAdmin {
  * Required env:
  *   DEPLOYER_PRIVATE_KEY   Owner/broadcaster key.
  *   ANTSEED_REGISTRY       Existing (legacy) AntseedRegistry address.
- *   VERIFICATION_WALLET    Recipient of the verification bucket.
  *
  * Optional env:
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
@@ -82,8 +83,6 @@ contract DeployRecognizedUsage is Script {
         require(existingChannels != address(0), "channels not set");
         require(existingDeposits != address(0), "deposits not set");
 
-        address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
-        require(verificationWallet != address(0), "verification wallet not set");
         address emissionsReserveWallet = vm.envOr("EMISSIONS_RESERVE_WALLET", address(0));
         address teamWallet = registry.teamWallet();
         address protocolReserve = registry.protocolReserve();
@@ -154,7 +153,16 @@ contract DeployRecognizedUsage is Script {
         console.log("SellerRegistry:       ", address(sellerRegistry));
 
         console.log("EmissionsGate:          ", address(gate));
-        gate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, 10_000, true);
+
+        // Verifier network: whitelisted verifier peers attest seller model
+        // truthfulness and split the verification bucket pro-rata by credits.
+        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(address(registryV2));
+        console.log("VerifierRegistry:       ", address(verifierRegistry));
+
+        AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(address(gate), address(verifierRegistry));
+        console.log("VerifierRewards:        ", address(verifierRewards));
+
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verifierRewards), 10_000, true);
 
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
@@ -235,7 +243,8 @@ contract DeployRecognizedUsage is Script {
         console.log("Legacy claims deposits:   ", existingDeposits);
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", protocolReserve);
-        console.log("Verification recipient:   ", verificationWallet);
+        console.log("Verifier registry:        ", address(verifierRegistry));
+        console.log("Verification minter:      ", address(verifierRewards));
         console.log("");
         console.log("POST-DEPLOY CHECKLIST (manual):");
         console.log("- The deployer EOA still owns ANTSToken, the gate, and every new");
@@ -245,6 +254,12 @@ contract DeployRecognizedUsage is Script {
         console.log("  included). Transfer ownership to the ops multisig, and once");
         console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
         console.log("  to freeze the emission plan.");
+        console.log("- The verification bucket pays through AntseedVerifierRewards, but");
+        console.log("  no verifier is whitelisted yet: for each approved verifier peer");
+        console.log("  call verifierRegistry.setVerifier(<verifier>, true). Verifier");
+        console.log("  addresses are a post-deploy decision; until at least one verifier");
+        console.log("  earns credits, settleEpochRemainder routes each finalized epoch's");
+        console.log("  verification budget to burn/reserve.");
         console.log("- Sellers staked in legacy USDC staking stay eligible via the");
         console.log("  SellerRegistry legacy fallback. Call setLegacyStakeEligibilityEnabled(false)");
         console.log("  only after seller pools are seeded with ANTS stake.");

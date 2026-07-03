@@ -1,0 +1,126 @@
+/**
+ * KBF (Knowledge Boundary Fingerprinting) verifier — spec 07 F1.
+ * Reference-based verification: the reference model's own self-test bounds
+ * the honest error rate; the target's mismatch count is binomial-tested
+ * against that bound.
+ */
+
+import {
+  FINGERPRINTS_PACKAGE_NAME,
+  FINGERPRINTS_PACKAGE_VERSION,
+  type AuditResultFragment,
+  type AuditStats,
+  type FingerprintReference,
+  type MatchVector,
+  type SellerObservation,
+} from '../../types.js';
+import { canonicalHash } from '../../canonical-json.js';
+import type { FingerprintVerifier, VerifyOptions } from '../../registry.js';
+import { computeMatchVector } from './scoring.js';
+import { computeKbfVerdict } from './verdict.js';
+
+export * from './prompts.js';
+export * from './parser.js';
+export * from './scoring.js';
+export * from './stats.js';
+export * from './stealth.js';
+export * from './verdict.js';
+
+export const KBF_KIND = 'kbf';
+
+export class KbfVerifier implements FingerprintVerifier {
+  readonly kind = KBF_KIND;
+
+  verify(
+    reference: FingerprintReference,
+    observation: SellerObservation,
+    options: VerifyOptions = {},
+  ): AuditResultFragment {
+    const base = {
+      verifier: {
+        kind: this.kind,
+        package: FINGERPRINTS_PACKAGE_NAME,
+        version: FINGERPRINTS_PACKAGE_VERSION,
+      },
+      referenceId: reference.referenceId,
+      referenceModel: reference.referenceModel,
+      probeCount: reference.probes.length,
+    };
+
+    const unknown = (reason: string): AuditResultFragment => ({
+      ...base,
+      parsedProbeCount: 0,
+      matchVector: [],
+      matchVectorHash: canonicalHash([]),
+      stats: emptyStats(reference),
+      verdict: 'UNKNOWN',
+      verdictReason: reason,
+    });
+
+    if (reference.kind !== this.kind) {
+      return unknown(`reference kind "${reference.kind}" is not "${this.kind}"`);
+    }
+
+    let matchVector: MatchVector;
+    if (observation.matchVector) {
+      if (observation.matchVector.length !== reference.probes.length) {
+        return unknown(
+          `match vector length ${observation.matchVector.length} !== probe count ${reference.probes.length}`,
+        );
+      }
+      matchVector = observation.matchVector;
+    } else {
+      if (observation.answers.length !== reference.probes.length) {
+        return unknown(
+          `answers length ${observation.answers.length} !== probe count ${reference.probes.length}`,
+        );
+      }
+      matchVector = computeMatchVector(observation.answers, reference.probes);
+    }
+
+    const { verdict, verdictReason, stats } = computeKbfVerdict({
+      selfHamming: reference.selfTest.hamming,
+      selfTotal: reference.selfTest.total,
+      targetMatchVector: matchVector,
+      minCoverage: options.minCoverage,
+      cpConfidence: options.cpConfidence,
+      alpha: options.alpha,
+    });
+
+    const parsedProbeCount = matchVector.filter((entry) => entry !== null).length;
+
+    const auditStats: AuditStats = {
+      selfHamming: stats.selfHamming,
+      selfTotal: stats.selfTotal,
+      targetHamming: stats.targetHamming,
+      targetTotal: stats.targetTotal,
+      selfCoverage: reference.selfTest.coverage,
+      targetCoverage: stats.targetCoverage,
+      p0Cp99: stats.p0Cp99,
+      pValueBinomial: stats.pValueBinomial,
+    };
+
+    return {
+      ...base,
+      parsedProbeCount,
+      matchVector,
+      matchVectorHash: canonicalHash(matchVector),
+      stats: auditStats,
+      verdict,
+      verdictReason,
+    };
+  }
+}
+
+function emptyStats(reference: FingerprintReference): AuditStats {
+  return {
+    selfHamming: reference.selfTest.hamming,
+    selfTotal: reference.selfTest.total,
+    targetHamming: null,
+    targetTotal: null,
+    selfCoverage: reference.selfTest.coverage,
+    targetCoverage: null,
+    p0Cp99: null,
+    pValueBinomial: null,
+  };
+}

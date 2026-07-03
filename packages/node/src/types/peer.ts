@@ -132,4 +132,30 @@ export interface PeerInfo {
   metadata?: PeerMetadata;
   /** Buyer-computed results for external ownership claims announced in metadata. */
   verificationResults?: PeerVerificationResults;
+  /**
+   * Model-verification reputation from the AntseedVerifierRegistry, keyed by
+   * normalized service/model id. Populated only when the node is configured
+   * with a verifier registry address and the peer has an on-chain agent id.
+   */
+  modelVerification?: Record<string, PeerModelVerification>;
+}
+
+/** Buyer-computed model-verification reputation for one (peer, model). */
+export interface PeerModelVerification {
+  /** SAME attestations recorded on-chain for this (agent, service). */
+  sameCount: number;
+  /** DIFF (substitution-flag) attestations. */
+  diffCount: number;
+  /** UNDETERMINED attestations. */
+  undeterminedCount: number;
+  /** Distinct approved verifiers that attested this (agent, service). */
+  distinctVerifierCount: number;
+  /** Latest on-chain verdict code (0 unknown, 1 same, 2 diff, 3 undetermined). */
+  lastVerdict: number;
+  /**
+   * Buyer-computed confidence score in [0,100] that the model is authentic,
+   * or null when there is no usable evidence (no attestations / single
+   * verifier only). Never fabricated — reflects only recorded attestations.
+   */
+  score: number | null;
 }

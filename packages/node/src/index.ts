@@ -81,6 +81,24 @@ export {
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
+export {
+  VerifierRegistryClient,
+  VerifierRewardsClient,
+  serviceHash,
+  VERIFIER_VERDICT_UNKNOWN,
+  VERIFIER_VERDICT_SAME,
+  VERIFIER_VERDICT_DIFF,
+  VERIFIER_VERDICT_UNDETERMINED,
+  type VerifierRegistryClientConfig,
+  type VerifierRewardsClientConfig,
+  type VerifierAttestation,
+  type ServiceVerificationStats,
+} from './payments/evm/verifier-client.js';
+export {
+  computeModelVerificationScore,
+  toPeerModelVerification,
+  hasModelSubstitutionFlag,
+} from './routing/verification-score.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {
   StatsClient,

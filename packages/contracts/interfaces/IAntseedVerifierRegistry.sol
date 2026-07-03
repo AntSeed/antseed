@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import { IAntseedRegistry } from "./IAntseedRegistry.sol";
+
+interface IAntseedVerifierRegistry {
+    /// @notice Verdict codes. FROZEN mapping shared with the TypeScript
+    ///         verifier daemon — never reorder or renumber:
+    ///         0=UNKNOWN, 1=SAME, 2=DIFF, 3=UNDETERMINED.
+    enum Verdict {
+        UNKNOWN,
+        SAME,
+        DIFF,
+        UNDETERMINED
+    }
+
+    struct Attestation {
+        address verifier;
+        uint64 attestedAt;
+        uint8 verdict;
+        uint32 probeCount;
+        uint32 cohortSize;
+        bytes32 evidenceHash;
+        bytes32 probeCommitment;
+    }
+
+    /// @notice Per-(agentId, serviceHash) reputation accumulators. The stats
+    ///         timestamp is `lastAuditedAt(agentId, serviceHash)` — it is not
+    ///         duplicated here.
+    struct ServiceVerificationStats {
+        uint32 sameCount;
+        uint32 diffCount;
+        uint32 undeterminedCount;
+        uint32 distinctVerifierCount;
+        uint8 lastVerdict;
+        address lastVerifier;
+    }
+
+    function registry() external view returns (IAntseedRegistry);
+    function currentEpoch() external view returns (uint256);
+
+    function approvedVerifiers(address verifier) external view returns (bool);
+    function commitProbeSet(bytes32 commitment) external;
+    function probeCommittedAt(address verifier, bytes32 commitment) external view returns (uint64);
+    function submitAttestation(
+        uint256 agentId,
+        bytes32 serviceHash,
+        uint8 verdict,
+        bytes32 evidenceHash,
+        bytes32 probeCommitment,
+        uint32 probeCount,
+        uint32 cohortSize
+    ) external;
+
+    function lastAuditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
+    function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
+    function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (Attestation memory);
+    function verificationStats(uint256 agentId, bytes32 serviceHash)
+        external
+        view
+        returns (ServiceVerificationStats memory);
+    function agentVerificationStats(uint256 agentId) external view returns (ServiceVerificationStats memory);
+    function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
+    function epochTotalCredits(uint256 epoch) external view returns (uint256);
+}

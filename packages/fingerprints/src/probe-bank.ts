@@ -1,0 +1,191 @@
+/**
+ * Built-in bank of numeric factual cloze probes and deterministic probe-set
+ * generation for cohort-mode verification.
+ *
+ * Bank `consensus` values are ADVISORY: in cohort mode ground truth comes
+ * from cross-seller consensus, so the bank values need not be certified-true.
+ * They exist so reference-based flows and tests have plausible expectations.
+ */
+
+import { sha256Hex } from './canonical-json.js';
+import { computeProbeSetId, type KbfProbe, type ProbeSet, type ProbeTolerance } from './types.js';
+
+function abs(value: number): ProbeTolerance {
+  return { mode: 'absolute', value };
+}
+
+function rel(value: number): ProbeTolerance {
+  return { mode: 'relative', value };
+}
+
+function probe(
+  domain: string,
+  slug: string,
+  name: string,
+  template: string,
+  consensus: number,
+  range: [number, number],
+  tolerance: ProbeTolerance,
+): KbfProbe {
+  return { id: `${domain}:${slug}`, name, domain, template, consensus, range, tolerance };
+}
+
+/* eslint-disable max-len */
+export const PROBE_BANK: readonly KbfProbe[] = [
+  // -- chemistry: melting / boiling points (°C) ----------------------------
+  probe('chemistry_mp', 'tungsten', 'tungsten', 'The melting point of tungsten is ___°C.', 3422, [-300, 4500], abs(30)),
+  probe('chemistry_mp', 'tantalum-carbide', 'tantalum carbide', 'The melting point of tantalum carbide is ___°C.', 3880, [-300, 4500], abs(60)),
+  probe('chemistry_mp', 'rhenium', 'rhenium', 'The melting point of rhenium is ___°C.', 3186, [-300, 4500], abs(30)),
+  probe('chemistry_mp', 'osmium', 'osmium', 'The melting point of osmium is ___°C.', 3033, [-300, 4500], abs(30)),
+  probe('chemistry_mp', 'iron', 'iron', 'The melting point of iron is ___°C.', 1538, [-300, 4500], abs(10)),
+  probe('chemistry_mp', 'gold', 'gold', 'The melting point of gold is ___°C.', 1064, [-300, 4500], abs(5)),
+  probe('chemistry_mp', 'silver', 'silver', 'The melting point of silver is ___°C.', 961.8, [-300, 4500], abs(5)),
+  probe('chemistry_mp', 'copper', 'copper', 'The melting point of copper is ___°C.', 1084.6, [-300, 4500], abs(5)),
+  probe('chemistry_mp', 'platinum', 'platinum', 'The melting point of platinum is ___°C.', 1768, [-300, 4500], abs(10)),
+  probe('chemistry_mp', 'titanium', 'titanium', 'The melting point of titanium is ___°C.', 1668, [-300, 4500], abs(10)),
+  probe('chemistry_mp', 'sodium-chloride', 'sodium chloride', 'The melting point of sodium chloride is ___°C.', 801, [-300, 4500], abs(5)),
+  probe('chemistry_mp', 'ethanol-bp', 'ethanol', 'The boiling point of ethanol at standard pressure is ___°C.', 78.4, [-300, 4500], abs(1)),
+
+  // -- physics: constants (scaled to convenient magnitudes) ----------------
+  probe('physics_const', 'speed-of-light-kms', 'speed of light', 'The speed of light in vacuum is ___ km/s.', 299792.458, [0, 500000], abs(2)),
+  probe('physics_const', 'standard-gravity', 'standard gravity', 'Standard gravity at the surface of the Earth is ___ m/s^2.', 9.80665, [0, 20], abs(0.02)),
+  probe('physics_const', 'planck-e34', 'Planck constant', 'The Planck constant multiplied by 10^34 is ___ J*s.', 6.62607, [0, 100], rel(0.001)),
+  probe('physics_const', 'elementary-charge-e19', 'elementary charge', 'The elementary charge multiplied by 10^19 is ___ C.', 1.602177, [0, 100], rel(0.001)),
+  probe('physics_const', 'avogadro-em23', 'Avogadro constant', 'The Avogadro constant multiplied by 10^-23 is ___ per mole.', 6.02214, [0, 100], rel(0.001)),
+  probe('physics_const', 'electron-mass-e31', 'electron mass', 'The electron rest mass multiplied by 10^31 is ___ kg.', 9.10938, [0, 100], rel(0.001)),
+  probe('physics_const', 'proton-electron-ratio', 'proton-electron mass ratio', 'The proton-to-electron mass ratio is approximately ___.', 1836.15, [0, 10000], abs(0.5)),
+  probe('physics_const', 'gas-constant', 'molar gas constant', 'The molar gas constant is ___ J/(mol*K).', 8.314, [0, 100], abs(0.01)),
+  probe('physics_const', 'boltzmann-e23', 'Boltzmann constant', 'The Boltzmann constant multiplied by 10^23 is ___ J/K.', 1.380649, [0, 100], rel(0.001)),
+  probe('physics_const', 'inverse-fine-structure', 'inverse fine-structure constant', 'The inverse of the fine-structure constant is approximately ___.', 137.036, [0, 1000], abs(0.05)),
+  probe('physics_const', 'gravitational-e11', 'gravitational constant', 'The Newtonian gravitational constant multiplied by 10^11 is ___ m^3/(kg*s^2).', 6.674, [0, 100], abs(0.01)),
+  probe('physics_const', 'absolute-zero-c', 'absolute zero', 'Absolute zero is ___°C.', -273.15, [-500, 0], abs(0.01)),
+
+  // -- biology: diploid chromosome counts (2n) -----------------------------
+  probe('biology_2n', 'human', 'human', 'The diploid chromosome number (2n) of humans is ___.', 46, [2, 500], abs(0)),
+  probe('biology_2n', 'chimpanzee', 'chimpanzee', 'The diploid chromosome number (2n) of the chimpanzee is ___.', 48, [2, 500], abs(0)),
+  probe('biology_2n', 'dog', 'dog', 'The diploid chromosome number (2n) of the domestic dog is ___.', 78, [2, 500], abs(0)),
+  probe('biology_2n', 'cat', 'cat', 'The diploid chromosome number (2n) of the domestic cat is ___.', 38, [2, 500], abs(0)),
+  probe('biology_2n', 'horse', 'horse', 'The diploid chromosome number (2n) of the horse is ___.', 64, [2, 500], abs(0)),
+  probe('biology_2n', 'mouse', 'house mouse', 'The diploid chromosome number (2n) of the house mouse is ___.', 40, [2, 500], abs(0)),
+  probe('biology_2n', 'fruit-fly', 'fruit fly', 'The diploid chromosome number (2n) of Drosophila melanogaster is ___.', 8, [2, 500], abs(0)),
+  probe('biology_2n', 'chicken', 'chicken', 'The diploid chromosome number (2n) of the chicken is ___.', 78, [2, 500], abs(0)),
+  probe('biology_2n', 'cattle', 'cattle', 'The diploid chromosome number (2n) of domestic cattle is ___.', 60, [2, 500], abs(0)),
+  probe('biology_2n', 'pig', 'pig', 'The diploid chromosome number (2n) of the domestic pig is ___.', 38, [2, 500], abs(0)),
+  probe('biology_2n', 'rice', 'rice', 'The diploid chromosome number (2n) of rice (Oryza sativa) is ___.', 24, [2, 500], abs(0)),
+  probe('biology_2n', 'potato', 'potato', 'The chromosome number (4n) of the cultivated potato is ___.', 48, [2, 500], abs(0)),
+
+  // -- astronomy: distances and periods -------------------------------------
+  probe('astronomy', 'mars-orbital-days', 'Mars', 'The orbital period of Mars is ___ Earth days.', 687, [0, 100000], abs(3)),
+  probe('astronomy', 'jupiter-orbital-years', 'Jupiter', 'The orbital period of Jupiter is ___ Earth years.', 11.86, [0, 1000], abs(0.15)),
+  probe('astronomy', 'moon-distance-km', 'Moon', 'The mean distance from the Earth to the Moon is ___ km.', 384400, [0, 1000000], abs(2000)),
+  probe('astronomy', 'mercury-orbital-days', 'Mercury', 'The orbital period of Mercury is ___ Earth days.', 87.97, [0, 100000], abs(1)),
+  probe('astronomy', 'venus-orbital-days', 'Venus', 'The orbital period of Venus is ___ Earth days.', 224.7, [0, 100000], abs(2)),
+  probe('astronomy', 'saturn-orbital-years', 'Saturn', 'The orbital period of Saturn is ___ Earth years.', 29.45, [0, 1000], abs(0.4)),
+  probe('astronomy', 'proxima-distance-ly', 'Proxima Centauri', 'The distance from the Sun to Proxima Centauri is ___ light-years.', 4.24, [0, 1000], abs(0.05)),
+  probe('astronomy', 'sun-radius-km', 'Sun', 'The equatorial radius of the Sun is approximately ___ km.', 695700, [0, 10000000], abs(5000)),
+  probe('astronomy', 'earth-radius-km', 'Earth', 'The equatorial radius of the Earth is ___ km.', 6378, [0, 100000], abs(10)),
+  probe('astronomy', 'halley-period-years', "Halley's comet", "The orbital period of Halley's comet is approximately ___ years.", 76, [0, 1000], abs(1.5)),
+  probe('astronomy', 'sirius-distance-ly', 'Sirius', 'The distance from the Sun to Sirius is ___ light-years.', 8.6, [0, 1000], abs(0.2)),
+  probe('astronomy', 'neptune-orbital-years', 'Neptune', 'The orbital period of Neptune is ___ Earth years.', 164.8, [0, 1000], abs(1.5)),
+
+  // -- geography: elevations, depths, lengths -------------------------------
+  probe('geography', 'everest-m', 'Mount Everest', 'The elevation of Mount Everest is ___ meters.', 8849, [-12000, 10000], abs(10)),
+  probe('geography', 'k2-m', 'K2', 'The elevation of K2 is ___ meters.', 8611, [-12000, 10000], abs(10)),
+  probe('geography', 'nile-km', 'Nile', 'The length of the Nile river is approximately ___ km.', 6650, [0, 10000], abs(150)),
+  probe('geography', 'amazon-km', 'Amazon', 'The length of the Amazon river is approximately ___ km.', 6400, [0, 10000], abs(400)),
+  probe('geography', 'dead-sea-m', 'Dead Sea', 'The surface elevation of the Dead Sea is ___ meters.', -430, [-12000, 10000], abs(15)),
+  probe('geography', 'mont-blanc-m', 'Mont Blanc', 'The elevation of Mont Blanc is ___ meters.', 4808, [-12000, 10000], abs(10)),
+  probe('geography', 'kilimanjaro-m', 'Kilimanjaro', 'The elevation of Mount Kilimanjaro is ___ meters.', 5895, [-12000, 10000], abs(10)),
+  probe('geography', 'challenger-deep-m', 'Challenger Deep', 'The depth of the Challenger Deep in the Mariana Trench is approximately ___ meters.', 10935, [0, 12000], abs(120)),
+  probe('geography', 'baikal-depth-m', 'Lake Baikal', 'The maximum depth of Lake Baikal is ___ meters.', 1642, [0, 12000], abs(20)),
+  probe('geography', 'denali-m', 'Denali', 'The elevation of Denali is ___ meters.', 6190, [-12000, 10000], abs(15)),
+  probe('geography', 'aconcagua-m', 'Aconcagua', 'The elevation of Aconcagua is ___ meters.', 6961, [-12000, 10000], abs(15)),
+  probe('geography', 'panama-canal-km', 'Panama Canal', 'The length of the Panama Canal is approximately ___ km.', 82, [0, 10000], abs(3)),
+
+  // -- math: constant digits ------------------------------------------------
+  probe('math_const', 'pi-6dp', 'pi', 'The value of pi rounded to 6 decimal places is ___.', 3.141593, [0, 10], abs(0.000002)),
+  probe('math_const', 'e-6dp', 'e', "The value of Euler's number e rounded to 6 decimal places is ___.", 2.718282, [0, 10], abs(0.000002)),
+  probe('math_const', 'sqrt2-6dp', 'square root of 2', 'The square root of 2 rounded to 6 decimal places is ___.', 1.414214, [0, 10], abs(0.000002)),
+  probe('math_const', 'golden-ratio-6dp', 'golden ratio', 'The golden ratio rounded to 6 decimal places is ___.', 1.618034, [0, 10], abs(0.000002)),
+  probe('math_const', 'ln2-6dp', 'natural log of 2', 'The natural logarithm of 2 rounded to 6 decimal places is ___.', 0.693147, [0, 10], abs(0.000002)),
+  probe('math_const', 'sqrt3-6dp', 'square root of 3', 'The square root of 3 rounded to 6 decimal places is ___.', 1.732051, [0, 10], abs(0.000002)),
+  probe('math_const', 'pi-squared-4dp', 'pi squared', 'The value of pi squared rounded to 4 decimal places is ___.', 9.8696, [0, 100], abs(0.0002)),
+  probe('math_const', 'log10-2-6dp', 'base-10 log of 2', 'The base-10 logarithm of 2 rounded to 6 decimal places is ___.', 0.30103, [0, 10], abs(0.000002)),
+  probe('math_const', 'euler-mascheroni-6dp', 'Euler-Mascheroni constant', 'The Euler-Mascheroni constant rounded to 6 decimal places is ___.', 0.577216, [0, 10], abs(0.000002)),
+  probe('math_const', 'catalan-6dp', 'Catalan constant', "The Catalan constant rounded to 6 decimal places is ___.", 0.915966, [0, 10], abs(0.000002)),
+];
+/* eslint-enable max-len */
+
+export const PROBE_BANK_DOMAINS: readonly string[] = [...new Set(PROBE_BANK.map((p) => p.domain))];
+
+// ---------------------------------------------------------------------------
+// Deterministic probe-set generation
+// ---------------------------------------------------------------------------
+
+/** mulberry32 PRNG over a 32-bit state. Deterministic; no Math.random. */
+export function mulberry32(state: number): () => number {
+  let a = state >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Derive a 32-bit PRNG seed from a seed string, domain-separated by `domainTag`. */
+export function seedToUint32(seed: string, domainTag: string): number {
+  const hex = sha256Hex(`${domainTag}:${seed}`);
+  return Number.parseInt(hex.slice(0, 8), 16) >>> 0;
+}
+
+export interface GenerateProbeSetParams {
+  service: string;
+  count: number;
+  /** Arbitrary seed string; same seed → identical probe set. */
+  seed: string;
+  /** Restrict selection to these domains (default: whole bank). */
+  domains?: readonly string[];
+  /**
+   * Timestamp recorded on the probe set. Defaults to the current time; pass a
+   * fixed value for byte-identical ProbeSets. Excluded from probeSetId and
+   * probe commitments, so all hashed artifacts are seed-deterministic anyway.
+   */
+  createdAt?: string;
+}
+
+/**
+ * Deterministically select and shuffle `count` probes from the built-in bank
+ * using a sha256-seeded PRNG. Same seed → identical selection and order,
+ * so a probe set can be regenerated and verified later.
+ */
+export function generateProbeSet(params: GenerateProbeSetParams): ProbeSet {
+  const { service, count, seed, domains } = params;
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(`generateProbeSet: count must be a positive integer, got ${count}`);
+  }
+  const pool = domains ? PROBE_BANK.filter((p) => domains.includes(p.domain)) : [...PROBE_BANK];
+  if (count > pool.length) {
+    throw new Error(`generateProbeSet: count ${count} exceeds available probes ${pool.length}`);
+  }
+
+  // Fisher-Yates shuffle with the seeded PRNG, then take the first `count`.
+  const rand = mulberry32(seedToUint32(seed, 'antseed-probe-set'));
+  const shuffled = [...pool];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = shuffled[i]!;
+    shuffled[i] = shuffled[j]!;
+    shuffled[j] = tmp;
+  }
+  const probes = shuffled.slice(0, count);
+
+  const nonce = sha256Hex(`antseed-probe-set-nonce:${seed}`);
+  return {
+    probeSetId: computeProbeSetId(service, probes),
+    service,
+    probes,
+    nonce,
+    createdAt: params.createdAt ?? new Date().toISOString(),
+  };
+}
