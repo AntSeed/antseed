@@ -37,7 +37,6 @@ interface IAntseedUsageAccounting {
         uint256 weightedBuyerPoints,
         uint256 weightedSellerPoints
     );
-    event PendingSellerAccrualCleared(address indexed seller, uint256 pointsDelta);
     event AccrualSkippedWhilePaused(address indexed seller, address indexed buyer, uint256 pointsDelta);
     event PointsPolicyFailed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 rawPoints);
     event PoolWeightPolicyFailed(uint256 indexed agentId, uint256 indexed epoch, uint256 poolPower);
@@ -59,7 +58,6 @@ interface IAntseedUsageAccounting {
     function accrueSellerPoints(address seller, uint256 pointsDelta) external;
     function accrueBuyerPoints(address buyer, uint256 pointsDelta) external;
     function accruePoints(bytes32 channelId, address buyer, address seller, uint256 pointsDelta) external;
-    function clearPendingSellerAccrual() external;
     function setPointsPolicy(address policy) external;
     function setPoolWeightPolicy(address policy) external;
     function setMinimumAccountedPoolPower(uint256 minimumPoolPower) external;

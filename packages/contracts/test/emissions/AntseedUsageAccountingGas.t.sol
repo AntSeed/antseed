@@ -189,11 +189,9 @@ contract AntseedUsageAccountingGasTest is Test {
         assertEq(pendingSeller, seller);
         assertEq(pendingDelta, 10);
 
-        // A dangling half-accrual is dropped and overwritten, never a revert:
+        // A repeated seller accrual is a plain overwrite, never a revert:
         // this runs inline in the Channels settle path.
         vm.prank(recorder);
-        vm.expectEmit(true, false, false, true);
-        emit IAntseedUsageAccounting.PendingSellerAccrualCleared(seller, 10);
         usageAccounting.accrueSellerPoints(seller, 11);
         (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
         assertEq(pendingSeller, seller);
@@ -211,8 +209,12 @@ contract AntseedUsageAccountingGasTest is Test {
         vm.expectRevert(IAntseedUsageAccounting.AccrualDeltaMismatch.selector);
         usageAccounting.accrueBuyerPoints(buyer, 9);
 
+        // Completing the pair clears the slot (sellerPools unset, so nothing
+        // is recorded).
+        usageAccounting.setSellerPools(address(0));
         vm.prank(recorder);
-        usageAccounting.clearPendingSellerAccrual();
+        usageAccounting.accrueBuyerPoints(buyer, 11);
+        usageAccounting.setSellerPools(address(sellerPools));
         (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
         assertEq(pendingSeller, address(0));
         assertEq(pendingDelta, 0);

@@ -1232,16 +1232,16 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueSellerPoints(seller, 0);
 
         usageAccounting.accrueSellerPoints(seller, 10);
-        // A dangling half-accrual is dropped and overwritten, never a revert:
+        // A repeated seller accrual is a plain overwrite, never a revert:
         // this runs inline in the Channels settle path.
-        vm.expectEmit(true, false, false, true);
-        emit IAntseedUsageAccounting.PendingSellerAccrualCleared(seller, 10);
         usageAccounting.accrueSellerPoints(seller, 10);
 
         vm.expectRevert(IAntseedUsageAccounting.AccrualDeltaMismatch.selector);
         usageAccounting.accrueBuyerPoints(buyer, 9);
 
-        usageAccounting.clearPendingSellerAccrual();
+        // Completing the pair clears the slot (no pools set, so nothing is
+        // recorded).
+        usageAccounting.accrueBuyerPoints(buyer, 10);
         vm.expectRevert(IAntseedUsageAccounting.NoPendingSellerAccrual.selector);
         usageAccounting.accrueBuyerPoints(buyer, 10);
 

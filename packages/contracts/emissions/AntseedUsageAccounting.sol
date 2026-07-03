@@ -126,15 +126,9 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         }
         if (seller == address(0)) revert InvalidAddress();
         if (pointsDelta == 0) revert InvalidValue();
-        // A dangling half-accrual left by a mis-paired recorder must not
-        // revert here: this runs inline in AntseedChannels' settle path, so
-        // one stuck slot would block every settlement network-wide. Drop the
-        // stale entry and record the fresh pair instead.
-        PendingSellerAccrual memory stale = pendingSellerAccrual;
-        if (stale.seller != address(0)) {
-            emit PendingSellerAccrualCleared(stale.seller, stale.pointsDelta);
-        }
-
+        // Plain overwrite: the settle path always pairs this with
+        // accrueBuyerPoints in the same tx, so a dangling entry cannot occur
+        // — and this call must never revert settlement either way.
         pendingSellerAccrual = PendingSellerAccrual({ seller: seller, pointsDelta: pointsDelta });
         emit LegacySellerAccrualPending(seller, currentEpoch(), pointsDelta);
     }
@@ -165,12 +159,6 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
             return;
         }
         _recordUsage(channelId, buyer, seller, pointsDelta);
-    }
-
-    function clearPendingSellerAccrual() external onlyUsageRecorder {
-        PendingSellerAccrual memory pending = pendingSellerAccrual;
-        delete pendingSellerAccrual;
-        emit PendingSellerAccrualCleared(pending.seller, pending.pointsDelta);
     }
 
     // ═══════════════════════════════════════════════════════════════════
