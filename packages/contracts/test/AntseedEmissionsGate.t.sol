@@ -208,10 +208,26 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function _deployGate(uint256 warpEpoch) internal {
+        _deployGate(warpEpoch, address(0), address(0));
+    }
+
+    /// @dev Deploys the gate at epoch `warpEpoch - 1` (effectiveEpoch ==
+    ///      warpEpoch) and configures the given seller-pools / usage minters
+    ///      (skipping address(0)) in that same deploy epoch — exactly like the
+    ///      production deploy broadcast — so they are active from warpEpoch
+    ///      onward. Minter shares only apply from the NEXT epoch after they
+    ///      are set, so tests that claim/assert epoch `warpEpoch` must wire
+    ///      their minters here rather than after the warp.
+    function _deployGate(uint256 warpEpoch, address sellerPoolsMinter, address usageMinter) internal {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * (warpEpoch - 1) + 1);
         gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
-        _warpGateEpoch(warpEpoch);
+        // Minters checkpoint from the NEXT epoch, so configure them in the
+        // deploy epoch (mirroring the production broadcast) to have them
+        // active from effectiveEpoch onward.
         _setVerificationMinter(verificationWallet);
+        if (sellerPoolsMinter != address(0)) _setSellerPoolsMinter(sellerPoolsMinter);
+        if (usageMinter != address(0)) _setUsageMinter(usageMinter);
+        _warpGateEpoch(warpEpoch);
         token.setRegistry(address(gate));
 
         // Production cutover mirror: fund the legacy escrow with the full
@@ -291,9 +307,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_preEffectiveEpochsAreNeverMintableByBuckets() public {
-        _deployGate(5);
-
-        _setSellerPoolsMinter(address(this));
+        _deployGate(5, address(this), address(0));
 
         // Every epoch before effectiveEpoch belongs to the legacy escrow and
         // is settled in full at funding time — no bucket, no flag, no window.
@@ -430,8 +444,9 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_removeMinterKeepsInFlightEpochShareAndSortedCheckpoints() public {
-        _deployGate(5);
-        _setSellerPoolsMinter(address(this));
+        // The seller-pools minter was configured in the deploy epoch, so its
+        // share is active for the in-flight epoch 5.
+        _deployGate(5, address(this), address(0));
 
         // Rotate the bucket mid-epoch 5: removal must not zero the in-flight
         // epoch's share, and the re-add must keep the checkpoint array sorted.
@@ -453,6 +468,14 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function _setupUsagePool(address poolSeller_) internal returns (uint256 agentId) {
+        agentId = _setupUsagePoolNoWarp(poolSeller_);
+        _warpGateEpoch(5);
+    }
+
+    /// @dev Same as _setupUsagePool but stays in the deploy epoch 4 so the
+    ///      caller can wire additional minters that must be active at epoch 5
+    ///      (minter shares only apply from the NEXT epoch) before warping.
+    function _setupUsagePoolNoWarp(address poolSeller_) internal returns (uint256 agentId) {
         _deployGate(4);
 
         sellerPools = new AntseedSellerPools(address(realRegistry));
@@ -465,8 +488,6 @@ contract AntseedEmissionsGateTest is Test {
         token.approve(address(sellerPools), 100 ether);
         sellerPools.stake(agentId, 100 ether, 4);
         vm.stopPrank();
-
-        _warpGateEpoch(5);
     }
 
     function _setupDelegationUsageRewards()
@@ -476,8 +497,11 @@ contract AntseedEmissionsGateTest is Test {
         // The delegation contract is the on-chain seller, exactly like the
         // deployed DiemStakingProxy: it owns the agent and earns the usage.
         delegation = new SellerDelegationHarness(address(realRegistry), operator);
-        agentId = _setupUsagePool(address(delegation));
+        agentId = _setupUsagePoolNoWarp(address(delegation));
 
+        // The usage minter is wired during epoch 4 — one epoch before the
+        // usage it rewards — because its share only applies from the NEXT
+        // epoch after setMinter.
         usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
         usageRewards.setSellerPools(address(sellerPools));
         _setUsageMinter(address(usageRewards));
@@ -486,6 +510,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.setUsageRewards(address(usageRewards));
         usageRewards.setClaimForwarder(address(usageAccounting));
 
+        _warpGateEpoch(5);
         usageAccounting.accrueSellerPoints(address(delegation), 100);
         usageAccounting.accrueBuyerPoints(buyer, 100);
         _warpGateEpoch(6);
@@ -1083,7 +1108,9 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_gateFixedCurveAndAdminValidation() public {
-        _deployGate(4);
+        // Seller-pools and usage minters are wired in the deploy epoch so
+        // their shares are active at epoch 4 (== effectiveEpoch).
+        _deployGate(4, address(this), address(0xBEEF));
         assertEq(gate.antsToken(), address(gate));
         assertEq(gate.deposits(), address(deposits));
         assertEq(gate.controllerMinterIds(address(legacyV2)), bytes32(0));
@@ -1096,7 +1123,6 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(gate.effectiveEpoch(), 4);
         assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
         assertEq(gate.SHARE_DENOMINATOR(), 100_000);
-        _setEmissionMinters(address(this), address(0xBEEF));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(TEAM_MINTER_ID, 4), _shareBudget(15_000, 4));
@@ -1157,8 +1183,7 @@ contract AntseedEmissionsGateTest is Test {
         vm.expectRevert(AntseedEmissionsGate.LegacyEscrowNotFunded.selector);
         freshGate.renounceOwnership();
 
-        _deployGate(4);
-        _setEmissionMinters(address(this), address(0xBEEF));
+        _deployGate(4, address(this), address(0xBEEF));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
 
         gate.renounceOwnership();
@@ -2182,8 +2207,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_gateMintValidationAndPause() public {
-        _deployGate(4);
-        _setSellerPoolsMinter(address(this));
+        _deployGate(4, address(this), address(0));
 
         vm.expectRevert(AntseedEmissionsGate.InvalidAddress.selector);
         gate.claim(4, address(0), 1 ether);
@@ -2207,8 +2231,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_gateRemainderUsesGlobalBurnCapAndRejectsOverBucketClaims() public {
-        _deployGate(4);
-        _setSellerPoolsMinter(address(this));
+        _deployGate(4, address(this), address(0));
 
         _warpGateEpoch(5);
         uint256 budget = gate.controllerEpochBudget(address(this), 4);
@@ -2231,8 +2254,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_fixedBucketSharesSumToPostMigrationEpochBudget() public {
-        _deployGate(5);
-        _setEmissionMinters(address(this), address(0xBEEF));
+        _deployGate(5, address(this), address(0xBEEF));
 
         uint256 totalBudget = gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 5)
             + gate.minterEpochBudget(USAGE_MINTER_ID, 5) + gate.minterEpochBudget(TEAM_MINTER_ID, 5)
@@ -2270,9 +2292,9 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_ownerCanUpdateUsageMinterDirectly() public {
-        _deployGate(4);
+        // Wired in the deploy epoch so the usage share is active at epoch 4.
+        _deployGate(4, address(0), address(this));
 
-        _setUsageMinter(address(this));
         assertEq(_configuredMinter(USAGE_MINTER_ID), address(this));
         assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 7), _shareBudget(USAGE_SHARE_BPS, 7));
@@ -2299,11 +2321,11 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_ownerCanUpdateControllerMinterShare() public {
-        _deployGate(4);
-
-        _setSellerPoolsMinter(address(this));
+        _deployGate(4, address(this), address(0));
         assertEq(gate.totalMinterShareBps(), 80_000);
 
+        // A share edit during epoch 4 keeps the in-flight epoch's share and
+        // only applies from epoch 5.
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 10_000, true);
         assertEq(gate.totalMinterShareBps(), 50_000);
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
@@ -2321,32 +2343,36 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(shareBps, 7_000);
         assertTrue(editable);
         assertEq(gate.totalMinterShareBps(), 47_000);
-        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), _shareBudget(7_000, 4));
+        // A first-time add during epoch 4 has zero budget for epoch 4; its
+        // share applies from epoch 5 onward.
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), _shareBudget(7_000, 5));
 
-        _warpGateEpoch(5);
-        uint256 budget = _shareBudget(7_000, 4);
+        _warpGateEpoch(6);
+        uint256 budget = _shareBudget(7_000, 5);
         vm.prank(customMinter);
-        gate.claim(4, customMinter, budget);
-        assertEq(gate.minterEpochMinted(CUSTOM_MINTER_ID, 4), budget);
+        gate.claim(5, customMinter, budget);
+        assertEq(gate.minterEpochMinted(CUSTOM_MINTER_ID, 5), budget);
         assertEq(token.balanceOf(customMinter), budget);
 
         vm.prank(customMinter);
         vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
-        gate.claim(4, customMinter, 1);
+        gate.claim(5, customMinter, 1);
 
         gate.removeMinter(CUSTOM_MINTER_ID);
         assertEq(gate.totalMinterShareBps(), 40_000);
-        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), 0);
 
         vm.prank(customMinter);
         vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
-        gate.claim(4, customMinter, 1);
+        gate.claim(5, customMinter, 1);
     }
 
     function test_ownerCanChangeNamedMinterShare() public {
-        _deployGate(4);
+        _deployGate(4, address(this), address(0));
 
-        _setSellerPoolsMinter(address(this));
+        // The share edit during epoch 4 applies from epoch 5; the in-flight
+        // epoch keeps the share configured in the deploy epoch.
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(this), 30_000, true);
 
         assertEq(gate.totalMinterShareBps(), 70_000);
@@ -2360,9 +2386,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     function test_shareEditsDoNotRewriteFinalizedEpochBudgets() public {
-        _deployGate(4);
-
-        _setSellerPoolsMinter(address(this));
+        _deployGate(4, address(this), address(0));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
 
         _warpGateEpoch(5);
@@ -2406,14 +2430,17 @@ contract AntseedEmissionsGateTest is Test {
         address newLockedMinter = address(0xBEEF);
         gate.setMinterController(LOCKED_MINTER_ID, newLockedMinter);
         assertEq(_configuredMinter(LOCKED_MINTER_ID), newLockedMinter);
-        assertEq(gate.minterEpochBudget(LOCKED_MINTER_ID, 4), _shareBudget(7_000, 4));
+        // The first-time add during epoch 4 earns nothing for epoch 4; its
+        // share applies from epoch 5. The controller move is immediate.
+        assertEq(gate.minterEpochBudget(LOCKED_MINTER_ID, 4), 0);
+        assertEq(gate.minterEpochBudget(LOCKED_MINTER_ID, 5), _shareBudget(7_000, 5));
         assertEq(gate.controllerMinterIds(lockedMinter), bytes32(0));
         assertEq(gate.controllerMinterIds(newLockedMinter), LOCKED_MINTER_ID);
 
-        _warpGateEpoch(5);
-        uint256 budget = _shareBudget(7_000, 4);
+        _warpGateEpoch(6);
+        uint256 budget = _shareBudget(7_000, 5);
         vm.prank(newLockedMinter);
-        gate.claim(4, newLockedMinter, budget);
+        gate.claim(5, newLockedMinter, budget);
         assertEq(token.balanceOf(newLockedMinter), budget);
     }
 
@@ -2743,23 +2770,29 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(address(this)), 1 ether);
     }
 
-    function test_newMinterEarnsOnlyFromItsAddEpoch() public {
+    function test_newMinterEarnsOnlyFromNextEpoch() public {
         _deployGate(4);
         _warpGateEpoch(6); // epochs 4 and 5 finalize with unclaimed emission
 
         // A first-time minter id gets no retroactive budget over finalized
-        // epochs — only the in-flight epoch onward.
+        // epochs and none for the in-flight add epoch either — its share
+        // applies strictly from the NEXT epoch onward.
         gate.setMinter(CUSTOM_MINTER_ID, address(this), 10_000, true);
         assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), 0);
         assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), 0);
-        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), _shareBudget(10_000, 6));
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 7), _shareBudget(10_000, 7));
 
         vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
         gate.claim(5, address(this), 1);
 
         _warpGateEpoch(7);
-        gate.claim(6, address(this), _shareBudget(10_000, 6));
-        assertEq(token.balanceOf(address(this)), _shareBudget(10_000, 6));
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(6, address(this), 1);
+
+        _warpGateEpoch(8);
+        gate.claim(7, address(this), _shareBudget(10_000, 7));
+        assertEq(token.balanceOf(address(this)), _shareBudget(10_000, 7));
     }
 
     function test_newMinterWaitsOutEpochWhoseShareWasFreedThisEpoch() public {
@@ -2768,8 +2801,9 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(6);
 
         // Removal keeps the removed id's in-flight-epoch share checkpointed
-        // (a same-epoch re-add of that id resurrects it), so a replacement
-        // id must not also earn that epoch: it starts next epoch.
+        // (a same-epoch re-add of that id resurrects it). The replacement id
+        // starts next epoch like every first-time add, so it can never also
+        // earn the epoch whose share the removal freed.
         gate.removeMinter(SELLER_POOLS_MINTER_ID);
         gate.setMinter(CUSTOM_MINTER_ID, address(this), SELLER_POOLS_SHARE_BPS, true);
         assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), 0);

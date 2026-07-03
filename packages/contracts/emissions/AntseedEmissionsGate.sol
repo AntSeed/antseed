@@ -47,11 +47,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     mapping(uint256 epoch => uint256 amount) public epochBurnedAmount;
 
     uint32 public totalMinterShareBps;
-    /// @dev Epoch-after-free sentinel (`epoch + 1` of the last shrink or
-    ///      removal). While it equals `currentEpoch() + 1`, share was freed
-    ///      this epoch and stays occupied by its old minter until next epoch,
-    ///      so a first-time minter add must not start in the in-flight epoch.
-    uint256 private _lastShareFreedEpoch;
     mapping(bytes32 minterId => Minter config) private _minters;
     mapping(address controller => bytes32 minterId) public controllerMinterIds;
     mapping(bytes32 minterId => ShareCheckpoint[] checkpoints) private _minterShareCheckpoints;
@@ -277,7 +272,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         uint32 previousShareBps = existing.controller == address(0) ? 0 : existing.shareBps;
         uint32 nextTotalMinterShareBps = totalMinterShareBps - previousShareBps + shareBps;
         if (nextTotalMinterShareBps > SHARE_DENOMINATOR) revert InvalidValue();
-        if (shareBps < previousShareBps) _lastShareFreedEpoch = currentEpoch() + 1;
 
         if (existing.controller != address(0) && existing.controller != controller) {
             delete controllerMinterIds[existing.controller];
@@ -286,24 +280,14 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
         totalMinterShareBps = nextTotalMinterShareBps;
         _minters[id] = Minter({ controller: controller, shareBps: shareBps, editable: editable });
-        // A brand-new minter id earns from the IN-FLIGHT epoch: nothing in it
-        // is claimable yet, so no finalized budget is disturbed and a bucket
-        // swapped in mid-epoch still covers the usage accrued during it. It
-        // must never start earlier — a checkpoint in an already-finalized
-        // epoch would stack on top of shares that removed/shrunk minters keep
-        // for those epochs, push the per-epoch sum past 100%, and let a
+        // Every share change — first add included — takes effect from the
+        // NEXT epoch, so each epoch's share set is exactly the config at the
+        // end of the previous epoch and per-epoch sums can never exceed
+        // 100%. A first-time checkpoint any earlier would stack on top of
+        // shares that removed/shrunk minters keep for past epochs and let a
         // first-mover drain the global epochMinted cap out from under other
-        // buckets' unclaimed rewards. For the same reason a new id cannot
-        // start in an epoch where a shrink/removal freed the share it now
-        // occupies: the old minter keeps that share for the in-flight epoch,
-        // so the newcomer waits one epoch. Edits and re-adds keep next-epoch
-        // semantics (see _removeMinter for the checkpoint ordering
-        // invariant).
-        uint256 startEpoch = currentEpoch() + 1;
-        if (_minterShareCheckpoints[id].length == 0 && _lastShareFreedEpoch != startEpoch) {
-            startEpoch = currentEpoch();
-        }
-        _recordMinterShare(id, startEpoch, shareBps);
+        // buckets' unclaimed rewards.
+        _recordMinterShare(id, currentEpoch() + 1, shareBps);
         emit MinterSet(id, controller, shareBps, editable);
     }
 
@@ -333,7 +317,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         if (!existing.editable) revert MinterNotEditable();
 
         totalMinterShareBps -= existing.shareBps;
-        _lastShareFreedEpoch = currentEpoch() + 1;
         // Removal takes effect from the NEXT epoch, matching _setMinter: the
         // in-progress epoch keeps its share so already-earned claims stay
         // mintable, and the checkpoint array stays sorted even when a

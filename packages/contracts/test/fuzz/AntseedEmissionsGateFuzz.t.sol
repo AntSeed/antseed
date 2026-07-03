@@ -231,8 +231,9 @@ contract AntseedEmissionsGateFuzzTest is Test {
     function testFuzz_minterShareCheckpointLookup(uint16 share1, uint16 share2, uint8 changeEpochSeed, uint256 queryEpoch) public {
         _deployGate(2);
 
-        // An editable minter starts (length==0) at share1 from the in-flight
-        // deploy epoch — never earlier.
+        // An editable minter added (length==0) during addEpoch checkpoints at
+        // addEpoch + 1: its share applies strictly from the NEXT epoch, never
+        // the in-flight add epoch or earlier.
         uint256 addEpoch = gate.currentEpoch();
         uint32 s1 = uint32(bound(share1, 1, 20_000));
         bytes32 id = keccak256("ckpt");
@@ -240,7 +241,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
         gate.setMinter(id, minter, s1, true);
 
         // Warp forward and change the share, creating a checkpoint at the next
-        // epoch. The first checkpoint stays at the add epoch.
+        // epoch. The first checkpoint stays at addEpoch + 1.
         uint256 changeEpoch = uint256(bound(changeEpochSeed, 3, 40));
         _warpGateEpoch(changeEpoch);
         uint32 s2 = uint32(bound(share2, 1, 20_000));
@@ -249,7 +250,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
 
         uint256 e = bound(queryEpoch, 0, 100);
         uint256 emission = gate.getEpochEmission(e);
-        uint256 expectedShare = e < addEpoch ? 0 : (e <= changeEpoch ? s1 : s2);
+        uint256 expectedShare = e <= addEpoch ? 0 : (e <= changeEpoch ? s1 : s2);
         assertEq(
             gate.minterEpochBudget(id, e),
             (emission * expectedShare) / SHARE_DENOMINATOR,
