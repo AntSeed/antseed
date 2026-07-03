@@ -11,6 +11,15 @@ import {
 } from './modules/plugin-setup';
 import { initAppSetupModule } from './modules/app-setup';
 import { initCreditsModule } from './modules/credits';
+import { findCatalogEntry } from './modules/vpr-model-catalog';
+import { resolveVprChatOption } from './modules/vpr-chat-projection';
+import type { VprRouteSelection } from './core/state';
+import {
+  loadVprRouteSelection,
+  loadVprRoutingPreferences,
+  saveVprRouteSelection,
+  saveVprRoutingPreferences,
+} from './modules/vpr-preferences';
 import { mountAppShell } from './ui/mount';
 import { registerActions } from './ui/actions';
 import {
@@ -75,6 +84,8 @@ async function applyMacOsRtlClass(): Promise<void> {
 void applyMacOsRtlClass();
 
 const uiState = createInitialUiState();
+uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPreferences);
+uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
 initStore(uiState);
 
 bridge?.onFullscreenChange?.((isFullscreen) => {
@@ -166,12 +177,6 @@ creditsApi.startPeriodicRefresh();
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
 /* ------------------------------------------------------------------ */
-
-function isProxyPortOccupiedMessage(value: unknown): boolean {
-  const message = safeString(value, '').toLowerCase();
-  if (!message) return false;
-  return message.includes('eaddrinuse') || message.includes('address already in use');
-}
 
 let runtimeActivityHoldUntil = 0;
 
@@ -325,17 +330,11 @@ async function ensureConnectRuntimeStarted(): Promise<void> {
       mode: 'connect',
       router: normalizeRouterRuntime(uiState.connectRouterValue),
     });
-    uiState.connectWarning = null;
-    notifyUiStateChanged();
     appendSystemLog(UI_MESSAGES.buyerAutoStarted);
     setRuntimeActivity('active', 'Buyer runtime auto-started.', 4_000);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.toLowerCase().includes('already running')) return;
-    if (isProxyPortOccupiedMessage(message)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
     appendSystemLog(`Buyer auto-start failed: ${message}`);
     setRuntimeActivity('bad', `Buyer auto-start failed: ${message}`, 10_000);
   }
@@ -344,7 +343,6 @@ async function ensureConnectRuntimeStarted(): Promise<void> {
 async function actionStartConnect(): Promise<void> {
   const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
   clearRouterPluginHint();
-  uiState.connectState = 'Starting buyer runtime...';
   uiState.connectBadge = { tone: 'idle', label: 'Starting...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
@@ -356,10 +354,6 @@ async function actionStartConnect(): Promise<void> {
     await refreshAll('manual');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isProxyPortOccupiedMessage(message)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
     appendSystemLog(`Action failed: ${message}`);
     setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
   }
@@ -367,7 +361,6 @@ async function actionStartConnect(): Promise<void> {
 
 async function actionStopConnect(): Promise<void> {
   const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
-  uiState.connectState = 'Stopping buyer runtime...';
   uiState.connectBadge = { tone: 'idle', label: 'Stopping...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
@@ -384,8 +377,6 @@ async function actionStopConnect(): Promise<void> {
 async function actionStartAll(): Promise<void> {
   if (isModeRunning('connect')) return;
   await actionStartConnect();
-  uiState.connectWarning = null;
-  notifyUiStateChanged();
 }
 
 async function actionStopAll(): Promise<void> {
@@ -395,7 +386,6 @@ async function actionStopAll(): Promise<void> {
 
 async function actionScanDht(): Promise<void> {
   uiState.peersMessage = 'Scanning DHT for peers...';
-  uiState.peersMeta = { tone: 'warn', label: 'Scanning...' };
   uiState.overviewBadge = { tone: 'warn', label: 'Scanning DHT for peers...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Scanning DHT for peers...', 12_000);
@@ -450,11 +440,51 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  selectVprModel: (provider, serviceId, peerId = null) => {
+    const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
+    if (!entry) return;
+    const selection: VprRouteSelection = {
+      model: {
+        provider: entry.provider,
+        serviceId: entry.serviceId,
+        label: entry.label,
+        categories: [...entry.categories],
+      },
+      mode: peerId ? 'pinned-peer' : 'auto',
+      peerId: peerId ?? null,
+    };
+    // Auto mode resolves the peer through the routing-preferences scorer, not
+    // whichever chat option happens to sort first.
+    const option = resolveVprChatOption(
+      uiState.chatServiceOptions,
+      uiState.discoverRows,
+      selection,
+      uiState.vprRoutingPreferences,
+    );
+    if (option) {
+      chatApi.handleServiceChange(option.value, peerId ?? option.peerId);
+    }
+    // handleServiceChange writes a pinned selection through; restore the
+    // requested mode so auto keeps re-resolving the best route on future
+    // sends instead of staying pinned to today's winner.
+    uiState.vprRouteSelection = selection;
+    saveVprRouteSelection(selection);
+    notifyUiStateChanged();
+  },
+  clearVprPinnedPeer: () => {
+    uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
+    saveVprRouteSelection(uiState.vprRouteSelection);
+    notifyUiStateChanged();
+  },
+  updateVprRoutingPreferences: (patch) => {
+    uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
+    saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    notifyUiStateChanged();
+  },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
     uiState.chatPaymentApprovalPeerName = null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalLoading = false;
@@ -466,8 +496,8 @@ registerActions({
     void bridge?.paymentsOpenPortal?.('channels');
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
+  refreshPaymentSummary: (force?: boolean) => void creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
-  refreshWorkspaceGitStatus: chatApi.refreshWorkspaceGitStatus,
   chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
@@ -495,7 +525,6 @@ setRefreshHooks({
   setDashboardRefreshState: (busy: boolean, stage: string) => {
     if (busy) {
       uiState.peersMessage = stage;
-      uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
       uiState.overviewBadge = { tone: 'active', label: stage };
       notifyUiStateChanged();
       return;
@@ -530,11 +559,6 @@ function initializeBridge(): void {
 
   bridge.onLog?.((event) => {
     updatePluginHintFromLog(event);
-    if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
-
     appendLog(event);
     if (event.mode === 'connect') {
       chatApi.handleLogLineForThinkingPhase(event.line);
@@ -555,8 +579,6 @@ function initializeBridge(): void {
     syncRuntimeActivityFromProcesses(processes);
 
     if (isModeRunning('connect', processes)) {
-      uiState.connectWarning = null;
-      notifyUiStateChanged();
       clearRouterPluginHint();
     }
 

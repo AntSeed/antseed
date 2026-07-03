@@ -3,8 +3,15 @@ import { LOCALHOST_URL } from '../constants';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
+import { resolveVprChatOption } from './vpr-chat-projection.js';
+import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from './vpr-model-catalog.js';
+import { saveVprRouteSelection } from './vpr-preferences.js';
+import {
+  applyOpenRouterBaselines,
+  ensureOpenRouterPrices,
+  getCachedOpenRouterPrices,
+} from './openrouter-baseline.js';
 import type {
-  ChatWorkspaceGitStatus,
   DesktopBridge,
   PreparedChatAttachment,
   RawChatAttachment,
@@ -16,15 +23,13 @@ import type {
   ChatMessage,
   ContentBlock,
 } from '../ui/components/chat/chat-shared';
+import { formatUsd } from '../core/format';
 import {
   cloneContentBlock,
-  countBlocks,
   formatCompactNumber,
-  formatUsd,
   getMyrmecochoryLabel,
   normalizeAssistantMeta,
   paymentLogToThinkingPhase,
-  shortServiceName,
 } from '../ui/components/chat/chat-shared';
 
 type ChatConversationUsage = {
@@ -73,7 +78,6 @@ export type ChatModuleApi = {
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
-  refreshWorkspaceGitStatus: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   createNewConversation: () => Promise<void>;
   startNewChat: () => void;
@@ -102,19 +106,6 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-
-  const UNAVAILABLE_GIT_STATUS: ChatWorkspaceGitStatus = {
-    available: false,
-    rootPath: null,
-    branch: null,
-    isDetached: false,
-    ahead: 0,
-    behind: 0,
-    stagedFiles: 0,
-    modifiedFiles: 0,
-    untrackedFiles: 0,
-    error: null,
-  };
 
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
   const PAYMENT_AUTO_RETRY_DELAY_MS = 7_000;
@@ -263,7 +254,6 @@ export function initChatModule({
       (opt) => opt.value === uiState.chatSelectedServiceValue,
     );
     uiState.chatPaymentApprovalAmount = (Number(amountBaseUnits) / 1_000_000).toFixed(2);
-    uiState.chatPaymentApprovalPeerId = selectedService?.peerId ?? null;
     uiState.chatPaymentApprovalPeerName = selectedService?.peerLabel ?? selectedService?.label ?? null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalError = null;
@@ -286,7 +276,6 @@ export function initChatModule({
 
   function hidePaymentApprovalCard(): void {
     uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
     uiState.chatPaymentApprovalPeerName = null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalLoading = false;
@@ -315,8 +304,6 @@ export function initChatModule({
       uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
       uiState.creditsEvmAddress = result.data.evmAddress;
       uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
-      uiState.creditsLastRefreshedAt = Date.now();
-
       return parseFloat(result.data.availableUsdc || '0');
     } catch {
       return parseFloat(uiState.creditsAvailableUsdc || '0');
@@ -522,17 +509,6 @@ export function initChatModule({
     });
   }
 
-  function formatElapsedMs(elapsedMs: number): string {
-    const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    if (hours > 0) {
-      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${minutes}:${String(seconds).padStart(2, '0')}`;
-  }
-
   function toErrorMessage(err: unknown, fallback = 'Unexpected error'): string {
     if (typeof err === 'string' && err.trim().length > 0) return err;
     if (
@@ -565,35 +541,9 @@ export function initChatModule({
     return (messages as ChatMessage[]).filter((msg) => !isToolResultOnlyMessage(msg));
   }
 
-  function isConnectRunning(): boolean {
-    const processes = Array.isArray(uiState.processes) ? uiState.processes : [];
-    return processes.some(
-      (proc) => proc && proc.mode === 'connect' && Boolean(proc.running),
-    );
-  }
-
-  function normalizeRouterLabel(routerRaw: unknown): string {
-    const raw = String(routerRaw || '').trim().toLowerCase();
-    if (!raw) return 'local';
-    if (
-      raw === 'claude-code' ||
-      raw === '@antseed/router-local' ||
-      raw === 'antseed-router-local' ||
-      raw === 'router-local'
-    ) {
-      return 'local';
-    }
-    return raw;
-  }
-
   // ---------------------------------------------------------------------------
   // Display state updates (no DOM — writes to uiState + notifies React)
   // ---------------------------------------------------------------------------
-
-  function setServiceCatalogStatus(tone: BadgeTone, label: string): void {
-    uiState.chatServiceStatus = { tone, label };
-    notifyUiStateChanged();
-  }
 
   function setServiceSelectLoading(loading: boolean): void {
     uiState.chatServiceSelectDisabled = loading;
@@ -622,47 +572,19 @@ export function initChatModule({
     return message;
   }
 
-  function formatGenericChatStatus(): string {
-    const buyerConnected = isConnectRunning();
-    const router = normalizeRouterLabel(uiState.connectRouterValue);
-    const peerCount = Array.isArray(uiState.lastPeers) ? uiState.lastPeers.length : 0;
-    const peerText = `${peerCount} peer${peerCount === 1 ? '' : 's'}`;
-    const proxyText =
-      proxyState === 'online'
-        ? `Proxy ${proxyPort > 0 ? `:${proxyPort}` : 'online'}`
-        : proxyState === 'offline'
-          ? 'Proxy offline'
-          : 'Proxy n/a';
-    return `Buyer ${buyerConnected ? 'connected' : 'offline'} · Router ${router} · ${peerText} · ${proxyText}`;
-  }
-
   function updateStreamingIndicator(): void {
-    const genericStatus = formatGenericChatStatus();
     const activeConvId = uiState.chatActiveConversation;
     const activeSending = activeConvId ? sendingConversationIds.has(activeConvId) : uiState.chatSending;
-    const activeStreamTurn = activeConvId ? streamTurnsByConversation.get(activeConvId) ?? null : null;
     const activeStreamStartedAt = activeConvId ? streamStartedAtByConversation.get(activeConvId) ?? 0 : 0;
     const elapsedMs =
       activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
-    const elapsedText = elapsedMs > 0 ? ` · ${formatElapsedMs(elapsedMs)}` : '';
 
-    if (activeStreamTurn !== null && activeSending) {
-      const label = getMyrmecochoryLabel(activeStreamTurn);
-      uiState.chatStreamingIndicatorText = `Turn ${activeStreamTurn} · ${label}${elapsedText} · ${genericStatus}`;
-    } else if (activeSending) {
-      uiState.chatStreamingIndicatorText = `Generating response...${elapsedText} · ${genericStatus}`;
-    } else {
-      uiState.chatStreamingIndicatorText = genericStatus;
-    }
-
-    uiState.chatStreamingActive = activeSending;
     uiState.chatThinkingElapsedMs = activeSending ? elapsedMs : 0;
     notifyUiStateChanged();
   }
 
   function updateThreadMeta(conv: ChatConversation | null): void {
     if (!conv) {
-      uiState.chatThreadMeta = 'No conversation selected';
       uiState.chatRoutedPeer = '';
       uiState.chatRoutedPeerId = '';
       uiState.chatSessionStarted = '';
@@ -676,62 +598,24 @@ export function initChatModule({
     }
 
     const messages = visibleMessages(conv.messages || []);
-    let toolCalls = 0;
-    let reasoningBlocks = 0;
-    let totalEstimatedCostUsd = 0;
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
-    const servingPeers = new Set<string>();
     let lastServingPeerId = '';
-
     for (const msg of messages) {
-      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        const counts = countBlocks(msg.content as ContentBlock[]);
-        toolCalls += counts.toolUse;
-        reasoningBlocks += counts.thinking;
-      }
       const meta = normalizeAssistantMeta(msg);
       if (meta) {
-        if (meta.peerId) {
-          servingPeers.add(meta.peerId);
-          lastServingPeerId = meta.peerId;
-        }
-        if (meta.costUsd > 0) totalEstimatedCostUsd += meta.costUsd;
+        if (meta.peerId) lastServingPeerId = meta.peerId;
         totalInputTokens += meta.inputTokens;
         totalOutputTokens += meta.outputTokens;
       }
     }
-
-    const parts = [
-      `session ${String(conv.id || '').slice(0, 8) || 'n/a'}`,
-      shortServiceName(conv.service),
-      `${messages.length} msg${messages.length === 1 ? '' : 's'}`,
-    ];
-    if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls === 1 ? '' : 's'}`);
-    if (reasoningBlocks > 0) parts.push(`${reasoningBlocks} reasoning`);
 
     // Prefer message-derived token counts (always up-to-date) over stale conv.usage
     const msgTotalTokens = totalInputTokens + totalOutputTokens;
     const tokenCounts = msgTotalTokens > 0
       ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: msgTotalTokens }
       : getConversationTokenCounts(conv);
-    parts.push(
-      `tokens ${formatCompactNumber(tokenCounts.totalTokens)} (${formatCompactNumber(tokenCounts.inputTokens)} in / ${formatCompactNumber(tokenCounts.outputTokens)} out)`,
-    );
-    if (totalEstimatedCostUsd > 0) {
-      parts.push(`cost $${formatUsd(totalEstimatedCostUsd)}`);
-    } else if (tokenCounts.totalTokens > 0) {
-      parts.push('cost n/a');
-    }
-    if (servingPeers.size > 0) {
-      parts.push(
-        `${servingPeers.size} serving peer${servingPeers.size === 1 ? '' : 's'}`,
-      );
-    }
-    if (conv.createdAt) parts.push(`started ${formatChatDateTime(conv.createdAt)}`);
-    parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
-    uiState.chatThreadMeta = parts.join(' · ');
     // Show the conversation-bound peer first. The global selector can move while
     // a thread is open, but the thread header must keep displaying the peer this
     // conversation is actually pinned to.
@@ -892,8 +776,9 @@ export function initChatModule({
   }
 
   function publishSendingConversationIds(): void {
-    // Snapshot the set into the uiState so the Sidebar can show a running
-    // indicator for every in-flight conversation (not just the active one).
+    // Snapshot the set into the uiState so the conversation list can show a
+    // running indicator for every in-flight conversation (not just the active
+    // one).
     uiState.chatSendingConversationIds =
       sendingConversationIds.size === 0 ? [] : Array.from(sendingConversationIds);
   }
@@ -1138,6 +1023,17 @@ export function initChatModule({
       };
     }
 
+    const vprOption = resolveVprChatOption(
+      uiState.chatServiceOptions,
+      uiState.discoverRows,
+      uiState.vprRouteSelection,
+      uiState.vprRoutingPreferences,
+    );
+    if (vprOption) {
+      const selected = decodeChatServiceSelection(vprOption.value);
+      if (selected.id.length > 0) return selected;
+    }
+
     const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
     if (selectedValue.id.length > 0) return selectedValue;
 
@@ -1317,13 +1213,11 @@ export function initChatModule({
     if (!bridge?.chatAiListDiscoverRows) {
       uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
-      setServiceCatalogStatus('warn', 'Services unavailable');
       setRuntimeActivity('warn', 'Service catalog unavailable (bridge missing).');
       serviceRefreshInProgress = false;
       return;
     }
 
-    setServiceCatalogStatus('warn', 'Loading services...');
     setRuntimeActivity('warn', 'Loading service catalog from peers...');
     setServiceSelectLoading(true);
     try {
@@ -1333,7 +1227,6 @@ export function initChatModule({
       if (!result.ok || !Array.isArray(result.data)) {
         uiState.chatDiscoverRowsLoaded = false;
         updateChatServiceOptions(fallback);
-        setServiceCatalogStatus('warn', result.error || 'Services unavailable');
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
         return;
       }
@@ -1344,14 +1237,30 @@ export function initChatModule({
         .filter((row): row is DiscoverRow => row !== null);
       uiState.discoverRows = rows;
       uiState.chatDiscoverRowsLoaded = true;
+      uiState.vprModelCatalog = applyOpenRouterBaselines(
+        projectRowsToVprModelCatalog(rows),
+        getCachedOpenRouterPrices(),
+      );
+      // Warm the OpenRouter reference-price cache in the background; once it
+      // resolves, re-stamp baselines onto the current catalog so the Home
+      // "Popular" list can show the struck-through retail price.
+      void ensureOpenRouterPrices().then((map) => {
+        if (!map) return;
+        uiState.vprModelCatalog = applyOpenRouterBaselines(uiState.vprModelCatalog, map);
+        notifyUiStateChanged();
+      });
+      // Only auto-fill an empty selection. A user-chosen model that is briefly
+      // missing from a partial discover snapshot (peer flap, partial DHT
+      // results) must not be silently replaced — it resolves again as soon as
+      // its peer reappears in the catalog.
+      if (!uiState.vprRouteSelection.model) {
+        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
+        if (defaultModel) {
+          uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
+        }
+      }
       const optionsToRender = rows.length > 0 ? projectRowsToChatServiceOptions(rows) : fallback;
       updateChatServiceOptions(optionsToRender);
-      setServiceCatalogStatus(
-        optionsToRender.length > 0 ? 'active' : 'warn',
-        optionsToRender.length > 0
-          ? `Services ready (${String(optionsToRender.length)})`
-          : 'No services available',
-      );
       setRuntimeActivity(
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
@@ -1363,7 +1272,6 @@ export function initChatModule({
       uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
       const message = toErrorMessage(error, 'Failed to load services');
-      setServiceCatalogStatus('warn', message);
       setRuntimeActivity('bad', message);
     } finally {
       serviceRefreshInProgress = false;
@@ -1382,7 +1290,6 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetProxyStatus) {
       proxyState = 'unknown';
       proxyPort = 0;
-      setServiceCatalogStatus('idle', 'Services idle');
       updateStreamingIndicator();
       return;
     }
@@ -1395,7 +1302,6 @@ export function initChatModule({
           proxyState = 'online';
           proxyPort = Number(port) || 0;
           uiState.chatProxyPort = proxyPort;
-          uiState.chatProxyStatus = { tone: 'active', label: `Proxy :${port}` };
           notifyUiStateChanged();
           // Proxy just became available — fetch metering stats for active conversation
           if (activeConversation) {
@@ -1412,9 +1318,7 @@ export function initChatModule({
           proxyState = 'offline';
           proxyPort = 0;
           uiState.chatProxyPort = 0;
-          uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
           notifyUiStateChanged();
-          setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
           if (previousProxyState !== 'offline') {
             setRuntimeActivity('warn', 'Waiting for runtime.');
           }
@@ -1424,9 +1328,7 @@ export function initChatModule({
       proxyState = 'offline';
       proxyPort = 0;
       uiState.chatProxyPort = 0;
-      uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
       notifyUiStateChanged();
-      setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
       if (previousProxyState !== 'offline') {
         setRuntimeActivity('warn', 'Buyer proxy unreachable; retrying.');
       }
@@ -1500,35 +1402,12 @@ export function initChatModule({
         uiState.chatWorkspaceDefaultPath = result.data.default;
         desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
-        await refreshWorkspaceGitStatus();
       }
     } catch {
       // Workspace selection unavailable
     }
   }
 
-  async function refreshWorkspaceGitStatus(): Promise<void> {
-    if (!bridge?.chatAiGetWorkspaceGitStatus) return;
-
-    try {
-      const result = await bridge.chatAiGetWorkspaceGitStatus();
-      if (result.ok && result.data) {
-        uiState.chatWorkspaceGitStatus = result.data as ChatWorkspaceGitStatus;
-      } else {
-        uiState.chatWorkspaceGitStatus = {
-          ...UNAVAILABLE_GIT_STATUS,
-          error: result.error || null,
-        };
-      }
-      notifyUiStateChanged();
-    } catch (error) {
-      uiState.chatWorkspaceGitStatus = {
-        ...UNAVAILABLE_GIT_STATUS,
-        error: error instanceof Error ? error.message : String(error),
-      };
-      notifyUiStateChanged();
-    }
-  }
 
   async function restoreWorkspace(workspacePath: string): Promise<void> {
     if (!bridge?.chatAiSetWorkspace) return;
@@ -1554,7 +1433,6 @@ export function initChatModule({
         uiState.chatWorkspaceDefaultPath = result.data.default;
         desiredWorkspacePath = result.data.current;
         notifyUiStateChanged();
-        await refreshWorkspaceGitStatus();
       } else {
         desiredWorkspacePath = uiState.chatWorkspacePath || null;
       }
@@ -1595,7 +1473,6 @@ export function initChatModule({
       uiState.chatError = null;
       startNewChat();
       await refreshChatConversations();
-      await refreshWorkspaceGitStatus();
       notifyUiStateChanged();
     } catch (err) {
       reportChatError(err, 'Failed to set workspace');
@@ -1640,8 +1517,6 @@ export function initChatModule({
         };
         uiState.chatMessages = nextMessages;
         uiState.chatStreamingMessage = getConversationStreamingMessage(convId);
-        uiState.chatConversationTitle = String(conv.title || 'Conversation');
-        uiState.chatDeleteVisible = true;
         syncActiveConversationSendingState();
 
         const optionCandidates = getAvailableChatServiceOptions();
@@ -1698,8 +1573,6 @@ export function initChatModule({
     uiState.chatMessages = [];
     setStreamingMessage(null);
     activeConversation = null;
-    uiState.chatDeleteVisible = false;
-    uiState.chatConversationTitle = 'New Chat';
     clearTransientChatNotices();
     // Re-derive sending flags from the (now null) active conversation so that
     // the thinking indicator does not leak in from whichever chat the user was
@@ -1985,9 +1858,6 @@ export function initChatModule({
       conv.title = newTitle;
       uiState.chatConversations = [...conversations];
     }
-    if (convId === uiState.chatActiveConversation) {
-      uiState.chatConversationTitle = newTitle;
-    }
     notifyUiStateChanged();
     if (bridge?.chatAiRenameConversation) {
       void bridge.chatAiRenameConversation(convId, newTitle).catch((err: unknown) => {
@@ -2153,7 +2023,6 @@ export function initChatModule({
       }
       notifyUiStateChanged();
 
-      void refreshWorkspaceGitStatus();
       dispatchChatRequest(convId, content, preparedAttachments, selectionOverride);
     })();
   }
@@ -2387,6 +2256,33 @@ export function initChatModule({
     const nextServiceId = normalizeChatServiceId(selectedOption?.id ?? decoded.id);
     const nextProvider = normalizeProviderId(selectedOption?.provider ?? decoded.provider);
 
+    // Write the explicit pick through to the VPR route selection so the two
+    // never disagree about which model+peer a new conversation targets. The
+    // service options are per-peer entries, so a dropdown pick is a peer pin.
+    if (nextServiceId) {
+      const catalogEntry = nextProvider
+        ? findCatalogEntry(uiState.vprModelCatalog, nextProvider, nextServiceId)
+        : null;
+      uiState.vprRouteSelection = {
+        model: catalogEntry
+          ? {
+              provider: catalogEntry.provider,
+              serviceId: catalogEntry.serviceId,
+              label: catalogEntry.label,
+              categories: [...catalogEntry.categories],
+            }
+          : {
+              provider: nextProvider ?? '',
+              serviceId: nextServiceId,
+              label: selectedOption?.label ?? nextServiceId,
+              categories: [...(selectedOption?.categories ?? [])],
+            },
+        mode: peerId ? 'pinned-peer' : 'auto',
+        peerId: peerId || null,
+      };
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    }
+
     if (activeConversation) {
       activeConversation.peerId = peerId || undefined;
       activeConversation.peerLabel = selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined;
@@ -2481,7 +2377,6 @@ export function initChatModule({
           notifyUiStateChanged();
         }
         void refreshChatConversations();
-        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -2530,9 +2425,6 @@ export function initChatModule({
         if (conv) {
           conv.title = title;
           uiState.chatConversations = [...conversations];
-        }
-        if (data.conversationId === uiState.chatActiveConversation) {
-          uiState.chatConversationTitle = title;
         }
         notifyUiStateChanged();
         void refreshChatConversations();
@@ -2932,7 +2824,6 @@ export function initChatModule({
         }
 
         void refreshChatConversations();
-        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -3002,7 +2893,6 @@ export function initChatModule({
           setConversationSending(data.conversationId, false);
           notifyUiStateChanged();
         }
-        void refreshWorkspaceGitStatus();
       });
     }
   }
@@ -3053,7 +2943,6 @@ export function initChatModule({
     refreshChatProxyStatus,
     refreshChatConversations,
     refreshWorkspace,
-    refreshWorkspaceGitStatus,
     chooseWorkspace,
     createNewConversation,
     startNewChat,

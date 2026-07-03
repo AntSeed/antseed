@@ -1,4 +1,4 @@
-import type { ConfigFormData } from '../core/state';
+import type { ConfigFormData, VprRoutingPreferences } from '../core/state';
 import type { ChatPermissionMode, RawChatAttachment, ToolApprovalDecision } from '../types/bridge';
 
 export type AppActions = {
@@ -22,14 +22,17 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  selectVprModel: (provider: string, serviceId: string, peerId?: string | null) => void;
+  clearVprPinnedPeer: () => void;
+  updateVprRoutingPreferences: (patch: Partial<VprRoutingPreferences>) => void;
   setChatPermissionMode: (mode: ChatPermissionMode) => void;
   decideToolApproval: (decision: ToolApprovalDecision, requestId?: string) => void;
   rejectPaymentSession: () => void;
   retryAfterPayment: () => void;
   requestChannelClose: () => void;
   refreshCredits: () => void;
+  refreshPaymentSummary: (force?: boolean) => void;
   refreshWorkspace: () => Promise<void>;
-  refreshWorkspaceGitStatus: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;

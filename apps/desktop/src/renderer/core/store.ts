@@ -96,8 +96,14 @@ export function getUiSnapshot(): RendererUiState {
         }
       : null,
     chatActiveChannels: new Map(state.chatActiveChannels),
+    creditsBuyerUsage: state.creditsBuyerUsage ? { ...state.creditsBuyerUsage } : null,
+    creditsRewards: state.creditsRewards ? { ...state.creditsRewards } : null,
     chatServiceOptions: [...state.chatServiceOptions],
     discoverRows: [...state.discoverRows],
+    // vprModelCatalog / creditsChannels / vprRouteSelection are reassigned
+    // wholesale at every mutation site, so the top-level spread passes their
+    // references through safely — no per-snapshot deep clone needed.
+    vprRoutingPreferences: { ...state.vprRoutingPreferences },
   };
   cachedSnapshotVersion = version;
   return cachedSnapshot;

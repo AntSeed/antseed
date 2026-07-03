@@ -170,6 +170,11 @@ const api = {
   getAppVersion(): Promise<string> {
     return ipcRenderer.invoke('app:get-version') as Promise<string>;
   },
+  getOpenRouterReferencePrices(): Promise<Record<string, { input: number | null; output: number | null }>> {
+    return ipcRenderer.invoke('openrouter:reference-prices') as Promise<
+      Record<string, { input: number | null; output: number | null }>
+    >;
+  },
   getState(): Promise<RuntimeSnapshot> {
     return ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeSnapshot>;
   },
@@ -467,6 +472,9 @@ const api = {
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
+  paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
+  paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
+  paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
   systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
     return ipcRenderer.invoke('system-proxy:start', opts) as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   },

@@ -5,7 +5,6 @@ import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 
 type ConfigViewProps = {
-  active: boolean;
 };
 
 type VoiceModelStatus = {
@@ -34,7 +33,7 @@ function isVoiceModelStatus(value: unknown): value is VoiceModelStatus {
   return Boolean(record && Array.isArray(record.models));
 }
 
-export function ConfigView({ active }: ConfigViewProps) {
+export function ConfigView(_props: ConfigViewProps) {
   const { configFormData, configSaving, devMode, configMessage } = useUiSelector((state) => ({
     configFormData: state.configFormData,
     configSaving: state.configSaving,
@@ -73,8 +72,8 @@ export function ConfigView({ active }: ConfigViewProps) {
   }, []);
 
   useEffect(() => {
-    if (active) void refreshVoiceStatus();
-  }, [active, refreshVoiceStatus]);
+    void refreshVoiceStatus();
+  }, [refreshVoiceStatus]);
 
   async function handleVoiceModelChange(modelId: string) {
     setVoiceMessage(null);
@@ -129,7 +128,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   }
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view`} role="tabpanel">
       <div className="page-header">
         <h2>Settings</h2>
       </div>

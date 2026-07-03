@@ -61,6 +61,16 @@ export interface SystemProxyConfigPatch {
   readonly modelFormat: 'peer-routed'
 }
 
+export interface SystemProxyProfileMetadata {
+  readonly icon?: string
+  readonly displayLabel?: string
+  readonly methodLabel?: string
+  readonly appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app'
+  readonly openUrl?: string
+  readonly toolName?: string
+  readonly restartAppName?: string
+}
+
 export interface SystemProxyProfile {
   readonly name: string
   readonly displayName: string
@@ -69,6 +79,7 @@ export interface SystemProxyProfile {
   readonly pathPrefixes: readonly string[]
   readonly forward?: SystemProxyForwardRule
   readonly configPatch?: SystemProxyConfigPatch
+  readonly metadata?: SystemProxyProfileMetadata
 }
 
 export interface SystemProxyState {

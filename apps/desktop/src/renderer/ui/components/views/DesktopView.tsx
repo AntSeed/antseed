@@ -4,7 +4,6 @@ import { useActions } from '../../hooks/useActions';
 import { formatClock } from '../../../core/format';
 
 type DesktopViewProps = {
-  active: boolean;
 };
 
 type RuntimeLogEntry = {
@@ -105,7 +104,7 @@ function downloadLogs(logs: RuntimeLogEntry[]): void {
   }
 }
 
-export function DesktopView({ active }: DesktopViewProps) {
+export function DesktopView(_props: DesktopViewProps) {
   const [selectedSource, setSelectedSource] = useState(ALL_SOURCES);
   const [searchQuery, setSearchQuery] = useState('');
   const { logs, daemonState } = useUiSelector((state) => ({
@@ -144,7 +143,7 @@ export function DesktopView({ active }: DesktopViewProps) {
       : JSON.stringify(daemonState.state, null, 2);
 
   return (
-    <section className={`view view-desktop${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view view-desktop`} role="tabpanel">
       <div className="page-header">
         <h2>Logs</h2>
         <div className="page-header-right">

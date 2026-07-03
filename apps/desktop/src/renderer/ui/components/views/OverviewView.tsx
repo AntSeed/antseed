@@ -8,10 +8,9 @@ import {
 } from '../../../core/peer-utils';
 
 type OverviewViewProps = {
-  active: boolean;
 };
 
-export function OverviewView({ active }: OverviewViewProps) {
+export function OverviewView(_props: OverviewViewProps) {
   const {
     overviewBadge,
     ovNodeState,
@@ -52,7 +51,7 @@ export function OverviewView({ active }: OverviewViewProps) {
   );
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view`} role="tabpanel">
       <div className="page-header">
         <h2>Overview</h2>
         <div className={`connection-badge badge-${overviewBadge.tone}`}>{overviewBadge.label}</div>

@@ -10,6 +10,7 @@ type CreditsModuleOptions = {
 
 export type CreditsModuleApi = {
   refreshCredits: () => Promise<void>;
+  refreshPaymentSummary: (force?: boolean) => Promise<void>;
   startPeriodicRefresh: () => void;
   stopPeriodicRefresh: () => void;
   getAvailableUsdc: () => string;
@@ -18,6 +19,10 @@ export type CreditsModuleApi = {
 
 const CREDITS_REFRESH_INTERVAL_MS = 60_000;
 const CREDITS_FAST_REFRESH_INTERVAL_MS = 5_000;
+// Self-throttle for refreshPaymentSummary. Slightly under the Credits view's
+// 60s poll interval so a tick arriving a moment "early" (relative to when the
+// previous fetch finished) is not skipped.
+const PAYMENT_SUMMARY_THROTTLE_MS = 55_000;
 
 const MAX_AUTO_RETRIES = 2;
 
@@ -26,6 +31,8 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
   let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let autoRetryCount = 0;
   let lastCardVisibleAt = 0;
+  let lastPaymentSummaryRefreshAt = 0;
+  let paymentSummaryRefreshInFlight = false;
 
   async function refreshCredits(): Promise<void> {
     if (!bridge?.creditsGetInfo) return;
@@ -47,7 +54,6 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
         uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
         uiState.creditsEvmAddress = result.data.evmAddress;
         uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
-        uiState.creditsLastRefreshedAt = Date.now();
 
         // Clear channel badges when no funds are reserved (all channels closed)
         const reserved = parseFloat(uiState.creditsReservedUsdc);
@@ -91,6 +97,38 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
       }
     } catch {
       // Silently fail — cached values remain
+    }
+  }
+
+  async function refreshPaymentSummary(force = false): Promise<void> {
+    if (paymentSummaryRefreshInFlight) return;
+    if (!force && Date.now() - lastPaymentSummaryRefreshAt < PAYMENT_SUMMARY_THROTTLE_MS) return;
+    if (!bridge?.paymentsGetBuyerUsage && !bridge?.paymentsGetChannels && !bridge?.paymentsGetRewardsSummary) return;
+
+    paymentSummaryRefreshInFlight = true;
+    uiState.creditsSummaryLoading = true;
+    notifyUiStateChanged();
+    try {
+      const [usage, channels, rewards] = await Promise.all([
+        bridge?.paymentsGetBuyerUsage?.().catch(() => null) ?? Promise.resolve(null),
+        bridge?.paymentsGetChannels?.().catch(() => null) ?? Promise.resolve(null),
+        bridge?.paymentsGetRewardsSummary?.().catch(() => null) ?? Promise.resolve(null),
+      ]);
+
+      if (usage?.ok && usage.data) {
+        uiState.creditsBuyerUsage = usage.data;
+      }
+      if (channels?.ok && Array.isArray(channels.data)) {
+        uiState.creditsChannels = channels.data;
+      }
+      if (rewards?.ok && rewards.data) {
+        uiState.creditsRewards = rewards.data;
+      }
+      lastPaymentSummaryRefreshAt = Date.now();
+    } finally {
+      paymentSummaryRefreshInFlight = false;
+      uiState.creditsSummaryLoading = false;
+      notifyUiStateChanged();
     }
   }
 
@@ -141,5 +179,5 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
     void refreshCredits();
   }
 
-  return { refreshCredits, startPeriodicRefresh, stopPeriodicRefresh, getAvailableUsdc, notifyPaymentCardVisible };
+  return { refreshCredits, refreshPaymentSummary, startPeriodicRefresh, stopPeriodicRefresh, getAvailableUsdc, notifyPaymentCardVisible };
 }

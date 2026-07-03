@@ -1,4 +1,5 @@
 import { Lexer } from 'marked';
+import { formatUsd } from '../../../core/format';
 
 type LexerToken = {
   type: string;
@@ -327,11 +328,6 @@ export function formatCompactNumber(value: unknown): string {
   return String(Math.floor(num));
 }
 
-export function formatUsd(value: unknown, fractionDigits = 2): string {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return (0).toFixed(fractionDigits);
-  return num.toLocaleString([], { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits });
-}
 
 export function getMyrmecochoryLabel(indexBase = 0): string {
   const index = Math.abs(Math.floor(Number(indexBase) || 0)) % myrmecochoryPhrases.length;

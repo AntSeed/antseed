@@ -74,7 +74,6 @@ export function initRuntimeModule({ uiState }: RuntimeModuleOptions) {
     uiState.processes = Array.isArray(processes) ? processes : [];
 
     const connect = computeProcessState('connect', processByMode('connect'));
-    uiState.connectState = connect.stateText;
     uiState.connectBadge = processBadgeToDisplay(connect.badge);
 
     notifyUiStateChanged();

@@ -107,7 +107,7 @@ test('empty successful discover response still settles catalog loading', async (
 
   await waitFor(() => uiState.chatDiscoverRowsLoaded && !uiState.chatServiceSelectDisabled);
   assert.equal(uiState.discoverRows.length, 0);
-  assert.equal(uiState.chatServiceStatus.label, 'No services available');
+  assert.equal(uiState.runtimeActivity.message, 'Discovering services');
 });
 
 test('failed discover response does not mark catalog loaded', async () => {
@@ -120,7 +120,7 @@ test('failed discover response does not mark catalog loaded', async () => {
 
   initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
 
-  await waitFor(() => !uiState.chatServiceSelectDisabled && uiState.chatServiceStatus.label === 'offline');
+  await waitFor(() => !uiState.chatServiceSelectDisabled && uiState.runtimeActivity.message === 'offline');
   assert.equal(uiState.chatDiscoverRowsLoaded, false);
 });
 
@@ -377,13 +377,11 @@ test('new chat created while previous response is pending sends to its own peer'
   assert.equal(uiState.chatActiveConversation, 'conv-2');
   assert.equal(uiState.chatRoutedPeerId, 'peer-b');
   assert.equal(uiState.chatRoutedPeer, 'Peer B');
-  assert.equal(uiState.chatConversationTitle, 'conv-2');
 
   await api.openConversation('conv-1');
   assert.equal(uiState.chatActiveConversation, 'conv-1');
   assert.equal(uiState.chatRoutedPeerId, 'peer-a');
   assert.equal(uiState.chatRoutedPeer, 'Peer A');
-  assert.equal(uiState.chatConversationTitle, 'conv-1');
 
   resolveFirstSend?.({ ok: true });
   for (const handler of streamDoneHandlers) {
@@ -580,7 +578,7 @@ test('payment-required card clears when switching conversations or models', asyn
   emitPaymentRequired();
   await waitFor(() => creditsCalls === 1);
   await waitFor(() => uiState.chatPaymentApprovalVisible === true);
-  assert.equal(uiState.chatPaymentApprovalPeerId, 'peer-a');
+  assert.equal(uiState.chatPaymentApprovalPeerName, 'Peer A');
 
   api.retryAfterPayment();
   await waitFor(() => sends.length === 1);
@@ -592,15 +590,15 @@ test('payment-required card clears when switching conversations or models', asyn
     peerId: 'peer-a',
   });
   assert.equal(uiState.chatPaymentApprovalVisible, true);
-  assert.equal(uiState.chatPaymentApprovalPeerId, 'peer-a');
+  assert.equal(uiState.chatPaymentApprovalPeerName, 'Peer A');
 
   streamDoneHandlers[0]?.({ conversationId: 'conv-a' });
   assert.equal(uiState.chatPaymentApprovalVisible, true);
-  assert.equal(uiState.chatPaymentApprovalPeerId, 'peer-a');
+  assert.equal(uiState.chatPaymentApprovalPeerName, 'Peer A');
 
   await api.openConversation('conv-b');
   assert.equal(uiState.chatPaymentApprovalVisible, false);
-  assert.equal(uiState.chatPaymentApprovalPeerId, null);
+  assert.equal(uiState.chatPaymentApprovalPeerName, null);
 
   await api.openConversation('conv-a');
   emitPaymentRequired();
@@ -609,7 +607,7 @@ test('payment-required card clears when switching conversations or models', asyn
 
   api.handleServiceChange(`openai${SEP}model-b${SEP}peer-b`, 'peer-b');
   assert.equal(uiState.chatPaymentApprovalVisible, false);
-  assert.equal(uiState.chatPaymentApprovalPeerId, null);
+  assert.equal(uiState.chatPaymentApprovalPeerName, null);
 });
 
 test('discover-selected draft keeps its peer if another discover chat is opened before create finishes', async () => {
@@ -813,6 +811,180 @@ test('queued send targets its original conversation after switching chats', asyn
   await waitFor(() => uiState.chatSendingConversationIds.length === 0);
 });
 
+function chatOption(id: string, peerId: string) {
+  return {
+    id,
+    label: id,
+    provider: 'openai',
+    protocol: 'openai-chat-completions',
+    count: 1,
+    value: `openai${SEP}${id}${SEP}${peerId}`,
+    peerId,
+    peerDisplayName: peerId,
+    peerLabel: peerId,
+    peerIconUrl: null,
+    inputUsdPerMillion: null,
+    outputUsdPerMillion: null,
+    cachedInputUsdPerMillion: null,
+    categories: [],
+    description: '',
+  };
+}
+
+function makeChatBridge(
+  sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }>,
+  conversations: Conversation[] = [],
+): DesktopBridge {
+  return {
+    chatAiCreateConversation: async (service, provider, peerId) => {
+      const now = Date.now();
+      const conversation: Conversation = {
+        id: `conv-${conversations.length + 1}`,
+        title: `conv-${conversations.length + 1}`,
+        service,
+        provider: provider ?? '',
+        peerId: peerId ?? '',
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
+      conversations.push(conversation);
+      return { ok: true, data: conversation };
+    },
+    chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
+    chatAiGetConversation: async (id) => {
+      const conversation = conversations.find((candidate) => candidate.id === id);
+      return conversation
+        ? { ok: true, data: { ...conversation, messages: [...conversation.messages] } }
+        : { ok: false, error: 'not found' };
+    },
+    chatPrepareAttachments: async () => ({ ok: true, data: [] }),
+    chatAiSendStream: async (conversationId, message, service, provider, _attachments, peerId) => {
+      sends.push({ conversationId, message, service, provider, peerId });
+      return { ok: true };
+    },
+  };
+}
+
+test('new chat created with VPR selected model uses the matching service and peer', async () => {
+  installDomTimers();
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [chatOption('model-a', 'peer-a'), chatOption('model-b', 'peer-b')];
+  uiState.vprRouteSelection = {
+    model: { provider: 'openai', serviceId: 'model-b', label: 'Model B', categories: [] },
+    mode: 'pinned-peer',
+    peerId: 'peer-b',
+  };
+  const sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }> = [];
+  const api = initChatModule({ bridge: makeChatBridge(sends), uiState, appendSystemLog: () => undefined });
+
+  api.sendMessage('hello from vpr');
+  await waitFor(() => sends.length === 1);
+
+  assert.deepEqual(sends[0], {
+    conversationId: 'conv-1',
+    message: 'hello from vpr',
+    service: 'model-b',
+    provider: 'openai',
+    peerId: 'peer-b',
+  });
+});
+
+test('explicit dropdown pick overrides the VPR auto-selected model for a new chat', async () => {
+  installDomTimers();
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [chatOption('model-a', 'peer-a'), chatOption('model-b', 'peer-b')];
+  // Discover auto-populated the VPR selection with the top catalog entry.
+  uiState.vprRouteSelection = {
+    model: { provider: 'openai', serviceId: 'model-a', label: 'model-a', categories: [] },
+    mode: 'auto',
+    peerId: null,
+  };
+  const sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }> = [];
+  const api = initChatModule({ bridge: makeChatBridge(sends), uiState, appendSystemLog: () => undefined });
+
+  // The user explicitly picks model-b in the ChatView dropdown; the pick must
+  // win over the VPR default (previously it was silently overridden).
+  api.handleServiceChange(`openai${SEP}model-b${SEP}peer-b`);
+  api.sendMessage('explicit pick wins');
+  await waitFor(() => sends.length === 1);
+
+  assert.deepEqual(sends[0], {
+    conversationId: 'conv-1',
+    message: 'explicit pick wins',
+    service: 'model-b',
+    provider: 'openai',
+    peerId: 'peer-b',
+  });
+  // The write-through keeps the VPR selection in sync with the pick.
+  assert.equal(uiState.vprRouteSelection.model?.serviceId, 'model-b');
+  assert.equal(uiState.vprRouteSelection.peerId, 'peer-b');
+});
+
+test('active conversation with persisted peer ignores a different VPR selected model', async () => {
+  installDomTimers();
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [chatOption('model-a', 'peer-a'), chatOption('model-b', 'peer-b')];
+  uiState.vprRouteSelection = {
+    model: { provider: 'openai', serviceId: 'model-b', label: 'Model B', categories: [] },
+    mode: 'pinned-peer',
+    peerId: 'peer-b',
+  };
+  const conversations: Conversation[] = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  const sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }> = [];
+  const api = initChatModule({ bridge: makeChatBridge(sends, conversations), uiState, appendSystemLog: () => undefined });
+
+  await api.refreshChatConversations();
+  await api.openConversation('conv-a');
+  api.sendMessage('still active conversation');
+  await waitFor(() => sends.length === 1);
+
+  assert.deepEqual(sends[0], {
+    conversationId: 'conv-a',
+    message: 'still active conversation',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+  });
+});
+
+test('pinned VPR peer with missing option falls back to existing chat selected value', async () => {
+  installDomTimers();
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [chatOption('model-a', 'peer-a'), chatOption('model-b', 'peer-b')];
+  uiState.chatSelectedServiceValue = `openai${SEP}model-a${SEP}peer-a`;
+  uiState.chatSelectedPeerId = 'peer-a';
+  uiState.vprRouteSelection = {
+    model: { provider: 'openai', serviceId: 'model-b', label: 'Model B', categories: [] },
+    mode: 'pinned-peer',
+    peerId: 'missing-peer',
+  };
+  const sends: Array<{ conversationId: string; message: string; service?: string; provider?: string; peerId?: string }> = [];
+  const api = initChatModule({ bridge: makeChatBridge(sends), uiState, appendSystemLog: () => undefined });
+
+  api.sendMessage('fallback');
+  await waitFor(() => sends.length === 1);
+
+  assert.deepEqual(sends[0], {
+    conversationId: 'conv-1',
+    message: 'fallback',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+  });
+});
+
 test('sending from reopened conversation ignores unrelated global dropdown peer', async () => {
   installDomTimers();
 
@@ -879,7 +1051,6 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
   assert.equal(uiState.chatActiveConversation, 'conv-a');
   assert.equal(uiState.chatRoutedPeerId, 'peer-a');
   assert.equal(uiState.chatRoutedPeer, 'Peer A');
-  assert.equal(uiState.chatConversationTitle, 'Conversation A');
 
   for (const handler of streamDoneHandlers) {
     handler({ conversationId: 'conv-a' });

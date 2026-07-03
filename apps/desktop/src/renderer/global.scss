@@ -15,16 +15,16 @@
   --text-secondary: #4a4a48;
   --text-muted: #9a9a96;
   --text-faint: #c8c8ce;
-  --accent: #1fd87a;
-  --accent-green: #1fd87a;
+  --accent: #01ba5c;
+  --accent-green: #01ba5c;
   --accent-blue: #3b82f6;
   --accent-yellow: #fbbf24;
   --danger: #ef4444;
   --border: rgba(0, 0, 0, 0.09);
   --border-strong: rgba(0, 0, 0, 0.12);
   --border-light: rgba(0, 0, 0, 0.04);
-  --accent-rgb: 31, 216, 122;
-  --accent-green-rgb: 31, 216, 122;
+  --accent-rgb: 1, 186, 92;
+  --accent-green-rgb: 1, 186, 92;
   --warning-rgb: 251, 191, 36;
   --danger-rgb: 239, 68, 68;
   --font-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -34,6 +34,11 @@
   --radius-sm: 8px;
   --shadow: 0px 16px 60px rgba(0, 0, 0, 0.16);
   --shadow-sm: 0px 1px 3px rgba(0, 0, 0, 0.06);
+
+  /* Motion — screen-change slides and anything that should feel like part of
+     the same gesture. Duration must match VIEW_SLIDE_MS in ViewHost.tsx. */
+  --motion-duration: 300ms;
+  --motion-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* Chat specific */
   --chat-user-bubble: #efefeb;
@@ -164,19 +169,112 @@ textarea {
    =================================================================== */
 
 .view-host {
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
-.view {
-  display: none;
-  height: 100%;
-  overflow-y: auto;
+.view-pane {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
 }
 
-.view.active {
+/* Screen-change slide (ExpressVPN-style): the incoming view slides in fully
+   while the outgoing one drifts a fraction of the width and dims (parallax). */
+.view-host-sliding .view-pane {
+  animation-duration: var(--motion-duration);
+  animation-timing-function: var(--motion-ease);
+  animation-fill-mode: both;
+  will-change: transform;
+}
+
+.view-host-sliding .view-pane-out {
+  pointer-events: none;
+}
+
+.view-host-forward .view-pane-in {
+  z-index: 2;
+  animation-name: view-slide-in-from-right;
+}
+
+.view-host-forward .view-pane-out {
+  z-index: 1;
+  animation-name: view-slide-drift-left;
+}
+
+.view-host-back .view-pane-in {
+  z-index: 1;
+  animation-name: view-slide-drift-in-from-left;
+}
+
+.view-host-back .view-pane-out {
+  z-index: 2;
+  animation-name: view-slide-out-to-right;
+}
+
+@keyframes view-slide-in-from-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes view-slide-drift-left {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-28%);
+    opacity: 0.4;
+  }
+}
+
+@keyframes view-slide-drift-in-from-left {
+  from {
+    transform: translateX(-28%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes view-slide-out-to-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-host-sliding .view-pane {
+    animation: none;
+  }
+
+  .view-host-sliding .view-pane-out {
+    display: none;
+  }
+}
+
+.view {
   display: block;
+  height: 100%;
+  overflow-y: auto;
+  /* Drives the credits pill's scroll-away (see VprShell.module.scss). The
+     pill can't live inside the scroller (it must hold still during view-slide
+     transitions), so its translate is bound to this timeline instead —
+     compositor-driven, unlike a JS scroll listener. */
+  scroll-timeline: --active-view-scroll y;
 }
 
 .route-loading {
@@ -202,9 +300,6 @@ textarea {
 
 .view-desktop.view {
   overflow: hidden;
-}
-
-.view-desktop.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -239,9 +334,6 @@ textarea {
 
 .view-chat.view {
   overflow: hidden;
-}
-
-.view-chat.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -253,9 +345,6 @@ textarea {
 
 .view-api.view {
   overflow: hidden;
-}
-
-.view-api.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -263,9 +352,6 @@ textarea {
 
 .view-system-proxy.view {
   overflow: hidden;
-}
-
-.view-system-proxy.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;

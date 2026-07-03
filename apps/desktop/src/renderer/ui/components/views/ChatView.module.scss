@@ -6,12 +6,19 @@
 
 .page-header {
   background: var(--chat-header-bg);
-  padding: 6px 16px;
+  /* Extra right padding clears the shell's floating credits pill. */
+  padding: 6px 110px 6px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--border-light);
+}
+
+/* The header sits inside the shell's title-bar drag strip — keep its
+   controls clickable by punching no-drag holes in the drag region. */
+.page-header :is(button, input, select, a, [role='button']) {
+  -webkit-app-region: no-drag;
 }
 
 .page-header-left {

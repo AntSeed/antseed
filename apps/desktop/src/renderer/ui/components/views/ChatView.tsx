@@ -10,7 +10,6 @@ import {
   Cancel01Icon,
   Copy01Icon,
   Folder01Icon,
-  GitBranchIcon,
   Mic01Icon,
   Search01Icon,
   SecurityWarningIcon,
@@ -34,7 +33,7 @@ import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewe
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
-import type { ChatPermissionMode, ChatWorkspaceGitStatus, RawChatAttachment } from '../../../types/bridge';
+import type { ChatPermissionMode, RawChatAttachment } from '../../../types/bridge';
 import { getPeerDisplayName } from '../../../core/peer-utils';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
@@ -153,24 +152,6 @@ function getPathEnding(value: string | null | undefined): string {
   return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }
 
-function getGitChangeCount(status: ChatWorkspaceGitStatus): number {
-  return status.stagedFiles + status.modifiedFiles + status.untrackedFiles;
-}
-
-function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
-  if (!status.available) {
-    return status.error ? 'Git unavailable' : 'No repo';
-  }
-
-  const parts: string[] = [];
-  if (status.ahead > 0) parts.push(`\u2191${status.ahead}`);
-  if (status.behind > 0) parts.push(`\u2193${status.behind}`);
-
-  const changes = getGitChangeCount(status);
-  parts.push(changes > 0 ? `${changes} changes` : 'clean');
-  return parts.join(' ');
-}
-
 function formatVoiceElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -178,27 +159,7 @@ function formatVoiceElapsed(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
-  if (!status.available) {
-    return status.error || 'Git status for the selected workspace. This workspace is shared across chats.';
-  }
-
-  const details = [
-    'Git status for the selected workspace. This workspace is shared across chats.',
-    status.rootPath ? `Repo: ${status.rootPath}` : null,
-    `Staged: ${status.stagedFiles}`,
-    `Modified: ${status.modifiedFiles}`,
-    `Untracked: ${status.untrackedFiles}`,
-    `Ahead: ${status.ahead}`,
-    `Behind: ${status.behind}`,
-  ].filter(Boolean);
-
-  return details.join('\n');
-}
-
-
 type ChatViewProps = {
-  active: boolean;
   onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
@@ -265,7 +226,7 @@ const chatViewCache: ChatViewCache = {
   approvedLowReputationPeers: new Set(),
 };
 
-export function ChatView({ active, onSelectView }: ChatViewProps) {
+export function ChatView({ onSelectView }: ChatViewProps) {
   const snap = useUiSelector((state) => ({
     browserPreviewRequestId: state.browserPreviewRequestId,
     browserPreviewUrl: state.browserPreviewUrl,
@@ -357,8 +318,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
-  const lastConversationIdRef = useRef<string | null>(snap.chatActiveConversation);
-  const wasActiveRef = useRef<boolean>(false);
   const isUserScrolledUp = useRef(false);
   const isDragging = useRef(false);
   const permissionMenuRef = useRef<HTMLDivElement>(null);
@@ -464,7 +423,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, [closeMessageSearch, selectNextSearchResult, selectPreviousSearchResult]);
 
   useEffect(() => {
-    if (!active) return undefined;
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -478,7 +436,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [active, closeMessageSearch, messageSearchOpen, openMessageSearch]);
+  }, [closeMessageSearch, messageSearchOpen, openMessageSearch]);
 
   // Track whether the user has scrolled away from the bottom.
   useEffect(() => {
@@ -510,23 +468,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   // last scroll offset from a previous visit. Keep manual scrollback behavior
   // during the current visit by only forcing bottom on conversation/view entry.
   useEffect(() => {
-    const previousConversationId = lastConversationIdRef.current;
-    const wasActive = wasActiveRef.current;
-    const conversationChanged = previousConversationId !== snap.chatActiveConversation;
-    const becameActive = active && !wasActive;
-
-    lastConversationIdRef.current = snap.chatActiveConversation;
-    wasActiveRef.current = active;
-
-    if (!active || (!conversationChanged && !becameActive)) {
-      return;
-    }
-
+    // Runs on view entry (mount) and on conversation switch — both should
+    // land on the latest message rather than a stale scroll offset.
     isUserScrolledUp.current = false;
     scrollChatToBottom();
     const frame = requestAnimationFrame(() => scrollChatToBottom());
     return () => cancelAnimationFrame(frame);
-  }, [active, snap.chatActiveConversation, scrollChatToBottom]);
+  }, [snap.chatActiveConversation, scrollChatToBottom]);
 
   // Keep the view pinned to the bottom while the user is already at the bottom.
   useEffect(() => {
@@ -1160,7 +1108,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     : undefined;
 
   return (
-    <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view view-chat`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
           {peerDisplayName && (
@@ -1328,9 +1276,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       {showWelcome && (
         <button
           className={styles.chatExternalHint}
-          onClick={() => onSelectView?.('external-clients')}
+          onClick={() => onSelectView?.('tools')}
         >
-          <span>Works with Claude Code, Codex, OpenCode, and any OpenAI-compatible tool</span>
+          <span>Connect tools through your VPR profiles</span>
           <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.5} />
         </button>
       )}

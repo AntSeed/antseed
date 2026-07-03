@@ -1,10 +1,9 @@
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 
 type ConnectionViewProps = {
-  active: boolean;
 };
 
-export function ConnectionView({ active }: ConnectionViewProps) {
+export function ConnectionView(_props: ConnectionViewProps) {
   const { connectionMeta, connectionStatus, connectionNetwork, connectionSources, connectionNotes } =
     useUiSelector((state) => ({
       connectionMeta: state.connectionMeta,
@@ -15,7 +14,7 @@ export function ConnectionView({ active }: ConnectionViewProps) {
     }), shallowEqual);
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view`} role="tabpanel">
       <div className="page-header">
         <h2>Connection</h2>
         <div className={`connection-badge badge-${connectionMeta.tone}`}>{connectionMeta.label}</div>

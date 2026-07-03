@@ -12,7 +12,6 @@ import { safeString } from '../../../core/safe';
 import type { PeerEntry, SortDirection } from '../../../core/state';
 
 type PeersViewProps = {
-  active: boolean;
 };
 
 type SortKey = string;
@@ -89,7 +88,7 @@ const peersViewCache = {
   filter: '',
 };
 
-export function PeersView({ active }: PeersViewProps) {
+export function PeersView(_props: PeersViewProps) {
   const { lastPeers, peersMessage, discoverRows } = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
     peersMessage: state.peersMessage,
@@ -124,7 +123,7 @@ export function PeersView({ active }: PeersViewProps) {
   }, [lastPeers, filter, sortKey, sortDir, reputationScoresByPeerId]);
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view`} role="tabpanel">
       <div className="page-header">
         <h2>Peers</h2>
         <div className="page-header-right">

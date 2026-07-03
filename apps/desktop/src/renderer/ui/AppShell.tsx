@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { StreamingIndicator } from './components/StreamingIndicator';
-import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import { SetupScreen } from './components/SetupScreen';
-import { preloadViews } from './components/viewRegistry';
+import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
-import type { ViewName } from './types';
+import { DEV_VIEW_NAMES, type ViewName } from './types';
+import { VprShell } from './components/VprShell';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
 
@@ -33,7 +31,7 @@ export function AppShell() {
     chatServiceCount: state.chatServiceOptions.length,
     devMode: state.devMode,
   }), shallowEqual);
-  const [activeView, setActiveView] = useState<ViewName>('discover');
+  const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
 
@@ -83,18 +81,18 @@ export function AppShell() {
   const showSetup = setupVisible;
 
   useEffect(() => {
-    if (!snap.devMode && (activeView === 'connection' || activeView === 'peers' || activeView === 'desktop')) {
-      setActiveView('overview');
+    if (!snap.devMode && (DEV_VIEW_NAMES as readonly ViewName[]).includes(activeView)) {
+      setActiveView('home');
     }
   }, [activeView, snap.devMode]);
 
   useEffect(() => {
     if (showSetup) return undefined;
 
-    void preloadViews(['discover', 'chat']);
+    void preloadViews(viewsForPreload('eager'));
 
     return scheduleRoutePreload(() => {
-      void preloadViews(['external-clients', 'config']);
+      void preloadViews(viewsForPreload('idle'));
     });
   }, [showSetup]);
 
@@ -108,15 +106,8 @@ export function AppShell() {
   }
 
   return (
-    <>
-      <TitleBar />
-      <div className="app-container">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} />
-        <main className="main-content">
-          <ViewHost activeView={activeView} onSelectView={setActiveView} />
-        </main>
-      </div>
-      <StreamingIndicator />
-    </>
+    <VprShell activeView={activeView} onSelectView={setActiveView}>
+      <ViewHost activeView={activeView} onSelectView={setActiveView} />
+    </VprShell>
   );
 }

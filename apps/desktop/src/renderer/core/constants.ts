@@ -13,8 +13,6 @@ export const ROUTER_PACKAGE_ALIASES: Record<string, string> = {
 };
 
 export const UI_MESSAGES = {
-  proxyPortInUse:
-    'Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.',
   desktopBridgeUnavailable:
     'Desktop bridge unavailable: preload failed to inject API. Restart app after main/preload compile.',
   localServicePortInUse: 'Local data service port already in use; reusing the existing service.',

@@ -1,0 +1,45 @@
+.view {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 46px 18px 18px;
+}
+
+.stack {
+  display: grid;
+  gap: 14px;
+}
+
+.header {
+  display: grid;
+  gap: 4px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.control {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preview {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}

@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect';
+export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -20,6 +20,34 @@ export type SystemProxyProfileSummary = {
   openUrl?: string;
   toolName?: string;
   canRestart?: boolean;
+};
+
+export type DesktopBuyerUsageTotals = {
+  totalRequests: number;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalSettlements: number;
+  uniqueSellers: number;
+  activeChannels: number;
+};
+
+export type DesktopPaymentChannelSummary = {
+  channelId: string;
+  peerId: string;
+  seller: string;
+  reserveMax: string;
+  cumulativeSigned: string;
+  reservedAt: number;
+  status: string;
+  requestCount: number;
+};
+
+export type DesktopRewardsSummary = {
+  available: boolean;
+  pendingAnts: string;
+  currentEpoch: number | null;
+  transfersEnabled: boolean;
+  error: string | null;
 };
 
 export type LogEvent = {
@@ -181,6 +209,14 @@ export type DesktopBridge = {
   getSystemLocale?: () => Promise<string>;
   /** Current app version from Electron `app.getVersion()`. */
   getAppVersion?: () => Promise<string>;
+  /**
+   * OpenRouter reference/retail prices keyed by normalized model id/name
+   * (USD per million tokens). Used to render the struck-through baseline on
+   * the VPR Home "Popular" list. Empty map when OpenRouter is unreachable.
+   */
+  getOpenRouterReferencePrices?: () => Promise<
+    Record<string, { input: number | null; output: number | null }>
+  >;
   getState?: () => Promise<RuntimeSnapshot>;
   start?: (options: StartOptions) => Promise<unknown>;
   stop?: (mode: RuntimeMode) => Promise<unknown>;
@@ -289,6 +325,9 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }>;
+  paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
+  paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
 
   systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;

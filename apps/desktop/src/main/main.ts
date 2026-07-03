@@ -26,7 +26,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
+import { ANTSTokenClient, DepositsClient, EmissionsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog, stripAnsi } from './log-parser.js';
@@ -63,6 +63,7 @@ import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
 import {
   getVoiceTranscriptionStatus,
@@ -83,6 +84,7 @@ const DEFAULT_BUYER_PROXY_PORT = 8377;
 const SYSTEM_PROXY_PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON';
 const SYSTEM_PROXY_PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE';
 const PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE = 'system-proxy-profiles.json';
+const SYSTEM_PROXY_ENV_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS'] as const;
 
 type DesktopSystemProxyProfile = {
   readonly name: string;
@@ -95,6 +97,43 @@ type DesktopSystemProxyProfile = {
   readonly toolName?: string;
   readonly restartAppName?: string;
   readonly configPatch?: ConfigPatchDef;
+};
+
+type DesktopSystemProxyProfileMetadata = {
+  readonly displayLabel?: string;
+  readonly methodLabel?: string;
+  readonly appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app';
+  readonly openUrl?: string;
+  readonly toolName?: string;
+  readonly restartAppName?: string;
+};
+
+type DesktopBuyerUsageTotals = {
+  totalRequests: number;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalSettlements: number;
+  uniqueSellers: number;
+  activeChannels: number;
+};
+
+type DesktopPaymentChannelSummary = {
+  channelId: string;
+  peerId: string;
+  seller: string;
+  reserveMax: string;
+  cumulativeSigned: string;
+  reservedAt: number;
+  status: string;
+  requestCount: number;
+};
+
+type DesktopRewardsSummary = {
+  available: boolean;
+  pendingAnts: string;
+  currentEpoch: number | null;
+  transfersEnabled: boolean;
+  error: string | null;
 };
 
 const SYSTEM_PROXY_PROFILES = loadDesktopSystemProxyProfiles();
@@ -137,18 +176,19 @@ function normalizeDesktopSystemProxyProfile(value: unknown, index: number): Desk
   }
   const raw = value as Record<string, unknown>;
   const name = readRequiredString(raw, 'name', index);
-  const label = readString(raw, 'displayName') ?? readString(raw, 'label') ?? `Tool ${index + 1}`;
+  const metadata = readProfileMetadata(raw['metadata']);
+  const label = readString(raw, 'displayName') ?? readString(raw, 'label') ?? metadata?.displayLabel ?? `Tool ${index + 1}`;
   const kind = raw['kind'] === 'config-patch' ? 'config-patch' : 'proxy';
   const configPatch = readConfigPatch(raw['configPatch'], name);
-  const appAction = readAppAction(raw['appAction']);
-  const openUrl = readString(raw, 'openUrl');
-  const toolName = readString(raw, 'toolName');
-  const restartAppName = readString(raw, 'restartAppName');
+  const appAction = readAppAction(raw['appAction']) ?? metadata?.appAction;
+  const openUrl = readString(raw, 'openUrl') ?? metadata?.openUrl;
+  const toolName = readString(raw, 'toolName') ?? metadata?.toolName;
+  const restartAppName = readString(raw, 'restartAppName') ?? metadata?.restartAppName;
   return {
     name,
     label,
     kind,
-    method: readString(raw, 'method') ?? (kind === 'config-patch' ? 'Config' : 'Proxy'),
+    method: readString(raw, 'method') ?? metadata?.methodLabel ?? (kind === 'config-patch' ? 'Config' : 'Proxy'),
     domains: readStringArray(raw['domains']),
     ...(appAction ? { appAction } : {}),
     ...(openUrl ? { openUrl } : {}),
@@ -156,6 +196,21 @@ function normalizeDesktopSystemProxyProfile(value: unknown, index: number): Desk
     ...(restartAppName ? { restartAppName } : {}),
     ...(configPatch ? { configPatch } : {}),
   };
+}
+
+function readProfileMetadata(value: unknown): DesktopSystemProxyProfileMetadata | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const appAction = readAppAction(raw['appAction']);
+  const metadata: DesktopSystemProxyProfileMetadata = {
+    ...(readString(raw, 'displayLabel') ? { displayLabel: readString(raw, 'displayLabel') } : {}),
+    ...(readString(raw, 'methodLabel') ? { methodLabel: readString(raw, 'methodLabel') } : {}),
+    ...(appAction ? { appAction } : {}),
+    ...(readString(raw, 'openUrl') ? { openUrl: readString(raw, 'openUrl') } : {}),
+    ...(readString(raw, 'toolName') ? { toolName: readString(raw, 'toolName') } : {}),
+    ...(readString(raw, 'restartAppName') ? { restartAppName: readString(raw, 'restartAppName') } : {}),
+  };
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 function readConfigPatch(value: unknown, profileName: string): ConfigPatchDef | undefined {
@@ -492,6 +547,9 @@ async function waitForSystemProxyReady(port: number, timeoutMs = 5_000): Promise
 function setSystemProxyNodeEnv(port: number): void {
   const caPath = systemProxyCaPath();
   const hookFile = systemProxyHookPath();
+  process.env['HTTPS_PROXY'] = `http://localhost:${port}`;
+  process.env['NODE_EXTRA_CA_CERTS'] = caPath;
+  process.env['NODE_OPTIONS'] = `--require ${hookFile}`;
   const cmds: [string, string[]][] = [];
   if (process.platform === 'darwin') {
     cmds.push(['launchctl', ['setenv', 'HTTPS_PROXY', `http://localhost:${port}`]]);
@@ -569,6 +627,14 @@ function clearOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): void {
     }
   } else if (process.platform === 'win32') {
     try {
+      // Ownership guard: only disable the proxy if it points at the AntSeed proxy.
+      const out = execFileSync('reg', [
+        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v', 'ProxyServer',
+      ], { encoding: 'utf8' });
+      if (!out.includes(`127.0.0.1:${port}`) && !out.includes(`localhost:${port}`)) {
+        return;
+      }
       execFileSync('reg', [
         'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
         '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f',
@@ -647,9 +713,15 @@ async function clearSystemProxyRuntimeFiles(): Promise<void> {
 }
 
 async function clearSystemProxySettings(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
-  clearSystemProxyNodeEnv();
+  clearSystemProxyNodeEnv(port);
   await restoreOsSystemProxy(port);
   await clearSystemProxyRuntimeFiles();
+  await removeSystemProxyFromShellProfiles();
+}
+
+async function clearSystemProxyTransportSettings(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
+  clearSystemProxyNodeEnv(port);
+  await restoreOsSystemProxy(port);
   await removeSystemProxyFromShellProfiles();
 }
 
@@ -663,7 +735,10 @@ async function stopManagedRuntimes(): Promise<void> {
 
 function removeSystemProxyShellBlock(content: string): string {
   // Remove the block between the start/end markers (inclusive), plus surrounding blank lines
-  return content.replace(/\n*# AntSeed System Proxy\n[\s\S]*?# End AntSeed System Proxy\n*/g, '\n');
+  return content
+    .replace(/\n*# AntSeed System Proxy\n[\s\S]*?# End AntSeed System Proxy\n*/gi, '\n')
+    .replace(/\n*# AntSeed intercept proxy\n(?:export (?:HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)=.*\n)+/gi, '\n')
+    .replace(/\n*# AntSeed CLI shell params\n(?:export (?:HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)=.*\n)+/gi, '\n');
 }
 
 async function removeSystemProxyFromShellProfiles(): Promise<void> {
@@ -685,13 +760,63 @@ async function removeSystemProxyFromShellProfiles(): Promise<void> {
   }
 }
 
-function clearSystemProxyNodeEnv(): void {
+function readWindowsUserEnvValue(varName: string): string {
+  try {
+    const out = execFileSync('reg', ['query', 'HKCU\\Environment', '/v', varName], { encoding: 'utf8' });
+    const match = out.match(new RegExp(`${varName}\\s+REG_(?:EXPAND_)?SZ\\s+(.*)`, 'i'));
+    return match?.[1]?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function readDarwinUserEnvValue(varName: string): string {
+  try {
+    return execFileSync('launchctl', ['getenv', varName], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function isSystemProxyEnvValue(varName: string, value: string, port: number): boolean {
+  const dataDir = systemProxyDataDir();
+  const caPath = systemProxyCaPath();
+  const hookFile = systemProxyHookPath();
+  const proxyPattern = new RegExp(`^(?:https?://)?(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::${port})/?$`, 'i');
+  if (varName === 'HTTPS_PROXY' || varName === 'HTTP_PROXY' || varName === 'ALL_PROXY') {
+    return proxyPattern.test(value.trim());
+  }
+  if (varName === 'NODE_EXTRA_CA_CERTS') {
+    return value === caPath || value.startsWith(`${dataDir}${path.sep}`);
+  }
+  if (varName === 'NODE_OPTIONS') {
+    return value.includes(hookFile) || value.includes(`${dataDir}${path.sep}node-proxy-hook.cjs`);
+  }
+  return false;
+}
+
+function clearSystemProxyProcessEnv(port = DEFAULT_SYSTEM_PROXY_PORT): void {
+  for (const varName of SYSTEM_PROXY_ENV_VARS) {
+    const current = process.env[varName];
+    if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
+    delete process.env[varName];
+  }
+}
+
+function clearSystemProxyNodeEnv(port = DEFAULT_SYSTEM_PROXY_PORT): void {
+  clearSystemProxyProcessEnv(port);
   if (process.platform === 'darwin') {
-    for (const varName of ['HTTPS_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS']) {
+    for (const varName of SYSTEM_PROXY_ENV_VARS) {
+      const current = readDarwinUserEnvValue(varName);
+      if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
       try { execFileSync('launchctl', ['unsetenv', varName], { stdio: 'pipe' }); } catch { /* best-effort */ }
     }
   } else if (process.platform === 'win32') {
-    for (const varName of ['HTTPS_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS']) {
+    // Ownership guard: only clear vars whose current value references the
+    // AntSeed proxy or its data dir — leave unrelated user values alone.
+    for (const varName of SYSTEM_PROXY_ENV_VARS) {
+      const current = readWindowsUserEnvValue(varName);
+      if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
       try { execFileSync('setx', [varName, ''], { stdio: 'pipe' }); } catch { /* best-effort */ }
     }
   }
@@ -1004,9 +1129,18 @@ type SystemProxyStartRequest = {
 function routeForTool(opts: SystemProxyStartRequest, profileName: string): { peerId: string; model: string; services: string[] } {
   const route = opts.toolRoutes?.[profileName];
   const peerId = route?.peerId?.trim() || opts.peerId;
-  const model = route?.model?.trim() || opts.defaultModel || '';
   const peer = lookupPeer(peerId);
-  return { peerId, model, services: peer?.services ?? opts.servedModels ?? [] };
+  const services = peer?.services ?? (peerId === opts.peerId ? opts.servedModels ?? [] : []);
+  const requestedModel = route?.model?.trim();
+  const defaultModel = opts.defaultModel?.trim() ?? '';
+  const model = route
+    // Explicitly routed model is used verbatim; otherwise fall back to the
+    // peer's first service, then the default model.
+    ? (requestedModel || (services[0] ?? defaultModel))
+    : (defaultModel && (services.length === 0 || services.includes(defaultModel))
+      ? defaultModel
+      : services[0] ?? defaultModel);
+  return { peerId, model, services };
 }
 
 async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
@@ -1033,6 +1167,9 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
   const processState = processManager.getState().find((entry) => entry.mode === 'system-proxy');
   if (processState?.running) {
     await processManager.stop('system-proxy');
+  }
+  if (proxyProfiles.length === 0) {
+    await clearSystemProxyTransportSettings(port);
   }
 
   const buyerProxyPort = await resolveBuyerProxyPort();
@@ -1106,7 +1243,8 @@ async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimePr
 function openSystemProxyWindow(): void {
   const window = getMainWindow();
   if (window) {
-    applyWindowView('system-proxy');
+    // Don't resize via applyWindowView here — no IPC navigates the renderer,
+    // so it keeps rendering whatever view is active. Just surface the window.
     window.show();
     window.focus();
   }
@@ -1545,6 +1683,8 @@ ipcMain.handle('app:get-setup-status', () => ({
 ipcMain.handle('app:get-system-locale', () => app.getLocale());
 ipcMain.handle('app:get-version', () => app.getVersion());
 
+ipcMain.handle('openrouter:reference-prices', () => getOpenRouterReferencePrices());
+
 ipcMain.handle('identity:get', async () => {
   try {
     await ensureSecureIdentity();
@@ -1746,6 +1886,8 @@ ipcMain.handle(
     try {
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
       cachedCryptoConfig = null; // Invalidate cached crypto config
+      cachedEmissionsClient = null;
+      cachedAntsTokenClient = null;
       invalidateOnChainEnrichmentCache();
       creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
       // Restart payments portal if running so it picks up new contract/chain config
@@ -1775,7 +1917,21 @@ let cachedCreditsInfo: CreditsInfo | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; fallbackRpcUrls?: string[]; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
+let cachedCryptoConfig: {
+  rpcUrl: string;
+  fallbackRpcUrls?: string[];
+  depositsAddress: string;
+  channelsAddress: string;
+  usdcAddress: string;
+  chainId: number;
+  emissionsAddress?: string;
+  antsTokenAddress?: string;
+} | null = null;
+
+// Cached on-chain clients for the rewards summary — invalidated together with
+// cachedCryptoConfig on config updates.
+let cachedEmissionsClient: EmissionsClient | null = null;
+let cachedAntsTokenClient: ANTSTokenClient | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -1792,7 +1948,16 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   const selectedChain = asString(overrides.chainId as string, '') || 'base-mainnet';
   const userRpcUrl = asString(overrides.rpcUrl as string, '');
   const cc = resolveChainConfig({ chainId: selectedChain, ...(userRpcUrl ? { rpcUrl: userRpcUrl } : {}) });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  cachedCryptoConfig = {
+    rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+    depositsAddress: cc.depositsContractAddress,
+    channelsAddress: cc.channelsContractAddress,
+    usdcAddress: cc.usdcContractAddress,
+    chainId: cc.evmChainId,
+    ...(cc.emissionsContractAddress ? { emissionsAddress: cc.emissionsContractAddress } : {}),
+    ...(cc.antsTokenAddress ? { antsTokenAddress: cc.antsTokenAddress } : {}),
+  };
   return cachedCryptoConfig;
 }
 
@@ -1876,6 +2041,88 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
 const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
+const EMPTY_BUYER_USAGE_TOTALS: DesktopBuyerUsageTotals = {
+  totalRequests: 0,
+  totalInputTokens: '0',
+  totalOutputTokens: '0',
+  totalSettlements: 0,
+  uniqueSellers: 0,
+  activeChannels: 0,
+};
+
+const EMPTY_REWARDS_SUMMARY: DesktopRewardsSummary = {
+  available: false,
+  pendingAnts: '0',
+  currentEpoch: null,
+  transfersEnabled: false,
+  error: null,
+};
+
+function readNumberField(raw: Record<string, unknown>, key: string): number {
+  const value = raw[key];
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function readStringField(raw: Record<string, unknown>, key: string): string {
+  const value = raw[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+  return '';
+}
+
+function normalizeBuyerUsageTotals(value: unknown): DesktopBuyerUsageTotals {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return EMPTY_BUYER_USAGE_TOTALS;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    totalRequests: readNumberField(raw, 'totalRequests'),
+    totalInputTokens: readStringField(raw, 'totalInputTokens') || '0',
+    totalOutputTokens: readStringField(raw, 'totalOutputTokens') || '0',
+    totalSettlements: readNumberField(raw, 'totalSettlements'),
+    uniqueSellers: readNumberField(raw, 'uniqueSellers'),
+    activeChannels: readNumberField(raw, 'activeChannels'),
+  };
+}
+
+function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSummary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const channelId = readStringField(raw, 'channelId') || readStringField(raw, 'sessionId');
+  if (!channelId) return null;
+  return {
+    channelId,
+    peerId: readStringField(raw, 'peerId') || readStringField(raw, 'sellerPeerId'),
+    seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
+    reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
+    cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
+    reservedAt: readNumberField(raw, 'reservedAt'),
+    status: readStringField(raw, 'status') || 'unknown',
+    requestCount: readNumberField(raw, 'requestCount'),
+  };
+}
+
+async function fetchBuyerProxyJson(pathname: string): Promise<Record<string, unknown> | null> {
+  const port = await resolveBuyerProxyPort();
+  try {
+    const response = await fetch(`${LOCALHOST_URL}:${port}${pathname}`);
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatAnts(value: bigint): string {
+  const whole = value / 1_000_000_000_000_000_000n;
+  const fraction = value % 1_000_000_000_000_000_000n;
+  if (fraction === 0n) return whole.toString();
+  const padded = fraction.toString().padStart(18, '0').replace(/0+$/, '');
+  return `${whole.toString()}.${padded.slice(0, 6)}`;
+}
+
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
   channelId: string;
   cumulativeAmountBaseUnits: string;
@@ -1956,6 +2203,88 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('payments:get-buyer-usage', async (): Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }> => {
+  const body = await fetchBuyerProxyJson('/_antseed/buyer-usage');
+  if (!body) {
+    return { ok: false, data: null, error: 'buyer proxy unreachable' };
+  }
+  return {
+    ok: true,
+    data: normalizeBuyerUsageTotals(body['totals']),
+    error: null,
+  };
+});
+
+ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
+  const body = await fetchBuyerProxyJson('/_antseed/channels?all=1');
+  if (!body) {
+    return { ok: false, data: null, error: 'buyer proxy unreachable' };
+  }
+  const channels = Array.isArray(body['channels'])
+    ? body['channels']
+      .map((entry) => normalizePaymentChannelSummary(entry))
+      .filter((entry): entry is DesktopPaymentChannelSummary => entry !== null)
+    : [];
+  return { ok: true, data: channels, error: null };
+});
+
+ipcMain.handle('payments:get-rewards-summary', async (): Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }> => {
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    const cc = await loadCachedCryptoConfig();
+    if (!identity || !cc?.emissionsAddress) {
+      return { ok: true, data: EMPTY_REWARDS_SUMMARY, error: null };
+    }
+
+    cachedEmissionsClient ??= new EmissionsClient({
+      rpcUrl: cc.rpcUrl,
+      ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+      contractAddress: cc.emissionsAddress,
+      evmChainId: cc.chainId,
+    });
+    const emissionsClient = cachedEmissionsClient;
+    if (cc.antsTokenAddress) {
+      cachedAntsTokenClient ??= new ANTSTokenClient({
+        rpcUrl: cc.rpcUrl,
+        ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+        contractAddress: cc.antsTokenAddress,
+        evmChainId: cc.chainId,
+      });
+    }
+    const tokenClient = cachedAntsTokenClient;
+    // transfersEnabled only depends on the token address — run it in parallel
+    // with the epoch + pending-emissions chain.
+    const [{ currentEpoch, pending }, transfersEnabled] = await Promise.all([
+      (async () => {
+        const info = await emissionsClient.getEpochInfo();
+        const startEpoch = Math.max(0, info.epoch - 9);
+        const epochs = Array.from({ length: info.epoch - startEpoch + 1 }, (_, index) => startEpoch + index);
+        return { currentEpoch: info.epoch, pending: await emissionsClient.pendingEmissions(identity.wallet.address, epochs) };
+      })(),
+      tokenClient ? tokenClient.transfersEnabled() : Promise.resolve(false),
+    ]);
+
+    return {
+      ok: true,
+      data: {
+        available: true,
+        pendingAnts: formatAnts(pending.seller + pending.buyer),
+        currentEpoch,
+        transfersEnabled,
+        error: null,
+      },
+      error: null,
+    };
+  } catch (err) {
+    return {
+      ok: true,
+      data: { ...EMPTY_REWARDS_SUMMARY, error: err instanceof Error ? err.message : String(err) },
+      error: null,
+    };
   }
 });
 
@@ -2218,6 +2547,7 @@ ipcMain.handle('system-proxy:remove-from-shell', async () => {
   const { readFile, writeFile } = await import('node:fs/promises');
   const { join: pjoin } = path;
   const home = homedir();
+  clearSystemProxyNodeEnv();
 
   const candidates = [
     pjoin(home, '.zshrc'),
@@ -2270,6 +2600,15 @@ app.whenReady().then(async () => {
   };
 
   showMainWindow();
+
+  // Stale System Proxy cleanup (no persisted state) — fire-and-forget so clean
+  // launches don't block window creation on networksetup/reg calls.
+  if (!activeSystemProxyState) {
+    void clearSystemProxySettings().catch((err) => {
+      appendLog('system-proxy', 'system', `System Proxy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
   createDesktopTray({
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,

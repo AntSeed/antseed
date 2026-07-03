@@ -11,13 +11,12 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { windowPresetForView, type WindowSizePresetName } from '../shared/view-windows.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
-
-type WindowSizePresetName = 'standard' | 'compact';
 
 type WindowSizePreset = {
   width: number;
@@ -34,10 +33,10 @@ const WINDOW_SIZE_PRESETS: Record<WindowSizePresetName, WindowSizePreset> = {
     minHeight: 700,
   },
   compact: {
-    width: 640,
-    height: 640,
-    minWidth: 560,
-    minHeight: 540,
+    width: 528,
+    height: 656,
+    minWidth: 480,
+    minHeight: 560,
   },
 };
 
@@ -125,11 +124,15 @@ function applySizePreset(presetName: WindowSizePresetName): { ok: true; skipped?
 }
 
 export function applyWindowView(viewName: string): { ok: true; skipped?: 'fullscreen' | 'maximized' | 'missing-window' } {
-  return applySizePreset(viewName === 'system-proxy' ? 'compact' : 'standard');
+  return applySizePreset(windowPresetForView(viewName));
 }
 
 export function createWindow(config: WindowConfig): void {
-  const standardPreset = WINDOW_SIZE_PRESETS.standard;
+  // The default view is 'home', which maps to the compact preset (see
+  // applyWindowView). Open at that size so the window doesn't briefly render
+  // large and then snap down on first mount.
+  const initialPreset = WINDOW_SIZE_PRESETS.compact;
+  activeSizePreset = 'compact';
   const macosWindowChrome = process.platform === 'darwin'
     ? {
       titleBarStyle: 'hiddenInset' as const,
@@ -138,10 +141,10 @@ export function createWindow(config: WindowConfig): void {
     : {};
 
   mainWindow = new BrowserWindow({
-    width: standardPreset.width,
-    height: standardPreset.height,
-    minWidth: standardPreset.minWidth,
-    minHeight: standardPreset.minHeight,
+    width: initialPreset.width,
+    height: initialPreset.height,
+    minWidth: initialPreset.minWidth,
+    minHeight: initialPreset.minHeight,
     title: config.appName,
     icon: config.appIconPath,
     backgroundColor: '#ececec',

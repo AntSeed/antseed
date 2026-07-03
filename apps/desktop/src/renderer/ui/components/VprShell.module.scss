@@ -1,0 +1,217 @@
+.shell {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 24px;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Chat mode inserts the conversation-list panel between the nav rail
+   and the main pane. The status strip spans all columns either way. */
+.shellWithPanel {
+  grid-template-columns: 88px var(--sidebar-width) minmax(0, 1fr);
+}
+
+.dragStrip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  -webkit-app-region: drag;
+  /* Drag regions are collected from layout, not hit-testing, so this can be
+     click-transparent for the web content underneath. */
+  pointer-events: none;
+}
+
+.sidebar {
+  grid-row: 1;
+  width: 88px;
+  min-width: 88px;
+  /* Top clearance for the macOS hidden-inset traffic lights (y:16). */
+  padding-top: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  border-right: 2px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.navGroup {
+  display: grid;
+  gap: 16px;
+}
+
+.navBottom {
+  margin-top: auto;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.navButton {
+  position: relative;
+  width: 100%;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.navButton:hover,
+.navButton:focus-visible {
+  color: var(--text-primary);
+  outline: none;
+}
+
+.navButtonActive {
+  color: var(--text-primary);
+}
+
+.navLabel {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.navDot {
+  position: absolute;
+  top: 5px;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.navIconOnly {
+  width: 44px;
+  min-height: 44px;
+  justify-self: center;
+}
+
+.mainPane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
+  /* Lifts the active view's --active-view-scroll timeline up to where the
+     credits pill (a sibling of the scroller) can attach to it. While a slide
+     transition has two views mounted, the duplicate names make the timeline
+     inactive and the pill holds its base position — exactly what we want. */
+  timeline-scope: --active-view-scroll;
+}
+
+.creditsPill {
+  position: absolute;
+  /* Above the sliding view panes (z-index 2) so it stays fixed in place
+     while screens transition underneath it. */
+  z-index: 3;
+  top: 12px;
+  right: 14px;
+  /* Sits inside the hidden-inset title-bar drag strip — keep it clickable. */
+  -webkit-app-region: no-drag;
+  max-width: min(180px, calc(100% - 24px));
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.creditsPill:hover,
+.creditsPill:focus-visible {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+/* Scroll-away: the pill tracks the view's first 56px of scroll (its top
+   offset + height) 1:1, then stays parked off-screen. Runs on the compositor
+   via the scroll timeline — no scroll-event lag. Longhands only: the
+   `animation` shorthand would reset animation-timeline back to auto. */
+.creditsPill {
+  animation-name: pill-scroll-away;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: --active-view-scroll;
+  animation-range: 0px 56px;
+}
+
+@keyframes pill-scroll-away {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-56px);
+  }
+}
+
+.content {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.statusStrip {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+  overflow: hidden;
+}
+
+.statusItem {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusItem:last-child {
+  color: var(--text-faint);
+}
+
+.statusWarn {
+  color: var(--accent-yellow);
+  font-weight: 600;
+}
+
+.statusBad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.statusSep {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  user-select: none;
+}

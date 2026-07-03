@@ -1,12 +1,22 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { PlayIcon, Cancel01Icon, CheckmarkCircle01Icon, Loading03Icon } from '@hugeicons/core-free-icons';
-import type { RuntimeProcessState, LogEvent, SystemProxyProfileSummary } from '../../../types/bridge';
-import type { DiscoverRow, PeerEntry } from '../../../core/state';
+import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import {
+  activeProfilesFromRuntimeState as activeProfilesFromState,
+  buildVprPeerOptions as buildPeerOptions,
+  buildVprProfileTraffic as buildTraffic,
+  isOkStatus,
+  shortPeerId,
+  statusLabel,
+  type VprProfileTraffic as ProfileTraffic,
+  type VprPeerOption as PeerOption,
+  type VprToolRoute as ToolRoute,
+} from '../../../modules/vpr-tools';
 import styles from './SystemProxyView.module.scss';
 
-type SystemProxyViewProps = { active: boolean };
+
 
 const DEFAULT_PORT = 8378;
 
@@ -22,75 +32,6 @@ type GuiTestResult = {
   error?: string;
 };
 
-type PeerOption = { peerId: string; label: string; services: string[]; online: boolean };
-type ProfileTraffic = { count: number; lastSeen: number | null; lastLine: string | null; lastStatus: number | null; lastStatusAt: number | null };
-type ToolRoute = { peerId: string; model: string };
-
-const STATUS_TEXT: Record<number, string> = {
-  400: 'Bad request', 401: 'Unauthorized', 402: 'Payment required', 403: 'Forbidden',
-  404: 'Not found', 408: 'Timeout', 429: 'Rate limited',
-  500: 'Server error', 502: 'Bad gateway', 503: 'Unavailable', 504: 'Gateway timeout',
-};
-
-function isOkStatus(code: number | null): boolean {
-  return code !== null && code >= 200 && code < 400;
-}
-
-function statusLabel(code: number): string {
-  if (isOkStatus(code)) return 'Healthy';
-  return `${code} ${STATUS_TEXT[code] ?? 'Error'}`;
-}
-
-function shortPeerId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
-}
-
-function buildPeerOptions(lastPeers: PeerEntry[], discoverRows: DiscoverRow[]): PeerOption[] {
-  const byPeer = new Map<string, PeerOption>();
-  for (const p of lastPeers) byPeer.set(p.peerId, { peerId: p.peerId, label: p.displayName || shortPeerId(p.peerId), services: p.services, online: p.online });
-  for (const r of discoverRows) {
-    const ex = byPeer.get(r.peerId);
-    const svc = new Set(ex?.services ?? []);
-    if (r.serviceId) svc.add(r.serviceId);
-    byPeer.set(r.peerId, { peerId: r.peerId, label: r.peerDisplayName || r.peerLabel || ex?.label || shortPeerId(r.peerId), services: [...svc], online: ex?.online ?? true });
-  }
-  return [...byPeer.values()].sort((a, b) => (a.online !== b.online ? (a.online ? -1 : 1) : a.label.localeCompare(b.label)));
-}
-
-function activeProfilesFromState(state: RuntimeProcessState | null): Set<string> | null {
-  const raw = state?.activeProfileNames;
-  return Array.isArray(raw) ? new Set(raw.filter((x): x is string => typeof x === 'string')) : null;
-}
-
-function buildTraffic(logs: LogEvent[], profiles: SystemProxyProfileSummary[]): Map<string, ProfileTraffic> {
-  const m = new Map<string, ProfileTraffic>();
-  for (const p of profiles) m.set(p.name, { count: 0, lastSeen: null, lastLine: null, lastStatus: null, lastStatusAt: null });
-  for (const e of logs) {
-    if (e.mode !== 'system-proxy') continue;
-    const line = e.line.replace(/\[[0-9;]*m/g, '');
-    // Response line: "← 502 example.test | source:standard | ..."
-    const resp = line.match(/←\s+(\d{3})\s+(\S+)\s+\|\s+source:(\S+)/);
-    if (resp) {
-      const status = Number(resp[1]);
-      const host = resp[2]!;
-      const source = resp[3]!;
-      const rp = profiles.find((x) => x.name === source || x.domains.some((d) => host === d || host.includes(d)));
-      if (rp) {
-        const prev = m.get(rp.name)!;
-        m.set(rp.name, { ...prev, lastStatus: status, lastStatusAt: e.timestamp });
-      }
-      continue;
-    }
-
-    if (!/(?:CONNECT|→)\s/.test(line)) continue;
-    const p = profiles.find((x) => line.includes(`source:${x.name}`) || x.domains.some((d) => line.includes(d)));
-    if (!p) continue;
-    const prev = m.get(p.name) ?? { count: 0, lastSeen: null, lastLine: null, lastStatus: null, lastStatusAt: null };
-    m.set(p.name, { ...prev, count: prev.count + 1, lastSeen: e.timestamp, lastLine: line });
-  }
-  return m;
-}
-
 function fmtAgo(ts: number | null): string {
   if (!ts) return 'No traffic yet';
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -100,7 +41,7 @@ function fmtAgo(ts: number | null): string {
   return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
 }
 
-export function SystemProxyView({ active }: SystemProxyViewProps) {
+export function SystemProxyView() {
   const { lastPeers, discoverRows, logs, chatSelectedPeerId, chatSelectedServiceValue } = useUiSelector((s) => ({
     lastPeers: s.lastPeers, discoverRows: s.discoverRows, logs: s.logs,
     chatSelectedPeerId: s.chatSelectedPeerId, chatSelectedServiceValue: s.chatSelectedServiceValue,
@@ -169,11 +110,10 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
   }, []);
 
   useEffect(() => {
-    if (!active) return;
     void refresh();
     pollingRef.current = setInterval(() => void refresh(), 3000);
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [active, refresh]);
+  }, [refresh]);
 
   const start = useCallback(async (profiles?: Set<string>, profileSwitch = false) => {
     const b = window.antseedDesktop;
@@ -183,12 +123,20 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
     if (p.size === 0) { setError('Enable at least one tool.'); return; }
     setError(null);
     setBusy(true);
-    const r = await b.systemProxyStart?.({ peerId: peerId.trim(), port, profiles: [...p], defaultModel: model.trim() || undefined, servedModels: models, profileSwitch });
+    const r = await b.systemProxyStart?.({
+      peerId: peerId.trim(),
+      port,
+      profiles: [...p],
+      defaultModel: model.trim() || undefined,
+      servedModels: models,
+      toolRoutes,
+      profileSwitch,
+    });
     setBusy(false);
     if (!r?.ok) { setError(r?.error ?? 'Failed to start.'); return; }
     setState(r.state ?? null);
     setEnabled(p);
-  }, [peerId, port, enabled, model, models]);
+  }, [peerId, port, enabled, model, models, toolRoutes]);
 
   const stop = useCallback(async () => {
     const b = window.antseedDesktop;
@@ -224,7 +172,7 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
     finally { setGuiTestBusy(false); }
   }, [port]);
 
-  useEffect(() => { if (active && isRunning) void testGui(); }, [active, isRunning, testGui]);
+  useEffect(() => { if (isRunning) void testGui(); }, [isRunning, testGui]);
 
   const trustCa = useCallback(async () => {
     const b = window.antseedDesktop;
@@ -244,6 +192,20 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
       const r = await b.systemProxyAddToShell();
       setShellMsg(r.ok
         ? (r.added.length > 0 ? `Updated ${r.added.map((f) => f.split('/').pop()).join(', ')}. Restart tools or open a new terminal.` : 'Already configured.')
+        : (r.error ?? 'Failed.'));
+    } catch (e) { setShellMsg(e instanceof Error ? e.message : String(e)); }
+    finally { setShellBusy(false); }
+  }, []);
+
+  const removeFromShell = useCallback(async () => {
+    const b = window.antseedDesktop;
+    if (!b?.systemProxyRemoveFromShell) return;
+    setShellBusy(true);
+    setShellMsg(null);
+    try {
+      const r = await b.systemProxyRemoveFromShell();
+      setShellMsg(r.ok
+        ? (r.removed.length > 0 ? `Removed from ${r.removed.map((f) => f.split('/').pop()).join(', ')}. Restart tools or open a new terminal.` : 'No shell setup found. Restart any already-open tools.')
         : (r.error ?? 'Failed.'));
     } catch (e) { setShellMsg(e instanceof Error ? e.message : String(e)); }
     finally { setShellBusy(false); }
@@ -295,7 +257,7 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
   }, []);
 
   return (
-    <section className={`view view-system-proxy ${styles.view}${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view view-system-proxy ${styles.view}`} role="tabpanel">
       <div className="page-header">
         <h2>System Proxy</h2>
         <div className={`${styles.badge} ${isRunning ? styles.badgeOn : styles.badgeOff}`}>
@@ -474,6 +436,9 @@ export function SystemProxyView({ active }: SystemProxyViewProps) {
               <div className={styles.btnRow}>
                 <button type="button" className={styles.secondaryBtn} onClick={() => void addToShell()} disabled={shellBusy}>
                   {shellBusy ? 'Updating…' : 'Add shell setup'}
+                </button>
+                <button type="button" className={styles.secondaryBtn} onClick={() => void removeFromShell()} disabled={shellBusy}>
+                  Remove shell setup
                 </button>
                 <button type="button" className={styles.secondaryBtn} onClick={() => void testGui()} disabled={guiTestBusy}>
                   {guiTestBusy ? 'Testing…' : 'Test connection'}

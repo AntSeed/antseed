@@ -171,12 +171,9 @@ export function initDashboardRenderModule({
     uiState.connectionNetwork = message;
     uiState.connectionSources = message;
     uiState.connectionNotes = message;
-    uiState.overviewDataSources = message;
 
     uiState.overviewBadge = { tone: 'idle', label: 'Idle' };
-    uiState.peersMeta = { tone: 'idle', label: '0 peers' };
     uiState.connectionMeta = { tone: 'idle', label: 'offline' };
-    uiState.configMeta = { tone: 'idle', label: 'offline' };
 
     notifyUiStateChanged();
   }
@@ -242,10 +239,6 @@ export function initDashboardRenderModule({
       const msg = results.network.error ?? results.peers.error ?? 'network unavailable';
       uiState.peersMessage = `Unable to load peers: ${msg}`;
     }
-    uiState.peersMeta = {
-      tone: dht.tone,
-      label: `${formatInt(peers.length)} peers • DHT ${dht.label}`,
-    };
 
     // Connection
     if (results.status.ok) {
@@ -311,11 +304,9 @@ export function initDashboardRenderModule({
       populateSettingsForm(config);
 
       const pluginCount = safeArray((config as Record<string, unknown> | null)?.plugins).length;
-      uiState.configMeta = { tone: 'active', label: `${pluginCount} plugins` };
       uiState.configMessage = { text: 'Config loaded from config.json', type: 'info' };
     } else {
       uiState.configMessage = { text: `Unable to load config: ${results.config.error ?? 'unknown error'}`, type: 'error' };
-      uiState.configMeta = { tone: 'warn', label: 'config unavailable' };
     }
 
     // Debug

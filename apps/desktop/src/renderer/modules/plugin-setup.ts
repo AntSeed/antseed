@@ -95,18 +95,6 @@ export function initPluginSetupModule({
     const missing: string[] = [];
     if (!installedRouter) missing.push(expectedRouter);
 
-    uiState.pluginSetupStatus =
-      missing.length === 0
-        ? 'Required runtime plugins are installed.'
-        : `Missing plugin${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`;
-
-    uiState.pluginInstallBtnLabel = installedRouter
-      ? `Buyer Ready (${expectedRouter})`
-      : `Install ${expectedRouter}`;
-    uiState.pluginInstallBtnDisabled =
-      uiState.pluginInstallBusy || installedRouter || !bridge?.pluginsInstall;
-    uiState.pluginRefreshBtnDisabled = uiState.pluginInstallBusy || !bridge?.pluginsList;
-
     notifyUiStateChanged();
   }
 
