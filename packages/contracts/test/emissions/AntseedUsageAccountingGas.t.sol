@@ -189,9 +189,15 @@ contract AntseedUsageAccountingGasTest is Test {
         assertEq(pendingSeller, seller);
         assertEq(pendingDelta, 10);
 
+        // A dangling half-accrual is dropped and overwritten, never a revert:
+        // this runs inline in the Channels settle path.
         vm.prank(recorder);
-        vm.expectRevert(IAntseedUsageAccounting.PendingSellerAccrualExists.selector);
-        usageAccounting.accrueSellerPoints(seller, 10);
+        vm.expectEmit(true, false, false, true);
+        emit IAntseedUsageAccounting.PendingSellerAccrualCleared(seller, 10);
+        usageAccounting.accrueSellerPoints(seller, 11);
+        (pendingSeller, pendingDelta) = usageAccounting.pendingSellerAccrual();
+        assertEq(pendingSeller, seller);
+        assertEq(pendingDelta, 11);
 
         vm.prank(recorder);
         vm.expectRevert(IAntseedUsageAccounting.InvalidAddress.selector);

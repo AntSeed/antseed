@@ -49,7 +49,6 @@ interface IAntseedUsageAccounting {
     error InvalidAddress();
     error InvalidValue();
     error NotUsageRecorder();
-    error PendingSellerAccrualExists();
     error NoPendingSellerAccrual();
     error AccrualDeltaMismatch();
     error UsageRewardsNotSet();

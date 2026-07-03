@@ -72,6 +72,7 @@ contract MockSellerAgentLookup {
     }
 }
 
+
 // Test-only wrapper around the real delegation base class. The deployed
 // DiemStakingProxy inherits this same (unchanged) code, so exposing the
 // internal helpers here hits the exact call path the live proxy uses against
@@ -1206,7 +1207,10 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueSellerPoints(seller, 0);
 
         usageAccounting.accrueSellerPoints(seller, 10);
-        vm.expectRevert(IAntseedUsageAccounting.PendingSellerAccrualExists.selector);
+        // A dangling half-accrual is dropped and overwritten, never a revert:
+        // this runs inline in the Channels settle path.
+        vm.expectEmit(true, false, false, true);
+        emit IAntseedUsageAccounting.PendingSellerAccrualCleared(seller, 10);
         usageAccounting.accrueSellerPoints(seller, 10);
 
         vm.expectRevert(IAntseedUsageAccounting.AccrualDeltaMismatch.selector);
@@ -2241,11 +2245,13 @@ contract AntseedEmissionsGateTest is Test {
     function test_gateCapsTotalBucketMintsByEpochEmission() public {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
         gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
-        _warpGateEpoch(5);
         _setVerificationMinter(verificationWallet);
         address usageMinter = address(0xBEEF);
         _setEmissionMinters(address(this), usageMinter);
         token.setRegistry(address(gate));
+        AntseedLegacyEmissionsEscrow escrow = new AntseedLegacyEmissionsEscrow(address(realRegistry), address(legacyV2));
+        gate.fundLegacyEscrow(address(escrow));
+        _warpGateEpoch(5);
 
         uint256 epochEmission = gate.getEpochEmission(4);
         uint256 sellerPoolsBudget = _shareBudget(SELLER_POOLS_SHARE_BPS, 4);
@@ -2712,5 +2718,96 @@ contract AntseedEmissionsGateTest is Test {
             new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         assertEq(deployedGate.currentEpoch(), 10);
         assertEq(deployedGate.effectiveEpoch(), 11);
+    }
+
+    function test_bucketsCannotMintBeforeLegacyEscrowFunded() public {
+        // The escrow pot is sized as `schedule − totalSupply` at funding
+        // time; a bucket mint landing first would inflate supply and
+        // underfund pre-effective legacy claims.
+        vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
+        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        _setSellerPoolsMinter(address(this));
+        token.setRegistry(address(gate));
+        _warpGateEpoch(5);
+
+        vm.expectRevert(AntseedEmissionsGate.LegacyEscrowNotFunded.selector);
+        gate.claim(4, address(this), 1 ether);
+
+        vm.expectRevert(AntseedEmissionsGate.LegacyEscrowNotFunded.selector);
+        gate.claimRemainder(4, reserveDest, 1 ether);
+
+        AntseedLegacyEmissionsEscrow escrow =
+            new AntseedLegacyEmissionsEscrow(address(realRegistry), address(legacyV2));
+        gate.fundLegacyEscrow(address(escrow));
+        gate.claim(4, address(this), 1 ether);
+        assertEq(token.balanceOf(address(this)), 1 ether);
+    }
+
+    function test_newMinterEarnsOnlyFromItsAddEpoch() public {
+        _deployGate(4);
+        _warpGateEpoch(6); // epochs 4 and 5 finalize with unclaimed emission
+
+        // A first-time minter id gets no retroactive budget over finalized
+        // epochs — only the in-flight epoch onward.
+        gate.setMinter(CUSTOM_MINTER_ID, address(this), 10_000, true);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 4), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), _shareBudget(10_000, 6));
+
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(5, address(this), 1);
+
+        _warpGateEpoch(7);
+        gate.claim(6, address(this), _shareBudget(10_000, 6));
+        assertEq(token.balanceOf(address(this)), _shareBudget(10_000, 6));
+    }
+
+    function test_newMinterWaitsOutEpochWhoseShareWasFreedThisEpoch() public {
+        _deployGate(4);
+        _setSellerPoolsMinter(address(0xF00D));
+        _warpGateEpoch(6);
+
+        // Removal keeps the removed id's in-flight-epoch share checkpointed
+        // (a same-epoch re-add of that id resurrects it), so a replacement
+        // id must not also earn that epoch: it starts next epoch.
+        gate.removeMinter(SELLER_POOLS_MINTER_ID);
+        gate.setMinter(CUSTOM_MINTER_ID, address(this), SELLER_POOLS_SHARE_BPS, true);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 7), _shareBudget(SELLER_POOLS_SHARE_BPS, 7));
+
+        _warpGateEpoch(7);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(6, address(this), 1);
+
+        _warpGateEpoch(8);
+        gate.claim(7, address(this), _shareBudget(SELLER_POOLS_SHARE_BPS, 7));
+        assertEq(token.balanceOf(address(this)), _shareBudget(SELLER_POOLS_SHARE_BPS, 7));
+    }
+
+    function test_cutoverEpochUsageAccruesToFirstRewardedEpoch() public {
+        // Mirror the production cutover: gate + usage stack go live mid-epoch
+        // 3 while effectiveEpoch is 4. Usage settled during the rest of epoch
+        // 3 must land in epoch 4 — the gate refuses pre-effective epochs
+        // forever, so epoch-3 bookkeeping would be permanently unclaimable.
+        vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
+        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        token.setRegistry(address(gate));
+        legacyEscrow = new AntseedLegacyEmissionsEscrow(address(realRegistry), address(legacyV2));
+        gate.fundLegacyEscrow(address(legacyEscrow));
+        usageAccounting = new AntseedUsageAccounting(address(0), address(this), address(gate));
+        realRegistry.setEmissions(address(usageAccounting));
+        sellerPools = new AntseedSellerPools(address(realRegistry));
+        usageAccounting.setSellerPools(address(sellerPools));
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+
+        assertEq(gate.currentEpoch(), 3);
+        assertEq(usageAccounting.firstRewardedEpoch(), 4);
+
+        usageAccounting.accruePoints(bytes32(0), buyer, seller, 100);
+
+        assertEq(usageAccounting.totalSellerPointsByEpoch(3), 0);
+        assertEq(usageAccounting.totalBuyerPointsByEpoch(3), 0);
+        assertEq(usageAccounting.totalSellerPointsByEpoch(4), 100);
+        assertEq(usageAccounting.buyerPointsByEpoch(4, buyer), 100);
     }
 }

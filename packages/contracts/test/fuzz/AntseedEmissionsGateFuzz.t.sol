@@ -67,6 +67,9 @@ contract AntseedEmissionsGateFuzzTest is Test {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * atEpoch + 1);
         gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
         token.setRegistry(address(gate));
+        // No bucket mints until the legacy escrow is settled; any recipient
+        // address marks the pot funded.
+        gate.fundLegacyEscrow(address(0xE5C0));
     }
 
     function _warpGateEpoch(uint256 epoch) internal {
@@ -163,49 +166,59 @@ contract AntseedEmissionsGateFuzzTest is Test {
     }
 
     // ───────────────────────────────────────────────────────────────────
-    //  3. Global cap is the binding backstop (minter-rotation overlap)
+    //  3. Minter rotation can never overlap a finalized epoch
     // ───────────────────────────────────────────────────────────────────
 
-    /// @notice A rotated-out minter's minted amounts stay on the books while a
-    ///         replacement id gets a fresh checkpoint from epoch 0, so two ids
-    ///         can together over-subscribe a finalized epoch. A claim that is
-    ///         within the replacement's OWN budget but pushes the epoch total
-    ///         over getEpochEmission must revert EpochEmissionExceeded (the
-    ///         global backstop), not BucketBudgetExceeded.
+    /// @notice A rotated-out minter's minted amounts stay on the books and a
+    ///         replacement id only earns from an unfinalized epoch — never
+    ///         the rotation epoch itself when its share was freed there — so
+    ///         a finalized epoch can never be over-subscribed: the
+    ///         replacement's claim for it reverts on its own (zero) budget
+    ///         regardless of amounts, and it earns normally afterwards.
     function testFuzz_globalCapBacksMinterRotationOverlap(uint256 firstAmount) public {
         _deployGate(4);
-        uint256 epoch = gate.effectiveEpoch(); // == 4
-        _warpGateEpoch(epoch + 1); // finalize it
+        uint256 epoch = gate.effectiveEpoch();
 
-        uint256 emission = gate.getEpochEmission(epoch);
-
-        // First minter consumes 60-70% of the epoch, then is rotated out.
+        // First minter is added while the epoch is still ahead — a first add
+        // only earns from the in-flight epoch onward, never retroactively.
         address firstMinter = address(0xF00D);
         gate.setMinter(keccak256("first"), firstMinter, 70_000, true);
+
+        _warpGateEpoch(epoch + 1); // finalize it
+        uint256 emission = gate.getEpochEmission(epoch);
+
+        // It consumes 60-70% of the finalized epoch, then is rotated out.
         uint256 firstMint = bound(firstAmount, (emission * 60) / 100, (emission * 70_000) / SHARE_DENOMINATOR);
         vm.prank(firstMinter);
         gate.claim(epoch, firstMinter, firstMint);
         assertEq(gate.epochMinted(epoch), firstMint, "first mint not recorded");
         gate.removeMinter(keccak256("first"));
 
-        // Replacement id: fresh books, checkpoint from epoch 0, 45% budget.
+        // Replacement id: fresh books, checkpointed only after the rotation
+        // epoch (the removal freed its share for the in-flight epoch).
         address secondMinter = address(0xBEEF);
         gate.setMinter(keccak256("second"), secondMinter, 45_000, true);
         uint256 secondBudget = (emission * 45_000) / SHARE_DENOMINATOR;
 
-        uint256 remaining = emission - firstMint;
-        // Claim exactly secondBudget: within the minter budget, but pushes the
-        // epoch total over the emission whenever secondBudget > remaining.
+        // No budget for the finalized epoch the first minter partially
+        // claimed, nor for the rotation epoch whose share the removal freed.
         vm.prank(secondMinter);
-        if (secondBudget > remaining) {
-            vm.expectRevert(AntseedEmissionsGate.EpochEmissionExceeded.selector);
-            gate.claim(epoch, secondMinter, secondBudget);
-        } else {
-            gate.claim(epoch, secondMinter, secondBudget);
-        }
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(epoch, secondMinter, secondBudget);
 
-        // No matter what, the epoch can never be over-minted.
+        _warpGateEpoch(epoch + 3);
+        vm.prank(secondMinter);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(epoch + 1, secondMinter, 1);
+
+        // From the epoch after rotation it earns its full share.
+        uint256 laterBudget = (gate.getEpochEmission(epoch + 2) * 45_000) / SHARE_DENOMINATOR;
+        vm.prank(secondMinter);
+        gate.claim(epoch + 2, secondMinter, laterBudget);
+
+        // No matter what, no epoch is ever over-minted.
         assertLe(gate.epochMinted(epoch), emission, "global cap breached");
+        assertLe(gate.epochMinted(epoch + 2), gate.getEpochEmission(epoch + 2), "later epoch over-minted");
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -218,14 +231,16 @@ contract AntseedEmissionsGateFuzzTest is Test {
     function testFuzz_minterShareCheckpointLookup(uint16 share1, uint16 share2, uint8 changeEpochSeed, uint256 queryEpoch) public {
         _deployGate(2);
 
-        // An editable minter starts (length==0) at share1 from epoch 0.
+        // An editable minter starts (length==0) at share1 from the in-flight
+        // deploy epoch — never earlier.
+        uint256 addEpoch = gate.currentEpoch();
         uint32 s1 = uint32(bound(share1, 1, 20_000));
         bytes32 id = keccak256("ckpt");
         address minter = address(0xC0FFEE);
         gate.setMinter(id, minter, s1, true);
 
         // Warp forward and change the share, creating a checkpoint at the next
-        // epoch. The first checkpoint stays at epoch 0.
+        // epoch. The first checkpoint stays at the add epoch.
         uint256 changeEpoch = uint256(bound(changeEpochSeed, 3, 40));
         _warpGateEpoch(changeEpoch);
         uint32 s2 = uint32(bound(share2, 1, 20_000));
@@ -234,7 +249,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
 
         uint256 e = bound(queryEpoch, 0, 100);
         uint256 emission = gate.getEpochEmission(e);
-        uint256 expectedShare = e <= changeEpoch ? s1 : s2;
+        uint256 expectedShare = e < addEpoch ? 0 : (e <= changeEpoch ? s1 : s2);
         assertEq(
             gate.minterEpochBudget(id, e),
             (emission * expectedShare) / SHARE_DENOMINATOR,

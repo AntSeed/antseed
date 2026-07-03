@@ -49,6 +49,12 @@ import { IAntseedUsageRewards } from "../interfaces/IAntseedUsageRewards.sol";
 contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausable {
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable emissionsGate;
+    /// @notice First epoch the gate will ever mint (its immutable
+    ///         `effectiveEpoch`). Usage settled before it — the tail of the
+    ///         cutover epoch — is accounted under this epoch instead, so it
+    ///         stays claimable rather than landing in a pre-effective epoch
+    ///         the gate refuses forever.
+    uint256 public immutable firstRewardedEpoch;
     IAntseedSellerPools public sellerPools;
     IAntseedPointsPolicy public pointsPolicy;
     IAntseedPoolWeightPolicy public poolWeightPolicy;
@@ -91,6 +97,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         if (_initialRecorder == address(0) || _emissionsGate == address(0)) revert InvalidAddress();
 
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
+        firstRewardedEpoch = IAntseedEmissionsGate(_emissionsGate).effectiveEpoch();
         sellerPools = IAntseedSellerPools(_sellerPools);
         usageRecorders[_initialRecorder] = true;
 
@@ -119,7 +126,14 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         }
         if (seller == address(0)) revert InvalidAddress();
         if (pointsDelta == 0) revert InvalidValue();
-        if (pendingSellerAccrual.seller != address(0)) revert PendingSellerAccrualExists();
+        // A dangling half-accrual left by a mis-paired recorder must not
+        // revert here: this runs inline in AntseedChannels' settle path, so
+        // one stuck slot would block every settlement network-wide. Drop the
+        // stale entry and record the fresh pair instead.
+        PendingSellerAccrual memory stale = pendingSellerAccrual;
+        if (stale.seller != address(0)) {
+            emit PendingSellerAccrualCleared(stale.seller, stale.pointsDelta);
+        }
 
         pendingSellerAccrual = PendingSellerAccrual({ seller: seller, pointsDelta: pointsDelta });
         emit LegacySellerAccrualPending(seller, currentEpoch(), pointsDelta);
@@ -232,7 +246,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         uint256 agentId = _sellerPoolAgentId(account);
         if (agentId == 0) return (0, 0);
         if (!_isAgentRewardRecipient(rewards, agentId, account)) return (0, 0);
-        uint256 firstGateEpoch = emissionsGate.effectiveEpoch();
+        uint256 firstGateEpoch = firstRewardedEpoch;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             if (epochs[i] < firstGateEpoch) continue;
@@ -254,7 +268,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         uint256 agentId = _sellerPoolAgentId(msg.sender);
         if (agentId == 0) return;
         if (!_isAgentRewardRecipient(rewards, agentId, msg.sender)) return;
-        uint256 firstGateEpoch = emissionsGate.effectiveEpoch();
+        uint256 firstGateEpoch = firstRewardedEpoch;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
@@ -298,6 +312,10 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         if (rawPoints == 0) revert InvalidValue();
 
         uint256 epoch = currentEpoch();
+        // Usage settled during the cutover epoch (before the gate's
+        // effective epoch) would be permanently unmintable through the gate;
+        // account it under the first gate-mintable epoch instead.
+        if (epoch < firstRewardedEpoch) epoch = firstRewardedEpoch;
         IAntseedSellerPools pools = sellerPools;
         if (address(pools) == address(0)) return;
 

@@ -91,6 +91,9 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 4 + 1);
         gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
         token.setRegistry(address(gate));
+        // No bucket mints until the legacy escrow is settled; any recipient
+        // address marks the pot funded.
+        gate.fundLegacyEscrow(address(0xE5C0));
 
         pools = new AntseedSellerPools(address(registry)); // uncapped APY
         token.setTransferWhitelist(address(pools), true);

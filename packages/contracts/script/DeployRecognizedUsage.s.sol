@@ -238,6 +238,13 @@ contract DeployRecognizedUsage is Script {
         console.log("Verification recipient:   ", verificationWallet);
         console.log("");
         console.log("POST-DEPLOY CHECKLIST (manual):");
+        console.log("- The deployer EOA still owns ANTSToken, the gate, and every new");
+        console.log("  contract. Until it is dealt with, that key can re-point the");
+        console.log("  token's mint authority (ANTSToken.setRegistry) and rotate any");
+        console.log("  bucket controller (gate.setMinterController, locked buckets");
+        console.log("  included). Transfer ownership to the ops multisig, and once");
+        console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
+        console.log("  to freeze the emission plan.");
         console.log("- Sellers staked in legacy USDC staking stay eligible via the");
         console.log("  SellerRegistry legacy fallback. Call setLegacyStakeEligibilityEnabled(false)");
         console.log("  only after seller pools are seeded with ANTS stake.");
