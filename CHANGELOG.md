@@ -8,33 +8,44 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Published
 
+- `@antseed/api-adapter`
 - `@antseed/cli`
 - `@antseed/node`
 
+### Desktop
+
+- `@antseed/desktop`
+
 ### Added
 
+- Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
+- Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
+- Added Desktop runtime log source filters and buyer debug log filtering via `antseed buyer start --log-filter` / `ANTSEED_LOG_FILTER`.
+- Added Desktop peer favicons from verified domains, showing fetched site icons in Discover and chat peer avatars when available.
 - Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
-- Added a swappable `IAntseedPoolWeightPolicy` hook to `AntseedUsageAccounting` that converts raw pool stake power into the effective reward weight applied to usage points. With no policy set, weighting stays linear (current behavior); a policy contract can later introduce capped, square-root, log, or other curves without redeploying the accounting contract.
-- Added a seller delegation adapter so the already-deployed `DiemStakingProxy` keeps earning ANTS after the recognized-usage cutover: `AntseedUsageAccounting` (the `registry.emissions()` endpoint) now answers the legacy `pendingEmissions` / `claimSellerEmissions` selectors by resolving the caller's seller-pool agent id and routing to `AntseedUsageRewards`, which lets the accounting contract initiate owner-destined claims via `claimAgentRewardFor` (gated by `setClaimForwarder`; rewards always pay the agent owner).
-- Added `AntseedRegistryV2`: the deployed registry stays in place as the legacy address book for already-deployed contracts, while the recognized-usage stack deploys against a new v2 registry that adds `emissionsReserve` — a dedicated destination for ANTS emission reserve flows (reserve bucket, reward-cap overflow, epoch remainders), separate from `protocolReserve` which keeps receiving USDC transaction fees and slash proceeds. While `emissionsReserve` is unset (or on a legacy registry), emission flows fall back to `protocolReserve`.
-- Added `AntseedLegacyEmissionsEscrow`: at cutover the gate pre-mints the entire pre-effective emission backlog (schedule-to-date minus circulating supply) into a fixed escrow pot, and the deployed legacy emissions contract is re-pointed at the escrow's registry facade so its unchanged claims and team/reserve flushes draw from the pot instead of minting. `AntseedEmissionsGate` consequently drops the legacy minter, `mint()`, and `disableLegacyEpochMints` entirely and refuses pre-effective epochs unconditionally — legacy claims work immediately after cutover with no single-epoch cap, and no pre-effective bucket can ever be minted.
+- Added a buyer-side metadata v2 service attribution opt-out for CLI and Desktop. Buyers can disable per-service attribution while preserving aggregate usage metadata in paid SpendingAuth and free-usage records.
+- Added `antseed buyer emissions info` and `antseed buyer emissions claim` for buyer-side ANTS emissions.
+- Added generic API request, response, and streaming adapters that transform between Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses through internal canonical models.
 
 ### Removed
 
 - Removed the legacy subpool/subscription payment surface, including the `antseed buyer subscribe` command, subpool payment client/config exports, and the `AntseedSubPool` contract deployment path.
-- Removed the unused APY-cap machinery from `AntseedSellerPools` (`startApyDecay`, `setApyCapBps`, `apyCapBpsAtEpoch`, `positionRewardCapAtEpoch`, the decay immutables) and the `POOL_APY_*` deploy configuration: pool-level APY clipping was superseded by remainder burn/reserve routing in `AntseedSellerPoolsRewards`, so nothing consumed the cap and the deploy script advertised a trajectory that was never enforced.
 
 ### Changed
 
+- Changed API adapter streaming transforms to use canonical stream events with per-protocol normalizers and renderers, so new stream protocols can be added without pairwise routes.
+- Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
 - Increased the default free-usage on-chain record flush interval from 10 seconds to 5 minutes to reduce background transaction frequency while preserving batch, disconnect, and shutdown flushes.
 
 ### Fixed
 
+- Fixed Desktop auto-update failures so download and install errors appear in the title bar with copyable details, and fixed macOS Quit so the first menu action exits after cleanup instead of requiring a second click.
 - Fixed buyer response-auth timeout warnings for non-inference probes and sellers that do not advertise response-auth support.
 - Fixed buyer discovery so temporarily unreachable metadata endpoints are probed for recovery before the full exponential cooldown expires, allowing recovered peers to reappear in buyer peer lists sooner.
-- Fixed the recognized-usage stack ahead of deployment: `DeployRecognizedUsage` now transfer-whitelists `AntseedSellerPoolsRewards` (and the legacy escrow) on the ANTS token so staker reward claims and restakes work while transfers are globally disabled; reward budgets in `AntseedUsageRewards` and `AntseedSellerPoolsRewards` freeze per epoch at first claim/settlement use so later dynamic-share config changes cannot retroactively over-commit a finalized epoch's gate bucket; `AntseedSellerPoolsRewards.settleEpochRemainder` routes the full staker bucket to burn/reserve for staked-but-zero-usage epochs instead of stranding it; `AntseedEmissionsGate.removeMinter` takes effect from the next epoch (matching `setMinter`), preserving the in-flight epoch's bucket budget and keeping share checkpoints sorted; and the registry-emissions delegation adapter skips pre-effective epochs and stale seller→agent bindings instead of reverting the whole batched claim.
-- Fixed audit findings in the recognized-usage stack: `AntseedEmissionsGate` no longer grants a first-time minter id a retroactive epoch-0 share checkpoint — every share change, first adds included, takes effect from the next epoch (controllers can still rotate mid-epoch), so per-epoch share sums can never exceed 100% and a replacement bucket can never drain the global epoch cap out from under other buckets' unclaimed rewards; the gate refuses all bucket mints until `fundLegacyEscrow` runs, so the escrow's `schedule − supply` sizing can never be diluted by earlier gate mints; a dangling legacy half-accrual in `AntseedUsageAccounting` is now dropped and overwritten instead of reverting the next settlement's `accrueSellerPoints`; and usage settled during the cutover epoch is accounted under the gate's first mintable epoch (`firstRewardedEpoch`) instead of a pre-effective epoch whose rewards would be permanently unclaimable. `DeployRecognizedUsage` documents transferring/renouncing gate and token ownership in its post-deploy checklist.
+- Fixed Desktop chats for peers that disappear from discovery so the header reports that the peer was not found and disables the composer instead of showing stale peer identifiers.
+- Fixed Desktop Discover overflow tag tooltips so the `+N` category indicator works on service cards in the first row.
+- Fixed `antseed seller emissions claim` so it only checks and claims seller rewards, leaving buyer rewards to the buyer command.
 
 ## 2026-06-15 — Buyer peer failure accounting and desktop stream responsiveness
 
