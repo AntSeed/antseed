@@ -1,13 +1,23 @@
 /**
- * Deterministic canonical JSON serialization and content hashing.
+ * Deterministic canonical JSON serialization and content hashing, following
+ * the JSON Canonicalization Scheme (JCS, RFC 8785):
+ * - UTF-8 JSON with no insignificant whitespace;
+ * - object keys sorted by UTF-16 code units (RFC 8785 §3.2.3 — JS default
+ *   string comparison);
+ * - numbers serialized via the ECMAScript Number-to-string algorithm
+ *   (RFC 8785 §3.2.2.3 — what `JSON.stringify` emits);
+ * - strings escaped per `JSON.stringify` (RFC 8785 §3.2.2.2).
  *
- * Per docs/protocol/spec/07-model-verification.md ("Private Buyer References"):
- * - UTF-8 JSON;
- * - object keys sorted lexicographically;
- * - no insignificant whitespace;
- * - finite numbers only (NaN / Infinity / -Infinity throw);
+ * Deviations, both stricter than JCS (they reject inputs JCS cannot round-trip
+ * rather than coercing them):
+ * - non-finite numbers (NaN / Infinity / -Infinity) throw instead of
+ *   serializing to `null`;
  * - undefined / function / bigint / symbol values throw, except undefined
  *   object properties which are skipped exactly like JSON.stringify.
+ * `toJSON` is honored as input conditioning (e.g. Date), like JSON.stringify.
+ *
+ * Also required by docs/protocol/spec/07-model-verification.md
+ * ("Private Buyer References").
  */
 
 import { createHash } from 'node:crypto';

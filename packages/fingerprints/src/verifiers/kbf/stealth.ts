@@ -11,14 +11,15 @@
  * "TASK/RULES" header, and no rigid output contract. A free-text extractor
  * (`extractAnswersFreeText`) then recovers the numeric answers from prose.
  *
- * Everything is fully deterministic from `probeSet.nonce` + probe ids via a
- * sha256-seeded mulberry32 PRNG (the same helpers used by the probe bank), so a
- * stored probe set reproduces byte-identical requests for later evidence
- * re-verification. No `Math.random`, no `Date`.
+ * Everything is fully deterministic from `probeSet.nonce` + probe ids via the
+ * shared deterministic RNG (RFC 5869 HKDF-SHA256 seed derivation feeding a
+ * NIST SP 800-90A HMAC_DRBG — see prng.ts), so a stored probe set reproduces
+ * byte-identical requests for later evidence re-verification. No
+ * `Math.random`, no `Date`.
  */
 
 import type { KbfProbe, ProbeSet } from '../../types.js';
-import { mulberry32, seedToUint32 } from '../../probe-bank.js';
+import { createRng, type DeterministicRng } from '../../prng.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -68,7 +69,7 @@ export function buildStealthChatRequests(
 
   const probes = probeSet.probes ?? [];
   const seedString = `${probeSet.nonce}|${probes.map((p) => p.id).join(',')}`;
-  const rand = mulberry32(seedToUint32(seedString, 'antseed-stealth'));
+  const rng = createRng(seedString, 'stealth');
 
   const plans: StealthRequestPlan[] = [];
   let cursor = 0;
@@ -76,7 +77,7 @@ export function buildStealthChatRequests(
     const remaining = probes.length - cursor;
     // Pseudo-random size in 1..min(maxPerRequest, remaining).
     const cap = Math.min(maxPerRequest, remaining);
-    const size = 1 + Math.floor(rand() * cap);
+    const size = 1 + rng.nextInt(cap);
     const probeIndices: number[] = [];
     const chunk: KbfProbe[] = [];
     for (let k = 0; k < size; k++) {
@@ -85,7 +86,7 @@ export function buildStealthChatRequests(
     }
     cursor += size;
 
-    const body = buildRequestBody(model, chunk, rand);
+    const body = buildRequestBody(model, chunk, rng);
     plans.push({ probeIndices, probes: chunk, body });
   }
 
@@ -98,8 +99,16 @@ export function buildStealthChatRequests(
 
 /**
  * Context framings — a person's reason for asking. `{q}` is where the
- * question(s) go. ≥12 entries; tone, capitalization and punctuation vary so no
- * single lexical signature identifies the request as a probe.
+ * question(s) go. Tone, capitalization and punctuation vary so no single
+ * lexical signature identifies the request as a probe.
+ *
+ * The second block are *task-shaped* framings: the fact is embedded in a piece
+ * of real-looking work (a writeup, a spec sheet, a review) rather than a bare
+ * trivia question. This widens the request silhouette so "route every short
+ * factual question to the real model" is a leakier classifier for a cheating
+ * seller. It raises the bar; it does not close it — genuine shape overlap with
+ * the expensive traffic worth substituting (long coding/agentic requests) is
+ * the job of the opt-in LLM generator and, ultimately, scoring organic traffic.
  */
 const FRAMINGS: readonly string[] = [
   '{q}', // bare — no preamble at all
@@ -116,6 +125,14 @@ const FRAMINGS: readonly string[] = [
   'hey, {q}',
   'so, {q}',
   'quick fact check for a blog post — {q}',
+  // Task-shaped framings.
+  'working on a short writeup and need to nail one detail before I continue — {q}',
+  'filling in a spec sheet for a project and one cell is blank: {q}',
+  'sanity-checking a draft a colleague sent. one figure looks off — {q}',
+  'putting together some notes and want to get this right: {q}',
+  'building a small reference table and need one entry — {q}',
+  "double-checking a fact for some docs i'm writing. {q}",
+  'updating a cheat sheet and blanked on one thing: {q}',
 ];
 
 /** Soft, natural answer nudges — appear in only ~half of requests. */
@@ -139,28 +156,28 @@ const CONNECTORS: readonly string[] = [
 
 const GENERIC_SYSTEM_PROMPT = 'You are a helpful assistant.';
 
-function buildRequestBody(model: string, probes: readonly KbfProbe[], rand: () => number): StealthRequestBody {
+function buildRequestBody(model: string, probes: readonly KbfProbe[], rng: DeterministicRng): StealthRequestBody {
   // Render each probe as a natural question.
-  const questions = probes.map((probe) => pickQuestion(probe, rand));
+  const questions = probes.map((probe) => pickQuestion(probe, rng));
 
   // Join conversationally.
   let userContent = questions[0] ?? '';
   for (let i = 1; i < questions.length; i++) {
-    const connector = pickFrom(CONNECTORS, rand);
+    const connector = pickFrom(CONNECTORS, rng);
     userContent += connector + questions[i];
   }
 
   // Wrap in a context framing.
-  const framing = pickFrom(FRAMINGS, rand);
+  const framing = pickFrom(FRAMINGS, rng);
   userContent = framing.replace('{q}', userContent);
 
   // Soft answer nudge on ~half of requests.
-  if (rand() < 0.5) {
-    userContent += ` ${pickFrom(NUDGES, rand)}`;
+  if (rng.nextFloat() < 0.5) {
+    userContent += ` ${pickFrom(NUDGES, rng)}`;
   }
 
   // Most organic clients send no system message; a minority carry a generic one.
-  const withSystem = rand() < 0.25;
+  const withSystem = rng.nextFloat() < 0.25;
   const messages: StealthChatMessage[] = withSystem
     ? [
         { role: 'system', content: GENERIC_SYSTEM_PROMPT },
@@ -175,8 +192,8 @@ function buildRequestBody(model: string, probes: readonly KbfProbe[], rand: () =
   return { model, messages };
 }
 
-function pickFrom<T>(arr: readonly T[], rand: () => number): T {
-  return arr[Math.floor(rand() * arr.length)]!;
+function pickFrom<T>(arr: readonly T[], rng: DeterministicRng): T {
+  return arr[rng.nextInt(arr.length)]!;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,10 +217,10 @@ function lowerFirst(text: string): string {
 
 /**
  * Turn a probe into a natural question, picking one of several phrasing
- * variants with the supplied PRNG. Never emits `___`, numbering, or the raw
- * template. Deterministic given `rand`.
+ * variants with the supplied RNG. Never emits `___`, numbering, or the raw
+ * template. Deterministic given `rng`.
  */
-function pickQuestion(probe: KbfProbe, rand: () => number): string {
+function pickQuestion(probe: KbfProbe, rng: DeterministicRng): string {
   const rendered = renderTemplate(probe);
 
   const structured = STRUCTURED_RE.exec(rendered);
@@ -220,7 +237,7 @@ function pickQuestion(probe: KbfProbe, rand: () => number): string {
       `do you happen to know the ${property} of ${name}${unitIn}?`,
       `the ${property} of ${name}${unitIn} — what is it?`,
     ];
-    return pickFrom(variants, rand);
+    return pickFrom(variants, rng);
   }
 
   const fallback = FALLBACK_RE.exec(rendered);
@@ -235,7 +252,7 @@ function pickQuestion(probe: KbfProbe, rand: () => number): string {
       `i'm trying to remember ${subjectLc}${unitIn}, any idea?`,
       `remind me — ${subjectLc}${unitIn}?`,
     ];
-    return pickFrom(variants, rand);
+    return pickFrom(variants, rng);
   }
 
   // Last-resort: strip the blank from the raw cloze and turn it into a question.
@@ -250,8 +267,7 @@ function pickQuestion(probe: KbfProbe, rand: () => number): string {
  * builder uses the internal PRNG-driven variant.
  */
 export function renderStealthQuestion(probe: KbfProbe, seed: string = probe.id): string {
-  const rand = mulberry32(seedToUint32(seed, 'antseed-stealth-question'));
-  return pickQuestion(probe, rand);
+  return pickQuestion(probe, createRng(seed, 'stealth-question'));
 }
 
 // ---------------------------------------------------------------------------
