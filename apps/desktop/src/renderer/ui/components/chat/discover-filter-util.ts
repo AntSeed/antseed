@@ -54,15 +54,26 @@ export function hasBeenUsed(row: DiscoverRow): boolean {
     || row.lifetimeLastSessionAt != null;
 }
 
+/** Collapse spaces, hyphens, underscores, and dots so that "Claude Opus 4.7"
+ *  matches the slug form "claude-opus-4-7" and vice-versa. */
+function normalizeForSearch(s: string): string {
+  return s.toLowerCase().replace(/[\s\-_.]+/g, '');
+}
+
 export function matchesSearch(row: DiscoverRow, q: string): boolean {
   if (!q) return true;
   const needle = q.trim().toLowerCase();
   if (!needle) return true;
-  if (row.serviceLabel.toLowerCase().includes(needle)) return true;
-  if ((row.peerDisplayName ?? '').toLowerCase().includes(needle)) return true;
-  if (row.peerLabel.toLowerCase().includes(needle)) return true;
-  for (const c of row.categories) {
-    if (c.toLowerCase().includes(needle)) return true;
+  const normNeedle = normalizeForSearch(needle);
+  const fields = [
+    row.serviceLabel,
+    row.peerDisplayName ?? '',
+    row.peerLabel,
+    ...row.categories,
+  ];
+  for (const field of fields) {
+    if (field.toLowerCase().includes(needle)) return true;
+    if (normNeedle && normalizeForSearch(field).includes(normNeedle)) return true;
   }
   return false;
 }

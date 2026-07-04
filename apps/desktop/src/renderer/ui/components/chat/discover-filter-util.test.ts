@@ -37,6 +37,26 @@ test('matchesSearch finds query in service, peer, categories', () => {
   assert.ok(!matchesSearch(r, 'zzz'));
 });
 
+test('matchesSearch normalizes spaces, hyphens, underscores, dots as equivalent separators', () => {
+  const r = mkRow({ serviceLabel: 'claude-opus-4-7', peerLabel: 'Provider', categories: [] });
+  // space-separated natural language query should match hyphenated slug
+  assert.ok(matchesSearch(r, 'Claude Opus 4.7'));
+  assert.ok(matchesSearch(r, 'claude opus 4 7'));
+  assert.ok(matchesSearch(r, 'Claude-Opus-4.7'));
+  assert.ok(matchesSearch(r, 'opus 4.7'));
+  // exact slug still works
+  assert.ok(matchesSearch(r, 'claude-opus-4-7'));
+  // unrelated query still returns false
+  assert.ok(!matchesSearch(r, 'gemini'));
+});
+
+test('matchesSearch normalizes dot-separated query against space-separated label', () => {
+  const r = mkRow({ serviceLabel: 'Claude Opus 4.7', peerLabel: 'Provider', categories: [] });
+  assert.ok(matchesSearch(r, 'claude-opus-4-7'));
+  assert.ok(matchesSearch(r, 'Claude Opus 4.7'));
+  assert.ok(matchesSearch(r, 'opus 4'));
+});
+
 test('matchesMaxInputPrice filters rows by the input slider ceiling', () => {
   assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: 5 }), MAX_INPUT_PRICE_SLIDER_USD));
   assert.ok(matchesMaxInputPrice(mkRow({ inputUsdPerMillion: null }), MAX_INPUT_PRICE_SLIDER_USD));
