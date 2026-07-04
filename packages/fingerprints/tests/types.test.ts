@@ -112,7 +112,9 @@ describe('evidence bundle hashing', () => {
 
   it('is stable across runs (fixed expected hash)', () => {
     const hash = computeEvidenceHash(makeBundle());
-    expect(hash).toBe('0x42a56350b93f902ea58621ce8a5c81273cae9ddd36935891f2c3e5dc1aea4a9b');
+    // Pinned over the HKDF/HMAC_DRBG derivation (prng.ts). If this breaks, the
+    // wire format changed — bump the HKDF salt version, don't silently re-pin.
+    expect(hash).toBe('0xe8796f90435f13b42f8fb693df1f47b3af72ab4e928e7f71c835efbdb2e86827');
     expect(computeEvidenceHash(makeBundle())).toBe(hash);
   });
 

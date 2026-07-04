@@ -7,7 +7,12 @@
  * They exist so reference-based flows and tests have plausible expectations.
  */
 
-import { sha256Hex } from './canonical-json.js';
+import { deriveHex } from './prng.js';
+import {
+  deterministicSample,
+  staticProbeSource,
+  type ProbeSource,
+} from './probe-source.js';
 import { computeProbeSetId, type KbfProbe, type ProbeSet, type ProbeTolerance } from './types.js';
 
 function abs(value: number): ProbeTolerance {
@@ -118,33 +123,38 @@ export const PROBE_BANK: readonly KbfProbe[] = [
 
 export const PROBE_BANK_DOMAINS: readonly string[] = [...new Set(PROBE_BANK.map((p) => p.domain))];
 
+export const PROBE_BANK_SOURCE_ID = 'bank/v1';
+
+/**
+ * The built-in bank as a ProbeSource. Its `consensus` values are advisory
+ * (cohort consensus is the reference in production), so `consensusCertified`
+ * is false. Intended for tests, demos, and bootstrap — production verifiers
+ * should draw from a large rotating source such as `compositionalProbeSource`.
+ */
+export function probeBankSource(): ProbeSource {
+  return staticProbeSource(PROBE_BANK_SOURCE_ID, PROBE_BANK);
+}
+
 // ---------------------------------------------------------------------------
 // Deterministic probe-set generation
 // ---------------------------------------------------------------------------
-
-/** mulberry32 PRNG over a 32-bit state. Deterministic; no Math.random. */
-export function mulberry32(state: number): () => number {
-  let a = state >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** Derive a 32-bit PRNG seed from a seed string, domain-separated by `domainTag`. */
-export function seedToUint32(seed: string, domainTag: string): number {
-  const hex = sha256Hex(`${domainTag}:${seed}`);
-  return Number.parseInt(hex.slice(0, 8), 16) >>> 0;
-}
 
 export interface GenerateProbeSetParams {
   service: string;
   count: number;
   /** Arbitrary seed string; same seed → identical probe set. */
   seed: string;
-  /** Restrict selection to these domains (default: whole bank). */
+  /**
+   * Probe origin. Defaults to the built-in bank. Pass `compositionalProbeSource()`
+   * (or a reference-backed source) for a large rotating space.
+   */
+  source?: ProbeSource;
+  /** Probe ids to skip (rotation). Forwarded to the source / bank selection. */
+  exclude?: ReadonlySet<string>;
+  /**
+   * Restrict bank selection to these domains. Only applies to the default bank
+   * path; ignored when an explicit `source` is given (a source owns its pool).
+   */
   domains?: readonly string[];
   /**
    * Timestamp recorded on the probe set. Defaults to the current time; pass a
@@ -155,32 +165,28 @@ export interface GenerateProbeSetParams {
 }
 
 /**
- * Deterministically select and shuffle `count` probes from the built-in bank
- * using a sha256-seeded PRNG. Same seed → identical selection and order,
- * so a probe set can be regenerated and verified later.
+ * Deterministically select and shuffle `count` probes and wrap them in a
+ * committable ProbeSet. Same (source, seed, exclude) → identical selection and
+ * order, so a probe set can be regenerated and verified later.
+ *
+ * With no `source`, probes are drawn from the built-in bank (optionally
+ * filtered by `domains`), preserving the original behavior.
  */
 export function generateProbeSet(params: GenerateProbeSetParams): ProbeSet {
-  const { service, count, seed, domains } = params;
-  if (!Number.isInteger(count) || count <= 0) {
-    throw new Error(`generateProbeSet: count must be a positive integer, got ${count}`);
-  }
-  const pool = domains ? PROBE_BANK.filter((p) => domains.includes(p.domain)) : [...PROBE_BANK];
-  if (count > pool.length) {
-    throw new Error(`generateProbeSet: count ${count} exceeds available probes ${pool.length}`);
+  const { service, count, seed, source, exclude, domains } = params;
+
+  let probes: KbfProbe[];
+  if (source) {
+    probes = source.generate({ count, seed, exclude });
+  } else {
+    const pool = domains ? PROBE_BANK.filter((p) => domains.includes(p.domain)) : PROBE_BANK;
+    probes = deterministicSample(pool, { count, seed, exclude });
   }
 
-  // Fisher-Yates shuffle with the seeded PRNG, then take the first `count`.
-  const rand = mulberry32(seedToUint32(seed, 'antseed-probe-set'));
-  const shuffled = [...pool];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    const tmp = shuffled[i]!;
-    shuffled[i] = shuffled[j]!;
-    shuffled[j] = tmp;
-  }
-  const probes = shuffled.slice(0, count);
-
-  const nonce = sha256Hex(`antseed-probe-set-nonce:${seed}`);
+  // Commitment blinding nonce, HKDF-derived (RFC 5869) from the seed under its
+  // own domain tag so it can never collide with the RNG streams drawn from the
+  // same seed. Hiding rests on the seed being high-entropy and secret.
+  const nonce = deriveHex(seed, 'probe-set-nonce');
   return {
     probeSetId: computeProbeSetId(service, probes),
     service,

@@ -160,9 +160,12 @@ export function computeProbeSetId(service: string, probes: readonly KbfProbe[]):
 }
 
 /**
- * On-chain pre-audit commitment (bytes32) over the probe set identity:
- * `{ probeSetId, orderedProbeIds, nonce }`. Revealed after responses so a
- * verifier cannot cherry-pick probes after seeing answers.
+ * On-chain pre-audit commitment (bytes32): a standard hash commitment
+ * `commit = SHA-256(canonicalJson({message, nonce}))` over the probe set
+ * identity `{ probeSetId, orderedProbeIds, nonce }`. Binding comes from
+ * SHA-256 collision resistance; hiding from the 256-bit HKDF-derived nonce.
+ * Opened (probe set + nonce revealed) only after responses, so a verifier
+ * cannot cherry-pick probes after seeing answers.
  */
 export function computeProbeCommitment(
   probeSet: Pick<ProbeSet, 'probeSetId' | 'probes' | 'nonce'>,
