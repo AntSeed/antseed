@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { registerVerifierStartCommand } from './start.js'
 import { registerVerifierStatusCommand } from './status.js'
 import { registerVerifierClaimCommand } from './claim.js'
+import { registerVerifierReferenceCommand } from './reference.js'
 
 export function registerVerifierCommands(program: Command): void {
   const verifierCmd = program
@@ -10,4 +11,5 @@ export function registerVerifierCommands(program: Command): void {
   registerVerifierStartCommand(verifierCmd)
   registerVerifierStatusCommand(verifierCmd)
   registerVerifierClaimCommand(verifierCmd)
+  registerVerifierReferenceCommand(verifierCmd)
 }

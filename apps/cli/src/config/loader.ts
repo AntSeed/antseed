@@ -393,8 +393,35 @@ function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
     ...(typeof value['cohortMaxSize'] === 'number' ? { cohortMaxSize: value['cohortMaxSize'] } : {}),
     ...(typeof value['auditIntervalMs'] === 'number' ? { auditIntervalMs: value['auditIntervalMs'] } : {}),
     ...(typeof value['stalenessWindowSecs'] === 'number' ? { stalenessWindowSecs: value['stalenessWindowSecs'] } : {}),
+    ...(value['probeSource'] === 'compositional' || value['probeSource'] === 'bank'
+      ? { probeSource: value['probeSource'] }
+      : {}),
+    ...(typeof value['probeRotationHistory'] === 'number' ? { probeRotationHistory: value['probeRotationHistory'] } : {}),
     ...(typeof value['referencesDir'] === 'string' ? { referencesDir: value['referencesDir'] } : {}),
     ...(typeof value['evidenceDir'] === 'string' ? { evidenceDir: value['evidenceDir'] } : {}),
+    ...(typeof value['probeLogDir'] === 'string' ? { probeLogDir: value['probeLogDir'] } : {}),
+    ...mergeVerifierUpstream(value['upstream']),
+  };
+}
+
+function mergeVerifierUpstream(value: unknown): { upstream?: NonNullable<AntseedConfig['verifier']>['upstream'] } {
+  if (!isRecord(value) || typeof value['baseUrl'] !== 'string' || value['baseUrl'].trim().length === 0) {
+    return {};
+  }
+  const modelMap = isRecord(value['modelMap'])
+    ? Object.fromEntries(
+        Object.entries(value['modelMap']).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
+        ),
+      )
+    : undefined;
+  return {
+    upstream: {
+      baseUrl: value['baseUrl'],
+      ...(typeof value['apiKey'] === 'string' ? { apiKey: value['apiKey'] } : {}),
+      ...(typeof value['apiKeyEnv'] === 'string' ? { apiKeyEnv: value['apiKeyEnv'] } : {}),
+      ...(modelMap && Object.keys(modelMap).length > 0 ? { modelMap } : {}),
+    },
   };
 }
 

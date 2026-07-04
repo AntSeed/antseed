@@ -107,8 +107,10 @@ Also implemented — the whitelisted verifier network:
 
 - `@antseed/fingerprints` package: KBF verifier math (position-aware numeric
   parsing, tolerance matching, CP99 + one-sided binomial verdicts),
-  cross-seller cohort consensus verdicts, a deterministic seeded probe bank,
-  canonical JSON hashing for probe-set commitments and evidence bundles.
+  cross-seller cohort consensus verdicts, a pluggable `ProbeSource` (a large
+  compositional entity/attribute generator by default, with the deterministic
+  seeded bank demoted to a test/bootstrap fixture), RFC 8785 (JCS) canonical
+  JSON hashing for probe-set commitments and evidence bundles.
 - `AntseedVerifierRegistry` contract: owner-approved verifier whitelist,
   pre-audit probe-set commitments (commit-reveal), per-audit attestations
   keyed by `(agentId, serviceHash)` with verdict + `evidenceHash`, staleness
@@ -117,14 +119,28 @@ Also implemented — the whitelisted verifier network:
 - `AntseedVerifierRewards` contract: emissions-gate bucket controller for
   `VERIFICATION_MINTER_ID`; verifiers claim each finalized epoch's bucket pro
   rata to credited audits; zero-credit epochs settle to burn/reserve.
-- `antseed verifier start`: a daemon that discovers sellers advertising the
-  configured services, selects stalest-first cohorts, commits a fresh private
-  probe set on-chain, probes every cohort member with identical paid
-  chat-completion batches over the ordinary buyer path (indistinguishable
-  from organic traffic), requires verified `ResponseAuth` on probe traffic,
-  computes cohort (and optional KBF-reference) verdicts, writes evidence
-  bundles under `<dataDir>/fingerprints/evidence`, and submits attestations.
+- `antseed verifier start`: a daemon that runs as a full buyer node on the
+  network. With no configured services it auto-discovers: one wildcard peer
+  discovery per round enumerates every service advertised in signed peer
+  metadata, and all of them become audit targets. Per service it selects
+  stalest-first cohorts, commits a fresh private probe set on-chain, probes
+  every cohort member with identical paid chat-completion batches over the
+  ordinary buyer path (indistinguishable from organic traffic), requires
+  verified `ResponseAuth` on probe traffic, computes cohort (and optional
+  KBF-reference) verdicts, writes evidence bundles under
+  `<dataDir>/fingerprints/evidence`, and submits attestations.
   `antseed verifier status` / `claim` cover credits and reward claims.
+- Reference enrollment: `antseed verifier reference build` enrolls a model
+  through a trusted OpenAI-compatible upstream (canonical provider,
+  OpenRouter, or a local deployment of the open weights) — consistency-filter
+  candidate probes across multiple temperatures, certify the median as
+  `consensus`, and measure the reference's own hold-out error rate as
+  `selfTest`. With `verifier.upstream` configured, the daemon enrolls
+  references automatically for discovered services that lack one. A certified
+  reference is ground truth on its own, so it unlocks auditing services with
+  fewer than `cohortMinSize` sellers — down to a single seller. References
+  drift as backends update (~7–9 weeks, arXiv:2605.29524); the daemon warns
+  when one is older than 7 weeks.
 
 Cohort consensus is the key mechanism enabling verification without a trusted
 upstream reference: when N sellers claim the same model, the majority behavior
@@ -145,6 +161,30 @@ the bar but does not eliminate it — a determined seller running a classifier
 over all traffic can still try, at the cost of real-model spend on false
 positives; the endgame remains verification over genuinely organic buyer
 traffic.
+
+Where the probes come from is a pluggable **`ProbeSource`**. The daemon defaults
+to a compositional source that crosses large entity lists with numeric attribute
+schemas (element atomic numbers, orbital periods, country calling codes, …),
+yielding a probe space of hundreds of thousands of combinations rather than a
+memorizable checked-in bank; the static bank survives as a test/bootstrap
+fixture (`probeSource: "bank"`). Compositional probes carry only advisory
+consensus values and are scored exclusively by cohort consensus — never against
+a reference self-test. When a trusted KBF reference matches the audited service,
+its certified probes are used instead (reference mode) and reference verdicts
+are computed alongside cohort verdicts. Because commit-reveal necessarily
+reveals every probe once an audit completes, the daemon also keeps a
+per-(verifier, service) **rotation log**: the ids of recently revealed probes
+(default: last 2000) are excluded from future rounds against that service, so a
+seller cannot profit from memorizing past audits. Rotation applies only to
+large non-certified sources; certified reference probes are meant to be reused.
+
+All probe selection, commitment nonces, and stealth phrasing choices derive
+from one per-audit CSPRNG seed through standard primitives: RFC 5869
+HKDF-SHA256 for domain-separated seed derivation, a NIST SP 800-90A HMAC_DRBG
+(SHA-256) for the deterministic stream, rejection sampling for unbiased draws,
+and a Fisher–Yates shuffle. Determinism is what makes evidence re-verifiable —
+an arbiter re-derives the exact stealth request bodies from the revealed probe
+set and nonce and checks the set against the pre-audit commitment.
 
 **Reputation and enforcement.** The registry accumulates per-(agent, service)
 and per-agent verification stats (`sameCount`/`diffCount`/`undeterminedCount`,
@@ -168,7 +208,16 @@ Still proposed:
 - verifier staking and slashing for misbehaving verifiers;
 - off-chain exhibit verifier for third-party re-checking of evidence bundles;
 - on-chain seller stake slashing for confirmed substitution (the current
-  enforcement is a reversible usage-points penalty, not stake slashing).
+  enforcement is a reversible usage-points penalty, not stake slashing);
+- two-round re-query against mixed routing (re-probe only first-round
+  mismatches, two-stage binomial null — arXiv:2605.29524 reports 95% TPR at
+  5–10% substitution fraction for distant substitutes);
+- anytime-valid sequential testing (SPRT / e-process on the running mismatch
+  count) so blatant substitutes are flagged after ~15–25 probes without alpha
+  inflation while marginal cases keep accumulating evidence;
+- a passive tier-0 filter scoring sellers' organic completions with an
+  idiosyncrasy classifier (https://arxiv.org/abs/2502.12150) to catch gross
+  wrong-family substitution for free before spending paid probes.
 
 The next implementation should build on the existing `ResponseAuth` and
 verification sample substrate instead of replacing it.
@@ -195,11 +244,36 @@ A secondary adversary is a malicious **Buyer** that fabricates or cherry-picks
 evidence to slash an honest Seller. Any mechanism that can trigger an on-chain
 penalty MUST be robust against this.
 
-External motivation:
+External motivation and research grounding:
 
 - "Real Money, Fake Models" documents deceptive model claims in shadow APIs and
   motivates treating model identity as an auditable market claim, not a label to
   trust blindly: https://arxiv.org/abs/2603.01919.
+- Knowledge Boundary Fingerprinting (https://arxiv.org/abs/2605.29524) is the
+  published protocol this design follows: numeric factual probes near the
+  reference model's knowledge boundary, reference-consistency filtering across
+  temperatures at enrollment, Clopper–Pearson-bounded self-error, and a
+  binomial tail test per audit. Reported 0/30 false positives and 60/60 true
+  positives under deployment wrappers (system prompts, RAG, agent CLIs,
+  temperature 0–0.7) where LLMmap (37.5% FPR) and distribution tests broke;
+  audits cost $0.002–$0.25 per endpoint. Probe staleness is ~7–9 weeks.
+- Model Equality Testing (https://arxiv.org/abs/2410.20247) found 11/31
+  commercial Llama endpoints deviating from reference weights; its MMD test
+  needs a trusted reference distribution and temperature-1 sampling, which
+  this protocol avoids by scoring numeric answers directly.
+- The spoofing attack literature (GhostPrint,
+  https://arxiv.org/abs/2606.16100) shows a cheater can LoRA-finetune a weak
+  model on any public probe bank (95% spoof success vs fixed-query
+  fingerprinters). The defenses here are exactly the implemented ones: a
+  large private compositional probe space, per-audit fresh selection, and
+  rotation of revealed probes. Diverse, high-entropy audit distributions were
+  the hardest to spoof (23.3% success).
+- Black-box tests reliably catch economically meaningful substitution
+  (cross-family, size-down, heavy quantization) but NOT near-lossless serving
+  changes — 8-bit quantization of the true model is essentially invisible to
+  every published black-box method (https://arxiv.org/abs/2504.04715,
+  https://arxiv.org/abs/2506.06975). Closing that residual gap requires TEE
+  attestation, which is out of scope for this mechanism.
 
 ---
 
@@ -543,7 +617,9 @@ Responsibilities:
 
 - shared `FingerprintVerifier` interface;
 - shared reference, probe, audit-result, and fingerprint-pack schemas;
-- canonical JSON hashing for reference IDs, pack IDs, and audit IDs;
+- canonical JSON (RFC 8785 JCS) hashing for reference IDs, pack IDs, and audit IDs;
+- deterministic randomness (RFC 5869 HKDF-SHA256 + NIST SP 800-90A HMAC_DRBG)
+  for probe selection, commitment nonces, and stealth phrasing;
 - verifier registry and dispatch by `kind`;
 - KBF schemas and validators;
 - domain definitions and tolerances;
@@ -684,13 +760,16 @@ imported by the Buyer and stored locally:
 referenceId = "sha256:" || sha256(canonical-json(reference-without-local-fields))
 ```
 
-The canonicalization function MUST be deterministic across platforms:
+The canonicalization function MUST follow the JSON Canonicalization Scheme
+(JCS, RFC 8785) so it is deterministic across platforms:
 
 - UTF-8 JSON;
-- object keys sorted lexicographically;
+- object keys sorted by UTF-16 code units (RFC 8785 §3.2.3);
 - no insignificant whitespace;
-- finite numbers only;
-- no `NaN`, `Infinity`, or `-Infinity`;
+- numbers serialized per the ECMAScript Number-to-string algorithm
+  (RFC 8785 §3.2.2.3);
+- finite numbers only — `NaN`, `Infinity`, and `-Infinity` MUST be rejected
+  (stricter than JCS, which cannot represent them anyway);
 - no local filesystem paths in hashed content.
 
 ### Reference Schema
@@ -1024,13 +1103,17 @@ this policy." It does not require the Seller to know the Buyer's private probes.
 ### Commit-Reveal for Adverse Audits
 
 If private probes can lead to slashing, the Buyer MUST be unable to choose only
-bad probes after seeing responses. Use commit-reveal:
+bad probes after seeing responses. Use a standard hash commitment scheme
+(binding via SHA-256 collision resistance, hiding via a fresh 256-bit nonce):
 
 1. Before sending audit requests, Buyer computes:
 
    ```text
    probeSetCommitment = sha256(referenceId || verifierKind || orderedProbeIds || nonce)
    ```
+
+   The nonce MUST be 256 bits and derived from fresh CSPRNG entropy (directly,
+   or via an RFC 5869 HKDF expansion of a per-audit random seed).
 
 2. Buyer records the commitment locally and MAY submit it to a cheap timestamping
    or dispute-intent path when the audit starts.

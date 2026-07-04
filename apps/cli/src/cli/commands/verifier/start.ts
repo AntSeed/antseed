@@ -16,7 +16,11 @@ import {
 } from '../../payment-utils.js'
 import { loadReferences, findReferenceForService } from '../../../verifier/references.js'
 import { selectCohort, runCohortAudit } from '../../../verifier/audit-runner.js'
+import type { ProbeSourceKind } from '../../../verifier/audit-runner.js'
+import { discoverServices } from '../../../verifier/service-discovery.js'
+import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
 import type { VerifierCLIConfig } from '../../../config/types.js'
+import { mkdir, writeFile } from 'node:fs/promises'
 
 const DEFAULT_MAX_AUDITS_PER_EPOCH = 50
 const DEFAULT_PROBES_PER_AUDIT = 24
@@ -24,6 +28,14 @@ const DEFAULT_MAX_PROBES_PER_REQUEST = 3
 const DEFAULT_COHORT_MIN_SIZE = 3
 const DEFAULT_COHORT_MAX_SIZE = 10
 const DEFAULT_AUDIT_INTERVAL_MS = 300_000
+const DEFAULT_PROBE_SOURCE = 'compositional' as const
+const DEFAULT_PROBE_ROTATION_HISTORY = 2000
+/**
+ * KBF references drift as upstream backends update — the published KBF study
+ * (arXiv:2605.29524) measured probe staleness at ~7–9 weeks. Warn (once per
+ * service) when a reference is older than 7 weeks so operators rebuild it.
+ */
+const REFERENCE_STALE_MS = 49 * 24 * 60 * 60 * 1000
 
 interface ResolvedVerifierOptions {
   services: string[]
@@ -34,19 +46,24 @@ interface ResolvedVerifierOptions {
   cohortMaxSize: number
   auditIntervalMs: number
   stalenessWindowSecs: number | undefined
+  probeSource: ProbeSourceKind
+  probeRotationHistory: number
   referencesDir: string
   evidenceDir: string
+  probeLogDir: string
 }
 
 function resolveVerifierOptions(
   verifierConfig: VerifierCLIConfig | undefined,
   flags: { service?: string[]; interval?: number },
   dataDir: string,
-): ResolvedVerifierOptions | null {
+): ResolvedVerifierOptions {
+  // Empty services = auto-discover mode: the verifier is a buyer node, so the
+  // full peer + service catalog is available locally after one wildcard
+  // discovery — audit everything the network claims to serve.
   const services = (flags.service && flags.service.length > 0 ? flags.service : verifierConfig?.services ?? [])
-    .map((s) => s.trim())
+    .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 0)
-  if (services.length === 0) return null
   return {
     services,
     maxAuditsPerEpoch: verifierConfig?.maxAuditsPerEpoch ?? DEFAULT_MAX_AUDITS_PER_EPOCH,
@@ -56,8 +73,11 @@ function resolveVerifierOptions(
     cohortMaxSize: verifierConfig?.cohortMaxSize ?? DEFAULT_COHORT_MAX_SIZE,
     auditIntervalMs: flags.interval ?? verifierConfig?.auditIntervalMs ?? DEFAULT_AUDIT_INTERVAL_MS,
     stalenessWindowSecs: verifierConfig?.stalenessWindowSecs,
+    probeSource: verifierConfig?.probeSource ?? DEFAULT_PROBE_SOURCE,
+    probeRotationHistory: verifierConfig?.probeRotationHistory ?? DEFAULT_PROBE_ROTATION_HISTORY,
     referencesDir: verifierConfig?.referencesDir ?? join(dataDir, 'fingerprints', 'references'),
     evidenceDir: verifierConfig?.evidenceDir ?? join(dataDir, 'fingerprints', 'evidence'),
+    probeLogDir: verifierConfig?.probeLogDir ?? join(dataDir, 'fingerprints', 'probe-log'),
   }
 }
 
@@ -78,10 +98,6 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         { service: options.service as string[] | undefined, interval: options.interval as number | undefined },
         globalOpts.dataDir,
       )
-      if (!verifierOptions) {
-        console.error(chalk.red('No services to verify. Set verifier.services in your config or pass --service.'))
-        process.exit(1)
-      }
 
       const rpcOverrides = {
         ...(options.rpcUrl ? { rpcUrl: options.rpcUrl as string } : {}),
@@ -170,8 +186,9 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       const policy = await registryClient.getAuditPolicy()
       const stalenessWindowSecs = verifierOptions.stalenessWindowSecs ?? policy.auditCooldown
       console.log(chalk.bold('Verifier settings:'))
-      console.log(chalk.dim(`  services: ${verifierOptions.services.join(', ')}`))
+      console.log(chalk.dim(`  services: ${verifierOptions.services.length > 0 ? verifierOptions.services.join(', ') : 'auto-discover (all advertised on the network)'}`))
       console.log(chalk.dim(`  probes per audit: ${verifierOptions.probesPerAudit} (${verifierOptions.maxProbesPerRequest}/request, stealth)`))
+      console.log(chalk.dim(`  probe source: ${verifierOptions.probeSource} (rotation history: ${verifierOptions.probeRotationHistory})`))
       console.log(chalk.dim(`  cohort size: ${verifierOptions.cohortMinSize}-${verifierOptions.cohortMaxSize}`))
       console.log(chalk.dim(`  audits per epoch: ${verifierOptions.maxAuditsPerEpoch} (on-chain cap: ${policy.maxCreditsPerVerifierPerEpoch})`))
       console.log(chalk.dim(`  staleness window: ${stalenessWindowSecs}s`))
@@ -182,6 +199,13 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       if (references.length > 0) {
         console.log(chalk.dim(`Loaded ${references.length} KBF reference(s) from ${verifierOptions.referencesDir}`))
       }
+
+      const upstream = resolveUpstream(config.verifier?.upstream)
+      if (upstream) {
+        console.log(chalk.dim(`Reference enrollment upstream: ${upstream.baseUrl} (services without a reference are enrolled automatically)`))
+      }
+      const enrollAttempted = new Set<string>()
+      const staleWarned = new Set<string>()
 
       let stopped = false
       setupShutdownHandler(async () => {
@@ -220,30 +244,93 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         const epoch = await registryClient.currentEpoch()
         const creditsUsed = await registryClient.epochCredits(epoch, address)
         const epochBudget = Math.min(verifierOptions.maxAuditsPerEpoch, policy.maxCreditsPerVerifierPerEpoch)
-        const remaining = epochBudget - creditsUsed
+        let remaining = epochBudget - creditsUsed
         if (remaining <= 0) {
           log(`Epoch ${epoch} audit budget exhausted (${creditsUsed}/${epochBudget}); waiting for next epoch`)
           return
         }
         log(`Epoch ${epoch}: ${creditsUsed}/${epochBudget} credits used`)
 
-        for (const service of verifierOptions.services) {
+        // One wildcard discovery per round: the verifier is itself a buyer
+        // node, so the whole peer + service catalog lands locally in a single
+        // sweep instead of one DHT walk per service.
+        let peers: PeerInfo[]
+        try {
+          peers = await node.discoverPeers()
+        } catch (err) {
+          warn(`peer discovery failed: ${(err as Error).message}`)
+          return
+        }
+        const discovered = discoverServices(peers)
+        const configured = verifierOptions.services
+        const targets = configured.length > 0
+          ? discovered.filter((d) => configured.includes(d.service))
+          : discovered
+        if (configured.length > 0) {
+          for (const service of configured) {
+            if (!targets.some((t) => t.service === service)) {
+              log(`${service}: no peers advertising it this round`)
+            }
+          }
+        } else {
+          log(`Discovered ${discovered.length} advertised service(s) across ${peers.length} peer(s)`)
+        }
+
+        for (const { service, peers: servicePeers } of targets) {
           if (stopped) return
-          let peers: PeerInfo[]
-          try {
-            peers = await node.discoverPeers(service)
-          } catch (err) {
-            warn(`discovery failed for ${service}: ${(err as Error).message}`)
-            continue
+          if (remaining <= 0) {
+            log(`Epoch ${epoch} audit budget exhausted mid-round; deferring remaining services`)
+            return
           }
 
-          const cohort = await selectCohort(peers, service, registryClient, {
+          let reference = findReferenceForService(references, service)
+          const cohort = await selectCohort(servicePeers, service, registryClient, {
             cohortMaxSize: Math.min(verifierOptions.cohortMaxSize, remaining),
             stalenessWindowSecs,
             warn,
           })
-          if (cohort.length < verifierOptions.cohortMinSize) {
-            log(`${service}: only ${cohort.length} eligible seller(s) (< ${verifierOptions.cohortMinSize}); skipping round`)
+          if (cohort.length === 0) {
+            log(`${service}: no eligible sellers (need on-chain agent id + response-auth); skipping`)
+            continue
+          }
+
+          // No reference yet but an upstream is configured: enroll one now
+          // (once per service per daemon run). A certified reference both
+          // anchors cohort consensus and unlocks auditing lone sellers.
+          if (!reference?.selfTest && upstream && !enrollAttempted.has(service)) {
+            enrollAttempted.add(service)
+            const upstreamModel = config.verifier?.upstream?.modelMap?.[service] ?? service
+            log(`${service}: no reference — enrolling via ${upstream.baseUrl} as "${upstreamModel}"`)
+            try {
+              const built = await buildKbfReference(upstream, { model: upstreamModel, service, log })
+              await mkdir(verifierOptions.referencesDir, { recursive: true })
+              const outPath = join(verifierOptions.referencesDir, `${service.replace(/[^a-z0-9._-]/gi, '_')}.json`)
+              await writeFile(outPath, JSON.stringify(built, null, 2))
+              references.push(built)
+              reference = built
+              log(`${service}: reference enrolled (${built.probes.length} probes, self-error ${(built.selfTest.errorRate * 100).toFixed(1)}%) → ${outPath}`)
+            } catch (err) {
+              warn(`${service}: reference enrollment failed: ${(err as Error).message}`)
+            }
+          }
+
+          if (reference?.selfTest && !staleWarned.has(service)) {
+            const age = Date.now() - Date.parse(reference.createdAt)
+            if (Number.isFinite(age) && age > REFERENCE_STALE_MS) {
+              staleWarned.add(service)
+              warn(`${service}: reference is ${Math.round(age / 86_400_000)} days old — backends drift in ~7-9 weeks; rebuild with \`antseed verifier reference build\``)
+            }
+          }
+
+          // Cohort consensus needs cohortMinSize sellers, but a certified
+          // reference is ground truth on its own — with one, audit even a
+          // single seller.
+          const minSize = reference?.selfTest ? 1 : verifierOptions.cohortMinSize
+          if (cohort.length < minSize) {
+            log(
+              `${service}: only ${cohort.length} eligible seller(s) (< ${minSize}` +
+                `${reference?.selfTest ? '' : ', no reference'}); skipping round`,
+            )
             continue
           }
 
@@ -254,7 +341,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
               registryClient,
               service,
               cohort,
-              findReferenceForService(references, service),
+              reference,
               {
                 probesPerAudit: verifierOptions.probesPerAudit,
                 cohortMinSize: verifierOptions.cohortMinSize,
@@ -262,12 +349,16 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                 stalenessWindowSecs,
                 maxProbesPerRequest: verifierOptions.maxProbesPerRequest,
                 evidenceDir: verifierOptions.evidenceDir,
+                probeSource: verifierOptions.probeSource,
+                probeLogDir: verifierOptions.probeLogDir,
+                probeRotationHistory: verifierOptions.probeRotationHistory,
                 log,
                 warn,
               },
             )
             const attested = result.outcomes.filter((o) => o.attested).length
             const diffs = result.outcomes.filter((o) => o.verdict === 'DIFF').length
+            remaining -= attested
             console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested, ${diffs} DIFF`))
           } catch (err) {
             warn(`audit round failed for ${service}: ${(err as Error).message}`)
