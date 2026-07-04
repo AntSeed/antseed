@@ -304,13 +304,16 @@ function validateVerifierConfig(
     errors.push(`${path} must be an object when provided`);
     return;
   }
-  if (!Array.isArray(verifier.services) || verifier.services.length === 0) {
-    errors.push(`${path}.services must be a non-empty string array`);
-  } else {
-    for (let i = 0; i < verifier.services.length; i += 1) {
-      const service = verifier.services[i];
-      if (typeof service !== 'string' || service.trim().length === 0) {
-        errors.push(`${path}.services[${i}] must be a non-empty string`);
+  // Empty/omitted services = auto-discover mode; entries just have to be strings.
+  if (verifier.services !== undefined) {
+    if (!Array.isArray(verifier.services)) {
+      errors.push(`${path}.services must be a string array when provided`);
+    } else {
+      for (let i = 0; i < verifier.services.length; i += 1) {
+        const service = verifier.services[i];
+        if (typeof service !== 'string' || service.trim().length === 0) {
+          errors.push(`${path}.services[${i}] must be a non-empty string`);
+        }
       }
     }
   }
@@ -334,6 +337,31 @@ function validateVerifierConfig(
     verifier.cohortMaxSize < verifier.cohortMinSize
   ) {
     errors.push(`${path}.cohortMaxSize must be >= ${path}.cohortMinSize`);
+  }
+  if (verifier.probeSource !== undefined && verifier.probeSource !== 'compositional' && verifier.probeSource !== 'bank') {
+    errors.push(`${path}.probeSource must be "compositional" or "bank"`);
+  }
+  if (
+    verifier.probeRotationHistory !== undefined &&
+    (!Number.isInteger(verifier.probeRotationHistory) || verifier.probeRotationHistory < 0)
+  ) {
+    errors.push(`${path}.probeRotationHistory must be an integer >= 0`);
+  }
+  if (verifier.upstream !== undefined) {
+    const upstream = verifier.upstream;
+    if (!upstream || typeof upstream !== 'object' || Array.isArray(upstream)) {
+      errors.push(`${path}.upstream must be an object when provided`);
+    } else {
+      if (typeof upstream.baseUrl !== 'string' || upstream.baseUrl.trim().length === 0) {
+        errors.push(`${path}.upstream.baseUrl must be a non-empty string`);
+      }
+      if (upstream.apiKey !== undefined && typeof upstream.apiKey !== 'string') {
+        errors.push(`${path}.upstream.apiKey must be a string when provided`);
+      }
+      if (upstream.apiKeyEnv !== undefined && typeof upstream.apiKeyEnv !== 'string') {
+        errors.push(`${path}.upstream.apiKeyEnv must be a string when provided`);
+      }
+    }
   }
 }
 

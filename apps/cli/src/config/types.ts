@@ -224,8 +224,12 @@ export interface PaymentsCLIConfig {
  * on-chain.
  */
 export interface VerifierCLIConfig {
-  /** Advertised services (model IDs) to verify, e.g. ["kimi-k2", "deepseek-v3.1"]. */
-  services: string[];
+  /**
+   * Advertised services (model IDs) to verify, e.g. ["kimi-k2", "deepseek-v3.1"].
+   * Empty (or omitted): auto-discover mode — the verifier audits every service
+   * advertised by peers on the network.
+   */
+  services?: string[];
   /** Max credited audits this verifier attempts per emissions epoch. Default: 50. */
   maxAuditsPerEpoch?: number;
   /** Numeric probes per audited seller. Default: 24. */
@@ -245,6 +249,20 @@ export interface VerifierCLIConfig {
   /** Skip sellers audited on-chain within this many seconds. Default: on-chain auditCooldown. */
   stalenessWindowSecs?: number;
   /**
+   * Origin of probes when no reference matches the service. `compositional`
+   * (default) draws from a large procedural entity/attribute space so a seller
+   * cannot memorize a finite bank; `bank` uses the small built-in fixture
+   * (tests/bootstrap). A matching reference always takes precedence (reference
+   * mode). Default: "compositional".
+   */
+  probeSource?: 'compositional' | 'bank';
+  /**
+   * Recently-used probe ids remembered per service and excluded from later
+   * rounds, so a revealed probe is not reused until the pool cycles. 0 disables
+   * rotation. Ignored in reference mode. Default: 2000.
+   */
+  probeRotationHistory?: number;
+  /**
    * Directory of trusted KBF reference files (JSON, spec 07 reference schema).
    * When a reference matches an audited service, reference-based KBF verdicts
    * are computed in addition to cohort consensus. Default: <dataDir>/fingerprints/references.
@@ -252,6 +270,28 @@ export interface VerifierCLIConfig {
   referencesDir?: string;
   /** Directory where evidence bundles are written. Default: <dataDir>/fingerprints/evidence. */
   evidenceDir?: string;
+  /** Directory for the per-service probe rotation log. Default: <dataDir>/fingerprints/probe-log. */
+  probeLogDir?: string;
+  /**
+   * Trusted OpenAI-compatible upstream used to enroll certified KBF references
+   * (`antseed verifier reference build`, plus automatic enrollment in the
+   * daemon for discovered services that lack one). Point it at the canonical
+   * provider, OpenRouter, or a local deployment of the open weights. With a
+   * reference, a service can be audited down to a single seller; without one,
+   * cohort consensus needs cohortMinSize sellers.
+   */
+  upstream?: VerifierUpstreamConfig;
+}
+
+export interface VerifierUpstreamConfig {
+  /** OpenAI-compatible base URL, e.g. "https://openrouter.ai/api/v1". */
+  baseUrl: string;
+  /** API key sent as a Bearer token. Prefer apiKeyEnv over inlining secrets. */
+  apiKey?: string;
+  /** Environment variable to read the API key from (wins over apiKey). */
+  apiKeyEnv?: string;
+  /** Map network service id → upstream model id when the names differ. */
+  modelMap?: Record<string, string>;
 }
 
 /**

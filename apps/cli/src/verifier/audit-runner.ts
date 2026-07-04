@@ -7,10 +7,14 @@ import type { Identity } from '@antseed/node'
 import type {
   FingerprintReference,
   FingerprintVerdict,
+  ProbeSource,
   SellerObservation,
 } from '@antseed/fingerprints'
 import {
   generateProbeSet,
+  compositionalProbeSource,
+  probeBankSource,
+  staticProbeSource,
   computeProbeCommitment,
   computeCohortVerdicts,
   computeMatchVector,
@@ -19,6 +23,9 @@ import {
   verdictToCode,
 } from '@antseed/fingerprints'
 import { probeSeller } from './probing.js'
+import { loadUsedProbeIds, recordUsedProbeIds } from './probe-log.js'
+
+export type ProbeSourceKind = 'compositional' | 'bank'
 
 export interface AuditRunnerOptions {
   probesPerAudit: number
@@ -28,6 +35,21 @@ export interface AuditRunnerOptions {
   /** Max probes woven into a single stealth chat request (stealth vs. cost dial). */
   maxProbesPerRequest: number
   evidenceDir: string
+  /**
+   * Origin of probes when no reference matches the service. `compositional`
+   * (default) draws from a large rotating space; `bank` uses the built-in
+   * fixture. When a reference IS present, its certified probes are used
+   * regardless (reference mode).
+   */
+  probeSource: ProbeSourceKind
+  /** Directory holding the per-service probe rotation log. */
+  probeLogDir: string
+  /**
+   * How many recently-used probe ids to remember per service and exclude from
+   * future rounds. 0 disables rotation. Ignored for reference mode (certified
+   * probes are meant to be reused).
+   */
+  probeRotationHistory: number
   log: (message: string) => void
   warn: (message: string) => void
 }
@@ -117,15 +139,56 @@ export async function runCohortAudit(
 ): Promise<CohortAuditResult> {
   const { log, warn } = options
 
+  // Choose the probe origin. A reference that matches the service is scored
+  // against its certified answers (reference mode); otherwise draw from a
+  // large rotating source so a seller cannot memorize a finite bank.
+  const referenceMode = Boolean(reference?.selfTest)
+  const source: ProbeSource = reference?.selfTest
+    ? staticProbeSource(reference.referenceId, reference.probes, { consensusCertified: true })
+    : options.probeSource === 'bank'
+      ? probeBankSource()
+      : compositionalProbeSource()
+
+  // Rotation: exclude probes recently revealed against this service. Only for
+  // large, non-certified sources — certified reference probes are meant to be
+  // reused, and their pools are too small to rotate.
+  const rotationEnabled = !source.consensusCertified && options.probeRotationHistory > 0
+  const exclude = rotationEnabled
+    ? await loadUsedProbeIds(options.probeLogDir, service)
+    : new Set<string>()
+
+  // Never ask for more probes than the live pool can supply after exclusions;
+  // shrink the count rather than throwing on a well-rotated small pool.
+  const available = source.size - exclude.size
+  const count = Math.max(1, Math.min(options.probesPerAudit, available))
+  if (count < options.probesPerAudit) {
+    warn(
+      `${service}: probe pool for source ${source.id} down to ${available} after rotation; ` +
+        `auditing with ${count} probes this round`,
+    )
+  }
+
   // Fresh private probe set per round. The seed is random — determinism is
   // only needed for later re-verification, which the persisted probe set in
   // the evidence bundle provides.
   const probeSet = generateProbeSet({
     service,
-    count: options.probesPerAudit,
+    count,
     seed: randomBytes(32).toString('hex'),
+    source,
+    ...(exclude.size > 0 ? { exclude } : {}),
   })
   const probeCommitment = computeProbeCommitment(probeSet)
+
+  if (rotationEnabled) {
+    await recordUsedProbeIds(
+      options.probeLogDir,
+      service,
+      probeSet.probes.map((p) => p.id),
+      options.probeRotationHistory,
+      new Date().toISOString(),
+    ).catch((err) => warn(`probe rotation log write failed for ${service}: ${(err as Error).message}`))
+  }
 
   // Commit BEFORE any probe leaves this machine. The contract rejects
   // attestations whose commitment is not strictly older than the submission,
@@ -159,10 +222,11 @@ export async function runCohortAudit(
     const cohortVerdict = sellerVerdict?.verdict ?? 'UNDETERMINED'
 
     let referenceVerdict: FingerprintVerdict | undefined
-    if (reference?.selfTest) {
-      // Score against the trusted reference too: consensus values in the
-      // generated bank are advisory, but reference probes carry certified
-      // answers, so a reference verdict strengthens (or overrides) cohort.
+    if (referenceMode && reference?.selfTest) {
+      // Reference mode only: the probe set IS the reference's certified probes,
+      // so scoring answers against their consensus is meaningful. Compositional
+      // and bank probes carry advisory consensus and MUST NOT reach this path
+      // (they would mismatch every seller and forge a bogus DIFF).
       const matchVector = computeMatchVector(run.answers, probeSet.probes)
       referenceVerdict = computeKbfVerdict({
         selfHamming: reference.selfTest.hamming,
