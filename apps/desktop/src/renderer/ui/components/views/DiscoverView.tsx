@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { DiscoverWelcome } from '../chat/DiscoverWelcome';
 import type { ViewName } from '../../types';
@@ -10,7 +10,7 @@ type DiscoverViewProps = {
 };
 
 export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
-  const snap = useUiSnapshot();
+  const serviceOptions = useUiSelector((state) => state.chatServiceOptions);
   const actions = useActions();
 
   const handleStartChatting = useCallback(
@@ -28,7 +28,7 @@ export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
   return (
     <section className={`view${active ? ' active' : ''}`} role="tabpanel">
       <DiscoverWelcome
-        serviceOptions={snap.chatServiceOptions}
+        serviceOptions={serviceOptions}
         onStartChatting={handleStartChatting}
       />
     </section>

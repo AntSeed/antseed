@@ -78,6 +78,10 @@ export function formatUsdc(baseUnits: bigint): string {
   return `${whole}.${fracStr}`;
 }
 
+export function shortId(value: string, len = 10): string {
+  return value.length > len ? `${value.slice(0, len)}...` : value;
+}
+
 /** Parse human-readable USDC to base units (6 decimals). */
 export function parseUsdcToBaseUnits(amount: string): bigint {
   const amountFloat = parseFloat(amount);

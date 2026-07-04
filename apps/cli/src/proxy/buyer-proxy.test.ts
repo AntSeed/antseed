@@ -337,7 +337,7 @@ test('pinned proxy request reports protocol or service mismatch when provider is
   pinnedPeer.providerServiceApiProtocols = {
     'local-llm': {
       services: {
-        llama: ['anthropic-messages'],
+        llama: ['openai-completions'],
       },
     },
   }

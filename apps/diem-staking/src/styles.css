@@ -1322,7 +1322,7 @@ footer .links { display: flex; gap: 24px; }
   --flow-inference-text: #ffffff;
   --flow-inference-muted: rgba(255, 255, 255, 0.7);
   --flow-ants-text: #edf6ee;
-  --flow-ants-muted: #97aa9f;
+  --flow-ants-muted: #d2e3d9;
   --soil-0: #070b09;
   --soil-1: #0a0e14;
   --soil-2: #0f1713;

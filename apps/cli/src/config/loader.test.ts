@@ -120,6 +120,48 @@ test('loadConfig preserves explicit buyer peerRefreshIntervalMs and metadataFetc
   );
 });
 
+test('loadConfig defaults and preserves buyer metadata v2 service opt-out setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        proxyPort: 9123,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.disableMetadataV2Services, false);
+    }
+  );
+
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        disableMetadataV2Services: true,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.disableMetadataV2Services, true);
+    }
+  );
+});
+
+test('loadConfig rejects invalid buyer disableMetadataV2Services', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        disableMetadataV2Services: 'false',
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.disableMetadataV2Services/
+      );
+    }
+  );
+});
+
 test('loadConfig preserves buyer verification sampling settings', async () => {
   await withTempConfig(
     JSON.stringify({

@@ -1,4 +1,4 @@
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 
 type ConnectionViewProps = {
   active: boolean;
@@ -6,7 +6,13 @@ type ConnectionViewProps = {
 
 export function ConnectionView({ active }: ConnectionViewProps) {
   const { connectionMeta, connectionStatus, connectionNetwork, connectionSources, connectionNotes } =
-    useUiSnapshot();
+    useUiSelector((state) => ({
+      connectionMeta: state.connectionMeta,
+      connectionStatus: state.connectionStatus,
+      connectionNetwork: state.connectionNetwork,
+      connectionSources: state.connectionSources,
+      connectionNotes: state.connectionNotes,
+    }), shallowEqual);
 
   return (
     <section className={`view${active ? ' active' : ''}`} role="tabpanel">

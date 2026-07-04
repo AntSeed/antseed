@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { Button } from '@antseed/ui';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useRetainedState } from '../../hooks/useRetainedState';
 
 type ConfigViewProps = {
   active: boolean;
@@ -14,36 +15,57 @@ type VoiceModelStatus = {
   models: Array<{ id: string; label: string; size: string; installed: boolean; selected: boolean; bundled: boolean }>;
 };
 
+// Renderer-lifetime cache: settings edits survive lazy page unmounts until the
+// form is saved or the app process exits.
+const configViewCache = {
+  proxyPort: '8377',
+  minRep: '0',
+  chainId: 'base-mainnet',
+  disableMetadataV2Services: false,
+  dirty: false,
+  initialized: false,
+  voiceStatus: null as VoiceModelStatus | null,
+  voiceInstalling: false,
+  voiceMessage: null as string | null,
+};
+
 function isVoiceModelStatus(value: unknown): value is VoiceModelStatus {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
   return Boolean(record && Array.isArray(record.models));
 }
 
 export function ConfigView({ active }: ConfigViewProps) {
-  const { configFormData, configSaving, devMode, configMessage } = useUiSnapshot();
+  const { configFormData, configSaving, devMode, configMessage } = useUiSelector((state) => ({
+    configFormData: state.configFormData,
+    configSaving: state.configSaving,
+    devMode: state.devMode,
+    configMessage: state.configMessage,
+  }), shallowEqual);
   const actions = useActions();
 
   // Local form state — initialized from config, edited locally, saved on button click
-  const [proxyPort, setProxyPort] = useState('8377');
-  const [minRep, setMinRep] = useState('0');
-  const [chainId, setChainId] = useState('base-mainnet');
-  const [dirty, setDirty] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<VoiceModelStatus | null>(null);
-  const [voiceInstalling, setVoiceInstalling] = useState(false);
-  const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+  const [proxyPort, setProxyPort] = useRetainedState(configViewCache, 'proxyPort');
+  const [minRep, setMinRep] = useRetainedState(configViewCache, 'minRep');
+  const [chainId, setChainId] = useRetainedState(configViewCache, 'chainId');
+  const [disableMetadataV2Services, setDisableMetadataV2Services] = useRetainedState(configViewCache, 'disableMetadataV2Services');
+  const [dirty, setDirty] = useRetainedState(configViewCache, 'dirty');
+  const [voiceStatus, setVoiceStatus] = useRetainedState(configViewCache, 'voiceStatus');
+  const [voiceInstalling, setVoiceInstalling] = useRetainedState(configViewCache, 'voiceInstalling');
+  const [voiceMessage, setVoiceMessage] = useRetainedState(configViewCache, 'voiceMessage');
 
   // Sync from config on first load only
-  const [initialized, setInitialized] = useState(false);
+  const [initialized, setInitialized] = useRetainedState(configViewCache, 'initialized');
   useEffect(() => {
     if (configFormData && !initialized) {
       setProxyPort(String(configFormData.proxyPort));
       setMinRep(String(configFormData.minRep));
       setChainId(configFormData.cryptoChainId || 'base-mainnet');
+      setDisableMetadataV2Services(configFormData.disableMetadataV2Services);
       setInitialized(true);
     }
-  }, [configFormData, initialized]);
+  }, [configFormData, initialized, setChainId, setDisableMetadataV2Services, setInitialized, setMinRep, setProxyPort]);
 
-  const markDirty = useCallback(() => setDirty(true), []);
+  const markDirty = useCallback(() => setDirty(true), [setDirty]);
 
   const refreshVoiceStatus = useCallback(async () => {
     const result = await window.antseedDesktop?.voiceGetStatus?.();
@@ -93,6 +115,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       proxyPort: parseInt(proxyPort, 10) || 8377,
       peerRefreshIntervalMs: configFormData.peerRefreshIntervalMs,
       minRep: parseInt(minRep, 10) || 0,
+      disableMetadataV2Services,
       cryptoChainId: chainId,
     });
     setDirty(false);
@@ -143,6 +166,27 @@ export function ConfigView({ active }: ConfigViewProps) {
                 onChange={(e) => { setMinRep(e.target.value); markDirty(); }}
               />
             </label>
+            <div className="settings-item">
+              <div className="settings-copy">
+                <h4>Disable Service Metadata Attribution</h4>
+                <p>Omit per-service usage details from paid and free usage metadata.</p>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch${disableMetadataV2Services ? ' is-on' : ''}`}
+                aria-pressed={disableMetadataV2Services}
+                onClick={() => {
+                  setDisableMetadataV2Services((value) => !value);
+                  markDirty();
+                }}
+                disabled={configSaving}
+              >
+                <span className="settings-switch-track">
+                  <span className="settings-switch-thumb" />
+                </span>
+                <span className="settings-switch-label">{disableMetadataV2Services ? 'Enabled' : 'Disabled'}</span>
+              </button>
+            </div>
           </div>
 
         <div className="settings-footer" />

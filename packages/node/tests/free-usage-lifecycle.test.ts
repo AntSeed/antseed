@@ -48,11 +48,12 @@ function makeConn() {
   };
 }
 
-function freeUsageConfig() {
+function freeUsageConfig(overrides: Partial<ConstructorParameters<typeof BuyerFreeUsageManager>[1]> = {}) {
   return {
     chainId: CHAIN_ID,
     freeUsageContractAddress: FREE_USAGE_ADDRESS,
     defaultAuthDurationSecs: AUTH_SECS,
+    ...overrides,
   };
 }
 
@@ -194,6 +195,52 @@ describe('FreeUsage P2P lifecycle', () => {
       },
       authPayload.usageSig,
     ).toLowerCase()).toBe(buyer.wallet.address.toLowerCase());
+  });
+
+  it('buyer can suppress per-service free usage metadata', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'free-usage-no-service-meta-'));
+    const store = new ChannelStore(dir);
+    try {
+      const buyerManager = new BuyerFreeUsageManager(
+        buyer,
+        freeUsageConfig({ disableMetadataV2Services: true }),
+        undefined,
+        store,
+      );
+      const buyerConn = makeConn();
+      const buyerMux = new PaymentMux(buyerConn.conn as any);
+
+      await buyerManager.prepareOpen(sellerPeer(), buyerMux);
+      const openPayload = decodeFreeUsageOpen(decodeSentFrame(buyerConn.frames[0]!).payload);
+      buyerManager.handleAck(seller.peerId, {
+        channelId: openPayload.channelId,
+        acceptedSequence: '0',
+      });
+      buyerManager.trackRequestService('req-free-private', 'sensitive-free-model');
+
+      await buyerManager.handleNeedAuth(seller.peerId, {
+        channelId: openPayload.channelId,
+        requiredSequence: '1',
+        currentAcceptedSequence: '0',
+        requestId: 'req-free-private',
+        inputTokens: '12',
+        outputTokens: '7',
+      }, buyerMux);
+
+      const authPayload = decodeFreeUsageAuth(decodeSentFrame(buyerConn.frames[1]!).payload);
+      const expectedMetadata = {
+        cumulativeInputTokens: 12n,
+        cumulativeOutputTokens: 7n,
+        cumulativeRequestCount: 1n,
+        services: [],
+      };
+      expect(authPayload.metadata).toBe(encodeFreeUsageMetadata(expectedMetadata));
+      expect(authPayload.metadataHash).toBe(computeFreeUsageMetadataHash(expectedMetadata));
+      expect(store.getServiceTotals(openPayload.channelId)).toEqual([]);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('buyer waits for free usage open ack and clears unacked sessions on timeout', async () => {

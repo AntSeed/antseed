@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
 import { createInitialUiState } from '../core/state.js';
@@ -66,6 +66,186 @@ type Conversation = {
   updatedAt: number;
   usage: { inputTokens: number; outputTokens: number };
 };
+
+test('discover rows are marked loaded only after a successful catalog response', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const catalog = createDeferred<{ ok: true; data: unknown[] }>();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => catalog.promise,
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.chatDiscoverRowsLoaded, false);
+
+  catalog.resolve({
+    ok: true,
+    data: [
+      {
+        peerId: 'peer-a',
+        serviceId: 'model-a',
+      },
+    ],
+  });
+
+  await waitFor(() => uiState.chatDiscoverRowsLoaded && !uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.discoverRows[0]?.peerId, 'peer-a');
+});
+
+test('empty successful discover response still settles catalog loading', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => ({ ok: true, data: [] }),
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => uiState.chatDiscoverRowsLoaded && !uiState.chatServiceSelectDisabled);
+  assert.equal(uiState.discoverRows.length, 0);
+  assert.equal(uiState.chatServiceStatus.label, 'No services available');
+});
+
+test('failed discover response does not mark catalog loaded', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  const bridge: DesktopBridge = {
+    chatAiListDiscoverRows: async () => ({ ok: false, error: 'offline' }),
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  await waitFor(() => !uiState.chatServiceSelectDisabled && uiState.chatServiceStatus.label === 'offline');
+  assert.equal(uiState.chatDiscoverRowsLoaded, false);
+});
+
+test('opening a conversation tracks the loading gap before peer binding is restored', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [
+    {
+      id: 'conv-a',
+      title: 'Conversation A',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const conversation: Conversation = {
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+  const conversationLoad = createDeferred<{ ok: true; data: Conversation }>();
+  const bridge: DesktopBridge = {
+    chatAiGetConversation: async () => conversationLoad.promise,
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const openPromise = api.openConversation('conv-a');
+
+  await waitFor(() => uiState.chatOpeningConversationId === 'conv-a');
+  assert.equal(uiState.chatActiveConversation, 'conv-a');
+  assert.equal(uiState.chatSelectedPeerId, '');
+
+  conversationLoad.resolve({ ok: true, data: conversation });
+  await openPromise;
+
+  assert.equal(uiState.chatOpeningConversationId, null);
+  assert.equal(uiState.chatSelectedPeerId, 'peer-a');
+});
+
+test('deleting a conversation removes it from the list before IPC settles', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [
+    {
+      id: 'conv-a',
+      title: 'Conversation A',
+      service: 'model-a',
+      provider: 'openai',
+      peerId: 'peer-a',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+    {
+      id: 'conv-b',
+      title: 'Conversation B',
+      service: 'model-b',
+      provider: 'openai',
+      peerId: 'peer-b',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    },
+  ];
+
+  const deletion = createDeferred<{ ok: boolean }>();
+  const bridge: DesktopBridge = {
+    chatAiDeleteConversation: async () => deletion.promise,
+    chatAiListConversations: async () => ({ ok: true, data: [uiState.chatConversations[0]] }),
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const deletePromise = api.deleteConversation('conv-b');
+
+  assert.deepEqual(
+    uiState.chatConversations.map((conv) => (conv as Conversation).id),
+    ['conv-a'],
+  );
+
+  deletion.resolve({ ok: true });
+  await deletePromise;
+});
+
+test('aborting a chat clears sending state before IPC settles', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatSending = true;
+  uiState.chatSendingConversationId = 'conv-a';
+  uiState.chatSendingConversationIds = ['conv-a'];
+  uiState.chatInputDisabled = true;
+  uiState.chatSendDisabled = true;
+  uiState.chatAbortVisible = true;
+
+  const abort = createDeferred<void>();
+  const bridge: DesktopBridge = {
+    chatAiAbort: async () => abort.promise,
+  };
+
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  const abortPromise = api.abortChat();
+
+  assert.equal(uiState.chatSending, false);
+  assert.equal(uiState.chatSendingConversationId, null);
+  assert.deepEqual(uiState.chatSendingConversationIds, []);
+  assert.equal(uiState.chatInputDisabled, false);
+  assert.equal(uiState.chatSendDisabled, false);
+  assert.equal(uiState.chatAbortVisible, false);
+
+  abort.resolve();
+  await abortPromise;
+});
 
 test('new chat created while previous response is pending sends to its own peer', async () => {
   installDomTimers();

@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ContractsIcon } from '@hugeicons/core-free-icons';
 import type { DiscoverFilterState } from '../../hooks/useDiscoverFilters';
@@ -15,6 +15,28 @@ import styles from './DiscoverFilters.module.scss';
 type Props = {
   filters: DiscoverFilterState;
 };
+
+function PeerAvatar({ letter, gradient, iconUrl }: { letter: string; gradient: string; iconUrl: string | null }) {
+  const [iconFailed, setIconFailed] = useState(false);
+  const showIcon = Boolean(iconUrl) && !iconFailed;
+  return (
+    <span
+      className={`${styles.peerAvatar}${showIcon ? ` ${styles.peerAvatarIcon}` : ''}`}
+      style={showIcon ? undefined : { background: gradient }}
+    >
+      {showIcon ? (
+        <img
+          className={styles.peerAvatarImage}
+          src={iconUrl ?? undefined}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setIconFailed(true)}
+        />
+      ) : letter}
+    </span>
+  );
+}
 
 function formatPriceLabel(value: number, max: number): string {
   if (value >= max) return 'Any';
@@ -46,9 +68,7 @@ export const DiscoverFilters = memo(function DiscoverFilters({ filters }: Props)
                   aria-pressed={active}
                   title={p.peerId}
                 >
-                  <span className={styles.peerAvatar} style={{ background: p.gradient }}>
-                    {p.letter}
-                  </span>
+                  <PeerAvatar letter={p.letter} gradient={p.gradient} iconUrl={p.iconUrl} />
                   <span className={styles.peerLabel}>{p.label}</span>
                   {p.knownProxy && (
                     /* Icon-only identifier: this peer routes settlement through a

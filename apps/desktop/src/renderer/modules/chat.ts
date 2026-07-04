@@ -1242,6 +1242,7 @@ export function initChatModule({
       peerId: entry.peerId,
       peerDisplayName: entry.peerDisplayName,
       peerLabel: entry.peerLabel,
+      peerIconUrl: null,
       inputUsdPerMillion: entry.inputUsdPerMillion,
       outputUsdPerMillion: entry.outputUsdPerMillion,
       categories: entry.categories,
@@ -1314,6 +1315,7 @@ export function initChatModule({
     const fallback = fallbackChatServices.map((entry) => ({ ...entry }));
 
     if (!bridge?.chatAiListDiscoverRows) {
+      uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
       setServiceCatalogStatus('warn', 'Services unavailable');
       setRuntimeActivity('warn', 'Service catalog unavailable (bridge missing).');
@@ -1329,6 +1331,7 @@ export function initChatModule({
       if (refreshToken !== serviceRefreshToken) return;
 
       if (!result.ok || !Array.isArray(result.data)) {
+        uiState.chatDiscoverRowsLoaded = false;
         updateChatServiceOptions(fallback);
         setServiceCatalogStatus('warn', result.error || 'Services unavailable');
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
@@ -1340,6 +1343,7 @@ export function initChatModule({
         .map((raw) => normalizeDiscoverRow(raw))
         .filter((row): row is DiscoverRow => row !== null);
       uiState.discoverRows = rows;
+      uiState.chatDiscoverRowsLoaded = true;
       const optionsToRender = rows.length > 0 ? projectRowsToChatServiceOptions(rows) : fallback;
       updateChatServiceOptions(optionsToRender);
       setServiceCatalogStatus(
@@ -1356,6 +1360,7 @@ export function initChatModule({
       );
     } catch (error) {
       if (refreshToken !== serviceRefreshToken) return;
+      uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
       const message = toErrorMessage(error, 'Failed to load services');
       setServiceCatalogStatus('warn', message);
@@ -1603,6 +1608,7 @@ export function initChatModule({
     const workspacePathAtOpen = uiState.chatWorkspacePath;
 
     uiState.chatActiveConversation = convId;
+    uiState.chatOpeningConversationId = convId;
     uiState.chatRoutedPeerId = '';
     uiState.chatSelectedPeerId = '';
     uiState.chatSessionStarted = '';
@@ -1660,6 +1666,7 @@ export function initChatModule({
         setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
         updateThreadMeta(activeConversation);
         clearTransientChatNotices();
+        uiState.chatOpeningConversationId = null;
         void refreshChatPermissionModeForPeer(resolveConversationPeerId(activeConversation));
         notifyUiStateChanged();
 
@@ -1675,9 +1682,11 @@ export function initChatModule({
         const peerId = resolveConversationPeerId(activeConversation);
         if (peerId) debouncedFetchMeteringStats(peerId);
       } else {
+        uiState.chatOpeningConversationId = null;
         reportChatError(result.error, 'Failed to open conversation');
       }
     } catch (err) {
+      uiState.chatOpeningConversationId = null;
       reportChatError(err, 'Failed to open conversation');
     }
   }
@@ -1685,6 +1694,7 @@ export function initChatModule({
   function startNewChat(): void {
     newChatDraftVersion += 1;
     uiState.chatActiveConversation = null;
+    uiState.chatOpeningConversationId = null;
     uiState.chatMessages = [];
     setStreamingMessage(null);
     activeConversation = null;
@@ -1927,26 +1937,41 @@ export function initChatModule({
     const convId = targetId || uiState.chatActiveConversation;
     if (!convId || !bridge || !bridge.chatAiDeleteConversation) return;
 
+    const previousConversations = Array.isArray(uiState.chatConversations)
+      ? [...uiState.chatConversations]
+      : [];
+    const nextConversations = previousConversations.filter((conv) => {
+      const candidate = conv as ChatConversationSummary;
+      return candidate.id !== convId;
+    });
+    if (nextConversations.length !== previousConversations.length) {
+      uiState.chatConversations = nextConversations;
+    }
+    localConversationMessages.delete(convId);
+    streamingMessagesByConversation.delete(convId);
+    sendingConversationIds.delete(convId);
+    streamTurnsByConversation.delete(convId);
+    streamStartedAtByConversation.delete(convId);
+    // Publish the updated sending set (and resync active-conv UI) before we
+    // potentially reset to new-chat state. This covers both the active and
+    // non-active delete paths.
+    syncActiveConversationSendingState();
+
+    // If we deleted the active conversation, reset to new-chat state immediately
+    // so the UI does not wait on IPC, storage, or attachment cleanup.
+    if (convId === uiState.chatActiveConversation) {
+      startNewChat();
+    } else {
+      notifyUiStateChanged();
+    }
+
     try {
       await bridge.chatAiDeleteConversation(convId);
-      localConversationMessages.delete(convId);
-      streamingMessagesByConversation.delete(convId);
-      sendingConversationIds.delete(convId);
-      streamTurnsByConversation.delete(convId);
-      streamStartedAtByConversation.delete(convId);
-      // Publish the updated sending set (and resync active-conv UI) before we
-      // potentially reset to new-chat state. This covers both the active and
-      // non-active delete paths.
-      syncActiveConversationSendingState();
-
-      // If we deleted the active conversation, reset to new-chat state
-      if (convId === uiState.chatActiveConversation) {
-        startNewChat();
-      }
-
-      notifyUiStateChanged();
       await refreshChatConversations();
     } catch (err) {
+      uiState.chatConversations = previousConversations;
+      notifyUiStateChanged();
+      void refreshChatConversations();
       reportChatError(err, 'Failed to delete conversation');
     }
   }
@@ -2329,13 +2354,13 @@ export function initChatModule({
 
   async function abortChat(): Promise<void> {
     const convId = uiState.chatActiveConversation;
-    if (bridge && bridge.chatAiAbort) {
-      await bridge.chatAiAbort(convId ?? undefined);
-    }
     if (convId) {
       setConversationSending(convId, false);
     } else {
       setChatSending(false);
+    }
+    if (bridge && bridge.chatAiAbort) {
+      await bridge.chatAiAbort(convId ?? undefined);
     }
   }
 

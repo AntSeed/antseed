@@ -89,6 +89,10 @@ export {
 } from './payments/evm/stats-client.js';
 export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
 export {
+  getDebugFilters,
+  shouldEmitDebugLine,
+} from './utils/debug.js';
+export {
   signSpendingAuth,
   signReserveAuth,
   signFreeUsageOpen,
@@ -157,17 +161,16 @@ export {
 export { resolveProvider } from './proxy/provider-detection.js';
 export {
   detectRequestServiceApiProtocol,
-  createOpenAIChatToAnthropicStreamingAdapter,
-  createOpenAIChatToResponsesStreamingAdapter,
+  createStreamingAdapter,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
+  transformRequest,
+  transformResponse,
   type TargetProtocolSelection,
-  type AnthropicToOpenAIRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
+  type ServiceApiRequestTransformOptions,
+  type ServiceApiRequestTransformResult,
+  type ServiceApiResponseTransformOptions,
+  type ServiceApiStreamTransformOptions,
   type StreamingResponseAdapter,
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';

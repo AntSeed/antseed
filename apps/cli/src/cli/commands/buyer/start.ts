@@ -30,6 +30,7 @@ export function buildBuyerRuntimeOverridesFromFlags(options: {
   maxInputUsdPerMillion?: number
   maxOutputUsdPerMillion?: number
   metadataFetchTimeoutMs?: number
+  disableMetadataV2Services?: boolean
 }): BuyerRuntimeOverrides {
   const overrides: BuyerRuntimeOverrides = {}
   if (options.port !== undefined) overrides.proxyPort = options.port
@@ -37,6 +38,7 @@ export function buildBuyerRuntimeOverridesFromFlags(options: {
   if (options.maxInputUsdPerMillion !== undefined) overrides.maxInputUsdPerMillion = options.maxInputUsdPerMillion
   if (options.maxOutputUsdPerMillion !== undefined) overrides.maxOutputUsdPerMillion = options.maxOutputUsdPerMillion
   if (options.metadataFetchTimeoutMs !== undefined) overrides.metadataFetchTimeoutMs = options.metadataFetchTimeoutMs
+  if (options.disableMetadataV2Services === true) overrides.disableMetadataV2Services = true
   return overrides
 }
 
@@ -193,10 +195,17 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
     .option('--max-input-usd-per-million <number>', 'runtime-only max input pricing override in USD per 1M tokens', parseFloat)
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
     .option('--metadata-fetch-timeout-ms <number>', 'runtime-only timeout for each peer metadata HTTP fetch during discovery', Number)
+    .option('--disable-metadata-v2-services', 'runtime-only opt-out from per-service buyer metadata v2 attribution')
     .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address), bypassing the router')
+    .option('--log-filter <sourceOrText>', 'show only debug logs matching a source or text, e.g. ProxyMux')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(buyerCmd)
       const config = await loadConfig(globalOpts.config)
+      const logFilter = typeof options.logFilter === 'string' ? options.logFilter.trim() : ''
+      if (logFilter.length > 0) {
+        process.env['ANTSEED_DEBUG'] = '1'
+        process.env['ANTSEED_LOG_FILTER'] = logFilter
+      }
 
       const pinnedPeerId = options.peer as string | undefined
       if (pinnedPeerId !== undefined && !/^(0x)?[0-9a-f]{40}$/i.test(pinnedPeerId)) {
@@ -209,6 +218,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         maxInputUsdPerMillion: options.maxInputUsdPerMillion as number | undefined,
         maxOutputUsdPerMillion: options.maxOutputUsdPerMillion as number | undefined,
         metadataFetchTimeoutMs: options.metadataFetchTimeoutMs as number | undefined,
+        disableMetadataV2Services: options.disableMetadataV2Services as boolean | undefined,
       })
       const effectiveBuyerConfig = resolveEffectiveBuyerConfig({
         config,
@@ -321,6 +331,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           // seller can extract via an inflated 402 target (per 402 round trip).
           maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '300000',
           maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
+          disableMetadataV2Services: effectiveBuyerConfig.disableMetadataV2Services,
         }
       }
 
@@ -340,6 +351,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  peer refresh interval: ${effectiveBuyerConfig.peerRefreshIntervalMs}ms`))
       console.log(chalk.dim(`  metadata fetch timeout: ${effectiveBuyerConfig.metadataFetchTimeoutMs}ms`))
+      console.log(chalk.dim(`  metadata v2 service opt-out: ${effectiveBuyerConfig.disableMetadataV2Services ? 'enabled' : 'disabled'}`))
+      if (logFilter.length > 0) {
+        console.log(chalk.dim(`  debug log filter: ${logFilter}`))
+      }
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
       if (pinnedPeerId) {
         console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
@@ -432,6 +447,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       }
       console.log('')
       console.log(chalk.dim('Enable debug logs: export ANTSEED_DEBUG=1'))
+      console.log(chalk.dim('Filter debug logs: antseed buyer start --log-filter ProxyMux'))
       console.log('')
 
       setupShutdownHandler(async () => {

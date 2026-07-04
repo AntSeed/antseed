@@ -30,6 +30,7 @@ export function createDefaultConfig(): AntseedConfig {
       proxyPort: 8377,
       peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
       metadataFetchTimeoutMs: DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
+      disableMetadataV2Services: false,
     },
     payments: {
       preferredMethod: 'crypto',

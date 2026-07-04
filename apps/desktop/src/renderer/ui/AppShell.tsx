@@ -1,23 +1,43 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { StreamingIndicator } from './components/StreamingIndicator';
 import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
-import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
 import { SetupScreen } from './components/SetupScreen';
-import { useUiSnapshot } from './hooks/useUiSnapshot';
-import { useActions } from './hooks/useActions';
+import { preloadViews } from './components/viewRegistry';
+import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
 import type { ViewName } from './types';
 
+type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
+
+function scheduleRoutePreload(callback: () => void): () => void {
+  const win = window as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (win.requestIdleCallback) {
+    const handle = win.requestIdleCallback(callback, { timeout: 1_500 });
+    return () => win.cancelIdleCallback?.(handle);
+  }
+
+  const handle: IdleCallbackHandle = window.setTimeout(callback, 250);
+  return () => window.clearTimeout(handle);
+}
+
 export function AppShell() {
-  const snap = useUiSnapshot();
-  const actions = useActions();
+  const snap = useUiSelector((state) => ({
+    appSetupStatusKnown: state.appSetupStatusKnown,
+    appSetupNeeded: state.appSetupNeeded,
+    appSetupComplete: state.appSetupComplete,
+    chatServiceCount: state.chatServiceOptions.length,
+    devMode: state.devMode,
+  }), shallowEqual);
   const [activeView, setActiveView] = useState<ViewName>('discover');
-  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
 
-  const hasServices = snap.chatServiceOptions.length > 0;
+  const hasServices = snap.chatServiceCount > 0;
 
   // Show setup during first-run plugin/runtime bootstrapping, but never re-open it
   // just because the service catalog is temporarily empty. Service discovery is
@@ -62,55 +82,30 @@ export function AppShell() {
 
   const showSetup = setupVisible;
 
-  const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
-  const showOnboarding =
-    !onboardingDismissed &&
-    !hasConversations &&
-    !snap.chatActiveConversation &&
-    !snap.chatStreamingMessage &&
-    !snap.chatSending;
-
   useEffect(() => {
     if (!snap.devMode && (activeView === 'connection' || activeView === 'peers' || activeView === 'desktop')) {
       setActiveView('overview');
     }
   }, [activeView, snap.devMode]);
 
-  // Re-show onboarding if user deletes all conversations
   useEffect(() => {
-    if (hasConversations) setOnboardingDismissed(false);
-  }, [hasConversations]);
+    if (showSetup) return undefined;
 
-  const handleStartChatting = useCallback(
-    (serviceValue: string, peerId?: string) => {
-      actions.startNewChat();
-      actions.handleServiceChange(serviceValue, peerId);
-      setOnboardingDismissed(true);
-      setActiveView('chat');
-    },
-    [actions],
-  );
+    void preloadViews(['discover', 'chat']);
+
+    return scheduleRoutePreload(() => {
+      void preloadViews(['external-clients', 'config']);
+    });
+  }, [showSetup]);
+
+  useEffect(() => {
+    if (showSetup) return;
+    void window.antseedDesktop?.applyWindowView?.(activeView);
+  }, [activeView, showSetup]);
 
   if (showSetup) {
     return <SetupScreen />;
   }
-
-  /* if (showOnboarding) {
-    return (
-      <>
-        <TitleBar />
-        <div className="app-container">
-          <main className="main-content">
-            <DiscoverWelcome
-              serviceOptions={snap.chatServiceOptions}
-              onStartChatting={handleStartChatting}
-            />
-          </main>
-        </div>
-        <StreamingIndicator />
-      </>
-    );
-  } */
 
   return (
     <>

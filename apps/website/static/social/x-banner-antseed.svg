@@ -40,10 +40,10 @@
   <text x="423" y="294" class="mono" font-size="23" fill="#97ffc7">THE OPEN MARKET FOR AI INFERENCE</text>
   <path d="M423 333H1035" stroke="#1FD87A" stroke-opacity="0.48" stroke-width="2"/>
   <g class="mono" font-size="17">
-    <rect x="423" y="358" width="128" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="441" y="381" fill="#97aa9f">P2P</text>
-    <rect x="573" y="358" width="128" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="591" y="381" fill="#97aa9f">PRIVATE</text>
+    <rect x="423" y="358" width="128" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="441" y="381" fill="#d2e3d9">P2P</text>
+    <rect x="573" y="358" width="128" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="591" y="381" fill="#d2e3d9">PRIVATE</text>
     <rect x="723" y="358" width="128" height="34" rx="17" fill="#e8a33d" fill-opacity="0.08" stroke="#e8a33d" stroke-opacity="0.32"/><text x="741" y="381" fill="#e8a33d">USDC</text>
-    <rect x="873" y="358" width="178" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="891" y="381" fill="#97aa9f">NO GATEKEEPERS</text>
+    <rect x="873" y="358" width="178" height="34" rx="17" fill="#1FD87A" fill-opacity="0.05" stroke="#97ffc7" stroke-opacity="0.18"/><text x="891" y="381" fill="#d2e3d9">NO GATEKEEPERS</text>
   </g>
   <circle cx="1298" cy="250" r="96" fill="none" stroke="#e8a33d" stroke-opacity="0.1" stroke-width="2"/><circle cx="1298" cy="250" r="52" fill="none" stroke="#e8a33d" stroke-opacity="0.18" stroke-width="2"/><circle cx="1298" cy="250" r="17" fill="#e8a33d"/>
 </svg>

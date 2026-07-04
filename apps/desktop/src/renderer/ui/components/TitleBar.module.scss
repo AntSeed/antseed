@@ -113,6 +113,108 @@
   }
 }
 
+.title-bar-update-badge-error {
+  background: rgba(var(--danger-rgb), 0.1);
+  border: 1px solid rgba(var(--danger-rgb), 0.35);
+  color: var(--danger);
+  cursor: pointer;
+
+  .title-bar-update-dot {
+    background: var(--danger);
+  }
+
+  &:hover {
+    background: rgba(var(--danger-rgb), 0.16);
+  }
+}
+
+.title-bar-update-error-wrap {
+  position: relative;
+}
+
+.title-bar-update-error-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: min(360px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(var(--danger-rgb), 0.28);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  white-space: normal;
+  text-align: left;
+  z-index: 220;
+
+  :global(body.dark-theme) & {
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  pre {
+    margin: 0;
+    max-height: 120px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 6px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
+.title-bar-update-error-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.title-bar-update-error-message {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.title-bar-update-error-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+
+  button {
+    height: 26px;
+    padding: 0 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--border-strong);
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+  }
+}
+
 .title-bar-update-fill {
   position: absolute;
   top: 0;
@@ -311,4 +413,3 @@
     opacity: 0.85;
   }
 }
-

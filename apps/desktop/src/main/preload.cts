@@ -111,6 +111,16 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 type ChatPermissionMode = 'manual' | 'full';
 type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
 type ToolApprovalRequest = {
@@ -310,6 +320,15 @@ const api = {
   pickDirectory(): Promise<{ ok: boolean; path: string | null }> {
     return ipcRenderer.invoke('desktop:pick-directory');
   },
+  openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('desktop:open-external-url', url) as Promise<{ ok: boolean; error?: string }>;
+  },
+  openTool(toolName: string): Promise<{ ok: boolean; error?: string; fallback?: string }> {
+    return ipcRenderer.invoke('desktop:open-tool', toolName) as Promise<{ ok: boolean; error?: string; fallback?: string }>;
+  },
+  applyWindowView(viewName: string): Promise<{ ok: true; skipped?: string }> {
+    return ipcRenderer.invoke('window:apply-view', viewName) as Promise<{ ok: true; skipped?: string }>;
+  },
   voiceTranscribe(audio: ArrayBuffer): Promise<{ ok: boolean; text?: string; error?: string }> {
     return ipcRenderer.invoke('voice:transcribe', audio) as Promise<{ ok: boolean; text?: string; error?: string }>;
   },
@@ -431,13 +450,13 @@ const api = {
   },
 
   // Auto-update
-  onUpdateStatus(handler: (data: { status: string; version: string }) => void): () => void {
-    const listener = (_: unknown, data: { status: string; version: string }) => handler(data);
+  onUpdateStatus(handler: (data: UpdateStatus) => void): () => void {
+    const listener = (_: unknown, data: UpdateStatus) => handler(data);
     ipcRenderer.on('app:update-status', listener);
     return () => ipcRenderer.off('app:update-status', listener);
   },
-  installUpdate(): Promise<void> {
-    return ipcRenderer.invoke('app:install-update') as Promise<void>;
+  installUpdate(): Promise<InstallUpdateResult> {
+    return ipcRenderer.invoke('app:install-update') as Promise<InstallUpdateResult>;
   },
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
@@ -448,6 +467,36 @@ const api = {
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
+  systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:start', opts) as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  },
+  systemProxyListProfiles() {
+    return ipcRenderer.invoke('system-proxy:list-profiles');
+  },
+  systemProxyStop(): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:stop') as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  },
+  systemProxyGetState(): Promise<RuntimeProcessState | null> {
+    return ipcRenderer.invoke('system-proxy:get-state') as Promise<RuntimeProcessState | null>;
+  },
+  systemProxyInstallCa(): Promise<{ ok: boolean; warning?: string; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:install-ca') as Promise<{ ok: boolean; warning?: string; error?: string }>;
+  },
+  systemProxyCaExists(): Promise<boolean> {
+    return ipcRenderer.invoke('system-proxy:ca-exists') as Promise<boolean>;
+  },
+  systemProxyAddToShell(opts?: { port?: number }): Promise<{ ok: boolean; added: string[]; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:add-to-shell', opts) as Promise<{ ok: boolean; added: string[]; error?: string }>;
+  },
+  systemProxyRemoveFromShell(): Promise<{ ok: boolean; removed: string[]; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:remove-from-shell') as Promise<{ ok: boolean; removed: string[]; error?: string }>;
+  },
+  systemProxyTestGui(opts?: { port?: number }) {
+    return ipcRenderer.invoke('system-proxy:test-gui', opts);
+  },
+  systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

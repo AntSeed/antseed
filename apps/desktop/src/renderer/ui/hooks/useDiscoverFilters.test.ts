@@ -1,5 +1,4 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect, test } from 'vitest';
 import {
   applyFilters, applySort, paginate, totalPagesFor,
   MAX_INPUT_PRICE_SLIDER_USD, MAX_OUTPUT_PRICE_SLIDER_USD,
@@ -33,12 +32,12 @@ test('pipeline: filter → sort → paginate on 25 rows', () => {
     minStakeUsdc: 0,
     minReputationScore: 0,
   });
-  assert.equal(filtered.length, 25);
+  expect(filtered).toHaveLength(25);
   const sorted = applySort(filtered, 'recentlyUsed', 'desc');
-  assert.equal(sorted[0]!.serviceLabel, 'Svc25');
+  expect(sorted[0]!.serviceLabel).toBe('Svc25');
   const paged = paginate(sorted, 1, 5);
-  assert.equal(paged.length, 5);
-  assert.equal(totalPagesFor(sorted.length, 5), 5);
+  expect(paged).toHaveLength(5);
+  expect(totalPagesFor(sorted.length, 5)).toBe(5);
 });
 
 test('pipeline: stake + reputation filters', () => {
@@ -54,6 +53,6 @@ test('pipeline: stake + reputation filters', () => {
     minStakeUsdc: 50,
     minReputationScore: 50,
   });
-  assert.equal(filtered.length, 1);
-  assert.equal(filtered[0]!.serviceLabel, 'Svc100');
+  expect(filtered).toHaveLength(1);
+  expect(filtered[0]!.serviceLabel).toBe('Svc100');
 });

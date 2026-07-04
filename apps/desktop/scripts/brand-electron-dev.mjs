@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const APP_NAME = 'AntSeed Desktop';
 const APP_BUNDLE_ID = 'com.antseed.desktop-dev';
+const require = createRequire(import.meta.url);
 
 function runPlistBuddy(plistPath, command) {
   execFileSync('/usr/libexec/PlistBuddy', ['-c', command, plistPath], {
@@ -30,7 +32,15 @@ function main() {
     process.exit(0);
   }
 
-  const distDir = path.resolve(process.cwd(), 'node_modules', 'electron', 'dist');
+  let electronPackageJson;
+  try {
+    electronPackageJson = require.resolve('electron/package.json', { paths: [process.cwd()] });
+  } catch {
+    process.exit(0);
+  }
+
+  const electronPackageDir = path.dirname(electronPackageJson);
+  const distDir = path.join(electronPackageDir, 'dist');
   const originalApp = path.join(distDir, 'Electron.app');
   const brandedApp = path.join(distDir, `${APP_NAME}.app`);
 
@@ -52,7 +62,7 @@ function main() {
   }
 
   // Update electron's path.txt so the `electron` CLI can find the renamed binary
-  const pathTxt = path.resolve(process.cwd(), 'node_modules', 'electron', 'path.txt');
+  const pathTxt = path.join(electronPackageDir, 'path.txt');
   writeFileSync(pathTxt, `${APP_NAME}.app/Contents/MacOS/Electron`, 'utf-8');
 }
 

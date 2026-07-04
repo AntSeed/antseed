@@ -1,0 +1,366 @@
+.assumptions,
+.ledgerCard,
+.chartCard,
+.tableCard {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  margin: 28px 0;
+  border: 1px solid var(--as-line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.018);
+  box-shadow: none;
+}
+
+.assumptions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+}
+
+.assumptions div {
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.assumptions span,
+.metric span,
+.chartSubtitle,
+.barRow,
+.tableCard th,
+.tableCard td,
+.formula {
+  font-family: var(--as-font-data);
+}
+
+.assumptions span,
+.metric span,
+.chartSubtitle {
+  display: block;
+  color: var(--as-text-3);
+  font-size: 11px;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.assumptions strong,
+.metric strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--as-text);
+  font-family: var(--as-font-data);
+  font-size: 20px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.assumptions p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 15px 16px 17px;
+  border-top: 1px solid var(--as-line);
+  color: var(--as-text-2) !important;
+  font-size: 13.5px !important;
+  line-height: 1.65 !important;
+}
+
+.ledgerCard,
+.chartCard,
+.tableCard {
+  padding: clamp(16px, 2.4vw, 22px);
+}
+
+.chartCard figcaption,
+.ledgerCard figcaption,
+.tableHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.chartTitle {
+  display: block;
+  color: var(--as-text);
+  font-family: var(--as-font-display);
+  font-size: clamp(19px, 2.4vw, 25px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.12;
+}
+
+.chartSubtitle {
+  max-width: 350px;
+  margin-top: 2px;
+  text-align: right;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.projectionNote {
+  margin: 12px 0 0 !important;
+  color: var(--as-text-3) !important;
+  font-family: var(--as-font-data);
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+}
+
+.figureGroup {
+  max-width: 100%;
+  min-width: 0;
+  margin: 30px 0;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.metric {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--as-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.metric strong {
+  margin: 0 0 8px;
+  color: var(--as-clay);
+  font-size: clamp(16px, 2vw, 20px);
+}
+
+.metric p {
+  margin: 7px 0 0 !important;
+  color: var(--as-text-3) !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+
+.chart {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart text {
+  fill: var(--as-text-3);
+  font-family: var(--as-font-data);
+  font-size: 10px;
+}
+
+.axis {
+  stroke: var(--as-line-strong);
+  stroke-width: 1;
+}
+
+.gridLine {
+  stroke: var(--as-line);
+  stroke-width: 1;
+}
+
+.seriesLine {
+  fill: none;
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.distributionCard {
+  overflow: hidden;
+}
+
+.distributionChart {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.distributionChart text {
+  fill: var(--as-text-3);
+  font-family: var(--as-font-data);
+  font-size: 10px;
+}
+
+.areaLayer {
+  opacity: 0.72;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 0.6;
+}
+
+.emissionAreaLayer {
+  opacity: 0.78;
+  stroke: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 15px;
+  margin-top: 10px;
+  color: var(--as-text-2);
+  font-family: var(--as-font-data);
+  font-size: 11px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.barList {
+  display: grid;
+  gap: 10px;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 132px 1fr 52px;
+  gap: 12px;
+  align-items: center;
+  color: var(--as-text-2);
+  font-size: 12px;
+}
+
+.barTrack {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--as-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.barFill {
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+}
+
+.barRow strong {
+  color: var(--as-text);
+  font-weight: 700;
+  text-align: right;
+}
+
+.formula {
+  margin: 16px 0 0 !important;
+  padding: 12px 14px;
+  border: 1px solid var(--as-line);
+  border-radius: 10px;
+  background: rgba(10, 14, 20, 0.38);
+  color: var(--as-text-2) !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+}
+
+.formula strong {
+  color: var(--as-green);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--as-line);
+  border-radius: 12px;
+}
+
+.tableCard table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tableCard th,
+.tableCard td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--as-line);
+  color: var(--as-text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tableCard th:first-child,
+.tableCard td:first-child {
+  color: var(--as-text);
+  text-align: left;
+}
+
+.tableCard th {
+  color: var(--as-text-3);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.tableCard tr:last-child td {
+  border-bottom: 0;
+}
+
+html[data-theme='light'] .assumptions,
+html[data-theme='light'] .ledgerCard,
+html[data-theme='light'] .chartCard,
+html[data-theme='light'] .tableCard {
+  box-shadow: none;
+}
+
+html[data-theme='light'] .formula {
+  color: #dbe7df !important;
+}
+
+@media (max-width: 996px) {
+  .assumptions,
+  .metricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .chartCard figcaption,
+  .ledgerCard figcaption,
+  .tableHeader {
+    display: block;
+  }
+
+  .chartSubtitle {
+    max-width: none;
+    margin-top: 8px;
+    text-align: left;
+  }
+
+  .barRow {
+    grid-template-columns: 112px 1fr 46px;
+  }
+}
+
+@media (max-width: 520px) {
+  .ledgerCard,
+  .chartCard,
+  .tableCard {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .barRow {
+    grid-template-columns: 1fr 48px;
+  }
+
+  .barTrack {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

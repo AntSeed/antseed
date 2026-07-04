@@ -575,6 +575,38 @@ describe('BuyerPaymentManager', () => {
     }));
   });
 
+  it('signPerRequestAuth suppresses per-service metadata when disabled', async () => {
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir, {
+      disableMetadataV2Services: true,
+    }), store);
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-no-service-meta');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        sellerClaimedCost: 100n,
+        reportedInputTokens: 1000n,
+        reportedCachedInputTokens: 200n,
+        reportedOutputTokens: 50n,
+        service: 'sensitive-model',
+      },
+    );
+
+    const meta = decodeMetadataTokens(payload.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(50n);
+    expect(decodeMetadataServices(payload.metadata)).toEqual([]);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
+    expect(channel).not.toBeNull();
+    expect(store.getServiceTotals(channel!.sessionId)).toEqual([]);
+  });
+
   it('signPerRequestAuth hydrates cumulative service metadata after restart', async () => {
     const sellerPeerId = fakePeerId('seller-service-restart');
     await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
@@ -677,6 +709,41 @@ describe('BuyerPaymentManager', () => {
       cumulativeOutputTokens: 100n,
       cumulativeRequestCount: 1n,
     }]);
+  });
+
+  it('handleNeedAuth suppresses per-service metadata when disabled', async () => {
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir, {
+      disableMetadataV2Services: true,
+    }), store);
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-needauth-no-service-meta');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    manager.trackRequestService('req-sensitive-needauth', 'sensitive-model');
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'req-sensitive-needauth',
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '100',
+      inputTokens: '1000',
+      cachedInputTokens: '200',
+      outputTokens: '50',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    const sent = mux.sentSpendingAuths[0] as Record<string, string>;
+    const meta = decodeMetadataTokens(sent.metadata);
+    expect(meta.inputTokens).toBe(1000n);
+    expect(meta.outputTokens).toBe(50n);
+    expect(decodeMetadataServices(sent.metadata)).toEqual([]);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
+    expect(channel).not.toBeNull();
+    expect(store.getServiceTotals(channel!.sessionId)).toEqual([]);
   });
 
   it('handleNeedAuth does not double-count service totals for a request already counted by signPerRequestAuth', async () => {

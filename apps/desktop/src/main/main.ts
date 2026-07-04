@@ -3,27 +3,33 @@ import {
   BrowserWindow,
   ipcMain,
   dialog,
+  shell,
+  net as electronNet,
   type OpenDialogOptions,
+  type MenuItemConstructorOptions,
 } from 'electron';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isIP } from 'node:net';
-import { existsSync } from 'node:fs';
+import { createConnection, isIP } from 'node:net';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
   type RuntimeProcessState,
   type StartOptions,
+  resolveConnectDataDir,
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
 import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
-import { parseRuntimeActivityFromLog } from './log-parser.js';
+import { parseRuntimeActivityFromLog, stripAnsi } from './log-parser.js';
 import {
   setPluginAppendLog,
   ensureDefaultPlugin,
@@ -51,11 +57,13 @@ import {
   onPeersChanged,
   type DashboardNetworkPeer,
 } from './peer-cache.js';
-import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
+import { createWindow, createApplicationMenu, getMainWindow, applyWindowView } from './window.js';
+import { createDesktopTray, updateDesktopTray } from './tray.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
 import {
   getVoiceTranscriptionStatus,
   installVoiceTranscriptionModel,
@@ -70,13 +78,640 @@ export type { InstalledPlugin } from './plugins.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_SYSTEM_PROXY_PORT = 8378;
+const DEFAULT_BUYER_PROXY_PORT = 8377;
+const SYSTEM_PROXY_PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON';
+const SYSTEM_PROXY_PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE';
+const PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE = 'system-proxy-profiles.json';
+
+type DesktopSystemProxyProfile = {
+  readonly name: string;
+  readonly label: string;
+  readonly kind: 'proxy' | 'config-patch';
+  readonly method: string;
+  readonly domains: readonly string[];
+  readonly appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app';
+  readonly openUrl?: string;
+  readonly toolName?: string;
+  readonly restartAppName?: string;
+  readonly configPatch?: ConfigPatchDef;
+};
+
+const SYSTEM_PROXY_PROFILES = loadDesktopSystemProxyProfiles();
+
+function loadDesktopSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): readonly DesktopSystemProxyProfile[] {
+  const envJson = env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim();
+  const envFile = env[SYSTEM_PROXY_PROFILES_FILE_ENV]?.trim();
+  const packagedFile = packagedSystemProxyProfilesPath();
+  const raw = envJson
+    || (envFile ? readFileSync(envFile, 'utf8') : '')
+    || (packagedFile ? readFileSync(packagedFile, 'utf8') : '');
+  if (!raw) return [];
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${SYSTEM_PROXY_PROFILES_JSON_ENV} / ${SYSTEM_PROXY_PROFILES_FILE_ENV} must define a JSON array`);
+  }
+  return parsed.map((profile, index) => normalizeDesktopSystemProxyProfile(profile, index));
+}
+
+function packagedSystemProxyProfilesPath(): string | null {
+  if (!app.isPackaged || typeof process.resourcesPath !== 'string') return null;
+  const filePath = path.join(process.resourcesPath, PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE);
+  return existsSync(filePath) ? filePath : null;
+}
+
+function systemProxyProfilesEnv(): Record<string, string> {
+  if (process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim()) {
+    return { [SYSTEM_PROXY_PROFILES_JSON_ENV]: process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]! };
+  }
+  if (process.env[SYSTEM_PROXY_PROFILES_FILE_ENV]?.trim()) {
+    return { [SYSTEM_PROXY_PROFILES_FILE_ENV]: process.env[SYSTEM_PROXY_PROFILES_FILE_ENV]! };
+  }
+  const packaged = packagedSystemProxyProfilesPath();
+  return packaged ? { [SYSTEM_PROXY_PROFILES_FILE_ENV]: packaged } : {};
+}
+
+function normalizeDesktopSystemProxyProfile(value: unknown, index: number): DesktopSystemProxyProfile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`System Proxy profile at index ${index} must be an object`);
+  }
+  const raw = value as Record<string, unknown>;
+  const name = readRequiredString(raw, 'name', index);
+  const label = readString(raw, 'displayName') ?? readString(raw, 'label') ?? `Tool ${index + 1}`;
+  const kind = raw['kind'] === 'config-patch' ? 'config-patch' : 'proxy';
+  const configPatch = readConfigPatch(raw['configPatch'], name);
+  const appAction = readAppAction(raw['appAction']);
+  const openUrl = readString(raw, 'openUrl');
+  const toolName = readString(raw, 'toolName');
+  const restartAppName = readString(raw, 'restartAppName');
+  return {
+    name,
+    label,
+    kind,
+    method: readString(raw, 'method') ?? (kind === 'config-patch' ? 'Config' : 'Proxy'),
+    domains: readStringArray(raw['domains']),
+    ...(appAction ? { appAction } : {}),
+    ...(openUrl ? { openUrl } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(restartAppName ? { restartAppName } : {}),
+    ...(configPatch ? { configPatch } : {}),
+  };
+}
+
+function readConfigPatch(value: unknown, profileName: string): ConfigPatchDef | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`configPatch for ${profileName} must be an object`);
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    configPath: readRequiredString(raw, 'configPath', profileName),
+    providerKey: readRequiredString(raw, 'providerKey', profileName),
+    npm: readRequiredString(raw, 'npm', profileName),
+    providerName: readRequiredString(raw, 'providerName', profileName),
+    baseURL: readRequiredString(raw, 'baseURL', profileName),
+    modelFormat: 'peer-routed',
+  };
+}
+
+function readRequiredString(raw: Record<string, unknown>, key: string, context: string | number): string {
+  const value = readString(raw, key);
+  if (!value) throw new Error(`System Proxy profile ${context} requires ${key}`);
+  return value;
+}
+
+function readString(raw: Record<string, unknown>, key: string): string | undefined {
+  const value = raw[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function readAppAction(value: unknown): DesktopSystemProxyProfile['appAction'] {
+  return value === 'open-url' || value === 'open-tool' || value === 'restart-app' || value === 'none'
+    ? value
+    : undefined;
+}
+
+function removeAllConfigPatches(): void {
+  for (const profile of SYSTEM_PROXY_PROFILES) {
+    if (profile.kind !== 'config-patch' || !profile.configPatch) continue;
+    removeConfigPatch(profile.configPatch);
+  }
+}
+
+let lastSystemProxySetupAt: number | null = null;
+let traySystemProxyPeerId = '';
+let traySystemProxyModel = '';
+let traySystemProxyProfiles = new Set<string>();
+let activeSystemProxyState: (RuntimeProcessState & Record<string, unknown>) | null = null;
+
+type SystemProxyGuiTestResult = {
+  ok: boolean;
+  proxyConfigured: boolean;
+  proxyReachable: boolean;
+  guiTrustOk: boolean;
+  appRunning: boolean;
+  needsAppRestart: boolean;
+  appPid?: number;
+  statusCode?: number;
+  error?: string;
+};
+
+function systemProxyDataDir(): string {
+  return path.join(resolveConnectDataDir(), 'system-proxy');
+}
+
+function systemProxyHookPath(): string {
+  return path.join(systemProxyDataDir(), 'node-proxy-hook.cjs');
+}
+
+function systemProxyCaPath(): string {
+  return path.join(systemProxyDataDir(), 'ca.crt');
+}
+
+function systemProxyPidPath(): string {
+  return path.join(systemProxyDataDir(), 'system-proxy.pid');
+}
+
+function systemProxyStatePath(): string {
+  return path.join(systemProxyDataDir(), 'system-proxy.state.json');
+}
+
+function systemProxySnapshotPath(): string {
+  return path.join(systemProxyDataDir(), 'system-proxy.snapshot.json');
+}
+
+function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(readFileSync(systemProxyStatePath(), 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function loadPersistedSystemProxyState(): void {
+  const metadata = readSystemProxyRuntimeMetadata();
+  const activeProfileNames = Array.isArray(metadata['activeProfileNames'])
+    ? metadata['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+    : [];
+  const peerId = typeof metadata['peerId'] === 'string' ? metadata['peerId'] : '';
+  const defaultModel = typeof metadata['defaultModel'] === 'string' ? metadata['defaultModel'] : '';
+  if (activeProfileNames.length === 0 || !peerId) return;
+  activeSystemProxyState = {
+    mode: 'system-proxy',
+    running: activeProfileNames.some((name) => isConfigPatchProfileName(name)),
+    pid: null,
+    startedAt: Date.now(),
+    lastExitCode: null,
+    lastError: null,
+    port: Number(metadata['port']) || DEFAULT_SYSTEM_PROXY_PORT,
+    peerId,
+    defaultModel,
+    activeProfileNames,
+    toolRoutes: metadata['toolRoutes'],
+  };
+  traySystemProxyPeerId = peerId;
+  traySystemProxyModel = defaultModel;
+  traySystemProxyProfiles = new Set(activeProfileNames);
+}
+
+function withSystemProxyRuntimeMetadata(state: RuntimeProcessState | null): RuntimeProcessState | null {
+  if (!state) return null;
+  if (state.mode !== 'system-proxy') return state;
+  return { ...state, ...readSystemProxyRuntimeMetadata(), running: state.running };
+}
+
+function getSystemProxyProcessState(): RuntimeProcessState | null {
+  const processState = processManager.getState().find((s) => s.mode === 'system-proxy') ?? null;
+  if (!activeSystemProxyState) {
+    return withSystemProxyRuntimeMetadata(processState);
+  }
+  const activeProfiles = Array.isArray(activeSystemProxyState['activeProfileNames'])
+    ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+    : [];
+  const hasConfigPatch = activeProfiles.some((name) => isConfigPatchProfileName(name));
+  const running = processState?.running === true || hasConfigPatch;
+  return {
+    ...activeSystemProxyState,
+    ...(processState ?? {}),
+    running,
+    pid: processState?.pid ?? null,
+    lastExitCode: processState?.lastExitCode ?? activeSystemProxyState.lastExitCode ?? null,
+    lastError: processState?.lastError ?? activeSystemProxyState.lastError ?? null,
+  };
+}
+
+async function setActiveSystemProxyState(state: RuntimeProcessState & Record<string, unknown>): Promise<void> {
+  activeSystemProxyState = state;
+  await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+  await writeFile(systemProxyStatePath(), JSON.stringify({
+    port: state['port'],
+    peerId: state['peerId'],
+    defaultModel: state['defaultModel'],
+    activeProfileNames: state['activeProfileNames'],
+    toolRoutes: state['toolRoutes'],
+    running: state.running,
+  }), 'utf8').catch(() => undefined);
+}
+
+function runtimeMetadata(state: RuntimeProcessState | null): Record<string, unknown> {
+  return state ? state as unknown as Record<string, unknown> : {};
+}
+
+function shortTrayPeerId(peerId: string): string {
+  return peerId.length > 12 ? `${peerId.slice(0, 8)}...${peerId.slice(-4)}` : peerId;
+}
+
+function getTrayPeerOptions(): DashboardNetworkPeer[] {
+  return getNetworkSnapshot().peers
+    .filter((peer) => peer.peerId.length > 0)
+    .sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return (a.displayName || a.peerId).localeCompare(b.displayName || b.peerId);
+    });
+}
+
+function getTraySelectedPeer(): DashboardNetworkPeer | null {
+  const state = getSystemProxyProcessState();
+  const metadata = runtimeMetadata(state);
+  const statePeerId = typeof metadata['peerId'] === 'string' ? metadata['peerId'] : '';
+  const selectedId = statePeerId || traySystemProxyPeerId;
+  return selectedId ? lookupPeer(selectedId) : null;
+}
+
+function getTraySelectedModel(): string {
+  const state = getSystemProxyProcessState();
+  const metadata = runtimeMetadata(state);
+  return (typeof metadata['defaultModel'] === 'string' && metadata['defaultModel'].length > 0)
+    ? metadata['defaultModel']
+    : traySystemProxyModel;
+}
+
+function getTrayProfilesFromState(): Set<string> {
+  const state = getSystemProxyProcessState();
+  const metadata = runtimeMetadata(state);
+  const active = Array.isArray(metadata['activeProfileNames'])
+    ? metadata['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+    : [];
+  return new Set(active.length > 0 ? active : traySystemProxyProfiles);
+}
+
+function isCertificateTrustError(message: string): boolean {
+  return /certificate|cert_|err_cert|authority|trust|ssl|tls/i.test(message);
+}
+
+function getMacAppProcessInfo(appName: string): { running: boolean; pid?: number; startedAt?: number } {
+  if (process.platform !== 'darwin') {
+    return { running: false };
+  }
+  try {
+    const raw = execFileSync('pgrep', ['-x', appName], { encoding: 'utf8' }).trim();
+    const firstLine = raw.split('\n')[0]?.trim() ?? '';
+    const pid = Number(firstLine);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      return { running: false };
+    }
+    let startedAt: number | undefined;
+    try {
+      const startRaw = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' }).trim();
+      const parsed = Date.parse(startRaw);
+      if (Number.isFinite(parsed)) {
+        startedAt = parsed;
+      }
+    } catch { /* best-effort */ }
+    return { running: true, pid, startedAt };
+  } catch {
+    return { running: false };
+  }
+}
+
+async function restartMacApp(appName: string): Promise<{ ok: boolean; error?: string }> {
+  if (process.platform !== 'darwin') {
+    return { ok: false, error: `${appName} restart is currently supported on macOS only.` };
+  }
+  try {
+    try {
+      execFileSync('osascript', ['-e', `tell application "${appName}" to quit`], { stdio: 'pipe' });
+    } catch {
+      // Continue: the app may not be running or may not respond to AppleScript.
+    }
+    const startedWaitingAt = Date.now();
+    while (Date.now() - startedWaitingAt < 10_000 && getMacAppProcessInfo(appName).running) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (getMacAppProcessInfo(appName).running) {
+      execFileSync('pkill', ['-x', appName], { stdio: 'pipe' });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    execFileSync('open', ['-a', appName], { stdio: 'pipe' });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function getEnabledNetworkServices(): string[] {
+  try {
+    const out = execFileSync('networksetup', ['-listallnetworkservices'], { encoding: 'utf8' });
+    const services = out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('*') && !line.includes('denotes'));
+    return services.length > 0 ? services : ['Wi-Fi'];
+  } catch {
+    return ['Wi-Fi'];
+  }
+}
+
+function getSystemProxyServices(port = DEFAULT_SYSTEM_PROXY_PORT): string[] {
+  if (process.platform !== 'darwin') {
+    return [];
+  }
+  const matches: string[] = [];
+  for (const service of getEnabledNetworkServices()) {
+    try {
+      const out = execFileSync('networksetup', ['-getsecurewebproxy', service], { encoding: 'utf8' });
+      if (out.includes('Enabled: Yes') && out.includes('Server: 127.0.0.1') && out.includes(`Port: ${port}`)) {
+        matches.push(service);
+      }
+    } catch { /* best-effort */ }
+  }
+  return matches;
+}
+
+function canConnectToLocalPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 1_000);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+async function waitForSystemProxyReady(port: number, timeoutMs = 5_000): Promise<void> {
+  const startedAt = Date.now();
+  let lastRunning = true;
+  while (Date.now() - startedAt < timeoutMs) {
+    const state = processManager.getState().find((entry) => entry.mode === 'system-proxy');
+    lastRunning = state?.running === true;
+    if (!lastRunning) break;
+    if (await canConnectToLocalPort(port)) return;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  const state = processManager.getState().find((entry) => entry.mode === 'system-proxy');
+  const detail = state?.lastError
+    ? ` Last error: ${state.lastError}`
+    : state?.lastExitCode !== null && state?.lastExitCode !== undefined
+      ? ` Process exited with code ${state.lastExitCode}.`
+      : lastRunning
+        ? ''
+        : ' Process exited before becoming ready.';
+  throw new Error(`System Proxy did not become ready on 127.0.0.1:${port}.${detail}`);
+}
+
+function setSystemProxyNodeEnv(port: number): void {
+  const caPath = systemProxyCaPath();
+  const hookFile = systemProxyHookPath();
+  const cmds: [string, string[]][] = [];
+  if (process.platform === 'darwin') {
+    cmds.push(['launchctl', ['setenv', 'HTTPS_PROXY', `http://localhost:${port}`]]);
+    cmds.push(['launchctl', ['setenv', 'NODE_EXTRA_CA_CERTS', caPath]]);
+    cmds.push(['launchctl', ['setenv', 'NODE_OPTIONS', `--require ${hookFile}`]]);
+  } else if (process.platform === 'win32') {
+    cmds.push(['setx', ['HTTPS_PROXY', `http://localhost:${port}`]]);
+    cmds.push(['setx', ['NODE_EXTRA_CA_CERTS', caPath]]);
+    cmds.push(['setx', ['NODE_OPTIONS', `--require ${hookFile}`]]);
+  }
+  for (const [cmd, args] of cmds) {
+    try {
+      execFileSync(cmd, args, { stdio: 'pipe' });
+    } catch (err) {
+      // Log so the Logs tab shows the failure
+      console.error(`[system-proxy] env setup failed: ${cmd} ${args.join(' ')}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+function firstProbeUrl(): string | null {
+  const profile = SYSTEM_PROXY_PROFILES.find((item) => item.kind === 'proxy' && item.domains.length > 0);
+  const domain = profile?.domains[0];
+  return domain ? `https://${domain}/` : null;
+}
+
+function restartTargetProcessInfo(): { running: boolean; pid?: number; startedAt?: number } {
+  const appName = SYSTEM_PROXY_PROFILES.find((item) => item.restartAppName)?.restartAppName;
+  return appName ? getMacAppProcessInfo(appName) : { running: false };
+}
+
+async function runGuiSystemProxyTrustProbe(): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
+  const url = firstProbeUrl();
+  if (!url) {
+    return { ok: false, error: 'No proxy-based System Proxy profiles are configured.' };
+  }
+  return await new Promise((resolve) => {
+    const request = electronNet.request({
+      method: 'GET',
+      url,
+    });
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (result: { ok: boolean; statusCode?: number; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    timer = setTimeout(() => {
+      request.abort();
+      finish({ ok: false, error: 'GUI network test timed out.' });
+    }, 8_000);
+    request.on('response', (response) => {
+      response.on('data', () => undefined);
+      response.on('end', () => finish({ ok: true, statusCode: response.statusCode }));
+    });
+    request.on('error', (err) => {
+      finish({ ok: false, error: err.message });
+    });
+    request.end();
+  });
+}
+
+function clearOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): void {
+  if (process.platform === 'darwin') {
+    for (const service of getEnabledNetworkServices()) {
+      try {
+        const out = execFileSync('networksetup', ['-getsecurewebproxy', service], { encoding: 'utf8' });
+        if (!out.includes('Server: 127.0.0.1') || !out.includes(`Port: ${port}`)) {
+          continue;
+        }
+        execFileSync('networksetup', ['-setsecurewebproxystate', service, 'off'], { stdio: 'pipe' });
+      } catch { /* best-effort */ }
+    }
+  } else if (process.platform === 'win32') {
+    try {
+      execFileSync('reg', [
+        'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f',
+      ], { stdio: 'pipe' });
+    } catch { /* best-effort */ }
+  }
+}
+
+function restoreOsSystemProxySnapshot(rawSnapshot: unknown): boolean {
+  if (!rawSnapshot || typeof rawSnapshot !== 'object' || Array.isArray(rawSnapshot)) return false;
+  const snapshot = rawSnapshot as Record<string, unknown>;
+  if (snapshot['platform'] === 'darwin') {
+    const services = Array.isArray(snapshot['services']) ? snapshot['services'] : [];
+    for (const rawService of services) {
+      if (!rawService || typeof rawService !== 'object' || Array.isArray(rawService)) continue;
+      const service = rawService as Record<string, unknown>;
+      const name = typeof service['service'] === 'string' ? service['service'] : '';
+      const server = typeof service['server'] === 'string' ? service['server'] : '';
+      const port = typeof service['port'] === 'string' ? service['port'] : '';
+      const enabled = service['enabled'] === true;
+      if (!name) continue;
+      try {
+        if (server && port) {
+          execFileSync('networksetup', ['-setsecurewebproxy', name, server, port], { stdio: 'pipe' });
+        }
+        execFileSync('networksetup', ['-setsecurewebproxystate', name, enabled ? 'on' : 'off'], { stdio: 'pipe' });
+      } catch { /* best-effort */ }
+    }
+    return true;
+  }
+  if (snapshot['platform'] === 'win32') {
+    const proxyEnable = typeof snapshot['proxyEnable'] === 'string' ? snapshot['proxyEnable'] : '0';
+    const proxyServer = typeof snapshot['proxyServer'] === 'string' ? snapshot['proxyServer'] : '';
+    try {
+      execFileSync('reg', [
+        'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', proxyEnable, '/f',
+      ], { stdio: 'pipe' });
+      if (proxyServer) {
+        execFileSync('reg', [
+          'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+          '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', proxyServer, '/f',
+        ], { stdio: 'pipe' });
+      } else {
+        try {
+          execFileSync('reg', [
+            'delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+            '/v', 'ProxyServer', '/f',
+          ], { stdio: 'pipe' });
+        } catch { /* missing value */ }
+      }
+    } catch { /* best-effort */ }
+    return true;
+  }
+  return false;
+}
+
+async function restoreOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
+  try {
+    const raw = readFileSync(systemProxySnapshotPath(), 'utf8');
+    const restored = restoreOsSystemProxySnapshot(JSON.parse(raw) as unknown);
+    if (restored) {
+      await unlink(systemProxySnapshotPath()).catch(() => undefined);
+      return;
+    }
+  } catch { /* no snapshot */ }
+  clearOsSystemProxy(port);
+}
+
+async function clearSystemProxyRuntimeFiles(): Promise<void> {
+  await Promise.all([
+    unlink(systemProxyPidPath()).catch(() => undefined),
+    unlink(systemProxyStatePath()).catch(() => undefined),
+  ]);
+  activeSystemProxyState = null;
+}
+
+async function clearSystemProxySettings(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
+  clearSystemProxyNodeEnv();
+  await restoreOsSystemProxy(port);
+  await clearSystemProxyRuntimeFiles();
+  await removeSystemProxyFromShellProfiles();
+}
+
+async function stopManagedRuntimes(): Promise<void> {
+  try {
+    await processManager.stopAll();
+  } finally {
+    await clearSystemProxySettings();
+  }
+}
+
+function removeSystemProxyShellBlock(content: string): string {
+  // Remove the block between the start/end markers (inclusive), plus surrounding blank lines
+  return content.replace(/\n*# AntSeed System Proxy\n[\s\S]*?# End AntSeed System Proxy\n*/g, '\n');
+}
+
+async function removeSystemProxyFromShellProfiles(): Promise<void> {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const home = homedir();
+  const candidates = [
+    path.join(home, '.zshrc'),
+    path.join(home, '.bash_profile'),
+    path.join(home, '.bashrc'),
+  ];
+  for (const profilePath of candidates) {
+    try {
+      const existing = await readFile(profilePath, 'utf8');
+      const cleaned = removeSystemProxyShellBlock(existing);
+      if (cleaned !== existing) {
+        await writeFile(profilePath, cleaned, 'utf8');
+      }
+    } catch { /* file doesn't exist or can't be read — skip */ }
+  }
+}
+
+function clearSystemProxyNodeEnv(): void {
+  if (process.platform === 'darwin') {
+    for (const varName of ['HTTPS_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS']) {
+      try { execFileSync('launchctl', ['unsetenv', varName], { stdio: 'pipe' }); } catch { /* best-effort */ }
+    }
+  } else if (process.platform === 'win32') {
+    for (const varName of ['HTTPS_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS']) {
+      try { execFileSync('setx', [varName, ''], { stdio: 'pipe' }); } catch { /* best-effort */ }
+    }
+  }
+}
 
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
 const APP_NAME = 'AntStation Desktop';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
-const DEFAULT_BUYER_PROXY_PORT = 8377;
+
+type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
 
 function isTruthyEnv(value: string | undefined): boolean {
   if (!value) {
@@ -95,7 +730,43 @@ function hasDesktopDebugFlag(argv: string[]): boolean {
   return false;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  return 'Unknown updater error';
+}
+
+function errorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message || String(error);
+  }
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function getMacUpdateInstallHint(): string | undefined {
+  if (process.platform !== 'darwin') return undefined;
+
+  const executablePath = process.execPath;
+  if (executablePath.includes('/AppTranslocation/')) {
+    return 'Quit AntSeed, move it to Applications, reopen, and try again.';
+  }
+  if (executablePath.startsWith('/Volumes/')) {
+    return 'Quit AntSeed, move it from the disk image to Applications, reopen, and try again.';
+  }
+  if (executablePath.includes('.app/') && !executablePath.startsWith('/Applications/')) {
+    return 'Quit AntSeed, move it to Applications, reopen, and try again.';
+  }
+  return undefined;
+}
+
 let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+let isQuitting = false;
+let isInstallingUpdate = false;
 
 // The `antseed-attachment://` scheme must be registered as privileged
 // *before* `app.whenReady()` fires. The actual request handler is wired
@@ -117,7 +788,23 @@ function resolveAppIconPath(): string | undefined {
   return undefined;
 }
 
+function resolveTrayIconPath(): string | undefined {
+  const candidates = [
+    path.resolve(__dirname, '../../assets/antseed-mark.png'),
+    path.resolve(process.cwd(), 'assets/antseed-mark.png'),
+    path.resolve(__dirname, '../../assets/antseed-dock-icon.png'),
+    path.resolve(process.cwd(), 'assets/antseed-dock-icon.png'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 const APP_ICON_PATH = resolveAppIconPath();
+const TRAY_ICON_PATH = resolveTrayIconPath();
 
 // Set app name as early as possible; on macOS dev runs may still show "Electron"
 // in some surfaces because the underlying bundle is Electron.app.
@@ -287,6 +974,9 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
     emitRuntimeActivity(activity);
   }
   emitRuntimeState();
+  if (mode === 'system-proxy' && stream === 'system' && /^Process exited|^Started system-proxy/.test(line)) {
+    refreshTrayMenu();
+  }
 }
 
 // Wire up callbacks for extracted modules
@@ -295,10 +985,327 @@ setPluginAppendLog(appendLog);
 // When the peer set changes, tell the renderer to refresh the service catalog.
 onPeersChanged(() => {
   getMainWindow()?.webContents.send('peers:changed');
+  refreshTrayMenu();
 });
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
+
+type SystemProxyStartRequest = {
+  peerId: string;
+  port?: number;
+  profiles?: string[];
+  defaultModel?: string;
+  servedModels?: string[];
+  toolRoutes?: Record<string, { peerId: string; model: string }>;
+  profileSwitch?: boolean;
+};
+
+function routeForTool(opts: SystemProxyStartRequest, profileName: string): { peerId: string; model: string; services: string[] } {
+  const route = opts.toolRoutes?.[profileName];
+  const peerId = route?.peerId?.trim() || opts.peerId;
+  const model = route?.model?.trim() || opts.defaultModel || '';
+  const peer = lookupPeer(peerId);
+  return { peerId, model, services: peer?.services ?? opts.servedModels ?? [] };
+}
+
+async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
+  const port = opts.port ?? DEFAULT_SYSTEM_PROXY_PORT;
+  const allProfiles = opts.profiles ?? [];
+  const proxyProfiles = allProfiles.filter((name) => !isConfigPatchProfileName(name));
+  const configPatchProfiles = allProfiles.filter((name) => isConfigPatchProfileName(name));
+  const proxyRoute = proxyProfiles.length > 0 ? routeForTool(opts, proxyProfiles[0]!) : routeForTool(opts, allProfiles[0] ?? '');
+  const previousProfiles = new Set(
+    Array.isArray(activeSystemProxyState?.['activeProfileNames'])
+      ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+      : [...traySystemProxyProfiles],
+  );
+
+  for (const name of previousProfiles) {
+    if (allProfiles.includes(name) || !isConfigPatchProfileName(name)) continue;
+    const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
+    if (profile?.configPatch) {
+      removeConfigPatch(profile.configPatch);
+      appendLog('system-proxy', 'system', `${profile.label}: removed AntSeed provider from config`);
+    }
+  }
+
+  const processState = processManager.getState().find((entry) => entry.mode === 'system-proxy');
+  if (processState?.running) {
+    await processManager.stop('system-proxy');
+  }
+
+  const buyerProxyPort = await resolveBuyerProxyPort();
+  for (const name of configPatchProfiles) {
+    const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
+    if (profile?.configPatch) {
+      const route = routeForTool(opts, name);
+      applyConfigPatch(profile.configPatch, route.peerId, route.model, buyerProxyPort, route.services);
+      appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(route.peerId)}, model=${route.model || 'auto'})`);
+    }
+  }
+
+  let state: RuntimeProcessState | null = null;
+  if (proxyProfiles.length > 0) {
+    state = await processManager.start({
+      mode: 'system-proxy',
+      env: systemProxyProfilesEnv(),
+      systemProxyPeerId: proxyRoute.peerId,
+      systemProxyPort: opts.port,
+      systemProxyProfiles: proxyProfiles,
+      systemProxyDefaultModel: proxyRoute.model || undefined,
+      systemProxyServedModels: proxyRoute.services,
+      setSystemProxy: true,
+    });
+    try {
+      await waitForSystemProxyReady(port);
+    } catch (err) {
+      await stopSystemProxyRuntime(true).catch(() => undefined);
+      throw err;
+    }
+    setSystemProxyNodeEnv(port);
+    if (!opts.profileSwitch) {
+      lastSystemProxySetupAt = Date.now();
+    }
+  }
+
+  traySystemProxyPeerId = opts.peerId;
+  traySystemProxyModel = opts.defaultModel ?? '';
+  traySystemProxyProfiles = new Set(allProfiles);
+  refreshTrayMenu();
+  const nextState = {
+    ...(state ?? { mode: 'system-proxy' as const, running: configPatchProfiles.length > 0, pid: null, startedAt: Date.now(), lastExitCode: null, lastError: null }),
+    port,
+    peerId: opts.peerId,
+    defaultModel: opts.defaultModel,
+    toolRoutes: opts.toolRoutes,
+    activeProfileNames: allProfiles,
+    running: proxyProfiles.length > 0 ? state?.running === true : configPatchProfiles.length > 0,
+  } as RuntimeProcessState & Record<string, unknown>;
+  await setActiveSystemProxyState(nextState);
+  return getSystemProxyProcessState();
+}
+
+async function restartSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
+  await processManager.stop('system-proxy');
+  return startSystemProxyRuntime(opts);
+}
+
+async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimeProcessState | null> {
+  const state = await processManager.stop('system-proxy');
+  if (clearSettings) {
+    await clearSystemProxySettings();
+    removeAllConfigPatches();
+    traySystemProxyProfiles = new Set();
+    activeSystemProxyState = null;
+  }
+  refreshTrayMenu();
+  return withSystemProxyRuntimeMetadata(state);
+}
+
+function openSystemProxyWindow(): void {
+  const window = getMainWindow();
+  if (window) {
+    applyWindowView('system-proxy');
+    window.show();
+    window.focus();
+  }
+}
+
+function resolveTrayPeerForStart(): DashboardNetworkPeer | null {
+  return getTraySelectedPeer() ?? getTrayPeerOptions().find((peer) => peer.online) ?? getTrayPeerOptions()[0] ?? null;
+}
+
+function resolveTrayModelForPeer(peer: DashboardNetworkPeer | null): string {
+  if (!peer) return '';
+  const selected = getTraySelectedModel();
+  return selected && peer.services.includes(selected) ? selected : peer.services[0] ?? selected;
+}
+
+async function setTrayPeer(peerId: string): Promise<void> {
+  traySystemProxyPeerId = peerId;
+  const peer = lookupPeer(peerId);
+  traySystemProxyModel = resolveTrayModelForPeer(peer);
+  const state = getSystemProxyProcessState();
+  const profiles = getTrayProfilesFromState();
+  if (state?.running && profiles.size > 0) {
+    await restartSystemProxyRuntime({
+      peerId,
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: [...profiles],
+      defaultModel: traySystemProxyModel || undefined,
+      servedModels: peer?.services ?? [],
+      profileSwitch: true,
+    });
+  }
+  refreshTrayMenu();
+}
+
+async function setTrayModel(model: string): Promise<void> {
+  traySystemProxyModel = model;
+  const peer = resolveTrayPeerForStart();
+  const state = getSystemProxyProcessState();
+  const profiles = getTrayProfilesFromState();
+  if (state?.running && peer && profiles.size > 0) {
+    await restartSystemProxyRuntime({
+      peerId: peer.peerId,
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: [...profiles],
+      defaultModel: model || undefined,
+      servedModels: peer.services,
+      profileSwitch: true,
+    });
+  }
+  refreshTrayMenu();
+}
+
+function isConfigPatchProfileName(name: string): boolean {
+  return SYSTEM_PROXY_PROFILES.find((p) => p.name === name)?.kind === 'config-patch';
+}
+
+async function setTrayProfile(profileName: string, enabled: boolean): Promise<void> {
+  const next = getTrayProfilesFromState();
+  if (enabled) next.add(profileName);
+  else next.delete(profileName);
+
+  const state = getSystemProxyProcessState();
+  traySystemProxyProfiles = next;
+
+  const peer = resolveTrayPeerForStart();
+
+  if (isConfigPatchProfileName(profileName)) {
+    if (!peer && enabled) {
+      appendLog('system-proxy', 'system', 'Select a peer before connecting an app from the tray.');
+      refreshTrayMenu();
+      return;
+    }
+    if (next.size === 0) {
+      await stopSystemProxyRuntime(true);
+      refreshTrayMenu();
+      return;
+    }
+    const selectedPeer = peer ?? getTraySelectedPeer();
+    if (selectedPeer) {
+      const model = resolveTrayModelForPeer(selectedPeer);
+      traySystemProxyPeerId = selectedPeer.peerId;
+      traySystemProxyModel = model;
+      await startSystemProxyRuntime({
+        peerId: selectedPeer.peerId,
+        port: DEFAULT_SYSTEM_PROXY_PORT,
+        profiles: [...next],
+        defaultModel: model || undefined,
+        servedModels: selectedPeer.services,
+        profileSwitch: true,
+      });
+    }
+    refreshTrayMenu();
+    return;
+  }
+
+  const proxyProfiles = [...next].filter((name) => !isConfigPatchProfileName(name));
+  if (proxyProfiles.length === 0) {
+    if (state?.running) {
+      await startSystemProxyRuntime({
+        peerId: peer?.peerId ?? traySystemProxyPeerId,
+        port: DEFAULT_SYSTEM_PROXY_PORT,
+        profiles: [...next],
+        defaultModel: peer ? resolveTrayModelForPeer(peer) || undefined : traySystemProxyModel || undefined,
+        servedModels: peer?.services ?? [],
+        profileSwitch: true,
+      });
+    }
+    refreshTrayMenu();
+    return;
+  }
+
+  if (!peer) {
+    appendLog('system-proxy', 'system', 'Select a peer before connecting an app from the tray.');
+    refreshTrayMenu();
+    return;
+  }
+  const model = resolveTrayModelForPeer(peer);
+  traySystemProxyPeerId = peer.peerId;
+  traySystemProxyModel = model;
+
+  if (state?.running) {
+    await restartSystemProxyRuntime({
+      peerId: peer.peerId,
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: [...next],
+      defaultModel: model || undefined,
+      servedModels: peer.services,
+      profileSwitch: true,
+    });
+  } else {
+    await startSystemProxyRuntime({
+      peerId: peer.peerId,
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: [...next],
+      defaultModel: model || undefined,
+      servedModels: peer.services,
+    });
+  }
+  refreshTrayMenu();
+}
+
+function buildSystemProxyTrayMenu(showMainWindow: () => void): MenuItemConstructorOptions[] {
+  const state = getSystemProxyProcessState();
+  const running = state?.running === true;
+  const profiles = getTrayProfilesFromState();
+  const peerOptions = getTrayPeerOptions();
+  const selectedPeer = getTraySelectedPeer() ?? peerOptions[0] ?? null;
+  const selectedModel = resolveTrayModelForPeer(selectedPeer);
+  const peerLabel = selectedPeer
+    ? `${selectedPeer.displayName || shortTrayPeerId(selectedPeer.peerId)} (${shortTrayPeerId(selectedPeer.peerId)})`
+    : 'No peer selected';
+
+  const peerSubmenu: MenuItemConstructorOptions[] = peerOptions.length > 0
+    ? peerOptions.slice(0, 20).map((peer) => ({
+      label: `${peer.displayName || shortTrayPeerId(peer.peerId)}${peer.online ? '' : ' (offline)'}`,
+      type: 'radio',
+      checked: selectedPeer?.peerId === peer.peerId,
+      click: () => { void setTrayPeer(peer.peerId); },
+    }))
+    : [{ label: 'No discovered peers', enabled: false }];
+
+  const modelOptions = selectedPeer?.services ?? [];
+  const modelSubmenu: MenuItemConstructorOptions[] = modelOptions.length > 0
+    ? modelOptions.slice(0, 30).map((model) => ({
+      label: model,
+      type: 'radio',
+      checked: selectedModel === model,
+      click: () => { void setTrayModel(model); },
+    }))
+    : [{ label: 'No models for selected peer', enabled: false }];
+
+  return [
+    { label: running ? 'System Proxy: Connected' : 'System Proxy: No tools connected', enabled: false },
+    { label: `Peer: ${peerLabel}`, enabled: false },
+    { label: `Model: ${selectedModel || 'No model selected'}`, enabled: false },
+    { type: 'separator' },
+    { label: 'Peer', submenu: peerSubmenu },
+    { label: 'Model', submenu: modelSubmenu },
+    { type: 'separator' },
+    ...SYSTEM_PROXY_PROFILES.map((profile): MenuItemConstructorOptions => {
+      const connected = profiles.has(profile.name) && (running || profile.kind === 'config-patch');
+      return {
+        label: `${profile.label}: ${connected ? 'Disconnect' : 'Connect'}`,
+        enabled: selectedPeer !== null,
+        click: () => { void setTrayProfile(profile.name, !connected); },
+      };
+    }),
+    { type: 'separator' },
+    { label: 'Open System Proxy', click: openSystemProxyWindow },
+    { label: `Show ${APP_NAME}`, click: showMainWindow },
+    ...(running ? [{ label: 'Disconnect All', click: () => { void stopSystemProxyRuntime(true); } } as MenuItemConstructorOptions] : []),
+    { type: 'separator' },
+    { role: 'quit', label: `Quit ${APP_NAME}` },
+  ];
+}
+
+function refreshTrayMenu(): void {
+  updateDesktopTray();
+}
 
 // ── Payments Portal ──
 
@@ -330,6 +1337,10 @@ async function stopPaymentsPortal(): Promise<void> {
     // Already closed
   }
   paymentsServer = null;
+}
+
+async function stopDesktopServices(): Promise<void> {
+  await Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]);
 }
 
 ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
@@ -409,6 +1420,48 @@ ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
 ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
   desktopDebugEnabled = Boolean(enabled);
   return { ok: true };
+});
+
+ipcMain.handle('desktop:open-external-url', async (_event, rawUrl: string) => {
+  try {
+    const url = new URL(typeof rawUrl === 'string' ? rawUrl : '');
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return { ok: false, error: 'Only http(s) URLs can be opened.' };
+    }
+    await shell.openExternal(url.toString());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
+  try {
+    const key = typeof toolName === 'string' ? toolName : '';
+    const profile = SYSTEM_PROXY_PROFILES.find((item) => item.name === key || item.toolName === key);
+    if (!profile) {
+      return { ok: false, error: 'Unknown tool.' };
+    }
+    if (profile.openUrl) {
+      await shell.openExternal(profile.openUrl);
+      return { ok: true, fallback: profile.openUrl };
+    }
+    if (profile.restartAppName && process.platform === 'darwin') {
+      try {
+        execFileSync('open', ['-a', profile.restartAppName], { stdio: 'pipe' });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    return { ok: false, error: 'No open target configured for this tool.' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('window:apply-view', (_event, viewName: string) => {
+  return applyWindowView(typeof viewName === 'string' ? viewName : '');
 });
 
 ipcMain.handle('runtime:clear-logs', async () => {
@@ -987,6 +2040,205 @@ ipcMain.handle('runtime:scan-network', async () => {
   }
 });
 
+ipcMain.handle('system-proxy:list-profiles', () => {
+  return SYSTEM_PROXY_PROFILES.map((profile) => ({
+    name: profile.name,
+    displayName: profile.label,
+    kind: profile.kind,
+    method: profile.method,
+    domains: profile.domains,
+    appAction: profile.appAction,
+    openUrl: profile.openUrl,
+    toolName: profile.toolName,
+    canRestart: Boolean(profile.restartAppName),
+  }));
+});
+
+ipcMain.handle('system-proxy:start', async (_event, opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => {
+  try {
+    return { ok: true, state: await startSystemProxyRuntime(opts) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('system-proxy:stop', async () => {
+  try {
+    return { ok: true, state: await stopSystemProxyRuntime(true) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('system-proxy:get-state', () => {
+  return getSystemProxyProcessState();
+});
+
+ipcMain.handle('system-proxy:install-ca', async () => {
+  try {
+    const dataDir = resolveConnectDataDir();
+    const result = await processManager.runCliCommand(['--data-dir', dataDir, 'system-proxy', 'install-ca']);
+    lastSystemProxySetupAt = Date.now();
+    const warning = stripAnsi(result.stdout)
+      .split(/\r?\n/)
+      .find((line) => line.trim().startsWith('Warning:'))
+      ?.replace(/^Warning:\s*/, '')
+      .trim();
+    return { ok: true, ...(warning ? { warning } : {}) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number }): Promise<SystemProxyGuiTestResult> => {
+  const port = opts?.port ?? DEFAULT_SYSTEM_PROXY_PORT;
+  const targetApp = restartTargetProcessInfo();
+  const proxyConfigured = process.platform === 'darwin'
+    ? getSystemProxyServices(port).length > 0
+    : true;
+  const proxyReachable = await canConnectToLocalPort(port);
+  const needsAppRestartByStartTime = Boolean(
+    targetApp.running
+    && lastSystemProxySetupAt
+    && (!targetApp.startedAt || targetApp.startedAt < lastSystemProxySetupAt),
+  );
+
+  if (!proxyReachable) {
+    return {
+      ok: false,
+      proxyConfigured,
+      proxyReachable,
+      guiTrustOk: false,
+      appRunning: targetApp.running,
+      needsAppRestart: needsAppRestartByStartTime,
+      appPid: targetApp.pid,
+      error: `System Proxy is not listening on 127.0.0.1:${port}.`,
+    };
+  }
+
+  if (!proxyConfigured) {
+    return {
+      ok: false,
+      proxyConfigured,
+      proxyReachable,
+      guiTrustOk: false,
+      appRunning: targetApp.running,
+      needsAppRestart: needsAppRestartByStartTime,
+      appPid: targetApp.pid,
+      error: 'macOS HTTPS proxy is not pointing at System Proxy.',
+    };
+  }
+
+  const probe = await runGuiSystemProxyTrustProbe();
+  const needsAppRestart = !probe.ok && (
+    needsAppRestartByStartTime
+    || (targetApp.running && isCertificateTrustError(probe.error ?? ''))
+  );
+  return {
+    ok: probe.ok,
+    proxyConfigured,
+    proxyReachable,
+    guiTrustOk: probe.ok,
+    appRunning: targetApp.running,
+    needsAppRestart,
+    appPid: targetApp.pid,
+    statusCode: probe.statusCode,
+    error: probe.error,
+  };
+});
+
+ipcMain.handle('system-proxy:restart-app', async (_event, opts: { app: string }) => {
+  const profileName = typeof opts?.app === 'string' ? opts.app : '';
+  const profile = SYSTEM_PROXY_PROFILES.find((item) => item.name === profileName);
+  const appName = profile?.restartAppName;
+  if (!appName) {
+    return { ok: false, error: `No restart target configured for ${profileName || 'this profile'}.` };
+  }
+  return restartMacApp(appName);
+});
+
+ipcMain.handle('system-proxy:ca-exists', () => {
+  const dataDir = resolveConnectDataDir();
+  return existsSync(path.join(dataDir, 'system-proxy', 'ca.crt'))
+    && existsSync(path.join(dataDir, 'system-proxy', 'ca.key'));
+});
+
+ipcMain.handle('system-proxy:add-to-shell', async (_event, opts?: { port?: number }) => {
+  const { readFile, appendFile, writeFile } = await import('node:fs/promises');
+  const { join: pjoin } = path;
+  const home = homedir();
+  const port = opts?.port ?? DEFAULT_SYSTEM_PROXY_PORT;
+  const caPath = systemProxyCaPath();
+  const hookFile = systemProxyHookPath();
+  const marker = '# AntSeed System Proxy';
+  const block = [
+    '',
+    marker,
+    `export HTTPS_PROXY=http://localhost:${port}`,
+    `export NODE_EXTRA_CA_CERTS="${caPath}"`,
+    `export NODE_OPTIONS="--require ${hookFile}"`,
+    '# End AntSeed System Proxy',
+    '',
+  ].join('\n');
+
+  const candidates = [
+    pjoin(home, '.zshrc'),
+    pjoin(home, '.bash_profile'),
+    pjoin(home, '.bashrc'),
+  ];
+  const added: string[] = [];
+
+  for (const profilePath of candidates) {
+    let existing = '';
+    try { existing = await readFile(profilePath, 'utf8'); } catch { continue; }
+    // Remove any prior block before appending the current one
+    const cleaned = removeSystemProxyShellBlock(existing);
+    if (cleaned !== existing) {
+      await writeFile(profilePath, cleaned + block, 'utf8');
+    } else {
+      await appendFile(profilePath, block, 'utf8');
+    }
+    added.push(profilePath);
+  }
+
+  // If none existed, create .zshrc
+  if (added.length === 0) {
+    const zshrc = pjoin(home, '.zshrc');
+    let existing = '';
+    try { existing = await readFile(zshrc, 'utf8'); } catch { /* doesn't exist */ }
+    const cleaned = removeSystemProxyShellBlock(existing);
+    await writeFile(zshrc, cleaned + block, 'utf8');
+    added.push(zshrc);
+  }
+
+  return { ok: true, added };
+});
+
+ipcMain.handle('system-proxy:remove-from-shell', async () => {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const { join: pjoin } = path;
+  const home = homedir();
+
+  const candidates = [
+    pjoin(home, '.zshrc'),
+    pjoin(home, '.bash_profile'),
+    pjoin(home, '.bashrc'),
+  ];
+  const removed: string[] = [];
+
+  for (const profilePath of candidates) {
+    let existing = '';
+    try { existing = await readFile(profilePath, 'utf8'); } catch { continue; }
+    const cleaned = removeSystemProxyShellBlock(existing);
+    if (cleaned !== existing) {
+      await writeFile(profilePath, cleaned, 'utf8');
+      removed.push(profilePath);
+    }
+  }
+
+  return { ok: true, removed };
+});
+
 app.whenReady().then(async () => {
   installAttachmentProtocol();
   app.setName(APP_NAME);
@@ -1005,8 +2257,43 @@ app.whenReady().then(async () => {
   // Must complete before creating the window — the renderer auto-starts the
   // buyer runtime which needs config.json to find the router plugin.
   await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
+  loadPersistedSystemProxyState();
 
-  createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+  const showMainWindow = () => {
+    const existingWindow = getMainWindow();
+    if (existingWindow) {
+      existingWindow.show();
+      existingWindow.focus();
+      return;
+    }
+    createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+  };
+
+  showMainWindow();
+  createDesktopTray({
+    appName: APP_NAME,
+    iconPath: TRAY_ICON_PATH,
+    onShow: showMainWindow,
+    buildMenu: () => buildSystemProxyTrayMenu(showMainWindow),
+  });
+  refreshTrayMenu();
+
+  const restoredProfiles = Array.isArray(activeSystemProxyState?.['activeProfileNames'])
+    ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+    : [];
+  const restoredProxyProfiles = restoredProfiles.filter((name) => !isConfigPatchProfileName(name));
+  if (restoredProxyProfiles.length > 0 && typeof activeSystemProxyState?.['peerId'] === 'string') {
+    void startSystemProxyRuntime({
+      peerId: activeSystemProxyState['peerId'],
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: restoredProfiles,
+      defaultModel: typeof activeSystemProxyState['defaultModel'] === 'string' ? activeSystemProxyState['defaultModel'] : undefined,
+      servedModels: [],
+      profileSwitch: true,
+    }).catch((err) => {
+      appendLog('system-proxy', 'system', `System Proxy auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {
@@ -1042,6 +2329,11 @@ app.whenReady().then(async () => {
   let downloadStallInterval: ReturnType<typeof setInterval> | null = null;
   let lastDownloadProgressAt: number | null = null;
   let lastDownloadPercent = 0;
+  let updateVersion: string | null = null;
+
+  const sendUpdateStatus = (status: UpdateStatus) => {
+    getMainWindow()?.webContents.send('app:update-status', status);
+  };
 
   const clearStallWatchdog = () => {
     if (downloadStallInterval) {
@@ -1052,11 +2344,27 @@ app.whenReady().then(async () => {
     lastDownloadPercent = 0;
   };
 
+  const reportUpdateError = (error: unknown, context: string): InstallUpdateResult => {
+    const message = errorMessage(error);
+    const details = errorDetails(error);
+    const hint = getMacUpdateInstallHint();
+    console.error(`[auto-update] ${context}:`, details);
+    appendLog('connect', 'system', `Auto-update ${context}: ${message}`);
+    clearStallWatchdog();
+    if (isInstallingUpdate) {
+      isQuitting = false;
+    }
+    isInstallingUpdate = false;
+    sendUpdateStatus({ status: 'error', version: updateVersion, message, details, hint });
+    updateVersion = null;
+    return { ok: false, error: message, details, hint };
+  };
+
   const startStallWatchdog = () => {
     clearStallWatchdog();
     lastDownloadProgressAt = Date.now();
     downloadStallInterval = setInterval(() => {
-      if (!pendingUpdateVersion || lastDownloadProgressAt === null) return;
+      if (!updateVersion || lastDownloadProgressAt === null) return;
       // Once bytes are done electron-updater still spends time verifying the
       // file (sha512 / code-sign) and emits no progress — don't treat that as
       // a stall, just wait for update-downloaded.
@@ -1065,43 +2373,40 @@ app.whenReady().then(async () => {
       if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
       console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
       clearStallWatchdog();
-      pendingUpdateVersion = null;
+      updateVersion = null;
       void autoUpdater.checkForUpdates().catch((err) => {
-        console.error('[auto-update] stall-retry failed:', err?.message ?? err);
+        reportUpdateError(err, 'stall-retry failed');
       });
     }, DOWNLOAD_STALL_POLL_MS);
   };
 
-  let pendingUpdateVersion: string | null = null;
   autoUpdater.on('update-available', (info) => {
-    pendingUpdateVersion = info.version;
+    updateVersion = info.version;
     startStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'downloading', version: info.version, percent: 0 });
+    sendUpdateStatus({ status: 'downloading', version: info.version, percent: 0 });
   });
   autoUpdater.on('download-progress', (progress) => {
-    if (!pendingUpdateVersion) return;
+    if (!updateVersion) return;
     lastDownloadProgressAt = Date.now();
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
     lastDownloadPercent = percent;
-    getMainWindow()?.webContents.send('app:update-status', {
+    sendUpdateStatus({
       status: 'downloading',
-      version: pendingUpdateVersion,
+      version: updateVersion,
       percent,
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
-    pendingUpdateVersion = null;
+    updateVersion = info.version;
     clearStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    sendUpdateStatus({ status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
     }
   });
   autoUpdater.on('error', (err) => {
-    console.error('[auto-update] error:', err?.message ?? err);
-    clearStallWatchdog();
-    pendingUpdateVersion = null;
+    reportUpdateError(err, 'error');
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
@@ -1110,24 +2415,37 @@ app.whenReady().then(async () => {
     void autoUpdater.checkForUpdates().catch(() => {});
   }, UPDATE_CHECK_INTERVAL_MS);
 
-  ipcMain.handle('app:install-update', () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle('app:install-update', async (): Promise<InstallUpdateResult> => {
+    if (isInstallingUpdate) {
+      return { ok: true };
+    }
+
+    isInstallingUpdate = true;
+    sendUpdateStatus({ status: 'installing', version: updateVersion });
+
+    try {
+      await stopDesktopServices();
+      isQuitting = true;
+      autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch (err) {
+      isQuitting = false;
+      return reportUpdateError(err, 'install failed');
+    }
   });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+      showMainWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void processManager.stopAll().finally(() => app.quit());
+    app.quit();
   }
 });
-
-let isQuitting = false;
 
 app.on('before-quit', (event) => {
   if (isQuitting) {
@@ -1137,17 +2455,19 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void processManager.stopAll()
-    .then(() => stopPaymentsPortal())
-    .finally(() => {
-      app.quit();
-    });
+  void stopDesktopServices().finally(() => {
+    app.exit(0);
+  });
 });
 
-// Ensure child processes are cleaned up if the main process receives SIGTERM
-// (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
+// Ensure child processes are cleaned up if the main process receives a terminal
+// stop signal before before-quit fires.
+process.on('SIGINT', () => {
+  void stopDesktopServices().finally(() => process.exit(0));
+});
+
 process.on('SIGTERM', () => {
-  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
+  void stopDesktopServices().finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal

@@ -1,20 +1,18 @@
 export {
-  createOpenAIChatToAnthropicStreamingAdapter,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  type AnthropicToOpenAIRequestTransformResult,
-} from './anthropic.js';
+  transformRequest,
+  type ServiceApiRequestTransformOptions,
+  type ServiceApiRequestTransformResult,
+} from './request-transform.js';
 
 export {
-  createOpenAIChatToResponsesStreamingAdapter,
-  createOpenAIResponsesToChatStreamingAdapter,
-  transformOpenAIChatRequestToOpenAIResponses,
-  transformOpenAIChatResponseToOpenAIResponses,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIResponsesResponseToOpenAIChat,
-  type ChatToResponsesRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
-} from './openai-responses.js';
+  transformResponse,
+  type ServiceApiResponseTransformOptions,
+} from './response-transform.js';
+
+export {
+  createStreamingAdapter,
+  type ServiceApiStreamTransformOptions,
+} from './stream-transform.js';
 
 export {
   detectRequestServiceApiProtocol,

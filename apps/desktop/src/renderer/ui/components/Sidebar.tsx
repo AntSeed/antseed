@@ -19,9 +19,11 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { Search01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
+import { Route01Icon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
 import type { ViewName } from '../types';
-import { useUiSnapshot } from '../hooks/useUiSnapshot';
+import { preloadView } from './viewRegistry';
+import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { useActions } from '../hooks/useActions';
 import styles from './Sidebar.module.scss';
 
@@ -43,6 +45,7 @@ type ConvRecord = Record<string, unknown>;
 const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'API', view: 'external-clients', icon: ComputerTerminal01Icon },
+  { label: 'System Proxy', view: 'system-proxy', icon: Route01Icon },
 ];
 
 const configEntries: NavEntry[] = [
@@ -61,7 +64,7 @@ const RECENT_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RECENT_SESSION_CLOCK_MS = 60 * 1000;
 
 const SidebarWarning = memo(function SidebarWarning() {
-  const { connectWarning } = useUiSnapshot();
+  const connectWarning = useUiSelector((state) => state.connectWarning);
   if (!connectWarning) return null;
   return <p className={styles.sidebarWarning}>{connectWarning}</p>;
 });
@@ -244,6 +247,7 @@ function ConversationListRow({
   approvalConvIds,
   chatActiveChannels,
   peerDisplayNameById,
+  peerIconUrlById,
   onSelectConv,
   onCloseChannel,
   menuOpenId,
@@ -256,6 +260,7 @@ function ConversationListRow({
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   peerDisplayNameById: ReadonlyMap<string, string>;
+  peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onCloseChannel: () => void;
   menuOpenId: string | null;
@@ -282,6 +287,9 @@ function ConversationListRow({
   const avatarGradient = convPeerId
     ? getPeerGradient(convPeerId)
     : 'linear-gradient(180deg, #9a9a96, #6b6b68)';
+  const avatarIconUrl = convPeerId ? peerIconUrlById.get(convPeerId) ?? null : null;
+  const [avatarIconFailed, setAvatarIconFailed] = useState(false);
+  const showAvatarIcon = Boolean(avatarIconUrl) && !avatarIconFailed;
 
   return (
     <div
@@ -312,8 +320,20 @@ function ConversationListRow({
         </div>
       </div>
       <div className={styles.recentSessionMeta}>
-        <span className={styles.recentSessionAvatar} style={{ background: avatarGradient }}>
-          {avatarLetter}
+        <span
+          className={`${styles.recentSessionAvatar}${showAvatarIcon ? ` ${styles.recentSessionAvatarIcon}` : ''}`}
+          style={showAvatarIcon ? undefined : { background: avatarGradient }}
+        >
+          {showAvatarIcon ? (
+            <img
+              className={styles.recentSessionAvatarImage}
+              src={avatarIconUrl ?? undefined}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setAvatarIconFailed(true)}
+            />
+          ) : avatarLetter}
         </span>
         <span className={styles.recentSessionPeer}>{peerName}</span>
         {costLabel && <span className={`${styles.chatConvCost} ${styles.recentSessionCost}`}>{costLabel}</span>}
@@ -355,6 +375,7 @@ function ChatListSection({
   approvalConvIds,
   chatActiveChannels,
   peerDisplayNameById,
+  peerIconUrlById,
   onSelectConv,
   onCloseChannel,
   onOpenChatSearch,
@@ -371,6 +392,7 @@ function ChatListSection({
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   peerDisplayNameById: ReadonlyMap<string, string>;
+  peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onCloseChannel: () => void;
   onOpenChatSearch: () => void;
@@ -426,6 +448,7 @@ function ChatListSection({
               approvalConvIds={approvalConvIds}
               chatActiveChannels={chatActiveChannels}
               peerDisplayNameById={peerDisplayNameById}
+              peerIconUrlById={peerIconUrlById}
               onSelectConv={onSelectConv}
               onCloseChannel={onCloseChannel}
               menuOpenId={menuOpenId}
@@ -580,7 +603,18 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     chatServiceOptions,
     chatSelectedServiceValue,
     chatSelectedPeerId,
-  } = useUiSnapshot();
+  } = useUiSelector((state) => ({
+    chatConversations: state.chatConversations,
+    chatActiveConversation: state.chatActiveConversation,
+    chatSendingConversationIds: state.chatSendingConversationIds,
+    chatToolApprovalRequests: state.chatToolApprovalRequests,
+    chatActiveChannels: state.chatActiveChannels,
+    chatActiveChannelCount: state.chatActiveChannels.size,
+    discoverRows: state.discoverRows,
+    chatServiceOptions: state.chatServiceOptions,
+    chatSelectedServiceValue: state.chatSelectedServiceValue,
+    chatSelectedPeerId: state.chatSelectedPeerId,
+  }), shallowEqual);
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
   const allConversations = conversations as ConvRecord[];
@@ -627,6 +661,17 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     return map;
   }, [allConversations, discoverRows]);
 
+  const peerIconUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    const rows = Array.isArray(discoverRows) ? discoverRows : [];
+    for (const row of rows) {
+      const peerId = String(row.peerId || '').trim();
+      if (!peerId || map.has(peerId) || !row.peerIconUrl) continue;
+      map.set(peerId, row.peerIconUrl);
+    }
+    return map;
+  }, [discoverRows]);
+
   // Sort the full list — the row itself is scrollable, so we render every
   // conversation rather than slicing. "Recent" (touched in the last 24 h)
   // still floats to the top so the active workstream stays one glance away;
@@ -641,6 +686,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   }, [allConversations, recentNow]);
 
   const handleSelectConv = useCallback((id: string) => {
+    void preloadView('chat');
     void actions.openConversation(id);
     onSelectView('chat');
   }, [actions, onSelectView]);
@@ -683,6 +729,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   }, [actions]);
 
   const handleStartNewChatWithCurrentPeer = useCallback(() => {
+    void preloadView('chat');
     actions.startNewChat();
     if (newChatTarget) {
       actions.handleServiceChange(newChatTarget.serviceValue, newChatTarget.peerId);
@@ -700,6 +747,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
         approvalConvIds={approvalConvIds}
         chatActiveChannels={chatActiveChannels}
         peerDisplayNameById={peerDisplayNameById}
+        peerIconUrlById={peerIconUrlById}
         onSelectConv={handleSelectConv}
         onCloseChannel={handleCloseChannel}
         onOpenChatSearch={() => setChatSearchOpen(true)}
@@ -736,10 +784,18 @@ type NavLayoutCache = {
 };
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
-  const { devMode } = useUiSnapshot();
+  const devMode = useUiSelector((state) => state.devMode);
   const navEntries = [...baseEntries, ...configEntries];
   const sidebarRef = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLUListElement | null>(null);
+  const handleSelectView = useCallback((view: ViewName) => {
+    void preloadView(view);
+    onSelectView(view);
+  }, [onSelectView]);
+
+  const handlePreloadView = useCallback((view: ViewName) => {
+    void preloadView(view);
+  }, []);
 
   // Per-button refs. We hand both the icon-wrapper span and the label
   // span their own refs so the scroll-driven interpolation can write
@@ -965,7 +1021,10 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => onSelectView(view)}
+                onPointerEnter={() => handlePreloadView(view)}
+                onFocus={() => handlePreloadView(view)}
+                onPointerDown={() => handlePreloadView(view)}
+                onClick={() => handleSelectView(view)}
                 title={label}
               >
                 <span
@@ -1007,7 +1066,10 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                     data-view={view}
                     role="tab"
                     aria-selected={isActive ? 'true' : 'false'}
-                    onClick={() => onSelectView(view)}
+                    onPointerEnter={() => handlePreloadView(view)}
+                    onFocus={() => handlePreloadView(view)}
+                    onPointerDown={() => handlePreloadView(view)}
+                    onClick={() => handleSelectView(view)}
                   >
                     <HugeiconsIcon icon={icon} size={16} strokeWidth={1.5} />
                     {label}

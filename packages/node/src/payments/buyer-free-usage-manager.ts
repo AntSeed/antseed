@@ -23,6 +23,8 @@ export interface BuyerFreeUsageConfig {
   freeUsageContractAddress: string;
   defaultAuthDurationSecs: number;
   openAckTimeoutMs?: number;
+  /** Disable per-service attribution in free-usage metadata. Default: false. */
+  disableMetadataV2Services?: boolean;
 }
 
 interface FreeUsageSession {
@@ -74,12 +76,41 @@ export class BuyerFreeUsageManager {
     this._hydrateFromStore();
   }
 
+  private get _disableMetadataV2Services(): boolean {
+    return this._config.disableMetadataV2Services === true;
+  }
+
+  private _sanitizeMetadata(metadata: FreeUsageMetadata): FreeUsageMetadata {
+    if (!this._disableMetadataV2Services) return metadata;
+    return {
+      cumulativeInputTokens: metadata.cumulativeInputTokens,
+      cumulativeOutputTokens: metadata.cumulativeOutputTokens,
+      cumulativeRequestCount: metadata.cumulativeRequestCount,
+      services: [],
+    };
+  }
+
+  private _advanceUsageMetadata(
+    previous: FreeUsageMetadata,
+    service: string | undefined,
+    delta: Parameters<typeof advanceUsageMetadata>[2],
+  ): FreeUsageMetadata {
+    return advanceUsageMetadata(
+      this._sanitizeMetadata(previous),
+      this._disableMetadataV2Services ? undefined : service,
+      delta,
+    );
+  }
+
   private _hydrateFromStore(): void {
     if (!this._channelStore) return;
     const activeChannels = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, this._identity.wallet.address, CHANNEL_KIND.FREE);
     for (const channel of activeChannels) {
       if (this._sessions.has(channel.peerId)) continue;
-      const metadata = this._channelStore.getChannelMetadata(channel);
+      const metadata = this._sanitizeMetadata(this._channelStore.getChannelMetadata(channel));
+      if (!this._disableMetadataV2Services) {
+        this._channelStore.replaceMetadataServiceTotals(channel.sessionId, metadata.services);
+      }
       this._sessions.set(channel.peerId, {
         channelId: channel.sessionId,
         // Salt is only needed to create a fresh open signature; hydrated
@@ -232,7 +263,7 @@ export class BuyerFreeUsageManager {
     const outputTokens = BigInt(payload.outputTokens ?? '0');
     const attributedService = this._requestService.get(payload.requestId) ?? payload.service;
 
-    const metadata = advanceUsageMetadata(session.latestMetadata, attributedService, {
+    const metadata = this._advanceUsageMetadata(session.latestMetadata, attributedService, {
       amount: 0n,
       inputTokens,
       cachedInputTokens: 0n,
@@ -352,6 +383,6 @@ export class BuyerFreeUsageManager {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
-    this._channelStore.replaceMetadataServiceTotals(session.channelId, session.services);
+    this._channelStore.replaceMetadataServiceTotals(session.channelId, this._sanitizeMetadata(session.latestMetadata).services);
   }
 }

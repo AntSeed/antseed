@@ -28,6 +28,7 @@ test('buyer start runtime overrides are runtime-only and win over env/config', (
     maxInputUsdPerMillion: 90,
     maxOutputUsdPerMillion: 95,
     metadataFetchTimeoutMs: 2500,
+    disableMetadataV2Services: true,
   });
 
   const effective = resolveEffectiveBuyerConfig({
@@ -40,6 +41,7 @@ test('buyer start runtime overrides are runtime-only and win over env/config', (
   assert.equal(effective.maxPricing.defaults.inputUsdPerMillion, 90);
   assert.equal(effective.maxPricing.defaults.outputUsdPerMillion, 95);
   assert.equal(effective.metadataFetchTimeoutMs, 2500);
+  assert.equal(effective.disableMetadataV2Services, true);
   assert.deepEqual(config, beforeResolution);
 });
 

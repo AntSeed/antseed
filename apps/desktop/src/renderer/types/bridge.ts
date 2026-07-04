@@ -10,6 +10,18 @@ export type RuntimeProcessState = {
   [key: string]: unknown;
 };
 
+export type SystemProxyProfileSummary = {
+  name: string;
+  displayName: string;
+  kind: 'proxy' | 'config-patch';
+  method: string;
+  domains: string[];
+  appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app';
+  openUrl?: string;
+  toolName?: string;
+  canRestart?: boolean;
+};
+
 export type LogEvent = {
   mode: RuntimeMode | string;
   stream: 'stdout' | 'stderr' | 'system' | string;
@@ -72,6 +84,16 @@ export type PluginInstallResult = {
   plugins: PluginInfo[];
   error: string | null;
 };
+
+export type UpdateStatus =
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+export type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
 
 export type ChatWorkspaceGitStatus = {
   available: boolean;
@@ -210,6 +232,9 @@ export type DesktopBridge = {
   chatAiGetWorkspaceGitStatus?: () => Promise<{ ok: boolean; data?: ChatWorkspaceGitStatus; error?: string }>;
   chatAiSetWorkspace?: (workspacePath: string) => Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }>;
   pickDirectory?: () => Promise<{ ok: boolean; path: string | null }>;
+  openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
+  openTool?: (toolName: string) => Promise<{ ok: boolean; error?: string; fallback?: string }>;
+  applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
   voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
   voiceGetStatus?: () => Promise<unknown>;
   voiceSetModel?: (modelId: string) => Promise<unknown>;
@@ -236,6 +261,8 @@ export type DesktopBridge = {
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
+  onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
+  installUpdate?: () => Promise<InstallUpdateResult>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
 
@@ -262,4 +289,25 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+
+  systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;
+  systemProxyStop?: () => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
+  systemProxyInstallCa?: () => Promise<{ ok: boolean; warning?: string; error?: string }>;
+  systemProxyCaExists?: () => Promise<boolean>;
+  systemProxyAddToShell?: (opts?: { port?: number }) => Promise<{ ok: boolean; added: string[]; error?: string }>;
+  systemProxyRemoveFromShell?: () => Promise<{ ok: boolean; removed: string[]; error?: string }>;
+  systemProxyTestGui?: (opts?: { port?: number }) => Promise<{
+    ok: boolean;
+    proxyConfigured: boolean;
+    proxyReachable: boolean;
+    guiTrustOk: boolean;
+    appRunning: boolean;
+    needsAppRestart: boolean;
+    appPid?: number;
+    statusCode?: number;
+    error?: string;
+  }>;
+  systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
 };
