@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {ProtocolFixture} from "./ProtocolFixture.sol";
-import {AntseedChannels} from "../../AntseedChannels.sol";
+import {AntseedChannels} from "../../payments/AntseedChannels.sol";
 
 /**
  * @title ChannelsStateMachineInvariants

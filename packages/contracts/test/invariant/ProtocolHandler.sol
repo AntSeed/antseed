@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {AntseedChannels} from "../../AntseedChannels.sol";
-import {AntseedDeposits} from "../../AntseedDeposits.sol";
-import {MockUSDC} from "../../MockUSDC.sol";
+import {AntseedChannels} from "../../payments/AntseedChannels.sol";
+import {AntseedDeposits} from "../../payments/AntseedDeposits.sol";
+import {MockUSDC} from "../mocks/MockUSDC.sol";
 
 /**
  * @title ProtocolHandler

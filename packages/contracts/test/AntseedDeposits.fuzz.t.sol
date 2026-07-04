@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {AntseedDeposits} from "../AntseedDeposits.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
-import {MockUSDC} from "../MockUSDC.sol";
+import {AntseedDeposits} from "../payments/AntseedDeposits.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
+import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /**
  * @title AntseedDepositsFuzz

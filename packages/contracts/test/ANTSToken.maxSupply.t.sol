@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {ANTSToken} from "../ANTSToken.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {ANTSToken} from "../core/ANTSToken.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
 
 /**
  * @title ANTSTokenMaxSupplyFuzz

@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {AntseedStaking} from "../../AntseedStaking.sol";
-import {MockUSDC} from "../../MockUSDC.sol";
-import {MockERC8004Registry} from "../../MockERC8004Registry.sol";
+import {AntseedStaking} from "../../staking/AntseedStaking.sol";
+import {MockUSDC} from "../mocks/MockUSDC.sol";
+import {MockERC8004Registry} from "../mocks/MockERC8004Registry.sol";
 import {MockChannelsCounter} from "../mocks/MockChannelsCounter.sol";
 
 /**

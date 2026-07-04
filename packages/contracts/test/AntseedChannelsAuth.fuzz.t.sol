@@ -3,12 +3,12 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import {AntseedChannels} from "../AntseedChannels.sol";
-import {AntseedDeposits} from "../AntseedDeposits.sol";
-import {AntseedStaking} from "../AntseedStaking.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
-import {MockUSDC} from "../MockUSDC.sol";
-import {MockERC8004Registry} from "../MockERC8004Registry.sol";
+import {AntseedChannels} from "../payments/AntseedChannels.sol";
+import {AntseedDeposits} from "../payments/AntseedDeposits.sol";
+import {AntseedStaking} from "../staking/AntseedStaking.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
+import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {MockERC8004Registry} from "./mocks/MockERC8004Registry.sol";
 
 /**
  * @title AntseedChannelsAuthFuzz
