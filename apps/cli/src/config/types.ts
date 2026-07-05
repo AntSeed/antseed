@@ -158,9 +158,11 @@ export interface BuyerCLIConfig {
 export interface DelegateCLIConfig {
   enabled: boolean;
   /**
-   * Address credited on-chain for carried probe jobs. Iron rule: never the
-   * buyer hot wallet — use the operator/depositor address. Required when
-   * enabled.
+   * Optional cross-check only. The payout address is always resolved from
+   * the operator registered for this buyer in AntseedDeposits (verifiers
+   * verify that binding on-chain and reject any other address). When set
+   * and it differs from the on-chain operator, the operator wins and a
+   * warning is printed. Never the buyer hot wallet.
    */
   payoutAddress?: string;
   /** Max probe jobs run concurrently. Default: 2. */

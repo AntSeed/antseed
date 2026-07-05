@@ -25,7 +25,11 @@ const ALLOWED_JOB_HEADERS = new Set(['content-type', 'accept', 'user-agent'])
 
 export interface DelegateWorkerOptions {
   node: AntseedNode
-  /** Operator address credited on-chain. Never the buyer hot wallet. */
+  /**
+   * Operator address credited on-chain — must be the operator registered for
+   * this buyer in AntseedDeposits (verifiers reject any other address).
+   * Never the buyer hot wallet.
+   */
   payoutAddress: string
   /**
    * On-chain whitelist check. Serving an unapproved "verifier" would let
@@ -148,7 +152,12 @@ export class DelegateWorker {
       )
       if (!welcome.accepted) {
         this._options.warn(`delegate: verifier ${verifier.peerId.slice(0, 12)}… rejected registration: ${welcome.reason ?? 'unknown'}`)
-        this._rejected.add(verifier.peerId)
+        // A transient failure on the verifier's side (e.g. its RPC was down
+        // during the operator lookup) should be retried on a later scan, not
+        // blacklisted.
+        if (welcome.reason !== 'operator_check_unavailable') {
+          this._rejected.add(verifier.peerId)
+        }
         return
       }
       this._serving.add(verifier.peerId)

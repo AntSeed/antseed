@@ -406,10 +406,11 @@ function validateDelegateConfig(
   if (typeof delegate.enabled !== 'boolean') {
     errors.push(`${path}.enabled must be a boolean`);
   }
-  if (delegate.enabled) {
-    if (typeof delegate.payoutAddress !== 'string' || !EVM_ADDRESS_PATTERN.test(delegate.payoutAddress)) {
-      errors.push(`${path}.payoutAddress must be a 0x-prefixed EVM address when ${path}.enabled is true (use the operator address, never the buyer hot wallet)`);
-    }
+  // payoutAddress is an optional cross-check — the effective payout is always
+  // the operator registered on AntseedDeposits.
+  if (delegate.payoutAddress !== undefined
+    && (typeof delegate.payoutAddress !== 'string' || !EVM_ADDRESS_PATTERN.test(delegate.payoutAddress))) {
+    errors.push(`${path}.payoutAddress must be a 0x-prefixed EVM address when provided`);
   }
   const positiveInts: Array<[string, number | undefined]> = [
     ['maxConcurrentJobs', delegate.maxConcurrentJobs],
