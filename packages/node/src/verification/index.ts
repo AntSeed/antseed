@@ -1,6 +1,7 @@
 export { decodeResponseAuth, encodeResponseAuth } from './codec.js';
 export { VerificationMux } from './verification-mux.js';
 export { DelegationMux, type DelegationMessageHandler } from './delegation-mux.js';
+export { DelegationManager, type ConnectedDelegate, type DelegationManagerDeps } from './delegation-manager.js';
 export {
   decodeDelegateHello,
   decodeDelegateWelcome,
