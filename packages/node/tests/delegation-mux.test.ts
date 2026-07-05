@@ -1,0 +1,148 @@
+import { describe, expect, it } from 'vitest';
+import { DelegationMux } from '../src/verification/delegation-mux.js';
+import {
+  decodeDelegateHello,
+  decodeProbeJobRequest,
+  decodeProbeJobResult,
+  encodeDelegateHello,
+  encodeProbeJobRequest,
+  encodeProbeJobResult,
+} from '../src/verification/delegation-codec.js';
+import { decodeFrame } from '../src/p2p/message-protocol.js';
+import type { PeerConnection } from '../src/p2p/connection-manager.js';
+import type { ProbeJobRequestPayload, ProbeJobResultPayload } from '../src/types/protocol.js';
+import { MessageType } from '../src/types/protocol.js';
+
+function jobPayload(overrides?: Partial<ProbeJobRequestPayload>): ProbeJobRequestPayload {
+  return {
+    version: 1,
+    jobId: 'job-1',
+    targetPeerId: 'b'.repeat(40),
+    service: 'kimi-k2',
+    request: {
+      requestId: 'req-1',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      bodyBase64: Buffer.from('{"model":"kimi-k2"}').toString('base64'),
+    },
+    timeoutMs: 30_000,
+    ...overrides,
+  };
+}
+
+/** Two muxes wired back-to-back through in-memory frame delivery. */
+function muxPair(): { verifier: DelegationMux; delegate: DelegationMux } {
+  let verifier!: DelegationMux;
+  let delegate!: DelegationMux;
+  const pipeTo = (target: () => DelegationMux) => (data: Uint8Array): void => {
+    const decoded = decodeFrame(data);
+    if (!decoded) throw new Error('incomplete frame in test pipe');
+    void target().handleFrame(decoded.message);
+  };
+  verifier = new DelegationMux({ send: pipeTo(() => delegate) } as unknown as PeerConnection);
+  delegate = new DelegationMux({ send: pipeTo(() => verifier) } as unknown as PeerConnection);
+  return { verifier, delegate };
+}
+
+describe('delegation codec', () => {
+  it('round-trips hello, job, and result payloads', () => {
+    const hello = { version: 1 as const, payoutAddress: '0x' + 'a'.repeat(40), maxConcurrentJobs: 3 };
+    expect(decodeDelegateHello(encodeDelegateHello(hello))).toEqual(hello);
+
+    const job = jobPayload();
+    expect(decodeProbeJobRequest(encodeProbeJobRequest(job))).toEqual(job);
+
+    const result: ProbeJobResultPayload = {
+      version: 1,
+      jobId: 'job-1',
+      status: 'ok',
+      response: {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        bodyBase64: Buffer.from('{"choices":[]}').toString('base64'),
+      },
+      responseAuth: {
+        version: 1,
+        requestId: 'req-1',
+        buyerPeerId: 'a'.repeat(40),
+        sellerPeerId: 'b'.repeat(40),
+        advertisedService: 'kimi-k2',
+        provider: 'openai',
+        statusCode: 200,
+        requestHash: '0x' + '1'.repeat(64),
+        responseHash: '0x' + '2'.repeat(64),
+        responseStartedAt: 1,
+        responseCompletedAt: 2,
+        signature: '0x' + '3'.repeat(130),
+      },
+    };
+    expect(decodeProbeJobResult(encodeProbeJobResult(result))).toEqual(result);
+  });
+
+  it('rejects malformed payloads', () => {
+    expect(() => decodeDelegateHello(new TextEncoder().encode('{"version":2,"payoutAddress":"x"}'))).toThrow(/version/);
+    expect(() => decodeProbeJobResult(new TextEncoder().encode('{"version":1,"jobId":"j","status":"maybe"}'))).toThrow(/status/);
+    expect(() => decodeProbeJobRequest(new TextEncoder().encode('{"version":1,"jobId":"j"}'))).toThrow();
+  });
+
+  it('claims the 0x90-0x9F range', () => {
+    expect(DelegationMux.isDelegationMessage(MessageType.DelegateHello)).toBe(true);
+    expect(DelegationMux.isDelegationMessage(MessageType.ProbeJobResult)).toBe(true);
+    expect(DelegationMux.isDelegationMessage(MessageType.VerificationResponseAuth)).toBe(false);
+    expect(DelegationMux.isDelegationMessage(MessageType.HttpRequest)).toBe(false);
+  });
+});
+
+describe('DelegationMux', () => {
+  it('registers a delegate via hello/welcome', async () => {
+    const { verifier, delegate } = muxPair();
+    const hellos: string[] = [];
+    verifier.onHello((hello) => {
+      hellos.push(hello.payoutAddress);
+      verifier.sendWelcome({ version: 1, accepted: true });
+    });
+
+    const welcomePromise = delegate.waitForWelcome(1_000);
+    delegate.sendHello({ version: 1, payoutAddress: '0x' + 'c'.repeat(40) });
+    const welcome = await welcomePromise;
+
+    expect(hellos).toEqual(['0x' + 'c'.repeat(40)]);
+    expect(welcome.accepted).toBe(true);
+  });
+
+  it('correlates job results by jobId', async () => {
+    const { verifier, delegate } = muxPair();
+    delegate.onJob((job) => {
+      delegate.sendResult({ version: 1, jobId: job.jobId, status: 'error', error: `echo:${job.jobId}` });
+    });
+
+    const [a, b] = await Promise.all([
+      verifier.runJob(jobPayload({ jobId: 'job-a' }), 1_000),
+      verifier.runJob(jobPayload({ jobId: 'job-b' }), 1_000),
+    ]);
+    expect(a.error).toBe('echo:job-a');
+    expect(b.error).toBe('echo:job-b');
+  });
+
+  it('times out jobs the delegate never answers', async () => {
+    const { verifier, delegate } = muxPair();
+    delegate.onJob(() => { /* swallow */ });
+    await expect(verifier.runJob(jobPayload({ jobId: 'job-slow' }), 50)).rejects.toThrow(/timed out/);
+  });
+
+  it('reports an error result when no job handler is registered', async () => {
+    const { verifier } = muxPair();
+    const result = await verifier.runJob(jobPayload({ jobId: 'job-x' }), 1_000);
+    expect(result.status).toBe('error');
+    expect(result.error).toBe('no_job_handler');
+  });
+
+  it('rejects pending jobs on close', async () => {
+    const { verifier, delegate } = muxPair();
+    delegate.onJob(() => { /* never answers */ });
+    const pending = verifier.runJob(jobPayload({ jobId: 'job-c' }), 60_000);
+    verifier.close();
+    await expect(pending).rejects.toThrow(/closed/);
+  });
+});

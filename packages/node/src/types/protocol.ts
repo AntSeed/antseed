@@ -34,11 +34,24 @@ export enum MessageType {
   // Verification / attestation protocol (0x80-0x8F)
   VerificationResponseAuth = 0x80,
 
+  // Probe delegation protocol (0x90-0x9F): verifiers dispatch probe jobs to
+  // organic buyer peers so probe traffic is indistinguishable from real usage.
+  DelegateHello = 0x90,
+  DelegateWelcome = 0x91,
+  ProbeJobRequest = 0x92,
+  ProbeJobResult = 0x93,
+
   Disconnect = 0xF0,
   Error = 0xFF,
 }
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
+/**
+ * Announced by verifier nodes that host probe delegation: buyers that opt in
+ * discover them by this capability, connect, and carry probe jobs in exchange
+ * for a share of the verification emissions bucket.
+ */
+export const CONNECTION_CAPABILITY_PROBE_DELEGATION_V1 = 'verification.probe-delegation.v1' as const;
 
 export interface FramedMessage {
   type: MessageType;
@@ -214,4 +227,69 @@ export interface ResponseAuthPayload {
   responseStartedAt: number;
   responseCompletedAt: number;
   signature: string;
+}
+
+// ─── Probe Delegation Messages ─────────────────────────────────
+
+/**
+ * Delegate buyer introduces itself to a verifier after connecting.
+ */
+export interface DelegateHelloPayload {
+  version: 1;
+  /**
+   * Payout (operator) address for on-chain delegate crediting. Iron rule:
+   * this must NEVER be the buyer's hot wallet — the hot wallet only signs.
+   */
+  payoutAddress: string;
+  /** Max probe jobs the delegate is willing to run concurrently. */
+  maxConcurrentJobs?: number;
+}
+
+/**
+ * Verifier accepts or rejects a delegate registration.
+ */
+export interface DelegateWelcomePayload {
+  version: 1;
+  accepted: boolean;
+  reason?: string;
+}
+
+/**
+ * One probe job: the delegate relays `request` to `targetPeerId` byte-for-byte
+ * over its ordinary paid buyer path and returns the seller's response plus the
+ * seller-signed ResponseAuth. The request is fully verifier-crafted — its hash
+ * is what the seller signs, so the delegate can only carry it or drop it,
+ * never alter or fabricate an observation.
+ */
+export interface ProbeJobRequestPayload {
+  version: 1;
+  jobId: string;
+  targetPeerId: string;
+  service: string;
+  request: {
+    requestId: string;
+    method: string;
+    path: string;
+    headers: Record<string, string>;
+    bodyBase64: string;
+  };
+  timeoutMs: number;
+}
+
+/**
+ * Delegate's result for one probe job. The verifier trusts nothing here
+ * blindly: it re-verifies the seller's ResponseAuth signature against the
+ * request it crafted and the response body returned.
+ */
+export interface ProbeJobResultPayload {
+  version: 1;
+  jobId: string;
+  status: 'ok' | 'error';
+  error?: string;
+  response?: {
+    statusCode: number;
+    headers: Record<string, string>;
+    bodyBase64: string;
+  };
+  responseAuth?: ResponseAuthPayload;
 }

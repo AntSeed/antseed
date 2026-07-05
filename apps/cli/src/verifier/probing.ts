@@ -19,7 +19,7 @@ export interface SellerProbeRun {
   errors: string[]
 }
 
-function extractCompletionText(body: Uint8Array): string | null {
+export function extractCompletionText(body: Uint8Array): string | null {
   try {
     const parsed = JSON.parse(new TextDecoder().decode(body)) as {
       choices?: Array<{ message?: { content?: unknown }; text?: unknown }>

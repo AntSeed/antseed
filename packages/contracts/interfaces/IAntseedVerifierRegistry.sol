@@ -68,4 +68,12 @@ interface IAntseedVerifierRegistry {
     function agentVerificationStats(uint256 agentId) external view returns (ServiceVerificationStats memory);
     function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
     function epochTotalCredits(uint256 epoch) external view returns (uint256);
+
+    // ─── Delegate crediting (organic probe carriers) ─────────────────
+    function delegateShareBps() external view returns (uint16);
+    function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32);
+    function creditDelegates(address[] calldata delegates, uint32[] calldata credits) external;
+    function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256);
+    function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256);
+    function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256);
 }

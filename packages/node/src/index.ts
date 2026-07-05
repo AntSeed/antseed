@@ -7,6 +7,7 @@ export {
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
+  type ConnectedDelegate,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export type { Router } from './interfaces/buyer-router.js';
@@ -164,6 +165,7 @@ export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export {
+  DelegationMux,
   VerificationMux,
   VerificationSampler,
   VerificationStorage,

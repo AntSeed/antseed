@@ -54,6 +54,7 @@ const VERIFIER_REGISTRY_ABI = [
   // Writes
   'function commitProbeSet(bytes32 commitment) external',
   'function submitAttestation(uint256 agentId, bytes32 serviceHash, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, uint32 probeCount, uint32 cohortSize) external',
+  'function creditDelegates(address[] delegates, uint32[] credits) external',
   // Reads
   'function approvedVerifiers(address verifier) external view returns (bool)',
   'function probeCommittedAt(address verifier, bytes32 commitment) external view returns (uint64)',
@@ -68,16 +69,25 @@ const VERIFIER_REGISTRY_ABI = [
   'function auditCooldown() external view returns (uint64)',
   'function maxCreditsPerVerifierPerEpoch() external view returns (uint32)',
   'function minProbeCount() external view returns (uint32)',
+  'function delegateShareBps() external view returns (uint16)',
+  'function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32)',
+  'function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256)',
+  'function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256)',
+  'function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256)',
 ] as const;
 
 const VERIFIER_REWARDS_ABI = [
   // Writes
   'function claimVerifierReward(uint256 epoch) external',
+  'function claimDelegateReward(uint256 epoch) external',
   'function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount, uint256 reserveAmount)',
   // Reads
   'function pendingVerifierReward(uint256 epoch, address verifier) external view returns (uint256)',
+  'function pendingDelegateReward(uint256 epoch, address delegate) external view returns (uint256)',
   'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
+  'function delegateEpochPool(uint256 epoch) external view returns (uint256)',
   'function epochRewardClaimed(uint256 epoch, address verifier) external view returns (bool)',
+  'function epochDelegateRewardClaimed(uint256 epoch, address delegate) external view returns (bool)',
   'function gate() external view returns (address)',
 ] as const;
 
@@ -147,8 +157,47 @@ export class VerifierRegistryClient extends BaseEvmClient {
     );
   }
 
+  /**
+   * Credit delegate payout addresses for verified probe jobs they carried.
+   * Submit aggregated per audit round — never per request.
+   */
+  async creditDelegates(
+    signer: AbstractSigner,
+    delegates: string[],
+    credits: number[],
+  ): Promise<string> {
+    return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'creditDelegates', delegates, credits);
+  }
+
   async isApprovedVerifier(verifier: string): Promise<boolean> {
     return this._contract().getFunction('approvedVerifiers')(verifier);
+  }
+
+  async epochDelegateCredits(epoch: number, delegate: string): Promise<number> {
+    const v = await this._contract().getFunction('epochDelegateCredits')(epoch, delegate);
+    return Number(v);
+  }
+
+  async epochTotalDelegateCredits(epoch: number): Promise<number> {
+    const v = await this._contract().getFunction('epochTotalDelegateCredits')(epoch);
+    return Number(v);
+  }
+
+  async epochDelegateCreditsGrantedBy(epoch: number, verifier: string): Promise<number> {
+    const v = await this._contract().getFunction('epochDelegateCreditsGrantedBy')(epoch, verifier);
+    return Number(v);
+  }
+
+  async getDelegatePolicy(): Promise<{ delegateShareBps: number; maxDelegateCreditsPerVerifierPerEpoch: number }> {
+    const contract = this._contract();
+    const [shareBps, maxCredits] = await Promise.all([
+      contract.getFunction('delegateShareBps')(),
+      contract.getFunction('maxDelegateCreditsPerVerifierPerEpoch')(),
+    ]);
+    return {
+      delegateShareBps: Number(shareBps),
+      maxDelegateCreditsPerVerifierPerEpoch: Number(maxCredits),
+    };
   }
 
   async probeCommittedAt(verifier: string, commitment: string): Promise<number> {
@@ -234,6 +283,22 @@ export class VerifierRewardsClient extends BaseEvmClient {
 
   async claimVerifierReward(signer: AbstractSigner, epoch: number): Promise<string> {
     return this._execWrite(signer, VERIFIER_REWARDS_ABI, 'claimVerifierReward', epoch);
+  }
+
+  async claimDelegateReward(signer: AbstractSigner, epoch: number): Promise<string> {
+    return this._execWrite(signer, VERIFIER_REWARDS_ABI, 'claimDelegateReward', epoch);
+  }
+
+  async pendingDelegateReward(epoch: number, delegate: string): Promise<bigint> {
+    return this._contract().getFunction('pendingDelegateReward')(epoch, delegate);
+  }
+
+  async delegateEpochPool(epoch: number): Promise<bigint> {
+    return this._contract().getFunction('delegateEpochPool')(epoch);
+  }
+
+  async epochDelegateRewardClaimed(epoch: number, delegate: string): Promise<boolean> {
+    return this._contract().getFunction('epochDelegateRewardClaimed')(epoch, delegate);
   }
 
   async settleEpochRemainder(signer: AbstractSigner, epoch: number): Promise<string> {

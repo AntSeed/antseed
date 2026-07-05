@@ -69,6 +69,11 @@ export interface AnnouncerConfig {
     }
   >;
   offerings?: PeerOffering[];
+  /**
+   * Extra protocol capabilities announced in signed metadata beyond the
+   * default response-auth capability (e.g. probe delegation hosting).
+   */
+  extraCapabilities?: string[];
   stakeAmountUSDC?: number;
   paymentsEnabled?: boolean;
   channelsClient?: ChannelsClient;
@@ -277,7 +282,7 @@ export class PeerAnnouncer {
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
-      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
+      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, ...(this.config.extraCapabilities ?? [])],
       region: this.config.region,
       timestamp: Date.now(),
       signature: "",

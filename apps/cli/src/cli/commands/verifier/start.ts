@@ -16,7 +16,8 @@ import {
 } from '../../payment-utils.js'
 import { loadReferences, findReferenceForService } from '../../../verifier/references.js'
 import { selectCohort, runCohortAudit } from '../../../verifier/audit-runner.js'
-import type { ProbeSourceKind } from '../../../verifier/audit-runner.js'
+import type { ProbeExecutor, ProbeSourceKind } from '../../../verifier/audit-runner.js'
+import { probeSellerViaDelegates } from '../../../verifier/delegated-probing.js'
 import { discoverServices } from '../../../verifier/service-discovery.js'
 import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
 import type { VerifierCLIConfig } from '../../../config/types.js'
@@ -30,6 +31,10 @@ const DEFAULT_COHORT_MAX_SIZE = 10
 const DEFAULT_AUDIT_INTERVAL_MS = 300_000
 const DEFAULT_PROBE_SOURCE = 'compositional' as const
 const DEFAULT_PROBE_ROTATION_HISTORY = 2000
+const DEFAULT_DELEGATE_JOB_TIMEOUT_MS = 60_000
+const DEFAULT_MIN_DELEGATES = 1
+/** On-chain batch bound (AntseedVerifierRegistry.MAX_DELEGATES_PER_BATCH). */
+const MAX_DELEGATE_CREDIT_BATCH = 64
 /**
  * KBF references drift as upstream backends update — the published KBF study
  * (arXiv:2605.29524) measured probe staleness at ~7–9 weeks. Warn (once per
@@ -51,6 +56,13 @@ interface ResolvedVerifierOptions {
   referencesDir: string
   evidenceDir: string
   probeLogDir: string
+  delegation: {
+    enabled: boolean
+    signalingPort: number | undefined
+    jobTimeoutMs: number
+    minDelegates: number
+    requireDelegates: boolean
+  }
 }
 
 function resolveVerifierOptions(
@@ -78,6 +90,13 @@ function resolveVerifierOptions(
     referencesDir: verifierConfig?.referencesDir ?? join(dataDir, 'fingerprints', 'references'),
     evidenceDir: verifierConfig?.evidenceDir ?? join(dataDir, 'fingerprints', 'evidence'),
     probeLogDir: verifierConfig?.probeLogDir ?? join(dataDir, 'fingerprints', 'probe-log'),
+    delegation: {
+      enabled: verifierConfig?.delegation?.enabled ?? false,
+      signalingPort: verifierConfig?.delegation?.signalingPort,
+      jobTimeoutMs: verifierConfig?.delegation?.jobTimeoutMs ?? DEFAULT_DELEGATE_JOB_TIMEOUT_MS,
+      minDelegates: verifierConfig?.delegation?.minDelegates ?? DEFAULT_MIN_DELEGATES,
+      requireDelegates: verifierConfig?.delegation?.requireDelegates ?? false,
+    },
   }
 }
 
@@ -154,6 +173,19 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         // Keep full request/response evidence for every verified exchange —
         // audit probes are the whole point of this daemon.
         verification: { sampleRate: 1 },
+        // Delegated probing: announce as a delegation host so opt-in organic
+        // buyers can connect and carry probe traffic. The verifier whitelist
+        // is public, so probes from this daemon's own wallet are
+        // classifiable; delegate-carried probes are not.
+        ...(verifierOptions.delegation.enabled
+          ? {
+              delegationHost: {
+                ...(verifierOptions.delegation.signalingPort !== undefined
+                  ? { signalingPort: verifierOptions.delegation.signalingPort }
+                  : {}),
+              },
+            }
+          : {}),
       })
 
       try {
@@ -193,7 +225,23 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       console.log(chalk.dim(`  audits per epoch: ${verifierOptions.maxAuditsPerEpoch} (on-chain cap: ${policy.maxCreditsPerVerifierPerEpoch})`))
       console.log(chalk.dim(`  staleness window: ${stalenessWindowSecs}s`))
       console.log(chalk.dim(`  audit interval: ${verifierOptions.auditIntervalMs}ms`))
+      if (verifierOptions.delegation.enabled) {
+        console.log(chalk.dim(
+          `  delegation: hosting on port ${node.signalingPort} `
+          + `(min ${verifierOptions.delegation.minDelegates} delegate(s), `
+          + `${verifierOptions.delegation.requireDelegates ? 'delegates required' : 'direct fallback'})`,
+        ))
+      }
       console.log('')
+
+      if (verifierOptions.delegation.enabled) {
+        node.on('delegate:connected', (delegate: { peerId: string; payoutAddress: string }) => {
+          console.log(chalk.dim(`[verifier] Delegate connected: ${delegate.peerId.slice(0, 12)}… (payout ${delegate.payoutAddress.slice(0, 10)}…)`))
+        })
+        node.on('delegate:disconnected', (peerId: string) => {
+          console.log(chalk.dim(`[verifier] Delegate disconnected: ${peerId.slice(0, 12)}…`))
+        })
+      }
 
       const references = await loadReferences(verifierOptions.referencesDir, (m) => console.warn(chalk.yellow(m)))
       if (references.length > 0) {
@@ -217,6 +265,51 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
 
       const log = (m: string) => console.log(chalk.dim(`[verifier] ${m}`))
       const warn = (m: string) => console.warn(chalk.yellow(`[verifier] ${m}`))
+
+      /**
+       * Submit one aggregated creditDelegates call for the round, clamped to
+       * the verifier's remaining on-chain per-epoch grant allowance.
+       * Aggregation is deliberate: per-request crediting would publish a
+       * fine-grained on-chain map of probe-carrying buyers.
+       */
+      const submitDelegateCredits = async (epoch: number, roundJobs: Map<string, number>): Promise<void> => {
+        if (roundJobs.size === 0) return
+        try {
+          const [policy, granted] = await Promise.all([
+            registryClient.getDelegatePolicy(),
+            registryClient.epochDelegateCreditsGrantedBy(epoch, address),
+          ])
+          const remaining = policy.maxDelegateCreditsPerVerifierPerEpoch - granted
+          if (remaining <= 0) {
+            log(`Delegate credit allowance exhausted for epoch ${epoch}; skipping crediting this round`)
+            return
+          }
+          // Largest contributors first, bounded by the on-chain batch size.
+          let entries = [...roundJobs.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, MAX_DELEGATE_CREDIT_BATCH)
+          let total = entries.reduce((sum, [, jobs]) => sum + jobs, 0)
+          if (total > remaining) {
+            const scale = remaining / total
+            entries = entries
+              .map(([payout, jobs]) => [payout, Math.floor(jobs * scale)] as [string, number])
+              .filter(([, credits]) => credits > 0)
+            total = entries.reduce((sum, [, credits]) => sum + credits, 0)
+            if (entries.length === 0 || total === 0) {
+              log(`Delegate credit allowance too low to credit this round (${remaining} left)`)
+              return
+            }
+          }
+          const tx = await registryClient.creditDelegates(
+            identity.wallet,
+            entries.map(([payout]) => payout),
+            entries.map(([, credits]) => credits),
+          )
+          log(`Credited ${entries.length} delegate(s) with ${total} credit(s) (tx ${tx.slice(0, 10)}…)`)
+        } catch (err) {
+          warn(`delegate crediting failed: ${(err as Error).message}`)
+        }
+      }
 
       const claimFinalizedRewards = async (): Promise<void> => {
         try {
@@ -276,10 +369,22 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           log(`Discovered ${discovered.length} advertised service(s) across ${peers.length} peer(s)`)
         }
 
+        const roundDelegateJobs = new Map<string, number>()
+        const flushDelegateCredits = async (): Promise<void> => {
+          if (verifierOptions.delegation.enabled && roundDelegateJobs.size > 0) {
+            await submitDelegateCredits(epoch, roundDelegateJobs)
+            roundDelegateJobs.clear()
+          }
+        }
+
         for (const { service, peers: servicePeers } of targets) {
-          if (stopped) return
+          if (stopped) {
+            await flushDelegateCredits()
+            return
+          }
           if (remaining <= 0) {
             log(`Epoch ${epoch} audit budget exhausted mid-round; deferring remaining services`)
+            await flushDelegateCredits()
             return
           }
 
@@ -334,6 +439,31 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             continue
           }
 
+          // Route probes through connected delegates when possible so probe
+          // traffic originates from organic buyer identities instead of this
+          // publicly-whitelisted one.
+          let probeExecutor: ProbeExecutor | undefined
+          if (verifierOptions.delegation.enabled) {
+            const delegates = node.getConnectedDelegates()
+            if (delegates.length >= verifierOptions.delegation.minDelegates) {
+              probeExecutor = (peer, svc, probeSet, maxPerRequest) =>
+                probeSellerViaDelegates(
+                  node,
+                  node.getConnectedDelegates(),
+                  peer,
+                  svc,
+                  probeSet,
+                  maxPerRequest,
+                  { jobTimeoutMs: verifierOptions.delegation.jobTimeoutMs, log, warn },
+                )
+            } else if (verifierOptions.delegation.requireDelegates) {
+              log(`${service}: ${delegates.length}/${verifierOptions.delegation.minDelegates} delegate(s) connected; skipping (delegates required)`)
+              continue
+            } else {
+              log(`${service}: ${delegates.length}/${verifierOptions.delegation.minDelegates} delegate(s) connected — probing directly this round`)
+            }
+          }
+
           try {
             const result = await runCohortAudit(
               node,
@@ -352,6 +482,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                 probeSource: verifierOptions.probeSource,
                 probeLogDir: verifierOptions.probeLogDir,
                 probeRotationHistory: verifierOptions.probeRotationHistory,
+                ...(probeExecutor ? { probeExecutor } : {}),
                 log,
                 warn,
               },
@@ -359,11 +490,16 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             const attested = result.outcomes.filter((o) => o.attested).length
             const diffs = result.outcomes.filter((o) => o.verdict === 'DIFF').length
             remaining -= attested
+            for (const [payout, jobs] of result.delegateJobs) {
+              roundDelegateJobs.set(payout, (roundDelegateJobs.get(payout) ?? 0) + jobs)
+            }
             console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested, ${diffs} DIFF`))
           } catch (err) {
             warn(`audit round failed for ${service}: ${(err as Error).message}`)
           }
         }
+
+        await flushDelegateCredits()
       }
 
       if (options.once) {
