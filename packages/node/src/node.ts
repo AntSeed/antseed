@@ -50,7 +50,7 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { VerificationStorage, type StoredResponseAuth } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
-import { DelegationMux } from "./verification/delegation-mux.js";
+import { DelegationManager, type ConnectedDelegate } from "./verification/delegation-manager.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import {
@@ -86,7 +86,7 @@ import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
-import { Contract as EthersContract, ZeroAddress, isAddress } from "ethers";
+import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { VerifierRegistryClient } from "./payments/evm/verifier-client.js";
@@ -230,14 +230,7 @@ export interface NodeConfig {
   };
 }
 
-/** A delegate buyer currently registered with this delegation host. */
-export interface ConnectedDelegate {
-  peerId: PeerId;
-  /** Payout (operator) address the delegate asked to be credited at. */
-  payoutAddress: string;
-  maxConcurrentJobs: number;
-  connectedAt: number;
-}
+export type { ConnectedDelegate } from "./verification/delegation-manager.js";
 
 export interface BuyerUsageChannelPoint {
   reservedAt: number;
@@ -297,9 +290,8 @@ export class AntseedNode extends EventEmitter {
   private _verifierRegistryClient: VerifierRegistryClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
-  private _delegationMuxes = new Map<PeerId, DelegationMux>();
-  /** Delegate buyers registered with this node's delegation host. */
-  private _delegates = new Map<PeerId, ConnectedDelegate>();
+  /** Probe-delegation state (buyer role only): muxes, delegate roster, jobs. */
+  private _delegation: DelegationManager | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -504,11 +496,8 @@ export class AntseedNode extends EventEmitter {
       verificationMux.close();
     }
     this._verificationMuxes.clear();
-    for (const delegationMux of this._delegationMuxes.values()) {
-      delegationMux.close();
-    }
-    this._delegationMuxes.clear();
-    this._delegates.clear();
+    this._delegation?.close();
+    this._delegation = null;
     this._decoders.clear();
 
     // Close all connections
@@ -1276,7 +1265,6 @@ export class AntseedNode extends EventEmitter {
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
       const verificationMux = this._verificationMuxes.get(peerId);
-      const delegationMux = this._delegationMuxes.get(peerId);
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
@@ -1303,11 +1291,8 @@ export class AntseedNode extends EventEmitter {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
-        } else if (delegationMux && DelegationMux.isDelegationMessage(frame.type)) {
-          delegationMux.handleFrame(frame).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            debugWarn(`[Node] Failed to handle delegation frame from ${peerId.slice(0, 12)}...: ${message}`);
-          });
+        } else if (this._delegation?.tryDispatchFrame(peerId, frame)) {
+          // Delegation frame — routed inside the manager.
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1335,11 +1320,7 @@ export class AntseedNode extends EventEmitter {
         this._paymentMuxes.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
-        this._delegationMuxes.get(peerId)?.close();
-        this._delegationMuxes.delete(peerId);
-        if (this._delegates.delete(peerId)) {
-          this.emit("delegate:disconnected", peerId);
-        }
+        this._delegation?.onPeerDisconnect(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1643,6 +1624,13 @@ export class AntseedNode extends EventEmitter {
       },
     );
 
+    // Probe-delegation state lives in its own manager; the node only owns
+    // connection lifecycle and forwards frames/APIs.
+    this._delegation = new DelegationManager({
+      getDepositsClient: () => this._depositsClient,
+      emit: (event, ...args) => this.emit(event, ...args),
+    });
+
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
 
     if (this._config.delegationHost) {
@@ -1700,65 +1688,14 @@ export class AntseedNode extends EventEmitter {
   }
 
   private _handleIncomingDelegateConnection(conn: PeerConnection): void {
-    const delegatePeerId = conn.remotePeerId;
-    debugLog(`[Node] Incoming delegate connection from ${delegatePeerId.slice(0, 12)}...`);
-
-    const mux = new DelegationMux(conn);
-    mux.onHello(async (hello: DelegateHelloPayload) => {
-      const reject = (reason: string): void => {
-        debugWarn(`[Node] Rejecting delegate ${delegatePeerId.slice(0, 12)}...: ${reason}`);
-        mux.sendWelcome({ version: 1, accepted: false, reason });
-      };
-      if (!isAddress(hello.payoutAddress)) {
-        reject("invalid_payout_address");
-        return;
-      }
-      // Bind the payout claim to the delegate's on-chain identity: credits
-      // must go to the operator registered for this buyer in AntseedDeposits,
-      // not to whatever address the hello asserts. This also doubles as a
-      // sybil filter — a delegate without a funded, operator-bound deposit
-      // account is not the organic buyer this network exists to recruit.
-      if (this._depositsClient) {
-        let operator: string;
-        try {
-          operator = await this._depositsClient.getOperator(peerIdToAddress(delegatePeerId));
-        } catch (err) {
-          debugWarn(`[Node] Operator lookup failed for delegate ${delegatePeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-          // Transient by contract with the worker: it will retry on a later
-          // scan instead of blacklisting this host.
-          reject("operator_check_unavailable");
-          return;
-        }
-        if (!operator || operator === ZeroAddress) {
-          reject("no_registered_operator");
-          return;
-        }
-        if (operator.toLowerCase() !== hello.payoutAddress.toLowerCase()) {
-          reject("payout_not_operator");
-          return;
-        }
-      } else {
-        debugWarn(`[Node] Deposits client unavailable — accepting delegate ${delegatePeerId.slice(0, 12)}... without operator binding check`);
-      }
-      const delegate: ConnectedDelegate = {
-        peerId: delegatePeerId,
-        payoutAddress: hello.payoutAddress,
-        maxConcurrentJobs: Math.max(1, Math.floor(hello.maxConcurrentJobs ?? 1)),
-        connectedAt: Date.now(),
-      };
-      this._delegates.set(delegatePeerId, delegate);
-      mux.sendWelcome({ version: 1, accepted: true });
-      debugLog(`[Node] Delegate registered: ${delegatePeerId.slice(0, 12)}... payout=${hello.payoutAddress.slice(0, 10)}...`);
-      this.emit("delegate:connected", delegate);
-    });
-    this._delegationMuxes.set(delegatePeerId, mux);
-    this._wireConnection(conn, delegatePeerId);
+    this._delegation!.registerInboundDelegate(conn);
+    this._wireConnection(conn, conn.remotePeerId);
     this.emit("connection", conn);
   }
 
   /** Delegate buyers currently registered with this delegation host. */
   getConnectedDelegates(): ConnectedDelegate[] {
-    return [...this._delegates.values()];
+    return this._delegation?.getConnectedDelegates() ?? [];
   }
 
   /**
@@ -1771,14 +1708,10 @@ export class AntseedNode extends EventEmitter {
     job: Omit<ProbeJobRequestPayload, "version">,
     timeoutMs?: number,
   ): Promise<ProbeJobResultPayload> {
-    if (!this._delegates.has(delegatePeerId)) {
-      throw new Error(`Delegate ${delegatePeerId} is not registered`);
+    if (!this._delegation) {
+      throw new Error("Node not started or not in buyer mode");
     }
-    const mux = this._delegationMuxes.get(delegatePeerId);
-    if (!mux) {
-      throw new Error(`No delegation channel to ${delegatePeerId}`);
-    }
-    return mux.runJob({ version: 1, ...job }, timeoutMs ?? job.timeoutMs + 5_000);
+    return this._delegation.runProbeJob(delegatePeerId, job, timeoutMs);
   }
 
   /**
@@ -1792,30 +1725,11 @@ export class AntseedNode extends EventEmitter {
     hello: Omit<DelegateHelloPayload, "version">,
     handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, "version" | "jobId">>,
   ): Promise<{ accepted: boolean; reason?: string }> {
-    const conn = await this._getOrCreateConnection(verifierPeer);
-    let mux = this._delegationMuxes.get(verifierPeer.peerId);
-    if (!mux) {
-      mux = new DelegationMux(conn);
-      this._delegationMuxes.set(verifierPeer.peerId, mux);
+    if (!this._delegation) {
+      throw new Error("Node not started or not in buyer mode");
     }
-    mux.onJob(async (job) => {
-      let result: Omit<ProbeJobResultPayload, "version" | "jobId">;
-      try {
-        result = await handler(job);
-      } catch (err) {
-        result = { status: "error", error: err instanceof Error ? err.message : String(err) };
-      }
-      try {
-        mux!.sendResult({ version: 1, jobId: job.jobId, ...result });
-      } catch (err) {
-        debugWarn(`[Node] Failed to send probe job result for ${job.jobId}: ${err instanceof Error ? err.message : err}`);
-      }
-    });
-
-    const welcomePromise = mux.waitForWelcome();
-    mux.sendHello({ version: 1, ...hello });
-    const welcome = await welcomePromise;
-    return { accepted: welcome.accepted, ...(welcome.reason ? { reason: welcome.reason } : {}) };
+    const conn = await this._getOrCreateConnection(verifierPeer);
+    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler);
   }
 
   private _handleIncomingConnection(conn: PeerConnection): void {
