@@ -86,7 +86,7 @@ import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
-import { Contract as EthersContract, isAddress } from "ethers";
+import { Contract as EthersContract, ZeroAddress, isAddress } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { VerifierRegistryClient } from "./payments/evm/verifier-client.js";
@@ -1704,10 +1704,41 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Incoming delegate connection from ${delegatePeerId.slice(0, 12)}...`);
 
     const mux = new DelegationMux(conn);
-    mux.onHello((hello: DelegateHelloPayload) => {
+    mux.onHello(async (hello: DelegateHelloPayload) => {
+      const reject = (reason: string): void => {
+        debugWarn(`[Node] Rejecting delegate ${delegatePeerId.slice(0, 12)}...: ${reason}`);
+        mux.sendWelcome({ version: 1, accepted: false, reason });
+      };
       if (!isAddress(hello.payoutAddress)) {
-        mux.sendWelcome({ version: 1, accepted: false, reason: "invalid_payout_address" });
+        reject("invalid_payout_address");
         return;
+      }
+      // Bind the payout claim to the delegate's on-chain identity: credits
+      // must go to the operator registered for this buyer in AntseedDeposits,
+      // not to whatever address the hello asserts. This also doubles as a
+      // sybil filter — a delegate without a funded, operator-bound deposit
+      // account is not the organic buyer this network exists to recruit.
+      if (this._depositsClient) {
+        let operator: string;
+        try {
+          operator = await this._depositsClient.getOperator(peerIdToAddress(delegatePeerId));
+        } catch (err) {
+          debugWarn(`[Node] Operator lookup failed for delegate ${delegatePeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+          // Transient by contract with the worker: it will retry on a later
+          // scan instead of blacklisting this host.
+          reject("operator_check_unavailable");
+          return;
+        }
+        if (!operator || operator === ZeroAddress) {
+          reject("no_registered_operator");
+          return;
+        }
+        if (operator.toLowerCase() !== hello.payoutAddress.toLowerCase()) {
+          reject("payout_not_operator");
+          return;
+        }
+      } else {
+        debugWarn(`[Node] Deposits client unavailable — accepting delegate ${delegatePeerId.slice(0, 12)}... without operator binding check`);
       }
       const delegate: ConnectedDelegate = {
         peerId: delegatePeerId,
