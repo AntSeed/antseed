@@ -145,6 +145,30 @@ export interface BuyerCLIConfig {
   disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+  /** Opt-in probe-carrier mode: serve probe jobs for whitelisted verifiers. */
+  delegate?: DelegateCLIConfig;
+}
+
+/**
+ * Opt-in delegate (probe carrier) settings. A participating buyer connects
+ * to on-chain-approved verifiers discovered on the DHT and relays their
+ * probe requests over its ordinary paid buyer path, earning a share of the
+ * verification emissions bucket at `payoutAddress`.
+ */
+export interface DelegateCLIConfig {
+  enabled: boolean;
+  /**
+   * Address credited on-chain for carried probe jobs. Iron rule: never the
+   * buyer hot wallet — use the operator/depositor address. Required when
+   * enabled.
+   */
+  payoutAddress?: string;
+  /** Max probe jobs run concurrently. Default: 2. */
+  maxConcurrentJobs?: number;
+  /** Rate cap on carried jobs. Default: 60. */
+  maxJobsPerHour?: number;
+  /** How often to scan the DHT for verifiers to serve. Default: 300000 (5 min). */
+  discoveryIntervalMs?: number;
 }
 
 /**
@@ -281,6 +305,28 @@ export interface VerifierCLIConfig {
    * cohort consensus needs cohortMinSize sellers.
    */
   upstream?: VerifierUpstreamConfig;
+  /**
+   * Delegated probing: announce as a delegation host on the DHT and route
+   * probes through opt-in organic buyers instead of this daemon's own
+   * (whitelist-linkable) buyer identity. Verified jobs are credited on-chain
+   * per round via `creditDelegates`.
+   */
+  delegation?: VerifierDelegationConfig;
+}
+
+export interface VerifierDelegationConfig {
+  enabled: boolean;
+  /** TCP port for the delegate signaling listener. Default: 6882. */
+  signalingPort?: number;
+  /** Per-job execution budget granted to a delegate. Default: 60000. */
+  jobTimeoutMs?: number;
+  /** Delegates required before probing through them. Default: 1. */
+  minDelegates?: number;
+  /**
+   * Never fall back to direct probing when too few delegates are connected —
+   * skip the round instead. Default: false (fall back to direct probing).
+   */
+  requireDelegates?: boolean;
 }
 
 export interface VerifierUpstreamConfig {

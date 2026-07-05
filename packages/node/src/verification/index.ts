@@ -1,5 +1,16 @@
 export { decodeResponseAuth, encodeResponseAuth } from './codec.js';
 export { VerificationMux } from './verification-mux.js';
+export { DelegationMux, type DelegationMessageHandler } from './delegation-mux.js';
+export {
+  decodeDelegateHello,
+  decodeDelegateWelcome,
+  decodeProbeJobRequest,
+  decodeProbeJobResult,
+  encodeDelegateHello,
+  encodeDelegateWelcome,
+  encodeProbeJobRequest,
+  encodeProbeJobResult,
+} from './delegation-codec.js';
 export {
   createResponseAuthPayload,
   hashRequest,

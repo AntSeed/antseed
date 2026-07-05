@@ -7,6 +7,7 @@ import type { Identity } from '@antseed/node'
 import type {
   FingerprintReference,
   FingerprintVerdict,
+  ProbeSet,
   ProbeSource,
   SellerObservation,
 } from '@antseed/fingerprints'
@@ -23,9 +24,23 @@ import {
   verdictToCode,
 } from '@antseed/fingerprints'
 import { probeSeller } from './probing.js'
+import type { SellerProbeRun } from './probing.js'
 import { loadUsedProbeIds, recordUsedProbeIds } from './probe-log.js'
 
 export type ProbeSourceKind = 'compositional' | 'bank'
+
+/**
+ * Executes the probe plan against one seller and returns the observation.
+ * The default executor probes directly from this node's buyer identity; the
+ * delegated executor routes probes through organic delegate buyers and
+ * reports which payout addresses carried verified jobs.
+ */
+export type ProbeExecutor = (
+  peer: PeerInfo,
+  service: string,
+  probeSet: ProbeSet,
+  maxProbesPerRequest: number,
+) => Promise<{ run: SellerProbeRun; jobsByPayout?: Map<string, number> }>
 
 export interface AuditRunnerOptions {
   probesPerAudit: number
@@ -50,6 +65,11 @@ export interface AuditRunnerOptions {
    * probes are meant to be reused).
    */
   probeRotationHistory: number
+  /**
+   * Overrides how probes reach the seller. Absent: direct probing from this
+   * node's own (verifier-linked, thus classifiable) buyer identity.
+   */
+  probeExecutor?: ProbeExecutor
   log: (message: string) => void
   warn: (message: string) => void
 }
@@ -72,6 +92,8 @@ export interface CohortAuditResult {
   evidencePath: string
   cohortSize: number
   outcomes: SellerAuditOutcome[]
+  /** Verified probe jobs per delegate payout address (empty in direct mode). */
+  delegateJobs: Map<string, number>
 }
 
 /**
@@ -196,11 +218,20 @@ export async function runCohortAudit(
   log(`Committing probe set ${probeCommitment.slice(0, 10)}… on-chain`)
   await registryClient.commitProbeSet(identity.wallet, probeCommitment)
 
+  const execute: ProbeExecutor = options.probeExecutor
+    ?? (async (target, svc, probes, maxPerRequest) => ({
+      run: await probeSeller(node, target, svc, probes, maxPerRequest),
+    }))
+
   const runs = []
+  const delegateJobs = new Map<string, number>()
   for (const peer of cohort) {
     log(`Probing ${peer.peerId.slice(0, 10)}… (agent ${peer.onChainAgentId}) with ${probeSet.probes.length} probes`)
-    const run = await probeSeller(node, peer, service, probeSet, options.maxProbesPerRequest)
+    const { run, jobsByPayout } = await execute(peer, service, probeSet, options.maxProbesPerRequest)
     for (const error of run.errors) warn(`  ${peer.peerId.slice(0, 10)}…: ${error}`)
+    for (const [payout, jobs] of jobsByPayout ?? []) {
+      delegateJobs.set(payout, (delegateJobs.get(payout) ?? 0) + jobs)
+    }
     runs.push(run)
   }
 
@@ -307,5 +338,6 @@ export async function runCohortAudit(
     evidencePath,
     cohortSize: cohort.length,
     outcomes,
+    delegateJobs,
   }
 }

@@ -363,6 +363,64 @@ function validateVerifierConfig(
       }
     }
   }
+  if (verifier.delegation !== undefined) {
+    const delegation = verifier.delegation;
+    if (!delegation || typeof delegation !== 'object' || Array.isArray(delegation)) {
+      errors.push(`${path}.delegation must be an object when provided`);
+    } else {
+      if (typeof delegation.enabled !== 'boolean') {
+        errors.push(`${path}.delegation.enabled must be a boolean`);
+      }
+      const delegationInts: Array<[string, number | undefined]> = [
+        ['signalingPort', delegation.signalingPort],
+        ['jobTimeoutMs', delegation.jobTimeoutMs],
+        ['minDelegates', delegation.minDelegates],
+      ];
+      for (const [key, value] of delegationInts) {
+        if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+          errors.push(`${path}.delegation.${key} must be an integer >= 1`);
+        }
+      }
+      if (delegation.signalingPort !== undefined && Number.isInteger(delegation.signalingPort) && delegation.signalingPort > 65535) {
+        errors.push(`${path}.delegation.signalingPort must be <= 65535`);
+      }
+      if (delegation.requireDelegates !== undefined && typeof delegation.requireDelegates !== 'boolean') {
+        errors.push(`${path}.delegation.requireDelegates must be a boolean when provided`);
+      }
+    }
+  }
+}
+
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+function validateDelegateConfig(
+  path: string,
+  delegate: AntseedConfig['buyer']['delegate'],
+  errors: string[],
+): void {
+  if (delegate === undefined) return;
+  if (!delegate || typeof delegate !== 'object' || Array.isArray(delegate)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  if (typeof delegate.enabled !== 'boolean') {
+    errors.push(`${path}.enabled must be a boolean`);
+  }
+  if (delegate.enabled) {
+    if (typeof delegate.payoutAddress !== 'string' || !EVM_ADDRESS_PATTERN.test(delegate.payoutAddress)) {
+      errors.push(`${path}.payoutAddress must be a 0x-prefixed EVM address when ${path}.enabled is true (use the operator address, never the buyer hot wallet)`);
+    }
+  }
+  const positiveInts: Array<[string, number | undefined]> = [
+    ['maxConcurrentJobs', delegate.maxConcurrentJobs],
+    ['maxJobsPerHour', delegate.maxJobsPerHour],
+    ['discoveryIntervalMs', delegate.discoveryIntervalMs],
+  ];
+  for (const [key, value] of positiveInts) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+      errors.push(`${path}.${key} must be an integer >= 1`);
+    }
+  }
 }
 
 /**
@@ -395,6 +453,7 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
+  validateDelegateConfig('buyer.delegate', config.buyer.delegate, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

@@ -7,8 +7,9 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositsClient, VerifierRegistryClient, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
+import { DelegateWorker } from '../../../delegate/worker.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
@@ -454,8 +455,45 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim('Filter debug logs: antseed buyer start --log-filter ProxyMux'))
       console.log('')
 
+      // Opt-in probe carrier: serve probe jobs for on-chain-approved
+      // verifiers over this buyer's ordinary paid request path, earning a
+      // share of the verification emissions bucket at the configured
+      // operator payout address.
+      let delegateWorker: DelegateWorker | null = null
+      const delegateConfig = config.buyer?.delegate
+      if (delegateConfig?.enabled) {
+        if (!paymentsConfig?.enabled) {
+          console.log(chalk.yellow('Delegate mode configured but payments are disabled; probe jobs need the paid buyer path. Skipping.'))
+        } else if (!chainConfig.verifierRegistryAddress) {
+          console.log(chalk.yellow('Delegate mode configured but no verifier registry address is available for this chain. Skipping.'))
+        } else if (!delegateConfig.payoutAddress) {
+          console.log(chalk.yellow('Delegate mode configured without buyer.delegate.payoutAddress. Skipping.'))
+        } else {
+          const verifierRegistry = new VerifierRegistryClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: chainConfig.verifierRegistryAddress,
+            evmChainId: chainConfig.evmChainId,
+          })
+          delegateWorker = new DelegateWorker({
+            node,
+            payoutAddress: delegateConfig.payoutAddress,
+            isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
+            ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
+            ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
+            ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),
+            log: (m) => console.log(chalk.dim(`[delegate] ${m}`)),
+            warn: (m) => console.warn(chalk.yellow(`[delegate] ${m}`)),
+          })
+          delegateWorker.start()
+          console.log(chalk.dim(`Delegate mode: carrying probe jobs for approved verifiers (payout ${delegateConfig.payoutAddress.slice(0, 10)}…)`))
+          console.log('')
+        }
+      }
+
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
+        delegateWorker?.stop()
         if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')
