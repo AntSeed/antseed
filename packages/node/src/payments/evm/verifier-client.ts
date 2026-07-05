@@ -42,6 +42,12 @@ export interface ServiceVerificationStats {
   distinctVerifierCount: number;
   lastVerdict: number;
   lastVerifier: string;
+  /**
+   * Distinct verifiers whose LATEST verdict is DIFF — a standing, retractable
+   * accusation, unlike the monotonic historical `diffCount`. The on-chain
+   * points penalty gates on this reaching `minDistinctDiffVerifiers`.
+   */
+  activeDiffVerifierCount: number;
 }
 
 const VERIFIER_REGISTRY_ABI = [
@@ -54,8 +60,8 @@ const VERIFIER_REGISTRY_ABI = [
   'function lastAuditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64)',
   'function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64)',
   'function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (tuple(address verifier, uint64 attestedAt, uint8 verdict, uint32 probeCount, uint32 cohortSize, bytes32 evidenceHash, bytes32 probeCommitment))',
-  'function verificationStats(uint256 agentId, bytes32 serviceHash) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier))',
-  'function agentVerificationStats(uint256 agentId) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier))',
+  'function verificationStats(uint256 agentId, bytes32 serviceHash) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier, uint32 activeDiffVerifierCount))',
+  'function agentVerificationStats(uint256 agentId) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier, uint32 activeDiffVerifierCount))',
   'function epochCredits(uint256 epoch, address verifier) external view returns (uint256)',
   'function epochTotalCredits(uint256 epoch) external view returns (uint256)',
   'function currentEpoch() external view returns (uint256)',
@@ -97,6 +103,7 @@ function decodeStats(raw: Record<string | number, unknown> & unknown[]): Service
     distinctVerifierCount: Number(raw.distinctVerifierCount ?? raw[3]),
     lastVerdict: Number(raw.lastVerdict ?? raw[4]),
     lastVerifier: String(raw.lastVerifier ?? raw[5]),
+    activeDiffVerifierCount: Number(raw.activeDiffVerifierCount ?? raw[6] ?? 0),
   };
 }
 

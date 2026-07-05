@@ -13,8 +13,13 @@ import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry
  * @notice Recognized-usage points policy that shapes seller points by the
  *         seller's model-verification standing in AntseedVerifierRegistry.
  *
- *         A seller whose agent has ever been flagged DIFF (served a different
- *         model than advertised) has its seller points cut by
+ *         A seller is penalized only while at least
+ *         `minDistinctDiffVerifiers` distinct verifiers' LATEST verdicts for
+ *         its agent are DIFF (`activeDiffVerifierCount`). This makes the
+ *         penalty corroborated — one mistaken or malicious verifier cannot
+ *         zero a seller alone — and reversible: a verifier re-attesting SAME
+ *         retracts its own standing DIFF, unlike the monotonic historical
+ *         `diffCount`. While flagged, seller points are cut by
  *         `diffPenaltyBps` (default 100% — zero seller emissions). Buyer
  *         points always pass through unchanged: buyers are not responsible
  *         for a seller's model fraud.
@@ -43,8 +48,17 @@ contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
     ///         DIFF-flagged, in basis points. 10_000 = seller earns nothing.
     uint16 public diffPenaltyBps = 10_000;
 
+    /// @notice Distinct verifiers whose standing verdict must be DIFF before
+    ///         the penalty applies. Default 2: a single verifier — mistaken,
+    ///         malicious, or fed by a colluding cohort — cannot zero a
+    ///         seller's emissions on its own. Aligned with the buyer-side
+    ///         routing score, which also requires two distinct verifiers for
+    ///         corroboration.
+    uint16 public minDistinctDiffVerifiers = 2;
+
     // ─── Events ──────────────────────────────────────────────────────
     event DiffPenaltyBpsSet(uint16 diffPenaltyBps);
+    event MinDistinctDiffVerifiersSet(uint16 minDistinctDiffVerifiers);
 
     // ─── Custom Errors ───────────────────────────────────────────────
     error InvalidAddress();
@@ -65,6 +79,12 @@ contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
         if (_diffPenaltyBps > BPS_DENOMINATOR) revert InvalidValue();
         diffPenaltyBps = _diffPenaltyBps;
         emit DiffPenaltyBpsSet(_diffPenaltyBps);
+    }
+
+    function setMinDistinctDiffVerifiers(uint16 _minDistinctDiffVerifiers) external onlyOwner {
+        if (_minDistinctDiffVerifiers == 0) revert InvalidValue();
+        minDistinctDiffVerifiers = _minDistinctDiffVerifiers;
+        emit MinDistinctDiffVerifiersSet(_minDistinctDiffVerifiers);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -92,8 +112,11 @@ contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
         try verifierRegistry.agentVerificationStats(agentId) returns (
             IAntseedVerifierRegistry.ServiceVerificationStats memory stats
         ) {
-            bool diffFlagged =
-                stats.diffCount > 0 || stats.lastVerdict == uint8(IAntseedVerifierRegistry.Verdict.DIFF);
+            // Standing, corroborated accusations only: `activeDiffVerifierCount`
+            // tracks distinct verifiers whose latest verdict is DIFF, so the
+            // flag clears when accusers retract — unlike the monotonic
+            // `diffCount`, which would make one false positive permanent.
+            bool diffFlagged = stats.activeDiffVerifierCount >= minDistinctDiffVerifiers;
             if (diffFlagged) {
                 sellerPoints = _applyKeepBps(rawPoints, BPS_DENOMINATOR - diffPenaltyBps);
             }

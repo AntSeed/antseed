@@ -415,6 +415,66 @@ contract AntseedVerifierRegistryTest is Test {
         _assertStats(_stats(otherAgentId, otherServiceHash), 0, 0, 0, 0, 0, address(0));
     }
 
+    function test_activeDiffVerifierCountRaisesOncePerVerifier() public {
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+
+        // Repeated DIFF from the same verifier is still one standing accusation.
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+
+        _commitAndAttest(otherVerifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 2);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 2);
+    }
+
+    function test_activeDiffVerifierCountClearsOnRetraction() public {
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        _commitAndAttest(otherVerifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 2);
+
+        // A verifier's later SAME retracts its own standing DIFF; another
+        // verifier's SAME never clears someone else's accusation.
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+
+        // UNDETERMINED also retracts, and DIFF re-raises.
+        _commitAndAttest(otherVerifier, agentId, SERVICE_HASH, 3);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 0);
+        _commitAndAttest(otherVerifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+
+        // diffCount stays a monotonic historical record throughout.
+        assertEq(_stats(agentId, SERVICE_HASH).diffCount, 3);
+    }
+
+    function test_activeDiffVerifierCountIsPerPairAndAnyServiceAtAgentLevel() public {
+        bytes32 otherServiceHash = keccak256("model:gpt-100");
+
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        _commitAndAttest(verifier, agentId, otherServiceHash, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+        assertEq(_stats(agentId, otherServiceHash).activeDiffVerifierCount, 1);
+        // Agent-level standing counts each verifier once, not per service.
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+
+        // A SAME on one service retracts only that pair. The agent-level
+        // accusation stands while ANY service still carries this verifier's
+        // DIFF — an honestly served second model must not launder a
+        // substituted one.
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 0);
+        assertEq(_stats(agentId, otherServiceHash).activeDiffVerifierCount, 1);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+
+        // Only retracting the last standing DIFF clears the agent level.
+        _commitAndAttest(verifier, agentId, otherServiceHash, 3);
+        assertEq(_stats(agentId, otherServiceHash).activeDiffVerifierCount, 0);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 0);
+    }
+
     function test_lastVerdictAndVerifierTrackLatestSubmission() public {
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
         IAntseedVerifierRegistry.ServiceVerificationStats memory stats = _stats(agentId, SERVICE_HASH);

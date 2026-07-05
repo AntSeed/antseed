@@ -34,6 +34,12 @@ interface IAntseedVerifierRegistry {
         uint32 distinctVerifierCount;
         uint8 lastVerdict;
         address lastVerifier;
+        /// @dev Distinct verifiers whose LATEST verdict for this key is DIFF.
+        ///      Unlike `diffCount` (monotonic history), this is a standing
+        ///      flag: a verifier re-attesting SAME/UNDETERMINED retracts its
+        ///      own DIFF. Penalty policies gate on this so an accusation is
+        ///      both corroborated and reversible.
+        uint32 activeDiffVerifierCount;
     }
 
     function registry() external view returns (IAntseedRegistry);

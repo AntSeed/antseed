@@ -43,6 +43,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
     AntseedVerifierPointsPolicy policy;
 
     address verifier = address(0x1001);
+    address secondVerifier = address(0x1002);
     address outsider = address(0x1003);
     address seller = address(0x3001);
     address buyer = address(0x4001);
@@ -55,6 +56,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
     uint256 commitSalt;
 
     event DiffPenaltyBpsSet(uint16 diffPenaltyBps);
+    event MinDistinctDiffVerifiersSet(uint16 minDistinctDiffVerifiers);
 
     function setUp() public {
         vm.warp(1_700_000_000);
@@ -70,6 +72,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
         verifierRegistry = new AntseedVerifierRegistry(address(registry));
         verifierRegistry.setVerifier(verifier, true);
+        verifierRegistry.setVerifier(secondVerifier, true);
 
         policy = new AntseedVerifierPointsPolicy(address(registry), address(verifierRegistry));
 
@@ -79,12 +82,23 @@ contract AntseedVerifierPointsPolicyTest is Test {
     }
 
     function _commitAndAttest(uint256 agentId_, uint8 verdict) internal {
-        bytes32 commitment = keccak256(abi.encode(verifier, ++commitSalt));
-        vm.prank(verifier);
+        _commitAndAttestFrom(verifier, agentId_, verdict);
+    }
+
+    function _commitAndAttestFrom(address verifier_, uint256 agentId_, uint8 verdict) internal {
+        bytes32 commitment = keccak256(abi.encode(verifier_, ++commitSalt));
+        vm.prank(verifier_);
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
-        vm.prank(verifier);
+        vm.prank(verifier_);
         verifierRegistry.submitAttestation(agentId_, SERVICE_HASH, verdict, EVIDENCE_HASH, commitment, 10, 3);
+    }
+
+    /// @dev DIFF standing from two distinct verifiers — the default
+    ///      corroboration threshold for the penalty to fire.
+    function _flagAgent() internal {
+        _commitAndAttestFrom(verifier, agentId, 2);
+        _commitAndAttestFrom(secondVerifier, agentId, 2);
     }
 
     function _points(uint256 rawPoints) internal view returns (uint256 sellerPoints, uint256 buyerPoints) {
@@ -108,6 +122,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
     function test_defaults() public view {
         assertEq(policy.diffPenaltyBps(), 10_000);
+        assertEq(policy.minDistinctDiffVerifiers(), 2);
         assertEq(address(policy.registry()), address(registry));
         assertEq(address(policy.verifierRegistry()), address(verifierRegistry));
         assertEq(policy.owner(), address(this));
@@ -129,6 +144,22 @@ contract AntseedVerifierPointsPolicyTest is Test {
         emit DiffPenaltyBpsSet(5000);
         policy.setDiffPenaltyBps(5000);
         assertEq(policy.diffPenaltyBps(), 5000);
+    }
+
+    function test_setMinDistinctDiffVerifiersOnlyOwner() public {
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", outsider));
+        policy.setMinDistinctDiffVerifiers(1);
+    }
+
+    function test_setMinDistinctDiffVerifiersBoundsAndEmits() public {
+        vm.expectRevert(AntseedVerifierPointsPolicy.InvalidValue.selector);
+        policy.setMinDistinctDiffVerifiers(0);
+
+        vm.expectEmit(false, false, false, true);
+        emit MinDistinctDiffVerifiersSet(3);
+        policy.setMinDistinctDiffVerifiers(3);
+        assertEq(policy.minDistinctDiffVerifiers(), 3);
     }
 
     // ─── Pass-through paths ──────────────────────────────────────────
@@ -185,23 +216,59 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
     // ─── Diff penalty shaping ────────────────────────────────────────
 
-    function test_diffFlaggedAgentZeroesSellerPointsByDefault() public {
-        _commitAndAttest(agentId, 2); // DIFF
+    function test_corroboratedDiffZeroesSellerPointsByDefault() public {
+        _flagAgent(); // DIFF from two distinct verifiers
         (uint256 sellerPoints, uint256 buyerPoints) = _points(RAW_POINTS);
         assertEq(sellerPoints, 0, "seller points zeroed");
         assertEq(buyerPoints, RAW_POINTS, "buyer points untouched");
     }
 
-    function test_diffFlagIsStickyAcrossLaterCleanVerdicts() public {
-        _commitAndAttest(agentId, 2); // DIFF
-        _commitAndAttest(agentId, 1); // later SAME does not clear the flag
+    function test_singleVerifierDiffDoesNotPenalize() public {
+        // One accusation — mistaken, malicious, or fed by a colluding
+        // cohort — is below the default corroboration threshold.
+        _commitAndAttest(agentId, 2); // DIFF from a single verifier
+        _assertPassThrough(RAW_POINTS);
+    }
+
+    function test_retractionRestoresSellerPoints() public {
+        _flagAgent();
+        (uint256 sellerPoints,) = _points(RAW_POINTS);
+        assertEq(sellerPoints, 0, "flagged while both accusations stand");
+
+        // One accuser re-audits and finds SAME: its standing DIFF is
+        // retracted and the penalty clears — the flag is reversible, not a
+        // permanent historical mark.
+        _commitAndAttestFrom(secondVerifier, agentId, 1);
+        _assertPassThrough(RAW_POINTS);
+
+        // It re-fires if the accusation returns.
+        _commitAndAttestFrom(secondVerifier, agentId, 2);
+        (sellerPoints,) = _points(RAW_POINTS);
+        assertEq(sellerPoints, 0);
+    }
+
+    function test_repeatDiffFromSameVerifierStaysBelowThreshold() public {
+        // The same verifier attesting DIFF repeatedly is still one accuser.
+        _commitAndAttest(agentId, 2);
+        _commitAndAttest(agentId, 2);
+        _commitAndAttest(agentId, 2);
+        _assertPassThrough(RAW_POINTS);
+    }
+
+    function test_thresholdOneAllowsSingleVerifierPenalty() public {
+        policy.setMinDistinctDiffVerifiers(1);
+        _commitAndAttest(agentId, 2);
         (uint256 sellerPoints,) = _points(RAW_POINTS);
         assertEq(sellerPoints, 0);
+
+        // Still reversible: the lone accuser retracting clears it.
+        _commitAndAttest(agentId, 1);
+        _assertPassThrough(RAW_POINTS);
     }
 
     function test_partialPenaltyAtHalfBps() public {
         policy.setDiffPenaltyBps(5000);
-        _commitAndAttest(agentId, 2); // DIFF
+        _flagAgent();
 
         (uint256 sellerPoints, uint256 buyerPoints) = _points(RAW_POINTS);
         assertEq(sellerPoints, RAW_POINTS / 2);
@@ -215,13 +282,13 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
     function test_zeroPenaltyBpsPassesThroughEvenWhenFlagged() public {
         policy.setDiffPenaltyBps(0);
-        _commitAndAttest(agentId, 2); // DIFF
+        _flagAgent();
         _assertPassThrough(RAW_POINTS);
     }
 
     function test_neverRevertsOnExtremeRawPoints() public {
         policy.setDiffPenaltyBps(5000);
-        _commitAndAttest(agentId, 2); // DIFF
+        _flagAgent();
 
         // rawPoints * bps would overflow a naive multiplication; the policy
         // must survive the full uint256 range.
@@ -239,6 +306,9 @@ contract AntseedVerifierPointsPolicyTest is Test {
         penaltyBps = uint16(bound(penaltyBps, 0, 10_000));
         verdict = uint8(bound(verdict, 1, 3));
         policy.setDiffPenaltyBps(penaltyBps);
+        // Threshold 1 keeps the penalty arithmetic exercised by a single
+        // fuzzed attestation; corroboration semantics are covered above.
+        policy.setMinDistinctDiffVerifiers(1);
         _commitAndAttest(agentId, verdict);
 
         (uint256 sellerPoints, uint256 buyerPoints) = _points(rawPoints);
