@@ -188,14 +188,23 @@ set and nonce and checks the set against the pre-audit commitment.
 
 **Reputation and enforcement.** The registry accumulates per-(agent, service)
 and per-agent verification stats (`sameCount`/`diffCount`/`undeterminedCount`,
-distinct-verifier count, last verdict). These are facts-only on-chain; buyers
-compute a local authenticity score per (peer, model) during discovery
-(`PeerInfo.modelVerification`) and route accordingly. `AntseedVerifierPointsPolicy`
-is a swappable `IAntseedPointsPolicy` that reads an agent's aggregate stats and
-zeroes (or partially discounts) its recognized-usage seller points while a DIFF
-substitution flag stands, so a caught substitute stops earning usage emissions.
-This is a soft, reversible economic penalty — not stake slashing, which still
-requires the arbiter-confirmed dispute path below.
+distinct-verifier count, last verdict, and `activeDiffVerifierCount` — the
+number of distinct verifiers whose LATEST verdict is DIFF, a standing
+accusation that a verifier retracts by re-attesting SAME on the same service).
+These are facts-only on-chain; buyers compute a local authenticity score per
+(peer, model) during discovery (`PeerInfo.modelVerification`) and route
+accordingly. `AntseedVerifierPointsPolicy` is a swappable
+`IAntseedPointsPolicy` that zeroes (or partially discounts) an agent's
+recognized-usage seller points while at least `minDistinctDiffVerifiers`
+(default 2) distinct verifiers hold a standing DIFF against it. Corroboration
+is required because DIFF verdicts have a designed false-positive rate (α per
+audit) and a single verifier can be mistaken, malicious, or fed by a colluding
+cohort; the standing (rather than historical) flag makes the penalty genuinely
+reversible — accusers retracting clears it. At the agent level a verifier's
+standing DIFF persists while ANY of the agent's services carries it, so
+honestly serving a second model never launders a substituted one. This is a
+soft, reversible economic penalty — not stake slashing, which still requires
+the arbiter-confirmed dispute path below.
 
 ### Not Implemented Yet
 

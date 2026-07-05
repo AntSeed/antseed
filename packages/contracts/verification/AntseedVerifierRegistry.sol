@@ -55,6 +55,18 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     mapping(uint256 => mapping(bytes32 => mapping(address => bool))) private _hasAttested;
     mapping(uint256 => ServiceVerificationStats) private _agentStats;
     mapping(uint256 => mapping(address => bool)) private _hasAttestedAgent;
+    /// @dev Each verifier's latest verdict per (agentId, serviceHash)
+    ///      (0 = never attested). Drives `activeDiffVerifierCount`: a DIFF
+    ///      raises it once per verifier, and the same verifier's later
+    ///      SAME/UNDETERMINED on the SAME service lowers it — a standing,
+    ///      retractable accusation rather than a permanent historical mark.
+    mapping(uint256 => mapping(bytes32 => mapping(address => uint8))) private _lastVerdictByVerifier;
+    /// @dev Services of `agentId` on which `verifier` currently stands at
+    ///      DIFF. The agent-level `activeDiffVerifierCount` counts verifiers
+    ///      with a standing DIFF on ANY service — a SAME on an honestly
+    ///      served service must never launder a standing DIFF on the
+    ///      substituted one.
+    mapping(uint256 => mapping(address => uint32)) private _verifierDiffServiceCount;
     mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochCredits;
     mapping(uint256 epoch => uint256 credits) public epochTotalCredits;
 
@@ -205,6 +217,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             agentStats.distinctVerifierCount++;
         }
 
+        _updateActiveDiff(agentId, serviceHash, verdict, stats, agentStats);
+
         bool credited = nowTs - lastCreditedAt[agentId][serviceHash] >= auditCooldown
             && epochCredits[epoch][msg.sender] < maxCreditsPerVerifierPerEpoch;
         if (credited) {
@@ -267,6 +281,41 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             if (agentOwner == msg.sender) revert SelfAudit();
         } catch {
             revert UnknownAgent();
+        }
+    }
+
+    /// @dev Maintain both `activeDiffVerifierCount` accumulators from the
+    ///      caller's per-service verdict transition. Entering DIFF raises the
+    ///      service-level count once per verifier; leaving DIFF (a later
+    ///      SAME/UNDETERMINED on the same service) lowers it. The agent-level
+    ///      count tracks verifiers with a standing DIFF on ANY of the agent's
+    ///      services via `_verifierDiffServiceCount`, so a SAME on an
+    ///      honestly served service never launders a standing DIFF on the
+    ///      substituted one. A stored verdict of 0 means "never attested"
+    ///      (UNKNOWN is not attestable, so 0 is unambiguous). No counter can
+    ///      underflow: every decrement requires this verifier's stored DIFF
+    ///      on this exact key, which implies the matching earlier increment.
+    function _updateActiveDiff(
+        uint256 agentId,
+        bytes32 serviceHash,
+        uint8 verdict,
+        ServiceVerificationStats storage stats,
+        ServiceVerificationStats storage agentStats
+    ) internal {
+        uint8 previous = _lastVerdictByVerifier[agentId][serviceHash][msg.sender];
+        if (previous == verdict) return;
+        _lastVerdictByVerifier[agentId][serviceHash][msg.sender] = verdict;
+
+        if (verdict == uint8(Verdict.DIFF)) {
+            stats.activeDiffVerifierCount++;
+            if (++_verifierDiffServiceCount[agentId][msg.sender] == 1) {
+                agentStats.activeDiffVerifierCount++;
+            }
+        } else if (previous == uint8(Verdict.DIFF)) {
+            stats.activeDiffVerifierCount--;
+            if (--_verifierDiffServiceCount[agentId][msg.sender] == 0) {
+                agentStats.activeDiffVerifierCount--;
+            }
         }
     }
 }
