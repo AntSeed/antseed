@@ -337,6 +337,37 @@ function normalizeBuyerVerification(
   };
 }
 
+function cloneBuyerDelegate(
+  value: AntseedConfig['buyer']['delegate'],
+): AntseedConfig['buyer']['delegate'] {
+  if (!value) return undefined;
+  return {
+    enabled: value.enabled,
+    ...(value.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: value.maxConcurrentJobs } : {}),
+    ...(value.maxJobsPerHour !== undefined ? { maxJobsPerHour: value.maxJobsPerHour } : {}),
+    ...(value.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: value.discoveryIntervalMs } : {}),
+  };
+}
+
+function normalizeBuyerDelegate(
+  value: unknown,
+  fallback?: AntseedConfig['buyer']['delegate'],
+): { delegate: NonNullable<AntseedConfig['buyer']['delegate']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    if (value !== undefined) return { delegate: value as NonNullable<AntseedConfig['buyer']['delegate']> };
+    const cloned = cloneBuyerDelegate(fallback);
+    return cloned ? { delegate: cloned } : {};
+  }
+  return {
+    delegate: {
+      enabled: value['enabled'] as boolean,
+      ...(value['maxConcurrentJobs'] !== undefined ? { maxConcurrentJobs: value['maxConcurrentJobs'] as number } : {}),
+      ...(value['maxJobsPerHour'] !== undefined ? { maxJobsPerHour: value['maxJobsPerHour'] as number } : {}),
+      ...(value['discoveryIntervalMs'] !== undefined ? { discoveryIntervalMs: value['discoveryIntervalMs'] as number } : {}),
+    },
+  };
+}
+
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -350,6 +381,7 @@ function mergeBuyerConfig(
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
+      ...(normalizeBuyerDelegate(undefined, defaults.delegate)),
     };
   }
   return {
@@ -370,6 +402,7 @@ function mergeBuyerConfig(
       'buyer.disableMetadataV2Services',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
+    ...(normalizeBuyerDelegate(value['delegate'], defaults.delegate)),
   };
 }
 
@@ -401,6 +434,24 @@ function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
     ...(typeof value['evidenceDir'] === 'string' ? { evidenceDir: value['evidenceDir'] } : {}),
     ...(typeof value['probeLogDir'] === 'string' ? { probeLogDir: value['probeLogDir'] } : {}),
     ...mergeVerifierUpstream(value['upstream']),
+    ...mergeVerifierDelegation(value['delegation']),
+  };
+}
+
+function mergeVerifierDelegation(
+  value: unknown,
+): { delegation?: NonNullable<AntseedConfig['verifier']>['delegation'] } {
+  if (!isRecord(value)) {
+    return value !== undefined ? { delegation: value as NonNullable<AntseedConfig['verifier']>['delegation'] } : {};
+  }
+  return {
+    delegation: {
+      enabled: value['enabled'] as boolean,
+      ...(value['signalingPort'] !== undefined ? { signalingPort: value['signalingPort'] as number } : {}),
+      ...(value['jobTimeoutMs'] !== undefined ? { jobTimeoutMs: value['jobTimeoutMs'] as number } : {}),
+      ...(value['minDelegates'] !== undefined ? { minDelegates: value['minDelegates'] as number } : {}),
+      ...(value['requireDelegates'] !== undefined ? { requireDelegates: value['requireDelegates'] as boolean } : {}),
+    },
   };
 }
 

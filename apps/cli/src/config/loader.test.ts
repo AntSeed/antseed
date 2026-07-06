@@ -182,6 +182,48 @@ test('loadConfig preserves buyer verification sampling settings', async () => {
   );
 });
 
+test('loadConfig preserves buyer delegate settings', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        delegate: {
+          enabled: true,
+          maxConcurrentJobs: 4,
+          maxJobsPerHour: 120,
+          discoveryIntervalMs: 60_000,
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.buyer.delegate, {
+        enabled: true,
+        maxConcurrentJobs: 4,
+        maxJobsPerHour: 120,
+        discoveryIntervalMs: 60_000,
+      });
+    }
+  );
+});
+
+test('loadConfig rejects invalid buyer delegate settings', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        delegate: {
+          enabled: 'true',
+        },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.delegate\.enabled/
+      );
+    }
+  );
+});
+
 test('loadConfig rejects invalid buyer verification sampleRate', async () => {
   await withTempConfig(
     JSON.stringify({
@@ -195,6 +237,52 @@ test('loadConfig rejects invalid buyer verification sampleRate', async () => {
       await assert.rejects(
         async () => loadConfig(configPath),
         /buyer\.verification\.sampleRate/
+      );
+    }
+  );
+});
+
+test('loadConfig preserves verifier delegation settings', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      verifier: {
+        services: ['kimi-k2'],
+        delegation: {
+          enabled: true,
+          signalingPort: 6883,
+          jobTimeoutMs: 45_000,
+          minDelegates: 2,
+          requireDelegates: true,
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.verifier?.delegation, {
+        enabled: true,
+        signalingPort: 6883,
+        jobTimeoutMs: 45_000,
+        minDelegates: 2,
+        requireDelegates: true,
+      });
+    }
+  );
+});
+
+test('loadConfig rejects invalid verifier delegation settings', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      verifier: {
+        delegation: {
+          enabled: true,
+          minDelegates: 0,
+        },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /verifier\.delegation\.minDelegates/
       );
     }
   );
