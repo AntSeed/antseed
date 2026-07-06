@@ -463,6 +463,24 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(newController), budget);
     }
 
+    function test_removedMinterCanClaimInFlightEpochAfterFinalization() public {
+        _deployGate(5, address(this), address(0));
+
+        gate.removeMinter(SELLER_POOLS_MINTER_ID);
+        assertEq(gate.controllerMinterIds(address(this)), SELLER_POOLS_MINTER_ID);
+        assertEq(gate.controllerEpochBudget(address(this), 5), _shareBudget(SELLER_POOLS_SHARE_BPS, 5));
+        assertEq(gate.controllerEpochBudget(address(this), 6), 0);
+
+        _warpGateEpoch(6);
+        uint256 budget = _shareBudget(SELLER_POOLS_SHARE_BPS, 5);
+        gate.claim(5, address(this), budget);
+        assertEq(token.balanceOf(address(this)), budget);
+
+        _warpGateEpoch(7);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(6, address(this), 1);
+    }
+
     function _setupUsagePool() internal returns (uint256 agentId) {
         return _setupUsagePool(seller);
     }
@@ -2351,10 +2369,11 @@ contract AntseedEmissionsGateTest is Test {
 
         gate.removeMinter(CUSTOM_MINTER_ID);
         assertEq(gate.totalMinterShareBps(), 40_000);
-        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), 0);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), budget);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 7), 0);
 
         vm.prank(customMinter);
-        vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
         gate.claim(5, customMinter, 1);
     }
 
