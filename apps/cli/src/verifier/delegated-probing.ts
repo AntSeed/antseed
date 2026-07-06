@@ -22,8 +22,8 @@ export interface DelegatedProbeOptions {
 
 export interface DelegatedProbeOutcome {
   run: SellerProbeRun
-  /** VERIFIED jobs carried per delegate payout address, for on-chain crediting. */
-  jobsByPayout: Map<string, number>
+  /** VERIFIED jobs carried per delegate peerId, for voucher issuance. */
+  jobsByDelegate: Map<string, number>
 }
 
 interface VerifiedJob {
@@ -61,7 +61,7 @@ export async function probeSellerViaDelegates(
   const requestIds: string[] = []
   const responseAuths: SellerProbeRun['responseAuths'] = []
   const errors: string[] = []
-  const jobsByPayout = new Map<string, number>()
+  const jobsByDelegate = new Map<string, number>()
 
   const plans = buildStealthChatRequests(service, probeSet, { maxProbesPerRequest })
 
@@ -95,7 +95,7 @@ export async function probeSellerViaDelegates(
         continue
       }
       verified = outcome
-      jobsByPayout.set(delegate.payoutAddress, (jobsByPayout.get(delegate.payoutAddress) ?? 0) + 1)
+      jobsByDelegate.set(delegate.peerId, (jobsByDelegate.get(delegate.peerId) ?? 0) + 1)
     }
 
     requestIds.push(requestId)
@@ -127,7 +127,7 @@ export async function probeSellerViaDelegates(
       fullyAuthenticated: responseAuths.length > 0 && responseAuths.every((auth) => auth !== null),
       errors,
     },
-    jobsByPayout,
+    jobsByDelegate,
   }
 }
 

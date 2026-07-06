@@ -57,6 +57,7 @@ import {
   MessageType,
   CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
   type DelegateHelloPayload,
+  type DelegateVoucherPayload,
   type ProbeJobRequestPayload,
   type ProbeJobResultPayload,
 } from "./types/protocol.js";
@@ -1627,7 +1628,6 @@ export class AntseedNode extends EventEmitter {
     // Probe-delegation state lives in its own manager; the node only owns
     // connection lifecycle and forwards frames/APIs.
     this._delegation = new DelegationManager({
-      getDepositsClient: () => this._depositsClient,
       emit: (event, ...args) => this.emit(event, ...args),
     });
 
@@ -1718,18 +1718,32 @@ export class AntseedNode extends EventEmitter {
    * Register with a delegation host (verifier) and serve its probe jobs.
    * `handler` receives each job and must return the result payload; errors
    * thrown by the handler are reported to the verifier as failed jobs.
-   * Resolves with the verifier's welcome (accepted or rejected).
+   * `onVoucher` receives signed DelegateVouchers for carried probes — the
+   * caller must verify and persist them. Resolves with the verifier's
+   * welcome (accepted or rejected).
    */
   async serveProbeJobs(
     verifierPeer: PeerInfo,
     hello: Omit<DelegateHelloPayload, "version">,
     handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, "version" | "jobId">>,
+    onVoucher?: (voucher: DelegateVoucherPayload) => void | Promise<void>,
   ): Promise<{ accepted: boolean; reason?: string }> {
     if (!this._delegation) {
       throw new Error("Node not started or not in buyer mode");
     }
     const conn = await this._getOrCreateConnection(verifierPeer);
-    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler);
+    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler, onVoucher);
+  }
+
+  /**
+   * Send a signed DelegateVoucher to a registered delegate (host side).
+   * Throws when no delegation channel to the delegate exists.
+   */
+  sendDelegateVoucher(delegatePeerId: PeerId, voucher: DelegateVoucherPayload): void {
+    if (!this._delegation) {
+      throw new Error("Node not started or not in buyer mode");
+    }
+    this._delegation.sendDelegateVoucher(delegatePeerId, voucher);
   }
 
   private _handleIncomingConnection(conn: PeerConnection): void {

@@ -2,7 +2,10 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
@@ -30,14 +33,16 @@ import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
  *         post-cutover points at AntseedUsageAccounting — the same clock the
  *         emissions gate runs on.
  */
-contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
+contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP712 {
     // ─── Constants ───────────────────────────────────────────────────
     /// @dev Upper bound on the audit cooldown so a misconfigured value can
     ///      never block crediting for unreasonably long.
     uint64 public constant MAX_AUDIT_COOLDOWN = 30 days;
-    /// @dev Upper bound on a single creditDelegates batch so a verifier
-    ///      cannot grief the mempool with unbounded arrays.
-    uint256 public constant MAX_DELEGATES_PER_BATCH = 64;
+    /// @dev EIP-712 type of the voucher a verifier signs off-chain for each
+    ///      delegate buyer that carried its probe traffic.
+    bytes32 public constant DELEGATE_VOUCHER_TYPEHASH = keccak256(
+        "DelegateVoucher(address buyer,bytes32 probeCommitment,uint32 credits,uint256 nonce,uint256 deadline)"
+    );
 
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedRegistry public immutable registry;
@@ -77,14 +82,24 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     // Probe execution is delegated to organic buyer peers so probe traffic
     // is indistinguishable from real usage (the verifier whitelist is
     // public, so verifier-originated traffic is linkable and a cheating
-    // seller could serve the real model only to verifiers). Verifiers
-    // credit the delegates that carried their probes; delegates claim a
-    // share of the verification emissions bucket via AntseedVerifierRewards.
+    // seller could serve the real model only to verifiers). A verifier
+    // signs an off-chain EIP-712 DelegateVoucher for each buyer that
+    // carried its probes; the buyer's OPERATOR claims it here and later
+    // collects the delegate share of the verification emissions bucket via
+    // AntseedVerifierRewards.
     //
-    // Credits are keyed by the delegate's PAYOUT address (its operator),
-    // never its buyer hot wallet, and should be submitted aggregated per
-    // round — per-request crediting would publish a fine-grained map of
-    // probe-carrying buyers.
+    // The voucher names the buyer (the peer identity the verifier actually
+    // talked to); this contract resolves and pays its deposits operator at
+    // claim time, so the iron rule holds — the buyer hot wallet never
+    // receives funds — and the "is this a real, operator-bound buyer"
+    // check is enforced on-chain rather than promised off-chain.
+    //
+    // Grants are anchored to audit work: every CREDITED attestation adds
+    // its probeCount to the referenced commitment's delegate budget, and
+    // cumulative voucher claims against a commitment may never exceed that
+    // budget. Since credited attestations are themselves rate-limited
+    // (per-service cooldown + per-verifier epoch cap), a verifier cannot
+    // farm the delegate pool without doing real, commit-reveal audit work.
 
     /// @notice Share of the verification bucket reserved for delegates, in
     ///         bps of the epoch budget. Applied by AntseedVerifierRewards
@@ -96,6 +111,14 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     mapping(uint256 epoch => mapping(address delegate => uint256 credits)) public epochDelegateCredits;
     mapping(uint256 epoch => uint256 credits) public epochTotalDelegateCredits;
     mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochDelegateCreditsGrantedBy;
+    /// @notice EIP-712 voucher digests already claimed (replay protection).
+    mapping(bytes32 digest => bool claimed) public voucherClaimed;
+    /// @notice Delegate-credit budget per (verifier, probeCommitment): the
+    ///         sum of probeCount over the verifier's CREDITED attestations
+    ///         that referenced the commitment.
+    mapping(address verifier => mapping(bytes32 commitment => uint256 budget)) public commitmentDelegateBudget;
+    /// @notice Voucher credits already claimed against (verifier, commitment).
+    mapping(address verifier => mapping(bytes32 commitment => uint256 granted)) public commitmentDelegateCredits;
 
     // ─── Events ──────────────────────────────────────────────────────
     event VerifierApprovalSet(address indexed verifier, bool approved);
@@ -130,10 +153,12 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     error ProbeSetTooRecent();
     error UnknownAgent();
     error SelfAudit();
-    error LengthMismatch();
-    error BatchTooLarge();
     error SelfDelegate();
     error DelegateCreditCapExceeded();
+    error VoucherExpired();
+    error VoucherAlreadyClaimed();
+    error NotBuyerOperator();
+    error CommitmentBudgetExceeded();
 
     // ─── Modifiers ───────────────────────────────────────────────────
     modifier onlyApprovedVerifier() {
@@ -142,7 +167,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     }
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _registry) Ownable(msg.sender) {
+    constructor(address _registry) Ownable(msg.sender) EIP712("AntseedVerifierRegistry", "1") {
         if (_registry == address(0)) revert InvalidAddress();
         registry = IAntseedRegistry(_registry);
     }
@@ -271,6 +296,12 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             lastCreditedAt[agentId][serviceHash] = nowTs;
             epochCredits[epoch][msg.sender]++;
             epochTotalCredits[epoch]++;
+            // Credited audit work backs delegate vouchers: cumulative voucher
+            // claims against this commitment are capped by the probes it
+            // attested to. Only CREDITED attestations grow the budget —
+            // uncredited re-attestations are unlimited and would otherwise
+            // let a verifier mint voucher budget for free.
+            commitmentDelegateBudget[msg.sender][probeCommitment] += probeCount;
         }
 
         emit AttestationSubmitted(
@@ -278,41 +309,68 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         );
     }
 
-    /// @notice Credit the delegate buyers that carried this verifier's probe
-    ///         traffic. Credits land in the CURRENT epoch and drive the
-    ///         delegate share of the verification bucket in
-    ///         AntseedVerifierRewards. `delegates` are payout (operator)
-    ///         addresses reported by the delegates themselves — never buyer
-    ///         hot wallets. Submit aggregated per audit round: fine-grained
-    ///         crediting would publish a per-request map of probe carriers.
+    /// @notice Claim a verifier-signed DelegateVoucher for probe traffic the
+    ///         buyer carried. Callable only by the buyer's deposits operator;
+    ///         credits land in the CURRENT epoch, keyed by that operator, and
+    ///         drive the delegate share of the verification bucket in
+    ///         AntseedVerifierRewards.
     ///
-    ///         Total credits granted by one verifier per epoch are capped at
-    ///         `maxDelegateCreditsPerVerifierPerEpoch`, so a verifier cannot
-    ///         inflate the delegate pool without bound.
-    function creditDelegates(address[] calldata delegates, uint32[] calldata credits)
-        external
-        onlyApprovedVerifier
-    {
-        if (delegates.length != credits.length) revert LengthMismatch();
-        if (delegates.length == 0) revert InvalidValue();
-        if (delegates.length > MAX_DELEGATES_PER_BATCH) revert BatchTooLarge();
+    ///         Enforced here rather than trusted off-chain:
+    ///           - the signer is a whitelisted verifier;
+    ///           - the caller is the operator registered for `voucher.buyer`
+    ///             in AntseedDeposits (a buyer without a funded, operator-
+    ///             bound deposit account cannot be paid — the sybil filter);
+    ///           - cumulative claims against `voucher.probeCommitment` never
+    ///             exceed the delegate budget earned by the verifier's
+    ///             credited attestations on that commitment;
+    ///           - total credits granted per verifier per epoch stay within
+    ///             `maxDelegateCreditsPerVerifierPerEpoch`.
+    ///
+    ///         The voucher itself proves the verifier vouched for the work;
+    ///         which carrier earned how much remains the verifier's word,
+    ///         bounded by the caps above. Delegates should claim aggregated
+    ///         and unhurried — the deadline is the only timing constraint.
+    function claimDelegateCredits(DelegateVoucher calldata voucher, bytes calldata signature) external {
+        if (voucher.buyer == address(0) || voucher.credits == 0) revert InvalidValue();
+        if (block.timestamp > voucher.deadline) revert VoucherExpired();
 
-        uint256 epoch = currentEpoch();
-        uint256 total = 0;
-        for (uint256 i = 0; i < delegates.length; i++) {
-            address delegate = delegates[i];
-            uint32 amount = credits[i];
-            if (delegate == address(0) || amount == 0) revert InvalidValue();
-            if (delegate == msg.sender) revert SelfDelegate();
-            epochDelegateCredits[epoch][delegate] += amount;
-            total += amount;
-            emit DelegateCredited(epoch, msg.sender, delegate, amount);
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    DELEGATE_VOUCHER_TYPEHASH,
+                    voucher.buyer,
+                    voucher.probeCommitment,
+                    voucher.credits,
+                    voucher.nonce,
+                    voucher.deadline
+                )
+            )
+        );
+        if (voucherClaimed[digest]) revert VoucherAlreadyClaimed();
+        address verifier = ECDSA.recover(digest, signature);
+        if (!approvedVerifiers[verifier]) revert NotApprovedVerifier();
+        if (voucher.buyer == verifier) revert SelfDelegate();
+
+        address operator = IAntseedDeposits(registry.deposits()).getOperator(voucher.buyer);
+        if (operator == address(0) || msg.sender != operator) revert NotBuyerOperator();
+        if (operator == verifier) revert SelfDelegate();
+
+        uint256 commitmentGranted = commitmentDelegateCredits[verifier][voucher.probeCommitment] + voucher.credits;
+        if (commitmentGranted > commitmentDelegateBudget[verifier][voucher.probeCommitment]) {
+            revert CommitmentBudgetExceeded();
         }
 
-        uint256 granted = epochDelegateCreditsGrantedBy[epoch][msg.sender] + total;
-        if (granted > maxDelegateCreditsPerVerifierPerEpoch) revert DelegateCreditCapExceeded();
-        epochDelegateCreditsGrantedBy[epoch][msg.sender] = granted;
-        epochTotalDelegateCredits[epoch] += total;
+        uint256 epoch = currentEpoch();
+        uint256 epochGranted = epochDelegateCreditsGrantedBy[epoch][verifier] + voucher.credits;
+        if (epochGranted > maxDelegateCreditsPerVerifierPerEpoch) revert DelegateCreditCapExceeded();
+
+        voucherClaimed[digest] = true;
+        commitmentDelegateCredits[verifier][voucher.probeCommitment] = commitmentGranted;
+        epochDelegateCreditsGrantedBy[epoch][verifier] = epochGranted;
+        epochDelegateCredits[epoch][operator] += voucher.credits;
+        epochTotalDelegateCredits[epoch] += voucher.credits;
+
+        emit DelegateCredited(epoch, verifier, operator, voucher.credits);
     }
 
     // ═══════════════════════════════════════════════════════════════════

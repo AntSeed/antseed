@@ -40,6 +40,7 @@ export enum MessageType {
   DelegateWelcome = 0x91,
   ProbeJobRequest = 0x92,
   ProbeJobResult = 0x93,
+  DelegateVoucher = 0x94,
 
   Disconnect = 0xF0,
   Error = 0xFF,
@@ -232,15 +233,13 @@ export interface ResponseAuthPayload {
 // ─── Probe Delegation Messages ─────────────────────────────────
 
 /**
- * Delegate buyer introduces itself to a verifier after connecting.
+ * Delegate buyer introduces itself to a verifier after connecting. The
+ * delegate's on-chain identity IS the connection's peerId (an EVM address),
+ * so there is nothing to assert: vouchers are issued to that address and the
+ * contract resolves its deposits operator at claim time.
  */
 export interface DelegateHelloPayload {
   version: 1;
-  /**
-   * Payout (operator) address for on-chain delegate crediting. Iron rule:
-   * this must NEVER be the buyer's hot wallet — the hot wallet only signs.
-   */
-  payoutAddress: string;
   /** Max probe jobs the delegate is willing to run concurrently. */
   maxConcurrentJobs?: number;
 }
@@ -274,6 +273,32 @@ export interface ProbeJobRequestPayload {
     bodyBase64: string;
   };
   timeoutMs: number;
+}
+
+/**
+ * Verifier-signed EIP-712 DelegateVoucher for probe traffic this delegate
+ * carried, sent over the delegation channel after the audit's attestations
+ * land on-chain. The buyer's deposits OPERATOR claims it via
+ * AntseedVerifierRegistry.claimDelegateCredits — this payload is the claim's
+ * entire input, so the delegate must persist it durably.
+ */
+export interface DelegateVoucherPayload {
+  version: 1;
+  /** EVM chain the voucher is claimable on. */
+  chainId: number;
+  /** AntseedVerifierRegistry address (the EIP-712 verifying contract). */
+  registry: string;
+  /** Buyer (this delegate's peer/hot-wallet) address named in the voucher. */
+  buyer: string;
+  /** Probe-set commitment whose credited attestations back these credits. */
+  probeCommitment: string;
+  credits: number;
+  /** uint256 nonce as a decimal string (unique per verifier). */
+  nonce: string;
+  /** Claim deadline, unix seconds. */
+  deadline: number;
+  /** Verifier's EIP-712 signature over the DelegateVoucher struct. */
+  signature: string;
 }
 
 /**

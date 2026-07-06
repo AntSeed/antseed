@@ -1,5 +1,6 @@
 import type {
   DelegateHelloPayload,
+  DelegateVoucherPayload,
   DelegateWelcomePayload,
   ProbeJobRequestPayload,
   ProbeJobResultPayload,
@@ -50,12 +51,30 @@ export function decodeDelegateHello(data: Uint8Array): DelegateHelloPayload {
   const obj = parseDelegationJson(data, MAX_CONTROL_PAYLOAD_SIZE);
   const result: DelegateHelloPayload = {
     version: requireVersion1(obj),
-    payoutAddress: requireStringField(obj, 'payoutAddress'),
   };
   if (obj.maxConcurrentJobs !== undefined) {
     result.maxConcurrentJobs = requireFiniteNumberField(obj, 'maxConcurrentJobs');
   }
   return result;
+}
+
+export function encodeDelegateVoucher(payload: DelegateVoucherPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function decodeDelegateVoucher(data: Uint8Array): DelegateVoucherPayload {
+  const obj = parseDelegationJson(data, MAX_CONTROL_PAYLOAD_SIZE);
+  return {
+    version: requireVersion1(obj),
+    chainId: requireFiniteNumberField(obj, 'chainId'),
+    registry: requireStringField(obj, 'registry'),
+    buyer: requireStringField(obj, 'buyer'),
+    probeCommitment: requireStringField(obj, 'probeCommitment'),
+    credits: requireFiniteNumberField(obj, 'credits'),
+    nonce: requireStringField(obj, 'nonce'),
+    deadline: requireFiniteNumberField(obj, 'deadline'),
+    signature: requireStringField(obj, 'signature'),
+  };
 }
 
 export function encodeDelegateWelcome(payload: DelegateWelcomePayload): Uint8Array {

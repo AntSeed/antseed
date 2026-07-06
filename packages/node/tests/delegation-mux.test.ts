@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { DelegationMux } from '../src/verification/delegation-mux.js';
 import {
   decodeDelegateHello,
+  decodeDelegateVoucher,
   decodeProbeJobRequest,
   decodeProbeJobResult,
   encodeDelegateHello,
+  encodeDelegateVoucher,
   encodeProbeJobRequest,
   encodeProbeJobResult,
 } from '../src/verification/delegation-codec.js';
@@ -46,9 +48,22 @@ function muxPair(): { verifier: DelegationMux; delegate: DelegationMux } {
 }
 
 describe('delegation codec', () => {
-  it('round-trips hello, job, and result payloads', () => {
-    const hello = { version: 1 as const, payoutAddress: '0x' + 'a'.repeat(40), maxConcurrentJobs: 3 };
+  it('round-trips hello, voucher, job, and result payloads', () => {
+    const hello = { version: 1 as const, maxConcurrentJobs: 3 };
     expect(decodeDelegateHello(encodeDelegateHello(hello))).toEqual(hello);
+
+    const voucher = {
+      version: 1 as const,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 7,
+      nonce: '12345678901234567890',
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(130),
+    };
+    expect(decodeDelegateVoucher(encodeDelegateVoucher(voucher))).toEqual(voucher);
 
     const job = jobPayload();
     expect(decodeProbeJobRequest(encodeProbeJobRequest(job))).toEqual(job);
@@ -81,9 +96,10 @@ describe('delegation codec', () => {
   });
 
   it('rejects malformed payloads', () => {
-    expect(() => decodeDelegateHello(new TextEncoder().encode('{"version":2,"payoutAddress":"x"}'))).toThrow(/version/);
+    expect(() => decodeDelegateHello(new TextEncoder().encode('{"version":2}'))).toThrow(/version/);
     expect(() => decodeProbeJobResult(new TextEncoder().encode('{"version":1,"jobId":"j","status":"maybe"}'))).toThrow(/status/);
     expect(() => decodeProbeJobRequest(new TextEncoder().encode('{"version":1,"jobId":"j"}'))).toThrow();
+    expect(() => decodeDelegateVoucher(new TextEncoder().encode('{"version":1,"buyer":"0xabc"}'))).toThrow();
   });
 
   it('claims the 0x90-0x9F range', () => {
@@ -97,18 +113,41 @@ describe('delegation codec', () => {
 describe('DelegationMux', () => {
   it('registers a delegate via hello/welcome', async () => {
     const { verifier, delegate } = muxPair();
-    const hellos: string[] = [];
+    const hellos: number[] = [];
     verifier.onHello((hello) => {
-      hellos.push(hello.payoutAddress);
+      hellos.push(hello.maxConcurrentJobs ?? 0);
       verifier.sendWelcome({ version: 1, accepted: true });
     });
 
     const welcomePromise = delegate.waitForWelcome(1_000);
-    delegate.sendHello({ version: 1, payoutAddress: '0x' + 'c'.repeat(40) });
+    delegate.sendHello({ version: 1, maxConcurrentJobs: 3 });
     const welcome = await welcomePromise;
 
-    expect(hellos).toEqual(['0x' + 'c'.repeat(40)]);
+    expect(hellos).toEqual([3]);
     expect(welcome.accepted).toBe(true);
+  });
+
+  it('delivers vouchers to the delegate handler', async () => {
+    const { verifier, delegate } = muxPair();
+    const received: string[] = [];
+    delegate.onVoucher((voucher) => {
+      received.push(`${voucher.probeCommitment}:${voucher.credits}`);
+    });
+
+    verifier.sendVoucher({
+      version: 1,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0xcafe',
+      credits: 2,
+      nonce: '1',
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(130),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(received).toEqual(['0xcafe:2']);
   });
 
   it('correlates job results by jobId', async () => {

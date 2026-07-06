@@ -11,6 +11,7 @@ import { AntseedNode, DepositsClient, VerifierRegistryClient, getInstance, resol
 import { ZeroAddress } from 'ethers'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { DelegateWorker } from '../../../delegate/worker.js'
+import { VoucherStore } from '../../../delegate/voucher-store.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
@@ -457,9 +458,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log('')
 
       // Opt-in probe carrier: serve probe jobs for on-chain-approved
-      // verifiers over this buyer's ordinary paid request path, earning a
-      // share of the verification emissions bucket at the configured
-      // operator payout address.
+      // verifiers over this buyer's ordinary paid request path. Carried jobs
+      // earn verifier-signed DelegateVouchers naming this buyer; the buyer's
+      // deposits operator claims them on-chain for a share of the
+      // verification emissions bucket.
       let delegateWorker: DelegateWorker | null = null
       const delegateConfig = config.buyer?.delegate
       if (delegateConfig?.enabled) {
@@ -468,53 +470,47 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         } else if (!chainConfig.verifierRegistryAddress) {
           console.log(chalk.yellow('Delegate mode configured but no verifier registry address is available for this chain. Skipping.'))
         } else {
-          // The payout address is always the operator registered for this
-          // buyer in AntseedDeposits — verifiers verify that binding on-chain
-          // and reject anything else, so config can at most confirm it.
-          const operatorDeposits = new DepositsClient({
-            rpcUrl: chainConfig.rpcUrl,
-            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-            contractAddress: chainConfig.depositsContractAddress,
-            usdcAddress: chainConfig.usdcContractAddress,
-            evmChainId: chainConfig.evmChainId,
-          })
-          let payoutAddress: string | null = null
-          let operatorLookupFailed = false
+          // Vouchers are claimable only by the operator registered for this
+          // buyer in AntseedDeposits — resolved by the contract at claim
+          // time, so carrying can start before the operator exists. Warn
+          // early anyway: unclaimed vouchers expire.
           try {
-            const operator = await operatorDeposits.getOperator(node.identity!.wallet.address)
-            if (operator && operator !== ZeroAddress) payoutAddress = operator
-          } catch (err) {
-            operatorLookupFailed = true
-            console.log(chalk.yellow(`Delegate mode: operator lookup failed (${(err as Error).message}). Skipping.`))
-          }
-          if (!payoutAddress) {
-            if (!operatorLookupFailed) {
-              console.log(chalk.yellow('Delegate mode requires a registered operator on AntseedDeposits — run the operator setup first. Skipping.'))
-            }
-          } else {
-            if (delegateConfig.payoutAddress && delegateConfig.payoutAddress.toLowerCase() !== payoutAddress.toLowerCase()) {
-              console.log(chalk.yellow(`buyer.delegate.payoutAddress differs from the on-chain operator; using the operator ${payoutAddress}`))
-            }
-            const verifierRegistry = new VerifierRegistryClient({
+            const operatorDeposits = new DepositsClient({
               rpcUrl: chainConfig.rpcUrl,
               ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-              contractAddress: chainConfig.verifierRegistryAddress,
+              contractAddress: chainConfig.depositsContractAddress,
+              usdcAddress: chainConfig.usdcContractAddress,
               evmChainId: chainConfig.evmChainId,
             })
-            delegateWorker = new DelegateWorker({
-              node,
-              payoutAddress,
-              isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
-              ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
-              ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
-              ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),
-              log: (m) => console.log(chalk.dim(`[delegate] ${m}`)),
-              warn: (m) => console.warn(chalk.yellow(`[delegate] ${m}`)),
-            })
-            delegateWorker.start()
-            console.log(chalk.dim(`Delegate mode: carrying probe jobs for approved verifiers (payout = operator ${payoutAddress.slice(0, 10)}…)`))
-            console.log('')
+            const operator = await operatorDeposits.getOperator(node.identity!.wallet.address)
+            if (!operator || operator === ZeroAddress) {
+              console.log(chalk.yellow('Delegate mode: no operator registered on AntseedDeposits yet — vouchers can be earned but only a registered operator can claim them.'))
+            }
+          } catch (err) {
+            console.log(chalk.yellow(`Delegate mode: operator lookup failed (${(err as Error).message}); continuing — the binding is enforced on-chain at claim time.`))
           }
+          const verifierRegistry = new VerifierRegistryClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: chainConfig.verifierRegistryAddress,
+            evmChainId: chainConfig.evmChainId,
+          })
+          const voucherStore = new VoucherStore(join(globalOpts.dataDir, 'delegate', 'vouchers.jsonl'))
+          delegateWorker = new DelegateWorker({
+            node,
+            isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
+            expectedChainId: chainConfig.evmChainId,
+            verifierRegistryAddress: chainConfig.verifierRegistryAddress,
+            voucherStore,
+            ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
+            ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
+            ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),
+            log: (m) => console.log(chalk.dim(`[delegate] ${m}`)),
+            warn: (m) => console.warn(chalk.yellow(`[delegate] ${m}`)),
+          })
+          delegateWorker.start()
+          console.log(chalk.dim('Delegate mode: carrying probe jobs for approved verifiers (vouchers land in delegate/vouchers.jsonl, claimable by the operator)'))
+          console.log('')
         }
       }
 
