@@ -152,19 +152,14 @@ export interface BuyerCLIConfig {
 /**
  * Opt-in delegate (probe carrier) settings. A participating buyer connects
  * to on-chain-approved verifiers discovered on the DHT and relays their
- * probe requests over its ordinary paid buyer path, earning a share of the
- * verification emissions bucket at `payoutAddress`.
+ * probe requests over its ordinary paid buyer path. Carried jobs earn
+ * verifier-signed DelegateVouchers naming this buyer; the buyer's deposits
+ * operator claims them on-chain for a share of the verification emissions
+ * bucket. There is no payout setting — the contract resolves the operator
+ * at claim time.
  */
 export interface DelegateCLIConfig {
   enabled: boolean;
-  /**
-   * Optional cross-check only. The payout address is always resolved from
-   * the operator registered for this buyer in AntseedDeposits (verifiers
-   * verify that binding on-chain and reject any other address). When set
-   * and it differs from the on-chain operator, the operator wins and a
-   * warning is printed. Never the buyer hot wallet.
-   */
-  payoutAddress?: string;
   /** Max probe jobs run concurrently. Default: 2. */
   maxConcurrentJobs?: number;
   /** Rate cap on carried jobs. Default: 60. */
@@ -310,8 +305,8 @@ export interface VerifierCLIConfig {
   /**
    * Delegated probing: announce as a delegation host on the DHT and route
    * probes through opt-in organic buyers instead of this daemon's own
-   * (whitelist-linkable) buyer identity. Verified jobs are credited on-chain
-   * per round via `creditDelegates`.
+   * (whitelist-linkable) buyer identity. Verified jobs earn signed
+   * DelegateVouchers, claimed on-chain by each carrier's operator.
    */
   delegation?: VerifierDelegationConfig;
 }

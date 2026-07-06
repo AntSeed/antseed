@@ -1,4 +1,11 @@
-import { Contract, keccak256, toUtf8Bytes, type AbstractSigner } from 'ethers';
+import {
+  Contract,
+  keccak256,
+  toUtf8Bytes,
+  verifyTypedData,
+  type AbstractSigner,
+  type TypedDataDomain,
+} from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface VerifierRegistryClientConfig {
@@ -54,7 +61,7 @@ const VERIFIER_REGISTRY_ABI = [
   // Writes
   'function commitProbeSet(bytes32 commitment) external',
   'function submitAttestation(uint256 agentId, bytes32 serviceHash, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, uint32 probeCount, uint32 cohortSize) external',
-  'function creditDelegates(address[] delegates, uint32[] credits) external',
+  'function claimDelegateCredits(tuple(address buyer, bytes32 probeCommitment, uint32 credits, uint256 nonce, uint256 deadline) voucher, bytes signature) external',
   // Reads
   'function approvedVerifiers(address verifier) external view returns (bool)',
   'function probeCommittedAt(address verifier, bytes32 commitment) external view returns (uint64)',
@@ -74,6 +81,9 @@ const VERIFIER_REGISTRY_ABI = [
   'function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256)',
   'function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256)',
   'function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256)',
+  'function voucherClaimed(bytes32 digest) external view returns (bool)',
+  'function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256)',
+  'function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256)',
 ] as const;
 
 const VERIFIER_REWARDS_ABI = [
@@ -103,6 +113,66 @@ const EMISSIONS_GATE_MINI_ABI = [
  */
 export function serviceHash(service: string): string {
   return keccak256(toUtf8Bytes(service.trim().toLowerCase()));
+}
+
+// =========================================================================
+// Delegate vouchers — EIP-712
+// =========================================================================
+
+/**
+ * EIP-712 DelegateVoucher struct signed by a verifier for a delegate buyer
+ * that carried its probe traffic. Mirrors
+ * AntseedVerifierRegistry.DELEGATE_VOUCHER_TYPEHASH — frozen with it.
+ */
+export interface DelegateVoucherMessage {
+  /** Buyer (delegate hot wallet / peer) address. Its operator claims. */
+  buyer: string;
+  /** Probe-set commitment whose credited attestations back the credits. */
+  probeCommitment: string;
+  credits: number;
+  nonce: bigint;
+  /** Claim deadline, unix seconds. */
+  deadline: number;
+}
+
+export const DELEGATE_VOUCHER_TYPES: Record<string, Array<{ name: string; type: string }>> = {
+  DelegateVoucher: [
+    { name: 'buyer', type: 'address' },
+    { name: 'probeCommitment', type: 'bytes32' },
+    { name: 'credits', type: 'uint32' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+};
+
+export function makeVerifierRegistryDomain(chainId: number, contractAddress: string): TypedDataDomain {
+  return {
+    name: 'AntseedVerifierRegistry',
+    version: '1',
+    chainId,
+    verifyingContract: contractAddress,
+  };
+}
+
+export async function signDelegateVoucher(
+  signer: AbstractSigner,
+  domain: TypedDataDomain,
+  msg: DelegateVoucherMessage,
+): Promise<string> {
+  return signer.signTypedData(domain, DELEGATE_VOUCHER_TYPES, msg);
+}
+
+/**
+ * Recover the signer of a DelegateVoucher. Delegates run this on every
+ * voucher they receive and check the result against the verifier peer they
+ * are serving — a voucher signed by anyone else is worthless on-chain.
+ */
+export function recoverDelegateVoucherSigner(
+  domain: TypedDataDomain,
+  msg: DelegateVoucherMessage,
+  signature: string,
+): string {
+  return verifyTypedData(domain, DELEGATE_VOUCHER_TYPES, msg, signature);
 }
 
 function decodeStats(raw: Record<string | number, unknown> & unknown[]): ServiceVerificationStats {
@@ -158,15 +228,41 @@ export class VerifierRegistryClient extends BaseEvmClient {
   }
 
   /**
-   * Credit delegate payout addresses for verified probe jobs they carried.
-   * Submit aggregated per audit round — never per request.
+   * Claim a verifier-signed DelegateVoucher. Must be sent by the operator
+   * registered for `voucher.buyer` in AntseedDeposits — the contract credits
+   * that operator and rejects any other caller.
    */
-  async creditDelegates(
+  async claimDelegateCredits(
     signer: AbstractSigner,
-    delegates: string[],
-    credits: number[],
+    voucher: DelegateVoucherMessage,
+    signature: string,
   ): Promise<string> {
-    return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'creditDelegates', delegates, credits);
+    return this._execWrite(
+      signer,
+      VERIFIER_REGISTRY_ABI,
+      'claimDelegateCredits',
+      [voucher.buyer, voucher.probeCommitment, voucher.credits, voucher.nonce, voucher.deadline],
+      signature,
+    );
+  }
+
+  /** True when the voucher with this EIP-712 digest was already claimed. */
+  async voucherClaimed(digest: string): Promise<boolean> {
+    return this._contract().getFunction('voucherClaimed')(digest);
+  }
+
+  /**
+   * Delegate-credit budget earned by `verifier`'s credited attestations on
+   * `commitment`, and how much of it vouchers have already claimed.
+   */
+  async commitmentDelegateBudget(verifier: string, commitment: string): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateBudget')(verifier, commitment);
+    return Number(v);
+  }
+
+  async commitmentDelegateCredits(verifier: string, commitment: string): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateCredits')(verifier, commitment);
+    return Number(v);
   }
 
   async isApprovedVerifier(verifier: string): Promise<boolean> {

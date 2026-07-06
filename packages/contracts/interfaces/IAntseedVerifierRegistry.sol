@@ -70,9 +70,25 @@ interface IAntseedVerifierRegistry {
     function epochTotalCredits(uint256 epoch) external view returns (uint256);
 
     // ─── Delegate crediting (organic probe carriers) ─────────────────
+
+    /// @notice Off-chain EIP-712 voucher a verifier signs for a buyer that
+    ///         carried its probe traffic. `buyer` is the delegate's peer
+    ///         identity (hot wallet); the claim resolves and credits its
+    ///         deposits operator.
+    struct DelegateVoucher {
+        address buyer;
+        bytes32 probeCommitment;
+        uint32 credits;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
     function delegateShareBps() external view returns (uint16);
     function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32);
-    function creditDelegates(address[] calldata delegates, uint32[] calldata credits) external;
+    function claimDelegateCredits(DelegateVoucher calldata voucher, bytes calldata signature) external;
+    function voucherClaimed(bytes32 digest) external view returns (bool);
+    function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256);
+    function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256);
     function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256);
     function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256);
     function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256);

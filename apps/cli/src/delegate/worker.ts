@@ -1,5 +1,6 @@
 import type {
   AntseedNode,
+  DelegateVoucherPayload,
   PeerId,
   PeerInfo,
   ProbeJobRequestPayload,
@@ -7,7 +8,14 @@ import type {
   SerializedHttpRequest,
   StoredResponseAuth,
 } from '@antseed/node'
-import { CONNECTION_CAPABILITY_PROBE_DELEGATION_V1, ConnectionState, peerIdToAddress } from '@antseed/node'
+import {
+  CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
+  ConnectionState,
+  makeVerifierRegistryDomain,
+  peerIdToAddress,
+  recoverDelegateVoucherSigner,
+} from '@antseed/node'
+import type { VoucherStore } from './voucher-store.js'
 
 const DEFAULT_MAX_CONCURRENT_JOBS = 2
 const DEFAULT_MAX_JOBS_PER_HOUR = 60
@@ -26,16 +34,19 @@ const ALLOWED_JOB_HEADERS = new Set(['content-type', 'accept', 'user-agent'])
 export interface DelegateWorkerOptions {
   node: AntseedNode
   /**
-   * Operator address credited on-chain — must be the operator registered for
-   * this buyer in AntseedDeposits (verifiers reject any other address).
-   * Never the buyer hot wallet.
-   */
-  payoutAddress: string
-  /**
    * On-chain whitelist check. Serving an unapproved "verifier" would let
    * anyone use this buyer as a free request proxy — mandatory.
    */
   isApprovedVerifier: (address: string) => Promise<boolean>
+  /**
+   * Chain + registry the received vouchers must be claimable on. A voucher
+   * naming any other domain is worthless to this buyer's operator and is
+   * dropped with a warning.
+   */
+  expectedChainId: number
+  verifierRegistryAddress: string
+  /** Durable store for verified vouchers — the only proof of credits. */
+  voucherStore: Pick<VoucherStore, 'add'>
   maxConcurrentJobs?: number
   maxJobsPerHour?: number
   discoveryIntervalMs?: number
@@ -50,8 +61,11 @@ export interface DelegateWorkerOptions {
  * buyer identity, which is the whole point — the verifier whitelist is
  * public, so verifier-originated probes are classifiable by cheating sellers.
  *
- * Carried jobs are credited on-chain to `payoutAddress`, which later claims
- * a share of the verification emissions bucket via `claimDelegateReward`.
+ * Carried jobs earn verifier-signed DelegateVouchers naming this buyer. The
+ * worker verifies each voucher's signature and domain and persists it; the
+ * buyer's deposits operator claims them on-chain
+ * (AntseedVerifierRegistry.claimDelegateCredits) and later collects the
+ * delegate share of the verification emissions bucket.
  */
 export class DelegateWorker {
   private readonly _options: Required<Pick<DelegateWorkerOptions, 'maxConcurrentJobs' | 'maxJobsPerHour' | 'discoveryIntervalMs'>> & DelegateWorkerOptions
@@ -144,26 +158,69 @@ export class DelegateWorker {
     try {
       const welcome = await this._options.node.serveProbeJobs(
         verifier,
-        {
-          payoutAddress: this._options.payoutAddress,
-          maxConcurrentJobs: this._options.maxConcurrentJobs,
-        },
+        { maxConcurrentJobs: this._options.maxConcurrentJobs },
         (job) => this._handleJob(job),
+        (voucher) => this._handleVoucher(verifier, voucher),
       )
       if (!welcome.accepted) {
         this._options.warn(`delegate: verifier ${verifier.peerId.slice(0, 12)}… rejected registration: ${welcome.reason ?? 'unknown'}`)
-        // A transient failure on the verifier's side (e.g. its RPC was down
-        // during the operator lookup) should be retried on a later scan, not
-        // blacklisted.
-        if (welcome.reason !== 'operator_check_unavailable') {
-          this._rejected.add(verifier.peerId)
-        }
+        this._rejected.add(verifier.peerId)
         return
       }
       this._serving.add(verifier.peerId)
       this._options.log(`delegate: serving probe jobs for verifier ${verifier.peerId.slice(0, 12)}…`)
     } catch (err) {
       this._options.warn(`delegate: failed to register with ${verifier.peerId.slice(0, 12)}…: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * Verify and persist a DelegateVoucher. Everything checkable locally is
+   * checked before the voucher is stored: the claim domain must be the chain
+   * + registry this buyer runs on, the named buyer must be this node, and
+   * the EIP-712 signer must be the exact verifier peer being served — the
+   * same identity the on-chain whitelist admitted at registration.
+   */
+  private async _handleVoucher(verifier: PeerInfo, voucher: DelegateVoucherPayload): Promise<void> {
+    const short = verifier.peerId.slice(0, 12)
+    if (voucher.chainId !== this._options.expectedChainId
+      || voucher.registry.toLowerCase() !== this._options.verifierRegistryAddress.toLowerCase()) {
+      this._options.warn(`delegate: dropping voucher from ${short}… for foreign domain (chain ${voucher.chainId}, registry ${voucher.registry.slice(0, 10)}…)`)
+      return
+    }
+    const selfAddress = this._options.node.peerId ? peerIdToAddress(this._options.node.peerId) : null
+    if (!selfAddress || voucher.buyer.toLowerCase() !== selfAddress.toLowerCase()) {
+      this._options.warn(`delegate: dropping voucher from ${short}… naming a different buyer ${voucher.buyer.slice(0, 10)}…`)
+      return
+    }
+    let signer: string
+    try {
+      signer = recoverDelegateVoucherSigner(
+        makeVerifierRegistryDomain(voucher.chainId, voucher.registry),
+        {
+          buyer: voucher.buyer,
+          probeCommitment: voucher.probeCommitment,
+          credits: voucher.credits,
+          nonce: BigInt(voucher.nonce),
+          deadline: voucher.deadline,
+        },
+        voucher.signature,
+      )
+    } catch (err) {
+      this._options.warn(`delegate: dropping voucher from ${short}… with unrecoverable signature: ${(err as Error).message}`)
+      return
+    }
+    if (signer.toLowerCase() !== peerIdToAddress(verifier.peerId).toLowerCase()) {
+      this._options.warn(`delegate: dropping voucher from ${short}… signed by ${signer.slice(0, 10)}… (not the serving verifier)`)
+      return
+    }
+    try {
+      const added = await this._options.voucherStore.add(voucher, verifier.peerId)
+      if (added) {
+        this._options.log(`delegate: voucher received from ${short}… — ${voucher.credits} credit(s), claimable by the operator until ${new Date(voucher.deadline * 1000).toISOString()}`)
+      }
+    } catch (err) {
+      this._options.warn(`delegate: failed to persist voucher from ${short}…: ${(err as Error).message}`)
     }
   }
 

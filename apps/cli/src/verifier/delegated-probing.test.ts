@@ -9,7 +9,6 @@ import { probeSellerViaDelegates } from './delegated-probing.js'
 const SELLER_WALLET = new Wallet('0x' + '11'.repeat(32))
 const SELLER_PEER = SELLER_WALLET.address.slice(2).toLowerCase()
 const DELEGATE_PEER = 'd'.repeat(40)
-const PAYOUT = '0x' + 'ab'.repeat(20)
 const SERVICE = 'kimi-k2'
 
 const noop = (): void => {}
@@ -20,7 +19,7 @@ function probeSet() {
 }
 
 function delegate(peerId = DELEGATE_PEER): ConnectedDelegate {
-  return { peerId, payoutAddress: PAYOUT, maxConcurrentJobs: 1, connectedAt: 0 } as unknown as ConnectedDelegate
+  return { peerId, maxConcurrentJobs: 1, connectedAt: 0 } as unknown as ConnectedDelegate
 }
 
 function sellerPeer(): PeerInfo {
@@ -87,14 +86,14 @@ function fakeNode(options?: {
 }
 
 test('verified delegate observations produce an authenticated run and credit the carrier', async () => {
-  const { run, jobsByPayout } = await probeSellerViaDelegates(
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
     fakeNode(), [delegate()], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS,
   )
   assert.equal(run.fullyAuthenticated, true)
   assert.ok(run.responseAuths.length > 0)
   assert.ok(run.responseAuths.every((auth) => auth !== null))
   assert.equal(run.errors.length, 0)
-  assert.equal(jobsByPayout.get(PAYOUT), run.responseAuths.length)
+  assert.equal(jobsByDelegate.get(DELEGATE_PEER), run.responseAuths.length)
 })
 
 test('a tampered response body is rejected even with a genuine seller signature', async () => {
@@ -111,13 +110,13 @@ test('a tampered response body is rejected even with a genuine seller signature'
       },
     }),
   })
-  const { run, jobsByPayout } = await probeSellerViaDelegates(
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
     node, [delegate()], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS,
   )
   assert.equal(run.fullyAuthenticated, false)
   assert.ok(run.responseAuths.every((auth) => auth === null))
   assert.ok(run.errors.some((e) => e.includes('invalid ResponseAuth')))
-  assert.equal(jobsByPayout.size, 0)
+  assert.equal(jobsByDelegate.size, 0)
   // No answers may be extracted from an unverified body.
   assert.ok(run.answers.every((a) => a === null))
 })
@@ -129,20 +128,20 @@ test('a stripped ResponseAuth yields an unauthenticated observation, not a crash
       return rest
     },
   })
-  const { run, jobsByPayout } = await probeSellerViaDelegates(
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
     node, [delegate()], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS,
   )
   assert.equal(run.fullyAuthenticated, false)
-  assert.equal(jobsByPayout.size, 0)
+  assert.equal(jobsByDelegate.size, 0)
 })
 
 test('delegate failures surface as errors and never credit', async () => {
-  const { run, jobsByPayout } = await probeSellerViaDelegates(
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
     fakeNode({ fail: true }), [delegate()], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS,
   )
   assert.equal(run.fullyAuthenticated, false)
   assert.ok(run.errors.some((e) => e.includes('seller unreachable')))
-  assert.equal(jobsByPayout.size, 0)
+  assert.equal(jobsByDelegate.size, 0)
 })
 
 test('requires at least one delegate', async () => {

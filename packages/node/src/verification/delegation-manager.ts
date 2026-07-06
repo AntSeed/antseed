@@ -1,33 +1,28 @@
-import { ZeroAddress, isAddress } from 'ethers';
 import type { PeerConnection } from '../p2p/connection-manager.js';
 import type { PeerId, PeerInfo } from '../types/peer.js';
-import { peerIdToAddress } from '../types/peer.js';
 import type {
   DelegateHelloPayload,
+  DelegateVoucherPayload,
   FramedMessage,
   ProbeJobRequestPayload,
   ProbeJobResultPayload,
 } from '../types/protocol.js';
-import type { DepositsClient } from '../payments/evm/deposits-client.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { DelegationMux } from './delegation-mux.js';
 
 /** A delegate buyer currently registered with this delegation host. */
 export interface ConnectedDelegate {
+  /**
+   * The delegate's peer identity — an EVM address, and the `buyer` named in
+   * any DelegateVoucher issued to it. Its deposits operator is resolved
+   * on-chain at claim time; nothing about payout is asserted or checked here.
+   */
   peerId: PeerId;
-  /** Payout (operator) address the delegate asked to be credited at. */
-  payoutAddress: string;
   maxConcurrentJobs: number;
   connectedAt: number;
 }
 
 export interface DelegationManagerDeps {
-  /**
-   * Deposits client used to verify a delegate's payout against its
-   * registered on-chain operator. Resolved lazily — payments wiring may
-   * finish after this manager is constructed.
-   */
-  getDepositsClient: () => DepositsClient | null;
   /** Forwarded to the node's EventEmitter (delegate:connected/disconnected). */
   emit: (event: string, ...args: unknown[]) => void;
 }
@@ -52,63 +47,41 @@ export class DelegationManager {
 
   /**
    * Wire an inbound delegate connection: create its mux and handle the
-   * hello/welcome registration, including the on-chain operator binding
-   * check. The caller still runs the node's frame wiring for the connection.
+   * hello/welcome registration. There is no payout to validate — the peerId
+   * the delegate authenticated with is the buyer address its vouchers will
+   * name, and the operator binding is enforced by the contract at claim
+   * time. The caller still runs the node's frame wiring for the connection.
    */
   registerInboundDelegate(conn: PeerConnection): void {
     const delegatePeerId = conn.remotePeerId;
     debugLog(`[Delegation] Incoming delegate connection from ${delegatePeerId.slice(0, 12)}...`);
 
     const mux = new DelegationMux(conn);
-    mux.onHello(async (hello: DelegateHelloPayload) => {
-      const reject = (reason: string): void => {
-        debugWarn(`[Delegation] Rejecting delegate ${delegatePeerId.slice(0, 12)}...: ${reason}`);
-        mux.sendWelcome({ version: 1, accepted: false, reason });
-      };
-      if (!isAddress(hello.payoutAddress)) {
-        reject('invalid_payout_address');
-        return;
-      }
-      // Bind the payout claim to the delegate's on-chain identity: credits
-      // must go to the operator registered for this buyer in AntseedDeposits,
-      // not to whatever address the hello asserts. This also doubles as a
-      // sybil filter — a delegate without a funded, operator-bound deposit
-      // account is not the organic buyer this network exists to recruit.
-      const depositsClient = this._deps.getDepositsClient();
-      if (depositsClient) {
-        let operator: string;
-        try {
-          operator = await depositsClient.getOperator(peerIdToAddress(delegatePeerId));
-        } catch (err) {
-          debugWarn(`[Delegation] Operator lookup failed for delegate ${delegatePeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-          // Transient by contract with the worker: it will retry on a later
-          // scan instead of blacklisting this host.
-          reject('operator_check_unavailable');
-          return;
-        }
-        if (!operator || operator === ZeroAddress) {
-          reject('no_registered_operator');
-          return;
-        }
-        if (operator.toLowerCase() !== hello.payoutAddress.toLowerCase()) {
-          reject('payout_not_operator');
-          return;
-        }
-      } else {
-        debugWarn(`[Delegation] Deposits client unavailable — accepting delegate ${delegatePeerId.slice(0, 12)}... without operator binding check`);
-      }
+    mux.onHello((hello: DelegateHelloPayload) => {
       const delegate: ConnectedDelegate = {
         peerId: delegatePeerId,
-        payoutAddress: hello.payoutAddress,
         maxConcurrentJobs: Math.max(1, Math.floor(hello.maxConcurrentJobs ?? 1)),
         connectedAt: Date.now(),
       };
       this._delegates.set(delegatePeerId, delegate);
       mux.sendWelcome({ version: 1, accepted: true });
-      debugLog(`[Delegation] Delegate registered: ${delegatePeerId.slice(0, 12)}... payout=${hello.payoutAddress.slice(0, 10)}...`);
+      debugLog(`[Delegation] Delegate registered: ${delegatePeerId.slice(0, 12)}...`);
       this._deps.emit('delegate:connected', delegate);
     });
     this._muxes.set(delegatePeerId, mux);
+  }
+
+  /**
+   * Send a signed DelegateVoucher to a registered delegate. Best-effort by
+   * design — the caller should log failures and move on; an unreachable
+   * delegate simply misses this round's voucher.
+   */
+  sendDelegateVoucher(delegatePeerId: PeerId, voucher: DelegateVoucherPayload): void {
+    const mux = this._muxes.get(delegatePeerId);
+    if (!mux) {
+      throw new Error(`No delegation channel to ${delegatePeerId}`);
+    }
+    mux.sendVoucher(voucher);
   }
 
   /** Delegate buyers currently registered with this delegation host. */
@@ -141,13 +114,17 @@ export class DelegationManager {
   /**
    * Register with a delegation host (verifier) over an existing connection
    * and serve its probe jobs. `handler` errors are reported back to the
-   * verifier as failed jobs. Resolves with the verifier's welcome.
+   * verifier as failed jobs. `onVoucher` receives the signed DelegateVouchers
+   * the verifier issues for carried probes — the caller must verify and
+   * persist them (they are the only proof of claimable credits). Resolves
+   * with the verifier's welcome.
    */
   async serveProbeJobs(
     verifierPeer: PeerInfo,
     conn: PeerConnection,
     hello: Omit<DelegateHelloPayload, 'version'>,
     handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>>,
+    onVoucher?: (voucher: DelegateVoucherPayload) => void | Promise<void>,
   ): Promise<{ accepted: boolean; reason?: string }> {
     let mux = this._muxes.get(verifierPeer.peerId);
     if (!mux) {
@@ -155,6 +132,9 @@ export class DelegationManager {
       this._muxes.set(verifierPeer.peerId, mux);
     }
     const jobMux = mux;
+    if (onVoucher) {
+      jobMux.onVoucher(onVoucher);
+    }
     jobMux.onJob(async (job) => {
       let result: Omit<ProbeJobResultPayload, 'version' | 'jobId'>;
       try {

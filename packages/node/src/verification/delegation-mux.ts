@@ -1,6 +1,7 @@
 import {
   MessageType,
   type DelegateHelloPayload,
+  type DelegateVoucherPayload,
   type DelegateWelcomePayload,
   type FramedMessage,
   type ProbeJobRequestPayload,
@@ -11,10 +12,12 @@ import { encodeFrame } from '../p2p/message-protocol.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import {
   decodeDelegateHello,
+  decodeDelegateVoucher,
   decodeDelegateWelcome,
   decodeProbeJobRequest,
   decodeProbeJobResult,
   encodeDelegateHello,
+  encodeDelegateVoucher,
   encodeDelegateWelcome,
   encodeProbeJobRequest,
   encodeProbeJobResult,
@@ -25,6 +28,7 @@ const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.DelegateWelcome]: 'DelegateWelcome',
   [MessageType.ProbeJobRequest]: 'ProbeJobRequest',
   [MessageType.ProbeJobResult]: 'ProbeJobResult',
+  [MessageType.DelegateVoucher]: 'DelegateVoucher',
 };
 
 const DEFAULT_WELCOME_TIMEOUT_MS = 15_000;
@@ -43,6 +47,7 @@ export class DelegationMux {
   private _messageIdCounter = 0;
   private _onHello?: DelegationMessageHandler<DelegateHelloPayload>;
   private _onJob?: DelegationMessageHandler<ProbeJobRequestPayload>;
+  private _onVoucher?: DelegationMessageHandler<DelegateVoucherPayload>;
   private readonly _pendingResults = new Map<string, PendingResult>();
   private _pendingWelcome: PendingWelcome | null = null;
 
@@ -56,6 +61,10 @@ export class DelegationMux {
 
   onJob(handler: DelegationMessageHandler<ProbeJobRequestPayload>): void {
     this._onJob = handler;
+  }
+
+  onVoucher(handler: DelegationMessageHandler<DelegateVoucherPayload>): void {
+    this._onVoucher = handler;
   }
 
   sendHello(payload: DelegateHelloPayload): void {
@@ -72,6 +81,10 @@ export class DelegationMux {
 
   sendResult(payload: ProbeJobResultPayload): void {
     this._send(MessageType.ProbeJobResult, encodeProbeJobResult(payload));
+  }
+
+  sendVoucher(payload: DelegateVoucherPayload): void {
+    this._send(MessageType.DelegateVoucher, encodeDelegateVoucher(payload));
   }
 
   waitForWelcome(timeoutMs = DEFAULT_WELCOME_TIMEOUT_MS): Promise<DelegateWelcomePayload> {
@@ -172,6 +185,15 @@ export class DelegationMux {
         } else {
           debugWarn(`[DelegationMux] Unmatched ProbeJobResult for job ${payload.jobId}`);
         }
+        return true;
+      }
+      case MessageType.DelegateVoucher: {
+        const payload = decodeDelegateVoucher(frame.payload);
+        if (!this._onVoucher) {
+          debugWarn('[DelegationMux] DelegateVoucher dropped — no voucher handler registered');
+          return true;
+        }
+        await this._onVoucher(payload);
         return true;
       }
       default:

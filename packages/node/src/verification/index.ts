@@ -4,10 +4,12 @@ export { DelegationMux, type DelegationMessageHandler } from './delegation-mux.j
 export { DelegationManager, type ConnectedDelegate, type DelegationManagerDeps } from './delegation-manager.js';
 export {
   decodeDelegateHello,
+  decodeDelegateVoucher,
   decodeDelegateWelcome,
   decodeProbeJobRequest,
   decodeProbeJobResult,
   encodeDelegateHello,
+  encodeDelegateVoucher,
   encodeDelegateWelcome,
   encodeProbeJobRequest,
   encodeProbeJobResult,

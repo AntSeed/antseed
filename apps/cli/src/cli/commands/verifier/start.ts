@@ -2,10 +2,18 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
 import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, resolveChainConfig } from '@antseed/node'
-import type { NodePaymentsConfig, PeerInfo } from '@antseed/node'
+import {
+  AntseedNode,
+  makeVerifierRegistryDomain,
+  peerIdToAddress,
+  resolveChainConfig,
+  signDelegateVoucher,
+  toPeerId,
+} from '@antseed/node'
+import type { DelegateVoucherMessage, NodePaymentsConfig, PeerInfo } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import {
@@ -33,8 +41,12 @@ const DEFAULT_PROBE_SOURCE = 'compositional' as const
 const DEFAULT_PROBE_ROTATION_HISTORY = 2000
 const DEFAULT_DELEGATE_JOB_TIMEOUT_MS = 60_000
 const DEFAULT_MIN_DELEGATES = 1
-/** On-chain batch bound (AntseedVerifierRegistry.MAX_DELEGATES_PER_BATCH). */
-const MAX_DELEGATE_CREDIT_BATCH = 64
+/**
+ * How long an issued DelegateVoucher stays claimable. Generous by design:
+ * claims land in the claim-time epoch, so a delegate whose verifier already
+ * exhausted its per-epoch grant cap simply claims in a later epoch.
+ */
+const VOUCHER_TTL_SECS = 30 * 24 * 60 * 60
 /**
  * KBF references drift as upstream backends update — the published KBF study
  * (arXiv:2605.29524) measured probe staleness at ~7–9 weeks. Warn (once per
@@ -235,8 +247,8 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       console.log('')
 
       if (verifierOptions.delegation.enabled) {
-        node.on('delegate:connected', (delegate: { peerId: string; payoutAddress: string }) => {
-          console.log(chalk.dim(`[verifier] Delegate connected: ${delegate.peerId.slice(0, 12)}… (payout ${delegate.payoutAddress.slice(0, 10)}…)`))
+        node.on('delegate:connected', (delegate: { peerId: string }) => {
+          console.log(chalk.dim(`[verifier] Delegate connected: ${delegate.peerId.slice(0, 12)}…`))
         })
         node.on('delegate:disconnected', (peerId: string) => {
           console.log(chalk.dim(`[verifier] Delegate disconnected: ${peerId.slice(0, 12)}…`))
@@ -267,47 +279,79 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       const warn = (m: string) => console.warn(chalk.yellow(`[verifier] ${m}`))
 
       /**
-       * Submit one aggregated creditDelegates call for the round, clamped to
-       * the verifier's remaining on-chain per-epoch grant allowance.
-       * Aggregation is deliberate: per-request crediting would publish a
-       * fine-grained on-chain map of probe-carrying buyers.
+       * Sign and deliver one EIP-712 DelegateVoucher per carrier for a cohort
+       * audit's probe commitment. Nothing goes on-chain here — the delegate's
+       * operator claims the voucher itself, and the contract enforces the
+       * commitment budget (credited attestations only), the operator binding,
+       * and the per-epoch cap. We clamp to the commitment's remaining budget
+       * up front so we never issue vouchers that can only revert.
        */
-      const submitDelegateCredits = async (epoch: number, roundJobs: Map<string, number>): Promise<void> => {
+      const issueDelegateVouchers = async (probeCommitment: string, roundJobs: Map<string, number>): Promise<void> => {
         if (roundJobs.size === 0) return
+        const registryAddress = chainConfig.verifierRegistryAddress
+        if (!registryAddress) {
+          warn('verifierRegistryAddress missing from chain config; cannot issue delegate vouchers')
+          return
+        }
         try {
-          const [policy, granted] = await Promise.all([
-            registryClient.getDelegatePolicy(),
-            registryClient.epochDelegateCreditsGrantedBy(epoch, address),
+          const [budget, granted] = await Promise.all([
+            registryClient.commitmentDelegateBudget(address, probeCommitment),
+            registryClient.commitmentDelegateCredits(address, probeCommitment),
           ])
-          const remaining = policy.maxDelegateCreditsPerVerifierPerEpoch - granted
-          if (remaining <= 0) {
-            log(`Delegate credit allowance exhausted for epoch ${epoch}; skipping crediting this round`)
+          const available = budget - granted
+          if (available <= 0) {
+            log(`No delegate-credit budget on commitment ${probeCommitment.slice(0, 10)}… (no credited attestations); skipping vouchers`)
             return
           }
-          // Largest contributors first, bounded by the on-chain batch size.
-          let entries = [...roundJobs.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, MAX_DELEGATE_CREDIT_BATCH)
+          // Largest contributors first; scale down when carried jobs exceed
+          // what the credited attestations can back.
+          let entries = [...roundJobs.entries()].sort((a, b) => b[1] - a[1])
           let total = entries.reduce((sum, [, jobs]) => sum + jobs, 0)
-          if (total > remaining) {
-            const scale = remaining / total
+          if (total > available) {
+            const scale = available / total
             entries = entries
-              .map(([payout, jobs]) => [payout, Math.floor(jobs * scale)] as [string, number])
+              .map(([peerId, jobs]) => [peerId, Math.floor(jobs * scale)] as [string, number])
               .filter(([, credits]) => credits > 0)
             total = entries.reduce((sum, [, credits]) => sum + credits, 0)
             if (entries.length === 0 || total === 0) {
-              log(`Delegate credit allowance too low to credit this round (${remaining} left)`)
+              log(`Commitment budget too low to voucher this round (${available} left)`)
               return
             }
           }
-          const tx = await registryClient.creditDelegates(
-            identity.wallet,
-            entries.map(([payout]) => payout),
-            entries.map(([, credits]) => credits),
-          )
-          log(`Credited ${entries.length} delegate(s) with ${total} credit(s) (tx ${tx.slice(0, 10)}…)`)
+          const domain = makeVerifierRegistryDomain(chainConfig.evmChainId, registryAddress)
+          const deadline = Math.floor(Date.now() / 1000) + VOUCHER_TTL_SECS
+          let issued = 0
+          for (const [delegatePeerId, credits] of entries) {
+            const msg: DelegateVoucherMessage = {
+              buyer: peerIdToAddress(delegatePeerId),
+              probeCommitment,
+              credits,
+              nonce: BigInt('0x' + randomBytes(16).toString('hex')),
+              deadline,
+            }
+            const signature = await signDelegateVoucher(identity.wallet, domain, msg)
+            try {
+              node.sendDelegateVoucher(toPeerId(delegatePeerId), {
+                version: 1,
+                chainId: chainConfig.evmChainId,
+                registry: registryAddress,
+                buyer: msg.buyer,
+                probeCommitment,
+                credits,
+                nonce: msg.nonce.toString(),
+                deadline,
+                signature,
+              })
+              issued += 1
+            } catch (err) {
+              // The delegate disconnected between carrying and crediting; its
+              // budget share stays unissued rather than being reassigned.
+              warn(`voucher delivery to ${delegatePeerId.slice(0, 12)}… failed: ${(err as Error).message}`)
+            }
+          }
+          log(`Issued ${issued}/${entries.length} delegate voucher(s) for ${total} credit(s) on commitment ${probeCommitment.slice(0, 10)}…`)
         } catch (err) {
-          warn(`delegate crediting failed: ${(err as Error).message}`)
+          warn(`delegate voucher issuance failed: ${(err as Error).message}`)
         }
       }
 
@@ -369,22 +413,10 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           log(`Discovered ${discovered.length} advertised service(s) across ${peers.length} peer(s)`)
         }
 
-        const roundDelegateJobs = new Map<string, number>()
-        const flushDelegateCredits = async (): Promise<void> => {
-          if (verifierOptions.delegation.enabled && roundDelegateJobs.size > 0) {
-            await submitDelegateCredits(epoch, roundDelegateJobs)
-            roundDelegateJobs.clear()
-          }
-        }
-
         for (const { service, peers: servicePeers } of targets) {
-          if (stopped) {
-            await flushDelegateCredits()
-            return
-          }
+          if (stopped) return
           if (remaining <= 0) {
             log(`Epoch ${epoch} audit budget exhausted mid-round; deferring remaining services`)
-            await flushDelegateCredits()
             return
           }
 
@@ -490,16 +522,16 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             const attested = result.outcomes.filter((o) => o.attested).length
             const diffs = result.outcomes.filter((o) => o.verdict === 'DIFF').length
             remaining -= attested
-            for (const [payout, jobs] of result.delegateJobs) {
-              roundDelegateJobs.set(payout, (roundDelegateJobs.get(payout) ?? 0) + jobs)
+            // Vouchers are per probe commitment: issue right after the
+            // audit's attestations funded the commitment's delegate budget.
+            if (verifierOptions.delegation.enabled && result.delegateJobs.size > 0) {
+              await issueDelegateVouchers(result.probeCommitment, result.delegateJobs)
             }
             console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested, ${diffs} DIFF`))
           } catch (err) {
             warn(`audit round failed for ${service}: ${(err as Error).message}`)
           }
         }
-
-        await flushDelegateCredits()
       }
 
       if (options.once) {

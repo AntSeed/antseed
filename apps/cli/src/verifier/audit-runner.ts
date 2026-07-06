@@ -33,14 +33,14 @@ export type ProbeSourceKind = 'compositional' | 'bank'
  * Executes the probe plan against one seller and returns the observation.
  * The default executor probes directly from this node's buyer identity; the
  * delegated executor routes probes through organic delegate buyers and
- * reports which payout addresses carried verified jobs.
+ * reports which delegates (by peerId) carried verified jobs.
  */
 export type ProbeExecutor = (
   peer: PeerInfo,
   service: string,
   probeSet: ProbeSet,
   maxProbesPerRequest: number,
-) => Promise<{ run: SellerProbeRun; jobsByPayout?: Map<string, number> }>
+) => Promise<{ run: SellerProbeRun; jobsByDelegate?: Map<string, number> }>
 
 export interface AuditRunnerOptions {
   probesPerAudit: number
@@ -92,7 +92,7 @@ export interface CohortAuditResult {
   evidencePath: string
   cohortSize: number
   outcomes: SellerAuditOutcome[]
-  /** Verified probe jobs per delegate payout address (empty in direct mode). */
+  /** Verified probe jobs per delegate peerId (empty in direct mode). */
   delegateJobs: Map<string, number>
 }
 
@@ -227,10 +227,10 @@ export async function runCohortAudit(
   const delegateJobs = new Map<string, number>()
   for (const peer of cohort) {
     log(`Probing ${peer.peerId.slice(0, 10)}… (agent ${peer.onChainAgentId}) with ${probeSet.probes.length} probes`)
-    const { run, jobsByPayout } = await execute(peer, service, probeSet, options.maxProbesPerRequest)
+    const { run, jobsByDelegate } = await execute(peer, service, probeSet, options.maxProbesPerRequest)
     for (const error of run.errors) warn(`  ${peer.peerId.slice(0, 10)}…: ${error}`)
-    for (const [payout, jobs] of jobsByPayout ?? []) {
-      delegateJobs.set(payout, (delegateJobs.get(payout) ?? 0) + jobs)
+    for (const [delegatePeerId, jobs] of jobsByDelegate ?? []) {
+      delegateJobs.set(delegatePeerId, (delegateJobs.get(delegatePeerId) ?? 0) + jobs)
     }
     runs.push(run)
   }
