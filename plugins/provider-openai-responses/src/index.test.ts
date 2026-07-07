@@ -260,6 +260,244 @@ describe('provider-openai-responses plugin', () => {
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
+  it('strips unsupported fields before relaying to the upstream backend', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'resp_1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+
+    await provider.handleRequest({
+      requestId: 'req-metadata',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        metadata: { trace: 'abc' },
+        user: 'user-123',
+        temperature: 0.2,
+        top_p: 0.9,
+        stream: false,
+      })),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
+    expect(body.metadata).toBeUndefined();
+    expect(body.user).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('forces upstream streaming and collapses SSE for non-stream callers', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        'event: response.created\n'
+          + 'data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.5","status":"in_progress","output":[]}}\n\n'
+          + 'event: response.completed\n'
+          + 'data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.5","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi","annotations":[]}]}],"output_text":"hi","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n'
+          + 'data: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+
+    const response = await provider.handleRequest({
+      requestId: 'req-stream-required',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        stream: false,
+      })),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const upstreamBody = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as Record<string, unknown>;
+    expect(upstreamBody.stream).toBe(true);
+    expect(response.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(body.id).toBe('resp_1');
+    expect(body.output_text).toBe('hi');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('does not stream callbacks when forced streaming serves a non-stream request', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        'event: response.completed\n'
+          + 'data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.5","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi","annotations":[]}]}],"output_text":"hi","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n'
+          + 'data: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+    const callbacks = {
+      onResponseStart: vi.fn(),
+      onResponseChunk: vi.fn(),
+    };
+
+    const response = await provider.handleRequestStream!({
+      requestId: 'req-forced-stream-callbacks',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        stream: false,
+      })),
+    }, callbacks);
+
+    expect(callbacks.onResponseStart).not.toHaveBeenCalled();
+    expect(callbacks.onResponseChunk).not.toHaveBeenCalled();
+    expect(response.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(body.output_text).toBe('hi');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('collapses failed Responses SSE into a JSON error for non-stream callers', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        'event: response.failed\n'
+          + 'data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"type":"server_error","message":"backend failed"}}}\n\n'
+          + 'data: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+
+    const response = await provider.handleRequest({
+      requestId: 'req-failed-stream',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        stream: false,
+      })),
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(body).toEqual({
+      error: {
+        type: 'server_error',
+        message: 'backend failed',
+      },
+    });
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('does not add create-only fields to Responses subresources', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+
+    await provider.handleRequest({
+      requestId: 'req-cancel',
+      method: 'POST',
+      path: '/v1/responses/resp_1/cancel',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({})),
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/responses\/resp_1\/cancel$/);
+    const body = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as Record<string, unknown>;
+    expect(body).toEqual({});
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
   it('retries transient upstream failures', async () => {
     const authFile = writeAuthFile({
       tokens: {
