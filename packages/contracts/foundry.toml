@@ -14,6 +14,27 @@ optimizer_runs = 200
 via_ir = true
 ffi = false
 
+# Lean defaults — keep `forge test` fast for routine runs.
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 128
+depth = 64
+fail_on_revert = false
+call_override = false
+
+# Heavy campaign for deep custody/invariant exploration.
+# Run with: FOUNDRY_PROFILE=deep-fuzz forge test
+[profile.deep-fuzz.fuzz]
+runs = 4096
+
+[profile.deep-fuzz.invariant]
+runs = 512
+depth = 256
+fail_on_revert = false
+call_override = false
+
 [fmt]
 line_length = 120
 tab_width = 4
