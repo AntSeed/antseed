@@ -271,14 +271,16 @@ function extractAccountIdFromTokens(accessToken: string, idToken: string | undef
 function prepareRequestBody(
   request: SerializedHttpRequest,
   serviceRewriteMap: Record<string, string> | undefined,
-): SerializedHttpRequest {
+): { request: SerializedHttpRequest; forcedStream: boolean } {
   if (request.method === 'GET' || request.method === 'HEAD') {
-    return request;
+    return { request, forcedStream: false };
   }
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
     parsed.store ??= false;
+    const forcedStream = parsed.stream !== true;
+    parsed.stream = true;
 
     const requestedService = (parsed.model ?? parsed.service) as string | undefined;
     if (serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
@@ -295,7 +297,10 @@ function prepareRequestBody(
 
     // Strip parameters the Codex backend doesn't support.
     delete parsed.metadata;
+    delete parsed.user;
     delete parsed.max_output_tokens;
+    delete parsed.temperature;
+    delete parsed.top_p;
 
     // The Codex backend requires `instructions` as a top-level field.
     // Some clients (e.g. pi's openai-responses provider) send the system
@@ -323,12 +328,68 @@ function prepareRequestBody(
     }
 
     return {
-      ...request,
-      body: new TextEncoder().encode(JSON.stringify(parsed)),
+      request: {
+        ...request,
+        body: new TextEncoder().encode(JSON.stringify(parsed)),
+      },
+      forcedStream,
     };
   } catch {
-    return request;
+    return { request, forcedStream: false };
   }
+}
+
+function collapseResponsesSseResponse(response: SerializedHttpResponse): SerializedHttpResponse {
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    return response;
+  }
+
+  const body = parseCompletedResponsesSse(new TextDecoder().decode(response.body));
+  if (!body) {
+    return response;
+  }
+
+  return {
+    ...response,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+    },
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  };
+}
+
+function parseCompletedResponsesSse(text: string): Record<string, unknown> | null {
+  for (const block of text.replace(/\r\n/g, '\n').split('\n\n')) {
+    const lines = block.split('\n');
+    const event = lines
+      .find((line) => line.startsWith('event: '))
+      ?.slice('event: '.length)
+      .trim();
+    if (event !== 'response.completed') continue;
+
+    const data = lines
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.slice('data: '.length))
+      .join('\n')
+      .trim();
+    if (!data || data === '[DONE]') continue;
+
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>;
+      const nested = parsed.response;
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        return nested as Record<string, unknown>;
+      }
+      if (Array.isArray(parsed.output) || typeof parsed.output_text === 'string') {
+        return parsed;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 function toRelayPath(path: string): string | null {
@@ -468,7 +529,8 @@ class OpenAIResponsesProvider implements Provider {
     if ('response' in prepared) {
       return prepared.response;
     }
-    return this.inner.handleRequest(prepared.request);
+    const response = await this.inner.handleRequest(prepared.request);
+    return prepared.forcedStream ? collapseResponsesSseResponse(response) : response;
   }
 
   async handleRequestStream(
@@ -490,7 +552,7 @@ class OpenAIResponsesProvider implements Provider {
 
   private prepareRequest(
     req: SerializedHttpRequest,
-  ): { request: SerializedHttpRequest } | { response: SerializedHttpResponse } {
+  ): { request: SerializedHttpRequest; forcedStream: boolean } | { response: SerializedHttpResponse } {
     const normalizedPath = req.path.split('?')[0] ?? req.path;
     const relayPath = toRelayPath(req.path);
     if (!relayPath) {
@@ -500,9 +562,10 @@ class OpenAIResponsesProvider implements Provider {
     const preparedBody = prepareRequestBody(req, this.serviceRewriteMap);
     return {
       request: {
-        ...preparedBody,
+        ...preparedBody.request,
         path: relayPath,
       },
+      forcedStream: preparedBody.forcedStream,
     };
   }
 }

@@ -44,7 +44,10 @@ const REQUEST_RENDERERS: Partial<Record<ServiceApiProtocol, RequestRenderer>> = 
   ),
   'openai-responses': (request, options) => renderCanonicalRequestToOpenAIResponsesBody(
     request,
-    { includeMetadata: options.from !== 'anthropic-messages' },
+    {
+      includeMetadata: options.from !== 'anthropic-messages',
+      includeUser: options.from !== 'anthropic-messages',
+    },
   ),
 };
 

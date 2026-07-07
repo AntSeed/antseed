@@ -290,7 +290,7 @@ describe('transformRequest anthropic to responses', () => {
     expect(body.max_output_tokens).toBe(256);
     expect(body.stop).toEqual(['END']);
     expect(body.metadata).toBeUndefined();
-    expect(body.user).toBe('user-123');
+    expect(body.user).toBeUndefined();
     expect(body.tool_choice).toEqual({ type: 'function', name: 'write' });
     expect(body.tools).toEqual([{
       type: 'function',
