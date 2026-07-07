@@ -7,7 +7,7 @@ export interface TrustedPlugin {
   version?: string
 }
 
-export const TRUSTED_PLUGINS: TrustedPlugin[] = [
+export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'anthropic',
     type: 'provider',
@@ -44,12 +44,18 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     description: 'Local LLM provider (Ollama, llama.cpp)',
     package: '@antseed/provider-local-llm',
   },
+]
+
+export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'local',
     type: 'router',
     description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
   },
+]
+
+export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'refoundhq-antseed-verifier',
     type: 'verifier',
@@ -57,6 +63,12 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@refoundhq/antseed-verifier',
     version: '0.1.0',
   },
+]
+
+export const TRUSTED_PLUGINS: TrustedPlugin[] = [
+  ...TRUSTED_PROVIDER_PLUGINS,
+  ...TRUSTED_ROUTER_PLUGINS,
+  ...TRUSTED_VERIFIER_PLUGINS,
 ]
 
 export function resolvePluginPackage(nameOrPackage: string): string {

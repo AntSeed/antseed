@@ -11,11 +11,11 @@ import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@a
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
-import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
-import { normalizeVerifierIds, type VerifierPolicy } from '../../../plugins/verifier.js'
+import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
 
@@ -414,17 +414,31 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
       let verifierPolicy: VerifierPolicy | undefined
-      if (options.verifier === false) {
-        verifierPolicy = undefined
-      } else {
-        try {
-          verifierPolicy = {
-            prefer: normalizeVerifierIds(String(options.verifiers ?? '')),
-            require: Boolean(options.requireVerifier),
+      try {
+        verifierPolicy = resolveVerifierPolicy({
+          verifier: options.verifier,
+          verifiers: options.verifiers,
+          requireVerifier: options.requireVerifier,
+        })
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exit(1)
+      }
+
+      // Keep the request path import-only; the seller-specific default is known per peer.
+      if (verifierPolicy) {
+        const toPreload = verifierPolicy.prefer?.length ? verifierPolicy.prefer : [...curatedVerifierIds()]
+        for (const id of toPreload) {
+          try {
+            await loadVerifierPlugin(id)
+          } catch (err) {
+            const msg = `Verifier "${id}" could not be prepared: ${(err as Error).message}`
+            if (verifierPolicy.require) {
+              proxySpinner.fail(chalk.red(msg))
+              process.exit(1)
+            }
+            console.warn(chalk.yellow(`${msg} — optional verification for this SDK will be skipped.`))
           }
-        } catch (err) {
-          console.error(chalk.red((err as Error).message))
-          process.exit(1)
         }
       }
 

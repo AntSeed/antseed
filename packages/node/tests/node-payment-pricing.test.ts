@@ -7,6 +7,9 @@ import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
 
+const ATTEST_ID = 'refoundhq-antseed-verifier';
+const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
+
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
   services: string[];
@@ -60,6 +63,57 @@ function makeConn(sentFrames: Uint8Array[]): any {
       sentFrames.push(frame);
     },
     hasRemoteCapability: () => false,
+  };
+}
+
+function makeAttestHarness() {
+  const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
+  provider.handleRequest = vi.fn(provider.handleRequest);
+  const prove = vi.fn(async (req: SellerRequest) => ({
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({ ok: true, path: req.path })),
+  }));
+  const prover: Prover = {
+    type: 'prover',
+    name: ATTEST_ID,
+    displayName: 'Refound verifier',
+    version: '0.1.0',
+    description: 'test prover',
+    prove,
+  };
+  const sendPaymentRequired = vi.fn();
+  const handler = new SellerRequestHandler({
+    providers: [provider],
+    provers: [prover],
+    sellerPaymentManager: makeSpmMock({ hasSession: () => false }),
+    sessionTracker: null,
+    channelsClient: {} as any,
+    announcer: null,
+    emit: () => false,
+  });
+  const sentFrames: Uint8Array[] = [];
+  const { mux } = handler.handleConnection(
+    makeConn(sentFrames),
+    'b'.repeat(40),
+    { sendNeedAuth: vi.fn(), sendPaymentRequired } as any,
+  );
+  return {
+    provider,
+    prove,
+    sendPaymentRequired,
+    sendAttest: (i = 0, body = new Uint8Array([1])) => mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: i + 1,
+      payload: encodeHttpRequest({
+        requestId: `req-attest-${i}`,
+        method: 'POST',
+        path: ATTEST_ROUTE,
+        headers: {},
+        body,
+      }),
+    }),
+    responses: () => sentFrames.map((f) => decodeHttpResponse(decodeFrame(f)!.message.payload)),
   };
 }
 
@@ -143,54 +197,47 @@ describe('SellerRequestHandler payment pricing selection', () => {
   });
 
   it('dispatches attestation requests before provider and payment logic', async () => {
-    const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
-    provider.handleRequest = vi.fn(provider.handleRequest);
-    const prove = vi.fn(async (req: SellerRequest) => ({
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: new TextEncoder().encode(JSON.stringify({ ok: true, path: req.path })),
-    }));
-    const prover: Prover = {
-      type: 'prover',
-      name: 'refoundhq-antseed-verifier',
-      displayName: 'Refound verifier',
-      version: '0.1.0',
-      description: 'test prover',
-      prove,
-    };
-    const sendPaymentRequired = vi.fn();
-    const handler = new SellerRequestHandler({
-      providers: [provider],
-      provers: [prover],
-      sellerPaymentManager: makeSpmMock({ hasSession: () => false }),
-      sessionTracker: null,
-      channelsClient: {} as any,
-      announcer: null,
-      emit: () => false,
-    });
+    const { provider, prove, sendPaymentRequired, sendAttest, responses } = makeAttestHarness();
+    await sendAttest(0, new Uint8Array([1, 2, 3]));
 
-    const sentFrames: Uint8Array[] = [];
-    const conn = makeConn(sentFrames);
-    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired } as any;
-    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
-    await mux.handleFrame({
-      type: MessageType.HttpRequest,
-      messageId: 1,
-      payload: encodeHttpRequest({
-        requestId: 'req-attest',
-        method: 'POST',
-        path: `${ANTSEED_ATTEST_PATH}/refoundhq-antseed-verifier`,
-        headers: {},
-        body: new Uint8Array([1, 2, 3]),
-      }),
-    });
-
-    const decoded = decodeFrame(sentFrames[0]!);
-    const response = decodeHttpResponse(decoded!.message.payload);
-    expect(response.statusCode).toBe(200);
+    expect(responses()[0]!.statusCode).toBe(200);
     expect(prove).toHaveBeenCalledOnce();
     expect(provider.handleRequest).not.toHaveBeenCalled();
     expect(sendPaymentRequired).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits the free attestation route per buyer', async () => {
+    const { prove, sendAttest, responses } = makeAttestHarness();
+
+    for (let i = 0; i < 11; i++) {
+      await sendAttest(i);
+    }
+
+    const statuses = responses().map((r) => r.statusCode);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(10);
+    expect(statuses[10]).toBe(429);
+    expect(prove).toHaveBeenCalledTimes(10);
+  });
+
+  it('hard-bounds tracked attestation rate-limit peers', () => {
+    const handler = new SellerRequestHandler({
+      providers: [],
+      sellerPaymentManager: null,
+      sessionTracker: null,
+      channelsClient: null,
+      announcer: null,
+      emit: () => false,
+    }) as unknown as {
+      _allowAttest(peerId: string): boolean;
+      _attestRateWindows: Map<string, unknown>;
+    };
+
+    for (let i = 0; i < 1024; i++) {
+      expect(handler._allowAttest(`peer-${i}`)).toBe(true);
+    }
+    expect(handler._attestRateWindows.size).toBe(1024);
+    expect(handler._allowAttest('peer-overflow')).toBe(false);
+    expect(handler._attestRateWindows.size).toBe(1024);
   });
 
   it('matches the requested provider and service pricing instead of using the first provider defaults', () => {

@@ -33,7 +33,8 @@ type PluginKind = 'provider' | 'router' | 'verifier' | 'prover'
 async function loadPlugin<T>(
   nameOrPackage: string,
   kind: PluginKind,
-  methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin | keyof AntseedVerifierPlugin | keyof Prover
+  methodName: keyof AntseedProviderPlugin | keyof AntseedRouterPlugin | keyof AntseedVerifierPlugin | keyof Prover,
+  opts?: { install?: boolean }
 ): Promise<T> {
   const pkgName = resolvePackageName(nameOrPackage)
   const pluginsDir = getPluginsDir()
@@ -49,8 +50,10 @@ async function loadPlugin<T>(
     'code' in err &&
     (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
 
+  // The request hot path passes { install: false } so it never blocks on npm; startup
+  // preloads with installs allowed, so a prepared plugin is import-only here.
   const isTrusted = TRUSTED_PLUGINS.some(p => p.package === pkgName)
-  if (isTrusted) {
+  if (isTrusted && opts?.install !== false) {
     await ensureTrustedPluginInstallReady(pkgName, resolved, pluginsDir)
   }
   assertPinnedPluginVersion(pkgName, pluginsDir)
@@ -61,7 +64,8 @@ async function loadPlugin<T>(
   } catch (err) {
     if (isModuleNotFound(err) && !existsSync(resolved)) {
       throw new Error(
-        `Plugin "${pkgName}" not found. Install it first, then retry your command.\nRun: antseed plugin add ${pkgName}`
+        `Plugin "${pkgName}" not found. Install it first, then retry your command.\n` +
+        `Run: cd ${pluginsDir} && npm install --ignore-scripts ${pkgName}`
       )
     } else {
       const cause = err instanceof Error ? err.message : String(err)
@@ -71,13 +75,12 @@ async function loadPlugin<T>(
     }
   }
 
-  // Packages may export multiple plugin types; pick the export matching this loader.
-  const candidates = [mod['default'], ...Object.values(mod)].filter(
-    (p): p is Record<string, unknown> => !!p && typeof p === 'object',
-  )
-  const plugin = candidates.find(
-    (p) => p['type'] === kind && typeof p[methodName as string] === 'function',
-  )
+  let plugin: Record<string, unknown> | undefined
+  try {
+    plugin = selectPluginExport(mod, kind, methodName as string)
+  } catch {
+    throw new Error(`Plugin "${pkgName}" exports multiple ${kind} plugins; expected exactly one.`)
+  }
   if (!plugin) {
     throw new Error(
       `Plugin "${pkgName}" does not export a valid ${kind} plugin (expected an export with type: '${kind}' and ${String(methodName)}())`
@@ -87,14 +90,32 @@ async function loadPlugin<T>(
   return plugin as T
 }
 
+export function selectPluginExport(
+  mod: Record<string, unknown>,
+  kind: PluginKind,
+  methodName: string,
+): Record<string, unknown> | undefined {
+  const candidates = Array.from(new Set([mod['default'], ...Object.values(mod)])).filter(
+    (p): p is Record<string, unknown> => !!p && typeof p === 'object',
+  )
+  const matches = candidates.filter(
+    (p) => p['type'] === kind && typeof p[methodName] === 'function',
+  )
+  if (matches.length > 1) {
+    throw new Error(`multiple matching ${kind} exports`)
+  }
+  return matches[0]
+}
+
 export function assertPinnedPluginVersion(pkgName: string, pluginsDir = getPluginsDir()): void {
   const pin = pinnedVersion(pkgName)
   if (!pin) return
   const installed = readPluginPackageVersion(pkgName, pluginsDir)
   if (installed === pin) return
+  const state = installed ? `version ${installed} is installed` : 'it is not installed'
   throw new Error(
-    `Plugin "${pkgName}" is version-locked to ${pin} but ${installed ?? 'an unknown version'} is installed.\n` +
-    `Reinstall the pinned version: antseed plugin add ${pkgName}@${pin}`
+    `Plugin "${pkgName}" is version-locked to ${pin} but ${state}.\n` +
+    `Reinstall the pinned version: cd ${pluginsDir} && npm install --ignore-scripts ${pkgName}@${pin}`
   )
 }
 
@@ -104,8 +125,11 @@ async function ensureTrustedPluginInstallReady(
   pluginsDir: string,
 ): Promise<void> {
   const pkgJsonPath = join(pluginsDir, 'node_modules', ...pkgName.split('/'), 'package.json')
+  const pin = pinnedVersion(pkgName)
+  const pinMismatch = pin !== undefined && readPluginPackageVersion(pkgName, pluginsDir) !== pin
   const shouldInstall = !existsSync(entryPath)
     || !existsSync(pkgJsonPath)
+    || pinMismatch
     || hasMissingDeclaredDependencyTree(pkgName, pluginsDir)
   if (!shouldInstall) return
   if (isTruthyEnv(process.env['ANTSEED_SKIP_PLUGIN_UPDATE_CHECK'])) return
@@ -164,8 +188,11 @@ export async function loadRouterPlugin(nameOrPackage: string): Promise<AntseedRo
   return loadPlugin<AntseedRouterPlugin>(nameOrPackage, 'router', 'createRouter')
 }
 
-export async function loadVerifierPlugin(nameOrPackage: string): Promise<AntseedVerifierPlugin> {
-  return loadPlugin<AntseedVerifierPlugin>(nameOrPackage, 'verifier', 'verify')
+export async function loadVerifierPlugin(
+  nameOrPackage: string,
+  opts?: { install?: boolean },
+): Promise<AntseedVerifierPlugin> {
+  return loadPlugin<AntseedVerifierPlugin>(nameOrPackage, 'verifier', 'verify', opts)
 }
 
 export async function loadProverPlugin(nameOrPackage: string): Promise<Prover> {

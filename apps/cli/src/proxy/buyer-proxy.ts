@@ -4,6 +4,7 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
   type AntseedNode,
@@ -47,7 +48,7 @@ import {
   attachStreamingAntseedHeaders,
 } from './telemetry.js'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
-import { runVerifier, type VerifierPolicy, type SellerReach } from '../plugins/verifier.js'
+import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -96,6 +97,8 @@ function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes:
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
+/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
+const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 type PeerFailureEntry = {
   count: number
@@ -354,6 +357,29 @@ export function parsePersistedPeers(
  * and the proxy transparently routes their API calls through the
  * Antseed P2P network.
  */
+
+export function makeVerifierReach(
+  node: Pick<AntseedNode, 'sendRequest'>,
+  peer: PeerInfo,
+  chosenId: string,
+  signal: AbortSignal,
+): SellerReach {
+  const attestRoute = `${ANTSEED_ATTEST_PATH}/${encodeURIComponent(chosenId)}`
+  return async (r) => {
+    if (r.path !== attestRoute) {
+      throw new Error(`verifier may only call its attestation route (${attestRoute}), not ${r.path}`)
+    }
+    const resp = await node.sendRequest(peer, {
+      requestId: randomUUID(),
+      method: r.method,
+      path: r.path,
+      headers: r.headers ?? {},
+      body: r.body ?? new Uint8Array(),
+    }, { signal, controlPlane: true })
+    return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
+  }
+}
+
 export class BuyerProxy {
   private readonly _server: Server
   private readonly _node: AntseedNode
@@ -365,6 +391,7 @@ export class BuyerProxy {
   private _stateFileWatching = false
   private _pinnedPeer: string | null
   private readonly _verifier?: VerifierPolicy
+  private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -1261,17 +1288,9 @@ export class BuyerProxy {
     }
 
     if (this._verifier) {
-      const reach: SellerReach = async (r) => {
-        const resp = await this._node.sendRequest(selectedPeer, {
-          requestId: randomUUID(),
-          method: r.method,
-          path: r.path,
-          headers: r.headers ?? {},
-          body: r.body ?? new Uint8Array(),
-        })
-        return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
-      }
-      const outcome = await runVerifier(this._verifier, selectedPeer.peerId, selectedPeer.capabilities, reach)
+      const makeReach = (chosenId: string): SellerReach =>
+        makeVerifierReach(this._node, selectedPeer, chosenId, clientAbortController.signal)
+      const outcome = await this._verifyPeer(selectedPeer, makeReach, clientAbortController.signal)
       const short = selectedPeer.peerId.slice(0, 12)
       if (outcome.verified) {
         log(`Verified ${short}... via ${outcome.sdk}`)
@@ -1307,6 +1326,24 @@ export class BuyerProxy {
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
     }
+  }
+
+  private async _verifyPeer(
+    peer: PeerInfo,
+    makeReach: (chosenId: string) => SellerReach,
+    signal: AbortSignal,
+  ): Promise<VerifyOutcome> {
+    const policy = this._verifier
+    if (!policy) return { ok: true, verified: false }
+    const key = `${peer.peerId}|${verifierSupportFingerprint(peer.capabilities)}`
+    return getCachedVerdict(
+      this._verifyCache,
+      key,
+      Date.now(),
+      this._peerCacheTtlMs,
+      VERIFY_CACHE_MAX_ENTRIES,
+      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal),
+    )
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {

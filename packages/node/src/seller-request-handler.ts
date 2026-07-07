@@ -42,6 +42,10 @@ export interface SellerRequestHandlerDeps {
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
 /** Time to wait for a catch-up SpendingAuth before returning 402. */
 const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
+/** Per-buyer rate limit for the free attestation route. */
+const ATTEST_RATE_WINDOW_MS = 60_000;
+const ATTEST_RATE_MAX_PER_WINDOW = 10;
+const ATTEST_RATE_MAX_TRACKED_PEERS = 1024;
 /**
  * Handles all seller-side request processing: provider matching, execution,
  * cost tracking, payment auth checks, and load management.
@@ -52,10 +56,31 @@ const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
 export class SellerRequestHandler {
   private readonly _deps: SellerRequestHandlerDeps;
   private readonly _providerLoadCounts = new Map<string, number>();
+  private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
+  }
+
+  private _allowAttest(buyerPeerId: string): boolean {
+    const now = Date.now();
+    const win = this._attestRateWindows.get(buyerPeerId);
+    if (!win || now - win.start >= ATTEST_RATE_WINDOW_MS) {
+      if (this._attestRateWindows.size >= ATTEST_RATE_MAX_TRACKED_PEERS) {
+        for (const [peer, w] of this._attestRateWindows) {
+          if (now - w.start >= ATTEST_RATE_WINDOW_MS) this._attestRateWindows.delete(peer);
+        }
+        if (!this._attestRateWindows.has(buyerPeerId) && this._attestRateWindows.size >= ATTEST_RATE_MAX_TRACKED_PEERS) {
+          return false;
+        }
+      }
+      this._attestRateWindows.set(buyerPeerId, { start: now, count: 1 });
+      return true;
+    }
+    if (win.count >= ATTEST_RATE_MAX_PER_WINDOW) return false;
+    win.count += 1;
+    return true;
   }
 
   /**
@@ -85,7 +110,6 @@ export class SellerRequestHandler {
         return;
       }
 
-      // Free attestation route handled before provider and payment logic.
       if (pathOnly.startsWith(ANTSEED_ATTEST_PATH + '/')) {
         let verifierId: string;
         try {
@@ -109,6 +133,19 @@ export class SellerRequestHandler {
             headers: { 'content-type': 'application/json' },
             body: new TextEncoder().encode(JSON.stringify({
               error: { message: `No prover for verifier "${verifierId}".`, type: 'verifier_error', code: 'prover_not_found' },
+            })),
+          });
+          return;
+        }
+        // Rate-limit only the expensive path (quote generation); cheap 400/404
+        // rejections above don't consume a buyer's attestation quota.
+        if (!this._allowAttest(buyerPeerId)) {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 429,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: 'Attestation rate limit exceeded.', type: 'rate_limit_error' },
             })),
           });
           return;

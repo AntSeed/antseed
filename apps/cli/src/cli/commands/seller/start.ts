@@ -582,7 +582,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       let requestedVerifierIds: string[]
       try {
         requestedVerifierIds = normalizeVerifierIds(
-          (options.verifiers as string | undefined) ?? process.env[ANTSEED_VERIFIER_SDKS_ENV] ?? '',
+          (options.verifiers as string | undefined)
+            ?? process.env[ANTSEED_VERIFIER_SDKS_ENV]
+            ?? config.seller.verifiers?.join(',')
+            ?? '',
         )
       } catch (err) {
         console.error(chalk.red((err as Error).message))
