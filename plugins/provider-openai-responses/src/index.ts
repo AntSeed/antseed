@@ -294,6 +294,7 @@ function prepareRequestBody(
     delete parsed.service;
 
     // Strip parameters the Codex backend doesn't support.
+    delete parsed.metadata;
     delete parsed.max_output_tokens;
 
     // The Codex backend requires `instructions` as a top-level field.

@@ -128,7 +128,10 @@ export function renderCanonicalRequestToOpenAIChatBody(
   return body;
 }
 
-export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLlmRequest): Record<string, unknown> {
+export function renderCanonicalRequestToOpenAIResponsesBody(
+  request: CanonicalLlmRequest,
+  options: { includeMetadata?: boolean } = {},
+): Record<string, unknown> {
   const input: unknown[] = [];
 
   for (const item of request.input) {
@@ -172,7 +175,7 @@ export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLl
   if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIResponses(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
-  if (request.metadata) body.metadata = request.metadata;
+  if (options.includeMetadata !== false && request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
   return body;
 }

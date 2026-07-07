@@ -42,7 +42,10 @@ const REQUEST_RENDERERS: Partial<Record<ServiceApiProtocol, RequestRenderer>> = 
       groupAssistantToolCallsWithPreviousMessage: options.from === 'anthropic-messages',
     },
   ),
-  'openai-responses': (request) => renderCanonicalRequestToOpenAIResponsesBody(request),
+  'openai-responses': (request, options) => renderCanonicalRequestToOpenAIResponsesBody(
+    request,
+    { includeMetadata: options.from !== 'anthropic-messages' },
+  ),
 };
 
 const TARGET_PATHS: Partial<Record<ServiceApiProtocol, string>> = {
