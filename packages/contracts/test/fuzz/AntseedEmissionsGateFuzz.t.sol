@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { ANTSToken } from "../../core/ANTSToken.sol";
-import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 
 /**
@@ -29,7 +29,7 @@ import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
  */
 contract AntseedEmissionsGateFuzzTest is Test {
     ANTSToken token;
-    AntseedRegistryV2 registry;
+    AntseedRegistry registry;
     AntseedEmissionsGate gate;
 
     address constant KNOWN_ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
@@ -52,7 +52,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
-        registry = new AntseedRegistryV2();
+        registry = new AntseedRegistry();
         registry.setAntsToken(address(token));
         registry.setEmissions(legacyController);
         registry.setTeamWallet(teamWallet);

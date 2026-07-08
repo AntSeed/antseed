@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { ANTSToken } from "../../core/ANTSToken.sol";
-import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
@@ -41,7 +41,7 @@ contract MockAgentLookup {
  */
 contract AntseedSellerPoolsRewardsFuzzTest is Test {
     ANTSToken token;
-    AntseedRegistryV2 registry;
+    AntseedRegistry registry;
     AntseedEmissionsGate gate;
     MockERC8004Registry identityRegistry;
     AntseedSellerPools pools;
@@ -72,7 +72,7 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
-        registry = new AntseedRegistryV2();
+        registry = new AntseedRegistry();
         identityRegistry = new MockERC8004Registry();
         agentLookup = new MockAgentLookup();
         registry.setAntsToken(address(token));
