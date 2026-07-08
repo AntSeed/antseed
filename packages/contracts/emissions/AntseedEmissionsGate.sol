@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IANTSToken } from "../interfaces/IANTSToken.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 
 /**
  * @title AntseedEmissionsGate
@@ -35,7 +35,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     bytes32 public constant RESERVE_MINTER_ID = keccak256("antseed.emissions.reserve.v1");
 
     IANTSToken private immutable _antsToken;
-    IAntseedRegistryV2 public immutable registry;
+    IAntseedRegistry public immutable registry;
 
     uint256 public immutable effectiveEpoch;
     /// @notice Escrow holding the one-time pre-minted backlog covering every
@@ -83,7 +83,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     constructor(address registry_, uint32 teamShareBps, uint32 reserveShareBps) Ownable(msg.sender) {
         if (registry_ == address(0)) revert InvalidAddress();
         _antsToken = IANTSToken(ANTS_TOKEN);
-        registry = IAntseedRegistryV2(registry_);
+        registry = IAntseedRegistry(registry_);
         uint256 epoch = block.timestamp <= GENESIS ? 0 : (block.timestamp - GENESIS) / EPOCH_DURATION;
         effectiveEpoch = epoch + 1;
 
@@ -139,8 +139,8 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         bytes32 id = controllerMinterIds[msg.sender];
         if (amount == 0) revert InvalidValue();
 
-        address emissionsReserve = _emissionsReserve();
-        if (emissionsReserve == address(0) || reserveRecipient != emissionsReserve) revert InvalidAddress();
+        address expectedReserve = _emissionsReserve();
+        if (expectedReserve == address(0) || reserveRecipient != expectedReserve) revert InvalidAddress();
 
         _chargeMinterBudget(id, msg.sender, epoch, amount);
 
@@ -179,6 +179,10 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
     function controllerEpochBudget(address controller, uint256 epoch) public view returns (uint256) {
         return minterEpochBudget(controllerMinterIds[controller], epoch);
+    }
+
+    function emissionsReserve() external view returns (address) {
+        return _emissionsReserve();
     }
 
     function currentEpoch() public view returns (uint256) {
@@ -360,11 +364,8 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         return (getEpochEmission(epoch) * shareBps) / SHARE_DENOMINATOR;
     }
 
-    /// @dev ANTS reserve flows go to the registry's dedicated emissions
-    ///      reserve; while the split is unset they fall back to the fee
-    ///      reserve (`protocolReserve`).
     function _emissionsReserve() internal view returns (address reserve) {
-        reserve = registry.emissionsReserve();
+        reserve = _minters[RESERVE_MINTER_ID].controller;
         if (reserve == address(0)) reserve = registry.protocolReserve();
     }
 

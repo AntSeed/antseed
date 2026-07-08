@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
@@ -46,7 +46,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable emissionsGate;
-    IAntseedRegistryV2 public immutable registry;
+    IAntseedRegistry public immutable registry;
     IAntseedUsageAccounting public immutable usageAccounting;
     IAntseedSellerPools public sellerPools;
 
@@ -155,7 +155,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         }
 
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
-        registry = IAntseedRegistryV2(_registry);
+        registry = IAntseedRegistry(_registry);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
     }
 
@@ -519,11 +519,8 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
     }
 
-    /// @dev ANTS reserve flows go to the registry's dedicated emissions
-    ///      reserve; while the split is unset they fall back to the fee
-    ///      reserve (`protocolReserve`).
     function _emissionsReserve() internal view returns (address reserve) {
-        reserve = registry.emissionsReserve();
+        reserve = emissionsGate.emissionsReserve();
         if (reserve == address(0)) reserve = registry.protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }

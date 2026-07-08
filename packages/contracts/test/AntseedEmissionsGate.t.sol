@@ -12,7 +12,7 @@ import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
-import { AntseedRegistryV2 } from "../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../core/AntseedRegistry.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
 import { IAntseedPoolWeightPolicy } from "../interfaces/IAntseedPoolWeightPolicy.sol";
@@ -129,7 +129,7 @@ contract AntseedEmissionsGateTest is Test {
     }
 
     ANTSToken token;
-    AntseedRegistryV2 realRegistry;
+    AntseedRegistry realRegistry;
     MockDepositsForEmissionsGate deposits;
     AntseedEmissions legacyV1;
     AntseedEmissionsV2 legacyV2;
@@ -175,7 +175,7 @@ contract AntseedEmissionsGateTest is Test {
 
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
-        realRegistry = new AntseedRegistryV2();
+        realRegistry = new AntseedRegistry();
         deposits = new MockDepositsForEmissionsGate();
 
         realRegistry.setChannels(address(this));
@@ -516,17 +516,16 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(6);
     }
 
-    function test_emissionsReserveReceivesAntsReserveFlowsWhenSplit() public {
-        // Configure the reserve split before the gate is constructed so the
-        // reserve bucket minter binds to the emissions reserve wallet.
-        realRegistry.setEmissionsReserve(emissionsReserveDest);
+    function test_emissionsReserveReceivesAntsReserveFlowsWhenReserveControllerRotates() public {
         (SellerDelegationHarness delegation, uint256 agentId) = _setupDelegationUsageRewards();
+        gate.setMinterController(RESERVE_MINTER_ID, emissionsReserveDest);
 
         (address reserveController,,) = gate.minters(RESERVE_MINTER_ID);
         assertEq(reserveController, emissionsReserveDest);
+        assertEq(gate.emissionsReserve(), emissionsReserveDest);
 
         // A single dominant agent overflows the 5% per-agent cap; the
-        // overflow must land on the emissions reserve, not the fee reserve.
+        // overflow must land on the reserve minter controller.
         uint256 claimable = usageRewards.pendingAgentReward(agentId, 5);
         uint256 sellerBudget = usageRewards.sellerEpochBudget(5);
         assertGt(sellerBudget, claimable);
@@ -535,8 +534,9 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(emissionsReserveDest), sellerBudget - claimable);
         assertEq(token.balanceOf(reserveDest), 0);
 
-        // Clearing the split falls back to the fee reserve for later flows.
-        realRegistry.setEmissionsReserve(address(0));
+        // Rotating the reserve minter controller sends later reserve flows to
+        // the new controller.
+        gate.setMinterController(RESERVE_MINTER_ID, reserveDest);
         usageAccounting.accrueSellerPoints(address(delegation), 100);
         usageAccounting.accrueBuyerPoints(buyer, 100);
         _warpGateEpoch(7);

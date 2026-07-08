@@ -9,7 +9,6 @@ import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmission
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { AntseedRegistryV2 } from "../core/AntseedRegistryV2.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 
@@ -46,8 +45,8 @@ interface IAntseedLegacyEmissionsAdmin {
  *
  * Optional env:
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
- *                                     on the new v2 registry. Unset = ANTS reserve
- *                                     flows fall back to protocolReserve (fees).
+ *                                     via the reserve minter controller. Unset =
+ *                                     ANTS reserve flows use protocolReserve.
  *
  * Usage:
  *   cd packages/contracts
@@ -92,29 +91,10 @@ contract DeployRecognizedUsage is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // The existing registry stays in place as the legacy address book for
-        // already-deployed contracts (Channels, Deposits, Staking, seller
-        // delegation proxies). The new stack lives on a v2 registry, which
-        // splits ANTS emission reserve flows (`emissionsReserve`) from USDC
-        // transaction fees and slash proceeds (`protocolReserve`).
-        AntseedRegistryV2 registryV2 = new AntseedRegistryV2();
-        registryV2.setChannels(existingChannels);
-        registryV2.setDeposits(existingDeposits);
-        registryV2.setStaking(existingStaking);
-        // Temporarily the legacy emissions contract: the gate constructor
-        // pins it as the legacy minter, and SellerPools resolves its epoch
-        // clock through it until the pointer flip below.
-        registryV2.setEmissions(existingEmissions);
-        registryV2.setAntsToken(antsToken);
-        registryV2.setIdentityRegistry(registry.identityRegistry());
-        registryV2.setProtocolReserve(protocolReserve);
-        registryV2.setTeamWallet(teamWallet);
-        if (registry.stats() != address(0)) registryV2.setStats(registry.stats());
-        if (emissionsReserveWallet != address(0)) registryV2.setEmissionsReserve(emissionsReserveWallet);
-        console.log("RegistryV2:             ", address(registryV2));
-        console.log("Emissions reserve:      ", emissionsReserveWallet);
-
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(registryV2), 15_000, 15_000);
+        AntseedEmissionsGate gate = new AntseedEmissionsGate(registryAddress, 15_000, 15_000);
+        if (emissionsReserveWallet != address(0)) {
+            gate.setMinterController(gate.RESERVE_MINTER_ID(), emissionsReserveWallet);
+        }
         uint256 currentEpoch = gate.currentEpoch();
         uint256 effectiveEpoch = gate.effectiveEpoch();
         uint256 genesis = gate.genesis();
@@ -146,11 +126,11 @@ contract DeployRecognizedUsage is Script {
         console.log("Effective Epoch:        ", effectiveEpoch);
         console.log("");
 
-        AntseedSellerPools sellerPools = new AntseedSellerPools(address(registryV2));
+        AntseedSellerPools sellerPools = new AntseedSellerPools(registryAddress);
         console.log("SellerPools:          ", address(sellerPools));
 
         AntseedSellerRegistry sellerRegistry =
-            new AntseedSellerRegistry(address(registryV2), address(sellerPools), existingStaking);
+            new AntseedSellerRegistry(registryAddress, address(sellerPools), existingStaking);
         console.log("SellerRegistry:       ", address(sellerRegistry));
 
         console.log("EmissionsGate:          ", address(gate));
@@ -165,7 +145,7 @@ contract DeployRecognizedUsage is Script {
         console.log("SellerPoolsRewards: ", address(sellerPoolsRewards));
 
         AntseedUsageRewards usageRewards =
-            new AntseedUsageRewards(address(gate), address(registryV2), address(usageAccounting));
+            new AntseedUsageRewards(address(gate), registryAddress, address(usageAccounting));
         usageRewards.setSellerPools(address(sellerPools));
         console.log("UsageRewards:       ", address(usageRewards));
 
@@ -203,16 +183,14 @@ contract DeployRecognizedUsage is Script {
         // broadcast that fails before this line leaves the legacy emissions
         // path untouched, and one that fails after it leaves the new path
         // fully mintable. The escrow is funded and wired immediately after so
-        // legacy claims never touch a token that only accepts the gate. Both
-        // registries flip: the v2 registry serves the new stack, the legacy
-        // registry keeps serving deployed contracts (Channels accruals + Diem
-        // adapter, Channels seller eligibility).
+        // legacy claims never touch a token that only accepts the gate. The
+        // registry flip keeps deployed contracts resolving Channels accruals,
+        // Diem adapter claims, and Channels seller eligibility through the new
+        // adapters.
         IANTSTokenAdmin(antsToken).setRegistry(address(gate));
         uint256 escrowAmount = gate.fundLegacyEscrow(address(legacyEscrow));
         IAntseedLegacyEmissionsAdmin(existingEmissions).setRegistry(address(legacyEscrow));
         console.log("Legacy escrow funded:   ", escrowAmount);
-        registryV2.setEmissions(address(usageAccounting));
-        registryV2.setStaking(address(sellerRegistry));
         registry.setEmissions(address(usageAccounting));
         registry.setStaking(address(sellerRegistry));
 
@@ -221,7 +199,6 @@ contract DeployRecognizedUsage is Script {
         console.log("");
         console.log("=== Recognized usage deployment complete ===");
         console.log("Token gate is:            ", address(gate));
-        console.log("New stack registry (v2):  ", address(registryV2));
         console.log("Registry emissions is now:", address(usageAccounting));
         console.log("Registry staking is now:  ", address(sellerRegistry));
         console.log("Seller pools bucket:      2-40% dynamic (40% max)");
@@ -234,7 +211,7 @@ contract DeployRecognizedUsage is Script {
         console.log("Legacy claims minter:     ", existingEmissions);
         console.log("Legacy claims deposits:   ", existingDeposits);
         console.log("Team recipient:           ", teamWallet);
-        console.log("Reserve recipient:        ", protocolReserve);
+        console.log("Reserve recipient:        ", gate.emissionsReserve());
         console.log("Verification recipient:   ", verificationWallet);
         console.log("");
         console.log("POST-DEPLOY CHECKLIST (manual):");
