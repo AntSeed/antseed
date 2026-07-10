@@ -32,6 +32,10 @@ export function buildSignaturePayload(receipt: Omit<UsageReceipt, 'signature'>):
     receipt.sellerPeerId,
     receipt.buyerPeerId,
     receipt.tokens.totalTokens.toString(),
+    // Bind unit price so a verified receipt's rate field cannot be rewritten
+    // post-sign while leaving costCents/totalTokens alone. Settlement still
+    // keys off costCents; this authenticates the pricing metadata consumers read.
+    receipt.unitPriceCentsPerThousandTokens.toString(),
     receipt.costCents.toString(),
   ].join('|');
 }

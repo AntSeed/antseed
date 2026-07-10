@@ -75,7 +75,7 @@ describe('buildSignaturePayload', () => {
       costCents: 5,
     });
 
-    expect(payload).toBe('r1|s1|e1|1000|openai|seller|buyer|500|5');
+    expect(payload).toBe('r1|s1|e1|1000|openai|seller|buyer|500|10|5');
   });
 
   it('should be deterministic', () => {
@@ -92,6 +92,24 @@ describe('buildSignaturePayload', () => {
       costCents: 5,
     };
     expect(buildSignaturePayload(data)).toBe(buildSignaturePayload(data));
+  });
+
+  it('binds unitPrice so rewriting the rate changes the signed payload', () => {
+    const base = {
+      receiptId: 'r1',
+      sessionId: 's1',
+      eventId: 'e1',
+      timestamp: 1000,
+      provider: 'openai' as const,
+      sellerPeerId: 'seller',
+      buyerPeerId: 'buyer',
+      tokens: makeTokenCount(500),
+      unitPriceCentsPerThousandTokens: 10,
+      costCents: 5,
+    };
+    const tampered = { ...base, unitPriceCentsPerThousandTokens: 999 };
+    // costCents + totalTokens unchanged — old payload would have matched; new one must not.
+    expect(buildSignaturePayload(tampered)).not.toBe(buildSignaturePayload(base));
   });
 });
 

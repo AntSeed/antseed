@@ -79,7 +79,8 @@ export interface UsageReceipt {
   /**
    * secp256k1 signature over the receipt data (hex string).
    * Signs: receiptId + sessionId + eventId + timestamp + provider
-   *        + sellerPeerId + buyerPeerId + totalTokens + costCents
+   *        + sellerPeerId + buyerPeerId + totalTokens
+   *        + unitPriceCentsPerThousandTokens + costCents
    */
   signature: string;
 }
