@@ -18,7 +18,11 @@ export function log(...args: unknown[]): void {
 }
 
 function getHeader(headers: Record<string, string>, name: string): string {
-  return headers[name] ?? headers[name.charAt(0).toUpperCase() + name.slice(1)] ?? ''
+  const target = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === target) return headers[key] ?? ''
+  }
+  return ''
 }
 
 export function normalizePeerId(value: string): string | null {
@@ -138,8 +142,8 @@ function summarizeMessageShape(messagesRaw: unknown): string {
 export function summarizeRequestShape(request: SerializedHttpRequest): string {
   const contentType = getHeader(request.headers, 'content-type').toLowerCase()
   const accept = getHeader(request.headers, 'accept').toLowerCase()
-  const providerHeader = request.headers['x-antseed-provider'] ?? 'none'
-  const preferPeerHeader = request.headers['x-antseed-prefer-peer'] ?? 'none'
+  const providerHeader = getHeader(request.headers, 'x-antseed-provider') || 'none'
+  const preferPeerHeader = getHeader(request.headers, 'x-antseed-prefer-peer') || 'none'
   const service = extractRequestedService(request) ?? 'none'
   const wantsStreaming = requestWantsStreaming(request.headers, request.body)
 
