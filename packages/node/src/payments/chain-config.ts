@@ -89,12 +89,21 @@ const DEFAULT_CHAIN_ID: ChainId = 'base-mainnet';
 
 /**
  * Get the chain config for a given chain ID.
- * Falls back to base-sepolia if not found.
+ *
+ * With no chainId, returns the default (base-mainnet). An unrecognized
+ * chainId throws rather than silently defaulting to mainnet — a typo'd or
+ * stale id must not quietly route real funds to the wrong chain.
  */
 export function getChainConfig(chainId?: ChainId | string): ChainConfig {
   if (!chainId) return CHAIN_CONFIGS[DEFAULT_CHAIN_ID];
   const config = CHAIN_CONFIGS[chainId as ChainId];
-  return config ?? CHAIN_CONFIGS[DEFAULT_CHAIN_ID];
+  if (!config) {
+    throw new Error(
+      `Unknown chainId "${chainId}" — refusing to silently default to ${DEFAULT_CHAIN_ID}. ` +
+        `Known chains: ${Object.keys(CHAIN_CONFIGS).join(', ')}.`,
+    );
+  }
+  return config;
 }
 
 /**
