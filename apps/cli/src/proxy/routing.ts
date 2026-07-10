@@ -5,7 +5,7 @@ import {
   type ServiceApiProtocol,
   type TargetProtocolSelection,
 } from './service-api-adapter.js'
-import { log, normalizePeerId } from './request-utils.js'
+import { getHeader, log, normalizePeerId } from './request-utils.js'
 
 export type PeerProtocolRoutePlan = {
   provider: string
@@ -23,8 +23,8 @@ export type CandidatePeerRouteSelection = {
 export type ServiceFilterMode = 'strict' | 'lenient'
 
 export function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
-  const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
-  return provider && provider.length > 0 ? provider : null
+  const provider = getHeader(request.headers, 'x-antseed-provider').trim().toLowerCase()
+  return provider.length > 0 ? provider : null
 }
 
 export function getExplicitPeerIdOverride(
@@ -33,8 +33,8 @@ export function getExplicitPeerIdOverride(
   requestPinnedPeerId?: string | null,
 ): string | null {
   // Per-request header takes priority over session pin
-  const header = request.headers['x-antseed-pin-peer']?.trim()
-  if (header && header.length > 0) return normalizePeerId(header) ?? header.toLowerCase()
+  const header = getHeader(request.headers, 'x-antseed-pin-peer').trim()
+  if (header.length > 0) return normalizePeerId(header) ?? header.toLowerCase()
   if (requestPinnedPeerId) return requestPinnedPeerId.toLowerCase()
   return sessionPinnedPeerId?.toLowerCase() ?? null
 }

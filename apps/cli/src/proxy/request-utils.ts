@@ -17,7 +17,7 @@ export function log(...args: unknown[]): void {
   if (DEBUG() && shouldEmitProxyLog(args)) console.log('[proxy]', ...args)
 }
 
-function getHeader(headers: Record<string, string>, name: string): string {
+export function getHeader(headers: Record<string, string>, name: string): string {
   const target = name.toLowerCase()
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === target) return headers[key] ?? ''

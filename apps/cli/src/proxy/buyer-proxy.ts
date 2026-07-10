@@ -23,6 +23,7 @@ import {
   transformResponse,
 } from './service-api-adapter.js'
 import {
+  getHeader,
   DEBUG,
   log,
   extractRequestedService,
@@ -1117,7 +1118,7 @@ export class BuyerProxy {
     }
 
     if (!pinnedDiscovered) {
-      const logSource = serializedReq.headers['x-antseed-pin-peer']
+      const logSource = getHeader(serializedReq.headers, 'x-antseed-pin-peer')
         ? 'x-antseed-pin-peer header'
         : bodyPinnedPeer
           ? 'model peer prefix'
@@ -1222,7 +1223,7 @@ export class BuyerProxy {
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {
-    const raw = headers['x-antseed-max-upload-body-bytes']
+    const raw = getHeader(headers, 'x-antseed-max-upload-body-bytes')
     if (!raw) return null
     const parsed = Number.parseInt(raw, 10)
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null
