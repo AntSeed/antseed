@@ -307,6 +307,53 @@ describe('provider-openai-responses plugin', () => {
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
+  it('extracts Responses input_text system messages into top-level instructions', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'resp_1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    await provider.handleRequest({
+      requestId: 'req-instructions',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: [
+          { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Use terse answers.' }] },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Hi' }] },
+        ],
+        stream: false,
+      })),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as {
+      instructions?: string;
+      input?: unknown[];
+    };
+    expect(body.instructions).toBe('Use terse answers.');
+    expect(body.input).toHaveLength(1);
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
   it('forces upstream streaming and collapses SSE for non-stream callers', async () => {
     const authFile = writeAuthFile({
       tokens: {

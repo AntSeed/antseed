@@ -316,7 +316,7 @@ function prepareRequestBody(
           instructionText = sysMsg.content;
         } else if (Array.isArray(sysMsg.content)) {
           instructionText = (sysMsg.content as Array<{ type?: string; text?: string }>)
-            .filter((c) => c.type === 'text' && typeof c.text === 'string')
+            .filter((c) => (c.type === 'text' || c.type === 'input_text') && typeof c.text === 'string')
             .map((c) => c.text as string)
             .join('');
         } else {
