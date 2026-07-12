@@ -1338,7 +1338,11 @@ export class BuyerProxy {
       }
 
       log(`Applying protocol adapter ${transformKey} via provider "${selectedRoutePlan.provider}"`)
-      const transformed = transformRequest(requestForPeer, { from: strategy.from, to: strategy.to })
+      const transformed = transformRequest(requestForPeer, {
+        from: strategy.from,
+        to: strategy.to,
+        streamRequested: clientWantsStreaming,
+      })
       if (!transformed) {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end(`Failed to transform request for ${transformKey}`)
