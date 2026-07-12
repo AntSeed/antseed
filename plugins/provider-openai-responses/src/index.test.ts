@@ -63,6 +63,25 @@ describe('provider-openai-responses plugin', () => {
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
+  it('defaults to higher seller concurrency for bursty clients', () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({
+          'https://api.openai.com/auth': {
+            chatgpt_account_id: 'acct-jwt',
+          },
+        }),
+      },
+    });
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    expect(provider.maxConcurrency).toBe(50);
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
   it('reads account id from JWT claim when available', () => {
     const authFile = writeAuthFile({
       tokens: {
@@ -402,6 +421,57 @@ describe('provider-openai-responses plugin', () => {
     const body = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
     expect(body.id).toBe('resp_1');
     expect(body.output_text).toBe('hi');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('collapses SSE for transformed non-stream callers when stream is already true', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        'event: response.completed\n'
+          + 'data: {"type":"response.completed","response":{"id":"resp_2","object":"response","model":"gpt-5.5","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]}],"output_text":"hello","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5.5',
+    });
+
+    const response = await provider.handleRequest({
+      requestId: 'req-transformed-non-stream',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+        'x-antseed-client-stream-requested': 'false',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        input: 'hello',
+        stream: true,
+      })),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const upstreamHeaders = init.headers as Record<string, string>;
+    const upstreamBody = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as Record<string, unknown>;
+    expect(upstreamBody.stream).toBe(true);
+    expect(upstreamHeaders['x-antseed-client-stream-requested']).toBeUndefined();
+    expect(response.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(body.id).toBe('resp_2');
+    expect(body.output_text).toBe('hello');
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 

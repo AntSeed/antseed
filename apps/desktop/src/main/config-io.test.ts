@@ -10,6 +10,7 @@ import {
   DESKTOP_DEFAULT_MIN_PEER_REPUTATION,
   DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS,
   DESKTOP_DEFAULT_METADATA_FETCH_TIMEOUT_MS,
+  DESKTOP_DEFAULT_SELLER_MAX_CONCURRENT_BUYERS,
   ensureConfig,
   readConfig,
 } from './config-io.js';
@@ -42,6 +43,10 @@ test('ensureConfig creates config with desktop buyer max pricing defaults', asyn
   assert.equal((config.buyer as { peerRefreshIntervalMs?: number }).peerRefreshIntervalMs, DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS);
   assert.equal((config.buyer as { metadataFetchTimeoutMs?: number }).metadataFetchTimeoutMs, DESKTOP_DEFAULT_METADATA_FETCH_TIMEOUT_MS);
   assert.equal((config.buyer as { disableMetadataV2Services?: boolean }).disableMetadataV2Services, false);
+  assert.equal(
+    (config.seller as { maxConcurrentBuyers?: number }).maxConcurrentBuyers,
+    DESKTOP_DEFAULT_SELLER_MAX_CONCURRENT_BUYERS,
+  );
 });
 
 test('ensureConfig clamps buyer max pricing above desktop defaults', async (t) => {

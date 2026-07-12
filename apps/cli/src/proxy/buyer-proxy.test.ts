@@ -467,6 +467,70 @@ test('/v1/models retryable response reports router success', async () => {
   assert.equal(routerResults[0]?.success, true)
 })
 
+test('non-stream transformed responses requests force upstream stream without streaming to client', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  let sendRequestCalls = 0
+  let sendRequestStreamCalls = 0
+  let capturedRequestBody: Record<string, unknown> | null = null
+  let capturedRequestHeaders: Record<string, string> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
+  ) => {
+    sendRequestCalls += 1
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedRequestHeaders = request.headers
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({
+        id: 'resp_1',
+        object: 'response',
+        model: 'gpt-5.6-sol',
+        output: [{
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'hi' }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })),
+    }
+  }
+  ;(proxy as any)._node.sendRequestStream = async () => {
+    sendRequestStreamCalls += 1
+    throw new Error('sendRequestStream should not be used')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(sendRequestCalls, 1)
+  assert.equal(sendRequestStreamCalls, 0)
+  assert.equal(capturedRequestBody?.['stream'], true)
+  assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'false')
+  const body = JSON.parse(res.body) as { content?: Array<{ type: string; text: string }> }
+  assert.equal(body.content?.[0]?.text, 'hi')
+})
+
 test('model peer prefix pins the request peer and strips the routed model', async () => {
   const pinnedPeer = makePeer('a', ['openai'])
   let capturedRequestBody: Record<string, unknown> | null = null
