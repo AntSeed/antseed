@@ -1032,6 +1032,7 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
@@ -1053,6 +1054,9 @@ export class AntseedNode extends EventEmitter {
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,
+        // Buyer rows overload previousConsumption as cumulative output tokens
+        // (see getBuyerUsageTotals).
+        outputTokens: c.previousConsumption,
       };
     });
   }
@@ -1070,6 +1074,7 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
@@ -1086,6 +1091,9 @@ export class AntseedNode extends EventEmitter {
       status: c.status,
       requestCount: c.requestCount,
       tokensDelivered: c.tokensDelivered,
+      // Buyer rows overload previousConsumption as cumulative output tokens
+      // (see getBuyerUsageTotals).
+      outputTokens: c.previousConsumption,
     }));
   }
 

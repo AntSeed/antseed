@@ -40,6 +40,10 @@ export type DesktopPaymentChannelSummary = {
   reservedAt: number;
   status: string;
   requestCount: number;
+  /** Cumulative input tokens delivered over this channel (bigint string). */
+  inputTokens: string;
+  /** Cumulative output tokens over this channel (bigint string). */
+  outputTokens: string;
 };
 
 export type DesktopRewardsSummary = {

@@ -126,6 +126,8 @@ type DesktopPaymentChannelSummary = {
   reservedAt: number;
   status: string;
   requestCount: number;
+  inputTokens: string;
+  outputTokens: string;
 };
 
 type DesktopRewardsSummary = {
@@ -2100,6 +2102,8 @@ function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSu
     reservedAt: readNumberField(raw, 'reservedAt'),
     status: readStringField(raw, 'status') || 'unknown',
     requestCount: readNumberField(raw, 'requestCount'),
+    inputTokens: readStringField(raw, 'tokensDelivered') || '0',
+    outputTokens: readStringField(raw, 'outputTokens') || '0',
   };
 }
 
