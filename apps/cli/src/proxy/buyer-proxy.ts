@@ -1324,6 +1324,7 @@ export class BuyerProxy {
         'x-antseed-provider': selectedRoutePlan.provider,
       },
     }
+    const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
     let streamResponseAdapter: StreamingResponseAdapter | null = null
 
@@ -1377,7 +1378,7 @@ export class BuyerProxy {
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
-    const wantsStreaming = requestWantsStreaming(requestForPeer.headers, requestForPeer.body)
+    const wantsStreaming = clientWantsStreaming
     const startTime = Date.now()
     try {
       if (wantsStreaming) {

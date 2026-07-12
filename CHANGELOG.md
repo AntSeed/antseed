@@ -11,6 +11,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - `@antseed/api-adapter`
 - `@antseed/cli`
 - `@antseed/node`
+- `@antseed/provider-openai-responses`
 
 ### Desktop
 
@@ -37,6 +38,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
 - Increased the default free-usage on-chain record flush interval from 10 seconds to 5 minutes to reduce background transaction frequency while preserving batch, disconnect, and shutdown flushes.
+- Increased default seller concurrency from 5 to 50 concurrent requests, including the OpenAI Responses provider default, for bursty clients.
 
 ### Fixed
 
@@ -47,6 +49,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed Desktop chats for peers that disappear from discovery so the header reports that the peer was not found and disables the composer instead of showing stale peer identifiers.
 - Fixed Desktop Discover overflow tag tooltips so the `+N` category indicator works on service cards in the first row.
 - Fixed `antseed seller emissions claim` so it only checks and claims seller rewards, leaving buyer rewards to the buyer command.
+- Fixed buyer proxy protocol transforms so requests routed to OpenAI Responses always set upstream `stream: true` without forcing non-stream clients to receive SSE.
 
 ## 2026-06-15 — Buyer peer failure accounting and desktop stream responsiveness
 

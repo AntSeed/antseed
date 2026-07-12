@@ -10,12 +10,13 @@ export const DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION = 30;
 export const DESKTOP_DEFAULT_MIN_PEER_REPUTATION = 0;
 export const DESKTOP_DEFAULT_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
 export const DESKTOP_DEFAULT_METADATA_FETCH_TIMEOUT_MS = 1500;
+export const DESKTOP_DEFAULT_SELLER_MAX_CONCURRENT_BUYERS = 50;
 
 const DEFAULT_CONFIG: Record<string, unknown> = {
   identity: { displayName: 'AntSeed Node' },
   seller: {
     reserveFloor: 10,
-    maxConcurrentBuyers: 5,
+    maxConcurrentBuyers: DESKTOP_DEFAULT_SELLER_MAX_CONCURRENT_BUYERS,
     enabledProviders: [],
     pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
   },

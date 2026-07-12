@@ -21,6 +21,8 @@ export interface ServiceApiRequestTransformOptions {
   to: ServiceApiProtocol;
 }
 
+const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
+
 type RequestNormalizer = (body: Record<string, unknown>) => CanonicalLlmRequest;
 type RequestRenderer = (
   request: CanonicalLlmRequest,
@@ -74,12 +76,17 @@ export function transformRequest(
   const render = REQUEST_RENDERERS[options.to];
   if (!render) return null;
   const transformedBody = render(normalized, options);
+  const transformedHeaders = headersForTargetProtocol(request.headers, options.to);
+  if (options.to === 'openai-responses') {
+    transformedBody.stream = true;
+    transformedHeaders[CLIENT_STREAM_REQUESTED_HEADER] = normalized.stream ? 'true' : 'false';
+  }
 
   return {
     request: {
       ...request,
       path,
-      headers: headersForTargetProtocol(request.headers, options.to),
+      headers: transformedHeaders,
       body: encodeJson(transformedBody),
     },
     streamRequested: normalized.stream,

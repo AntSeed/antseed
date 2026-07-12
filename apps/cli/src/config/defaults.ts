@@ -15,7 +15,7 @@ export function createDefaultConfig(): AntseedConfig {
     },
     seller: {
       reserveFloor: 10,
-      maxConcurrentBuyers: 5,
+      maxConcurrentBuyers: 50,
       providers: {},
       publicAddress: '',
     },
