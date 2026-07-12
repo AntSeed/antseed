@@ -354,4 +354,50 @@ export type DesktopBridge = {
     error?: string;
   }>;
   systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
+
+  /* Floating always-on-top pill window */
+  vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
+  vprFloatClose?: () => Promise<{ ok: boolean }>;
+  vprFloatIsOpen?: () => Promise<boolean>;
+  vprFloatUpdate?: (data: VprFloatData) => void;
+  vprFloatAction?: (action: VprFloatAction) => void;
+  onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
+  onVprFloatClosed?: (handler: () => void) => () => void;
+  onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
 };
+
+export type VprFloatApp = {
+  name: string;
+  displayName: string;
+};
+
+export type VprFloatModel = {
+  provider: string;
+  serviceId: string;
+  label: string;
+};
+
+/** Display payload the main window pushes to the floating pill. */
+export type VprFloatData = {
+  /** Connected app profiles the pill's app dropdown can switch between. */
+  apps: VprFloatApp[];
+  /** Which app the pill should track (profile name). */
+  selectedApp: string;
+  /** Models available in the pill's model dropdown. */
+  models: VprFloatModel[];
+  selectedModel: { provider: string; serviceId: string } | null;
+  /**
+   * Usage line: the selected model's current route channel when one exists
+   * ("1.2M tok · $0.42"), falling back to buyer-wide totals.
+   */
+  usageLabel: string;
+  /**
+   * True when traffic moved through the system proxy or the buyer proxy
+   * since the previous payload — drives the pulse on the app icon.
+   */
+  trafficActive: boolean;
+};
+
+export type VprFloatAction =
+  | 'open-main'
+  | { type: 'select-model'; provider: string; serviceId: string };

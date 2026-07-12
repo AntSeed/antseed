@@ -13,16 +13,20 @@ export const VIEW_WINDOW_PRESETS = {
   tools: 'compact',
   preferences: 'compact',
   credits: 'compact',
+  help: 'compact',
   // Chat opens at the standard (wide) preset so the conversation-list panel
-  // fits next to the nav rail. Developer/legacy routes are dense tables.
+  // fits next to the nav rail.
   chat: 'standard',
-  developer: 'standard',
-  overview: 'standard',
-  peers: 'standard',
-  connection: 'standard',
-  desktop: 'standard',
-  config: 'standard',
-  'system-proxy': 'standard',
+  // Diagnostic/dev screens stay in the same compact panel as the VPR views
+  // (they're reachable from Help & Support) — their tables and panels scroll
+  // within the window instead of blowing it up to the wide preset.
+  developer: 'compact',
+  overview: 'compact',
+  peers: 'compact',
+  connection: 'compact',
+  desktop: 'compact',
+  config: 'compact',
+  'system-proxy': 'compact',
 } as const satisfies Record<string, WindowSizePresetName>;
 
 export function windowPresetForView(view: string): WindowSizePresetName {

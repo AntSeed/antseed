@@ -18,6 +18,13 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 
+/* Floating always-on-top pill: 256x72 content (model / app / usage lines)
+   plus an 8px margin so the drop shadow isn't clipped by the transparent
+   window edge. */
+let floatWindow: BrowserWindow | null = null;
+const FLOAT_WINDOW_WIDTH = 272;
+const FLOAT_WINDOW_HEIGHT = 88;
+
 type WindowSizePreset = {
   width: number;
   height: number;
@@ -33,7 +40,10 @@ const WINDOW_SIZE_PRESETS: Record<WindowSizePresetName, WindowSizePreset> = {
     minHeight: 700,
   },
   compact: {
-    width: 528,
+    // 88px nav rail + 424px pane: the pane shows the 392px content stack
+    // with 16px view padding, so the 408px-wide banner asset renders at its
+    // native size with the design's 8px side gutters.
+    width: 512,
     height: 656,
     minWidth: 480,
     minHeight: 560,
@@ -52,6 +62,88 @@ export interface WindowConfig {
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+export function getFloatWindow(): BrowserWindow | null {
+  return floatWindow && !floatWindow.isDestroyed() ? floatWindow : null;
+}
+
+export function closeFloatWindow(): void {
+  getFloatWindow()?.close();
+}
+
+function floatRendererUrl(rendererUrl: string): string {
+  // Dev: http://127.0.0.1:5174/ -> .../float.html
+  // Prod: file://.../renderer/index.html -> .../renderer/float.html
+  return rendererUrl.includes('index.html')
+    ? rendererUrl.replace('index.html', 'float.html')
+    : new URL('float.html', rendererUrl).toString();
+}
+
+export function openFloatWindow(config: WindowConfig, initialData: unknown): BrowserWindow {
+  const existing = getFloatWindow();
+  if (existing) {
+    if (initialData !== undefined) {
+      existing.webContents.send('vpr-float:data', initialData);
+    }
+    existing.showInactive();
+    return existing;
+  }
+
+  const anchor = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow.getBounds()
+    : { x: 0, y: 0, width: 0, height: 0 };
+  const workArea = screen.getDisplayMatching(anchor).workArea;
+
+  floatWindow = new BrowserWindow({
+    width: FLOAT_WINDOW_WIDTH,
+    height: FLOAT_WINDOW_HEIGHT,
+    x: workArea.x + workArea.width - FLOAT_WINDOW_WIDTH - 24,
+    y: workArea.y + 24,
+    title: config.appName,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  const created = floatWindow;
+
+  // 'floating' keeps the pill above normal app windows without fighting
+  // system-level panels; visible on every space so it follows the user.
+  // Deliberately NOT visibleOnFullScreen: that option flips the macOS
+  // activation policy to accessory, removing the app from Cmd+Tab and
+  // the Dock.
+  created.setAlwaysOnTop(true, 'floating');
+  created.setVisibleOnAllWorkspaces(true);
+
+  created.webContents.once('did-finish-load', () => {
+    if (initialData !== undefined && !created.isDestroyed()) {
+      created.webContents.send('vpr-float:data', initialData);
+    }
+  });
+
+  void created.loadURL(floatRendererUrl(config.rendererUrl));
+
+  created.on('closed', () => {
+    if (floatWindow === created) floatWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('vpr-float:closed');
+    }
+  });
+
+  return created;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -108,6 +200,10 @@ function applySizePreset(presetName: WindowSizePresetName): { ok: true; skipped?
   }
 
   const preset = WINDOW_SIZE_PRESETS[presetName];
+  // The compact panel is a fixed-size surface — no manual resizing (on macOS
+  // this also disables the zoom button). The standard (chat) preset stays
+  // user-resizable. Programmatic setBounds below is unaffected.
+  win.setResizable(presetName === 'standard');
   if (presetName === 'standard') {
     const targetBounds = clampBoundsToPreset(
       lastStandardBounds ?? centerBoundsWithinDisplay(currentBounds, preset),
@@ -145,6 +241,9 @@ export function createWindow(config: WindowConfig): void {
     height: initialPreset.height,
     minWidth: initialPreset.minWidth,
     minHeight: initialPreset.minHeight,
+    // Starts on the compact preset, which is fixed-size; applySizePreset
+    // re-enables resizing when a standard-preset view (chat) is shown.
+    resizable: false,
     title: config.appName,
     icon: config.appIconPath,
     backgroundColor: '#ececec',
@@ -222,6 +321,7 @@ export function createWindow(config: WindowConfig): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    closeFloatWindow();
   });
 }
 

@@ -13,6 +13,13 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        index: path.resolve(rendererRoot, 'index.html'),
+        // Detachable always-on-top pill window (see src/main/window.ts).
+        float: path.resolve(rendererRoot, 'float.html'),
+      },
+    },
   },
   css: {
     modules: {

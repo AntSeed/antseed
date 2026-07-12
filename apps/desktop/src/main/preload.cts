@@ -510,6 +510,38 @@ const api = {
   systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
   },
+
+  /* Floating always-on-top pill window */
+  vprFloatOpen(data: unknown): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('vpr-float:open', data) as Promise<{ ok: boolean }>;
+  },
+  vprFloatClose(): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('vpr-float:close') as Promise<{ ok: boolean }>;
+  },
+  vprFloatIsOpen(): Promise<boolean> {
+    return ipcRenderer.invoke('vpr-float:is-open') as Promise<boolean>;
+  },
+  vprFloatUpdate(data: unknown): void {
+    ipcRenderer.send('vpr-float:update', data);
+  },
+  vprFloatAction(action: unknown): void {
+    ipcRenderer.send('vpr-float:action', action);
+  },
+  onVprFloatData(handler: (data: unknown) => void): () => void {
+    const listener = (_: unknown, data: unknown) => handler(data);
+    ipcRenderer.on('vpr-float:data', listener);
+    return () => ipcRenderer.off('vpr-float:data', listener);
+  },
+  onVprFloatClosed(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('vpr-float:closed', listener);
+    return () => ipcRenderer.off('vpr-float:closed', listener);
+  },
+  onVprFloatAction(handler: (action: unknown) => void): () => void {
+    const listener = (_: unknown, action: unknown) => handler(action);
+    ipcRenderer.on('vpr-float:action', listener);
+    return () => ipcRenderer.off('vpr-float:action', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

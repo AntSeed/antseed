@@ -1,0 +1,181 @@
+/* Floating pill (Figma "flowing window"): 256x72 content, radius 16. The
+   window adds an 8px transparent margin so the drop shadow isn't clipped.
+   The whole pill is a drag region; interactive children opt out. */
+
+.pill {
+  position: fixed;
+  inset: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.pill button,
+.pill select {
+  -webkit-app-region: no-drag;
+}
+
+.appBadge {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.appBadge:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* Traffic pulse: heartbeat rings radiating from the app icon while requests
+   move through the system proxy / buyer proxy. Two rings offset by half a
+   period read as a continuous pulse. */
+.appBadge::before,
+.appBadge::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--brand-rgb), 0.8);
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+}
+
+.appBadgeActive::before {
+  animation: float-pulse 1.8s ease-out infinite;
+}
+
+.appBadgeActive::after {
+  animation: float-pulse 1.8s ease-out 0.9s infinite;
+}
+
+@keyframes float-pulse {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appBadge::before,
+  .appBadge::after {
+    animation: none !important;
+  }
+
+  /* Static indicator instead of motion. */
+  .appBadgeActive::before {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+}
+
+.body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+
+/* Dropdowns are styled as inline text with a small chevron; each is sized
+   in JS to its selected label so the chevron hugs the text (a native select
+   otherwise sizes itself to its longest option). Native selects are used on
+   purpose: their popup menus are OS-level and can extend past this tiny
+   window's bounds. */
+.modelSelect,
+.appSelect {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  max-width: 100%;
+  padding: 0 14px 0 0;
+  border: none;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%234b5450' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    right center / 10px 6px no-repeat;
+  cursor: pointer;
+  outline: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.modelSelect {
+  /* Only the first line must clear the close button; the lines below may
+     run underneath it. */
+  max-width: calc(100% - 26px);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  height: 20px;
+}
+
+.appSelect {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+  height: 16px;
+}
+
+.app {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.usage {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}

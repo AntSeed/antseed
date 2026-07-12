@@ -57,7 +57,15 @@ import {
   onPeersChanged,
   type DashboardNetworkPeer,
 } from './peer-cache.js';
-import { createWindow, createApplicationMenu, getMainWindow, applyWindowView } from './window.js';
+import {
+  createWindow,
+  createApplicationMenu,
+  getMainWindow,
+  applyWindowView,
+  openFloatWindow,
+  closeFloatWindow,
+  getFloatWindow,
+} from './window.js';
 import { createDesktopTray, updateDesktopTray } from './tray.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
@@ -2547,6 +2555,50 @@ ipcMain.handle('system-proxy:add-to-shell', async (_event, opts?: { port?: numbe
   }
 
   return { ok: true, added };
+});
+
+/* ------------------------------------------------------------------ */
+/*  Floating always-on-top pill window                                  */
+/* ------------------------------------------------------------------ */
+
+// Cache the latest display payload so a freshly opened float window can be
+// primed before the main window's next periodic update.
+let lastVprFloatData: unknown;
+
+ipcMain.handle('vpr-float:open', (_event, data: unknown) => {
+  if (data !== undefined) lastVprFloatData = data;
+  openFloatWindow(
+    { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+    lastVprFloatData,
+  );
+  return { ok: true };
+});
+
+ipcMain.handle('vpr-float:close', () => {
+  closeFloatWindow();
+  return { ok: true };
+});
+
+ipcMain.handle('vpr-float:is-open', () => Boolean(getFloatWindow()));
+
+ipcMain.on('vpr-float:update', (_event, data: unknown) => {
+  lastVprFloatData = data;
+  getFloatWindow()?.webContents.send('vpr-float:data', data);
+});
+
+ipcMain.on('vpr-float:action', (_event, action: unknown) => {
+  if (action === 'open-main') {
+    const win = getMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+    return;
+  }
+  // Structured actions (e.g. model selection) are handled by the main
+  // window's renderer, which owns routing state.
+  getMainWindow()?.webContents.send('vpr-float:action', action);
 });
 
 ipcMain.handle('system-proxy:remove-from-shell', async () => {
