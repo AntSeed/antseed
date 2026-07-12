@@ -12,7 +12,7 @@ import {
   parseUsdcToBaseUnits,
 } from '../../payment-utils.js'
 import { AntseedNode, buildReceiveAuthorization, makeUsdcDomain } from '@antseed/node'
-import type { DepositsClient, SweepRequestPayload, SweepReceiptPayload } from '@antseed/node'
+import type { DepositRelayClient, DepositsClient, SweepRequestPayload, SweepReceiptPayload } from '@antseed/node'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { buildBuyerBootstrapEntries } from './start.js'
 
@@ -91,15 +91,24 @@ async function daemonGetReceipt(port: number, nonce: string): Promise<SweepRecei
 interface WaitResult {
   credited: bigint | null
   finalAvailable: bigint
+  finalTotal: bigint
+  confirmation: 'relay-event' | 'authorization' | 'balance' | null
+  blockNumber?: number
+  relayer?: string
   txHash?: string
 }
 
 async function waitForDeposit(
   spinner: Ora,
   depositsClient: DepositsClient,
+  relayClient: DepositRelayClient,
   address: string,
   initialAvailable: bigint,
+  initialTotal: bigint,
   expectedNet: bigint,
+  fee: bigint,
+  usdcAddress: string,
+  authNonce: string,
   timeoutSecs: number,
   getReceipt: () => Promise<SweepReceiptPayload | null>,
 ): Promise<WaitResult> {
@@ -115,16 +124,62 @@ async function waitForDeposit(
       if (receipt.status === 'submitted') {
         spinner.text = 'Relayer accepted the sweep — submitting on-chain...'
       } else if (receipt.status === 'confirmed') {
-        spinner.text = 'Sweep transaction confirmed — waiting for balance...'
+        spinner.text = 'Sweep transaction reported — verifying relay event...'
       }
     }
 
     const current = await depositsClient.getBuyerBalance(address).catch(() => null)
-    if (current && current.available >= initialAvailable + expectedNet) {
-      return { credited: current.available - initialAvailable, finalAvailable: current.available, ...(txHash ? { txHash } : {}) }
+    const finalAvailable = current?.available ?? initialAvailable
+    const finalTotal = current ? current.available + current.reserved : initialTotal
+
+    if (txHash) {
+      const confirmation = await relayClient.getSweepConfirmation(txHash, {
+        buyer: address,
+        deposited: expectedNet,
+        fee,
+        authNonce,
+      }).catch(() => null)
+      if (confirmation) {
+        return {
+          credited: confirmation.deposited,
+          finalAvailable,
+          finalTotal: current ? finalTotal : initialTotal + confirmation.deposited,
+          confirmation: 'relay-event',
+          blockNumber: confirmation.blockNumber,
+          relayer: confirmation.relayer,
+          txHash: confirmation.txHash,
+        }
+      }
+    }
+
+    const authorizationUsed = await relayClient.isAuthorizationUsed(usdcAddress, address, authNonce).catch(() => false)
+    if (authorizationUsed) {
+      return {
+        credited: expectedNet,
+        finalAvailable,
+        finalTotal: current ? finalTotal : initialTotal + expectedNet,
+        confirmation: 'authorization',
+        ...(txHash ? { txHash } : {}),
+      }
+    }
+
+    if (finalTotal >= initialTotal + expectedNet) {
+      return {
+        credited: finalTotal - initialTotal,
+        finalAvailable,
+        finalTotal,
+        confirmation: 'balance',
+        ...(txHash ? { txHash } : {}),
+      }
     }
   }
-  return { credited: null, finalAvailable: initialAvailable, ...(txHash ? { txHash } : {}) }
+  return {
+    credited: null,
+    finalAvailable: initialAvailable,
+    finalTotal: initialTotal,
+    confirmation: null,
+    ...(txHash ? { txHash } : {}),
+  }
 }
 
 export function registerBuyerSweepCommand(buyerCmd: Command): void {
@@ -297,23 +352,36 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
         const result = await waitForDeposit(
           netSpinner,
           depositsClient,
+          relayClient,
           address,
           initialDeposits.available,
+          depositsBalance,
           amount - fee,
+          fee,
+          crypto.usdcContractAddress,
+          message.nonce,
           timeoutSecs,
           getReceipt,
         )
 
         if (result.credited !== null) {
-          netSpinner.succeed(chalk.green(`Deposited ${formatUsdc(result.credited)} USDC to your deposits balance`))
+          const confirmationLabel = result.confirmation === 'relay-event'
+            ? 'verified relay event'
+            : result.confirmation === 'authorization'
+              ? 'verified USDC authorization'
+              : 'verified deposits balance'
+          netSpinner.succeed(chalk.green(`Sweep confirmed by ${confirmationLabel}: deposited ${formatUsdc(result.credited)} USDC`))
           console.log(chalk.dim(`New available balance: ${formatUsdc(result.finalAvailable)} USDC`))
+          console.log(chalk.dim(`New deposits total: ${formatUsdc(result.finalTotal)} USDC`))
           if (result.txHash) console.log(chalk.dim(`Transaction: ${result.txHash}`))
+          if (result.blockNumber !== undefined) console.log(chalk.dim(`Block: ${result.blockNumber}`))
+          if (result.relayer) console.log(chalk.dim(`Relayer: ${result.relayer}`))
           if (node) await node.stop()
           process.exit(0)
         }
 
-        netSpinner.fail(chalk.yellow(`No relayer completed the sweep within ${timeoutSecs}s.`))
-        console.log(chalk.dim('Your funds have not moved from the hot wallet — it is safe to retry.'))
+        netSpinner.fail(chalk.yellow(`No on-chain sweep confirmation within ${timeoutSecs}s.`))
+        console.log(chalk.dim('No matching relay event, consumed authorization, or deposits-balance increase was observed.'))
         console.log(chalk.dim(`The signed authorization expires at ${new Date(validBefore * 1000).toISOString()}.`))
         if (result.txHash) console.log(chalk.dim(`Last seen transaction: ${result.txHash}`))
         if (node) await node.stop()

@@ -77,6 +77,7 @@ export {
   type DepositRelayClientConfig,
   type SweepParams,
   type SweepProfitEstimate,
+  type SweepEventConfirmation,
 } from './payments/evm/deposit-relay-client.js';
 export { DepositRelayer, type DepositRelayerConfig, type SweepHandleResult } from './payments/deposit-relayer.js';
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';

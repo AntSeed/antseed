@@ -1,4 +1,4 @@
-import { Contract, TypedDataEncoder } from 'ethers';
+import { Contract, Interface, TypedDataEncoder } from 'ethers';
 import type { AbstractSigner, TypedDataDomain } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
@@ -28,6 +28,16 @@ export interface SweepProfitEstimate {
   profitUsdc: bigint;
 }
 
+export interface SweepEventConfirmation {
+  txHash: string;
+  blockNumber: number;
+  buyer: string;
+  relayer: string;
+  deposited: bigint;
+  fee: bigint;
+  authNonce: string;
+}
+
 /** Conservative ETH/USD assumption for profitability checks when the caller
  *  provides no price. Overestimating ETH makes the check stricter, never
  *  unprofitable-but-accepted. */
@@ -38,7 +48,10 @@ const DEPOSIT_RELAY_ABI = [
   'function FEE() external view returns (uint256)',
   'function usdc() external view returns (address)',
   'function deposits() external view returns (address)',
+  'event SweepExecuted(address indexed buyer, address indexed relayer, uint256 deposited, uint256 fee, bytes32 authNonce)',
 ] as const;
+
+const DEPOSIT_RELAY_INTERFACE = new Interface(DEPOSIT_RELAY_ABI);
 
 export class DepositRelayClient extends BaseEvmClient {
   constructor(config: DepositRelayClientConfig) {
@@ -102,6 +115,72 @@ export class DepositRelayClient extends BaseEvmClient {
   async fee(): Promise<bigint> {
     const contract = new Contract(this._contractAddress, DEPOSIT_RELAY_ABI, this._provider);
     return contract.getFunction('FEE')() as Promise<bigint>;
+  }
+
+  /**
+   * Confirm a relayer-reported transaction by reading its receipt and matching
+   * the relay's SweepExecuted event against the buyer authorization nonce.
+   */
+  async getSweepConfirmation(
+    txHash: string,
+    expected?: {
+      buyer?: string;
+      deposited?: bigint;
+      fee?: bigint;
+      authNonce?: string;
+    },
+  ): Promise<SweepEventConfirmation | null> {
+    const receipt = await this._provider.getTransactionReceipt(txHash);
+    if (!receipt || receipt.status !== 1) return null;
+
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== this._contractAddress.toLowerCase()) continue;
+      const parsed = (() => {
+        try {
+          return DEPOSIT_RELAY_INTERFACE.parseLog(log);
+        } catch {
+          return null;
+        }
+      })();
+      if (!parsed || parsed.name !== 'SweepExecuted') continue;
+      const args = parsed.args as unknown as {
+        buyer: string;
+        relayer: string;
+        deposited: bigint;
+        fee: bigint;
+        authNonce: string;
+      };
+      if (expected?.buyer && args.buyer.toLowerCase() !== expected.buyer.toLowerCase()) continue;
+      if (expected?.deposited !== undefined && args.deposited !== expected.deposited) continue;
+      if (expected?.fee !== undefined && args.fee !== expected.fee) continue;
+      if (expected?.authNonce && args.authNonce.toLowerCase() !== expected.authNonce.toLowerCase()) continue;
+      return {
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        buyer: args.buyer,
+        relayer: args.relayer,
+        deposited: args.deposited,
+        fee: args.fee,
+        authNonce: args.authNonce,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Check whether USDC has consumed the EIP-3009 authorization nonce. Because
+   * sweep authorizations are signed with `to = AntseedDepositRelay`, and the
+   * relay call is atomic, a consumed nonce is a strong fallback confirmation
+   * that the sweep transaction landed even when no relayer tx hash was reported.
+   */
+  async isAuthorizationUsed(usdcAddress: string, from: string, nonce: string): Promise<boolean> {
+    const usdc = new Contract(
+      usdcAddress,
+      ['function authorizationState(address authorizer, bytes32 nonce) external view returns (bool)'],
+      this._provider,
+    );
+    return usdc.getFunction('authorizationState')(from, nonce) as Promise<boolean>;
   }
 
   /**
