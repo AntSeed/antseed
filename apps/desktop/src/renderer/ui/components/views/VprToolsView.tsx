@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { LogEvent, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { getUiStateRef } from '../../../core/store';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
@@ -56,6 +56,9 @@ export function VprToolsView({ onSelectView }: Props) {
   const [message, setMessage] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addUrl, setAddUrl] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
 
   const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
@@ -266,6 +269,56 @@ export function VprToolsView({ onSelectView }: Props) {
     }
   }, []);
 
+  const addCustomApp = useCallback(async () => {
+    const bridge = window.antseedDesktop;
+    if (!bridge?.systemProxyAddCustomApp) return;
+    setAddBusy(true);
+    setMessage(null);
+    try {
+      const result = await bridge.systemProxyAddCustomApp({ apiUrl: addUrl });
+      if (!result.ok) {
+        setMessage(result.error ?? 'Unable to add custom app');
+        return;
+      }
+      setAddOpen(false);
+      setAddUrl('');
+      if (result.name) setExpanded(result.name);
+      await refresh();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddBusy(false);
+    }
+  }, [addUrl, refresh]);
+
+  const removeCustomApp = useCallback(async (profileName: string, connected: boolean) => {
+    const bridge = window.antseedDesktop;
+    if (!bridge?.systemProxyRemoveCustomApp) return;
+    setActionBusy(profileName);
+    setMessage(null);
+    try {
+      if (connected) {
+        const remaining = activeProfileNames.filter((name) => name !== profileName);
+        if (remaining.length === 0) {
+          await disconnect();
+        } else {
+          await startProfiles(remaining);
+        }
+      }
+      const result = await bridge.systemProxyRemoveCustomApp(profileName);
+      if (!result.ok) {
+        setMessage(result.error ?? 'Unable to remove app');
+        return;
+      }
+      setExpanded((current) => (current === profileName ? null : current));
+      await refresh();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [activeProfileNames, disconnect, refresh, startProfiles]);
+
   const visibleProfiles = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return profiles;
@@ -304,7 +357,11 @@ export function VprToolsView({ onSelectView }: Props) {
                       aria-expanded={isExpanded}
                       onClick={() => setExpanded(isExpanded ? null : profile.name)}
                     >
-                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={18} />
+                      {profile.iconDataUri ? (
+                        <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+                      ) : (
+                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={18} />
+                      )}
                       <span className={styles.appName}>{profile.displayName}</span>
                       {connected && <VprBadge tone="green">Connected</VprBadge>}
                       <HugeiconsIcon
@@ -392,7 +449,7 @@ export function VprToolsView({ onSelectView }: Props) {
                             {trustBusy ? 'Trusting...' : 'Trust CA'}
                           </button>
                         ) : null}
-                        {profile.kind === 'proxy' ? (
+                        {profile.kind === 'proxy' && !profile.custom ? (
                           <>
                             <button type="button" onClick={() => { void addShellSetup(); }} disabled={actionBusy === 'shell-setup'}>
                               {actionBusy === 'shell-setup' ? 'Updating...' : 'Shell setup'}
@@ -402,6 +459,16 @@ export function VprToolsView({ onSelectView }: Props) {
                             </button>
                           </>
                         ) : null}
+                        {profile.custom ? (
+                          <button
+                            type="button"
+                            className={styles.dangerAction}
+                            onClick={() => { void removeCustomApp(profile.name, connected); }}
+                            disabled={actionBusy === profile.name || busy !== null}
+                          >
+                            {actionBusy === profile.name ? 'Removing...' : 'Remove app'}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   )}
@@ -409,6 +476,51 @@ export function VprToolsView({ onSelectView }: Props) {
               );
             })}
           </VprCard>
+        )}
+
+        {addOpen ? (
+          <VprCard>
+            <form
+              className={styles.addAppForm}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addCustomApp();
+              }}
+            >
+              <label>
+                <span>API URL</span>
+                <input
+                  type="text"
+                  value={addUrl}
+                  placeholder="https://api.example.com/v1"
+                  autoFocus
+                  spellCheck={false}
+                  onChange={(event) => setAddUrl(event.currentTarget.value)}
+                  disabled={addBusy}
+                />
+              </label>
+              <p className={styles.addAppHint}>
+                Requests the app sends to this URL are routed through AntSeed.
+              </p>
+              <div className={styles.actions}>
+                <button type="submit" disabled={addBusy || addUrl.trim().length === 0}>
+                  {addBusy ? 'Adding...' : 'Add app'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAddOpen(false); setAddUrl(''); }}
+                  disabled={addBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </VprCard>
+        ) : (
+          <button type="button" className={styles.addAppButton} onClick={() => { setAddOpen(true); setMessage(null); }}>
+            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
+            Add custom app
+          </button>
         )}
       </div>
     </section>

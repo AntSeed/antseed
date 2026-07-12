@@ -486,6 +486,12 @@ const api = {
   systemProxyListProfiles() {
     return ipcRenderer.invoke('system-proxy:list-profiles');
   },
+  systemProxyAddCustomApp(opts: { apiUrl: string }): Promise<{ ok: boolean; name?: string; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:add-custom-app', opts) as Promise<{ ok: boolean; name?: string; error?: string }>;
+  },
+  systemProxyRemoveCustomApp(name: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:remove-custom-app', { name }) as Promise<{ ok: boolean; error?: string }>;
+  },
   systemProxyStop(): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
     return ipcRenderer.invoke('system-proxy:stop') as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   },

@@ -211,7 +211,7 @@ async function fetchDomainSiteMetadata(domain: string, options: EnrichOptions): 
   }
 }
 
-async function getDomainSiteMetadata(domain: string, options: EnrichOptions): Promise<DomainSiteMetadata | null> {
+export async function getDomainSiteMetadata(domain: string, options: EnrichOptions = {}): Promise<DomainSiteMetadata | null> {
   const nowMs = options.nowMs ?? Date.now();
   const successTtlMs = options.successTtlMs ?? DEFAULT_SUCCESS_TTL_MS;
   const failureTtlMs = options.failureTtlMs ?? DEFAULT_FAILURE_TTL_MS;

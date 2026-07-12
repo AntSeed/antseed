@@ -16,7 +16,7 @@ const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, isIP } from 'node:net';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -73,6 +73,15 @@ import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
+import {
+  customAppName,
+  customAppToCliProfile,
+  deriveCustomAppTarget,
+  fetchCustomAppSiteMetadata,
+  loadCustomApps,
+  saveCustomApps,
+  type CustomAppRecord,
+} from './custom-apps.js';
 import {
   getVoiceTranscriptionStatus,
   installVoiceTranscriptionModel,
@@ -146,21 +155,46 @@ type DesktopRewardsSummary = {
   error: string | null;
 };
 
-const SYSTEM_PROXY_PROFILES = loadDesktopSystemProxyProfiles();
+const { profiles: SYSTEM_PROXY_PROFILES, raw: SYSTEM_PROXY_PROFILES_RAW } = loadDesktopSystemProxyProfiles();
 
-function loadDesktopSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): readonly DesktopSystemProxyProfile[] {
+function loadDesktopSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): {
+  profiles: readonly DesktopSystemProxyProfile[];
+  raw: readonly unknown[];
+} {
   const envJson = env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim();
   const envFile = env[SYSTEM_PROXY_PROFILES_FILE_ENV]?.trim();
   const packagedFile = packagedSystemProxyProfilesPath();
   const raw = envJson
     || (envFile ? readFileSync(envFile, 'utf8') : '')
     || (packagedFile ? readFileSync(packagedFile, 'utf8') : '');
-  if (!raw) return [];
+  if (!raw) return { profiles: [], raw: [] };
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) {
     throw new Error(`${SYSTEM_PROXY_PROFILES_JSON_ENV} / ${SYSTEM_PROXY_PROFILES_FILE_ENV} must define a JSON array`);
   }
-  return parsed.map((profile, index) => normalizeDesktopSystemProxyProfile(profile, index));
+  return {
+    profiles: parsed.map((profile, index) => normalizeDesktopSystemProxyProfile(profile, index)),
+    raw: parsed,
+  };
+}
+
+function loadCustomAppRecords(): CustomAppRecord[] {
+  return loadCustomApps(resolveConnectDataDir());
+}
+
+function customAppDesktopProfile(record: CustomAppRecord): DesktopSystemProxyProfile {
+  return {
+    name: record.name,
+    label: record.displayName,
+    kind: 'proxy',
+    method: 'HTTPS proxy',
+    domains: [record.host],
+  };
+}
+
+/** Packaged profiles plus the user's custom apps, in display order. */
+function allSystemProxyProfiles(): DesktopSystemProxyProfile[] {
+  return [...SYSTEM_PROXY_PROFILES, ...loadCustomAppRecords().map(customAppDesktopProfile)];
 }
 
 function packagedSystemProxyProfilesPath(): string | null {
@@ -170,6 +204,16 @@ function packagedSystemProxyProfilesPath(): string | null {
 }
 
 function systemProxyProfilesEnv(): Record<string, string> {
+  const customApps = loadCustomAppRecords();
+  if (customApps.length > 0) {
+    // The CLI child reads profiles once at startup, so hand it a merged file
+    // combining the packaged/base profiles with the user's custom apps.
+    const merged = [...SYSTEM_PROXY_PROFILES_RAW, ...customApps.map(customAppToCliProfile)];
+    const filePath = path.join(systemProxyDataDir(), 'profiles.merged.json');
+    mkdirSync(systemProxyDataDir(), { recursive: true });
+    writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    return { [SYSTEM_PROXY_PROFILES_FILE_ENV]: filePath };
+  }
   if (process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim()) {
     return { [SYSTEM_PROXY_PROFILES_JSON_ENV]: process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]! };
   }
@@ -1436,7 +1480,7 @@ function buildSystemProxyTrayMenu(showMainWindow: () => void): MenuItemConstruct
     { label: 'Peer', submenu: peerSubmenu },
     { label: 'Model', submenu: modelSubmenu },
     { type: 'separator' },
-    ...SYSTEM_PROXY_PROFILES.map((profile): MenuItemConstructorOptions => {
+    ...allSystemProxyProfiles().map((profile): MenuItemConstructorOptions => {
       const connected = profiles.has(profile.name) && (running || profile.kind === 'config-patch');
       return {
         label: `${profile.label}: ${connected ? 'Disconnect' : 'Connect'}`,
@@ -2384,7 +2428,7 @@ ipcMain.handle('runtime:scan-network', async () => {
 });
 
 ipcMain.handle('system-proxy:list-profiles', () => {
-  return SYSTEM_PROXY_PROFILES.map((profile) => ({
+  const base = SYSTEM_PROXY_PROFILES.map((profile) => ({
     name: profile.name,
     displayName: profile.label,
     kind: profile.kind,
@@ -2395,6 +2439,60 @@ ipcMain.handle('system-proxy:list-profiles', () => {
     toolName: profile.toolName,
     canRestart: Boolean(profile.restartAppName),
   }));
+  const custom = loadCustomAppRecords().map((record) => ({
+    name: record.name,
+    displayName: record.displayName,
+    kind: 'proxy' as const,
+    method: 'HTTPS proxy',
+    domains: [record.host],
+    canRestart: false,
+    custom: true,
+    ...(record.iconDataUri ? { iconDataUri: record.iconDataUri } : {}),
+  }));
+  return [...base, ...custom];
+});
+
+ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: string }) => {
+  try {
+    const apiUrl = typeof opts?.apiUrl === 'string' ? opts.apiUrl.trim() : '';
+    const target = deriveCustomAppTarget(apiUrl);
+    const existingProfiles = allSystemProxyProfiles();
+    const conflict = existingProfiles.find((profile) => profile.kind === 'proxy' && profile.domains.includes(target.host));
+    if (conflict) {
+      return { ok: false, error: `${target.host} is already handled by ${conflict.label}.` };
+    }
+    const metadata = await fetchCustomAppSiteMetadata(target.host);
+    const dataDir = resolveConnectDataDir();
+    const record: CustomAppRecord = {
+      name: customAppName(target.host, existingProfiles.map((profile) => profile.name)),
+      displayName: metadata.title ?? target.host,
+      apiUrl,
+      ...target,
+      ...(metadata.iconDataUri ? { iconDataUri: metadata.iconDataUri } : {}),
+      createdAt: Date.now(),
+    };
+    saveCustomApps(dataDir, [...loadCustomApps(dataDir), record]);
+    refreshTrayMenu();
+    return { ok: true, name: record.name };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('system-proxy:remove-custom-app', (_event, opts: { name?: string }) => {
+  try {
+    const name = typeof opts?.name === 'string' ? opts.name : '';
+    const dataDir = resolveConnectDataDir();
+    const existing = loadCustomApps(dataDir);
+    if (!existing.some((record) => record.name === name)) {
+      return { ok: false, error: 'Unknown custom app.' };
+    }
+    saveCustomApps(dataDir, existing.filter((record) => record.name !== name));
+    refreshTrayMenu();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 ipcMain.handle('system-proxy:start', async (_event, opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => {

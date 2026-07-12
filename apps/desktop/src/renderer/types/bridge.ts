@@ -20,6 +20,9 @@ export type SystemProxyProfileSummary = {
   openUrl?: string;
   toolName?: string;
   canRestart?: boolean;
+  /** True for user-added custom apps (removable, favicon-based icon). */
+  custom?: boolean;
+  iconDataUri?: string;
 };
 
 export type DesktopBuyerUsageTotals = {
@@ -336,6 +339,8 @@ export type DesktopBridge = {
 
   systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;
+  systemProxyAddCustomApp?: (opts: { apiUrl: string }) => Promise<{ ok: boolean; name?: string; error?: string }>;
+  systemProxyRemoveCustomApp?: (name: string) => Promise<{ ok: boolean; error?: string }>;
   systemProxyStop?: () => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
   systemProxyInstallCa?: () => Promise<{ ok: boolean; warning?: string; error?: string }>;

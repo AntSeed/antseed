@@ -199,6 +199,80 @@
   cursor: default;
 }
 
+.dangerAction {
+  color: var(--danger) !important;
+}
+
+.appIcon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+/* ---------- Add custom app ---------- */
+
+.addAppButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.addAppButton:hover:not(:disabled) {
+  border-color: rgba(var(--brand-rgb), 0.5);
+  color: var(--text-primary);
+}
+
+.addAppForm {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.addAppForm label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.addAppForm input,
+.addAppForm select {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.addAppForm input:focus-visible,
+.addAppForm select:focus-visible {
+  border-color: rgba(var(--brand-rgb), 0.5);
+}
+
+.addAppHint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
 @media (max-width: 560px) {
   .controls {
     grid-template-columns: minmax(0, 1fr);
