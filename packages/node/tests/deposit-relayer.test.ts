@@ -184,6 +184,33 @@ describe('DepositRelayer', () => {
     );
   });
 
+  it('allows a nonce to be retried after transient simulation failure', async () => {
+    const { relayer, estimateSpy, sweepSpy } = makeRelayer();
+    const payload = await makeValidPayload();
+
+    estimateSpy.mockRejectedValueOnce(new Error('rpc timeout'));
+
+    expect(await relayer.handleSweepRequest(PEER, payload, makeMux())).toBe('rejected');
+    expect(await relayer.handleSweepRequest(PEER, payload, makeMux())).toBe('submitted');
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a nonce to be retried when the sweep is temporarily unprofitable', async () => {
+    const { relayer, estimateSpy, sweepSpy } = makeRelayer();
+    const payload = await makeValidPayload();
+
+    estimateSpy.mockResolvedValueOnce({
+      gasEstimate: 200_000n,
+      estGasCostUsdc: 80_000n,
+      fee: FEE,
+      profitUsdc: FEE - 80_000n,
+    });
+
+    expect(await relayer.handleSweepRequest(PEER, payload, makeMux())).toBe('rejected');
+    expect(await relayer.handleSweepRequest(PEER, payload, makeMux())).toBe('submitted');
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('reports rejected when the submission loses the race', async () => {
     const { relayer, sweepSpy } = makeRelayer();
     sweepSpy.mockRejectedValue(new Error('authorization is used or canceled'));

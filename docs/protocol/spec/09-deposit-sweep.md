@@ -124,3 +124,12 @@ disabled with `relayer.enabled: false`.
 Broadcasting a sweep reveals the buyer address and amount to connected peers.
 The same data becomes public on-chain when the sweep lands; no additional
 mitigation is applied in v1.
+
+## Threat notes
+
+A funded buyer can grief relayers by broadcasting valid authorizations and then
+front-running with `cancelAuthorization`, causing relayer submissions to revert
+after gas is spent. The attacker pays comparable gas to do this, and relayer
+exposure is bounded by the per-peer rate limit (default 6/min), the global
+in-flight cap (default 2), local signature verification, and simulation before
+submission.

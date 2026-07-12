@@ -28,6 +28,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function parseTimeoutSecs(value: string | undefined): { value: number; usedDefault: boolean } {
+  if (!value) return { value: DEFAULT_TIMEOUT_SECS, usedDefault: false }
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { value: DEFAULT_TIMEOUT_SECS, usedDefault: true }
+  }
+  return { value: Math.floor(parsed), usedDefault: false }
+}
+
 // ─── Running-daemon control plane ─────────────────────────────────────
 
 /** Fetch against the local buyer daemon; null when nothing is listening. */
@@ -348,7 +357,10 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
           netSpinner.text = `Broadcast sweep request to ${sent} peer${sent === 1 ? '' : 's'} — waiting for a relayer...`
         }
 
-        const timeoutSecs = options.timeout ? parseInt(options.timeout, 10) : DEFAULT_TIMEOUT_SECS
+        const timeout = parseTimeoutSecs(options.timeout)
+        if (timeout.usedDefault) {
+          console.log(chalk.yellow(`Ignoring invalid --timeout value; using ${DEFAULT_TIMEOUT_SECS}s.`))
+        }
         const result = await waitForDeposit(
           netSpinner,
           depositsClient,
@@ -360,7 +372,7 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
           fee,
           crypto.usdcContractAddress,
           message.nonce,
-          timeoutSecs,
+          timeout.value,
           getReceipt,
         )
 
@@ -380,8 +392,9 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
           process.exit(0)
         }
 
-        netSpinner.fail(chalk.yellow(`No on-chain sweep confirmation within ${timeoutSecs}s.`))
+        netSpinner.fail(chalk.yellow(`No on-chain sweep confirmation within ${timeout.value}s.`))
         console.log(chalk.dim('No matching relay event, consumed authorization, or deposits-balance increase was observed.'))
+        console.log(chalk.dim('Retrying may deposit twice if the first sweep lands late; both deposits credit this same buyer wallet.'))
         console.log(chalk.dim(`The signed authorization expires at ${new Date(validBefore * 1000).toISOString()}.`))
         if (result.txHash) console.log(chalk.dim(`Last seen transaction: ${result.txHash}`))
         if (node) await node.stop()

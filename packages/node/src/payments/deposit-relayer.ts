@@ -114,11 +114,7 @@ export class DepositRelayer {
       return 'rejected';
     }
 
-    this._seenNonces.add(nonceKey);
-    if (this._seenNonces.size > SEEN_NONCES_MAX) {
-      const oldest = this._seenNonces.values().next().value;
-      if (oldest !== undefined) this._seenNonces.delete(oldest);
-    }
+    this._rememberNonce(nonceKey);
 
     const params = {
       from: payload.from,
@@ -139,6 +135,7 @@ export class DepositRelayer {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         debugLog(`[Relayer] Simulation failed for nonce ${payload.nonce.slice(0, 10)}...: ${message}`);
+        this._seenNonces.delete(nonceKey);
         this._sendReceipt(mux, payload, 'rejected', undefined, 'simulation failed');
         return 'rejected';
       }
@@ -146,6 +143,7 @@ export class DepositRelayer {
       const minProfit = this._config.minProfitBaseUnits ?? DEFAULT_MIN_PROFIT;
       if (estimate.profitUsdc < minProfit) {
         debugLog(`[Relayer] Unprofitable sweep for nonce ${payload.nonce.slice(0, 10)}...: fee=${estimate.fee} gasEst=${estimate.estGasCostUsdc} profit=${estimate.profitUsdc} min=${minProfit}`);
+        this._seenNonces.delete(nonceKey);
         this._sendReceipt(mux, payload, 'rejected', undefined, 'unprofitable for relayer');
         return 'rejected';
       }
@@ -163,6 +161,14 @@ export class DepositRelayer {
       return 'rejected';
     } finally {
       this._inFlight--;
+    }
+  }
+
+  private _rememberNonce(nonceKey: string): void {
+    this._seenNonces.add(nonceKey);
+    if (this._seenNonces.size > SEEN_NONCES_MAX) {
+      const oldest = this._seenNonces.values().next().value;
+      if (oldest !== undefined) this._seenNonces.delete(oldest);
     }
   }
 
