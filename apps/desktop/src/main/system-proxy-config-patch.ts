@@ -174,8 +174,9 @@ function buildConfigPatchModels(
   servedModels: string[],
 ): JsonObject {
   const models: JsonObject = {};
+  const cleanServedModels = servedModels.map((svc) => svc.trim()).filter(Boolean);
   if (patch.modelFormat === 'peer-routed') {
-    for (const svc of servedModels) {
+    for (const svc of cleanServedModels) {
       const key = peerId ? `${peerId}@${svc}` : svc;
       models[key] = { name: svc };
     }
@@ -191,13 +192,22 @@ function routedModelKey(peerId: string, model: string): string {
   return peerId ? `${peerId}@${model}` : model;
 }
 
+function resolveConfigPatchModel(model: string, servedModels: string[]): string {
+  const requested = model.trim();
+  if (requested) return requested;
+  const fallback = servedModels.map((svc) => svc.trim()).find(Boolean);
+  if (fallback) return fallback;
+  throw new Error('Config-based routing requires a model. Select a peer with advertised models or choose a model before enabling this tool.');
+}
+
 export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: string, buyerPort: number, servedModels: string[]): void {
   if (!isBuyerProxyRoutablePeerId(peerId)) {
     throw new Error('Config-based routing requires a 40-character hex peer ID. Select a chain-backed peer before enabling this tool.');
   }
+  const selectedService = resolveConfigPatchModel(model, servedModels);
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
-  const selectedModel = routedModelKey(peerId, model);
+  const selectedModel = routedModelKey(peerId, selectedService);
   const config = readConfigPatchFile(filePath);
 
   const providers = (config['provider'] && typeof config['provider'] === 'object' && !Array.isArray(config['provider']))
@@ -210,7 +220,7 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
       baseURL: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
       apiKey: 'antseed',
     },
-    models: buildConfigPatchModels(patch, peerId, model, servedModels),
+    models: buildConfigPatchModels(patch, peerId, selectedService, servedModels),
   };
   config['provider'] = providers;
   config['model'] = `${patch.providerKey}/${selectedModel}`;

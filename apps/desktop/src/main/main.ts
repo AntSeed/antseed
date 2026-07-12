@@ -732,6 +732,8 @@ async function stopManagedRuntimes(): Promise<void> {
     await processManager.stopAll();
   } finally {
     await clearSystemProxySettings();
+    removeAllConfigPatches();
+    traySystemProxyProfiles = new Set();
   }
 }
 
@@ -1245,8 +1247,8 @@ async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimePr
 function openSystemProxyWindow(): void {
   const window = getMainWindow();
   if (window) {
-    // Don't resize via applyWindowView here — no IPC navigates the renderer,
-    // so it keeps rendering whatever view is active. Just surface the window.
+    applyWindowView('system-proxy');
+    window.webContents.send('desktop:navigate-view', 'system-proxy');
     window.show();
     window.focus();
   }
@@ -2624,8 +2626,7 @@ app.whenReady().then(async () => {
   const restoredProfiles = Array.isArray(activeSystemProxyState?.['activeProfileNames'])
     ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
     : [];
-  const restoredProxyProfiles = restoredProfiles.filter((name) => !isConfigPatchProfileName(name));
-  if (restoredProxyProfiles.length > 0 && typeof activeSystemProxyState?.['peerId'] === 'string') {
+  if (restoredProfiles.length > 0 && typeof activeSystemProxyState?.['peerId'] === 'string') {
     void startSystemProxyRuntime({
       peerId: activeSystemProxyState['peerId'],
       port: DEFAULT_SYSTEM_PROXY_PORT,

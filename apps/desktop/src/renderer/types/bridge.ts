@@ -275,6 +275,7 @@ export type DesktopBridge = {
   openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
   openTool?: (toolName: string) => Promise<{ ok: boolean; error?: string; fallback?: string }>;
   applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
+  onNavigateView?: (handler: (viewName: string) => void) => () => void;
   voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
   voiceGetStatus?: () => Promise<unknown>;
   voiceSetModel?: (modelId: string) => Promise<unknown>;

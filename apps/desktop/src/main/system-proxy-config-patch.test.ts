@@ -108,6 +108,31 @@ test('applyConfigPatch creates a new config file when one does not exist', async
   });
 });
 
+test('applyConfigPatch falls back to an advertised model when no default model is selected', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, ['model-a']);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      provider?: Record<string, { models?: Record<string, { name: string }> }>;
+      model?: string;
+    };
+    assert.deepEqual(config.provider?.antseed?.models, {
+      [`${PEER_ID}@model-a`]: { name: 'model-a' },
+    });
+    assert.equal(config.model, `antseed/${PEER_ID}@model-a`);
+  });
+});
+
+test('applyConfigPatch rejects routes without any selected or advertised model', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    assert.throws(
+      () => applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, []),
+      /requires a model/,
+    );
+    assert.equal(existsSync(configPath), false);
+  });
+});
+
 test('applyConfigPatch leaves malformed existing configs unchanged', async () => {
   await withTempConfig(async (_dir, configPath) => {
     const original = '{ "provider": { "broken": } }\n';

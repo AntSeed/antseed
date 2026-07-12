@@ -334,6 +334,11 @@ const api = {
   applyWindowView(viewName: string): Promise<{ ok: true; skipped?: string }> {
     return ipcRenderer.invoke('window:apply-view', viewName) as Promise<{ ok: true; skipped?: string }>;
   },
+  onNavigateView(handler: (viewName: string) => void): () => void {
+    const listener = (_: unknown, viewName: string) => handler(viewName);
+    ipcRenderer.on('desktop:navigate-view', listener);
+    return () => ipcRenderer.off('desktop:navigate-view', listener);
+  },
   voiceTranscribe(audio: ArrayBuffer): Promise<{ ok: boolean; text?: string; error?: string }> {
     return ipcRenderer.invoke('voice:transcribe', audio) as Promise<{ ok: boolean; text?: string; error?: string }>;
   },
