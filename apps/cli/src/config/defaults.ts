@@ -39,6 +39,9 @@ export function createDefaultConfig(): AntseedConfig {
         chainId: 'base-mainnet',
       },
     },
+    relayer: {
+      enabled: true,
+    },
     network: {
       bootstrapNodes: [],
     },

@@ -34,6 +34,12 @@ export enum MessageType {
   // Verification / attestation protocol (0x80-0x8F)
   VerificationResponseAuth = 0x80,
 
+  // 0x90-0x9F reserved: delegated-verification protocol (feat/verifier-network)
+
+  // Deposit sweep protocol (0xA0-0xAF)
+  SweepRequest = 0xA0,
+  SweepReceipt = 0xA1,
+
   Disconnect = 0xF0,
   Error = 0xFF,
 }
@@ -192,6 +198,48 @@ export interface NeedAuthPayload {
   freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
+}
+
+// ─── Deposit Sweep Messages ─────────────────────────────────────
+
+/**
+ * Buyer broadcasts a signed gasless deposit sweep for permissionless relayers
+ * (sellers by default) to submit on-chain. Carries everything
+ * AntseedDepositRelay.sweepDeposit needs; the relayer earns the contract's
+ * fixed, immutable FEE in USDC. The single EIP-3009 signature — addressed to
+ * the relay contract — is the buyer's consent to those terms. Replay-safe via
+ * the EIP-3009 nonce; losing a submission race is harmless.
+ */
+export interface SweepRequestPayload {
+  version: 1;
+  evmChainId: number;
+  /** AntseedDepositRelay address the buyer signed against. Relayers must only
+   *  submit when this matches their own configured relay address. */
+  relayAddress: string;
+  from: string;
+  /** Total USDC pulled via EIP-3009, base units (uint256 decimal string). */
+  amount: string;
+  validAfter: number;
+  validBefore: number;
+  /** EIP-3009 authorization nonce (bytes32 hex). Also the correlation key. */
+  nonce: string;
+  /** Buyer signature over the USDC ReceiveWithAuthorization typed data. */
+  sig3009: string;
+}
+
+export type SweepReceiptStatus = 'submitted' | 'confirmed' | 'rejected';
+
+/**
+ * Optional relayer progress report for a SweepRequest, correlated by the
+ * EIP-3009 nonce. Purely informational — the buyer's source of truth is its
+ * Deposits balance on-chain.
+ */
+export interface SweepReceiptPayload {
+  version: 1;
+  authNonce: string;
+  status: SweepReceiptStatus;
+  txHash?: string;
+  reason?: string;
 }
 
 // ─── Bilateral Verification Messages ───────────────────────────

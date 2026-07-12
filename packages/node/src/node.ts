@@ -47,7 +47,10 @@ import {
 import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
+import { SweepMux } from "./p2p/sweep-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
+import { DepositRelayer } from "./payments/deposit-relayer.js";
+import type { SweepRequestPayload, SweepReceiptPayload } from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
@@ -155,6 +158,20 @@ export interface NodePaymentsConfig {
   maxReserveAmountUsdc?: string;
   /** Disable per-service buyer attribution in metadata v2. Default: false. */
   disableMetadataV2Services?: boolean;
+  /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps). */
+  depositRelayAddress?: string;
+}
+
+export interface NodeRelayerConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true (opt-out). */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
 }
 
 export interface NodeVerificationConfig {
@@ -195,6 +212,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default). */
+  relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
   verification?: NodeVerificationConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
@@ -266,6 +285,9 @@ export class AntseedNode extends EventEmitter {
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
+  private _sweepMuxes = new Map<PeerId, SweepMux>();
+  /** Seller-side deposit-sweep relayer (initialized when configured + enabled). */
+  private _depositRelayer: DepositRelayer | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -1177,6 +1199,7 @@ export class AntseedNode extends EventEmitter {
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
       const verificationMux = this._verificationMuxes.get(peerId);
+      const sweepMux = this._sweepMuxes.get(peerId);
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
@@ -1202,6 +1225,11 @@ export class AntseedNode extends EventEmitter {
           verificationMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
+          });
+        } else if (sweepMux && SweepMux.isSweepMessage(frame.type)) {
+          sweepMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle sweep frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
@@ -1230,6 +1258,7 @@ export class AntseedNode extends EventEmitter {
         this._paymentMuxes.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
+        this._sweepMuxes.delete(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1581,6 +1610,18 @@ export class AntseedNode extends EventEmitter {
     this._paymentMuxes.set(buyerPeerId, paymentMux);
     this._verificationMuxes.set(buyerPeerId, verificationMux);
 
+    // Deposit-sweep relaying (seller side, opt-out)
+    const sweepMux = new SweepMux(conn);
+    if (this._depositRelayer) {
+      const relayer = this._depositRelayer;
+      sweepMux.onSweepRequest((payload) => {
+        void relayer.handleSweepRequest(buyerPeerId, payload, sweepMux).catch((err) => {
+          debugWarn(`[Node] Sweep relay handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        });
+      });
+    }
+    this._sweepMuxes.set(buyerPeerId, sweepMux);
+
     const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux, verificationMux);
 
     this._muxes.set(buyerPeerId, mux);
@@ -1724,6 +1765,26 @@ export class AntseedNode extends EventEmitter {
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
+
+      // Deposit-sweep relayer (opt-out — ON by default when the chain has a relay)
+      const relayerConfig = this._config.relayer;
+      if (relayerConfig?.enabled !== false && payments.depositRelayAddress && payments.usdcAddress) {
+        this._depositRelayer = new DepositRelayer(this._identity, {
+          rpcUrl: payments.rpcUrl,
+          ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+          relayAddress: payments.depositRelayAddress,
+          usdcAddress: payments.usdcAddress,
+          evmChainId: payments.chainId ?? 8453,
+          ...(relayerConfig?.minProfitBaseUnits !== undefined
+            ? { minProfitBaseUnits: BigInt(relayerConfig.minProfitBaseUnits) }
+            : {}),
+          ...(relayerConfig?.maxInFlight !== undefined ? { maxInFlight: relayerConfig.maxInFlight } : {}),
+          ...(relayerConfig?.maxPerPeerPerMinute !== undefined
+            ? { maxPerPeerPerMinute: relayerConfig.maxPerPeerPerMinute }
+            : {}),
+        });
+        debugLog(`[Node] DepositRelayer initialized (relay=${payments.depositRelayAddress.slice(0, 10)}...)`);
+      }
 
       // Startup recovery: validate hydrated channels against on-chain state, then check timeouts
       await this._sellerPaymentManager.validateHydratedChannels();
@@ -1886,6 +1947,45 @@ export class AntseedNode extends EventEmitter {
     const mux = new VerificationMux(conn);
     this._verificationMuxes.set(peerId, mux);
     return mux;
+  }
+
+  private _getOrCreateSweepMux(peerId: PeerId, conn: PeerConnection): SweepMux {
+    const existing = this._sweepMuxes.get(peerId);
+    if (existing) {
+      return existing;
+    }
+
+    const mux = new SweepMux(conn);
+    // Buyer side: surface relayer progress reports as node events.
+    mux.onSweepReceipt((payload: SweepReceiptPayload) => {
+      this.emit('sweep:receipt', { peerId, payload });
+    });
+    this._sweepMuxes.set(peerId, mux);
+    return mux;
+  }
+
+  /**
+   * Broadcast a signed deposit-sweep request to all currently connected peers.
+   * Relayers submit it on-chain permissionlessly; progress reports arrive as
+   * 'sweep:receipt' events. Returns the number of peers the request was sent to.
+   */
+  broadcastSweepRequest(payload: SweepRequestPayload): number {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    let sent = 0;
+    for (const peerId of this._muxes.keys()) {
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+        sent++;
+      } catch (err) {
+        debugWarn(`[Node] Failed to send sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return sent;
   }
 
   private _resolvePublicAddress(result: LookupResult): string {

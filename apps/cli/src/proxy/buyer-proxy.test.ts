@@ -179,6 +179,63 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
+test('sweep control endpoint validates and broadcasts via the running node', async () => {
+  const validSweep = {
+    version: 1,
+    evmChainId: 31337,
+    relayAddress: '0x' + '8a'.repeat(20),
+    from: '0x' + '11'.repeat(20),
+    amount: '5000000',
+    validAfter: 0,
+    validBefore: 2_000_000_000,
+    nonce: '0x' + 'aa'.repeat(32),
+    sig3009: '0x' + 'ab'.repeat(65),
+  }
+
+  const broadcasts: unknown[] = []
+  const listeners = new Map<string, (event: unknown) => void>()
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: {
+      router: null,
+      on: (event: string, listener: (event: unknown) => void) => listeners.set(event, listener),
+      broadcastSweepRequest: (payload: unknown) => {
+        broadcasts.push(payload)
+        return 3
+      },
+    } as any,
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/sweep', body: validSweep }))
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3 })
+  assert.equal(broadcasts.length, 1)
+
+  // Malformed payloads are rejected by the wire codec, not broadcast.
+  const bad = await invokeProxy(proxy, makeProxyRequest({
+    path: '/_antseed/sweep',
+    body: { ...validSweep, sig3009: 'garbage' },
+  }))
+  assert.equal(bad.statusCode, 400)
+  assert.equal(broadcasts.length, 1)
+
+  // Receipts surfaced via node events are readable per-nonce.
+  const emit = listeners.get('sweep:receipt')
+  assert.ok(emit, 'proxy subscribes to sweep:receipt')
+  emit!({ peerId: 'p1', payload: { version: 1, authNonce: validSweep.nonce, status: 'confirmed', txHash: '0x' + '77'.repeat(32) } })
+
+  const receiptRes = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: `/_antseed/sweep/${validSweep.nonce}` }))
+  assert.equal(receiptRes.statusCode, 200)
+  const receiptBody = JSON.parse(receiptRes.body) as { ok: boolean; receipt: { status: string; txHash: string } }
+  assert.equal(receiptBody.receipt.status, 'confirmed')
+  assert.equal(receiptBody.receipt.txHash, '0x' + '77'.repeat(32))
+
+  // Unknown nonce returns null receipt.
+  const missing = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: `/_antseed/sweep/0x${'bb'.repeat(32)}` }))
+  assert.deepEqual(JSON.parse(missing.body), { ok: true, receipt: null })
+})
+
 test('peer refresh control endpoint triggers immediate refresh', async () => {
   const refreshedPeer = makePeer('a', ['anthropic'])
   const proxy = makeBuyerProxyWithPeers([], [refreshedPeer])
