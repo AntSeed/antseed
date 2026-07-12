@@ -1,8 +1,9 @@
 .view {
   height: 100%;
   min-height: 0;
-  overflow: auto;
-  padding: 40px 24px 24px;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
 }
 
 .stack {
@@ -10,7 +11,7 @@
   flex-direction: column;
   gap: 24px;
   width: 100%;
-  max-width: 560px;
+  max-width: 392px;
   margin: 0 auto;
   min-width: 0;
 }
@@ -18,28 +19,100 @@
 /* ---------- Power hero ---------- */
 
 .hero {
+  position: relative;
+  /* Places the power circle concentric with the banner's notch: the notch
+     circle center sits at y=101.7 in the 128px shape, minus the 48px
+     button radius. */
+  padding-top: 54px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+/* Brand banner: the designer's grain-gradient texture clipped by the
+   banner-shape SVG (rounded rect with a filleted notch for the power
+   button), mirroring the Subtract structure in Figma. */
+.heroBanner {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  right: -8px;
+  height: 128px;
+  background: url('../../../assets/banner-texture.jpg') center / cover no-repeat, var(--brand);
+  -webkit-mask-image: url('../../../assets/banner-shape.svg');
+  mask-image: url('../../../assets/banner-shape.svg');
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  /* Drag regions are collected from layout, not hit-testing, so the banner
+     can stay click-transparent and still act as a window-drag handle.
+     Known trade-off: drag regions swallow wheel events, so the pointer must
+     leave the banner to scroll — acceptable for this one static strip at the
+     top of the screen (the scrollable view bodies themselves stay drag-free). */
+  -webkit-app-region: drag;
+  pointer-events: none;
+}
+
+/* Shimmer band that sweeps the banner every few seconds while connected.
+   Speckled by a noise mask and blended over the texture so it reads as the
+   grain dots lighting up in a wave. */
+.heroBanner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.6) 50%, rgba(255, 255, 255, 0) 100%);
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  transform: translateX(-120%) skewX(-12deg);
+  opacity: 0;
+}
+
+.heroBannerLive::after {
+  opacity: 1;
+  animation: hero-wave 7s ease-in-out infinite;
+}
+
+@keyframes hero-wave {
+  0% {
+    transform: translateX(-120%) skewX(-12deg);
+  }
+  30% {
+    transform: translateX(350%) skewX(-12deg);
+  }
+  100% {
+    transform: translateX(350%) skewX(-12deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroBannerLive::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .power {
+  position: relative;
+  z-index: 1;
   width: 96px;
   height: 96px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  border: 5px solid rgba(var(--accent-rgb), 0.2);
+  border: none;
   background: var(--bg-card);
-  color: var(--accent-green);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: box-shadow 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+  box-shadow: var(--shadow-float);
+  transition: color 0.15s ease, transform 0.1s ease;
 }
 
 .power:hover {
-  border-color: rgba(var(--accent-rgb), 0.35);
-  box-shadow: 0 8px 26px rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-green);
 }
 
 .power:active {
@@ -48,21 +121,21 @@
 
 .power:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.3);
+  box-shadow:
+    0 0 0 3px rgba(var(--brand-rgb), 0.4),
+    var(--shadow-float);
 }
 
 .powerOn {
-  border-color: rgba(var(--accent-rgb), 0.35);
-  background: rgba(var(--accent-rgb), 0.06);
+  color: var(--brand);
 }
 
 .statusLine {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 16px;
+  position: relative;
+  z-index: 1;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
   color: var(--text-muted);
 }
 
@@ -70,56 +143,58 @@
   color: var(--accent-green);
 }
 
-.statusDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
 /* ---------- Default model card ---------- */
 
 .modelCard {
   width: 100%;
+  margin-top: 2px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px 8px 16px;
+  padding: 12px 12px 12px 16px;
+  min-height: 66px;
   border-radius: 16px;
-  border: 1px solid var(--border-strong, var(--border));
-  background: var(--bg-surface);
+  border: none;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  transition: box-shadow 0.12s ease;
 }
 
 .modelCard:hover {
-  border-color: var(--text-muted);
+  box-shadow: var(--shadow-float);
 }
 
 .modelCard:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
 .modelCardBody {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 2px;
+}
+
+.modelCardCaption {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .modelCardTitle {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 4px;
-  line-height: 16px;
 }
 
 .modelName {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 24px;
   max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -127,14 +202,13 @@
 }
 
 .freeTag {
-  color: var(--accent-green);
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--success-subtle-border);
+  background: var(--success-subtle-bg);
+  color: var(--success-subtle-text);
   font-size: 12px;
-  font-weight: 600;
-}
-
-.modelCardCaption {
-  color: var(--text-muted);
-  font-size: 12px;
+  font-weight: 500;
   line-height: 16px;
 }
 
@@ -143,7 +217,195 @@
   color: var(--text-secondary);
 }
 
-/* ---------- Ask + connect tools ---------- */
+/* ---------- Connected variant ---------- */
+
+.connectedGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.routeCard {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 66px;
+  padding: 12px 12px 12px 16px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.12s ease;
+}
+
+.routeCard:hover {
+  box-shadow: var(--shadow-float);
+}
+
+.routeMain {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.routeMain:focus-visible {
+  outline: none;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.routeTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.routeModel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.routeMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.routeApp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routeTraffic {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.routePop {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.routePop:hover:not(:disabled) {
+  color: var(--accent-green);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.routePop:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.routeChevron {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.balanceBanner {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 12px 14px 16px;
+  border-radius: 16px;
+  background:
+    linear-gradient(100deg, #047452 0%, var(--accent-green) 55%, #24a06c 100%);
+  box-shadow: var(--shadow-sm);
+}
+
+.balanceBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.balanceTitle {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.balanceText {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.balanceClose {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.balanceClose:hover {
+  color: #ffffff;
+}
+
+.usageGroup {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.usageLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.savingValue {
+  color: var(--accent-green);
+}
+
+/* ---------- Ask + routed apps ---------- */
 
 .connectGroup {
   display: flex;
@@ -152,19 +414,27 @@
   gap: 16px;
 }
 
+.connectHeading {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  color: var(--text-primary);
+}
+
 .askForm {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 9px 9px 25px;
-  border-radius: 999px;
+  padding: 9px 9px 9px 21px;
+  border-radius: 28px;
   border: 1px solid var(--border);
   background: var(--bg-card);
 }
 
 .askForm:focus-within {
-  border-color: rgba(var(--accent-rgb), 0.5);
+  border-color: rgba(var(--brand-rgb), 0.5);
 }
 
 .askInput {
@@ -174,8 +444,8 @@
   background: transparent;
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 500;
-  line-height: 24px;
+  font-weight: 400;
+  line-height: 20px;
   outline: none;
 }
 
@@ -192,14 +462,14 @@
   place-items: center;
   border: none;
   border-radius: 50%;
-  background: rgba(var(--accent-rgb), 0.2);
-  color: var(--accent-green);
+  background: rgba(var(--brand-rgb), 0.12);
+  color: var(--brand);
   cursor: pointer;
   transition: background 0.12s ease;
 }
 
 .askSend:hover:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.32);
+  background: rgba(var(--brand-rgb), 0.24);
 }
 
 .askSend:disabled {
@@ -207,12 +477,19 @@
   opacity: 0.6;
 }
 
-.connectHeading {
+.appsGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.appsLabel {
   text-align: center;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 400;
   line-height: 20px;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .toolGrid {
@@ -228,19 +505,25 @@
   justify-content: center;
   gap: 4px;
   padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--text-primary);
-  background: var(--bg-surface);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 500;
-  line-height: 16px;
+  font-weight: 600;
+  line-height: 20px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
-.toolButton:hover {
-  background: var(--bg-hover);
+.toolButton:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.toolButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .toolLabel {
@@ -249,209 +532,22 @@
   white-space: nowrap;
 }
 
-.ctaGroup {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.connectMore {
+.moreApps {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 12px 16px;
-  border-radius: 40px;
-  border: 1px solid var(--text-primary);
-  background: var(--text-primary);
-  color: var(--bg-card);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-  cursor: pointer;
-  transition: opacity 0.12s ease;
-}
-
-.connectMore:hover {
-  opacity: 0.88;
-}
-
-.internalChat {
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
-.chatLink {
+  gap: 4px;
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--text-primary);
-  font-size: 12px;
+  color: var(--accent-green);
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
-  vertical-align: baseline;
 }
 
-.chatLink:hover {
-  color: var(--accent-green);
-}
-
-/* ---------- Popular on Antseed ---------- */
-
-.popularSection {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.popularHeader {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.popularTitle {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 16px;
-  color: var(--text-primary);
-}
-
-.savingHint {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-  color: var(--text-secondary);
-}
-
-.savingPct {
-  color: var(--accent-green);
-}
-
-.popularList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.popularRow {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 16px;
-  border: 1px solid var(--border-strong, var(--border));
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
-}
-
-.popularRow:hover {
-  border-color: var(--text-muted);
-  box-shadow: var(--shadow-sm);
-}
-
-.popularRow:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.3);
-}
-
-.popularMark {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  color: var(--text-primary);
-}
-
-.popularBody {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.popularName {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.popularMeta {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.popularPricing {
-  display: grid;
-  justify-items: end;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.priceRow {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-}
-
-.priceBaseline {
-  color: var(--text-secondary);
-  font-weight: 400;
-  text-decoration: line-through;
-}
-
-.priceLive {
-  color: var(--accent-green);
-}
-
-.priceUnit {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-muted);
-}
-
-.popularChevron {
-  color: var(--text-secondary);
-}
-
-.popularEmpty {
-  min-height: 72px;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  text-align: center;
-}
-
-@media (max-width: 480px) {
-  .popularRow {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .popularChevron {
-    display: none;
-  }
+.moreApps:hover {
+  color: var(--brand);
 }

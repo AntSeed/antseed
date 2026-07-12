@@ -1,0 +1,166 @@
+.view {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.pageTitle {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* ---------- Segmented tabs ---------- */
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+}
+
+.tab {
+  min-height: 28px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.tabActive {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------- Filter pills (All tab) ---------- */
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filterPill {
+  display: inline-flex;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.filterPill select {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 160px;
+  padding: 6px 26px 6px 12px;
+  border: none;
+  border-radius: 999px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7570' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    right 10px center / 10px 6px no-repeat;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+  outline: none;
+}
+
+.filterPillEnd {
+  margin-left: auto;
+}
+
+/* ---------- Section header (Recommended tab) ---------- */
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.sectionTitle {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.sectionAside {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.sectionAside strong {
+  color: var(--accent-green);
+  font-weight: 650;
+}
+
+/* ---------- Empty state ---------- */
+
+.empty {
+  min-height: 96px;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.empty button {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.empty button:hover,
+.empty button:focus-visible {
+  border-color: var(--border-strong);
+  outline: none;
+}

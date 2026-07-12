@@ -1,39 +1,30 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
+  ArrowDown01Icon,
   ArrowRight01Icon,
+  ArrowRight02Icon,
   ArrowUp02Icon,
-  ConnectIcon,
+  ArrowUpRight01Icon,
+  Cancel01Icon,
   PowerIcon,
 } from '@hugeicons/core-free-icons';
-import type { SystemProxyProfileSummary } from '../../../types/bridge';
+import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
-import { formatCategoryLabel } from '../chat/discover-filter-util';
+import { getUiStateRef } from '../../../core/store';
+import { activeProfilesFromRuntimeState, buildVprProfileTraffic } from '../../../modules/vpr-tools';
+import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
-import { formatCompactUsd } from '../../../core/format';
 import { BrandIcon } from '../brand/BrandIcon';
+import { formatCompactTokens, VprBadge, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-function formatRange(min: number | null, max: number | null): string | null {
-  if (min === null) return null;
-  if (min <= 0 && (max === null || max <= 0)) return 'Free';
-  const low = formatCompactUsd(min);
-  if (max === null || max === min) return low;
-  return `${low}-${formatCompactUsd(max)}`;
-}
-
-/**
- * Baseline (retail) price shown struck-through — sourced from the OpenRouter
- * catalog. Uses the input dimension so it lines up with the live input-price
- * range next to it; falls back to output when input is unpriced.
- */
-function baselineInput(entry: VprModelCatalogEntry): number | null {
-  return entry.baselineInputUsdPerMillion ?? entry.baselineOutputUsdPerMillion ?? null;
-}
+const PROXY_STATE_POLL_MS = 3_000;
+const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry) return false;
@@ -48,9 +39,20 @@ export function VprHomeView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     processes: state.processes,
     connectBadge: state.connectBadge,
+    usage: state.creditsBuyerUsage,
+    floatOpen: state.vprFloatOpen,
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
+  const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
+  const [trafficTick, setTrafficTick] = useState(0);
   const [draft, setDraft] = useState('');
+  const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(ADD_BALANCE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const runtimeOn = snap.processes.some((process) => process.mode === 'connect' && process.running === true);
 
@@ -61,26 +63,85 @@ export function VprHomeView({ onSelectView }: Props) {
   );
   const modelIsFree = isFreeEntry(selectedEntry);
 
-  const popular = useMemo(() => snap.catalog.slice(0, 3), [snap.catalog]);
-  const maxSavings = useMemo(() => {
-    const values = snap.catalog.map((e) => e.expectedSavingsPct).filter((v): v is number => v !== null);
-    return values.length > 0 ? Math.max(...values) : null;
-  }, [snap.catalog]);
-
   useEffect(() => {
     let cancelled = false;
     async function refreshTools(): Promise<void> {
       const bridge = window.antseedDesktop;
       try {
-        const nextProfiles = (await bridge?.systemProxyListProfiles?.()) ?? [];
-        if (!cancelled) setProfiles(nextProfiles);
+        const [nextProfiles, nextState] = await Promise.all([
+          bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
+          bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        setProfiles(nextProfiles);
+        setProxyState(nextState);
+        setTrafficTick((tick) => tick + 1);
       } catch {
-        if (!cancelled) setProfiles([]);
+        if (!cancelled) setProxyState(null);
       }
     }
     void refreshTools();
-    return () => { cancelled = true; };
+    const timer = window.setInterval(() => { void refreshTools(); }, PROXY_STATE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
+
+  const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
+  const connectedProfiles = useMemo(
+    () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
+    [activeProfiles, profiles],
+  );
+  const traffic = useMemo(
+    // Attribute against the full profile list so counts match the floating
+    // pills (vpr-float.ts) regardless of how many profiles are connected.
+    () => buildVprProfileTraffic(getUiStateRef().logs, profiles),
+    // trafficTick re-samples the (wholesale-reassigned) logs on the poll timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profiles, trafficTick],
+  );
+
+  const expectedSavingsPct = useMemo(() => {
+    const values = snap.catalog
+      .map((entry) => entry.expectedSavingsPct)
+      .filter((value): value is number => value !== null);
+    if (values.length === 0) return null;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }, [snap.catalog]);
+
+  // The usage tiles come from the payments summary; nudge a refresh when the
+  // connected variant becomes visible (module-level throttle absorbs bursts).
+  const hasConnectedApps = connectedProfiles.length > 0;
+  useEffect(() => {
+    if (hasConnectedApps) actions.refreshPaymentSummary();
+  }, [actions, hasConnectedApps]);
+
+  const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
+
+  // One-click connect from the app buttons; falls back to the Apps page when
+  // the profile can't be connected automatically (e.g. no route yet).
+  async function connectApp(profileName: string): Promise<void> {
+    if (connectingProfile !== null) return;
+    setConnectingProfile(profileName);
+    try {
+      const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);
+      if (result.ok) {
+        if (result.state !== undefined) setProxyState(result.state);
+        return;
+      }
+      onSelectView?.('tools');
+    } finally {
+      setConnectingProfile(null);
+    }
+  }
+
+  function dismissAddBalance(): void {
+    setAddBalanceDismissed(true);
+    try {
+      localStorage.setItem(ADD_BALANCE_DISMISSED_KEY, '1');
+    } catch { /* private mode */ }
+  }
 
   const connected = snap.connectBadge.tone === 'active' || runtimeOn;
 
@@ -95,8 +156,12 @@ export function VprHomeView({ onSelectView }: Props) {
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
-        {/* Power / status hero */}
+        {/* Power / status hero over the brand gradient banner */}
         <div className={styles.hero}>
+          <div
+            className={`${styles.heroBanner}${connected ? ` ${styles.heroBannerLive}` : ''}`}
+            aria-hidden="true"
+          />
           <button
             type="button"
             className={`${styles.power}${runtimeOn ? ` ${styles.powerOn}` : ''}`}
@@ -109,8 +174,7 @@ export function VprHomeView({ onSelectView }: Props) {
           </button>
 
           <div className={`${styles.statusLine}${connected ? ` ${styles.statusOnline}` : ''}`}>
-            <span className={styles.statusDot} aria-hidden="true" />
-            <span>{snap.connectBadge.label}</span>
+            {snap.connectBadge.label}
           </div>
 
           <button
@@ -120,18 +184,106 @@ export function VprHomeView({ onSelectView }: Props) {
             title="Change default model"
           >
             <span className={styles.modelCardBody}>
+              <span className={styles.modelCardCaption}>Default model</span>
               <span className={styles.modelCardTitle}>
                 <span className={styles.modelName}>{selectedModel?.label ?? 'None selected'}</span>
                 {modelIsFree && <span className={styles.freeTag}>Free</span>}
               </span>
-              <span className={styles.modelCardCaption}>Default Model</span>
             </span>
-            <HugeiconsIcon icon={ArrowRight01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
+            <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
           </button>
         </div>
 
-        {/* Ask + connect tools */}
+        {hasConnectedApps ? (
+          /* Connected variant: per-app route cards instead of the ask input */
+          <div className={styles.connectedGroup}>
+            {connectedProfiles.map((profile) => {
+              const profileTraffic = traffic.get(profile.name);
+              return (
+                <div key={profile.name} className={styles.routeCard}>
+                  <button
+                    type="button"
+                    className={styles.routeMain}
+                    onClick={() => onSelectView?.('tools')}
+                    title={`Manage ${profile.displayName}`}
+                  >
+                    <span className={styles.routeTitle}>
+                      <span className={styles.routeModel}>{selectedModel?.label ?? 'No model selected'}</span>
+                      {snap.selection.mode === 'auto' && <VprBadge tone="green">· Auto</VprBadge>}
+                    </span>
+                    <span className={styles.routeMeta}>
+                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={14} />
+                      <span className={styles.routeApp}>{profile.displayName}</span>
+                      <span className={styles.routeTraffic}>
+                        {profileTraffic?.count ?? 0} {profileTraffic?.count === 1 ? 'request' : 'requests'}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.routePop}
+                    onClick={() => { void actions.openVprFloat?.(profile.name); }}
+                    disabled={snap.floatOpen}
+                    aria-label="Pop out floating window"
+                    title={snap.floatOpen ? 'Floating window is open' : 'Pop out as floating window'}
+                  >
+                    <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+                  </button>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={20} strokeWidth={2} className={styles.routeChevron} />
+                </div>
+              );
+            })}
+
+            <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
+              <span>Connect more apps</span>
+              <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+            </button>
+
+            {!addBalanceDismissed && (
+              <div className={styles.balanceBanner}>
+                <button
+                  type="button"
+                  className={styles.balanceBody}
+                  onClick={() => actions.openPaymentsPortal?.('deposit')}
+                >
+                  <span className={styles.balanceTitle}>Add Balance</span>
+                  <span className={styles.balanceText}>
+                    Pay only for what you use - no subscriptions, no lock-in. Card or crypto, your choice.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.balanceClose}
+                  onClick={dismissAddBalance}
+                  aria-label="Dismiss add balance"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+
+            <div className={styles.usageGroup}>
+              <p className={styles.usageLabel}>Usage</p>
+              <VprStatRow>
+                <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
+                <VprStatTile
+                  label="Tokens"
+                  value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
+                />
+                <VprStatTile
+                  label="Saving"
+                  value={expectedSavingsPct !== null
+                    ? <span className={styles.savingValue}>{expectedSavingsPct}%</span>
+                    : '-'}
+                />
+              </VprStatRow>
+            </div>
+          </div>
+        ) : (
+        /* Ask + routed apps */
         <div className={styles.connectGroup}>
+          <h2 className={styles.connectHeading}>Routing to your existing apps or start chatting here</h2>
+
           <form
             className={styles.askForm}
             onSubmit={(event) => { event.preventDefault(); submitDraft(); }}
@@ -155,92 +307,36 @@ export function VprHomeView({ onSelectView }: Props) {
             </button>
           </form>
 
-          <h2 className={styles.connectHeading}>Connect to your existing tools or start chatting</h2>
+          <div className={styles.appsGroup}>
+            <p className={styles.appsLabel}>Use it on your favorite app</p>
 
-          {profiles.length > 0 && (
-            <div className={styles.toolGrid}>
-              {profiles.map((profile) => (
-                <button
-                  key={profile.name}
-                  type="button"
-                  className={styles.toolButton}
-                  onClick={() => onSelectView?.('tools')}
-                  title={profile.displayName}
-                >
-                  <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
-                  <span className={styles.toolLabel}>{profile.displayName}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className={styles.ctaGroup}>
-            <button type="button" className={styles.connectMore} onClick={() => onSelectView?.('tools')}>
-              <HugeiconsIcon icon={ConnectIcon} size={20} strokeWidth={2} />
-              <span>Connect more Tools</span>
-            </button>
-            <p className={styles.internalChat}>
-              Or use internal{' '}
-              <button type="button" className={styles.chatLink} onClick={() => onSelectView?.('chat')}>
-                Chat
-              </button>
-            </p>
-          </div>
-        </div>
-
-        {/* Popular on Antseed */}
-        <div className={styles.popularSection}>
-          <div className={styles.popularHeader}>
-            <span className={styles.popularTitle}>Popular on Antseed</span>
-            {maxSavings !== null && (
-              <span className={styles.savingHint}>
-                Expected Saving <span className={styles.savingPct}>up to {maxSavings}%</span>
-              </span>
-            )}
-          </div>
-
-          {popular.length > 0 ? (
-            <div className={styles.popularList}>
-              {popular.map((entry) => {
-                const baseline = baselineInput(entry);
-                const liveRange = formatRange(entry.minInputUsdPerMillion, entry.maxInputUsdPerMillion) ?? 'Free';
-                const categories = entry.categories.map(formatCategoryLabel).join(', ');
-                return (
+            {profiles.length > 0 && (
+              <div className={styles.toolGrid}>
+                {profiles.map((profile) => (
                   <button
-                    key={`${entry.provider}:${entry.serviceId}`}
+                    key={profile.name}
                     type="button"
-                    className={styles.popularRow}
-                    onClick={() => actions.selectVprModel(entry.provider, entry.serviceId)}
-                    title={`Route ${entry.label}`}
+                    className={styles.toolButton}
+                    disabled={connectingProfile !== null}
+                    onClick={() => { void connectApp(profile.name); }}
+                    title={`Connect ${profile.displayName}`}
                   >
-                    <span className={styles.popularMark}>
-                      <BrandIcon name={entry.provider} hints={[entry.label]} size={24} />
+                    <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
+                    <span className={styles.toolLabel}>
+                      {connectingProfile === profile.name ? 'Connecting...' : profile.displayName}
                     </span>
-                    <span className={styles.popularBody}>
-                      <span className={styles.popularName}>{entry.label}</span>
-                      <span className={styles.popularMeta}>
-                        {entry.peerCount} {entry.peerCount === 1 ? 'peer' : 'peers'}
-                        {categories && ` | ${categories}`}
-                      </span>
-                    </span>
-                    <span className={styles.popularPricing}>
-                      <span className={styles.priceRow}>
-                        {baseline !== null && (
-                          <span className={styles.priceBaseline}>{formatCompactUsd(baseline)}</span>
-                        )}
-                        <span className={styles.priceLive}>{liveRange}</span>
-                      </span>
-                      <span className={styles.priceUnit}>/m tok</span>
-                    </span>
-                    <HugeiconsIcon icon={ArrowRight01Icon} size={24} strokeWidth={2} className={styles.popularChevron} />
                   </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={styles.popularEmpty}>No services discovered yet</div>
-          )}
+                ))}
+              </div>
+            )}
+
+            <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
+              <span>More apps</span>
+              <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+            </button>
+          </div>
         </div>
+        )}
       </div>
     </section>
   );

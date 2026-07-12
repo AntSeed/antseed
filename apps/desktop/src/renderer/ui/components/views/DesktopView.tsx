@@ -204,9 +204,11 @@ export function DesktopView(_props: DesktopViewProps) {
             )}
             {filteredLogs.map((entry, i) => (
               <div key={`${entry.timestamp}-${i}-${entry.line}`} className={`log-entry ${entry.stream}`}>
-                <span className="ts">{formatClock(entry.timestamp)}</span>
-                <span className="log-source">{getLogSource(entry)}</span>
-                {`[${entry.mode}] ${entry.line}`}
+                <div className="log-meta">
+                  <span className="ts">{formatClock(entry.timestamp)}</span>
+                  <span className="log-source">{getLogSource(entry)}</span>
+                </div>
+                <div className="log-text">{`[${entry.mode}] ${entry.line}`}</div>
               </div>
             ))}
             <div ref={logsEndRef} />

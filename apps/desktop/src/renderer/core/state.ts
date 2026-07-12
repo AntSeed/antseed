@@ -315,6 +315,8 @@ export type RendererUiState = {
   vprModelCatalog: VprModelCatalogEntry[];
   vprRouteSelection: VprRouteSelection;
   vprRoutingPreferences: VprRoutingPreferences;
+  /** Whether the detachable always-on-top pill window is currently open. */
+  vprFloatOpen: boolean;
   chatDiscoverRowsLoaded: boolean;
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -461,6 +463,7 @@ export function createInitialUiState(): RendererUiState {
       maxInputUsdPerMillion: 25,
       minTrustScore: 0,
     },
+    vprFloatOpen: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',

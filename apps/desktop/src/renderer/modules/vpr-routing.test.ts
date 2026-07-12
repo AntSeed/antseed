@@ -138,3 +138,22 @@ test('cheap priced route beats unknown-priced route at equal trust', () => {
 
   assert.equal(chooseBestVprRoute([unpriced, cheap], preferences)?.peerId, 'cheap');
 });
+
+test('known priced route beats unknown route even when trust is lower', () => {
+  const unpriced = discoverRow({
+    peerId: 'unpriced',
+    inputUsdPerMillion: null,
+    outputUsdPerMillion: null,
+    onChainTrustScore: 100,
+  });
+  const cheap = discoverRow({
+    peerId: 'cheap',
+    inputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    onChainTrustScore: 50,
+  });
+
+  assert.equal(scoreVprRoute(unpriced, preferences).score, 110);
+  assert.equal(scoreVprRoute(cheap, preferences).score, 107);
+  assert.equal(chooseBestVprRoute([unpriced, cheap], preferences)?.peerId, 'cheap');
+});

@@ -1,24 +1,25 @@
 import { useEffect } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowUpRight01Icon, SquareLock01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { shortAddress } from '../../../core/format';
+import { formatCredits, shortAddress } from '../../../core/format';
+import { formatCompactTokens, VprBackTitle, VprCard, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprCreditsView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
-export function VprCreditsView(_props: Props) {
+export function VprCreditsView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     available: state.creditsAvailableUsdc,
     reserved: state.creditsReservedUsdc,
     total: state.creditsTotalUsdc,
-    creditLimit: state.creditsCreditLimitUsdc,
     evmAddress: state.creditsEvmAddress,
     operatorAddress: state.creditsOperatorAddress,
     usage: state.creditsBuyerUsage,
-    channels: state.creditsChannels,
     rewards: state.creditsRewards,
     loading: state.creditsLoading || state.creditsSummaryLoading,
   }), shallowEqual);
@@ -35,55 +36,83 @@ export function VprCreditsView(_props: Props) {
   return (
     <section className={`view view-vpr-credits ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
-        <div className={styles.header}>
-          <span>Credits</span>
-          <h2 className={styles.title}>Payments</h2>
-        </div>
+        <VprBackTitle title="Balance" onBack={() => onSelectView?.('home')} />
 
-        <div className={styles.grid}>
-          <div className={styles.tile}><div className={styles.label}>Available</div><div className={styles.value}>${snap.available}</div></div>
-          <div className={styles.tile}><div className={styles.label}>Reserved</div><div className={styles.value}>${snap.reserved}</div></div>
-          <div className={styles.tile}><div className={styles.label}>Total</div><div className={styles.value}>${snap.total}</div></div>
-          <div className={styles.tile}><div className={styles.label}>Credit limit</div><div className={styles.value}>${snap.creditLimit}</div></div>
-        </div>
-
-        <div className={styles.section}>
-          <div className={styles.row}><span>Wallet</span><span>{shortAddress(snap.evmAddress)}</span></div>
-          <div className={styles.row}><span>Operator</span><span>{shortAddress(snap.operatorAddress)}</span></div>
-        </div>
-
-        <div className={styles.section}>
-          <strong>Usage</strong>
-          <div className={styles.row}><span>Requests</span><span>{snap.usage?.totalRequests ?? 0}</span></div>
-          <div className={styles.row}><span>Input tokens</span><span>{snap.usage?.totalInputTokens ?? '0'}</span></div>
-          <div className={styles.row}><span>Output tokens</span><span>{snap.usage?.totalOutputTokens ?? '0'}</span></div>
-          <div className={styles.row}><span>Settlements</span><span>{snap.usage?.totalSettlements ?? 0}</span></div>
-          <div className={styles.row}><span>Active channels</span><span>{snap.usage?.activeChannels ?? 0}</span></div>
-        </div>
-
-        <div className={styles.section}>
-          <strong>Channels</strong>
-          {snap.channels.length === 0 ? <span className={styles.label}>No channel activity</span> : snap.channels.slice(0, 5).map((channel) => (
-            <div key={channel.channelId} className={styles.row}>
-              <span>{channel.peerId || shortAddress(channel.seller)}</span>
-              <span>{channel.status} · {channel.requestCount}</span>
+        <div className={styles.balanceGroup}>
+          <VprCard className={styles.balanceCard}>
+            <div className={styles.balanceText}>
+              <span className={styles.balanceLabel}>Available balance</span>
+              <span className={styles.balanceValue}>${formatCredits(snap.available)}</span>
+              <span className={styles.balanceHint}>Pay only for what you use - no subscriptions, no lock-in.</span>
             </div>
-          ))}
+            <div className={styles.payButtons}>
+              <button type="button" onClick={() => actions.openPaymentsPortal?.('deposit')}>
+                <span>Credit Card</span>
+                <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+              </button>
+              <button type="button" onClick={() => actions.openPaymentsPortal?.('deposit')}>
+                <span>Crypto</span>
+                <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+              </button>
+            </div>
+          </VprCard>
+
+          <div className={styles.secureNote}>
+            <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
+            <span>Encrypted &amp; secure checkout</span>
+          </div>
+          <div className={styles.walletNote}>Visa · Mastercard · MetaMask · WalletConnect</div>
+
+          <button
+            type="button"
+            className={styles.withdraw}
+            onClick={() => actions.openPaymentsPortal?.('channels')}
+          >
+            Withdraw unused credits
+          </button>
         </div>
 
-        <div className={styles.section}>
-          <strong>Rewards</strong>
-          <div className={styles.row}><span>Pending ANTS</span><span>{snap.rewards?.pendingAnts ?? '0'}</span></div>
-          <div className={styles.row}><span>Epoch</span><span>{snap.rewards?.currentEpoch ?? 'n/a'}</span></div>
-          <div className={styles.row}><span>Transfers</span><span>{snap.rewards?.transfersEnabled ? 'Enabled' : 'Locked'}</span></div>
-        </div>
+        <VprStatRow>
+          <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
+          <VprStatTile
+            label="Tokens"
+            value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
+          />
+          <VprStatTile label="Sellers" value={snap.usage?.uniqueSellers ?? 0} />
+        </VprStatRow>
 
-        <div className={styles.actions}>
-          <button type="button" onClick={() => actions.openPaymentsPortal?.('deposit')}>Deposit</button>
-          <button type="button" onClick={() => actions.openPaymentsPortal?.('channels')}>Activity</button>
-          <button type="button" onClick={() => actions.openPaymentsPortal?.('rewards')}>Rewards</button>
-          <button type="button" disabled={snap.loading} onClick={() => { actions.refreshCredits(); actions.refreshPaymentSummary(true); }}>Refresh</button>
-        </div>
+        <VprCard className={styles.rewardsCard}>
+          <span className={styles.rewardsText}>
+            <strong>Network rewards</strong>{' '}
+            {snap.rewards?.available
+              ? `${formatCredits(snap.rewards.pendingAnts)} ANTS pending this epoch from your usage.`
+              : 'Earn ANTS from your usage once rewards go live on this chain.'}
+          </span>
+          <button
+            type="button"
+            className={styles.rewardsLink}
+            onClick={() => actions.openPaymentsPortal?.('rewards')}
+          >
+            <span>Portal</span>
+            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+          </button>
+        </VprCard>
+
+        <VprCard className={styles.detailsCard}>
+          <div className={styles.detailRow}><span>Reserved</span><span>${formatCredits(snap.reserved)}</span></div>
+          <div className={styles.detailRow}><span>Total</span><span>${formatCredits(snap.total)}</span></div>
+          <div className={styles.detailRow}><span>Wallet</span><span>{shortAddress(snap.evmAddress)}</span></div>
+          <div className={styles.detailRow}><span>Operator</span><span>{shortAddress(snap.operatorAddress)}</span></div>
+          <div className={styles.detailActions}>
+            <button
+              type="button"
+              disabled={snap.loading}
+              onClick={() => { actions.refreshCredits(); actions.refreshPaymentSummary(true); }}
+            >
+              {snap.loading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+        </VprCard>
       </div>
     </section>
   );

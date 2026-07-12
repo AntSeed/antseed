@@ -3,7 +3,7 @@ import { ViewHost } from './components/ViewHost';
 import { SetupScreen } from './components/SetupScreen';
 import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
-import { DEV_VIEW_NAMES, type ViewName } from './types';
+import { VIEW_NAMES, type ViewName } from './types';
 import { VprShell } from './components/VprShell';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
@@ -80,11 +80,23 @@ export function AppShell() {
 
   const showSetup = setupVisible;
 
+  // Developer mode only gates the nav-rail entry for the console; the
+  // diagnostic screens themselves stay reachable (Help & Support links to
+  // them), except the console menu which is dev-mode only.
   useEffect(() => {
-    if (!snap.devMode && (DEV_VIEW_NAMES as readonly ViewName[]).includes(activeView)) {
+    if (!snap.devMode && activeView === 'developer') {
       setActiveView('home');
     }
   }, [activeView, snap.devMode]);
+
+  useEffect(() => {
+    return window.antseedDesktop?.onNavigateView?.((viewName) => {
+      if (!(VIEW_NAMES as readonly string[]).includes(viewName)) return;
+      const nextView = viewName as ViewName;
+      if (!snap.devMode && nextView === 'developer') return;
+      setActiveView(nextView);
+    });
+  }, [snap.devMode]);
 
   useEffect(() => {
     if (showSetup) return undefined;

@@ -1228,6 +1228,7 @@ export function initChatModule({
         uiState.chatDiscoverRowsLoaded = false;
         updateChatServiceOptions(fallback);
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
+        notifyUiStateChanged();
         return;
       }
 
@@ -1237,10 +1238,13 @@ export function initChatModule({
         .filter((row): row is DiscoverRow => row !== null);
       uiState.discoverRows = rows;
       uiState.chatDiscoverRowsLoaded = true;
-      uiState.vprModelCatalog = applyOpenRouterBaselines(
-        projectRowsToVprModelCatalog(rows),
-        getCachedOpenRouterPrices(),
-      );
+      const nextVprCatalog = projectRowsToVprModelCatalog(rows);
+      if (nextVprCatalog.length > 0 || uiState.vprModelCatalog.length === 0) {
+        uiState.vprModelCatalog = applyOpenRouterBaselines(
+          nextVprCatalog,
+          getCachedOpenRouterPrices(),
+        );
+      }
       // Warm the OpenRouter reference-price cache in the background; once it
       // resolves, re-stamp baselines onto the current catalog so the Home
       // "Popular" list can show the struck-through retail price.

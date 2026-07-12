@@ -12,11 +12,18 @@ export type VprScoredRoute = {
 // routes and dodge the max-input-price preference entirely.
 const UNKNOWN_PRICE_PENALTY = 10;
 
+function hasKnownPrice(row: DiscoverRow): boolean {
+  return totalRowPrice(row) !== null;
+}
+
 function comparableTotalPrice(row: DiscoverRow): number {
   return totalRowPrice(row) ?? Number.POSITIVE_INFINITY;
 }
 
 function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute): number {
+  const aKnown = hasKnownPrice(a.row);
+  const bKnown = hasKnownPrice(b.row);
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
   return b.score - a.score
     || comparableTotalPrice(a.row) - comparableTotalPrice(b.row)
     || a.row.peerId.localeCompare(b.row.peerId);

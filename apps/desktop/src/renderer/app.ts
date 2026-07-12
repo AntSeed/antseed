@@ -11,6 +11,8 @@ import {
 } from './modules/plugin-setup';
 import { initAppSetupModule } from './modules/app-setup';
 import { initCreditsModule } from './modules/credits';
+import { initVprFloatModule } from './modules/vpr-float';
+import { applyVprRouteToConnectedProxy } from './modules/vpr-proxy-sync';
 import { findCatalogEntry } from './modules/vpr-model-catalog';
 import { resolveVprChatOption } from './modules/vpr-chat-projection';
 import type { VprRouteSelection } from './core/state';
@@ -173,6 +175,50 @@ creditsApi = initCreditsModule({
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
 });
 creditsApi.startPeriodicRefresh();
+
+function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
+  const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
+  if (!entry) return;
+  const selection: VprRouteSelection = {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [...entry.categories],
+    },
+    mode: peerId ? 'pinned-peer' : 'auto',
+    peerId: peerId ?? null,
+  };
+  // Auto mode resolves the peer through the routing-preferences scorer, not
+  // whichever chat option happens to sort first.
+  const option = resolveVprChatOption(
+    uiState.chatServiceOptions,
+    uiState.discoverRows,
+    selection,
+    uiState.vprRoutingPreferences,
+  );
+  if (option) {
+    chatApi.handleServiceChange(option.value, peerId ?? option.peerId);
+  }
+  // handleServiceChange writes a pinned selection through; restore the
+  // requested mode so auto keeps re-resolving the best route on future
+  // sends instead of staying pinned to today's winner.
+  uiState.vprRouteSelection = selection;
+  saveVprRouteSelection(selection);
+  notifyUiStateChanged();
+  // Keep connected app profiles in step with the new route: the system
+  // proxy captured its default model and served-models list at connect
+  // time, and the buyer is now pinned to the new model's peer — stale
+  // profiles would forward models that peer doesn't serve.
+  void applyVprRouteToConnectedProxy(bridge, uiState);
+}
+
+const vprFloatApi = initVprFloatModule({
+  bridge,
+  uiState,
+  onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
+  refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
+});
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
@@ -440,37 +486,7 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
-  selectVprModel: (provider, serviceId, peerId = null) => {
-    const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
-    if (!entry) return;
-    const selection: VprRouteSelection = {
-      model: {
-        provider: entry.provider,
-        serviceId: entry.serviceId,
-        label: entry.label,
-        categories: [...entry.categories],
-      },
-      mode: peerId ? 'pinned-peer' : 'auto',
-      peerId: peerId ?? null,
-    };
-    // Auto mode resolves the peer through the routing-preferences scorer, not
-    // whichever chat option happens to sort first.
-    const option = resolveVprChatOption(
-      uiState.chatServiceOptions,
-      uiState.discoverRows,
-      selection,
-      uiState.vprRoutingPreferences,
-    );
-    if (option) {
-      chatApi.handleServiceChange(option.value, peerId ?? option.peerId);
-    }
-    // handleServiceChange writes a pinned selection through; restore the
-    // requested mode so auto keeps re-resolving the best route on future
-    // sends instead of staying pinned to today's winner.
-    uiState.vprRouteSelection = selection;
-    saveVprRouteSelection(selection);
-    notifyUiStateChanged();
-  },
+  selectVprModel: actionSelectVprModel,
   clearVprPinnedPeer: () => {
     uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
     saveVprRouteSelection(uiState.vprRouteSelection);
@@ -509,6 +525,8 @@ registerActions({
   openPaymentsPortal: (tab?: string) => {
     void bridge?.paymentsOpenPortal?.(tab);
   },
+  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
+  closeVprFloat: () => vprFloatApi.closeFloat(),
 });
 
 /* ------------------------------------------------------------------ */

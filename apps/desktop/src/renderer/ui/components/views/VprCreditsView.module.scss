@@ -1,75 +1,222 @@
 .view {
   height: 100%;
   min-height: 0;
-  overflow: auto;
-  padding: 46px 18px 18px;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
 }
 
 .stack {
-  display: grid;
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
 }
 
-.header {
+.pageTitle {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* ---------- Balance hero ---------- */
+
+.balanceGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.balanceCard {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.balanceText {
   display: grid;
   gap: 4px;
 }
 
-.title {
-  font-size: 22px;
-  font-weight: 750;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tile,
-.section {
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-card);
-}
-
-.label {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.value {
-  margin-top: 4px;
-  font-size: 18px;
-  font-weight: 750;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.section {
-  display: grid;
-  gap: 8px;
-}
-
-.row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+.balanceLabel {
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 16px;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
+.balanceValue {
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 32px;
+}
+
+.balanceHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.payButtons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
-@media (max-width: 560px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.payButtons button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.payButtons button:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.secureNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.walletNote {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.withdraw {
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.withdraw:hover {
+  color: var(--brand);
+}
+
+/* ---------- Rewards ---------- */
+
+.rewardsCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.rewardsText {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.rewardsText strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.rewardsLink {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.rewardsLink:hover {
+  color: var(--brand);
+}
+
+/* ---------- Details ---------- */
+
+.detailsCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.detailRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.detailRow span:first-child {
+  color: var(--text-secondary);
+}
+
+.detailRow span:last-child {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.detailActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detailActions button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detailActions button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.detailActions button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

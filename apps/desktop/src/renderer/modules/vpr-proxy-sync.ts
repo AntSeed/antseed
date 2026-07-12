@@ -1,0 +1,104 @@
+import type { RendererUiState } from '../core/state';
+import type { DesktopBridge, RuntimeProcessState } from '../types/bridge';
+import { chooseBestVprRoute } from './vpr-routing';
+import { routesForSelectedModel } from './vpr-view-models';
+import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './vpr-tools';
+
+const SYSTEM_PROXY_PORT = 8378;
+
+type VprRouteTarget = {
+  peerId: string;
+  model: string;
+  servedModels: string[];
+};
+
+/** Resolve the current VPR selection to a concrete peer + model target. */
+function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
+  const selection = uiState.vprRouteSelection;
+  if (!selection.model) return null;
+  const routes = routesForSelectedModel(uiState.discoverRows, selection.model);
+  const peerId = selection.mode === 'pinned-peer' && selection.peerId
+    ? selection.peerId
+    : chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
+  if (!peerId) return null;
+
+  const model = selection.model.serviceId;
+  const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.discoverRows);
+  const servedModels = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [model];
+  return { peerId, model, servedModels };
+}
+
+async function activeProfileNames(bridge: DesktopBridge): Promise<string[]> {
+  try {
+    const state = (await bridge.systemProxyGetState?.()) ?? null;
+    return [...(activeProfilesFromRuntimeState(state) ?? [])];
+  } catch {
+    return [];
+  }
+}
+
+async function startProfilesOnRoute(
+  bridge: DesktopBridge,
+  target: VprRouteTarget,
+  profileNames: string[],
+  profileSwitch: boolean,
+): Promise<{ ok: boolean; state?: RuntimeProcessState | null; error?: string }> {
+  if (!bridge.systemProxyStart) return { ok: false, error: 'System proxy is unavailable in this build' };
+  try {
+    const result = await bridge.systemProxyStart({
+      peerId: target.peerId,
+      port: SYSTEM_PROXY_PORT,
+      profiles: profileNames,
+      defaultModel: target.model,
+      servedModels: target.servedModels,
+      toolRoutes: Object.fromEntries(profileNames.map((name) => [name, { peerId: target.peerId, model: target.model }])),
+      profileSwitch,
+    });
+    return { ok: result.ok, state: result.state ?? null, ...(result.error ? { error: result.error } : {}) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Re-point the running system proxy at the current VPR route selection.
+ *
+ * Without this, changing the default model (Home dropdown, model view Apply,
+ * floating pill) re-pins the buyer to the new model's peer while connected
+ * app profiles keep the served-models list and default model captured at
+ * connect time — apps then request models the newly pinned peer doesn't
+ * serve ("Service X is not served by this peer").
+ *
+ * No-op when no profile is connected. Per-app route overrides made in the
+ * Apps view are reset to the new default route; adjust them there afterwards
+ * if needed.
+ */
+export async function applyVprRouteToConnectedProxy(
+  bridge: DesktopBridge | undefined,
+  uiState: RendererUiState,
+): Promise<void> {
+  if (!bridge) return;
+  const profileNames = await activeProfileNames(bridge);
+  if (profileNames.length === 0) return;
+  const target = resolveRouteTarget(uiState);
+  if (!target) return;
+  await startProfilesOnRoute(bridge, target, profileNames, true);
+}
+
+/**
+ * Connect a single app profile on the current VPR route (joining any
+ * profiles already connected). Used by the Home screen's one-click app
+ * buttons.
+ */
+export async function connectVprProfile(
+  bridge: DesktopBridge | undefined,
+  uiState: RendererUiState,
+  profileName: string,
+): Promise<{ ok: boolean; state?: RuntimeProcessState | null; error?: string }> {
+  if (!bridge) return { ok: false, error: 'Desktop bridge unavailable' };
+  const target = resolveRouteTarget(uiState);
+  if (!target) return { ok: false, error: 'No model route available yet' };
+  const existing = await activeProfileNames(bridge);
+  const profileNames = Array.from(new Set([...existing, profileName]));
+  return startProfilesOnRoute(bridge, target, profileNames, existing.length > 0);
+}

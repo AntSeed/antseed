@@ -6,8 +6,10 @@ import {
   ComputerTerminal01Icon,
   ConnectIcon,
   DiscoverCircleIcon,
+  HelpCircleIcon,
   PreferenceHorizontalIcon,
   SquarePowerIcon,
+  UserIcon,
 } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 
@@ -70,7 +72,7 @@ function createViewEntry(
 
 // Legacy dev routes have no slide relationship to the VPR screens; parking
 // them past the end keeps any transition involving them sliding "forward".
-const LEGACY_SLIDE_INDEX = 8;
+const LEGACY_SLIDE_INDEX = 9;
 
 export const VIEW_REGISTRY = {
   home: createViewEntry(
@@ -88,7 +90,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 1,
       preloadPriority: 'eager',
-      nav: { slot: 'main', label: 'Explore', icon: DiscoverCircleIcon },
+      nav: { slot: 'main', label: 'Models', icon: DiscoverCircleIcon },
     },
   ),
   model: createViewEntry(
@@ -101,7 +103,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 3,
       preloadPriority: 'eager',
-      nav: { slot: 'main', label: 'Tools', icon: ConnectIcon },
+      nav: { slot: 'main', label: 'Apps', icon: ConnectIcon },
     },
   ),
   preferences: createViewEntry(
@@ -110,12 +112,17 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 4,
       preloadPriority: 'idle',
-      nav: { slot: 'main', label: 'Preferences', icon: PreferenceHorizontalIcon },
+      nav: { slot: 'main', label: 'Prefs', icon: PreferenceHorizontalIcon },
     },
   ),
   credits: createViewEntry(
     async () => (await import('./views/VprCreditsView')).VprCreditsView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 5, preloadPriority: 'eager' },
+    {
+      receivesOnSelectView: true,
+      slideIndex: 5,
+      preloadPriority: 'eager',
+      nav: { slot: 'main', label: 'Profile', icon: UserIcon },
+    },
   ),
   chat: createViewEntry(
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
@@ -126,11 +133,20 @@ export const VIEW_REGISTRY = {
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
   ),
+  help: createViewEntry(
+    async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
+    {
+      receivesOnSelectView: true,
+      slideIndex: 7,
+      preloadPriority: 'idle',
+      nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
+    },
+  ),
   developer: createViewEntry(
     async () => (await import('./views/DeveloperConsoleView')).DeveloperConsoleView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 7,
+      slideIndex: 8,
       preloadPriority: 'idle',
       nav: { slot: 'dev', label: 'Developer', icon: ComputerTerminal01Icon },
     },

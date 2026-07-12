@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import type { LogEvent, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { getUiStateRef } from '../../../core/store';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
@@ -12,6 +14,8 @@ import {
   type VprToolRoute,
 } from '../../../modules/vpr-tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { BrandIcon } from '../brand/BrandIcon';
+import { VprBackTitle, VprBadge, VprCard, VprSearch } from '../vpr/VprKit';
 import styles from './VprToolsView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -30,7 +34,7 @@ type GuiTestResult = {
   error?: string;
 };
 
-export function VprToolsView(_props: Props) {
+export function VprToolsView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
     discoverRows: state.discoverRows,
@@ -50,6 +54,8 @@ export function VprToolsView(_props: Props) {
   const [guiTest, setGuiTest] = useState<GuiTestResult | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
@@ -232,7 +238,7 @@ export function VprToolsView(_props: Props) {
     try {
       const result = await bridge.systemProxyAddToShell({ port: DEFAULT_PORT });
       setMessage(result.ok
-        ? (result.added.length > 0 ? `Updated ${result.added.map((file) => file.split('/').pop()).join(', ')}` : 'Shell setup already configured')
+        ? (result.added.length > 0 ? `Updated ${result.added.map((file) => file.split('/').pop()).join(', ')}. Open a new terminal for it to take effect.` : 'Shell setup already configured')
         : (result.error ?? 'Unable to update shell setup'));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -249,7 +255,9 @@ export function VprToolsView(_props: Props) {
     try {
       const result = await bridge.systemProxyRemoveFromShell();
       setMessage(result.ok
-        ? (result.removed.length > 0 ? `Removed from ${result.removed.map((file) => file.split('/').pop()).join(', ')}` : 'No shell setup found')
+        ? (result.removed.length > 0
+          ? `Removed from ${result.removed.map((file) => file.split('/').pop()).join(', ')}. Already-open terminals keep the old environment until restarted.`
+          : 'Shell setup was already removed. Already-open terminals keep the old environment until restarted.')
         : (result.error ?? 'Unable to remove shell setup'));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -258,111 +266,150 @@ export function VprToolsView(_props: Props) {
     }
   }, []);
 
+  const visibleProfiles = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return profiles;
+    return profiles.filter((profile) => profile.displayName.toLowerCase().includes(query) || profile.name.toLowerCase().includes(query));
+  }, [profiles, search]);
+
   return (
     <section className={`view view-vpr-tools ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
-        <div className={styles.header}>
-          <span>Tools</span>
-          <h2 className={styles.title}>Connections</h2>
-        </div>
+        <VprBackTitle title="Connected apps" onBack={() => onSelectView?.('home')} />
 
-        {message ? <p className={styles.meta}>{message}</p> : null}
-        {profiles.length === 0 ? <div className={styles.empty}>No tool profiles configured</div> : profiles.map((profile) => {
-          const connected = activeProfiles?.has(profile.name) ?? false;
-          const route = resolveVprToolRouteForPeerOptions(
-            toolRoutes,
-            profile.name,
-            { peerId: defaultPeerId, model: defaultModel },
-            peerOptions,
-          );
-          const profileTraffic = traffic.get(profile.name);
-          return (
-            <div key={profile.name} className={styles.tool}>
-              <div className={styles.toolHeader}>
-                <div>
-                  <div className={styles.name}>{profile.displayName}</div>
-                  <div className={styles.meta}>
-                    {profile.method} · {connected ? 'Connected' : 'Disconnected'} · {profileTraffic?.count ?? 0} requests
-                    {profileTraffic?.lastStatus ? ` · ${statusLabel(profileTraffic.lastStatus)}` : ''}
+        <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
+
+        {message ? <p className={styles.note} role="status">{message}</p> : null}
+
+        {visibleProfiles.length === 0 ? (
+          <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
+        ) : (
+          <VprCard>
+            {visibleProfiles.map((profile) => {
+              const connected = activeProfiles?.has(profile.name) ?? false;
+              const isExpanded = expanded === profile.name;
+              const route = resolveVprToolRouteForPeerOptions(
+                toolRoutes,
+                profile.name,
+                { peerId: defaultPeerId, model: defaultModel },
+                peerOptions,
+              );
+              const profileTraffic = traffic.get(profile.name);
+              return (
+                <div key={profile.name} className={styles.appRow}>
+                  <div className={styles.appHead}>
+                    <button
+                      type="button"
+                      className={styles.appToggle}
+                      aria-expanded={isExpanded}
+                      onClick={() => setExpanded(isExpanded ? null : profile.name)}
+                    >
+                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={18} />
+                      <span className={styles.appName}>{profile.displayName}</span>
+                      {connected && <VprBadge tone="green">Connected</VprBadge>}
+                      <HugeiconsIcon
+                        icon={isExpanded ? ArrowDown01Icon : ArrowRight01Icon}
+                        size={14}
+                        strokeWidth={2}
+                        className={styles.appChevron}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.appAction}${connected ? ` ${styles.appActionQuiet}` : ''}`}
+                      disabled={busy !== null || (!connected && !defaultPeerId)}
+                      onClick={() => {
+                        if (connected) {
+                          disconnectProfile(profile.name);
+                        } else {
+                          connectProfile(profile.name);
+                          setExpanded(profile.name);
+                        }
+                      }}
+                    >
+                      {connected ? 'Disconnect' : 'Connect'}
+                    </button>
                   </div>
+
+                  {isExpanded && (
+                    <div className={styles.appBody}>
+                      <div className={styles.meta}>
+                        {profile.method} · {connected ? 'Connected' : 'Disconnected'} · {profileTraffic?.count ?? 0} requests
+                        {profileTraffic?.lastStatus ? ` · ${statusLabel(profileTraffic.lastStatus)}` : ''}
+                      </div>
+
+                      <div className={styles.controls}>
+                        <label>
+                          <span>Seller</span>
+                          <select
+                            value={route.peerId}
+                            onChange={(event) => {
+                              const peerId = event.currentTarget.value;
+                              const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
+                              const model = services.includes(route.model) ? route.model : (services[0] ?? '');
+                              updateToolRoute(profile.name, { peerId, model }, connected);
+                            }}
+                            disabled={busy !== null}
+                          >
+                            {peerOptions.map((peer) => <option key={peer.peerId} value={peer.peerId}>{peer.label}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Model</span>
+                          <select
+                            value={route.model}
+                            onChange={(event) => {
+                              const model = event.currentTarget.value;
+                              updateToolRoute(profile.name, { ...route, model }, connected);
+                            }}
+                            disabled={busy !== null}
+                          >
+                            {(peerOptions.find((peer) => peer.peerId === route.peerId)?.services ?? [route.model]).filter(Boolean).map((service) => (
+                              <option key={service} value={service}>{service}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className={styles.actions}>
+                        {connected && profile.appAction === 'open-url' && profile.openUrl ? (
+                          <button type="button" onClick={() => { void openUrl(profile.openUrl!); }}>Open</button>
+                        ) : null}
+                        {connected && profile.appAction === 'open-tool' ? (
+                          <button type="button" onClick={() => { void openTool(profile.toolName ?? profile.name); }}>Open</button>
+                        ) : null}
+                        {connected && (profile.kind === 'config-patch' || profile.canRestart || profile.appAction === 'restart-app') ? (
+                          <button
+                            type="button"
+                            onClick={() => { void restartApp(profile.name, profile.displayName); }}
+                            disabled={actionBusy === profile.name}
+                          >
+                            {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
+                          </button>
+                        ) : null}
+                        {connected && profile.kind === 'proxy' && guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable ? (
+                          <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                            {trustBusy ? 'Trusting...' : 'Trust CA'}
+                          </button>
+                        ) : null}
+                        {profile.kind === 'proxy' ? (
+                          <>
+                            <button type="button" onClick={() => { void addShellSetup(); }} disabled={actionBusy === 'shell-setup'}>
+                              {actionBusy === 'shell-setup' ? 'Updating...' : 'Shell setup'}
+                            </button>
+                            <button type="button" onClick={() => { void removeShellSetup(); }} disabled={actionBusy === 'shell-remove'}>
+                              {actionBusy === 'shell-remove' ? 'Removing...' : 'Remove shell setup'}
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  disabled={busy !== null || (!connected && !defaultPeerId)}
-                  onClick={() => { connected ? disconnectProfile(profile.name) : connectProfile(profile.name); }}
-                >
-                  {connected ? 'Disconnect' : 'Connect'}
-                </button>
-              </div>
-
-              <div className={styles.controls}>
-                <label>
-                  Peer
-                  <select
-                    value={route.peerId}
-                    onChange={(event) => {
-                      const peerId = event.currentTarget.value;
-                      const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
-                      const model = services.includes(route.model) ? route.model : (services[0] ?? '');
-                      updateToolRoute(profile.name, { peerId, model }, connected);
-                    }}
-                    disabled={busy !== null}
-                  >
-                    {peerOptions.map((peer) => <option key={peer.peerId} value={peer.peerId}>{peer.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Model
-                  <select
-                    value={route.model}
-                    onChange={(event) => {
-                      const model = event.currentTarget.value;
-                      updateToolRoute(profile.name, { ...route, model }, connected);
-                    }}
-                    disabled={busy !== null}
-                  >
-                    {(peerOptions.find((peer) => peer.peerId === route.peerId)?.services ?? [route.model]).filter(Boolean).map((service) => (
-                      <option key={service} value={service}>{service}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <div className={styles.actions}>
-                {connected && profile.appAction === 'open-url' && profile.openUrl ? (
-                  <button type="button" onClick={() => { void openUrl(profile.openUrl!); }}>Open</button>
-                ) : null}
-                {connected && profile.appAction === 'open-tool' ? (
-                  <button type="button" onClick={() => { void openTool(profile.toolName ?? profile.name); }}>Open</button>
-                ) : null}
-                {connected && (profile.kind === 'config-patch' || profile.canRestart || profile.appAction === 'restart-app') ? (
-                  <button
-                    type="button"
-                    onClick={() => { void restartApp(profile.name, profile.displayName); }}
-                    disabled={actionBusy === profile.name}
-                  >
-                    {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
-                  </button>
-                ) : null}
-                {connected && profile.kind === 'proxy' && guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable ? (
-                  <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                    {trustBusy ? 'Trusting...' : 'Trust CA'}
-                  </button>
-                ) : null}
-                {profile.kind === 'proxy' ? (
-                  <>
-                    <button type="button" onClick={() => { void addShellSetup(); }} disabled={actionBusy === 'shell-setup'}>
-                      {actionBusy === 'shell-setup' ? 'Updating...' : 'Shell setup'}
-                    </button>
-                    <button type="button" onClick={() => { void removeShellSetup(); }} disabled={actionBusy === 'shell-remove'}>
-                      {actionBusy === 'shell-remove' ? 'Removing...' : 'Remove shell setup'}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
+              );
+            })}
+          </VprCard>
+        )}
       </div>
     </section>
   );

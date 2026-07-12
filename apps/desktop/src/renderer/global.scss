@@ -4,36 +4,68 @@
    =================================================================== */
 
 :root {
-  /* ---------- Light theme (default) ---------- */
-  --bg-primary: #f5f5f1;
-  --bg-secondary: #fafaf6;
-  --bg-surface: #ebebe7;
-  --bg-hover: #e4e4df;
+  /* ---------- Light theme (default) ----------
+     Brand palette from the AntSeed Figma guideline: warm cream surfaces
+     (surface/0 #fbf9f4, surface/1 white), deep green primary (#008359)
+     with the brighter brand emerald (#10b981) reserved for fills. */
+  --bg-primary: #fbf9f4;
+  --bg-secondary: #fbf9f4;
+  --bg-surface: #f1efe8;
+  --bg-hover: #eef2ea;
   --bg-card: #ffffff;
-  --bg-card-alt: #fcfcf8;
-  --text-primary: #0f0f0e;
-  --text-secondary: #4a4a48;
-  --text-muted: #9a9a96;
-  --text-faint: #c8c8ce;
-  --accent: #01ba5c;
-  --accent-green: #01ba5c;
+  --bg-card-alt: #fdfcf8;
+  --bg-sidebar-active: #eef2ea;
+  --text-primary: #111714;
+  --text-secondary: #4b5450;
+  --text-muted: #6b7570;
+  --text-faint: #b7c0bb;
+  --accent: #008359;
+  --accent-green: #008359;
+  --brand: #10b981;
   --accent-blue: #3b82f6;
   --accent-yellow: #fbbf24;
   --danger: #ef4444;
-  --border: rgba(0, 0, 0, 0.09);
-  --border-strong: rgba(0, 0, 0, 0.12);
-  --border-light: rgba(0, 0, 0, 0.04);
-  --accent-rgb: 1, 186, 92;
-  --accent-green-rgb: 1, 186, 92;
+  --border: #d4dbd7;
+  --border-strong: #b7c0bb;
+  --border-light: #e4e9e5;
+  --success-subtle-bg: #e9ffdd;
+  --success-subtle-border: #c0f6a2;
+  --success-subtle-text: #0a1e00;
+  --accent-rgb: 0, 131, 89;
+  --accent-green-rgb: 0, 131, 89;
+  --brand-rgb: 16, 185, 129;
   --warning-rgb: 251, 191, 36;
   --danger-rgb: 239, 68, 68;
+  /* Typography (Figma guideline) — Geist throughout, three body sizes:
+     16px/24 (400-700), 14px/20 (400-600), 12px/20 (400-500), and a
+     12px/16 variant reserved for badges and the nav rail labels. */
   --font-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Spacing scale (Figma guideline, 16px base): steps 1-12. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 40px;
+  --space-10: 48px;
+  --space-11: 56px;
+  --space-12: 64px;
+
   --sidebar-width: 220px;
   --radius: 16px;
+  --radius-md: 12px;
   --radius-sm: 8px;
-  --shadow: 0px 16px 60px rgba(0, 0, 0, 0.16);
-  --shadow-sm: 0px 1px 3px rgba(0, 0, 0, 0.06);
+
+  /* Shadow scale (Figma guideline): shadow/1 for resting cards,
+     shadow/2 for floating emphasis, shadow/popup for overlays. */
+  --shadow-sm: 0px 2px 8px rgba(17, 23, 20, 0.08);
+  --shadow-float: 0px 2px 10px rgba(17, 23, 20, 0.16);
+  --shadow: 0px 12px 32px rgba(17, 23, 20, 0.14);
 
   /* Motion — screen-change slides and anything that should feel like part of
      the same gesture. Duration must match VIEW_SLIDE_MS in ViewHost.tsx. */
@@ -41,16 +73,16 @@
   --motion-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /* Chat specific */
-  --chat-user-bubble: #efefeb;
-  --chat-user-bubble-border: rgba(0, 0, 0, 0.09);
+  --chat-user-bubble: #eef2ea;
+  --chat-user-bubble-border: #d4dbd7;
   --chat-input-bg: #ffffff;
-  --chat-header-bg: #fafaf6;
-  --chat-area-bg: #fcfcf8;
-  --drop-overlay-bg: rgba(252, 252, 248, 0.82);
+  --chat-header-bg: #fbf9f4;
+  --chat-area-bg: #fdfcf8;
+  --drop-overlay-bg: rgba(251, 249, 244, 0.82);
 
   /* Scrollbar */
-  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb: rgba(17, 23, 20, 0.12);
+  --scrollbar-thumb-hover: rgba(17, 23, 20, 0.2);
 }
 
 body.dark-theme {
@@ -64,20 +96,27 @@ body.dark-theme {
   --text-secondary: #8b949e;
   --text-muted: #8b949e;
   --text-faint: #5f656b;
+  --bg-sidebar-active: rgba(52, 211, 153, 0.12);
   --accent: #1fd87a;
   --accent-green: #1fd87a;
+  --brand: #10b981;
   --accent-blue: #58a6ff;
   --accent-yellow: #f2cc60;
   --danger: #ff7b72;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.12);
   --border-light: rgba(255, 255, 255, 0.04);
+  --success-subtle-bg: rgba(74, 222, 128, 0.12);
+  --success-subtle-border: rgba(74, 222, 128, 0.35);
+  --success-subtle-text: #bbf7d0;
   --accent-rgb: 31, 216, 122;
   --accent-green-rgb: 31, 216, 122;
+  --brand-rgb: 16, 185, 129;
   --warning-rgb: 242, 204, 96;
   --danger-rgb: 255, 123, 114;
-  --shadow: 0px 8px 40px rgba(0, 0, 0, 0.5);
-  --shadow-sm: 0px 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow: 0px 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0px 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-float: 0px 2px 10px rgba(0, 0, 0, 0.4);
   --chat-user-bubble: rgba(255, 255, 255, 0.06);
   --chat-user-bubble-border: rgba(255, 255, 255, 0.08);
   --chat-input-bg: #2a2a2c;
@@ -111,6 +150,18 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Backgrounds double as window-drag regions (sidebar, banner, view bodies).
+   Every interactive element opts out globally so a drag ancestor can never
+   swallow its clicks. */
+button,
+a,
+input,
+select,
+textarea,
+label {
+  -webkit-app-region: no-drag;
 }
 
 button,
@@ -152,10 +203,24 @@ textarea {
 
 .page-header {
   padding: 16px;
+  /* Clear the floating credits pill pinned to the pane's top-right corner. */
+  padding-right: 104px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  /* The diagnostic screens live in the compact window — let the actions drop
+     below the title instead of colliding with it. */
+  flex-wrap: wrap;
+}
+
+.page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .page-header h2 {
@@ -447,6 +512,14 @@ textarea {
 
 .panel-grid.two-col {
   grid-template-columns: 1fr 1fr;
+}
+
+/* The diagnostic screens open in the compact window preset (528px wide);
+   side-by-side panels don't fit there, so stack them. */
+@media (max-width: 720px) {
+  .panel-grid.two-col {
+    grid-template-columns: 1fr;
+  }
 }
 
 .panel-span-full {
@@ -840,8 +913,21 @@ pre,
   color: var(--text-muted);
 }
 
+/* Two-line entries built for the narrow panel: a muted meta line (time +
+   source) with the message wrapped underneath it. */
 .log-entry {
-  margin-bottom: 3px;
+  margin-bottom: 6px;
+}
+
+.log-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.log-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .log-empty {
@@ -858,14 +944,11 @@ pre,
 
 .log-entry .ts {
   color: var(--text-muted);
-  margin-right: 6px;
 }
 
 .log-source {
-  display: inline-block;
-  min-width: 86px;
-  margin-right: 6px;
   color: var(--text-muted);
+  font-weight: 600;
 }
 
 @media (max-width: 760px) {

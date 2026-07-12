@@ -18,7 +18,7 @@ describe('view registry', () => {
   it('passes navigation callbacks only to views that need to change pages', () => {
     const navigationViews = VIEW_NAMES.filter((view) => getViewRegistryEntry(view).receivesOnSelectView);
 
-    expect(navigationViews).toEqual(['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'chat', 'developer'] satisfies ViewName[]);
+    expect(navigationViews).toEqual(['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'chat', 'help', 'developer'] satisfies ViewName[]);
   });
 
   it('reuses the same preload promise for repeated preload requests', () => {
@@ -36,7 +36,7 @@ describe('view registry', () => {
 
   it('derives the nav rail from registry metadata in slide order', () => {
     expect(navViews('main').map((entry) => entry.view)).toEqual(
-      ['home', 'explore', 'tools', 'preferences', 'chat'] satisfies ViewName[],
+      ['home', 'explore', 'tools', 'preferences', 'credits', 'chat', 'help'] satisfies ViewName[],
     );
     expect(navViews('dev').map((entry) => entry.view)).toEqual(['developer'] satisfies ViewName[]);
     for (const entry of navViews('main')) {
@@ -49,7 +49,7 @@ describe('view registry', () => {
     expect(viewsForPreload('eager')).toEqual(
       ['home', 'explore', 'tools', 'credits', 'chat'] satisfies ViewName[],
     );
-    expect(viewsForPreload('idle')).toEqual(['preferences', 'developer'] satisfies ViewName[]);
+    expect(viewsForPreload('idle')).toEqual(['preferences', 'help', 'developer'] satisfies ViewName[]);
   });
 
   it('assigns every view a slide position', () => {

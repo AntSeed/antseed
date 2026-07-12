@@ -37,6 +37,8 @@ export type AppActions = {
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
   openPaymentsPortal?: (tab?: string) => void;
+  openVprFloat?: (profileName?: string) => Promise<void>;
+  closeVprFloat?: () => Promise<void>;
 };
 
 let _actions: AppActions | null = null;

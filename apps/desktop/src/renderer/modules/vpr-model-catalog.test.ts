@@ -76,10 +76,21 @@ test('price min/max ignores null values', () => {
     discoverRow({ peerId: 'p3', inputUsdPerMillion: 5, outputUsdPerMillion: 4 }),
   ]);
 
-  assert.equal(entry.minInputUsdPerMillion, 2);
+  assert.equal(entry.minInputUsdPerMillion, 5);
   assert.equal(entry.maxInputUsdPerMillion, 5);
   assert.equal(entry.minOutputUsdPerMillion, 4);
   assert.equal(entry.maxOutputUsdPerMillion, 9);
+});
+
+test('catalog entry minimum prices come from the same best route', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({ peerId: 'low-input', inputUsdPerMillion: 1, outputUsdPerMillion: 20 }),
+    discoverRow({ peerId: 'low-output', inputUsdPerMillion: 8, outputUsdPerMillion: 2 }),
+  ]);
+
+  assert.equal(entry.bestPeerId, 'low-output');
+  assert.equal(entry.minInputUsdPerMillion, 8);
+  assert.equal(entry.minOutputUsdPerMillion, 2);
 });
 
 test('expectedSavingsPct is 50 for totals 10 and 20', () => {

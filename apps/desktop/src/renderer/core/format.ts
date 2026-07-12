@@ -171,6 +171,31 @@ export function formatCredits(value: string): string {
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 }
 
+/* Compact token totals for the brand stat tiles ("656.9M"). Accepts
+   bigint-strings since lifetime token counts can exceed 2^53. */
+export function formatCompactTokens(input: string | undefined, output: string | undefined): string {
+  let total: bigint;
+  try {
+    total = BigInt(input ?? '0') + BigInt(output ?? '0');
+  } catch {
+    return '-';
+  }
+  if (total < 1000n) return total.toString();
+  const units: Array<[bigint, string]> = [
+    [1_000_000_000_000n, 'T'],
+    [1_000_000_000n, 'B'],
+    [1_000_000n, 'M'],
+    [1_000n, 'K'],
+  ];
+  for (const [divisor, suffix] of units) {
+    if (total >= divisor) {
+      const scaled = Number((total * 10n) / divisor) / 10;
+      return `${scaled.toFixed(1)}${suffix}`;
+    }
+  }
+  return total.toString();
+}
+
 /* Compact price tag: "Free" for zero, trailing zeros trimmed
    (0.50 -> $0.5, 1.00 -> $1), sub-cent prices at 3dp. */
 export function formatCompactUsd(value: number): string {

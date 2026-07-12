@@ -1,70 +1,202 @@
 .view {
   height: 100%;
   min-height: 0;
-  overflow: auto;
-  padding: 46px 18px 18px;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
 }
 
 .stack {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
 }
 
-.header {
+.pageTitle {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.note {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.empty {
+  min-height: 96px;
   display: grid;
-  gap: 4px;
+  place-items: center;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
-.title {
-  font-size: 22px;
-  font-weight: 750;
+/* ---------- App rows ---------- */
+
+.appRow + .appRow {
+  border-top: 1px solid var(--border);
 }
 
-.tool {
+.appHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 16px;
+}
+
+.appToggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.appToggle:focus-visible {
+  outline: none;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.appName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.appChevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.appAction {
+  flex: 0 0 auto;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.appAction:hover:not(:disabled) {
+  color: var(--brand);
+}
+
+.appAction:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.appActionQuiet {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.appActionQuiet:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+/* ---------- Expanded body ---------- */
+
+.appBody {
   display: grid;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-card);
-}
-
-.toolHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  gap: 12px;
-}
-
-.name {
-  font-weight: 750;
+  padding: 0 16px 14px;
 }
 
 .meta {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
+  line-height: 16px;
 }
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.controls label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.controls select {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.controls select:focus-visible {
+  border-color: rgba(var(--brand-rgb), 0.5);
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
-.empty {
-  min-height: 72px;
-  display: grid;
-  place-items: center;
+.actions button {
+  padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--bg-card);
-  color: var(--text-muted);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.actions button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 @media (max-width: 560px) {

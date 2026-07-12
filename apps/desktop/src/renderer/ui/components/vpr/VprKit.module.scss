@@ -1,0 +1,296 @@
+/* Shared brand-guideline primitives for the VPR screens. */
+
+/* ---------- Back title ---------- */
+
+.backTitle {
+  align-self: flex-start;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  /* Negative inset aligns the chevron with the content edge while keeping a
+     comfortable hit target. */
+  margin-left: -4px;
+  padding: 0 6px 0 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.backTitle:hover {
+  color: var(--text-primary);
+}
+
+.backTitle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* ---------- Toggle - Switch (48x24) ---------- */
+
+.toggle {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 24px;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border: none;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.toggleKnob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  box-shadow: 0 1px 3px rgba(17, 23, 20, 0.25);
+  transform: translateX(0);
+  transition: transform 0.15s ease;
+}
+
+.toggleOn {
+  background: var(--accent-green);
+}
+
+.toggleOn .toggleKnob {
+  transform: translateX(24px);
+}
+
+/* ---------- Badge ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.badgeGreen {
+  border: 1px solid var(--success-subtle-border);
+  background: var(--success-subtle-bg);
+  color: var(--success-subtle-text);
+}
+
+.badgePrimary {
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent-green);
+}
+
+.badgeNeutral {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.badgeType {
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  line-height: 16px;
+}
+
+/* ---------- Slider ---------- */
+
+.slider {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider:focus-visible {
+  outline: none;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent-green) 0%,
+    var(--accent-green) var(--slider-fill, 50%),
+    var(--border) var(--slider-fill, 50%),
+    var(--border) 100%
+  );
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+}
+
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 3px rgba(var(--brand-rgb), 0.4),
+    var(--shadow-float);
+}
+
+/* ---------- Stat tiles ---------- */
+
+.statRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.statTile {
+  display: grid;
+  gap: 2px;
+  padding: 8px 16px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.statLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.statValue {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statSuffix {
+  margin-left: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* ---------- Search ---------- */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.search:focus-within {
+  border-color: rgba(var(--brand-rgb), 0.5);
+}
+
+.searchIcon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 20px;
+  outline: none;
+}
+
+.search input::placeholder {
+  color: var(--text-muted);
+}
+
+.search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+/* ---------- Card ---------- */
+
+.card {
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* ---------- Setting row ---------- */
+
+.settingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settingText {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settingTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.settingCaption {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.settingHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settingControl {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
