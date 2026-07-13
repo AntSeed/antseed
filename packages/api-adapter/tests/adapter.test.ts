@@ -1027,6 +1027,61 @@ describe('transformResponse chat to responses', () => {
     expect(usage.total_tokens).toBe(23);
   });
 
+  it('preserves cached input token details in responses usage', () => {
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-cache',
+        model: 'gpt-4.1',
+        choices: [{
+          index: 0,
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: 'cached' },
+        }],
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 8,
+          prompt_tokens_details: { cached_tokens: 900 },
+        },
+      })),
+    });
+
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse);
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toMatchObject({
+      input_tokens: 1000,
+      output_tokens: 8,
+      total_tokens: 1008,
+      input_tokens_details: { cached_tokens: 900 },
+    });
+  });
+
+  it('maps Anthropic cache reads to Responses cached token details', () => {
+    const anthropicResponse = makeAnthropicResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'msg_cache',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet',
+        content: [{ type: 'text', text: 'cached' }],
+        stop_reason: 'end_turn',
+        usage: {
+          input_tokens: 3000,
+          cache_read_input_tokens: 34_500_000,
+          output_tokens: 42,
+        },
+      })),
+    });
+
+    const result = adaptResponseForTest('anthropic-messages', 'openai-responses', anthropicResponse);
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toMatchObject({
+      input_tokens: 34_503_000,
+      output_tokens: 42,
+      total_tokens: 34_503_042,
+      input_tokens_details: { cached_tokens: 34_500_000 },
+    });
+  });
+
   it('maps tool calls to function_call items', () => {
     const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
       fallbackModel: 'fallback',
@@ -1323,6 +1378,40 @@ describe('transformResponse responses to anthropic', () => {
       { type: 'text', text: 'Working on it' },
       { type: 'tool_use', id: 'call_123', name: 'write', input: { path: 'hello.txt' } },
     ]);
+  });
+
+  it('maps cached Responses usage to Anthropic cache fields', () => {
+    const result = adaptResponseForTest('openai-responses', 'anthropic-messages', {
+      requestId: 'req-resp-cache',
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'resp_cache',
+        model: 'gpt-5.5',
+        status: 'completed',
+        output: [{
+          type: 'message',
+          id: 'msg_1',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'cached' }],
+        }],
+        usage: {
+          input_tokens: 34_503_000,
+          input_tokens_details: { cached_tokens: 34_500_000 },
+          output_tokens: 42,
+        },
+      })),
+    }, {
+      streamRequested: false,
+      fallbackModel: 'claude-sonnet',
+    });
+
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toEqual({
+      input_tokens: 3000,
+      output_tokens: 42,
+      cache_read_input_tokens: 34_500_000,
+    });
   });
 
   it('maps incomplete responses stop reasons to anthropic stop reasons', () => {

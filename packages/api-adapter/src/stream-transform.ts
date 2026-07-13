@@ -2,12 +2,13 @@ import type { SerializedHttpResponseChunk, ServiceApiProtocol } from './types.js
 import {
   createChatStreamParser,
   encodeSseEvents,
+  extractUsage,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
   parseJsonSafe,
   parseSseBuffer,
-  toNonNegativeInt,
   type StreamingResponseAdapter,
+  type TokenUsage,
 } from './utils.js';
 
 export interface ServiceApiStreamTransformOptions {
@@ -24,7 +25,7 @@ interface CanonicalStreamToolCall {
 }
 
 type CanonicalStreamEvent =
-  | { type: 'response_start'; id: string; model: string; inputTokens: number }
+  | { type: 'response_start'; id: string; model: string; usage: TokenUsage }
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_call_start'; index: number; id: string; name: string }
   | { type: 'tool_call_delta'; index: number; argumentsDelta: string }
@@ -33,8 +34,7 @@ type CanonicalStreamEvent =
     id: string;
     model: string;
     finishReason: string | null;
-    inputTokens: number;
-    outputTokens: number;
+    usage: TokenUsage;
     toolCalls: CanonicalStreamToolCall[];
   };
 
@@ -52,6 +52,8 @@ interface ProtocolStreamNormalizer {
 interface ProtocolStreamRenderer {
   render(events: CanonicalStreamEvent[], chunk: SerializedHttpResponseChunk): SerializedHttpResponseChunk[];
 }
+
+const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
 
 const STREAM_NORMALIZERS: Partial<Record<ServiceApiProtocol, CanonicalStreamNormalizer>> = {
   'anthropic-messages': createAnthropicStreamNormalizer,
@@ -91,14 +93,14 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
   const emitted: CanonicalStreamEvent[] = [];
   let responseStarted = false;
 
-  const emitStart = (id: string, model: string, inputTokens = 0): void => {
+  const emitStart = (id: string, model: string, usage: TokenUsage = ZERO_USAGE): void => {
     if (responseStarted) return;
     responseStarted = true;
     emitted.push({
       type: 'response_start',
       id,
       model: model || options.fallbackModel || 'unknown',
-      inputTokens,
+      usage,
     });
   };
 
@@ -115,14 +117,13 @@ function createChatStreamNormalizer(options: StreamTransformInternals): Protocol
       emitted.push({ type: 'tool_call_delta', index, argumentsDelta });
     },
     onFinish(info) {
-      emitStart(info.id, info.model, info.inputTokens);
+      emitStart(info.id, info.model, info.usage);
       emitted.push({
         type: 'response_done',
         id: info.id,
         model: info.model,
         finishReason: info.finishReason,
-        inputTokens: info.inputTokens,
-        outputTokens: info.outputTokens,
+        usage: info.usage,
         toolCalls: info.toolCalls,
       });
     },
@@ -145,8 +146,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
   let sseBuffer = '';
   let responseId = '';
   let responseModel = options.fallbackModel ?? 'unknown';
-  let inputTokens = 0;
-  let outputTokens = 0;
+  let usage: TokenUsage = ZERO_USAGE;
   let finishReason: string | null = null;
   let responseStarted = false;
   const toolBlockIndexes = new Map<number, number>();
@@ -167,7 +167,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
       type: 'response_start',
       id: responseId,
       model: responseModel,
-      inputTokens,
+      usage,
     });
   };
 
@@ -191,7 +191,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
             : {};
           if (typeof message.id === 'string') responseId = message.id;
           if (typeof message.model === 'string') responseModel = message.model;
-          inputTokens = readUsageNumber(message.usage, 'input_tokens');
+          usage = extractUsage({ usage: message.usage });
           emitStart(emitted);
           continue;
         }
@@ -237,7 +237,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
             ? data.delta as Record<string, unknown>
             : {};
           finishReason = anthropicStopReasonToCanonical(delta.stop_reason);
-          outputTokens = readUsageNumber(data.usage, 'output_tokens', outputTokens);
+          usage = mergeOutputUsage(usage, extractUsage({ usage: data.usage }));
           continue;
         }
 
@@ -248,8 +248,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
             id: responseId,
             model: responseModel,
             finishReason: finishReason ?? 'stop',
-            inputTokens,
-            outputTokens,
+            usage,
             toolCalls: sortedToolCalls(toolCalls),
           });
         }
@@ -261,8 +260,7 @@ function createAnthropicStreamNormalizer(options: StreamTransformInternals): Pro
           id: responseId,
           model: responseModel,
           finishReason: finishReason ?? 'stop',
-          inputTokens,
-          outputTokens,
+          usage,
           toolCalls: sortedToolCalls(toolCalls),
         }];
       }
@@ -277,8 +275,7 @@ function createResponsesStreamNormalizer(options: StreamTransformInternals): Pro
   let sseBuffer = '';
   let responseId = '';
   let responseModel = options.fallbackModel ?? 'unknown';
-  let inputTokens = 0;
-  let outputTokens = 0;
+  let usage: TokenUsage = ZERO_USAGE;
   let responseStarted = false;
   const toolOutputIndexes = new Map<number, number>();
   const toolCalls = new Map<number, CanonicalStreamToolCall>();
@@ -298,7 +295,7 @@ function createResponsesStreamNormalizer(options: StreamTransformInternals): Pro
       type: 'response_start',
       id: responseId,
       model: responseModel,
-      inputTokens,
+      usage,
     });
   };
 
@@ -320,7 +317,7 @@ function createResponsesStreamNormalizer(options: StreamTransformInternals): Pro
           const response = objectValue(data.response);
           if (typeof response.id === 'string') responseId = response.id;
           if (typeof response.model === 'string') responseModel = response.model;
-          inputTokens = readUsageNumber(response.usage, 'input_tokens');
+          usage = extractUsage({ usage: response.usage });
           emitStart(emitted);
           continue;
         }
@@ -360,8 +357,7 @@ function createResponsesStreamNormalizer(options: StreamTransformInternals): Pro
           const response = objectValue(data.response);
           if (typeof response.id === 'string') responseId = response.id;
           if (typeof response.model === 'string') responseModel = response.model;
-          inputTokens = readUsageNumber(response.usage, 'input_tokens', inputTokens);
-          outputTokens = readUsageNumber(response.usage, 'output_tokens', outputTokens);
+          usage = mergeUsage(usage, extractUsage({ usage: response.usage }));
           emitCompletedResponseOutput(response.output, toolCalls, toolOutputIndexes);
           emitStart(emitted);
           emitted.push({
@@ -369,8 +365,7 @@ function createResponsesStreamNormalizer(options: StreamTransformInternals): Pro
             id: responseId,
             model: responseModel,
             finishReason: openAIResponsesStreamFinishReason(response, toolCalls),
-            inputTokens,
-            outputTokens,
+            usage,
             toolCalls: sortedToolCalls(toolCalls),
           });
         }
@@ -441,11 +436,7 @@ function createChatStreamRenderer(options: StreamTransformInternals): ProtocolSt
         }
 
         if (event.type === 'response_done') {
-          chunks.push(renderChunk({}, event.finishReason ?? 'stop', {
-            prompt_tokens: event.inputTokens,
-            completion_tokens: event.outputTokens,
-            total_tokens: event.inputTokens + event.outputTokens,
-          }));
+          chunks.push(renderChunk({}, event.finishReason ?? 'stop', openAIChatUsage(event.usage)));
           chunks.push('data: [DONE]\n\n');
         }
       }
@@ -493,7 +484,7 @@ function createAnthropicStreamRenderer(options: StreamTransformInternals): Proto
           content: [],
           stop_reason: null,
           stop_sequence: null,
-          usage: { input_tokens: event?.inputTokens ?? 0, output_tokens: 0 },
+          usage: anthropicUsage(event?.usage ?? ZERO_USAGE),
         },
       },
     });
@@ -584,7 +575,7 @@ function createAnthropicStreamRenderer(options: StreamTransformInternals): Proto
             data: {
               type: 'message_delta',
               delta: { stop_reason: mapFinishReasonToAnthropicStopReason(event.finishReason), stop_sequence: null },
-              usage: { output_tokens: event.outputTokens },
+              usage: { output_tokens: event.usage.outputTokens },
             },
           });
           emitted.push({ event: 'message_stop', data: { type: 'message_stop' } });
@@ -643,7 +634,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
         created_at: createdAt,
         output: [],
         output_text: '',
-        usage: { input_tokens: event?.inputTokens ?? 0, output_tokens: 0, total_tokens: event?.inputTokens ?? 0 },
+        usage: openAIResponsesUsage(event?.usage ?? ZERO_USAGE),
       },
     });
   };
@@ -814,11 +805,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                 })),
               ],
               output_text: textBuffer,
-              usage: {
-                input_tokens: event.inputTokens,
-                output_tokens: event.outputTokens,
-                total_tokens: event.inputTokens + event.outputTokens,
-              },
+              usage: openAIResponsesUsage(event.usage),
             },
           });
           emitted.push({ data: '[DONE]' });
@@ -889,10 +876,47 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function readUsageNumber(value: unknown, field: string, fallback = 0): number {
-  const usage = objectValue(value);
-  if (!(field in usage)) return fallback;
-  return toNonNegativeInt(usage[field]);
+function mergeUsage(previous: TokenUsage, next: TokenUsage): TokenUsage {
+  return {
+    inputTokens: next.inputTokens > 0 ? next.inputTokens : previous.inputTokens,
+    outputTokens: next.outputTokens > 0 ? next.outputTokens : previous.outputTokens,
+    freshInputTokens: next.freshInputTokens > 0 ? next.freshInputTokens : previous.freshInputTokens,
+    cachedInputTokens: next.cachedInputTokens > 0 ? next.cachedInputTokens : previous.cachedInputTokens,
+  };
+}
+
+function mergeOutputUsage(previous: TokenUsage, next: TokenUsage): TokenUsage {
+  return { ...previous, outputTokens: next.outputTokens > 0 ? next.outputTokens : previous.outputTokens };
+}
+
+function openAIChatUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.inputTokens + usage.outputTokens,
+    ...(usage.cachedInputTokens > 0
+      ? { prompt_tokens_details: { cached_tokens: usage.cachedInputTokens } }
+      : {}),
+  };
+}
+
+function openAIResponsesUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    total_tokens: usage.inputTokens + usage.outputTokens,
+    ...(usage.cachedInputTokens > 0
+      ? { input_tokens_details: { cached_tokens: usage.cachedInputTokens } }
+      : {}),
+  };
+}
+
+function anthropicUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    input_tokens: usage.freshInputTokens,
+    output_tokens: usage.outputTokens,
+    ...(usage.cachedInputTokens > 0 ? { cache_read_input_tokens: usage.cachedInputTokens } : {}),
+  };
 }
 
 function sortedToolCalls(toolCalls: Map<number, CanonicalStreamToolCall>): CanonicalStreamToolCall[] {

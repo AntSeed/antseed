@@ -3,6 +3,7 @@ import {
   mapFinishReasonToAnthropicStopReason,
   parseJsonSafe,
   toStringContent,
+  type TokenUsage,
 } from './utils.js';
 
 export interface CanonicalFunctionTool {
@@ -46,7 +47,7 @@ export interface CanonicalLlmResponse {
   model: string;
   output: CanonicalOutputItem[];
   stopReason: string | null;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: TokenUsage;
 }
 
 function responseFunctionCallId(id: string): string {
@@ -436,9 +437,9 @@ export function normalizeOpenAIChatResponseBody(
     });
   }
 
-  const { inputTokens, outputTokens } = extractUsage(body);
+  const usage = extractUsage(body);
   const stopReason = typeof firstChoice.finish_reason === 'string' ? firstChoice.finish_reason : null;
-  return { id, model, output, stopReason, usage: { inputTokens, outputTokens } };
+  return { id, model, output, stopReason, usage };
 }
 
 export function normalizeOpenAIResponsesResponseBody(
@@ -471,9 +472,9 @@ export function normalizeOpenAIResponsesResponseBody(
     }
   }
 
-  const { inputTokens, outputTokens } = extractUsage(body);
+  const usage = extractUsage(body);
   const stopReason = openAIResponsesStopReason(body, output);
-  return { id, model, output, stopReason, usage: { inputTokens, outputTokens } };
+  return { id, model, output, stopReason, usage };
 }
 
 function openAIResponsesStopReason(
@@ -521,9 +522,9 @@ export function normalizeAnthropicMessagesResponseBody(
     }
   }
 
-  const { inputTokens, outputTokens } = extractUsage(body);
+  const usage = extractUsage(body);
   const stopReason = anthropicStopReasonToOpenAI(body.stop_reason);
-  return { id, model, output, stopReason, usage: { inputTokens, outputTokens } };
+  return { id, model, output, stopReason, usage };
 }
 
 export function renderCanonicalResponseToOpenAIChatBody(response: CanonicalLlmResponse): Record<string, unknown> {
@@ -553,11 +554,7 @@ export function renderCanonicalResponseToOpenAIChatBody(response: CanonicalLlmRe
       },
       finish_reason: response.stopReason ?? (toolCalls.length > 0 ? 'tool_calls' : 'stop'),
     }],
-    usage: {
-      prompt_tokens: response.usage.inputTokens,
-      completion_tokens: response.usage.outputTokens,
-      total_tokens: response.usage.inputTokens + response.usage.outputTokens,
-    },
+    usage: openAIChatUsage(response.usage),
   };
 }
 
@@ -598,11 +595,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     created_at: Math.floor(Date.now() / 1000),
     output,
     output_text: text,
-    usage: {
-      input_tokens: response.usage.inputTokens,
-      output_tokens: response.usage.outputTokens,
-      total_tokens: response.usage.inputTokens + response.usage.outputTokens,
-    },
+    usage: openAIResponsesUsage(response.usage),
   };
 }
 
@@ -625,10 +618,37 @@ export function renderCanonicalResponseToAnthropicMessagesBody(response: Canonic
     content,
     stop_reason: mapFinishReasonToAnthropicStopReason(response.stopReason),
     stop_sequence: null,
-    usage: {
-      input_tokens: response.usage.inputTokens,
-      output_tokens: response.usage.outputTokens,
-    },
+    usage: anthropicUsage(response.usage),
+  };
+}
+
+function openAIChatUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.inputTokens + usage.outputTokens,
+    ...(usage.cachedInputTokens > 0
+      ? { prompt_tokens_details: { cached_tokens: usage.cachedInputTokens } }
+      : {}),
+  };
+}
+
+function openAIResponsesUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    total_tokens: usage.inputTokens + usage.outputTokens,
+    ...(usage.cachedInputTokens > 0
+      ? { input_tokens_details: { cached_tokens: usage.cachedInputTokens } }
+      : {}),
+  };
+}
+
+function anthropicUsage(usage: TokenUsage): Record<string, unknown> {
+  return {
+    input_tokens: usage.freshInputTokens,
+    output_tokens: usage.outputTokens,
+    ...(usage.cachedInputTokens > 0 ? { cache_read_input_tokens: usage.cachedInputTokens } : {}),
   };
 }
 
