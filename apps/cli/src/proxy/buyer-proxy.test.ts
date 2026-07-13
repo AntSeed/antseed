@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import type { PeerInfo } from '@antseed/node'
+import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
@@ -251,6 +251,18 @@ test('peer refresh control endpoint triggers immediate refresh', async () => {
   assert.equal(refreshCalled, true)
   assert.equal(res.statusCode, 200)
   assert.deepEqual(body, { ok: true, total: 1 })
+})
+
+test('peers control endpoint exposes relay capability metadata', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.capabilities = [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1]
+  const proxy = makeBuyerProxyWithPeers([peer])
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/peers' }))
+  const body = JSON.parse(res.body) as { peers: Array<{ capabilities: string[] }> }
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(body.peers[0]?.capabilities, [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1])
 })
 
 test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {

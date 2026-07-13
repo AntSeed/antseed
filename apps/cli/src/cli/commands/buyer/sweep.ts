@@ -11,7 +11,7 @@ import {
   formatUsdc,
   parseUsdcToBaseUnits,
 } from '../../payment-utils.js'
-import { AntseedNode, buildReceiveAuthorization, makeUsdcDomain } from '@antseed/node'
+import { AntseedNode, buildReceiveAuthorization, makeUsdcDomain, peerRelaysSweeps } from '@antseed/node'
 import type { DepositRelayClient, DepositsClient, SweepRequestPayload, SweepReceiptPayload } from '@antseed/node'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { buildBuyerBootstrapEntries } from './start.js'
@@ -76,8 +76,10 @@ async function daemonBroadcast(port: number, payload: SweepRequestPayload): Prom
 async function daemonRefreshAndConnect(port: number): Promise<void> {
   await daemonFetch(port, '/_antseed/peers/refresh', { method: 'POST' }, 30_000)
   const res = await daemonFetch(port, '/_antseed/peers')
-  const body = await res?.json().catch(() => null) as { peers?: Array<{ peerId: string }> } | null
-  const peers = body?.peers ?? []
+  const body = await res?.json().catch(() => null) as {
+    peers?: Array<{ peerId: string; capabilities?: string[]; metadata?: { capabilities?: string[] } }>
+  } | null
+  const peers = (body?.peers ?? []).filter(peerRelaysSweeps)
   await Promise.allSettled(
     peers.slice(0, MAX_PEERS_TO_CONNECT).map((p) =>
       daemonFetch(port, '/_antseed/connect', {
@@ -311,12 +313,12 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
 
         if (sent !== null) {
           if (sent === 0) {
-            netSpinner.text = 'Daemon has no connected peers — refreshing discovery...'
+            netSpinner.text = 'Daemon has no connected sweep relayers — refreshing discovery...'
             await daemonRefreshAndConnect(proxyPort)
             sent = await daemonBroadcast(proxyPort, payload) ?? 0
           }
           if (sent === 0) {
-            netSpinner.fail(chalk.red('Buyer daemon is running but could not reach any peers.'))
+            netSpinner.fail(chalk.red('Buyer daemon is running but could not reach any sweep relayers.'))
             console.log(chalk.dim('Your funds have not moved — check the daemon\'s network connectivity and retry.'))
             process.exit(1)
           }
@@ -336,9 +338,9 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
           })
           await node.start()
 
-          const peers = await node.discoverPeers()
+          const peers = (await node.discoverPeers()).filter(peerRelaysSweeps)
           if (peers.length === 0) {
-            netSpinner.fail(chalk.red('No peers found on the network. Your funds have not moved — try again later.'))
+            netSpinner.fail(chalk.red('No sweep relayers found on the network. Your funds have not moved — try again later.'))
             process.exit(1)
           }
           await Promise.allSettled(peers.slice(0, MAX_PEERS_TO_CONNECT).map((peer) => node!.connectToPeer(peer)))

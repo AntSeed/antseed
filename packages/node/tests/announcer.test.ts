@@ -4,7 +4,10 @@ import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { bytesToHex } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
-import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '../src/types/protocol.js';
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+} from '../src/types/protocol.js';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -60,5 +63,18 @@ describe('PeerAnnouncer capabilities', () => {
     await announcer.announce();
     const meta = announcer.getLatestMetadata();
     expect(meta?.capabilities).toEqual([CONNECTION_CAPABILITY_RESPONSE_AUTH_V1]);
+  });
+
+  it('publishes sweep relay support only when configured', async () => {
+    const announcer = new PeerAnnouncer({
+      ...makeBaseConfig(),
+      relaysSweeps: true,
+    });
+    await announcer.announce();
+    const meta = announcer.getLatestMetadata();
+    expect(meta?.capabilities).toEqual([
+      CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+      CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+    ]);
   });
 });

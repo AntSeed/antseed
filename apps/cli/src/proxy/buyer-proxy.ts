@@ -852,6 +852,7 @@ export class BuyerProxy {
         displayName: p.displayName,
         publicAddress: p.publicAddress,
         providers: p.providers,
+        capabilities: p.capabilities ?? p.metadata?.capabilities ?? [],
         providerPricing: p.providerPricing,
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,

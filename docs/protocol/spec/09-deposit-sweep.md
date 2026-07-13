@@ -49,7 +49,7 @@ unchanged.
 
 | Hex  | Name         | Direction        | Purpose |
 |------|--------------|------------------|---------|
-| 0xA0 | SweepRequest | Buyer -> Peers   | Broadcast a signed sweep for relayers to submit |
+| 0xA0 | SweepRequest | Buyer -> Relay-capable peers | Broadcast a signed sweep for relayers to submit |
 | 0xA1 | SweepReceipt | Relayer -> Buyer | Optional progress report, correlated by the 3009 nonce |
 
 Payloads are UTF-8 JSON (like the payment protocol), capped at **8 KiB**.
@@ -101,6 +101,11 @@ from/to/amount/validity/nonce and the relay's terms (FEE) are immutable,
 addressing it to the relay is complete consent — no second signature exists.
 
 ## Relayer behavior (sellers, opt-out)
+
+Sellers that support deposit sweeps MUST announce the peer metadata capability
+`payments.relays-sweeps.v1`. Sellers set this capability only when the relayer
+is enabled and the configured chain has a deposit relay address. Buyers MUST
+target sweep broadcasts only to peers that announce this capability.
 
 On `SweepRequest`, in order:
 

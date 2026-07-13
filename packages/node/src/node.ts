@@ -50,7 +50,11 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { SweepMux } from "./p2p/sweep-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { DepositRelayer } from "./payments/deposit-relayer.js";
-import type { SweepRequestPayload, SweepReceiptPayload } from "./types/protocol.js";
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  type SweepRequestPayload,
+  type SweepReceiptPayload,
+} from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
@@ -286,6 +290,7 @@ export class AntseedNode extends EventEmitter {
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
   private _sweepMuxes = new Map<PeerId, SweepMux>();
+  private _peerCapabilities = new Map<PeerId, Set<string>>();
   /** Seller-side deposit-sweep relayer (initialized when configured + enabled). */
   private _depositRelayer: DepositRelayer | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
@@ -488,6 +493,7 @@ export class AntseedNode extends EventEmitter {
     // Close all proxy muxes
     this._muxes.clear();
     this._paymentMuxes.clear();
+    this._peerCapabilities.clear();
     for (const verificationMux of this._verificationMuxes.values()) {
       verificationMux.close();
     }
@@ -1256,6 +1262,7 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._peerCapabilities.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
         this._sweepMuxes.delete(peerId);
@@ -1424,6 +1431,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
+        ...(this._depositRelayer ? { relaysSweeps: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1848,6 +1856,8 @@ export class AntseedNode extends EventEmitter {
     }
 
     const existing = this._connectionManager.getConnection(peer.peerId);
+    const peerCapabilities = new Set(peer.capabilities ?? peer.metadata?.capabilities ?? []);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     let endpointChanged = false;
 
     // Check if the peer's endpoint has changed (e.g. IP rotation).
@@ -1860,6 +1870,7 @@ export class AntseedNode extends EventEmitter {
       if (currentEndpoint && (currentEndpoint.host !== newHost || currentEndpoint.port !== newPort)) {
         debugLog(`[Node] Peer ${peer.peerId.slice(0, 12)}... endpoint changed from ${currentEndpoint.host}:${currentEndpoint.port} to ${newHost}:${newPort}, reconnecting`);
         existing.close();
+        this._peerCapabilities.set(peer.peerId, peerCapabilities);
         endpointChanged = true;
       }
     }
@@ -1921,6 +1932,7 @@ export class AntseedNode extends EventEmitter {
     });
 
     debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     this._wireConnection(conn, peer.peerId);
     return conn;
   }
@@ -1975,6 +1987,8 @@ export class AntseedNode extends EventEmitter {
     }
     let sent = 0;
     for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
       const conn = this._connectionManager.getConnection(peerId);
       if (!conn) continue;
       if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;

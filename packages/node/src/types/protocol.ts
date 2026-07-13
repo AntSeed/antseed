@@ -45,6 +45,12 @@ export enum MessageType {
 }
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
+export const CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1 = 'payments.relays-sweeps.v1' as const;
+
+export function peerRelaysSweeps(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
+  return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true
+    || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true;
+}
 
 export interface FramedMessage {
   type: MessageType;
