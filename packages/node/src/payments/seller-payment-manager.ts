@@ -1,4 +1,4 @@
-import { type AbstractSigner, verifyTypedData } from 'ethers';
+import { type AbstractSigner, keccak256, verifyTypedData } from 'ethers';
 import type { Identity } from '../p2p/identity.js';
 import type { PaymentMux } from '../p2p/payment-mux.js';
 import type {
@@ -412,6 +412,14 @@ export class SellerPaymentManager {
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
       const existingCumulative = this._acceptedCumulative.get(channelId);
 
+      if (!this._metadataMatchesHash(payload)) {
+        debugWarn(
+          `[SellerPayment] Rejecting SpendingAuth: metadataHash mismatch ` +
+          `channel=${channelId.slice(0, 18)}...`,
+        );
+        return 'rejected';
+      }
+
       const { channels: channelsAddr } = await this._resolvedAddresses!;
       const channelsDomain = makeChannelsDomain(this._config.chainId, channelsAddr);
 
@@ -678,6 +686,16 @@ export class SellerPaymentManager {
     } catch (err) {
       debugWarn(`[SellerPayment] Failed to process SpendingAuth: ${err instanceof Error ? err.message : err}`);
       return 'rejected';
+    }
+  }
+
+  private _metadataMatchesHash(payload: SpendingAuthPayload): boolean {
+    try {
+      const metadata = payload.metadata || encodeMetadata(ZERO_METADATA);
+      return keccak256(metadata).toLowerCase() === payload.metadataHash.toLowerCase();
+    } catch (err) {
+      debugWarn(`[SellerPayment] Invalid metadata payload: ${err instanceof Error ? err.message : err}`);
+      return false;
     }
   }
 

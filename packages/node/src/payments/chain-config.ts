@@ -29,6 +29,8 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
+  depositRelayAddress?: string;
 }
 
 /**
@@ -59,6 +61,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',
+    // depositRelayAddress: TODO — set after AntseedDepositRelay mainnet deployment
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
@@ -70,18 +73,20 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     stakingContractAddress: '0x1CB76B197a20E41f9AA01806B41C59e16Cad46a7',
     emissionsContractAddress: '0x9B30DAcfC20F0927fFD49fB0B84cf3EB83976a33',
     identityRegistryAddress: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+    // depositRelayAddress: TODO — set after AntseedDepositRelay sepolia deployment
   },
   'base-local': {
     chainId: 'base-local',
     evmChainId: 31337,
     rpcUrl: 'http://127.0.0.1:8545',
-    // Nonce sequence: 0=USDC, 1=Registry, 2=ANTSToken, 3=AntseedRegistry, 4=Staking, 5=Deposits, 6=Channels, 7=Stats, 8=Emissions
+    // Nonce sequence: 0=USDC, 1=Registry, 2=ANTSToken, 3=AntseedRegistry, 4=Staking, 5=Deposits, 6=Channels, 7=Stats, 8=Emissions, 9=DepositRelay
     usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     identityRegistryAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
     stakingContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
     depositsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
     channelsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
     emissionsContractAddress: '0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6',
+    depositRelayAddress: '0x8A791620dd6260079BF849Dc5567aDC3F2FdC318',
   },
 };
 
@@ -114,6 +119,7 @@ export function resolveChainConfig(overrides?: {
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
+  depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
   // If the caller overrode the primary rpcUrl without providing their own
@@ -135,6 +141,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
+    ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }
 

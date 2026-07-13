@@ -29,7 +29,10 @@ import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
-import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "../types/protocol.js";
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+} from "../types/protocol.js";
 
 export interface SellerContractConfig {
   /**
@@ -83,6 +86,8 @@ export interface AnnouncerConfig {
    * `sellerContract.isOperator(peerAddress)`.
    */
   sellerContract?: SellerContractConfig;
+  /** Whether this seller currently supports buyer deposit sweep relaying. */
+  relaysSweeps?: boolean;
 }
 
 /**
@@ -271,13 +276,18 @@ export class PeerAnnouncer {
       return providerAnnouncement;
     });
 
+    const capabilities: string[] = [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1];
+    if (this.config.relaysSweeps) {
+      capabilities.push(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1);
+    }
+
     const metadata: PeerMetadata = {
       peerId: this.config.identity.peerId,
       version: METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
-      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
+      capabilities,
       region: this.config.region,
       timestamp: Date.now(),
       signature: "",
