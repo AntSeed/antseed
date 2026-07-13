@@ -1,3 +1,4 @@
+import { Signature } from 'ethers';
 import type {
   DelegateHelloPayload,
   DelegateVoucherPayload,
@@ -49,6 +50,28 @@ function requireHexBytesField(
   return value;
 }
 
+/**
+ * Require an ECDSA signature field and normalize it to the canonical 65-byte
+ * (r,s,v) serialization. EIP-2098 compact (64-byte) signatures are accepted
+ * on the wire, but the on-chain claim path (OZ `ECDSA.recover(bytes32,bytes)`)
+ * reverts on any length other than 65 — a voucher persisted in compact form
+ * would verify locally (ethers accepts both forms) yet be unclaimable, so
+ * canonicalize before the payload reaches any caller. This also rejects
+ * malleable high-s signatures and normalizes v to 27/28, matching what the
+ * contract accepts.
+ */
+function requireCanonicalSignatureField(obj: Record<string, unknown>, field: string): string {
+  const value = requireHexBytesField(obj, field, [64, 65]);
+  try {
+    return Signature.from(value).serialized;
+  } catch (err) {
+    throw new Error(
+      `Delegation payload field "${field}" is not a valid ECDSA signature: `
+      + (err instanceof Error ? err.message : String(err)),
+    );
+  }
+}
+
 function requireVersion1(obj: Record<string, unknown>): 1 {
   if (obj.version !== 1) {
     throw new Error(`Unsupported delegation payload version: ${String(obj.version)}`);
@@ -96,14 +119,15 @@ export function decodeDelegateVoucher(data: Uint8Array): DelegateVoucherPayload 
     version: requireVersion1(obj),
     chainId: requireFiniteNumberField(obj, 'chainId'),
     // Addresses are 20 bytes; the probe-set commitment is a bytes32 hash; the
-    // EIP-712 signature is 65 bytes (or 64 for EIP-2098 compact form).
+    // signature is canonicalized to the 65-byte (r,s,v) form the on-chain
+    // claim accepts (see requireCanonicalSignatureField).
     registry: requireHexBytesField(obj, 'registry', [20]),
     buyer: requireHexBytesField(obj, 'buyer', [20]),
     probeCommitment: requireHexBytesField(obj, 'probeCommitment', [32]),
     credits: requireFiniteNumberField(obj, 'credits'),
     nonce: requireStringField(obj, 'nonce'),
     deadline: requireFiniteNumberField(obj, 'deadline'),
-    signature: requireHexBytesField(obj, 'signature', [64, 65]),
+    signature: requireCanonicalSignatureField(obj, 'signature'),
   };
 }
 

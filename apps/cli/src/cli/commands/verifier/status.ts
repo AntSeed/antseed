@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
+import { firstScanEpoch } from '../../../verifier/epoch-rewards.js'
 import {
   createVerifierRegistryClient,
   createVerifierRewardsClient,
@@ -42,18 +43,26 @@ export function registerVerifierStatusCommand(verifierCmd: Command): void {
       console.log(`  min probes: ${policy.minProbeCount}`)
 
       try {
-        const { currentEpoch, effectiveEpoch } = await rewardsClient.getEpochWindow()
-        const firstEpoch = Math.max(effectiveEpoch, currentEpoch - 8)
+        // Same scan window as `verifier claim` (the full claimable window),
+        // so status never reports "no unclaimed" for an epoch claim would
+        // still pay out. One failing epoch is reported, the rest still list.
+        const window = await rewardsClient.getEpochWindow()
+        const firstEpoch = firstScanEpoch(window)
         let anyPending = false
-        for (let e = firstEpoch; e < currentEpoch; e += 1) {
-          const [epochCredits, claimed] = await Promise.all([
-            registryClient.epochCredits(e, address),
-            rewardsClient.epochRewardClaimed(e, address),
-          ])
-          if (epochCredits === 0) continue
-          const pending = claimed ? 0n : await rewardsClient.pendingVerifierReward(e, address)
-          anyPending = anyPending || pending > 0n
-          console.log(`  epoch ${e}: ${epochCredits} credits — ${claimed ? chalk.dim('claimed') : `${formatAnts(pending)} ANTS claimable`}`)
+        for (let e = firstEpoch; e < window.currentEpoch; e += 1) {
+          try {
+            const [epochCredits, claimed] = await Promise.all([
+              registryClient.epochCredits(e, address),
+              rewardsClient.epochRewardClaimed(e, address),
+            ])
+            if (epochCredits === 0) continue
+            const pending = claimed ? 0n : await rewardsClient.pendingVerifierReward(e, address)
+            anyPending = anyPending || pending > 0n
+            console.log(`  epoch ${e}: ${epochCredits} credits — ${claimed ? chalk.dim('claimed') : `${formatAnts(pending)} ANTS claimable`}`)
+          } catch (err) {
+            anyPending = true // unknown — do not report "no unclaimed"
+            console.log(chalk.yellow(`  epoch ${e}: unavailable (${(err as Error).message})`))
+          }
         }
         if (!anyPending) console.log(chalk.dim('  no unclaimed finalized rewards'))
       } catch (err) {

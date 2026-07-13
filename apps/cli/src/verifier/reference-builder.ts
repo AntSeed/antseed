@@ -51,6 +51,32 @@ export function resolveUpstream(
   return { baseUrl: upstream.baseUrl, ...(apiKey ? { apiKey } : {}) }
 }
 
+/**
+ * Resolve the upstream model id to enroll for a discovered service.
+ *
+ * Upstreams (Together, OpenRouter, …) match model ids CASE-SENSITIVELY, so
+ * the fallback is the ADVERTISED spelling — never the normalized (lowercased)
+ * grouping key, which would 404 for services like `Qwen/Qwen3-32B`.
+ *
+ * `modelMap` keys are matched case-insensitively: users naturally copy either
+ * the normalized service id or the advertised spelling as the key, and both
+ * must work.
+ */
+export function resolveUpstreamModel(
+  modelMap: Record<string, string> | undefined,
+  service: string,
+  advertised: string,
+): string {
+  if (modelMap) {
+    const direct = modelMap[service] ?? modelMap[advertised]
+    if (direct !== undefined) return direct
+    for (const [key, value] of Object.entries(modelMap)) {
+      if (key.trim().toLowerCase() === service) return value
+    }
+  }
+  return advertised
+}
+
 export interface BuildReferenceOptions {
   /** Upstream model id to enroll (what the trusted API calls it). */
   model: string

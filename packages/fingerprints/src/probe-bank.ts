@@ -186,15 +186,33 @@ export function generateProbeSet(params: GenerateProbeSetParams): ProbeSet {
 
   // Commitment blinding nonce, HKDF-derived (RFC 5869) from the seed under its
   // own domain tag so it can never collide with the RNG streams drawn from the
-  // same seed. The (canonically hashed, sorted) exclude set is folded into
-  // the domain: rotation changes the selected probes, so it must also change
-  // the nonce — otherwise the same seed with a grown exclude set would blind a
-  // NEW probe set with an ALREADY-REVEALED nonce. The set is hashed rather
-  // than inlined because hkdfSync caps `info` at 1024 bytes, which a deep
-  // rotation log would exceed. Hiding rests on the seed being high-entropy
-  // and secret.
+  // same seed. EVERYTHING that varies the generated probe set — the sorted
+  // exclude set, the service, the count, the source id, and the bank-path
+  // domains filter — is folded (canonically hashed) into the domain: any of
+  // them changing changes the selection, so it must also change the nonce.
+  // Otherwise the same seed with a grown exclude set (rotation) or a sibling
+  // (service, count, source, domains) tuple would blind a DIFFERENT probe set
+  // with the SAME nonce, and opening one audit's commitment would void the
+  // sibling's blinding. The parameters are hashed rather than inlined because
+  // hkdfSync caps `info` at 1024 bytes, which a deep rotation log would
+  // exceed. Hiding rests on the seed being high-entropy and secret.
+  //
+  // The SAMPLING seed is deliberately left as the raw caller seed (not
+  // per-service): two sets drawn from one seed for different (service, count)
+  // still share a selection prefix, but with distinct nonces each commitment
+  // stays independently blinded. Callers wanting disjoint selections must use
+  // fresh per-audit seeds — which they should anyway for hiding.
   const excludeIds = exclude ? [...exclude].sort() : [];
-  const nonce = deriveHex(seed, `probe-set-nonce/${canonicalHash(excludeIds)}`);
+  const nonceDomain = canonicalHash({
+    service,
+    count,
+    source: source ? source.id : PROBE_BANK_SOURCE_ID,
+    // Only the default bank path selects by domains; a source owns its pool
+    // (sorted: order does not change the filtered selection).
+    domains: !source && domains ? [...domains].sort() : null,
+    exclude: excludeIds,
+  });
+  const nonce = deriveHex(seed, `probe-set-nonce/${nonceDomain}`);
   return {
     probeSetId: computeProbeSetId(service, probes),
     service,

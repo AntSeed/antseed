@@ -31,10 +31,18 @@ import { IAntseedVerifierRewards } from "../interfaces/IAntseedVerifierRewards.s
  *         denominators) are frozen at first touch of an epoch (claim or
  *         remainder settlement): a later gate or share config change cannot
  *         resize a finalized epoch's pots under remaining claimants, and
- *         credits landing late in an already-touched epoch (possible only if
- *         the registry's swappable emissions clock lags the gate's) cannot
- *         shift earlier claimants' shares or overdraw the pools — late
- *         credits are simply outside the frozen claim set. Epochs with no
+ *         every share already PAID is final. Credits landing late in an
+ *         already-touched epoch are possible only under misconfigured
+ *         epoch-clock wiring — the registry's swappable emissions clock
+ *         lagging the gate's; production wiring runs both on one clock. The
+ *         guarantees for that case are deliberately narrow: the gate's
+ *         bucket budget can never be overdrawn, and late credits are
+ *         rejected outright (`NothingToClaim`) only when the epoch froze
+ *         with a ZERO total. Against a nonzero frozen total a late claimant
+ *         claims first-come-first-served like everyone else and can exhaust
+ *         the pool, so a pre-freeze claimant who has not yet claimed may
+ *         later revert `BucketBudgetExceeded` — freezing pins denominators,
+ *         it does not reserve per-claimant shares. Epochs with no
  *         verifier credits route the verifier pool through the gate's
  *         burn/reserve remainder path; pro-rata rounding dust of credited
  *         pools stays unminted by design.
@@ -105,8 +113,10 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         if (credits == 0) revert NothingToClaim();
 
         (uint256 verifierPool,, uint256 totalCredits,) = _freezeEpochPools(epoch);
-        // Caller's credits landed after the epoch's totals froze (a lagging
-        // registry epoch clock): outside the frozen claim set.
+        // The epoch froze with a ZERO total, so the caller's credits landed
+        // after the freeze (a lagging registry epoch clock): unclaimable.
+        // A NONZERO frozen total does not filter late credits — they claim
+        // against it first-come-first-served (see the contract natspec).
         if (totalCredits == 0) revert NothingToClaim();
         uint256 amount = Math.mulDiv(verifierPool, credits, totalCredits);
 
@@ -128,8 +138,10 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         if (credits == 0) revert NothingToClaim();
 
         (, uint256 delegatePool,, uint256 totalCredits) = _freezeEpochPools(epoch);
-        // Caller's delegate credits landed after the epoch's totals froze (a
-        // lagging registry epoch clock): outside the frozen claim set.
+        // The epoch froze with a ZERO delegate total, so the caller's credits
+        // landed after the freeze (a lagging registry epoch clock):
+        // unclaimable. A NONZERO frozen total does not filter late credits —
+        // they claim against it first-come-first-served (contract natspec).
         if (totalCredits == 0) revert NothingToClaim();
         uint256 amount = Math.mulDiv(delegatePool, credits, totalCredits);
 
@@ -173,7 +185,7 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         uint256 credits = verifierRegistry.epochCredits(epoch, verifier);
         if (credits == 0) return 0;
 
-        // Credits that landed after the totals froze are unclaimable.
+        // Credits that landed after a ZERO-total freeze are unclaimable.
         uint256 totalCredits = verifierEpochTotalCredits(epoch);
         if (totalCredits == 0) return 0;
 
@@ -188,7 +200,7 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         uint256 credits = verifierRegistry.epochDelegateCredits(epoch, delegate);
         if (credits == 0) return 0;
 
-        // Credits that landed after the totals froze are unclaimable.
+        // Credits that landed after a ZERO-total freeze are unclaimable.
         uint256 totalCredits = delegateEpochTotalCredits(epoch);
         if (totalCredits == 0) return 0;
 
@@ -238,9 +250,11 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     ///      (`registry.emissions()`): were it ever to lag the gate's clock,
     ///      credits could land in an already-claimable epoch. Snapshotting
     ///      the totals — the pro-rata denominators — alongside the pools
-    ///      keeps every earlier claim's share final, so late credits can
-    ///      never overdraw the pools under remaining claimants; they are
-    ///      simply outside the frozen claim set.
+    ///      keeps every already-paid share final and caps total minting at
+    ///      the gate budget. It does NOT reserve shares for claimants who
+    ///      have not claimed yet: a late credit against a nonzero frozen
+    ///      total competes first-come-first-served for what remains (see the
+    ///      contract natspec).
     function _freezeEpochPools(uint256 epoch)
         internal
         returns (uint256 verifierPool, uint256 delegatePool, uint256 totalCredits, uint256 totalDelegateCredits)

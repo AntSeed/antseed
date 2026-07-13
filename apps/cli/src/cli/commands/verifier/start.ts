@@ -27,7 +27,8 @@ import { selectCohort, runCohortAudit } from '../../../verifier/audit-runner.js'
 import type { ProbeExecutor, ProbeSourceKind } from '../../../verifier/audit-runner.js'
 import { probeSellerViaDelegates } from '../../../verifier/delegated-probing.js'
 import { discoverServices } from '../../../verifier/service-discovery.js'
-import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
+import { buildKbfReference, resolveUpstream, resolveUpstreamModel } from '../../../verifier/reference-builder.js'
+import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
 import { SellerBackoff, EpochAttemptBudget } from '../../../verifier/backoff.js'
 import { safeServiceSlug } from '../../../verifier/slug.js'
 import { parsePositiveIntFlag } from './flags.js'
@@ -386,21 +387,31 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         }
       }
 
+      // Claims scan the full on-chain claimable window (effectiveEpoch..)
+      // like `verifier claim`/`verifier status`; the settled floor from each
+      // pass avoids re-reading finished epochs every round. One failing epoch
+      // is skipped (and retried next round) instead of blocking later epochs.
+      let rewardScanFloor: number | undefined
       const claimFinalizedRewards = async (): Promise<void> => {
         try {
-          const { currentEpoch, effectiveEpoch } = await rewardsClient.getEpochWindow()
-          const firstEpoch = Math.max(effectiveEpoch, currentEpoch - 8)
-          for (let epoch = firstEpoch; epoch < currentEpoch; epoch += 1) {
-            const [credits, claimed] = await Promise.all([
-              registryClient.epochCredits(epoch, address),
-              rewardsClient.epochRewardClaimed(epoch, address),
-            ])
-            if (credits === 0 || claimed) continue
-            const pending = await rewardsClient.pendingVerifierReward(epoch, address)
-            if (pending === 0n) continue
-            const tx = await rewardsClient.claimVerifierReward(identity.wallet, epoch)
-            console.log(chalk.green(`Claimed ${formatAnts(pending)} ANTS for epoch ${epoch} (tx ${tx.slice(0, 10)}…)`))
-          }
+          const window = await rewardsClient.getEpochWindow()
+          const result = await claimRewardEpochs(
+            window,
+            {
+              credits: (epoch) => registryClient.epochCredits(epoch, address),
+              claimed: (epoch) => rewardsClient.epochRewardClaimed(epoch, address),
+              pending: (epoch) => rewardsClient.pendingVerifierReward(epoch, address),
+              claim: (epoch) => rewardsClient.claimVerifierReward(identity.wallet, epoch),
+            },
+            {
+              ...(rewardScanFloor !== undefined ? { fromEpoch: rewardScanFloor } : {}),
+              onClaim: (epoch, pending, tx) =>
+                console.log(chalk.green(`Claimed ${formatAnts(pending)} ANTS for epoch ${epoch} (tx ${tx.slice(0, 10)}…)`)),
+              onEpochError: (epoch, err) =>
+                warn(`reward claim for epoch ${epoch} failed (continuing): ${err.message}`),
+            },
+          )
+          rewardScanFloor = result.settledThrough
         } catch (err) {
           warn(`reward claim pass failed: ${(err as Error).message}`)
         }
@@ -510,7 +521,9 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           // anchors cohort consensus and unlocks auditing lone sellers.
           if (!reference?.selfTest && upstream && !enrollAttempted.has(service)) {
             enrollAttempted.add(service)
-            const upstreamModel = config.verifier?.upstream?.modelMap?.[service] ?? service
+            // Upstreams match model ids case-sensitively: enroll with the
+            // advertised spelling, never the lowercased grouping key.
+            const upstreamModel = resolveUpstreamModel(config.verifier?.upstream?.modelMap, service, advertised)
             log(`${service}: no reference — enrolling via ${upstream.baseUrl} as "${upstreamModel}"`)
             try {
               const built = await buildKbfReference(upstream, { model: upstreamModel, service, log })

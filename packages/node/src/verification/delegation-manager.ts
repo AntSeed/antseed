@@ -195,7 +195,15 @@ export class DelegationManager {
     const jobMux = new DelegationMux(conn);
     this._muxes.set(verifierPeer.peerId, jobMux);
 
+    // Accept-state flips synchronously from the welcome frame's dispatch path
+    // (DelegationMux.onWelcome), NOT after `await welcomePromise` below: a job
+    // or voucher frame coalesced with the welcome in the same batch is
+    // dispatched before that microtask resumes, and a flag set after the
+    // await would spuriously reject it.
     let acceptedWelcome = false;
+    jobMux.onWelcome((welcome) => {
+      acceptedWelcome = welcome.accepted;
+    });
     const maxConcurrentJobs = Math.max(1, Math.floor(hello.maxConcurrentJobs ?? 1));
     let activeJobs = 0;
 
@@ -210,7 +218,7 @@ export class DelegationManager {
     }
     // The job handler is registered before the hello so there is no window
     // where a job frame bypasses the gate below; execution is guarded by the
-    // welcome flag, not by handler registration order.
+    // welcome state, not by handler registration order.
     jobMux.onJob(async (job) => {
       const rejectJob = (error: string): void => {
         try {
@@ -252,9 +260,15 @@ export class DelegationManager {
       jobMux.close();
     };
 
+    const welcomePromise = jobMux.waitForWelcome(opts?.welcomeTimeoutMs);
+    // If sendHello throws synchronously, teardown() rejects this promise
+    // before it is ever awaited; the no-op handler keeps that secondary
+    // rejection from surfacing as an unhandled rejection (the sendHello
+    // error itself is what propagates to the caller).
+    welcomePromise.catch(() => {});
+
     let welcome: { accepted: boolean; reason?: string };
     try {
-      const welcomePromise = jobMux.waitForWelcome(opts?.welcomeTimeoutMs);
       jobMux.sendHello({ version: 1, ...hello });
       welcome = await welcomePromise;
     } catch (err) {
@@ -268,7 +282,6 @@ export class DelegationManager {
       teardown();
       return { accepted: false, ...(welcome.reason ? { reason: welcome.reason } : {}) };
     }
-    acceptedWelcome = true;
     return { accepted: true };
   }
 

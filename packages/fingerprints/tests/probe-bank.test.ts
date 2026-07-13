@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateProbeSet, PROBE_BANK, PROBE_BANK_DOMAINS } from '../src/probe-bank.js';
+import { compositionalProbeSource } from '../src/compositional/source.js';
 import { computeProbeCommitment, computeProbeSetId } from '../src/types.js';
 
 const CREATED_AT = '2026-07-03T00:00:00.000Z';
@@ -118,6 +119,65 @@ describe('generateProbeSet', () => {
         createdAt: CREATED_AT,
       }).nonce,
     ).toBe(rotated.nonce);
+  });
+
+  it('same (seed, exclude) with a different service derives a different nonce', () => {
+    // Two audits sharing a seed but probing different services are DIFFERENT
+    // probe sets; if they shared a nonce, opening one commitment would void
+    // the sibling's blinding.
+    const a = generateProbeSet({ service: 'svc-a', count: 10, seed: 'shared', createdAt: CREATED_AT });
+    const b = generateProbeSet({ service: 'svc-b', count: 10, seed: 'shared', createdAt: CREATED_AT });
+    expect(a.nonce).not.toBe(b.nonce);
+    expect(computeProbeCommitment(a)).not.toBe(computeProbeCommitment(b));
+  });
+
+  it('same (seed, exclude, service) with a different count derives a different nonce', () => {
+    // deterministicSample gives count=10 a strict prefix of count=20 for the
+    // same seed, so the two sets overlap; distinct nonces keep the sibling
+    // commitment blinded after one audit opens.
+    const small = generateProbeSet({ service: 's', count: 10, seed: 'shared', createdAt: CREATED_AT });
+    const large = generateProbeSet({ service: 's', count: 20, seed: 'shared', createdAt: CREATED_AT });
+    expect(small.nonce).not.toBe(large.nonce);
+    expect(computeProbeCommitment(small)).not.toBe(computeProbeCommitment(large));
+  });
+
+  it('same (seed, service, count) with a different source derives a different nonce', () => {
+    // The bank and the compositional source select DIFFERENT probe sets from
+    // the same seed; sharing a nonce across them would let one opened
+    // commitment void the sibling's blinding.
+    const bank = generateProbeSet({ service: 's', count: 10, seed: 'shared', createdAt: CREATED_AT });
+    const comp = generateProbeSet({
+      service: 's',
+      count: 10,
+      seed: 'shared',
+      source: compositionalProbeSource(),
+      createdAt: CREATED_AT,
+    });
+    expect(bank.nonce).not.toBe(comp.nonce);
+    expect(computeProbeCommitment(bank)).not.toBe(computeProbeCommitment(comp));
+  });
+
+  it('same seed with a different bank domains filter derives a different nonce', () => {
+    // The domains filter changes the bank selection, so it is part of the
+    // nonce derivation context too; filter order is canonicalized away.
+    const all = generateProbeSet({ service: 's', count: 10, seed: 'shared', createdAt: CREATED_AT });
+    const filtered = generateProbeSet({
+      service: 's',
+      count: 10,
+      seed: 'shared',
+      domains: ['chemistry_mp', 'biology_2n'],
+      createdAt: CREATED_AT,
+    });
+    expect(all.nonce).not.toBe(filtered.nonce);
+    expect(
+      generateProbeSet({
+        service: 's',
+        count: 10,
+        seed: 'shared',
+        domains: ['biology_2n', 'chemistry_mp'],
+        createdAt: CREATED_AT,
+      }).nonce,
+    ).toBe(filtered.nonce);
   });
 
   it('supports arbitrarily deep exclude sets (hkdf info is a fixed-size hash)', () => {

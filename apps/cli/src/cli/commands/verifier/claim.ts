@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
+import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
 import {
   createVerifierRegistryClient,
   createVerifierRewardsClient,
@@ -23,27 +24,33 @@ export function registerVerifierClaimCommand(verifierCmd: Command): void {
       const registryClient = createVerifierRegistryClient(config, rpcOverrides)
       const rewardsClient = createVerifierRewardsClient(config, rpcOverrides)
 
-      const { currentEpoch, effectiveEpoch } = await rewardsClient.getEpochWindow()
-      let claimedTotal = 0n
-      let claimedEpochs = 0
-      for (let epoch = effectiveEpoch; epoch < currentEpoch; epoch += 1) {
-        const [credits, claimed] = await Promise.all([
-          registryClient.epochCredits(epoch, address),
-          rewardsClient.epochRewardClaimed(epoch, address),
-        ])
-        if (credits === 0 || claimed) continue
-        const pending = await rewardsClient.pendingVerifierReward(epoch, address)
-        if (pending === 0n) continue
-        const tx = await rewardsClient.claimVerifierReward(identity.wallet, epoch)
-        console.log(chalk.green(`Epoch ${epoch}: claimed ${formatAnts(pending)} ANTS (tx ${tx.slice(0, 10)}…)`))
-        claimedTotal += pending
-        claimedEpochs += 1
-      }
+      // Same scan window as `verifier status` and the daemon's claim pass;
+      // one failing epoch is reported and skipped, later epochs still claim.
+      const window = await rewardsClient.getEpochWindow()
+      const result = await claimRewardEpochs(
+        window,
+        {
+          credits: (epoch) => registryClient.epochCredits(epoch, address),
+          claimed: (epoch) => rewardsClient.epochRewardClaimed(epoch, address),
+          pending: (epoch) => rewardsClient.pendingVerifierReward(epoch, address),
+          claim: (epoch) => rewardsClient.claimVerifierReward(identity.wallet, epoch),
+        },
+        {
+          onClaim: (epoch, pending, tx) =>
+            console.log(chalk.green(`Epoch ${epoch}: claimed ${formatAnts(pending)} ANTS (tx ${tx.slice(0, 10)}…)`)),
+          onEpochError: (epoch, err) =>
+            console.warn(chalk.yellow(`Epoch ${epoch}: claim failed (continuing): ${err.message}`)),
+        },
+      )
 
-      if (claimedEpochs === 0) {
+      if (result.claimedEpochs === 0) {
         console.log(chalk.dim('Nothing to claim.'))
       } else {
-        console.log(chalk.bold(`Claimed ${formatAnts(claimedTotal)} ANTS across ${claimedEpochs} epoch(s).`))
+        console.log(chalk.bold(`Claimed ${formatAnts(result.claimedTotal)} ANTS across ${result.claimedEpochs} epoch(s).`))
+      }
+      if (result.failedEpochs.length > 0) {
+        console.warn(chalk.yellow(`Failed epoch(s): ${result.failedEpochs.join(', ')} — re-run to retry.`))
+        process.exitCode = 1
       }
     })
 }

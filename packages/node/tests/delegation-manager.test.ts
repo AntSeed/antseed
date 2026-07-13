@@ -4,7 +4,7 @@ import { DelegationMux } from '../src/verification/delegation-mux.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import type { PeerId, PeerInfo } from '../src/types/peer.js';
-import type { ProbeJobRequestPayload } from '../src/types/protocol.js';
+import type { DelegateVoucherPayload, ProbeJobRequestPayload, ProbeJobResultPayload } from '../src/types/protocol.js';
 
 const VERIFIER_ID = 'f'.repeat(40) as PeerId;
 const DELEGATE_ID = 'd'.repeat(40) as PeerId;
@@ -113,6 +113,33 @@ describe('DelegationManager delegate side (serveProbeJobs)', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('serves a job dispatched in the same synchronous batch as the welcome', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    const { verifierMux, conn } = delegateHarness(manager);
+    const handled: string[] = [];
+    const handler = vi.fn(async (job: ProbeJobRequestPayload) => {
+      handled.push(job.jobId);
+      return { status: 'ok' as const };
+    });
+
+    // The verifier pushes the job right behind the welcome, with no I/O
+    // boundary between the two frames — the delegate must not reject it as
+    // not_registered just because its own `await welcome` microtask has not
+    // resumed yet.
+    let resultPromise!: Promise<ProbeJobResultPayload>;
+    verifierMux.onHello(() => {
+      verifierMux.sendWelcome({ version: 1, accepted: true });
+      resultPromise = verifierMux.runJob({ version: 1, ...jobPayload('coalesced') }, 1_000);
+    });
+
+    const welcome = await manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler);
+    expect(welcome).toEqual({ accepted: true });
+    const result = await resultPromise;
+    expect(result.status).toBe('ok');
+    expect(result.error).toBeUndefined();
+    expect(handled).toEqual(['coalesced']);
+  });
+
   it('tears the channel down on a rejected welcome so later jobs cannot reach the handler', async () => {
     const manager = new DelegationManager({ emit: vi.fn() });
     const { verifierMux, conn } = delegateHarness(manager);
@@ -179,6 +206,72 @@ describe('DelegationManager delegate side (serveProbeJobs)', () => {
     // Slot freed — the next job runs.
     const third = await verifierMux.runJob({ version: 1, ...jobPayload('after-free') }, 1_000);
     expect(third.status).toBe('ok');
+  });
+
+  it('fails cleanly when sending the hello throws synchronously (no unhandled rejection)', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    // PeerConnection.send throws synchronously when the connection is not
+    // open — the failure must reject the caller, not escape as an unhandled
+    // rejection of the never-awaited welcome promise (which would kill the
+    // process).
+    const conn = {
+      remotePeerId: VERIFIER_ID,
+      send: (): void => {
+        throw new Error('connection is not open');
+      },
+    } as unknown as PeerConnection;
+    const handler = vi.fn();
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(
+        manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler),
+      ).rejects.toThrow(/connection is not open/);
+      // Unhandled rejections surface on later ticks — give them time.
+      await flush();
+      await flush();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('accepts a voucher coalesced into the same synchronous batch as the welcome', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    const { verifierMux, conn } = delegateHarness(manager);
+    const voucher: DelegateVoucherPayload = {
+      version: 1,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 3,
+      nonce: '1',
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(128) + '1b',
+    };
+    verifierMux.onHello(() => {
+      // Welcome and voucher dispatched back-to-back in one synchronous
+      // batch, as when both frames arrive in a single network read. The
+      // voucher is the delegate's only claim proof — it must not be dropped
+      // because the accept-state flag flips a microtask after the welcome.
+      verifierMux.sendWelcome({ version: 1, accepted: true });
+      verifierMux.sendVoucher(voucher);
+    });
+
+    const vouchers: DelegateVoucherPayload[] = [];
+    await expect(
+      manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, vi.fn(), (v) => {
+        vouchers.push(v);
+      }),
+    ).resolves.toEqual({ accepted: true });
+    await flush();
+    expect(vouchers).toEqual([voucher]);
   });
 });
 

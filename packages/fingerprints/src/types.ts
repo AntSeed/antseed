@@ -363,9 +363,63 @@ export interface CohortConsensus {
 // Evidence bundle (committed on-chain via evidenceHash)
 // ---------------------------------------------------------------------------
 
+/**
+ * Seller-signed commitment for one completed inference response, as persisted
+ * inside evidence bundles. Structurally identical to `ResponseAuthPayload`
+ * in `@antseed/node` (packages/node/src/types/protocol.ts) — re-declared here
+ * so an evidence bundle is fully typed by this package alone and anyone
+ * reconstructing a bundle from the published schema computes the same
+ * evidenceHash. Follow-up: converge apps/cli and @antseed/node onto this
+ * declaration so the shape cannot drift.
+ */
+export interface EvidenceResponseAuth {
+  version: 1;
+  requestId: string;
+  channelId?: string;
+  buyerPeerId: string;
+  sellerPeerId: string;
+  advertisedService: string;
+  provider: string;
+  statusCode: number;
+  requestHash: string;
+  responseHash: string;
+  responseStartedAt: number;
+  responseCompletedAt: number;
+  signature: string;
+}
+
+/**
+ * One complete probe exchange as persisted in evidence bundles: the exact
+ * request/response material needed to recompute the ResponseAuth hashes plus
+ * the full signed payload, so any third party can re-verify the seller
+ * signature from the bundle alone. Mirrors `ProbeExchangeEvidence` in
+ * apps/cli/src/verifier/probing.ts (see EvidenceResponseAuth for the
+ * convergence follow-up).
+ */
+export interface EvidenceProbeExchange {
+  requestId: string;
+  request: {
+    method: string;
+    path: string;
+    headers: Record<string, string>;
+    bodyBase64: string;
+  };
+  response: {
+    statusCode: number;
+    headers: Record<string, string>;
+    bodyBase64: string;
+  } | null;
+  /** Complete signed ResponseAuth payload (null = seller never produced one). */
+  responseAuth: EvidenceResponseAuth | null;
+}
+
 export interface EvidenceSeller extends SellerObservation {
   verdict: FingerprintVerdict;
   stats: CohortSellerStats;
+  /** Full re-verifiable exchange evidence, aligned with requestIds. */
+  exchanges?: EvidenceProbeExchange[];
+  /** True when every probe request produced a verified ResponseAuth. */
+  fullyAuthenticated?: boolean;
 }
 
 export interface EvidenceBundle {

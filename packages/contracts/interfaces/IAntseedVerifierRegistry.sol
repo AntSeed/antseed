@@ -86,7 +86,7 @@ interface IAntseedVerifierRegistry {
     function delegateShareBps() external view returns (uint16);
     function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32);
     function claimDelegateCredits(DelegateVoucher calldata voucher, bytes calldata signature) external;
-    function voucherClaimed(bytes32 digest) external view returns (bool);
+    function voucherClaimed(address verifier, bytes32 digest) external view returns (bool);
     function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256);
     function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256);
     function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256);

@@ -880,3 +880,170 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
   assert.equal(result.body, body)
   assert.equal(result.pinnedPeerId, null)
 })
+
+// Substitution-flag routing gate — the CLI buyer path is pinned-peer-only, so
+// the exclusion DefaultRouter applies during selection is enforced here on the
+// pinned peer itself (pins are deliberately gated: an explicit pin means
+// "I want this peer", not "I accept a substituted model").
+
+const FLAGGED_STATS = {
+  sameCount: 1,
+  diffCount: 3,
+  undeterminedCount: 0,
+  distinctVerifierCount: 2,
+  activeDiffVerifierCount: 1,
+  lastVerdict: 2,
+  score: 10,
+}
+
+const CLEAN_STATS = {
+  sameCount: 5,
+  diffCount: 0,
+  undeterminedCount: 0,
+  distinctVerifierCount: 3,
+  activeDiffVerifierCount: 0,
+  lastVerdict: 1,
+  score: 88,
+}
+
+// Historical DIFFs with no standing accuser (every accusing verifier
+// re-attested SAME) must not block routing — only lower the score ceiling.
+const RETRACTED_STATS = {
+  sameCount: 4,
+  diffCount: 2,
+  undeterminedCount: 0,
+  distinctVerifierCount: 3,
+  activeDiffVerifierCount: 0,
+  lastVerdict: 1,
+  score: 60,
+}
+
+function makeDispatchCountingProxy(peer: PeerInfo): { proxy: BuyerProxy; dispatched: () => number } {
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], { allowsPeerForPolicy: () => true, onResult: () => undefined })
+  let dispatchCount = 0
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => {
+    dispatchCount += 1
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"ok":true}'),
+    }
+  }
+  return { proxy, dispatched: () => dispatchCount }
+}
+
+test('pinned peer with an active substitution flag for the requested service is blocked', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { 'gpt-4o': FLAGGED_STATS }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /model-substitution flag/)
+  assert.match(res.body, /gpt-4o/)
+  assert.equal(dispatched(), 0, 'no request may be dispatched to a flagged peer')
+})
+
+test('clean pinned peer is dispatched; a flag on a different service does not block', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = {
+    'other-model': FLAGGED_STATS,
+    'gpt-4o': CLEAN_STATS,
+  }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1, 'clean peer must be dispatched')
+})
+
+test('substitution gate falls back to the agent-wide aggregate when per-service stats are missing', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { '*': FLAGGED_STATS }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /model-substitution flag/)
+  assert.equal(dispatched(), 0)
+})
+
+test('retracted substitution flag (no standing accuser) does not block routing', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { 'gpt-4o': RETRACTED_STATS, '*': RETRACTED_STATS }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1)
+})
+
+test('peers with no verification data are unaffected by the substitution gate', async () => {
+  const peer = makePeer('a', ['openai'])
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1)
+})
+
+test('/v1/models service listing is exempt from the substitution gate', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { '*': FLAGGED_STATS }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    method: 'GET',
+    path: '/v1/models',
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1, 'flagged peers must remain inspectable via /v1/models')
+})
+
+test('parsePersistedPeers round-trips modelVerification so the gate works from the warm cache', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - 5_000,
+          modelVerification: { 'gpt-4o': FLAGGED_STATS, '*': CLEAN_STATS },
+        },
+        {
+          peerId: 'b'.repeat(40),
+          providers: ['openai'],
+          lastSeen: NOW - 5_000,
+          modelVerification: 'junk',
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 2)
+  assert.deepEqual(result[0]?.modelVerification, { 'gpt-4o': FLAGGED_STATS, '*': CLEAN_STATS })
+  assert.equal(result[1]?.modelVerification, undefined)
+})

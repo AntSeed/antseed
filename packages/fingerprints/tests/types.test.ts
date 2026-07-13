@@ -9,6 +9,7 @@ import {
   verdictFromCode,
   verdictToCode,
   type EvidenceBundle,
+  type EvidenceProbeExchange,
   type FingerprintReference,
   type FingerprintVerdict,
   type KbfProbe,
@@ -117,9 +118,12 @@ describe('evidence bundle hashing', () => {
     const hash = computeEvidenceHash(makeBundle());
     // Pinned over the HKDF/HMAC_DRBG derivation (prng.ts). If this breaks, the
     // wire format changed — bump the HKDF salt version, don't silently re-pin.
-    // (Last re-pinned deliberately: content-binding probeSetId/commitment and
-    // hashed exclude-aware nonce derivation, PR #720 review.)
-    expect(hash).toBe('0x50257c5d246cd5325c84b42f53579d993b38ccae3eb41cda56c35981d29417bf');
+    // (Last re-pinned deliberately: nonce derivation now binds (service,
+    // count, source id, domains filter) alongside the exclude set so sibling
+    // probe sets sharing a seed never share a blinding nonce, round-2 review.
+    // Previously: content-binding probeSetId/commitment and hashed
+    // exclude-aware nonce, PR #720.)
+    expect(hash).toBe('0x670a7f3395ab739ecf9125a8ae083684b8140d5b866ba8f233d876188e5b7d78');
     expect(computeEvidenceHash(makeBundle())).toBe(hash);
   });
 
@@ -141,6 +145,55 @@ describe('evidence bundle hashing', () => {
     expect(
       computeEvidenceHash({ ...bundle, verifierAddress: '0x2222222222222222222222222222222222222222' }),
     ).not.toBe(base);
+  });
+
+  // The CLI audit runner persists per-seller `exchanges` (full request/response
+  // bytes + the signed ResponseAuth payload) and `fullyAuthenticated` inside
+  // the hashed bundle. Both must be part of the exported schema, or anyone
+  // reconstructing a bundle from the published types computes a different
+  // evidenceHash than the one attested on-chain.
+  it('declares per-seller exchanges and fullyAuthenticated as schema fields', () => {
+    const bundle = makeBundle();
+    const base = computeEvidenceHash(bundle);
+    const exchange: EvidenceProbeExchange = {
+      requestId: 'req-0',
+      request: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json' },
+        bodyBase64: 'e30=',
+      },
+      response: { statusCode: 200, headers: {}, bodyBase64: 'e30=' },
+      responseAuth: {
+        version: 1,
+        requestId: 'req-0',
+        buyerPeerId: '0xbuyer',
+        sellerPeerId: '0xaaa',
+        advertisedService: 'kimi-k2',
+        provider: 'openai',
+        statusCode: 200,
+        requestHash: '0x00',
+        responseHash: '0x10',
+        responseStartedAt: 1,
+        responseCompletedAt: 2,
+        signature: '0xsig',
+      },
+    };
+    const withEvidence: EvidenceBundle = {
+      ...bundle,
+      sellers: bundle.sellers.map((seller) => ({
+        ...seller,
+        exchanges: [exchange],
+        fullyAuthenticated: true,
+      })),
+    };
+    // The new fields are hash-bearing…
+    expect(computeEvidenceHash(withEvidence)).not.toBe(base);
+    // …and a JSON round-trip (a third party re-reading the published bundle)
+    // reproduces the identical hash.
+    expect(
+      computeEvidenceHash(JSON.parse(JSON.stringify(withEvidence)) as EvidenceBundle),
+    ).toBe(computeEvidenceHash(withEvidence));
   });
 });
 

@@ -23,6 +23,13 @@ import { binomialOneSidedPValue } from './verifiers/kbf/stats.js';
 export interface CohortConsensusOptions {
   /** Minimum sellers in the winning cluster for a valid consensus. Default 3. */
   minConsensusSellers?: number;
+  /**
+   * Sink for non-fatal diagnostics — currently, observations dropped by the
+   * one-vote-per-seller rule (see dedupeObservations). This library is pure
+   * and never logs on its own; callers that want visibility into silently
+   * discarded input (a CLI, a daemon logger) inject a logger here.
+   */
+  onWarning?: (message: string) => void;
 }
 
 export interface CohortVerdictOptions extends CohortConsensusOptions {
@@ -47,16 +54,39 @@ const DEFAULT_EPSILON = 0.02;
  * — peer ids are EVM addresses) or `agentId` entries are dropped, first
  * occurrence wins. Without this a single seller could submit its observation
  * N times to fabricate consensus support and the minimum cohort size.
+ *
+ * NOTE the agentId rule also collapses DISTINCT peer ids that share an
+ * agentId: the second peer's observation is silently discarded and it receives
+ * no verdict entry. That is intentional — on-chain identity is the agentId, so
+ * two peers claiming one agent are one voter at best and a vote-splitting
+ * attempt at worst — but callers passing observations whose agentId was not
+ * resolved from the chain (unlike the CLI, which resolves and filters) should
+ * supply `onWarning` to surface the drop instead of losing it silently.
  */
 function dedupeObservations(
   observations: readonly SellerObservation[],
+  onWarning?: (message: string) => void,
 ): readonly SellerObservation[] {
   const seenPeers = new Set<string>();
   const seenAgents = new Set<number>();
   const unique: SellerObservation[] = [];
   for (const observation of observations) {
     const peerKey = observation.sellerPeerId.toLowerCase();
-    if (seenPeers.has(peerKey) || seenAgents.has(observation.agentId)) continue;
+    if (seenPeers.has(peerKey)) {
+      onWarning?.(
+        `cohort: dropped duplicate observation for seller ${observation.sellerPeerId} ` +
+          '(repeated sellerPeerId; one vote per seller, first occurrence wins)',
+      );
+      continue;
+    }
+    if (seenAgents.has(observation.agentId)) {
+      onWarning?.(
+        `cohort: dropped observation for seller ${observation.sellerPeerId} — ` +
+          `agentId ${observation.agentId} was already used by an earlier observation ` +
+          '(distinct sellers sharing an agentId collapse to one vote; first occurrence wins)',
+      );
+      continue;
+    }
     seenPeers.add(peerKey);
     seenAgents.add(observation.agentId);
     unique.push(observation);
@@ -110,7 +140,7 @@ export function computeCohortConsensus(
   options: CohortConsensusOptions = {},
 ): CohortConsensus {
   const minConsensusSellers = options.minConsensusSellers ?? DEFAULT_MIN_CONSENSUS_SELLERS;
-  const voters = dedupeObservations(observations);
+  const voters = dedupeObservations(observations, options.onWarning);
 
   const values: Array<number | null> = [];
   const supportCounts: number[] = [];
@@ -222,7 +252,9 @@ function undeterminedSeller(
  *
  * Duplicate observations (repeated sellerPeerId or agentId) are dropped before
  * any gate — first occurrence wins, and only unique sellers receive a verdict
- * entry — so one seller can neither vote twice nor pad the cohort size.
+ * entry — so one seller can neither vote twice nor pad the cohort size. Each
+ * drop is reported through `options.onWarning` when supplied (see
+ * dedupeObservations for the distinct-sellers-sharing-an-agentId caveat).
  *
  * Gates:
  * - fewer than 3 unique sellers → every seller is UNDETERMINED (no consensus
@@ -245,7 +277,10 @@ export function computeCohortVerdicts(
   const epsilon = options.epsilon ?? DEFAULT_EPSILON;
   const minConsensusSellers = options.minConsensusSellers ?? DEFAULT_MIN_CONSENSUS_SELLERS;
 
-  const observations = dedupeObservations(allObservations);
+  // Warnings surface here only: the inner computeCohortConsensus call receives
+  // the already-unique list, so its own dedupe pass can never drop (or warn)
+  // again.
+  const observations = dedupeObservations(allObservations, options.onWarning);
 
   const emptyResult = (reason: string, consensusProbeCount: number): CohortResult => {
     const verdicts = observations.map((observation) =>

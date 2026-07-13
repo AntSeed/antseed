@@ -81,7 +81,7 @@ const VERIFIER_REGISTRY_ABI = [
   'function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256)',
   'function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256)',
   'function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256)',
-  'function voucherClaimed(bytes32 digest) external view returns (bool)',
+  'function voucherClaimed(address verifier, bytes32 digest) external view returns (bool)',
   'function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256)',
   'function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256)',
 ] as const;
@@ -166,12 +166,24 @@ export async function signDelegateVoucher(
  * Recover the signer of a DelegateVoucher. Delegates run this on every
  * voucher they receive and check the result against the verifier peer they
  * are serving — a voucher signed by anyone else is worthless on-chain.
+ *
+ * Only the canonical 65-byte (r,s,v) encoding is accepted. ethers'
+ * `verifyTypedData` would also recover from an EIP-2098 compact (64-byte)
+ * signature, but AntseedVerifierRegistry.claimDelegateCredits recovers with
+ * OpenZeppelin's ECDSA.recover, which rejects the compact form — a
+ * compact-signed voucher would verify here yet revert on-chain, so the
+ * delegate must treat it as invalid before carrying any probe for it.
  */
 export function recoverDelegateVoucherSigner(
   domain: TypedDataDomain,
   msg: DelegateVoucherMessage,
   signature: string,
 ): string {
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+    throw new Error(
+      'DelegateVoucher signature must be a 65-byte (r,s,v) hex string; EIP-2098 compact signatures are not claimable on-chain',
+    );
+  }
   return verifyTypedData(domain, DELEGATE_VOUCHER_TYPES, msg, signature);
 }
 
@@ -183,6 +195,11 @@ function decodeStats(raw: Record<string | number, unknown> & unknown[]): Service
     distinctVerifierCount: Number(raw.distinctVerifierCount ?? raw[3]),
     lastVerdict: Number(raw.lastVerdict ?? raw[4]),
     lastVerifier: String(raw.lastVerifier ?? raw[5]),
+    // The trailing `?? 0` is defensive only, not a compatibility path: a
+    // registry deployment without `activeDiffVerifierCount` returns a
+    // 6-field tuple that fails ABI decode before reaching this function
+    // (the caller sees a throw, not degraded stats), so the fallback can
+    // only fire if a decoded result somehow omits the field.
     activeDiffVerifierCount: Number(raw.activeDiffVerifierCount ?? raw[6] ?? 0),
   };
 }
@@ -246,9 +263,14 @@ export class VerifierRegistryClient extends BaseEvmClient {
     );
   }
 
-  /** True when the voucher with this EIP-712 digest was already claimed. */
-  async voucherClaimed(digest: string): Promise<boolean> {
-    return this._contract().getFunction('voucherClaimed')(digest);
+  /**
+   * True when the voucher with this EIP-712 digest, signed by `verifier`,
+   * was already claimed. The replay guard is keyed by the recovered signer:
+   * two verifiers signing identical voucher fields share one digest, so the
+   * digest alone does not identify a claim.
+   */
+  async voucherClaimed(verifier: string, digest: string): Promise<boolean> {
+    return this._contract().getFunction('voucherClaimed')(verifier, digest);
   }
 
   /**

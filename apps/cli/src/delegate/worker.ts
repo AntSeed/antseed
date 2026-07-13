@@ -46,6 +46,25 @@ const DEFAULT_REJECTED_TTL_MS = 15 * 60 * 1000
  * payment-control headers) is refused.
  */
 const ALLOWED_JOB_HEADERS = new Set(['content-type', 'accept', 'user-agent'])
+/**
+ * Body fields a probe request may carry — the body-side mirror of the header
+ * allowlist. Anything else is refused, because clamping is not an option:
+ * the request must be relayed byte-for-byte (the seller signs its hash), so
+ * an unknown output-multiplying field (`best_of`, `logprobs`, future knobs)
+ * would ride along verbatim on this buyer's deposit.
+ */
+const ALLOWED_JOB_BODY_FIELDS = new Set([
+  'model',
+  'messages',
+  'temperature',
+  'top_p',
+  'seed',
+  'stop',
+  'stream',
+  'max_tokens',
+  'max_completion_tokens',
+  'n',
+])
 
 export interface DelegateWorkerOptions {
   node: AntseedNode
@@ -325,6 +344,13 @@ export class DelegateWorker {
       if (approved === false) this._dropRevokedVerifier(verifier.peerId)
       return { status: 'error', error: 'verifier_not_approved' }
     }
+    // stop() or deregistration may have landed during the approval await —
+    // re-check before spending, or a job admitted mid-await runs its paid
+    // request to completion on a stopped worker (TOCTOU).
+    if (this._stopped) return { status: 'error', error: 'stopped' }
+    if (!this._serving.has(verifier.peerId)) {
+      return { status: 'error', error: 'not_serving' }
+    }
 
     const validationError = validateProbeJob(job, this._options.node.peerId ?? '')
     if (validationError) return { status: 'error', error: validationError }
@@ -479,20 +505,40 @@ export function validateProbeJob(job: ProbeJobRequestPayload, selfPeerId: string
     return 'body_not_json_object'
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'body_not_json_object'
-  const chat = parsed as { model?: unknown; stream?: unknown; max_tokens?: unknown }
+  for (const field of Object.keys(parsed)) {
+    if (!ALLOWED_JOB_BODY_FIELDS.has(field)) {
+      return `disallowed_body_field:${field}`
+    }
+  }
+  const chat = parsed as {
+    model?: unknown
+    stream?: unknown
+    max_tokens?: unknown
+    max_completion_tokens?: unknown
+    n?: unknown
+  }
   if (typeof chat.model !== 'string' || chat.model.trim() !== job.service.trim()) {
     return 'model_service_mismatch'
   }
   if (chat.stream === true) {
     return 'streaming_not_allowed'
   }
-  if (chat.max_tokens !== undefined) {
-    if (typeof chat.max_tokens !== 'number' || !Number.isInteger(chat.max_tokens)
-      || chat.max_tokens < 1 || chat.max_tokens > MAX_JOB_MAX_TOKENS) {
-      return 'max_tokens_out_of_bounds'
-    }
+  // Both completion-budget spellings bound the paid output identically.
+  if (chat.max_tokens !== undefined && !isBoundedCompletionBudget(chat.max_tokens)) {
+    return 'max_tokens_out_of_bounds'
+  }
+  if (chat.max_completion_tokens !== undefined && !isBoundedCompletionBudget(chat.max_completion_tokens)) {
+    return 'max_completion_tokens_out_of_bounds'
+  }
+  // `n` multiplies paid completions; only the no-op value is relayable.
+  if (chat.n !== undefined && chat.n !== 1) {
+    return 'n_out_of_bounds'
   }
   return null
+}
+
+function isBoundedCompletionBudget(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_JOB_MAX_TOKENS
 }
 
 function toResponseAuthPayload(stored: StoredResponseAuth): ProbeJobResultPayload['responseAuth'] {

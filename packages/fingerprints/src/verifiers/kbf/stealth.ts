@@ -82,11 +82,22 @@ export function buildStealthChatRequests(
     const size = 1 + rng.nextInt(cap);
     const probeIndices: number[] = [];
     const chunk: KbfProbe[] = [];
+    // Never bundle two probes about the SAME entity (e.g. tungsten melting
+    // point + tungsten boiling point) into one message: the response answers
+    // both in one breath ("The melting point of tungsten is 3422°C, and its
+    // boiling point is 5555°C.") and the shared entity anchor makes the
+    // extractor grab the same number for both probes. A duplicate name ends
+    // the chunk early and starts the next request instead.
+    const namesInChunk = new Set<string>();
     for (let k = 0; k < size; k++) {
+      const probe = probes[cursor + k]!;
+      const nameKey = probe.name.toLowerCase();
+      if (namesInChunk.has(nameKey)) break;
+      namesInChunk.add(nameKey);
       probeIndices.push(cursor + k);
-      chunk.push(probes[cursor + k]!);
+      chunk.push(probe);
     }
-    cursor += size;
+    cursor += chunk.length;
 
     const body = buildRequestBody(model, chunk, rng);
     plans.push({ probeIndices, probes: chunk, body });
@@ -363,6 +374,15 @@ function keywordsFor(probe: KbfProbe): string[] {
       for (const tok of tokenize(fallback[1]!)) tokens.add(tok);
     }
   }
+  // Verb stems for gerund property words: "melting point" answers often read
+  // "tungsten MELTS at 3422°C" and "boiling point" as "it BOILS at 5555°C".
+  // The base form (tokenOffsets already fuzzes a trailing 's') lets the anchor
+  // land in the verb's sentence instead of only on the entity name.
+  for (const tok of [...tokens]) {
+    if (tok.endsWith('ing') && tok.length >= 6) {
+      tokens.add(tok.slice(0, -3));
+    }
+  }
   return [...tokens];
 }
 
@@ -455,28 +475,48 @@ function terminatorBetween(text: string, a: number, b: number): boolean {
 }
 
 /**
+ * Numeric values that literally appear in the probe's rendered question text
+ * (e.g. the 3 in "square root of 3"). A model restating the question makes
+ * these look like cued answers ("For the square root OF 3 you get …"), so
+ * they are strongly DEPRIORITIZED as candidates — used only when no other
+ * in-range candidate qualifies, because a legitimate answer may coincide with
+ * a number in the question (deprioritize, never exclude).
+ */
+function questionEchoValues(probe: KbfProbe): ReadonlySet<number> {
+  return new Set(scanNumbers(renderTemplate(probe)).map((c) => c.value));
+}
+
+/**
  * Pick the answer from candidates that sit in the SAME sentence as an anchor.
- * Sorts by cue strength first (strong predicate cue, then weak, then none —
- * see cueRank), nearest to the anchor within a tier. So the predicate-attached
- * "…melting point of 3880" beats the incidental "in 2020" even when 2020 sits
- * closer to the anchor. Returns null if no in-range candidate shares a
- * sentence with any anchor.
+ * Sorts by question-echo status first (a number copied from the question text
+ * loses to any non-echo candidate — see questionEchoValues), then cue strength
+ * (strong predicate cue, then weak, then none — see cueRank), nearest to the
+ * anchor within a tier. So the predicate-attached "…melting point of 3880"
+ * beats the incidental "in 2020" even when 2020 sits closer to the anchor,
+ * and the true answer in "For the square root of 3 you get 1.732051" beats
+ * the question-echoed 3 despite the 3's stronger cue. Returns null if no
+ * in-range candidate shares a sentence with any anchor.
  */
 function pickInSentence(
   text: string,
   candidates: readonly NumberCandidate[],
   anchors: readonly number[],
   probe: KbfProbe,
+  echoValues: ReadonlySet<number>,
 ): number | null {
   let best: NumberCandidate | null = null;
   let bestKey = Infinity;
+  // cueRank ∈ {0,1,2} and dist < text.length, so any non-echo candidate's key
+  // (< 3·len) always beats any echo candidate's key (≥ 3·len).
+  const echoTier = 3 * text.length;
   for (const cand of candidates) {
     if (!inRange(cand.value, probe)) continue;
     const rank = cueRank(text, cand.index);
+    const echoPenalty = echoValues.has(cand.value) ? echoTier : 0;
     for (const anchor of anchors) {
       if (terminatorBetween(text, anchor, cand.index)) continue; // different sentence
       const dist = Math.abs(cand.index - anchor);
-      const key = rank * text.length + dist;
+      const key = echoPenalty + rank * text.length + dist;
       if (key < bestKey) {
         bestKey = key;
         best = cand;
@@ -541,44 +581,59 @@ export function extractAnswersFreeText(
         continue; // unanchored — may be resolved by positional fallback
       }
       anyAnchored = true;
+      const echoValues = questionEchoValues(probe);
 
       // First scope to the SENTENCE holding an anchor: the answer lives in the
       // same clause as its subject, so this walls off numbers bleeding in from
-      // neighbouring sentences. Within the sentence, cue strength decides
-      // (strong "is/:"-cued beats weak "of/at"-cued beats uncued — so the
-      // subject integer in "square root of 3" and the incidental year in "As
-      // measured in 2020" both lose); nearest to the anchor breaks ties.
-      const local = pickInSentence(text, candidates, anchors, probe);
+      // neighbouring sentences. Within the sentence, question-echoed numbers
+      // lose to everything else, then cue strength decides (strong "is/:"-cued
+      // beats weak "of/at"-cued beats uncued — so the subject integer in
+      // "square root of 3" and the incidental year in "As measured in 2020"
+      // both lose); nearest to the anchor breaks ties.
+      const local = pickInSentence(text, candidates, anchors, probe, echoValues);
       if (local !== null) {
         answers[i] = local;
         continue;
       }
 
       // Fallback: the anchor's own sentence had no number (e.g. "…of tungsten?
-      // That's 3422°C."). Take the nearest forward in-range candidate overall.
+      // That's 3422°C."). Take the nearest forward in-range candidate overall,
+      // again deprioritizing question-echoed numbers to non-answer status.
       let best: NumberCandidate | null = null;
       let bestDist = Infinity;
+      let bestEcho: NumberCandidate | null = null;
+      let bestEchoDist = Infinity;
       for (const cand of candidates) {
         if (!inRange(cand.value, probe)) continue;
+        const isEcho = echoValues.has(cand.value);
         for (const anchor of anchors) {
           const delta = cand.index - anchor;
           if (delta < 0 || delta > ASSOCIATION_WINDOW) continue;
-          if (delta < bestDist) {
+          if (isEcho) {
+            if (delta < bestEchoDist) {
+              bestEchoDist = delta;
+              bestEcho = cand;
+            }
+          } else if (delta < bestDist) {
             bestDist = delta;
             best = cand;
           }
         }
       }
-      if (best) {
-        answers[i] = best.value;
+      const chosen = best ?? bestEcho;
+      if (chosen) {
+        answers[i] = chosen.value;
       }
     }
 
     // Positional fallback: response answered in order without naming probes.
     // List ordinals are stripped first ("1. 3880" must yield 3880, not 1), and
     // the answers are taken from the contiguous candidate window with the most
-    // in-range values (ties → earliest), so preamble numerals ("here are 2
-    // quick answers: …") don't shift the alignment.
+    // in-range values, so preamble numerals ("here are 2 quick answers: …")
+    // don't shift the alignment. Score ties break toward the LAST window:
+    // answers follow preambles, so when a preamble numeral happens to be
+    // in-range for a probe ("here are 2 quick answers: 46 and 3880" with a
+    // [2, 500] range), the later window holds the real answer run.
     if (!anyAnchored) {
       const positional = scanNumbers(stripListNumbering(text));
       if (positional.length >= probes.length) {
@@ -589,7 +644,7 @@ export function extractAnswersFreeText(
           for (let i = 0; i < probes.length; i++) {
             if (inRange(positional[start + i]!.value, probes[i]!)) score += 1;
           }
-          if (score > bestScore) {
+          if (score >= bestScore) {
             bestScore = score;
             bestStart = start;
           }

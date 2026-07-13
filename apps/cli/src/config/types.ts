@@ -333,7 +333,12 @@ export interface VerifierUpstreamConfig {
   apiKey?: string;
   /** Environment variable to read the API key from (wins over apiKey). */
   apiKeyEnv?: string;
-  /** Map network service id → upstream model id when the names differ. */
+  /**
+   * Map network service id → upstream model id when the names differ. Keys
+   * are matched case-insensitively, so both the normalized service id
+   * ("qwen/qwen3-32b") and the advertised spelling ("Qwen/Qwen3-32B") work.
+   * Without an entry, the advertised spelling is sent to the upstream as-is.
+   */
   modelMap?: Record<string, string>;
 }
 
