@@ -58,3 +58,12 @@ test('empty id list is a no-op', async () => {
     assert.equal((await loadUsedProbeIds(dir, 's')).size, 0)
   })
 })
+
+test('dot-only service names never touch the filesystem', async () => {
+  await withTempDir(async (dir) => {
+    // ".." would write the log one directory up.
+    await assert.rejects(recordUsedProbeIds(dir, '..', ['a'], 10, NOW), /unsafe service name/)
+    // Reads treat it like any other failure: empty set, no crash.
+    assert.equal((await loadUsedProbeIds(dir, '..')).size, 0)
+  })
+})

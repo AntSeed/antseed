@@ -105,6 +105,18 @@ describe('computeKbfVerdict', () => {
     expect(verdictReason).toMatch(/empty/);
   });
 
+  it('UNKNOWN when the match vector holds entries other than 0/1/null', () => {
+    for (const bad of [2, true, '1', 0.5, -1]) {
+      const { verdict, verdictReason } = computeKbfVerdict({
+        selfHamming: 3,
+        selfTotal: 224,
+        targetMatchVector: [1, bad, 0] as unknown as MatchVector,
+      });
+      expect(verdict, String(bad)).toBe('UNKNOWN');
+      expect(verdictReason).toMatch(/exactly 0, 1, or null/);
+    }
+  });
+
   it('alpha controls the DIFF threshold', () => {
     // Choose a borderline case: p0 ~ 0.0441, 14 mismatches in 220.
     const input = {

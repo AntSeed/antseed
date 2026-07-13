@@ -147,6 +147,25 @@ describe('KbfVerifier', () => {
     expect(fragment.verdict).toBe('SAME');
     expect(fragment.stats.targetHamming).toBe(0);
   });
+
+  it('returns UNKNOWN when a supplied matchVector holds entries other than 0/1/null', () => {
+    const reference = makeReference();
+    const invalidVectors = [
+      PROBES.map((_, i) => (i === 0 ? 2 : 1)), // 2 is not a match
+      PROBES.map((_, i) => (i === 0 ? true : 1)), // truthy boolean
+      PROBES.map((_, i) => (i === 0 ? '1' : 1)), // string digit
+      PROBES.map((_, i) => (i === 0 ? undefined : 1)), // hole
+    ];
+    for (const matchVector of invalidVectors) {
+      const observation = {
+        ...makeObservation([]),
+        matchVector,
+      } as unknown as SellerObservation;
+      const fragment = verifier.verify(reference, observation);
+      expect(fragment.verdict).toBe('UNKNOWN');
+      expect(fragment.verdictReason).toMatch(/exactly 0, 1, or null/);
+    }
+  });
 });
 
 describe('createVerifierRegistry', () => {

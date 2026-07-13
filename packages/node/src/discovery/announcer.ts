@@ -195,6 +195,26 @@ export class PeerAnnouncer {
     return this._latestMetadata;
   }
 
+  /**
+   * Extra capabilities normalized the way the metadata validator normalizes
+   * them (trimmed, lowercased) and deduped against each other and against the
+   * mandatory capabilities. Without this, a duplicated or differently-cased
+   * config entry would produce signed metadata our own validator rejects
+   * ("Capability values must be unique").
+   */
+  private _normalizedExtraCapabilities(): string[] {
+    const mandatory = new Set<string>([CONNECTION_CAPABILITY_RESPONSE_AUTH_V1]);
+    const seen = new Set<string>(mandatory);
+    const extras: string[] = [];
+    for (const capability of this.config.extraCapabilities ?? []) {
+      const normalized = capability.trim().toLowerCase();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      extras.push(normalized);
+    }
+    return extras;
+  }
+
   /** Return the configured seller contract as lowercase 40-hex (no 0x). */
   private _normalizedSellerContract(): string | undefined {
     const cfg = this.config.sellerContract;
@@ -282,7 +302,7 @@ export class PeerAnnouncer {
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
-      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, ...(this.config.extraCapabilities ?? [])],
+      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, ...this._normalizedExtraCapabilities()],
       region: this.config.region,
       timestamp: Date.now(),
       signature: "",
@@ -378,6 +398,13 @@ export class PeerAnnouncer {
           topics.add(capabilityTopic(normalizedCapability));
         }
       }
+    }
+
+    // Extra protocol capabilities (e.g. probe-delegation hosting) get their
+    // own capability topics too — announcing them only inside signed metadata
+    // would leave `findByCapability()` blind to peers that have no offerings.
+    for (const capability of this._normalizedExtraCapabilities()) {
+      topics.add(capabilityTopic(capability));
     }
 
     const results = await Promise.allSettled(

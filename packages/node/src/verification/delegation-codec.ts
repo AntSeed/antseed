@@ -21,6 +21,34 @@ function parseDelegationJson(data: Uint8Array, maxBytes: number): Record<string,
   return parseJsonObject(data, { maxBytes, payloadName: 'Delegation payload' });
 }
 
+/**
+ * Encode-side mirror of the decoders' size limits. Encoders must enforce the
+ * same cap the peer's decoder does — otherwise an oversize payload is sent
+ * successfully and silently dropped on the other end (for a voucher, that
+ * means the delegate loses its only claim proof with no error at the source).
+ */
+function checkEncodedSize(bytes: Uint8Array, maxBytes: number, payloadName: string): Uint8Array {
+  if (bytes.length > maxBytes) {
+    throw new Error(`${payloadName} too large to encode: ${bytes.length} > ${maxBytes}`);
+  }
+  return bytes;
+}
+
+/** Require a 0x-prefixed hex string of one of the given byte lengths. */
+function requireHexBytesField(
+  obj: Record<string, unknown>,
+  field: string,
+  byteLengths: number[],
+): string {
+  const value = requireStringField(obj, field);
+  if (!/^0x[0-9a-fA-F]*$/.test(value) || !byteLengths.includes((value.length - 2) / 2)) {
+    throw new Error(
+      `Delegation payload field "${field}" must be 0x-prefixed hex of ${byteLengths.join(' or ')} byte(s)`,
+    );
+  }
+  return value;
+}
+
 function requireVersion1(obj: Record<string, unknown>): 1 {
   if (obj.version !== 1) {
     throw new Error(`Unsupported delegation payload version: ${String(obj.version)}`);
@@ -44,7 +72,7 @@ function requireStringRecord(obj: Record<string, unknown>, field: string): Recor
 }
 
 export function encodeDelegateHello(payload: DelegateHelloPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
+  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'DelegateHello');
 }
 
 export function decodeDelegateHello(data: Uint8Array): DelegateHelloPayload {
@@ -59,7 +87,7 @@ export function decodeDelegateHello(data: Uint8Array): DelegateHelloPayload {
 }
 
 export function encodeDelegateVoucher(payload: DelegateVoucherPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
+  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'DelegateVoucher');
 }
 
 export function decodeDelegateVoucher(data: Uint8Array): DelegateVoucherPayload {
@@ -67,18 +95,20 @@ export function decodeDelegateVoucher(data: Uint8Array): DelegateVoucherPayload 
   return {
     version: requireVersion1(obj),
     chainId: requireFiniteNumberField(obj, 'chainId'),
-    registry: requireStringField(obj, 'registry'),
-    buyer: requireStringField(obj, 'buyer'),
-    probeCommitment: requireStringField(obj, 'probeCommitment'),
+    // Addresses are 20 bytes; the probe-set commitment is a bytes32 hash; the
+    // EIP-712 signature is 65 bytes (or 64 for EIP-2098 compact form).
+    registry: requireHexBytesField(obj, 'registry', [20]),
+    buyer: requireHexBytesField(obj, 'buyer', [20]),
+    probeCommitment: requireHexBytesField(obj, 'probeCommitment', [32]),
     credits: requireFiniteNumberField(obj, 'credits'),
     nonce: requireStringField(obj, 'nonce'),
     deadline: requireFiniteNumberField(obj, 'deadline'),
-    signature: requireStringField(obj, 'signature'),
+    signature: requireHexBytesField(obj, 'signature', [64, 65]),
   };
 }
 
 export function encodeDelegateWelcome(payload: DelegateWelcomePayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
+  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'DelegateWelcome');
 }
 
 export function decodeDelegateWelcome(data: Uint8Array): DelegateWelcomePayload {

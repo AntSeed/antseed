@@ -8,6 +8,7 @@
 import {
   FINGERPRINTS_PACKAGE_NAME,
   FINGERPRINTS_PACKAGE_VERSION,
+  isMatchVector,
   type AuditResultFragment,
   type AuditStats,
   type FingerprintReference,
@@ -67,6 +68,11 @@ export class KbfVerifier implements FingerprintVerifier {
         return unknown(
           `match vector length ${observation.matchVector.length} !== probe count ${reference.probes.length}`,
         );
+      }
+      // Caller-supplied vector: runtime-validate so arbitrary truthy entries
+      // cannot pass as matches.
+      if (!isMatchVector(observation.matchVector)) {
+        return unknown('match vector entries must be exactly 0, 1, or null');
       }
       matchVector = observation.matchVector;
     } else {

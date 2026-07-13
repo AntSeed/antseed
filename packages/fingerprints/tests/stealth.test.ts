@@ -93,6 +93,30 @@ describe('buildStealthChatRequests — determinism', () => {
   });
 });
 
+describe('buildStealthChatRequests — seed derivation', () => {
+  it('probe-id lists that join to the same string still derive distinct streams', () => {
+    // With a naive `${nonce}|${ids.join(',')}` seed these two sets collide:
+    // ['a,b','c',...] and ['a','b,c',...] both join to "a,b,c,...".
+    const contents = Array.from({ length: 8 }, (_, i) =>
+      P(`placeholder-${i}`, `quantity ${i}`, `The value of quantity ${i} is ___.`, 100 + i, [0, 1000]),
+    );
+    const withIds = (ids: readonly string[]): ProbeSet => ({
+      probeSetId: 'test',
+      service: 'kimi-k2',
+      probes: contents.map((p, i) => ({ ...p, id: ids[i]! })),
+      nonce: 'fixed-nonce',
+      createdAt: AT,
+    });
+    const idsA = ['a,b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+    const idsB = ['a', 'b,c', 'd', 'e', 'f', 'g', 'h', 'i'];
+    expect(idsA.join(',')).toBe(idsB.join(','));
+
+    const bodiesA = buildStealthChatRequests('kimi-k2', withIds(idsA)).map((p) => p.body);
+    const bodiesB = buildStealthChatRequests('kimi-k2', withIds(idsB)).map((p) => p.body);
+    expect(JSON.stringify(bodiesA)).not.toBe(JSON.stringify(bodiesB));
+  });
+});
+
 describe('buildStealthChatRequests — partitioning & coverage', () => {
   it('covers every probe exactly once, in set order', () => {
     const ps = probeSet('coverage', 30);
@@ -222,6 +246,85 @@ describe('extractAnswersFreeText', () => {
     // @ts-expect-error — defensive: must not throw on a non-string input
     expect(extractAnswersFreeText(null, [TANTALUM])).toEqual([null]);
     expect(extractAnswersFreeText('42', [])).toEqual([]);
+  });
+});
+
+describe('extractAnswersFreeText — adversarial phrasings', () => {
+  const JUPITER = P(
+    'astronomy:jupiter-orbital-years',
+    'Jupiter',
+    'The orbital period of Jupiter is ___ Earth years.',
+    11.86,
+    [0, 1000],
+    0.15,
+  );
+
+  it('does not split sentences on decimal points; finds a candidate before its anchor', () => {
+    expect(extractAnswersFreeText("11.86 years is Jupiter's orbital period.", [JUPITER])).toEqual([
+      11.86,
+    ]);
+  });
+
+  it('strips markdown list ordinals from the positional fallback', () => {
+    expect(extractAnswersFreeText('1. 3880\n2. 46', [TANTALUM, HUMAN])).toEqual([3880, 46]);
+  });
+
+  it('ignores preamble count words in the positional fallback', () => {
+    expect(
+      extractAnswersFreeText('Sure, here are 2 quick answers: 3880 and 46.', [TANTALUM, HUMAN]),
+    ).toEqual([3880, 46]);
+  });
+
+  it('a predicate-attached number beats a nearer incidental in-range numeral', () => {
+    expect(
+      extractAnswersFreeText(
+        'As measured in 2020, tantalum carbide has a melting point of 3880°C.',
+        [TANTALUM],
+      ),
+    ).toEqual([3880]);
+  });
+
+  it('normalizes the Unicode minus (U+2212) instead of silently dropping the sign', () => {
+    const DEAD_SEA = P(
+      'geography:dead-sea-m',
+      'Dead Sea',
+      'The surface elevation of the Dead Sea is ___ meters.',
+      -430,
+      [-12000, 10000],
+      15,
+    );
+    expect(
+      extractAnswersFreeText('The surface elevation of the Dead Sea is −430 meters.', [
+        DEAD_SEA,
+      ]),
+    ).toEqual([-430]);
+
+    const ABSOLUTE_ZERO = P(
+      'physics_const:absolute-zero-c',
+      'absolute zero',
+      'Absolute zero is ___°C.',
+      -273.15,
+      [-500, 0],
+      0.01,
+    );
+    expect(extractAnswersFreeText('Absolute zero is −273.15°C.', [ABSOLUTE_ZERO])).toEqual([
+      -273.15,
+    ]);
+  });
+
+  it('reads leading-decimal forms (".5") at full value, never as a bare mantissa', () => {
+    const LN2 = P(
+      'math_const:ln2-6dp',
+      'natural log of 2',
+      'The natural logarithm of 2 rounded to 6 decimal places is ___.',
+      0.693147,
+      [0, 1],
+      0.01,
+    );
+    // Old scanner matched only the "69" of ".69" — a silent 100x magnitude change.
+    expect(extractAnswersFreeText('The natural logarithm of 2 is about .69', [LN2])).toEqual([
+      0.69,
+    ]);
   });
 });
 

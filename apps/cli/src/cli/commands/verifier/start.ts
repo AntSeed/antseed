@@ -14,7 +14,7 @@ import {
   toPeerId,
 } from '@antseed/node'
 import type { DelegateVoucherMessage, NodePaymentsConfig, PeerInfo } from '@antseed/node'
-import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
+import { mergeBootstrapNodes, OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import {
   createVerifierRegistryClient,
@@ -28,6 +28,9 @@ import type { ProbeExecutor, ProbeSourceKind } from '../../../verifier/audit-run
 import { probeSellerViaDelegates } from '../../../verifier/delegated-probing.js'
 import { discoverServices } from '../../../verifier/service-discovery.js'
 import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
+import { SellerBackoff, EpochAttemptBudget } from '../../../verifier/backoff.js'
+import { safeServiceSlug } from '../../../verifier/slug.js'
+import { parsePositiveIntFlag } from './flags.js'
 import type { VerifierCLIConfig } from '../../../config/types.js'
 import { mkdir, writeFile } from 'node:fs/promises'
 
@@ -53,6 +56,15 @@ const VOUCHER_TTL_SECS = 30 * 24 * 60 * 60
  * service) when a reference is older than 7 weeks so operators rebuild it.
  */
 const REFERENCE_STALE_MS = 49 * 24 * 60 * 60 * 1000
+/**
+ * Hard cap on ATTEMPTED seller-audits per epoch, as a multiple of the
+ * credited budget. Credits only move on successful attestations, so a seller
+ * that never produces a valid ResponseAuth would otherwise be probed (and
+ * paid for) every round forever without ever consuming budget.
+ */
+const MAX_ATTEMPTS_PER_CREDIT = 2
+/** Upper bound for the round-failure retry backoff. */
+const MAX_ROUND_BACKOFF_MS = 60 * 60 * 1000
 
 interface ResolvedVerifierOptions {
   services: string[]
@@ -112,12 +124,22 @@ function resolveVerifierOptions(
   }
 }
 
+/**
+ * Custom bootstrap entries MERGE with (never replace) the official nodes —
+ * replacing them silently detaches the daemon from the public DHT (known
+ * repo gotcha; matches how AntseedNode itself treats bootstrap config).
+ */
+export function resolveVerifierBootstrapNodes(customEntries: string[] | undefined): Array<{ host: string; port: number }> {
+  const custom = Array.isArray(customEntries) ? parseBootstrapList(customEntries) : []
+  return toBootstrapConfig(mergeBootstrapNodes(OFFICIAL_BOOTSTRAP_NODES, custom))
+}
+
 export function registerVerifierStartCommand(verifierCmd: Command): void {
   verifierCmd
     .command('start')
     .description('Start the verifier daemon: audit sellers for the configured services and attest results on-chain')
     .option('--service <id...>', 'service/model IDs to verify (overrides config verifier.services)')
-    .option('--interval <ms>', 'pause between audit rounds in ms', (v) => parseInt(v, 10))
+    .option('--interval <ms>', 'pause between audit rounds in ms', parsePositiveIntFlag)
     .option('--once', 'run a single audit round and exit')
     .option('--rpc-url <url>', 'Base JSON-RPC URL override')
     .action(async (options) => {
@@ -169,10 +191,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
       }
 
-      const bootstrapEntries = Array.isArray(config.network?.bootstrapNodes) && config.network.bootstrapNodes.length > 0
-        ? config.network.bootstrapNodes
-        : OFFICIAL_BOOTSTRAP_NODES.map((node) => `${node.host}:${node.port}`)
-      const bootstrapNodes = toBootstrapConfig(parseBootstrapList(bootstrapEntries))
+      const bootstrapNodes = resolveVerifierBootstrapNodes(config.network?.bootstrapNodes)
 
       const nodeSpinner = ora('Connecting to P2P network...').start()
       const node = new AntseedNode({
@@ -227,7 +246,19 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       }
       console.log(chalk.green('Verifier approval: OK'))
 
-      const policy = await registryClient.getAuditPolicy()
+      // Fetched once for startup validation, refreshed at every round (the
+      // on-chain policy is owner-tunable and must not be cached for the
+      // daemon's whole lifetime).
+      let policy = await registryClient.getAuditPolicy()
+      if (verifierOptions.probesPerAudit < policy.minProbeCount) {
+        console.error(chalk.red(
+          `Configured probesPerAudit (${verifierOptions.probesPerAudit}) is below the on-chain ` +
+          `minProbeCount (${policy.minProbeCount}) — every attestation would revert with ProbeCountTooLow ` +
+          'after paying for all probes. Raise verifier.probesPerAudit.',
+        ))
+        await node.stop()
+        process.exit(1)
+      }
       const stalenessWindowSecs = verifierOptions.stalenessWindowSecs ?? policy.auditCooldown
       console.log(chalk.bold('Verifier settings:'))
       console.log(chalk.dim(`  services: ${verifierOptions.services.length > 0 ? verifierOptions.services.join(', ') : 'auto-discover (all advertised on the network)'}`))
@@ -375,8 +406,33 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         }
       }
 
+      // Cost-control state shared across rounds. In-memory by design: a
+      // restart forgets failure history / attempt counts, which at worst
+      // allows one extra probe batch per seller — bounded and acceptable.
+      const sellerBackoff = new SellerBackoff()
+      const attemptBudget = new EpochAttemptBudget(
+        Math.max(1, verifierOptions.maxAuditsPerEpoch * MAX_ATTEMPTS_PER_CREDIT),
+      )
+      const backoffKey = (peerId: string, service: string): string => `${peerId}:${service}`
+
       const runRound = async (): Promise<void> => {
         await claimFinalizedRewards()
+
+        // Refresh the on-chain audit policy every round; keep the last-known
+        // policy when the read transiently fails.
+        try {
+          policy = await registryClient.getAuditPolicy()
+        } catch (err) {
+          warn(`audit policy refresh failed (using last known): ${(err as Error).message}`)
+        }
+        const stalenessWindowSecs = verifierOptions.stalenessWindowSecs ?? policy.auditCooldown
+        if (verifierOptions.probesPerAudit < policy.minProbeCount) {
+          warn(
+            `probesPerAudit (${verifierOptions.probesPerAudit}) fell below the on-chain minProbeCount ` +
+            `(${policy.minProbeCount}); skipping round — raise verifier.probesPerAudit`,
+          )
+          return
+        }
 
         const epoch = await registryClient.currentEpoch()
         const creditsUsed = await registryClient.epochCredits(epoch, address)
@@ -384,6 +440,10 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
         let remaining = epochBudget - creditsUsed
         if (remaining <= 0) {
           log(`Epoch ${epoch} audit budget exhausted (${creditsUsed}/${epochBudget}); waiting for next epoch`)
+          return
+        }
+        if (attemptBudget.remaining(epoch) <= 0) {
+          log(`Epoch ${epoch} attempted-audit cap reached (${epochBudget * MAX_ATTEMPTS_PER_CREDIT} attempts); waiting for next epoch`)
           return
         }
         log(`Epoch ${epoch}: ${creditsUsed}/${epochBudget} credits used`)
@@ -413,16 +473,30 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           log(`Discovered ${discovered.length} advertised service(s) across ${peers.length} peer(s)`)
         }
 
-        for (const { service, peers: servicePeers } of targets) {
+        for (const { service, advertised, advertisedByPeer, peers: servicePeers } of targets) {
           if (stopped) return
           if (remaining <= 0) {
             log(`Epoch ${epoch} audit budget exhausted mid-round; deferring remaining services`)
             return
           }
+          const remainingAttempts = attemptBudget.remaining(epoch)
+          if (remainingAttempts <= 0) {
+            log(`Epoch ${epoch} attempted-audit cap reached mid-round; deferring remaining services`)
+            return
+          }
+
+          // Per-seller failure backoff: sellers whose recent audits finished
+          // uncredited cool down exponentially instead of staying
+          // stalest-first and drawing a full paid probe batch every round.
+          const probeablePeers = servicePeers.filter((peer) => {
+            if (!sellerBackoff.isBlocked(backoffKey(peer.peerId, service))) return true
+            log(`${service}: ${peer.peerId.slice(0, 10)}… cooling down after ${sellerBackoff.consecutiveFailures(backoffKey(peer.peerId, service))} uncredited audit(s); skipping`)
+            return false
+          })
 
           let reference = findReferenceForService(references, service)
-          const cohort = await selectCohort(servicePeers, service, registryClient, {
-            cohortMaxSize: Math.min(verifierOptions.cohortMaxSize, remaining),
+          const cohort = await selectCohort(probeablePeers, service, registryClient, {
+            cohortMaxSize: Math.min(verifierOptions.cohortMaxSize, remaining, remainingAttempts),
             stalenessWindowSecs,
             warn,
           })
@@ -441,7 +515,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             try {
               const built = await buildKbfReference(upstream, { model: upstreamModel, service, log })
               await mkdir(verifierOptions.referencesDir, { recursive: true })
-              const outPath = join(verifierOptions.referencesDir, `${service.replace(/[^a-z0-9._-]/gi, '_')}.json`)
+              const outPath = join(verifierOptions.referencesDir, `${safeServiceSlug(service)}.json`)
               await writeFile(outPath, JSON.stringify(built, null, 2))
               references.push(built)
               reference = built
@@ -506,6 +580,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
               reference,
               {
                 probesPerAudit: verifierOptions.probesPerAudit,
+                minProbeCount: policy.minProbeCount,
                 cohortMinSize: verifierOptions.cohortMinSize,
                 cohortMaxSize: verifierOptions.cohortMaxSize,
                 stalenessWindowSecs,
@@ -514,38 +589,76 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                 probeSource: verifierOptions.probeSource,
                 probeLogDir: verifierOptions.probeLogDir,
                 probeRotationHistory: verifierOptions.probeRotationHistory,
+                // Sellers match the wire model id case-sensitively: probe
+                // with the advertised spelling, keep the normalized form for
+                // grouping/config/hash keys only.
+                advertisedService: advertised,
+                advertisedByPeer,
                 ...(probeExecutor ? { probeExecutor } : {}),
                 log,
                 warn,
               },
             )
+            if (result === null) continue // skipped before commit/probes — no attempts spent
+
+            attemptBudget.recordAttempts(epoch, result.cohortSize)
             const attested = result.outcomes.filter((o) => o.attested).length
+            const credited = result.outcomes.filter((o) => o.credited).length
             const diffs = result.outcomes.filter((o) => o.verdict === 'DIFF').length
-            remaining -= attested
+            // Only CREDITED attestations consume budget on-chain; an
+            // attested-but-uncredited tx (cooldown, epoch cap) does not.
+            remaining -= credited
+            for (const outcome of result.outcomes) {
+              const key = backoffKey(outcome.peerId, service)
+              if (outcome.credited) sellerBackoff.recordSuccess(key)
+              else sellerBackoff.recordFailure(key)
+            }
             // Vouchers are per probe commitment: issue right after the
             // audit's attestations funded the commitment's delegate budget.
             if (verifierOptions.delegation.enabled && result.delegateJobs.size > 0) {
               await issueDelegateVouchers(result.probeCommitment, result.delegateJobs)
             }
-            console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested, ${diffs} DIFF`))
+            console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested (${credited} credited), ${diffs} DIFF`))
           } catch (err) {
+            // Probes may have been dispatched before the failure — count the
+            // whole cohort against the attempt cap (the safe direction).
+            attemptBudget.recordAttempts(epoch, cohort.length)
             warn(`audit round failed for ${service}: ${(err as Error).message}`)
           }
         }
       }
 
       if (options.once) {
-        await runRound()
+        try {
+          await runRound()
+        } catch (err) {
+          console.error(chalk.red(`Audit round failed: ${(err as Error).message}`))
+          process.exitCode = 1
+        }
         await node.stop()
         return
       }
 
       console.log(chalk.bold('Verifier daemon running. Press Ctrl+C to stop.'))
+      // Round boundary is an error boundary: a transient RPC outage in the
+      // pre-round reads (epoch, credits, policy) must never kill the daemon.
+      // Consecutive failures back off exponentially (bounded, jittered).
+      let consecutiveRoundFailures = 0
       for (;;) {
         if (stopped) return
-        await runRound()
+        try {
+          await runRound()
+          consecutiveRoundFailures = 0
+        } catch (err) {
+          consecutiveRoundFailures += 1
+          warn(`audit round failed (${consecutiveRoundFailures} in a row): ${(err as Error).message}`)
+        }
         if (stopped) return
-        await new Promise((resolve) => setTimeout(resolve, verifierOptions.auditIntervalMs))
+        const baseDelay = consecutiveRoundFailures === 0
+          ? verifierOptions.auditIntervalMs
+          : Math.min(verifierOptions.auditIntervalMs * 2 ** consecutiveRoundFailures, MAX_ROUND_BACKOFF_MS)
+        const jitter = consecutiveRoundFailures === 0 ? 0 : Math.floor(baseDelay * 0.2 * Math.random())
+        await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter))
       }
     })
 }

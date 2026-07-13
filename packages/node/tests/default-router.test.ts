@@ -102,6 +102,92 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('a'.repeat(40));
     });
 
+    it('should exclude a cheaper seller with an active substitution flag for the requested model', () => {
+      const router = new DefaultRouter();
+      const flagged = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': {
+            sameCount: 0,
+            diffCount: 1,
+            undeterminedCount: 0,
+            distinctVerifierCount: 1,
+            activeDiffVerifierCount: 1,
+            lastVerdict: 2,
+            score: 0,
+          },
+        },
+      });
+      const clean = makePeer({
+        peerId: 'b'.repeat(40) as any,
+        defaultInputUsdPerMillion: 100,
+        modelVerification: {
+          'kimi-k2': {
+            sameCount: 5,
+            diffCount: 0,
+            undeterminedCount: 0,
+            distinctVerifierCount: 3,
+            activeDiffVerifierCount: 0,
+            lastVerdict: 1,
+            score: 90,
+          },
+        },
+      });
+      const req: SerializedHttpRequest = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+
+      const selected = router.selectPeer(req, [flagged, clean]);
+      expect(selected?.peerId).toBe('b'.repeat(40));
+    });
+
+    it('should fall back to the agent-wide substitution flag when the request names no service', () => {
+      const router = new DefaultRouter();
+      const flagged = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          '*': {
+            sameCount: 0,
+            diffCount: 1,
+            undeterminedCount: 0,
+            distinctVerifierCount: 1,
+            activeDiffVerifierCount: 1,
+            lastVerdict: 2,
+            score: 0,
+          },
+        },
+      });
+      const clean = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
+
+      const selected = router.selectPeer(dummyReq, [flagged, clean]);
+      expect(selected?.peerId).toBe('b'.repeat(40));
+    });
+
+    it('should keep a peer whose flag was fully retracted (active count 0)', () => {
+      const router = new DefaultRouter();
+      const retracted = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          '*': {
+            sameCount: 4,
+            diffCount: 2,
+            undeterminedCount: 0,
+            distinctVerifierCount: 2,
+            activeDiffVerifierCount: 0,
+            lastVerdict: 1,
+            score: 70,
+          },
+        },
+      });
+
+      const selected = router.selectPeer(dummyReq, [retracted]);
+      expect(selected?.peerId).toBe('a'.repeat(40));
+    });
+
     it('should treat missing defaultInputUsdPerMillion as Infinity', () => {
       const router = new DefaultRouter();
       const withPrice = makePeer({ peerId: 'a'.repeat(40) as any, defaultInputUsdPerMillion: 500 });

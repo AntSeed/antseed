@@ -42,6 +42,28 @@ const DEFAULT_MIN_CONSENSUS_PROBES = 10;
 const DEFAULT_MIN_COVERAGE = 0.5;
 const DEFAULT_EPSILON = 0.02;
 
+/**
+ * One observation (vote) per seller: repeated `sellerPeerId` (case-insensitive
+ * — peer ids are EVM addresses) or `agentId` entries are dropped, first
+ * occurrence wins. Without this a single seller could submit its observation
+ * N times to fabricate consensus support and the minimum cohort size.
+ */
+function dedupeObservations(
+  observations: readonly SellerObservation[],
+): readonly SellerObservation[] {
+  const seenPeers = new Set<string>();
+  const seenAgents = new Set<number>();
+  const unique: SellerObservation[] = [];
+  for (const observation of observations) {
+    const peerKey = observation.sellerPeerId.toLowerCase();
+    if (seenPeers.has(peerKey) || seenAgents.has(observation.agentId)) continue;
+    seenPeers.add(peerKey);
+    seenAgents.add(observation.agentId);
+    unique.push(observation);
+  }
+  return unique;
+}
+
 function parseableAnswer(answer: number | null | undefined, probe: KbfProbe): number | null {
   if (answer === null || answer === undefined || !Number.isFinite(answer)) {
     return null;
@@ -64,10 +86,20 @@ function median(sorted: readonly number[]): number {
 
 /**
  * Per-probe consensus: cluster the sellers' parseable in-range answers using
- * the probe's tolerance. The consensus value is the center (median) of the
- * largest cluster, but ONLY IF that cluster holds a strict majority of the
- * sellers with parseable answers AND at least `minConsensusSellers` members.
- * Otherwise the probe has no discriminating power this round (null).
+ * the probe's tolerance. The consensus value is the median of the largest
+ * cluster.
+ *
+ * CONSISTENCY RULE — support is then RECOMPUTED as the answers within
+ * tolerance of that emitted median (the exact predicate scoreAgainstConsensus
+ * applies), and the strict-majority / `minConsensusSellers` gates run on the
+ * recomputed support. A cluster can be wider than the tolerance around its own
+ * median (e.g. answers {0,0,40,80,80,80} with abs-40 tolerance cluster fully
+ * around candidate 40, but the median 60 only covers {40,80,80,80}), so gating
+ * on raw cluster size would emit a value that some "supporters" then mismatch.
+ * With this rule, `supportCounts[i]` always equals the number of cohort
+ * sellers whose match vector entry for probe i is 1.
+ *
+ * Duplicate seller observations are deduplicated first — one vote per seller.
  *
  * Deterministic: candidate centers are evaluated in ascending value order and
  * ties keep the first (smallest) candidate.
@@ -78,6 +110,7 @@ export function computeCohortConsensus(
   options: CohortConsensusOptions = {},
 ): CohortConsensus {
   const minConsensusSellers = options.minConsensusSellers ?? DEFAULT_MIN_CONSENSUS_SELLERS;
+  const voters = dedupeObservations(observations);
 
   const values: Array<number | null> = [];
   const supportCounts: number[] = [];
@@ -87,7 +120,7 @@ export function computeCohortConsensus(
   for (let probeIndex = 0; probeIndex < probes.length; probeIndex++) {
     const probe = probes[probeIndex]!;
     const parseable: number[] = [];
-    for (const observation of observations) {
+    for (const observation of voters) {
       const answer = parseableAnswer(observation.answers[probeIndex], probe);
       if (answer !== null) {
         parseable.push(answer);
@@ -113,16 +146,21 @@ export function computeCohortConsensus(
       }
     }
 
-    const clusterSize = bestMembers.length;
-    const strictMajority = clusterSize * 2 > parseable.length;
-    if (!strictMajority || clusterSize < minConsensusSellers) {
+    // Emit the cluster median, then recompute support against the EMITTED
+    // value so support, majority gating, and later match scoring all use the
+    // same predicate (see the consistency rule in the function doc).
+    const consensusValue = median(bestMembers);
+    const emitted: KbfProbe = { ...probe, consensus: consensusValue };
+    const support = sortedAnswers.filter((answer) => matchesTolerance(answer, emitted)).length;
+    const strictMajority = support * 2 > parseable.length;
+    if (!strictMajority || support < minConsensusSellers) {
       values.push(null);
-      supportCounts.push(clusterSize);
+      supportCounts.push(support);
       continue;
     }
 
-    values.push(median(bestMembers));
-    supportCounts.push(clusterSize);
+    values.push(consensusValue);
+    supportCounts.push(support);
     validProbeIndices.push(probeIndex);
   }
 
@@ -182,8 +220,13 @@ function undeterminedSeller(
 /**
  * Compute per-seller cohort verdicts.
  *
+ * Duplicate observations (repeated sellerPeerId or agentId) are dropped before
+ * any gate — first occurrence wins, and only unique sellers receive a verdict
+ * entry — so one seller can neither vote twice nor pad the cohort size.
+ *
  * Gates:
- * - fewer than 3 sellers → every seller is UNDETERMINED (no consensus basis);
+ * - fewer than 3 unique sellers → every seller is UNDETERMINED (no consensus
+ *   basis);
  * - fewer than `minConsensusProbes` consensus-valid probes → all UNDETERMINED;
  * - seller coverage below `minCoverage` → that seller is UNDETERMINED.
  *
@@ -192,7 +235,7 @@ function undeterminedSeller(
  * p0 yields DIFF (pValue < alpha) or SAME.
  */
 export function computeCohortVerdicts(
-  observations: readonly SellerObservation[],
+  allObservations: readonly SellerObservation[],
   probes: readonly KbfProbe[],
   options: CohortVerdictOptions = {},
 ): CohortResult {
@@ -201,6 +244,8 @@ export function computeCohortVerdicts(
   const minCoverage = options.minCoverage ?? DEFAULT_MIN_COVERAGE;
   const epsilon = options.epsilon ?? DEFAULT_EPSILON;
   const minConsensusSellers = options.minConsensusSellers ?? DEFAULT_MIN_CONSENSUS_SELLERS;
+
+  const observations = dedupeObservations(allObservations);
 
   const emptyResult = (reason: string, consensusProbeCount: number): CohortResult => {
     const verdicts = observations.map((observation) =>

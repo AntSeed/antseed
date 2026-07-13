@@ -68,3 +68,27 @@ test('empty and service-less peers yield no services', () => {
   assert.deepEqual(discoverServices([peer({ id: 'a' })]), [])
   assert.deepEqual(discoverServices([peer({ id: 'a', metadataServices: ['  '] })]), [])
 })
+
+test('preserves the original advertised spelling for outgoing requests', () => {
+  // Sellers match the wire model id case-sensitively — probing
+  // "Qwen/Qwen3-32B" as "qwen/qwen3-32b" would 404 forever.
+  const result = discoverServices([
+    peer({ id: 'a', metadataServices: ['Qwen/Qwen3-32B'] }),
+    peer({ id: 'b', metadataServices: ['Qwen/Qwen3-32B'] }),
+    peer({ id: 'c', pricingServices: ['qwen/qwen3-32b'] }),
+  ])
+  assert.equal(result.length, 1)
+  const service = result[0]!
+  assert.equal(service.service, 'qwen/qwen3-32b') // normalized grouping key
+  assert.equal(service.advertised, 'Qwen/Qwen3-32B') // majority spelling wins
+  assert.equal(service.advertisedByPeer.get('a'), 'Qwen/Qwen3-32B')
+  assert.equal(service.advertisedByPeer.get('b'), 'Qwen/Qwen3-32B')
+  assert.equal(service.advertisedByPeer.get('c'), 'qwen/qwen3-32b')
+  assert.equal(service.peers.length, 3)
+})
+
+test('advertised spelling is trimmed but case-preserved', () => {
+  const result = discoverServices([peer({ id: 'a', metadataServices: ['  Kimi-K2  '] })])
+  assert.equal(result[0]!.service, 'kimi-k2')
+  assert.equal(result[0]!.advertised, 'Kimi-K2')
+})

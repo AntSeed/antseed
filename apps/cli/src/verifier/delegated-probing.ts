@@ -4,13 +4,14 @@ import type {
   ConnectedDelegate,
   PeerInfo,
   ProbeJobResultPayload,
+  ResponseAuthPayload,
   SerializedHttpRequest,
   SerializedHttpResponse,
 } from '@antseed/node'
 import { verifyResponseAuth } from '@antseed/node'
 import type { ProbeSet } from '@antseed/fingerprints'
 import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/fingerprints'
-import type { SellerProbeRun } from './probing.js'
+import type { ProbeExchangeEvidence, SellerProbeRun } from './probing.js'
 import { extractCompletionText } from './probing.js'
 
 export interface DelegatedProbeOptions {
@@ -28,7 +29,8 @@ export interface DelegatedProbeOutcome {
 
 interface VerifiedJob {
   responseBody: Uint8Array
-  auth: { requestHash: string; responseHash: string; signature: string }
+  response: { statusCode: number; headers: Record<string, string>; bodyBase64: string }
+  auth: ResponseAuthPayload
 }
 
 /**
@@ -60,6 +62,7 @@ export async function probeSellerViaDelegates(
   const answers: Array<number | null> = new Array(probeSet.probes.length).fill(null)
   const requestIds: string[] = []
   const responseAuths: SellerProbeRun['responseAuths'] = []
+  const exchanges: ProbeExchangeEvidence[] = []
   const errors: string[] = []
   const jobsByDelegate = new Map<string, number>()
 
@@ -68,6 +71,7 @@ export async function probeSellerViaDelegates(
   let delegateCursor = 0
   for (const plan of plans) {
     const bodyBytes = new TextEncoder().encode(JSON.stringify(plan.body))
+    const bodyBase64 = Buffer.from(bodyBytes).toString('base64')
     // One retry on a different delegate: probe secrecy for this plan is
     // already spent after the first dispatch, so a second carrier costs
     // nothing extra in leak exposure.
@@ -99,6 +103,17 @@ export async function probeSellerViaDelegates(
     }
 
     requestIds.push(requestId)
+    exchanges.push({
+      requestId,
+      request: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json' },
+        bodyBase64,
+      },
+      response: verified?.response ?? null,
+      responseAuth: verified?.auth ?? null,
+    })
     if (!verified) {
       errors.push(`request ${requestId.slice(0, 8)}: ${lastError}`)
       responseAuths.push(null)
@@ -114,7 +129,11 @@ export async function probeSellerViaDelegates(
         answers[probeIndex] = planAnswers[i] ?? null
       })
     }
-    responseAuths.push(verified.auth)
+    responseAuths.push({
+      requestHash: verified.auth.requestHash,
+      responseHash: verified.auth.responseHash,
+      signature: verified.auth.signature,
+    })
   }
 
   return {
@@ -124,6 +143,7 @@ export async function probeSellerViaDelegates(
       answers,
       requestIds,
       responseAuths,
+      exchanges,
       fullyAuthenticated: responseAuths.length > 0 && responseAuths.every((auth) => auth !== null),
       errors,
     },
@@ -191,11 +211,12 @@ async function runVerifiedJob(
 
   return {
     responseBody: response.body,
-    auth: {
-      requestHash: result.responseAuth.requestHash,
-      responseHash: result.responseAuth.responseHash,
-      signature: result.responseAuth.signature,
+    response: {
+      statusCode: result.response.statusCode,
+      headers: { ...result.response.headers },
+      bodyBase64: result.response.bodyBase64,
     },
+    auth: result.responseAuth,
   }
 }
 

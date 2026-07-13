@@ -232,6 +232,18 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
     ///         share only when the per-service cooldown has elapsed and the
     ///         verifier is below its per-epoch credit cap; the attestation
     ///         itself is stored either way.
+    ///
+    ///         TRUST MODEL — whitelist, not proof. On-chain, credited audit
+    ///         work requires neither a real relationship with the audited
+    ///         seller nor evidence that any probing happened: the probe-set
+    ///         commitment is an opaque hash unbound to the audited target,
+    ///         is never revealed or consumed on-chain, and only needs to be
+    ///         one second old; `evidenceHash` is likewise just a pointer to
+    ///         off-chain material. This is by design — verifiers are
+    ///         owner-whitelisted and their evidence is reviewed off-chain,
+    ///         with the whitelist as the enforcement lever. Integrators MUST
+    ///         NOT treat epoch credits or stored attestations as
+    ///         cryptographic proof of audit work.
     function submitAttestation(
         uint256 agentId,
         bytes32 serviceHash,

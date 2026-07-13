@@ -412,27 +412,31 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   throw new Error(`${path} must be a boolean`);
 }
 
+// Shape-only merge, like the delegate/delegation sections: raw values pass
+// through so assertValidConfig rejects mistyped entries loudly. Filtering here
+// would silently widen the config — e.g. `services: [123]` collapsing to `[]`
+// means "audit EVERYTHING", and a typo'd upstream would silently disable
+// reference enrollment.
 function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
-  if (!isRecord(value)) return undefined;
-  const services = Array.isArray(value['services'])
-    ? value['services'].filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-    : [];
+  if (!isRecord(value)) {
+    return value !== undefined ? (value as AntseedConfig['verifier']) : undefined;
+  }
   return {
-    services,
-    ...(typeof value['maxAuditsPerEpoch'] === 'number' ? { maxAuditsPerEpoch: value['maxAuditsPerEpoch'] } : {}),
-    ...(typeof value['probesPerAudit'] === 'number' ? { probesPerAudit: value['probesPerAudit'] } : {}),
-    ...(typeof value['maxProbesPerRequest'] === 'number' ? { maxProbesPerRequest: value['maxProbesPerRequest'] } : {}),
-    ...(typeof value['cohortMinSize'] === 'number' ? { cohortMinSize: value['cohortMinSize'] } : {}),
-    ...(typeof value['cohortMaxSize'] === 'number' ? { cohortMaxSize: value['cohortMaxSize'] } : {}),
-    ...(typeof value['auditIntervalMs'] === 'number' ? { auditIntervalMs: value['auditIntervalMs'] } : {}),
-    ...(typeof value['stalenessWindowSecs'] === 'number' ? { stalenessWindowSecs: value['stalenessWindowSecs'] } : {}),
-    ...(value['probeSource'] === 'compositional' || value['probeSource'] === 'bank'
-      ? { probeSource: value['probeSource'] }
+    ...(value['services'] !== undefined ? { services: value['services'] as string[] } : { services: [] }),
+    ...(value['maxAuditsPerEpoch'] !== undefined ? { maxAuditsPerEpoch: value['maxAuditsPerEpoch'] as number } : {}),
+    ...(value['probesPerAudit'] !== undefined ? { probesPerAudit: value['probesPerAudit'] as number } : {}),
+    ...(value['maxProbesPerRequest'] !== undefined ? { maxProbesPerRequest: value['maxProbesPerRequest'] as number } : {}),
+    ...(value['cohortMinSize'] !== undefined ? { cohortMinSize: value['cohortMinSize'] as number } : {}),
+    ...(value['cohortMaxSize'] !== undefined ? { cohortMaxSize: value['cohortMaxSize'] as number } : {}),
+    ...(value['auditIntervalMs'] !== undefined ? { auditIntervalMs: value['auditIntervalMs'] as number } : {}),
+    ...(value['stalenessWindowSecs'] !== undefined ? { stalenessWindowSecs: value['stalenessWindowSecs'] as number } : {}),
+    ...(value['probeSource'] !== undefined
+      ? { probeSource: value['probeSource'] as 'compositional' | 'bank' }
       : {}),
-    ...(typeof value['probeRotationHistory'] === 'number' ? { probeRotationHistory: value['probeRotationHistory'] } : {}),
-    ...(typeof value['referencesDir'] === 'string' ? { referencesDir: value['referencesDir'] } : {}),
-    ...(typeof value['evidenceDir'] === 'string' ? { evidenceDir: value['evidenceDir'] } : {}),
-    ...(typeof value['probeLogDir'] === 'string' ? { probeLogDir: value['probeLogDir'] } : {}),
+    ...(value['probeRotationHistory'] !== undefined ? { probeRotationHistory: value['probeRotationHistory'] as number } : {}),
+    ...(value['referencesDir'] !== undefined ? { referencesDir: value['referencesDir'] as string } : {}),
+    ...(value['evidenceDir'] !== undefined ? { evidenceDir: value['evidenceDir'] as string } : {}),
+    ...(value['probeLogDir'] !== undefined ? { probeLogDir: value['probeLogDir'] as string } : {}),
     ...mergeVerifierUpstream(value['upstream']),
     ...mergeVerifierDelegation(value['delegation']),
   };
@@ -455,23 +459,19 @@ function mergeVerifierDelegation(
   };
 }
 
+// Same raw pass-through contract as mergeVerifierConfig: a malformed upstream
+// must reach validation instead of silently disabling reference enrollment.
 function mergeVerifierUpstream(value: unknown): { upstream?: NonNullable<AntseedConfig['verifier']>['upstream'] } {
-  if (!isRecord(value) || typeof value['baseUrl'] !== 'string' || value['baseUrl'].trim().length === 0) {
-    return {};
+  if (value === undefined) return {};
+  if (!isRecord(value)) {
+    return { upstream: value as NonNullable<AntseedConfig['verifier']>['upstream'] };
   }
-  const modelMap = isRecord(value['modelMap'])
-    ? Object.fromEntries(
-        Object.entries(value['modelMap']).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
-        ),
-      )
-    : undefined;
   return {
     upstream: {
-      baseUrl: value['baseUrl'],
-      ...(typeof value['apiKey'] === 'string' ? { apiKey: value['apiKey'] } : {}),
-      ...(typeof value['apiKeyEnv'] === 'string' ? { apiKeyEnv: value['apiKeyEnv'] } : {}),
-      ...(modelMap && Object.keys(modelMap).length > 0 ? { modelMap } : {}),
+      baseUrl: value['baseUrl'] as string,
+      ...(value['apiKey'] !== undefined ? { apiKey: value['apiKey'] as string } : {}),
+      ...(value['apiKeyEnv'] !== undefined ? { apiKeyEnv: value['apiKeyEnv'] as string } : {}),
+      ...(value['modelMap'] !== undefined ? { modelMap: value['modelMap'] as Record<string, string> } : {}),
     },
   };
 }

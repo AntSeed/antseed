@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { safeServiceSlug } from './slug.js'
 
 /**
  * Per-(verifier, service) probe rotation log.
@@ -23,12 +24,11 @@ interface ProbeLogFile {
   updatedAt: string
 }
 
-function serviceSlug(service: string): string {
-  return service.replace(/[^a-z0-9._-]/gi, '_')
-}
-
+// safeServiceSlug throws on dot-only names (`..` would write one directory
+// up); loadUsedProbeIds treats that like any other read error (empty set),
+// recordUsedProbeIds surfaces it to the caller's warn handler.
 function logPath(dir: string, service: string): string {
-  return join(dir, `${serviceSlug(service)}.json`)
+  return join(dir, `${safeServiceSlug(service)}.json`)
 }
 
 /** Load the set of recently-used probe ids for a service (empty on any error). */

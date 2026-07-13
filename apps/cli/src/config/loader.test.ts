@@ -269,6 +269,104 @@ test('loadConfig preserves verifier delegation settings', async () => {
   );
 });
 
+test('loadConfig rejects mistyped verifier.services instead of widening to audit-everything', async () => {
+  // `services: [123]` previously collapsed to [] — which means "audit
+  // EVERYTHING the network advertises".
+  await withTempConfig(
+    JSON.stringify({ verifier: { services: [123] } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.services\[0\]/);
+    }
+  );
+});
+
+test('loadConfig rejects a non-object verifier section', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: 'yes please' }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier must be an object/);
+    }
+  );
+});
+
+test('loadConfig rejects mistyped verifier numeric fields', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { probesPerAudit: '24' } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.probesPerAudit/);
+    }
+  );
+});
+
+test('loadConfig rejects an invalid verifier probeSource', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { probeSource: 'compositoinal' } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.probeSource/);
+    }
+  );
+});
+
+test('loadConfig rejects a mistyped verifier upstream instead of silently disabling enrollment', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { upstream: { baseUrl: 123 } } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream\.baseUrl/);
+    }
+  );
+  await withTempConfig(
+    JSON.stringify({ verifier: { upstream: ['https://u/v1'] } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream must be an object/);
+    }
+  );
+  await withTempConfig(
+    JSON.stringify({ verifier: { upstream: { baseUrl: 'https://u/v1', modelMap: { 'kimi-k2': 7 } } } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream\.modelMap\["kimi-k2"\]/);
+    }
+  );
+});
+
+test('loadConfig rejects mistyped verifier directories', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { evidenceDir: 42 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.evidenceDir/);
+    }
+  );
+});
+
+test('loadConfig preserves a valid verifier section end-to-end', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      verifier: {
+        services: ['Kimi-K2'],
+        probesPerAudit: 24,
+        probeSource: 'bank',
+        referencesDir: './refs',
+        upstream: {
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKeyEnv: 'OPENROUTER_KEY',
+          modelMap: { 'kimi-k2': 'moonshotai/kimi-k2' },
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.verifier?.services, ['Kimi-K2']);
+      assert.equal(config.verifier?.probesPerAudit, 24);
+      assert.equal(config.verifier?.probeSource, 'bank');
+      assert.equal(config.verifier?.referencesDir, './refs');
+      assert.deepEqual(config.verifier?.upstream, {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKeyEnv: 'OPENROUTER_KEY',
+        modelMap: { 'kimi-k2': 'moonshotai/kimi-k2' },
+      });
+    }
+  );
+});
+
 test('loadConfig rejects invalid verifier delegation settings', async () => {
   await withTempConfig(
     JSON.stringify({

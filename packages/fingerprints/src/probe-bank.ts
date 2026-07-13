@@ -7,6 +7,7 @@
  * They exist so reference-based flows and tests have plausible expectations.
  */
 
+import { canonicalHash } from './canonical-json.js';
 import { deriveHex } from './prng.js';
 import {
   deterministicSample,
@@ -185,8 +186,15 @@ export function generateProbeSet(params: GenerateProbeSetParams): ProbeSet {
 
   // Commitment blinding nonce, HKDF-derived (RFC 5869) from the seed under its
   // own domain tag so it can never collide with the RNG streams drawn from the
-  // same seed. Hiding rests on the seed being high-entropy and secret.
-  const nonce = deriveHex(seed, 'probe-set-nonce');
+  // same seed. The (canonically hashed, sorted) exclude set is folded into
+  // the domain: rotation changes the selected probes, so it must also change
+  // the nonce — otherwise the same seed with a grown exclude set would blind a
+  // NEW probe set with an ALREADY-REVEALED nonce. The set is hashed rather
+  // than inlined because hkdfSync caps `info` at 1024 bytes, which a deep
+  // rotation log would exceed. Hiding rests on the seed being high-entropy
+  // and secret.
+  const excludeIds = exclude ? [...exclude].sort() : [];
+  const nonce = deriveHex(seed, `probe-set-nonce/${canonicalHash(excludeIds)}`);
   return {
     probeSetId: computeProbeSetId(service, probes),
     service,

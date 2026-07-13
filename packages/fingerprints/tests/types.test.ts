@@ -4,11 +4,14 @@ import {
   computeProbeCommitment,
   computeProbeSetId,
   computeReferenceId,
+  isMatchEntry,
+  isMatchVector,
   verdictFromCode,
   verdictToCode,
   type EvidenceBundle,
   type FingerprintReference,
   type FingerprintVerdict,
+  type KbfProbe,
 } from '../src/types.js';
 import { generateProbeSet } from '../src/probe-bank.js';
 import { computeCohortVerdicts } from '../src/cohort.js';
@@ -114,7 +117,9 @@ describe('evidence bundle hashing', () => {
     const hash = computeEvidenceHash(makeBundle());
     // Pinned over the HKDF/HMAC_DRBG derivation (prng.ts). If this breaks, the
     // wire format changed — bump the HKDF salt version, don't silently re-pin.
-    expect(hash).toBe('0xe8796f90435f13b42f8fb693df1f47b3af72ab4e928e7f71c835efbdb2e86827');
+    // (Last re-pinned deliberately: content-binding probeSetId/commitment and
+    // hashed exclude-aware nonce derivation, PR #720 review.)
+    expect(hash).toBe('0x50257c5d246cd5325c84b42f53579d993b38ccae3eb41cda56c35981d29417bf');
     expect(computeEvidenceHash(makeBundle())).toBe(hash);
   });
 
@@ -161,5 +166,87 @@ describe('probe set ids and commitments', () => {
     const a = computeProbeCommitment(probeSet);
     const b = computeProbeCommitment({ ...probeSet, nonce: 'deadbeef' });
     expect(a).not.toBe(b);
+  });
+
+  // Post-hoc content mutations a cheating verifier could try after seeing
+  // responses. Every scoring-relevant field must be bound by BOTH the
+  // probe-set id and the on-chain commitment.
+  const CONTENT_MUTATIONS: ReadonlyArray<[string, (p: KbfProbe) => KbfProbe]> = [
+    ['id', (p) => ({ ...p, id: `${p.id}-forged` })],
+    ['name', (p) => ({ ...p, name: `${p.name} (v2)` })],
+    ['domain', (p) => ({ ...p, domain: `${p.domain}_alt` })],
+    ['template', (p) => ({ ...p, template: p.template.replace('___', 'exactly ___') })],
+    ['consensus', (p) => ({ ...p, consensus: p.consensus + 1 })],
+    ['range low', (p) => ({ ...p, range: [p.range[0] - 1, p.range[1]] as [number, number] })],
+    ['range high', (p) => ({ ...p, range: [p.range[0], p.range[1] + 1] as [number, number] })],
+    [
+      'tolerance mode',
+      (p) => ({
+        ...p,
+        tolerance: { ...p.tolerance, mode: p.tolerance.mode === 'absolute' ? 'relative' : 'absolute' },
+      }),
+    ],
+    [
+      'tolerance value (tightened)',
+      (p) => ({ ...p, tolerance: { ...p.tolerance, value: p.tolerance.value / 2 } }),
+    ],
+    ['extension field', (p) => ({ ...p, contrast: { forged: true } })],
+  ];
+
+  it.each(CONTENT_MUTATIONS)(
+    'mutating probe %s changes both the probe-set id and the commitment',
+    (_field, mutate) => {
+      const probeSet = generateProbeSet({
+        service: 's',
+        count: 6,
+        seed: 'content-binding',
+        createdAt: '2026-07-03T00:00:00.000Z',
+      });
+      const mutatedProbes = probeSet.probes.map((p, i) => (i === 2 ? mutate(p) : p));
+
+      expect(computeProbeSetId('s', mutatedProbes)).not.toBe(
+        computeProbeSetId('s', probeSet.probes),
+      );
+      expect(computeProbeCommitment({ ...probeSet, probes: mutatedProbes })).not.toBe(
+        computeProbeCommitment(probeSet),
+      );
+    },
+  );
+
+  it('probeSetId and commitment depend on the service', () => {
+    const probeSet = generateProbeSet({
+      service: 's',
+      count: 6,
+      seed: 'service-binding',
+      createdAt: '2026-07-03T00:00:00.000Z',
+    });
+    expect(computeProbeSetId('other', probeSet.probes)).not.toBe(probeSet.probeSetId);
+    expect(computeProbeCommitment({ ...probeSet, service: 'other' })).not.toBe(
+      computeProbeCommitment(probeSet),
+    );
+  });
+});
+
+describe('match vector guards', () => {
+  it('isMatchEntry accepts exactly 0, 1, null', () => {
+    expect(isMatchEntry(0)).toBe(true);
+    expect(isMatchEntry(1)).toBe(true);
+    expect(isMatchEntry(null)).toBe(true);
+  });
+
+  it('isMatchEntry rejects other truthy/falsy values', () => {
+    for (const bad of [2, -1, 0.5, true, false, '1', '0', undefined, NaN, [], {}]) {
+      expect(isMatchEntry(bad), String(bad)).toBe(false);
+    }
+  });
+
+  it('isMatchVector accepts only arrays of valid entries', () => {
+    expect(isMatchVector([])).toBe(true);
+    expect(isMatchVector([1, 0, null, 1])).toBe(true);
+    expect(isMatchVector([1, 2, 0])).toBe(false);
+    expect(isMatchVector([true])).toBe(false);
+    expect(isMatchVector(['1'])).toBe(false);
+    expect(isMatchVector('10')).toBe(false);
+    expect(isMatchVector(null)).toBe(false);
   });
 });

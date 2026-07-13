@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
 import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
+import { safeServiceSlug } from '../../../verifier/slug.js'
+import { parsePositiveIntFlag, resolveReferenceUpstreamInput } from './flags.js'
 
 /**
  * `antseed verifier reference build` — enroll a model through a trusted
@@ -27,21 +29,22 @@ export function registerVerifierReferenceCommand(verifierCmd: Command): void {
     .option('--base-url <url>', 'OpenAI-compatible base URL (default: config verifier.upstream.baseUrl)')
     .option('--api-key <key>', 'upstream API key (default: config verifier.upstream)')
     .option('--api-key-env <var>', 'environment variable holding the upstream API key')
-    .option('--probes <n>', 'candidate probes to draw from the compositional space', (v) => parseInt(v, 10))
+    .option('--probes <n>', 'candidate probes to draw from the compositional space', parsePositiveIntFlag)
     .option('--out <dir>', 'references directory (default: config verifier.referencesDir)')
     .action(async (options, command: Command) => {
       const globalOpts = getGlobalOptions(command)
       const config = await loadConfig(globalOpts.config)
 
-      const upstream = resolveUpstream({
-        baseUrl: (options.baseUrl as string | undefined) ?? config.verifier?.upstream?.baseUrl ?? '',
-        ...(options.apiKey ? { apiKey: options.apiKey as string } : config.verifier?.upstream?.apiKey ? { apiKey: config.verifier.upstream.apiKey } : {}),
-        ...(options.apiKeyEnv
-          ? { apiKeyEnv: options.apiKeyEnv as string }
-          : config.verifier?.upstream?.apiKeyEnv
-            ? { apiKeyEnv: config.verifier.upstream.apiKeyEnv }
-            : {}),
-      })
+      // CLI flags win end-to-end: --api-key must not be silently overridden
+      // by a configured apiKeyEnv (that bills the wrong account).
+      const upstream = resolveUpstream(resolveReferenceUpstreamInput(
+        {
+          ...(options.baseUrl ? { baseUrl: options.baseUrl as string } : {}),
+          ...(options.apiKey ? { apiKey: options.apiKey as string } : {}),
+          ...(options.apiKeyEnv ? { apiKeyEnv: options.apiKeyEnv as string } : {}),
+        },
+        config.verifier?.upstream,
+      ))
       if (!upstream) {
         console.error(chalk.red('No upstream API configured. Pass --base-url or set verifier.upstream.baseUrl in your config.'))
         process.exit(1)
@@ -62,7 +65,7 @@ export function registerVerifierReferenceCommand(verifierCmd: Command): void {
         })
 
         await mkdir(outDir, { recursive: true })
-        const slug = (reference.referenceModel || (options.model as string)).replace(/[^a-z0-9._-]/gi, '_')
+        const slug = safeServiceSlug(reference.referenceModel || (options.model as string))
         const outPath = join(outDir, `${slug}.json`)
         await writeFile(outPath, JSON.stringify(reference, null, 2))
 

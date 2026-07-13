@@ -154,25 +154,33 @@ export interface ProbeSet {
   createdAt: string;
 }
 
-/** Order-sensitive content id over `{ service, probeIds }`. */
+/**
+ * Order-sensitive content id over `{ service, probes }` — the COMPLETE probe
+ * definitions, not just ids. Every scoring-relevant field (template, consensus,
+ * range, tolerance, extensions) is bound, so two sets that would score answers
+ * differently can never share an id.
+ */
 export function computeProbeSetId(service: string, probes: readonly KbfProbe[]): string {
-  return canonicalHash({ service, probeIds: probes.map((p) => p.id) });
+  return canonicalHash({ service, probes });
 }
 
 /**
  * On-chain pre-audit commitment (bytes32): a standard hash commitment
- * `commit = SHA-256(canonicalJson({message, nonce}))` over the probe set
- * identity `{ probeSetId, orderedProbeIds, nonce }`. Binding comes from
- * SHA-256 collision resistance; hiding from the 256-bit HKDF-derived nonce.
- * Opened (probe set + nonce revealed) only after responses, so a verifier
- * cannot cherry-pick probes after seeing answers.
+ * `commit = SHA-256(canonicalJson({service, probes, nonce}))` over the FULL
+ * ordered probe definitions. Binding the complete content (not merely probe
+ * ids) is what stops a verifier from committing, observing responses, and then
+ * tightening `tolerance` or altering `consensus`/`range`/`template` while the
+ * commitment still verifies. Binding comes from SHA-256 collision resistance;
+ * hiding from the 256-bit HKDF-derived nonce. Opened (probe set + nonce
+ * revealed) only after responses, so a verifier cannot cherry-pick or reshape
+ * probes after seeing answers.
  */
 export function computeProbeCommitment(
-  probeSet: Pick<ProbeSet, 'probeSetId' | 'probes' | 'nonce'>,
+  probeSet: Pick<ProbeSet, 'service' | 'probes' | 'nonce'>,
 ): string {
   return canonicalHashBytes32({
-    probeSetId: probeSet.probeSetId,
-    orderedProbeIds: probeSet.probes.map((p) => p.id),
+    service: probeSet.service,
+    probes: probeSet.probes,
     nonce: probeSet.nonce,
   });
 }
@@ -184,6 +192,20 @@ export function computeProbeCommitment(
 /** Per-probe outcome: 1 match, 0 mismatch, null unparseable. */
 export type MatchEntry = 1 | 0 | null;
 export type MatchVector = MatchEntry[];
+
+/** Runtime guard: exactly 1, 0, or null — arbitrary truthy values are NOT matches. */
+export function isMatchEntry(value: unknown): value is MatchEntry {
+  return value === 1 || value === 0 || value === null;
+}
+
+/**
+ * Runtime guard for match vectors crossing the public API boundary
+ * (e.g. `SellerObservation.matchVector` supplied by a caller rather than
+ * derived via `computeMatchVector`).
+ */
+export function isMatchVector(value: unknown): value is MatchVector {
+  return Array.isArray(value) && value.every(isMatchEntry);
+}
 
 export interface ResponseAuthHashes {
   requestHash: string;

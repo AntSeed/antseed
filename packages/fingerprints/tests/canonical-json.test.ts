@@ -63,6 +63,50 @@ describe('canonicalJsonStringify', () => {
     b['x'] = 1;
     expect(canonicalJsonStringify(a)).toBe(canonicalJsonStringify(b));
   });
+
+  // RFC 8785 §3.2.3: keys sort by UTF-16 code units, NOT locale/codepoint
+  // collation.
+  it('sorts non-ASCII keys by UTF-16 code units', () => {
+    // "é" is U+00E9 (0x00e9) > "z" (0x007a): "z" sorts first.
+    expect(canonicalJsonStringify({ 'é': 1, z: 2 })).toBe('{"z":2,"é":1}');
+    // Surrogate-pair key "𝄞" (U+1D11E → 0xd834 0xdd1e) sorts by its FIRST
+    // code unit 0xd834, so it precedes "﻿" (0xfeff) despite the higher
+    // code point.
+    expect(canonicalJsonStringify({ '﻿': 1, '𝄞': 2 })).toBe('{"𝄞":2,"﻿":1}');
+    // RFC 8785 §3.2.3 example ordering fragment: "\r" < "1" < "El Niño"-style
+    // non-ASCII after ASCII.
+    expect(canonicalJsonStringify({ 'ü': 1, '\r': 2, '1': 3 })).toBe(
+      '{"\\r":2,"1":3,"ü":1}',
+    );
+  });
+
+  // RFC 8785 §3.2.2.2: control characters use \u00xx (lowercase hex) except
+  // the short forms \b \t \n \f \r.
+  it('escapes control characters per the JSON short forms and \\u00xx', () => {
+    expect(canonicalJsonStringify('\u0000')).toBe('"\\u0000"');
+    expect(canonicalJsonStringify('\u001f')).toBe('"\\u001f"');
+    expect(canonicalJsonStringify('\b\t\n\f\r')).toBe('"\\b\\t\\n\\f\\r"');
+  });
+
+  it('escapes lone surrogates instead of emitting invalid UTF-8', () => {
+    // ES2019 well-formed JSON.stringify escapes unpaired surrogates.
+    expect(canonicalJsonStringify('\ud800')).toBe('"\\ud800"');
+    expect(canonicalJsonStringify('\udfff')).toBe('"\\udfff"');
+    expect(canonicalJsonStringify('a\ud800b')).toBe('"a\\ud800b"');
+    // A well-formed pair passes through unescaped.
+    expect(canonicalJsonStringify('𝄞')).toBe('"𝄞"');
+  });
+
+  // RFC 8785 §3.2.2.3 / Appendix B: ECMAScript Number-to-string algorithm.
+  it('serializes numbers via the ECMAScript algorithm, including exponent forms', () => {
+    expect(canonicalJsonStringify(1e21)).toBe('1e+21');
+    expect(canonicalJsonStringify(1e20)).toBe('100000000000000000000');
+    expect(canonicalJsonStringify(1e-7)).toBe('1e-7');
+    expect(canonicalJsonStringify(0.000001)).toBe('0.000001');
+    expect(canonicalJsonStringify(333333333.33333329)).toBe('333333333.3333333');
+    expect(canonicalJsonStringify(9007199254740996.0)).toBe('9007199254740996');
+    expect(canonicalJsonStringify(-0)).toBe('0');
+  });
 });
 
 describe('sha256Hex / canonicalHash / canonicalHashBytes32', () => {

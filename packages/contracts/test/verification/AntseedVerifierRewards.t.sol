@@ -10,6 +10,17 @@ import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegis
 import { AntseedVerifierRewards } from "../../verification/AntseedVerifierRewards.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
+/// @dev Stand-in for `registry.emissions()` pinned at a fixed epoch: models
+///      a registry epoch clock lagging the gate's, so credits can land in an
+///      epoch the gate already finalized.
+contract MockEpochClock {
+    uint256 public currentEpoch;
+
+    function setCurrentEpoch(uint256 epoch) external {
+        currentEpoch = epoch;
+    }
+}
+
 contract AntseedVerifierRewardsTest is Test {
     ANTSToken token;
     AntseedRegistryV2 registry;
@@ -195,6 +206,97 @@ contract AntseedVerifierRewardsTest is Test {
         vm.prank(verifierB);
         verifierRewards.claimVerifierReward(5);
         assertEq(token.balanceOf(verifierB), budgetBefore / 2);
+    }
+
+    function test_lateCreditsDoNotShiftFrozenShares() public {
+        _credit(verifierA, 1);
+        _credit(verifierB, 1);
+        _warpGateEpoch(6);
+
+        uint256 budget = verifierRewards.verifierEpochBudget(5);
+        vm.prank(verifierA);
+        verifierRewards.claimVerifierReward(5); // freezes budget, split AND totals
+        assertEq(token.balanceOf(verifierA), budget / 2);
+        assertEq(verifierRewards.verifierEpochTotalCredits(5), 2);
+
+        // A lagging registry epoch clock lands a late credit in the already
+        // frozen epoch 5.
+        MockEpochClock laggingClock = new MockEpochClock();
+        laggingClock.setCurrentEpoch(5);
+        registry.setEmissions(address(laggingClock));
+        _credit(verifierC, 1);
+        assertEq(verifierRegistry.epochTotalCredits(5), 3);
+        assertEq(verifierRewards.verifierEpochTotalCredits(5), 2, "frozen total must not move");
+
+        // Remaining pre-freeze claimants keep their exact frozen share — the
+        // late credit neither dilutes them nor makes their claims revert.
+        assertEq(verifierRewards.pendingVerifierReward(5, verifierB), budget / 2);
+        vm.prank(verifierB);
+        verifierRewards.claimVerifierReward(5);
+        assertEq(token.balanceOf(verifierB), budget / 2);
+
+        // The late claimer is outside the frozen claim set: its share against
+        // the frozen total no longer fits the gate bucket, so the gate's
+        // budget guard stops it instead of overdrawing earlier claimants.
+        vm.prank(verifierC);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        verifierRewards.claimVerifierReward(5);
+    }
+
+    function test_lateCreditsAfterZeroCreditFreezeAreUnclaimable() public {
+        _warpGateEpoch(6);
+        // Settling the zero-credit epoch freezes its totals at zero.
+        verifierRewards.settleEpochRemainder(5);
+
+        MockEpochClock laggingClock = new MockEpochClock();
+        laggingClock.setCurrentEpoch(5);
+        registry.setEmissions(address(laggingClock));
+        _credit(verifierA, 1);
+        assertEq(verifierRegistry.epochCredits(5, verifierA), 1);
+
+        // The pool already routed through burn/reserve; the late credit is a
+        // clean NothingToClaim, not a division panic or a gate revert.
+        assertEq(verifierRewards.pendingVerifierReward(5, verifierA), 0);
+        vm.prank(verifierA);
+        vm.expectRevert(AntseedVerifierRewards.NothingToClaim.selector);
+        verifierRewards.claimVerifierReward(5);
+    }
+
+    function test_dewhitelistedVerifierStillClaimsPastEpochRewards() public {
+        // Pins current behavior: the whitelist gates ATTESTING, not claiming.
+        // Credits already earned in a finalized epoch stay claimable after
+        // the verifier is removed from the whitelist.
+        _credit(verifierA, 1);
+        _warpGateEpoch(6);
+        verifierRegistry.setVerifier(verifierA, false);
+
+        uint256 budget = verifierRewards.verifierEpochBudget(5);
+        vm.prank(verifierA);
+        verifierRewards.claimVerifierReward(5);
+        assertEq(token.balanceOf(verifierA), budget);
+    }
+
+    function test_controllerFlipStrandsUnclaimedRewards() public {
+        // Pins current behavior: rotating the verification bucket controller
+        // deletes THIS controller's minter binding in the gate, stranding
+        // every reward not yet claimed through it (the deploy script warns
+        // about exactly this).
+        _credit(verifierA, 1);
+        _credit(verifierB, 1);
+        _warpGateEpoch(6);
+
+        vm.prank(verifierA);
+        verifierRewards.claimVerifierReward(5); // freezes a nonzero budget
+
+        AntseedVerifierRewards replacement =
+            new AntseedVerifierRewards(address(gate), address(verifierRegistry));
+        gate.setMinterController(VERIFICATION_MINTER_ID, address(replacement));
+
+        // B's share was frozen under the old controller; after the flip the
+        // gate no longer recognizes it as a minter.
+        vm.prank(verifierB);
+        vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
+        verifierRewards.claimVerifierReward(5);
     }
 
     function test_zeroBudgetClaimMarksClaimedWithoutMinting() public {

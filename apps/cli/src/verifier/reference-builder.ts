@@ -70,6 +70,10 @@ export interface BuildReferenceOptions {
   probeSource?: ProbeSource
   /** Minimum stable probes for a usable reference. Default MIN_REFERENCE_PROBES. */
   minProbes?: number
+  /** Minimum hold-out coverage (parsed/total). Default MIN_SELF_TEST_COVERAGE. */
+  minSelfTestCoverage?: number
+  /** Maximum hold-out error rate (hamming/total). Default MAX_SELF_TEST_ERROR_RATE. */
+  maxSelfTestErrorRate?: number
   /** Injectable for tests. Defaults to global fetch. */
   fetchFn?: typeof fetch
   log?: (message: string) => void
@@ -82,6 +86,18 @@ const DEFAULT_SELF_TEST_TEMPERATURE = 0.7
 
 /** Minimum stable probes for a usable reference; below this, enrollment fails. */
 export const MIN_REFERENCE_PROBES = 24
+
+/**
+ * Hold-out quality gate. A reference whose independent hold-out pass barely
+ * parses (low coverage) or barely matches its own certified consensus (high
+ * error rate) would still be persisted and drive verdicts — including
+ * single-seller mode, where it is the only ground truth. `computeKbfVerdict`
+ * derives the honest-mismatch bound p₀ from the self-test, so a degenerate
+ * self-test (coverage 0, error rate 1) makes every verdict vacuous. Reject at
+ * enrollment instead.
+ */
+export const MIN_SELF_TEST_COVERAGE = 0.8
+export const MAX_SELF_TEST_ERROR_RATE = 0.35
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: unknown } }>
@@ -160,6 +176,8 @@ export async function buildKbfReference(
     selfTestTemperature = DEFAULT_SELF_TEST_TEMPERATURE,
     probeSource,
     minProbes = MIN_REFERENCE_PROBES,
+    minSelfTestCoverage = MIN_SELF_TEST_COVERAGE,
+    maxSelfTestErrorRate = MAX_SELF_TEST_ERROR_RATE,
     fetchFn = fetch,
     log = () => {},
   } = options
@@ -217,6 +235,22 @@ export async function buildKbfReference(
     errorRate: total > 0 ? hamming / total : 0,
   }
   log(`Self-test: ${hamming}/${total} mismatches (coverage ${(selfTest.coverage * 100).toFixed(1)}%)`)
+  // Quality gate: a reference that cannot reproduce itself must never be
+  // persisted — it would certify verdicts its own hold-out pass disowns.
+  if (selfTest.coverage < minSelfTestCoverage) {
+    throw new Error(
+      `buildKbfReference: hold-out coverage ${(selfTest.coverage * 100).toFixed(1)}% ` +
+        `< required ${(minSelfTestCoverage * 100).toFixed(1)}%; ` +
+        'the upstream endpoint may be unreliable for this model',
+    )
+  }
+  if (selfTest.errorRate > maxSelfTestErrorRate) {
+    throw new Error(
+      `buildKbfReference: hold-out error rate ${(selfTest.errorRate * 100).toFixed(1)}% ` +
+        `> allowed ${(maxSelfTestErrorRate * 100).toFixed(1)}%; ` +
+        'the upstream endpoint may be unreliable for this model',
+    )
+  }
 
   const serviceAliases = [...new Set([service, model, ...aliases].map((s) => s.trim().toLowerCase()))]
   const reference: FingerprintReference = {

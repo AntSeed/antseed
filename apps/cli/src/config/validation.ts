@@ -347,6 +347,16 @@ function validateVerifierConfig(
   ) {
     errors.push(`${path}.probeRotationHistory must be an integer >= 0`);
   }
+  const dirKeys: Array<[string, unknown]> = [
+    ['referencesDir', verifier.referencesDir],
+    ['evidenceDir', verifier.evidenceDir],
+    ['probeLogDir', verifier.probeLogDir],
+  ];
+  for (const [key, value] of dirKeys) {
+    if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
+      errors.push(`${path}.${key} must be a non-empty string when provided`);
+    }
+  }
   if (verifier.upstream !== undefined) {
     const upstream = verifier.upstream;
     if (!upstream || typeof upstream !== 'object' || Array.isArray(upstream)) {
@@ -360,6 +370,17 @@ function validateVerifierConfig(
       }
       if (upstream.apiKeyEnv !== undefined && typeof upstream.apiKeyEnv !== 'string') {
         errors.push(`${path}.upstream.apiKeyEnv must be a string when provided`);
+      }
+      if (upstream.modelMap !== undefined) {
+        if (!upstream.modelMap || typeof upstream.modelMap !== 'object' || Array.isArray(upstream.modelMap)) {
+          errors.push(`${path}.upstream.modelMap must be an object when provided`);
+        } else {
+          for (const [service, model] of Object.entries(upstream.modelMap)) {
+            if (typeof model !== 'string' || model.trim().length === 0) {
+              errors.push(`${path}.upstream.modelMap["${service}"] must be a non-empty string`);
+            }
+          }
+        }
       }
     }
   }

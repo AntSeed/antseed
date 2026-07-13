@@ -26,6 +26,7 @@ import {
 import { probeSeller } from './probing.js'
 import type { SellerProbeRun } from './probing.js'
 import { loadUsedProbeIds, recordUsedProbeIds } from './probe-log.js'
+import { safeServiceSlug } from './slug.js'
 
 export type ProbeSourceKind = 'compositional' | 'bank'
 
@@ -44,6 +45,13 @@ export type ProbeExecutor = (
 
 export interface AuditRunnerOptions {
   probesPerAudit: number
+  /**
+   * On-chain minimum probe count (AntseedVerifierRegistry.minProbeCount).
+   * An audit whose effective probe count would fall below it is skipped
+   * BEFORE committing or probing — the contract would reject every
+   * attestation with ProbeCountTooLow after all probes were already paid for.
+   */
+  minProbeCount: number
   cohortMinSize: number
   cohortMaxSize: number
   stalenessWindowSecs: number
@@ -66,6 +74,15 @@ export interface AuditRunnerOptions {
    */
   probeRotationHistory: number
   /**
+   * Original advertised spelling sent as the wire model id. Sellers match the
+   * body's model field case-sensitively, so probing `Qwen/Qwen3-32B` as
+   * `qwen/qwen3-32b` 404s forever. Defaults to `service` (the normalized key,
+   * used for grouping/config/hash purposes only).
+   */
+  advertisedService?: string
+  /** Per-peer advertised spelling override (peerId → exact spelling). */
+  advertisedByPeer?: ReadonlyMap<string, string>
+  /**
    * Overrides how probes reach the seller. Absent: direct probing from this
    * node's own (verifier-linked, thus classifiable) buyer identity.
    */
@@ -82,6 +99,13 @@ export interface SellerAuditOutcome {
   referenceVerdict?: FingerprintVerdict
   fullyAuthenticated: boolean
   attested: boolean
+  /**
+   * True when the on-chain attestation was actually CREDITED (moved
+   * lastCreditedAt / epochCredits). The contract records attestations as
+   * uncredited under its cooldown or per-epoch cap, so tx success alone must
+   * not count against the audit budget.
+   */
+  credited: boolean
   attestationTx?: string
 }
 
@@ -144,11 +168,28 @@ function combineVerdicts(
   return cohortVerdict
 }
 
+/** All-null placeholder run for a seller whose probe execution itself failed. */
+function failedRun(peer: PeerInfo, probeCount: number, error: string): SellerProbeRun {
+  return {
+    peerId: peer.peerId,
+    agentId: peer.onChainAgentId,
+    answers: new Array<number | null>(probeCount).fill(null),
+    requestIds: [],
+    responseAuths: [],
+    exchanges: [],
+    fullyAuthenticated: false,
+    errors: [error],
+  }
+}
+
 /**
  * Run one cohort audit round for a service:
  * commit probe set on-chain → probe every cohort member with identical
  * batches → cohort-consensus verdicts (+ optional KBF reference verdicts) →
  * write the evidence bundle → attest each seller on-chain.
+ *
+ * Returns null when the audit is skipped before any money moves (probe pool
+ * too small for the on-chain minProbeCount).
  */
 export async function runCohortAudit(
   node: AntseedNode,
@@ -158,8 +199,12 @@ export async function runCohortAudit(
   cohort: PeerInfo[],
   reference: FingerprintReference | undefined,
   options: AuditRunnerOptions,
-): Promise<CohortAuditResult> {
+): Promise<CohortAuditResult | null> {
   const { log, warn } = options
+
+  // Fail fast on hostile service names (e.g. "..") BEFORE any on-chain
+  // commit or probe spend — the slug builds evidence/rotation-log paths.
+  const serviceSlug = safeServiceSlug(service)
 
   // Choose the probe origin. A reference that matches the service is scored
   // against its certified answers (reference mode); otherwise draw from a
@@ -179,15 +224,43 @@ export async function runCohortAudit(
     ? await loadUsedProbeIds(options.probeLogDir, service)
     : new Set<string>()
 
-  // Never ask for more probes than the live pool can supply after exclusions;
-  // shrink the count rather than throwing on a well-rotated small pool.
-  const available = source.size - exclude.size
-  const count = Math.max(1, Math.min(options.probesPerAudit, available))
+  // Never ask for more probes than the live pool can supply. When rotation
+  // has exhausted the pool, expire the OLDEST exclusions (an explicit new
+  // rotation cycle) instead of forcing a positive count against an empty
+  // pool — generateProbeSet would throw and permanently kill this service's
+  // audits. loadUsedProbeIds preserves file order, so Set iteration order is
+  // oldest-first.
+  const targetCount = Math.min(options.probesPerAudit, source.size)
+  if (source.size - exclude.size < targetCount) {
+    const toExpire = targetCount - (source.size - exclude.size)
+    let expired = 0
+    for (const id of exclude) {
+      if (expired >= toExpire) break
+      exclude.delete(id)
+      expired += 1
+    }
+    warn(
+      `${service}: probe pool for source ${source.id} exhausted by rotation; ` +
+        `expired ${expired} oldest exclusion(s) to start a new rotation cycle`,
+    )
+  }
+  const count = Math.min(options.probesPerAudit, source.size - exclude.size)
   if (count < options.probesPerAudit) {
     warn(
-      `${service}: probe pool for source ${source.id} down to ${available} after rotation; ` +
+      `${service}: probe pool for source ${source.id} down to ${source.size - exclude.size}; ` +
         `auditing with ${count} probes this round`,
     )
+  }
+
+  // The contract rejects attestations below minProbeCount — skip BEFORE
+  // committing or sending a single paid probe. (Also skips a fully empty
+  // pool: a positive count is never forced against one.)
+  if (count < Math.max(1, options.minProbeCount)) {
+    warn(
+      `${service}: effective probe count ${count} < on-chain minProbeCount ${options.minProbeCount}; ` +
+        'skipping audit (no commit, no probes)',
+    )
+    return null
   }
 
   // Fresh private probe set per round. The seed is random — determinism is
@@ -202,16 +275,6 @@ export async function runCohortAudit(
   })
   const probeCommitment = computeProbeCommitment(probeSet)
 
-  if (rotationEnabled) {
-    await recordUsedProbeIds(
-      options.probeLogDir,
-      service,
-      probeSet.probes.map((p) => p.id),
-      options.probeRotationHistory,
-      new Date().toISOString(),
-    ).catch((err) => warn(`probe rotation log write failed for ${service}: ${(err as Error).message}`))
-  }
-
   // Commit BEFORE any probe leaves this machine. The contract rejects
   // attestations whose commitment is not strictly older than the submission,
   // which is what makes fabricated-after-the-fact results detectable.
@@ -223,16 +286,44 @@ export async function runCohortAudit(
       run: await probeSeller(node, target, svc, probes, maxPerRequest),
     }))
 
-  const runs = []
+  const runs: SellerProbeRun[] = []
   const delegateJobs = new Map<string, number>()
   for (const peer of cohort) {
+    // Wire model id: the exact spelling this peer advertises (sellers match
+    // it case-sensitively); normalized `service` is only a grouping key.
+    const wireService = options.advertisedByPeer?.get(peer.peerId)
+      ?? options.advertisedService
+      ?? service
     log(`Probing ${peer.peerId.slice(0, 10)}… (agent ${peer.onChainAgentId}) with ${probeSet.probes.length} probes`)
-    const { run, jobsByDelegate } = await execute(peer, service, probeSet, options.maxProbesPerRequest)
-    for (const error of run.errors) warn(`  ${peer.peerId.slice(0, 10)}…: ${error}`)
-    for (const [delegatePeerId, jobs] of jobsByDelegate ?? []) {
-      delegateJobs.set(delegatePeerId, (delegateJobs.get(delegatePeerId) ?? 0) + jobs)
+    // Per-seller error boundary: one seller's probe path blowing up (e.g.
+    // the last delegate disconnecting mid-audit) must not discard the whole
+    // committed, partially-paid cohort audit.
+    let run: SellerProbeRun
+    try {
+      const outcome = await execute(peer, wireService, probeSet, options.maxProbesPerRequest)
+      run = outcome.run
+      for (const [delegatePeerId, jobs] of outcome.jobsByDelegate ?? []) {
+        delegateJobs.set(delegatePeerId, (delegateJobs.get(delegatePeerId) ?? 0) + jobs)
+      }
+    } catch (err) {
+      warn(`  ${peer.peerId.slice(0, 10)}…: probe execution failed: ${(err as Error).message}`)
+      run = failedRun(peer, probeSet.probes.length, `probe execution failed: ${(err as Error).message}`)
     }
+    for (const error of run.errors) warn(`  ${peer.peerId.slice(0, 10)}…: ${error}`)
     runs.push(run)
+  }
+
+  // Record probe reveals only AFTER probes were actually sent. Recording
+  // before the on-chain commit burned never-revealed probes into the
+  // rotation log whenever the commit (or anything before dispatch) aborted.
+  if (rotationEnabled) {
+    await recordUsedProbeIds(
+      options.probeLogDir,
+      service,
+      probeSet.probes.map((p) => p.id),
+      options.probeRotationHistory,
+      new Date().toISOString(),
+    ).catch((err) => warn(`probe rotation log write failed for ${service}: ${(err as Error).message}`))
   }
 
   const observations: SellerObservation[] = runs.map((run) => ({
@@ -274,9 +365,13 @@ export async function runCohortAudit(
       ...(referenceVerdict !== undefined ? { referenceVerdict } : {}),
       fullyAuthenticated: run.fullyAuthenticated,
       attested: false,
+      credited: false,
     })
   }
 
+  // Evidence bundle: enough material for a third party to re-verify every
+  // seller signature from the bundle alone — full ResponseAuth payloads plus
+  // the exact request/response bytes their hashes commit to.
   const evidenceBundle = {
     version: 1 as const,
     service,
@@ -289,7 +384,7 @@ export async function runCohortAudit(
         verdict: outcomes[i]!.verdict,
         stats: sellerVerdict.stats,
         fullyAuthenticated: run.fullyAuthenticated,
-        responseAuthSignatures: run.responseAuths.map((auth) => auth?.signature ?? null),
+        exchanges: run.exchanges,
       }
     }),
     cohort: cohortResult,
@@ -297,7 +392,7 @@ export async function runCohortAudit(
   }
   const evidenceHash = computeEvidenceHash(evidenceBundle)
 
-  const evidenceServiceDir = join(options.evidenceDir, service.replace(/[^a-z0-9._-]/gi, '_'))
+  const evidenceServiceDir = join(options.evidenceDir, serviceSlug)
   await mkdir(evidenceServiceDir, { recursive: true })
   const evidencePath = join(evidenceServiceDir, `${Date.now()}-${evidenceHash.slice(2, 14)}.json`)
   await writeFile(evidencePath, JSON.stringify(evidenceBundle, null, 2))
@@ -313,6 +408,16 @@ export async function runCohortAudit(
       warn(`Skipping attestation for agent ${outcome.agentId}: missing verified ResponseAuth on probe traffic`)
       continue
     }
+    // lastCreditedAt is the on-chain credited marker: comparing it around the
+    // submission distinguishes CREDITED attestations from ones the contract
+    // recorded but refused to credit (cooldown, per-epoch cap).
+    let creditedBefore = 0
+    let creditedBeforeKnown = true
+    try {
+      creditedBefore = await registryClient.lastCreditedAt(outcome.agentId, service)
+    } catch {
+      creditedBeforeKnown = false
+    }
     try {
       const tx = await registryClient.submitAttestation(identity.wallet, {
         agentId: outcome.agentId,
@@ -325,7 +430,15 @@ export async function runCohortAudit(
       })
       outcome.attested = true
       outcome.attestationTx = tx
-      log(`Attested agent ${outcome.agentId} ${service}: ${outcome.verdict} (tx ${tx.slice(0, 10)}…)`)
+      try {
+        const creditedAfter = await registryClient.lastCreditedAt(outcome.agentId, service)
+        outcome.credited = creditedBeforeKnown ? creditedAfter > creditedBefore : creditedAfter > 0
+      } catch {
+        // Read failure after a successful submission: assume credited — the
+        // conservative direction for budget accounting (never over-spend).
+        outcome.credited = true
+      }
+      log(`Attested agent ${outcome.agentId} ${service}: ${outcome.verdict}${outcome.credited ? '' : ' (uncredited)'} (tx ${tx.slice(0, 10)}…)`)
     } catch (err) {
       warn(`Attestation failed for agent ${outcome.agentId}: ${(err as Error).message}`)
     }

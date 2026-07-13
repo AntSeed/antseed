@@ -25,7 +25,20 @@ export interface ConnectedDelegate {
 export interface DelegationManagerDeps {
   /** Forwarded to the node's EventEmitter (delegate:connected/disconnected). */
   emit: (event: string, ...args: unknown[]) => void;
+  /**
+   * Host side: maximum delegates this host will register at once. Additional
+   * hellos are rejected with a `delegate_capacity` welcome and their channel
+   * is torn down. Default: DEFAULT_MAX_DELEGATES.
+   */
+  maxDelegates?: number;
 }
+
+/**
+ * Default cap on concurrently registered delegates. Each delegate costs the
+ * host a live connection plus bookkeeping, and an unbounded roster is a
+ * trivial resource-exhaustion vector (any peer can register unauthenticated).
+ */
+export const DEFAULT_MAX_DELEGATES = 64;
 
 /**
  * Probe-delegation state and protocol behavior, kept out of AntseedNode:
@@ -36,11 +49,13 @@ export interface DelegationManagerDeps {
  */
 export class DelegationManager {
   private readonly _deps: DelegationManagerDeps;
+  private readonly _maxDelegates: number;
   private readonly _muxes = new Map<PeerId, DelegationMux>();
   private readonly _delegates = new Map<PeerId, ConnectedDelegate>();
 
   constructor(deps: DelegationManagerDeps) {
     this._deps = deps;
+    this._maxDelegates = Math.max(1, Math.floor(deps.maxDelegates ?? DEFAULT_MAX_DELEGATES));
   }
 
   // ─── Host (verifier) side ─────────────────────────────────────────
@@ -51,20 +66,55 @@ export class DelegationManager {
    * the delegate authenticated with is the buyer address its vouchers will
    * name, and the operator binding is enforced by the contract at claim
    * time. The caller still runs the node's frame wiring for the connection.
+   *
+   * Reconnects replace the previous channel: the stale mux is closed first so
+   * any jobs still pending on it reject promptly instead of dangling until
+   * their timeout. Repeated hellos on the same channel are idempotent — the
+   * roster entry is refreshed and the welcome re-sent, but `delegate:connected`
+   * fires only once per registration.
    */
   registerInboundDelegate(conn: PeerConnection): void {
     const delegatePeerId = conn.remotePeerId;
     debugLog(`[Delegation] Incoming delegate connection from ${delegatePeerId.slice(0, 12)}...`);
 
+    const previous = this._muxes.get(delegatePeerId);
+    if (previous) {
+      debugLog(`[Delegation] Replacing existing delegation channel for ${delegatePeerId.slice(0, 12)}...`);
+      previous.close();
+    }
+
     const mux = new DelegationMux(conn);
     mux.onHello((hello: DelegateHelloPayload) => {
+      // Ignore hellos on a channel that has since been replaced or torn down.
+      if (this._muxes.get(delegatePeerId) !== mux) return;
+
+      const alreadyRegistered = this._delegates.has(delegatePeerId);
+      if (!alreadyRegistered && this._delegates.size >= this._maxDelegates) {
+        debugWarn(
+          `[Delegation] Rejecting delegate ${delegatePeerId.slice(0, 12)}...: `
+          + `roster full (${this._delegates.size}/${this._maxDelegates})`,
+        );
+        try {
+          mux.sendWelcome({ version: 1, accepted: false, reason: 'delegate_capacity' });
+        } catch {
+          // Best-effort: the rejection below tears the channel down regardless.
+        }
+        this._muxes.delete(delegatePeerId);
+        mux.close();
+        return;
+      }
+
       const delegate: ConnectedDelegate = {
         peerId: delegatePeerId,
         maxConcurrentJobs: Math.max(1, Math.floor(hello.maxConcurrentJobs ?? 1)),
-        connectedAt: Date.now(),
+        connectedAt: this._delegates.get(delegatePeerId)?.connectedAt ?? Date.now(),
       };
       this._delegates.set(delegatePeerId, delegate);
       mux.sendWelcome({ version: 1, accepted: true });
+      if (alreadyRegistered) {
+        debugLog(`[Delegation] Delegate hello refreshed: ${delegatePeerId.slice(0, 12)}...`);
+        return;
+      }
       debugLog(`[Delegation] Delegate registered: ${delegatePeerId.slice(0, 12)}...`);
       this._deps.emit('delegate:connected', delegate);
     });
@@ -118,6 +168,16 @@ export class DelegationManager {
    * the verifier issues for carried probes — the caller must verify and
    * persist them (they are the only proof of claimable credits). Resolves
    * with the verifier's welcome.
+   *
+   * Fail-closed: no probe job is executed (and therefore no paid seller
+   * request is made) until the verifier's welcome arrives with
+   * `accepted: true`. Jobs pushed before then are answered with an error
+   * result, and on a rejected or timed-out welcome the channel is torn down
+   * so the verifier cannot keep pushing jobs afterwards.
+   *
+   * The delegate also enforces its own advertised `maxConcurrentJobs` here:
+   * the verifier is the untrusted party, so excess jobs are rejected before
+   * any paid request is issued rather than trusting host-side scheduling.
    */
   async serveProbeJobs(
     verifierPeer: PeerInfo,
@@ -125,22 +185,58 @@ export class DelegationManager {
     hello: Omit<DelegateHelloPayload, 'version'>,
     handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>>,
     onVoucher?: (voucher: DelegateVoucherPayload) => void | Promise<void>,
+    opts?: { welcomeTimeoutMs?: number },
   ): Promise<{ accepted: boolean; reason?: string }> {
-    let mux = this._muxes.get(verifierPeer.peerId);
-    if (!mux) {
-      mux = new DelegationMux(conn);
-      this._muxes.set(verifierPeer.peerId, mux);
-    }
-    const jobMux = mux;
+    // Always bind a fresh mux to this connection: a stale entry from an
+    // earlier registration may reference a dead connection, and its pending
+    // state should reject promptly.
+    const previous = this._muxes.get(verifierPeer.peerId);
+    if (previous) previous.close();
+    const jobMux = new DelegationMux(conn);
+    this._muxes.set(verifierPeer.peerId, jobMux);
+
+    let acceptedWelcome = false;
+    const maxConcurrentJobs = Math.max(1, Math.floor(hello.maxConcurrentJobs ?? 1));
+    let activeJobs = 0;
+
     if (onVoucher) {
-      jobMux.onVoucher(onVoucher);
+      jobMux.onVoucher(async (voucher) => {
+        if (!acceptedWelcome) {
+          debugWarn('[Delegation] Dropping DelegateVoucher received before an accepted welcome');
+          return;
+        }
+        await onVoucher(voucher);
+      });
     }
+    // The job handler is registered before the hello so there is no window
+    // where a job frame bypasses the gate below; execution is guarded by the
+    // welcome flag, not by handler registration order.
     jobMux.onJob(async (job) => {
+      const rejectJob = (error: string): void => {
+        try {
+          jobMux.sendResult({ version: 1, jobId: job.jobId, status: 'error', error });
+        } catch (err) {
+          debugWarn(`[Delegation] Failed to send probe job rejection for ${job.jobId}: ${err instanceof Error ? err.message : err}`);
+        }
+      };
+      if (!acceptedWelcome) {
+        debugWarn(`[Delegation] Rejecting probe job ${job.jobId}: no accepted welcome from verifier`);
+        rejectJob('not_registered');
+        return;
+      }
+      if (activeJobs >= maxConcurrentJobs) {
+        debugWarn(`[Delegation] Rejecting probe job ${job.jobId}: at capacity (${activeJobs}/${maxConcurrentJobs})`);
+        rejectJob('delegate_at_capacity');
+        return;
+      }
+      activeJobs += 1;
       let result: Omit<ProbeJobResultPayload, 'version' | 'jobId'>;
       try {
         result = await handler(job);
       } catch (err) {
         result = { status: 'error', error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        activeJobs -= 1;
       }
       try {
         jobMux.sendResult({ version: 1, jobId: job.jobId, ...result });
@@ -149,10 +245,31 @@ export class DelegationManager {
       }
     });
 
-    const welcomePromise = jobMux.waitForWelcome();
-    jobMux.sendHello({ version: 1, ...hello });
-    const welcome = await welcomePromise;
-    return { accepted: welcome.accepted, ...(welcome.reason ? { reason: welcome.reason } : {}) };
+    const teardown = (): void => {
+      if (this._muxes.get(verifierPeer.peerId) === jobMux) {
+        this._muxes.delete(verifierPeer.peerId);
+      }
+      jobMux.close();
+    };
+
+    let welcome: { accepted: boolean; reason?: string };
+    try {
+      const welcomePromise = jobMux.waitForWelcome(opts?.welcomeTimeoutMs);
+      jobMux.sendHello({ version: 1, ...hello });
+      welcome = await welcomePromise;
+    } catch (err) {
+      // Welcome timed out (or the channel failed) — fail closed.
+      teardown();
+      throw err;
+    }
+    if (!welcome.accepted) {
+      // Rejected — tear the channel down so the verifier cannot push jobs
+      // to a delegate it claimed not to want.
+      teardown();
+      return { accepted: false, ...(welcome.reason ? { reason: welcome.reason } : {}) };
+    }
+    acceptedWelcome = true;
+    return { accepted: true };
   }
 
   // ─── Plumbing (called from the node's connection wiring) ─────────

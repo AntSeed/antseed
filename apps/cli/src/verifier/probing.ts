@@ -1,10 +1,33 @@
 import { randomUUID } from 'node:crypto'
-import type { AntseedNode, PeerInfo } from '@antseed/node'
+import type { AntseedNode, PeerInfo, ResponseAuthPayload, StoredResponseAuth } from '@antseed/node'
 import type { ProbeSet } from '@antseed/fingerprints'
 import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/fingerprints'
 
 const RESPONSE_AUTH_POLL_INTERVAL_MS = 500
 const RESPONSE_AUTH_POLL_TIMEOUT_MS = 35_000
+
+/**
+ * One complete probe exchange as persisted in evidence bundles: the exact
+ * request/response material needed to recompute the ResponseAuth hashes plus
+ * the full signed payload, so any third party can re-verify the seller
+ * signature from the bundle alone — no daemon state required.
+ */
+export interface ProbeExchangeEvidence {
+  requestId: string
+  request: {
+    method: string
+    path: string
+    headers: Record<string, string>
+    bodyBase64: string
+  }
+  response: {
+    statusCode: number
+    headers: Record<string, string>
+    bodyBase64: string
+  } | null
+  /** Complete signed ResponseAuth payload (null = seller never produced one). */
+  responseAuth: ResponseAuthPayload | null
+}
 
 export interface SellerProbeRun {
   peerId: string
@@ -14,6 +37,8 @@ export interface SellerProbeRun {
   requestIds: string[]
   /** Verified ResponseAuth hashes per request, aligned with requestIds (null = missing/unverified). */
   responseAuths: Array<{ requestHash: string; responseHash: string; signature: string } | null>
+  /** Full re-verifiable exchange evidence, aligned with requestIds. */
+  exchanges: ProbeExchangeEvidence[]
   /** True when every probe request produced a verified ResponseAuth. */
   fullyAuthenticated: boolean
   errors: string[]
@@ -37,20 +62,35 @@ export function extractCompletionText(body: Uint8Array): string | null {
   }
 }
 
+/** Strip local bookkeeping so only the seller-signed payload is persisted. */
+export function toResponseAuthPayload(stored: StoredResponseAuth): ResponseAuthPayload {
+  return {
+    version: stored.version,
+    requestId: stored.requestId,
+    ...(stored.channelId ? { channelId: stored.channelId } : {}),
+    buyerPeerId: stored.buyerPeerId,
+    sellerPeerId: stored.sellerPeerId,
+    advertisedService: stored.advertisedService,
+    provider: stored.provider,
+    statusCode: stored.statusCode,
+    requestHash: stored.requestHash,
+    responseHash: stored.responseHash,
+    responseStartedAt: stored.responseStartedAt,
+    responseCompletedAt: stored.responseCompletedAt,
+    signature: stored.signature,
+  }
+}
+
 async function waitForResponseAuth(
   node: AntseedNode,
   requestId: string,
-): Promise<{ requestHash: string; responseHash: string; signature: string } | null> {
+): Promise<StoredResponseAuth | null> {
   const deadline = Date.now() + RESPONSE_AUTH_POLL_TIMEOUT_MS
   for (;;) {
     const record = node.getResponseAuth(requestId)
     if (record) {
       if (!record.verified) return null
-      return {
-        requestHash: record.requestHash,
-        responseHash: record.responseHash,
-        signature: record.signature,
-      }
+      return record
     }
     if (Date.now() >= deadline) return null
     await new Promise((resolve) => setTimeout(resolve, RESPONSE_AUTH_POLL_INTERVAL_MS))
@@ -79,23 +119,42 @@ export async function probeSeller(
   const answers: Array<number | null> = new Array(probeSet.probes.length).fill(null)
   const requestIds: string[] = []
   const responseAuths: SellerProbeRun['responseAuths'] = []
+  const exchanges: ProbeExchangeEvidence[] = []
   const errors: string[] = []
 
   const plans = buildStealthChatRequests(service, probeSet, { maxProbesPerRequest })
 
   for (const plan of plans) {
     const requestId = randomUUID()
+    const bodyBytes = new TextEncoder().encode(JSON.stringify(plan.body))
     const req = {
       requestId,
       method: 'POST',
       path: '/v1/chat/completions',
       headers: { 'content-type': 'application/json' },
-      body: new TextEncoder().encode(JSON.stringify(plan.body)),
+      body: bodyBytes,
+    }
+    const exchange: ProbeExchangeEvidence = {
+      requestId,
+      request: {
+        method: req.method,
+        path: req.path,
+        headers: { ...req.headers },
+        bodyBase64: Buffer.from(bodyBytes).toString('base64'),
+      },
+      response: null,
+      responseAuth: null,
     }
 
     requestIds.push(requestId)
+    exchanges.push(exchange)
     try {
       const response = await node.sendRequest(peer, req)
+      exchange.response = {
+        statusCode: response.statusCode,
+        headers: { ...response.headers },
+        bodyBase64: Buffer.from(response.body).toString('base64'),
+      }
       if (response.statusCode !== 200) {
         errors.push(`request ${requestId.slice(0, 8)}: HTTP ${response.statusCode}`)
         responseAuths.push(null)
@@ -110,7 +169,17 @@ export async function probeSeller(
           answers[probeIndex] = planAnswers[i] ?? null
         })
       }
-      responseAuths.push(await waitForResponseAuth(node, requestId))
+      const stored = await waitForResponseAuth(node, requestId)
+      if (stored) {
+        exchange.responseAuth = toResponseAuthPayload(stored)
+        responseAuths.push({
+          requestHash: stored.requestHash,
+          responseHash: stored.responseHash,
+          signature: stored.signature,
+        })
+      } else {
+        responseAuths.push(null)
+      }
     } catch (err) {
       errors.push(`request ${requestId.slice(0, 8)}: ${(err as Error).message}`)
       responseAuths.push(null)
@@ -123,6 +192,7 @@ export async function probeSeller(
     answers,
     requestIds,
     responseAuths,
+    exchanges,
     fullyAuthenticated: responseAuths.length > 0 && responseAuths.every((auth) => auth !== null),
     errors,
   }
