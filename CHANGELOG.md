@@ -54,6 +54,8 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed Desktop Discover overflow tag tooltips so the `+N` category indicator works on service cards in the first row.
 - Fixed `antseed seller emissions claim` so it only checks and claims seller rewards, leaving buyer rewards to the buyer command.
 - Fixed buyer proxy protocol transforms so requests routed to OpenAI Responses always set upstream `stream: true` without forcing non-stream clients to receive SSE.
+- Fixed API adapter cache-token accounting so Anthropic cache reads and OpenAI cached token details stay separate from fresh input tokens across response and streaming transforms.
+- Fixed API adapter request transforms to propagate a per-session `prompt_cache_key` (derived from Anthropic `metadata.user_id`) to OpenAI Responses upstreams, improving prompt cache hit rates for cross-protocol buyers.
 
 ## 2026-06-15 — Buyer peer failure accounting and desktop stream responsiveness
 

@@ -69,6 +69,23 @@ describe('extractUsage', () => {
     });
   });
 
+  it('counts Anthropic cache creation tokens as fresh input', () => {
+    const result = extractUsage({
+      usage: {
+        input_tokens: 150,
+        cache_creation_input_tokens: 50,
+        cache_read_input_tokens: 600,
+        output_tokens: 75,
+      },
+    });
+    expect(result).toEqual({
+      inputTokens: 800,
+      outputTokens: 75,
+      freshInputTokens: 200,
+      cachedInputTokens: 600,
+    });
+  });
+
   it('OpenAI cached tokens never produce negative freshInputTokens', () => {
     // Edge case: cached_tokens > prompt_tokens (shouldn't happen but be safe)
     const result = extractUsage({
