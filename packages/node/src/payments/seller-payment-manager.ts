@@ -691,7 +691,8 @@ export class SellerPaymentManager {
 
   private _metadataMatchesHash(payload: SpendingAuthPayload): boolean {
     try {
-      return keccak256(payload.metadata).toLowerCase() === payload.metadataHash.toLowerCase();
+      const metadata = payload.metadata || encodeMetadata(ZERO_METADATA);
+      return keccak256(metadata).toLowerCase() === payload.metadataHash.toLowerCase();
     } catch (err) {
       debugWarn(`[SellerPayment] Invalid metadata payload: ${err instanceof Error ? err.message : err}`);
       return false;

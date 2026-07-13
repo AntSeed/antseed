@@ -191,6 +191,21 @@ describe('SellerPaymentManager', () => {
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
+  it('accepts first reserve with zero metadata', async () => {
+    const channelId = makeChannelId(24);
+
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    payload.metadata = encodeMetadata(ZERO_METADATA);
+    payload.metadataHash = ZERO_METADATA_HASH;
+
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+
+    expect(result).toBe('reserved');
+    expect(manager.channelsClient.reserve).toHaveBeenCalledOnce();
+    expect(mux.sentAuthAcks.length).toBe(1);
+    expect(store.getChannel(channelId)!.latestMetadata).toBe(encodeMetadata(ZERO_METADATA));
+  });
+
   it('rejects SpendingAuth when raw metadata does not match signed metadataHash', async () => {
     const channelId = makeChannelId(22);
 
@@ -207,6 +222,24 @@ describe('SellerPaymentManager', () => {
       cumulativeOutputTokens: 50n,
       cumulativeRequestCount: 0n,
     });
+
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+
+    expect(result).toBe('rejected');
+    expect(manager.getAcceptedCumulative(channelId)).toBe(0n);
+    expect(store.getChannel(channelId)!.latestMetadata).toBe(reservePayload.metadata);
+  });
+
+  it('rejects SpendingAuth when raw metadata is malformed non-hex', async () => {
+    const channelId = makeChannelId(25);
+
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+    });
+    payload.metadata = 'not-hex';
 
     const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
@@ -735,26 +768,37 @@ describe('SellerPaymentManager', () => {
     expect(metadata.startsWith('0x')).toBe(true);
   });
 
-  it('test_onBuyerDisconnect_close_empty_metadata: rejects invalid metadata before it can be settled', async () => {
+  it('test_onBuyerDisconnect_close_empty_metadata: normalizes empty zero-metadata auth before settling', async () => {
     const channelId = makeChannelId(11);
 
     // Reserve
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
 
-    // Mutate metadata to empty string (simulates old/malformed buyer payload)
+    // Empty metadata is accepted only when paired with the zero metadata hash;
+    // settle params mirror the contract-facing fallback to encoded zero metadata.
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
     payload2.metadata = '';
+    payload2.metadataHash = ZERO_METADATA_HASH;
+    payload2.spendingAuthSig = await signSpendingAuth(buyerIdentity.wallet, makeChannelsDomain(CHAIN_ID, CONTRACT_ADDR), {
+      channelId,
+      cumulativeAmount: 200_000n,
+      metadataHash: ZERO_METADATA_HASH,
+    });
     const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
 
-    expect(result).toBe('rejected');
-    expect(manager.getAcceptedCumulative(channelId)).toBe(0n);
+    expect(result).toBe('accepted');
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
 
-    // No accepted spend should exist, so disconnect preserves the channel rather
-    // than trying to settle with metadata that the contract would reject.
+    manager.recordSpend(channelId, 50_000n);
     manager.onBuyerDisconnect(buyerIdentity.peerId);
 
-    expect(manager.channelsClient.close).not.toHaveBeenCalled();
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(closeArgs[1]).toBe(channelId);
+    expect(closeArgs[2]).toBe(200_000n);
+    expect(closeArgs[3]).toBe(encodeMetadata(ZERO_METADATA));
+    expect(closeArgs[4]).toBe(payload2.spendingAuthSig);
   });
 
   it('settleSession suppresses duplicate in-flight close attempts for the same channel', async () => {
