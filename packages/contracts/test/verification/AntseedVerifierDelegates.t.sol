@@ -17,6 +17,17 @@ import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 ///         Delegates are the organic buyer peers that carry probe traffic for
 ///         verifiers; a verifier signs an EIP-712 DelegateVoucher naming the
 ///         buyer, and the buyer's deposits operator claims it on-chain.
+/// @dev Stand-in for `registry.emissions()` pinned at a fixed epoch: models
+///      a registry epoch clock lagging the gate's, so delegate credits can
+///      land in an epoch the gate already finalized.
+contract MockEpochClock {
+    uint256 public currentEpoch;
+
+    function setCurrentEpoch(uint256 epoch) external {
+        currentEpoch = epoch;
+    }
+}
+
 contract AntseedVerifierDelegatesTest is Test {
     ANTSToken token;
     AntseedRegistryV2 registry;
@@ -308,6 +319,26 @@ contract AntseedVerifierDelegatesTest is Test {
         verifierRegistry.claimDelegateCredits(zeroCredits, _sign(verifierAKey, zeroCredits));
     }
 
+    function test_claimRejectsSinceDewhitelistedVerifier() public {
+        // Pins current behavior: the signer's whitelist standing is checked
+        // at CLAIM time, so a voucher from a since-de-whitelisted verifier is
+        // unclaimable even though it was signed while approved.
+        bytes32 commitment = _attest(verifierA);
+        IAntseedVerifierRegistry.DelegateVoucher memory v = _voucher(buyerX, commitment, 1);
+        bytes memory sig = _sign(verifierAKey, v);
+
+        verifierRegistry.setVerifier(verifierA, false);
+        vm.prank(operatorX);
+        vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
+        verifierRegistry.claimDelegateCredits(v, sig);
+
+        // Re-approving restores claimability — the voucher itself is intact.
+        verifierRegistry.setVerifier(verifierA, true);
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(v, sig);
+        assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 1);
+    }
+
     function test_claimRejectsSelfDelegate() public {
         // Verifier "carrying" its own probes: buyer == verifier.
         deposits.setOperator(verifierA, operatorX);
@@ -542,6 +573,35 @@ contract AntseedVerifierDelegatesTest is Test {
         vm.prank(operatorX);
         verifierRewards.claimDelegateReward(5);
         assertEq(token.balanceOf(operatorX), delegatePool);
+    }
+
+    function test_lateDelegateCreditsAfterFreezeAreUnclaimable() public {
+        // Epoch 5 freezes with verifier credits but NO delegate credits: the
+        // delegate pool and delegate-credit total both freeze at zero.
+        bytes32 commitment = _attest(verifierA);
+        _warpGateEpoch(6);
+        vm.prank(verifierA);
+        verifierRewards.claimVerifierReward(5);
+        assertEq(verifierRewards.delegateEpochPool(5), 0);
+        assertEq(verifierRewards.delegateEpochTotalCredits(5), 0);
+
+        // A lagging registry epoch clock lands delegate credits in the
+        // already frozen epoch 5.
+        MockEpochClock laggingClock = new MockEpochClock();
+        laggingClock.setCurrentEpoch(5);
+        registry.setEmissions(address(laggingClock));
+        IAntseedVerifierRegistry.DelegateVoucher memory v = _voucher(buyerX, commitment, 2);
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(v, _sign(verifierAKey, v));
+        assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 2);
+        assertEq(verifierRewards.delegateEpochTotalCredits(5), 0, "frozen total must not move");
+
+        // Outside the frozen claim set: clean NothingToClaim, not a division
+        // panic against the zero frozen total.
+        assertEq(verifierRewards.pendingDelegateReward(5, operatorX), 0);
+        vm.prank(operatorX);
+        vm.expectRevert(AntseedVerifierRewards.NothingToClaim.selector);
+        verifierRewards.claimDelegateReward(5);
     }
 
     function test_remainderSettlesOnlyVerifierPool() public {

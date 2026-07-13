@@ -24,6 +24,22 @@ const MAX_JOB_BODY_BYTES = 256 * 1024
 const MAX_JOB_TIMEOUT_MS = 120_000
 const RESPONSE_AUTH_POLL_INTERVAL_MS = 500
 const RESPONSE_AUTH_POLL_TIMEOUT_MS = 35_000
+/** Largest completion budget a probe job may request on this buyer's dime. */
+const MAX_JOB_MAX_TOKENS = 4_096
+/** Largest seller response relayed back to the verifier. */
+const MAX_JOB_RESPONSE_BYTES = 2 * 1024 * 1024
+/**
+ * How long a positive on-chain approval is trusted before re-checking. A
+ * revoked verifier must stop receiving paid jobs within this window instead
+ * of dispatching them indefinitely on a registration-time check.
+ */
+const DEFAULT_APPROVAL_TTL_MS = 5 * 60 * 1000
+/**
+ * How long a rejected verifier stays blacklisted before re-evaluation. A
+ * transient rejection (e.g. registration hiccup) must not permanently
+ * blacklist the verifier until restart.
+ */
+const DEFAULT_REJECTED_TTL_MS = 15 * 60 * 1000
 /**
  * Headers a probe request may carry. The request is relayed verbatim on this
  * buyer's identity and dime — anything beyond plain JSON chat metadata (e.g.
@@ -35,7 +51,8 @@ export interface DelegateWorkerOptions {
   node: AntseedNode
   /**
    * On-chain whitelist check. Serving an unapproved "verifier" would let
-   * anyone use this buyer as a free request proxy — mandatory.
+   * anyone use this buyer as a free request proxy — mandatory, and re-checked
+   * on a short TTL while serving (approval is revocable).
    */
   isApprovedVerifier: (address: string) => Promise<boolean>
   /**
@@ -50,6 +67,10 @@ export interface DelegateWorkerOptions {
   maxConcurrentJobs?: number
   maxJobsPerHour?: number
   discoveryIntervalMs?: number
+  /** Trust window for a cached on-chain approval. Default 5 min. */
+  approvalTtlMs?: number
+  /** How long a rejected verifier stays blacklisted. Default 15 min. */
+  rejectedTtlMs?: number
   log: (message: string) => void
   warn: (message: string) => void
 }
@@ -68,7 +89,7 @@ export interface DelegateWorkerOptions {
  * delegate share of the verification emissions bucket.
  */
 export class DelegateWorker {
-  private readonly _options: Required<Pick<DelegateWorkerOptions, 'maxConcurrentJobs' | 'maxJobsPerHour' | 'discoveryIntervalMs'>> & DelegateWorkerOptions
+  private readonly _options: Required<Pick<DelegateWorkerOptions, 'maxConcurrentJobs' | 'maxJobsPerHour' | 'discoveryIntervalMs' | 'approvalTtlMs' | 'rejectedTtlMs'>> & DelegateWorkerOptions
   private _timer: ReturnType<typeof setInterval> | null = null
   private _stopped = false
   private _scanning = false
@@ -76,14 +97,20 @@ export class DelegateWorker {
   private _jobStartTimes: number[] = []
   /** Verifier peerIds we are currently registered with. */
   private readonly _serving = new Set<PeerId>()
-  /** Verifier peerIds rejected on-chain, so we don't re-check every scan. */
-  private readonly _rejected = new Set<PeerId>()
+  /** Verifier peerIds rejected on-chain, with re-evaluation deadlines. */
+  private readonly _rejectedUntil = new Map<PeerId, number>()
+  /** Last on-chain approval check per verifier address (short TTL). */
+  private readonly _approvalCache = new Map<string, { approved: boolean; checkedAt: number }>()
+  /** Abort controllers of in-flight jobs, aborted on stop(). */
+  private readonly _activeJobAborts = new Set<AbortController>()
 
   constructor(options: DelegateWorkerOptions) {
     this._options = {
       maxConcurrentJobs: options.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS,
       maxJobsPerHour: options.maxJobsPerHour ?? DEFAULT_MAX_JOBS_PER_HOUR,
       discoveryIntervalMs: options.discoveryIntervalMs ?? DEFAULT_DISCOVERY_INTERVAL_MS,
+      approvalTtlMs: options.approvalTtlMs ?? DEFAULT_APPROVAL_TTL_MS,
+      rejectedTtlMs: options.rejectedTtlMs ?? DEFAULT_REJECTED_TTL_MS,
       ...options,
     }
   }
@@ -96,12 +123,25 @@ export class DelegateWorker {
     }, this._options.discoveryIntervalMs)
   }
 
+  /**
+   * Stop serving entirely: no more scans, every in-flight job aborted, all
+   * registrations forgotten, and `_handleJob` fails closed — the underlying
+   * delegation channels belong to the node, so refusing every job is the
+   * fail-closed teardown available at this layer.
+   */
   stop(): void {
     this._stopped = true
     if (this._timer) {
       clearInterval(this._timer)
       this._timer = null
     }
+    for (const controller of this._activeJobAborts) {
+      controller.abort()
+    }
+    this._activeJobAborts.clear()
+    this._serving.clear()
+    this._rejectedUntil.clear()
+    this._approvalCache.clear()
   }
 
   /** Verifier peerIds currently served (registered and connected). */
@@ -122,13 +162,23 @@ export class DelegateWorker {
         }
       }
 
+      // Re-validate approval of verifiers we are already serving: approval is
+      // revocable, and a revoked verifier must stop getting paid jobs.
+      for (const peerId of [...this._serving]) {
+        if (this._stopped) return
+        const approved = await this._checkApproval(peerIdToAddress(peerId))
+        if (approved === false) {
+          this._dropRevokedVerifier(peerId)
+        }
+      }
+
       const peers = await this._options.node.discoverPeers()
       const verifiers = peers.filter((peer) =>
         (peer.capabilities ?? []).includes(CONNECTION_CAPABILITY_PROBE_DELEGATION_V1),
       )
       for (const verifier of verifiers) {
         if (this._stopped) return
-        if (this._serving.has(verifier.peerId) || this._rejected.has(verifier.peerId)) continue
+        if (this._serving.has(verifier.peerId) || this._isRejected(verifier.peerId)) continue
         await this._register(verifier)
       }
     } catch (err) {
@@ -138,20 +188,57 @@ export class DelegateWorker {
     }
   }
 
-  private async _register(verifier: PeerInfo): Promise<void> {
-    const address = peerIdToAddress(verifier.peerId)
-    let approved = false
+  private _isRejected(peerId: PeerId): boolean {
+    const until = this._rejectedUntil.get(peerId)
+    if (until === undefined) return false
+    if (Date.now() >= until) {
+      this._rejectedUntil.delete(peerId)
+      return false
+    }
+    return true
+  }
+
+  private _reject(peerId: PeerId): void {
+    this._rejectedUntil.set(peerId, Date.now() + this._options.rejectedTtlMs)
+  }
+
+  private _dropRevokedVerifier(peerId: PeerId): void {
+    this._serving.delete(peerId)
+    this._reject(peerId)
+    this._options.warn(`delegate: verifier ${peerId.slice(0, 12)}… is no longer on-chain approved; refusing further jobs`)
+  }
+
+  /**
+   * TTL-cached on-chain approval. Returns the cached value while fresh;
+   * otherwise re-checks. On a transient RPC failure the last known value is
+   * reused (stale-while-error); with no known value the caller must refuse.
+   */
+  private async _checkApproval(address: string): Promise<boolean | null> {
+    const key = address.toLowerCase()
+    const cached = this._approvalCache.get(key)
+    const now = Date.now()
+    if (cached && now - cached.checkedAt < this._options.approvalTtlMs) {
+      return cached.approved
+    }
     try {
-      approved = await this._options.isApprovedVerifier(address)
+      const approved = await this._options.isApprovedVerifier(address)
+      this._approvalCache.set(key, { approved, checkedAt: now })
+      return approved
     } catch (err) {
       this._options.warn(`delegate: whitelist check failed for ${address.slice(0, 10)}…: ${(err as Error).message}`)
-      return // transient — retry next scan
+      return cached ? cached.approved : null
     }
+  }
+
+  private async _register(verifier: PeerInfo): Promise<void> {
+    const address = peerIdToAddress(verifier.peerId)
+    const approved = await this._checkApproval(address)
+    if (approved === null) return // transient — retry next scan
     if (!approved) {
       // Announcing the capability without on-chain approval is either stale
       // config or someone hunting for free request proxies. Never serve it.
       this._options.warn(`delegate: ${verifier.peerId.slice(0, 12)}… announces delegation but is not an approved verifier; ignoring`)
-      this._rejected.add(verifier.peerId)
+      this._reject(verifier.peerId)
       return
     }
 
@@ -159,12 +246,12 @@ export class DelegateWorker {
       const welcome = await this._options.node.serveProbeJobs(
         verifier,
         { maxConcurrentJobs: this._options.maxConcurrentJobs },
-        (job) => this._handleJob(job),
+        (job) => this._handleJob(verifier, job),
         (voucher) => this._handleVoucher(verifier, voucher),
       )
       if (!welcome.accepted) {
         this._options.warn(`delegate: verifier ${verifier.peerId.slice(0, 12)}… rejected registration: ${welcome.reason ?? 'unknown'}`)
-        this._rejected.add(verifier.peerId)
+        this._reject(verifier.peerId)
         return
       }
       this._serving.add(verifier.peerId)
@@ -224,7 +311,21 @@ export class DelegateWorker {
     }
   }
 
-  private async _handleJob(job: ProbeJobRequestPayload): Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>> {
+  private async _handleJob(verifier: PeerInfo, job: ProbeJobRequestPayload): Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>> {
+    // Fail closed: a stopped worker must not run paid jobs even though the
+    // node-owned delegation channel may still be open.
+    if (this._stopped) return { status: 'error', error: 'stopped' }
+    if (!this._serving.has(verifier.peerId)) {
+      return { status: 'error', error: 'not_serving' }
+    }
+    // Re-validate on-chain approval before spending: approval is revocable,
+    // and registration-time trust must not last forever.
+    const approved = await this._checkApproval(peerIdToAddress(verifier.peerId))
+    if (approved !== true) {
+      if (approved === false) this._dropRevokedVerifier(verifier.peerId)
+      return { status: 'error', error: 'verifier_not_approved' }
+    }
+
     const validationError = validateProbeJob(job, this._options.node.peerId ?? '')
     if (validationError) return { status: 'error', error: validationError }
 
@@ -239,18 +340,38 @@ export class DelegateWorker {
 
     this._jobStartTimes.push(now)
     this._activeJobs += 1
+    // One abort controller spans the whole job (dispatch + ResponseAuth
+    // wait): an abandoned job must release its concurrency slot and stop
+    // paying for a response instead of running to completion.
+    const controller = new AbortController()
+    this._activeJobAborts.add(controller)
+    const timeoutMs = Math.min(Math.max(1, job.timeoutMs), MAX_JOB_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      return await this._executeJob(job)
+      return await this._executeJob(job, controller.signal)
     } finally {
+      clearTimeout(timeout)
+      this._activeJobAborts.delete(controller)
       this._activeJobs -= 1
     }
   }
 
-  private async _executeJob(job: ProbeJobRequestPayload): Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>> {
+  private async _executeJob(
+    job: ProbeJobRequestPayload,
+    signal: AbortSignal,
+  ): Promise<Omit<ProbeJobResultPayload, 'version' | 'jobId'>> {
     const node = this._options.node
     const target = await node.findPeer(job.targetPeerId)
     if (!target) {
       return { status: 'error', error: 'target_not_found' }
+    }
+    // The target must actually advertise the audited service — otherwise a
+    // compromised verifier can bounce arbitrary paid chat through any seller.
+    if (!peerAdvertisesService(target, job.service)) {
+      return { status: 'error', error: 'target_does_not_serve_service' }
+    }
+    if (signal.aborted) {
+      return { status: 'error', error: 'timeout' }
     }
 
     // Relay byte-for-byte: the request hash is what the seller signs, so any
@@ -265,14 +386,18 @@ export class DelegateWorker {
 
     let response
     try {
-      response = await node.sendRequest(target, request)
+      response = await node.sendRequest(target, request, { signal })
     } catch (err) {
       return { status: 'error', error: `request_failed: ${(err as Error).message}` }
+    }
+    if (response.body.byteLength > MAX_JOB_RESPONSE_BYTES) {
+      return { status: 'error', error: 'response_too_large' }
     }
 
     const auth = await this._waitForResponseAuth(
       job.request.requestId,
-      Math.min(Math.max(1, job.timeoutMs), MAX_JOB_TIMEOUT_MS, RESPONSE_AUTH_POLL_TIMEOUT_MS),
+      Math.min(RESPONSE_AUTH_POLL_TIMEOUT_MS, MAX_JOB_TIMEOUT_MS),
+      signal,
     )
 
     return {
@@ -288,27 +413,52 @@ export class DelegateWorker {
     }
   }
 
-  private async _waitForResponseAuth(requestId: string, timeoutMs: number): Promise<StoredResponseAuth | null> {
+  private async _waitForResponseAuth(
+    requestId: string,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<StoredResponseAuth | null> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const record = this._options.node.getResponseAuth(requestId)
       if (record) return record
-      if (Date.now() >= deadline) return null
+      if (signal.aborted || Date.now() >= deadline) return null
       await new Promise((resolve) => setTimeout(resolve, RESPONSE_AUTH_POLL_INTERVAL_MS))
     }
   }
 }
 
+function peerAdvertisesService(peer: PeerInfo, service: string): boolean {
+  const wanted = service.trim().toLowerCase()
+  if (wanted.length === 0) return false
+  for (const announcement of peer.metadata?.providers ?? []) {
+    for (const advertised of announcement.services ?? []) {
+      if (advertised.trim().toLowerCase() === wanted) return true
+    }
+  }
+  for (const entry of Object.values(peer.providerPricing ?? {})) {
+    for (const advertised of Object.keys(entry.services ?? {})) {
+      if (advertised.trim().toLowerCase() === wanted) return true
+    }
+  }
+  return false
+}
+
 /**
- * Refuse anything but a plain JSON chat-completion relay: the job runs on
- * this buyer's identity and deposit, so the surface is kept as narrow as the
- * probes it exists to carry.
+ * Refuse anything but a plain JSON chat-completion relay for the job's own
+ * declared service: the job runs on this buyer's identity and deposit, so the
+ * surface is kept as narrow as the probes it exists to carry. In particular,
+ * the body's model must be exactly the audited service, streaming is refused
+ * (unbounded response), and any explicit completion budget is capped.
  */
 export function validateProbeJob(job: ProbeJobRequestPayload, selfPeerId: string): string | null {
   if (job.request.method !== 'POST') return 'unsupported_method'
   if (job.request.path !== '/v1/chat/completions') return 'unsupported_path'
   if (job.targetPeerId.toLowerCase() === selfPeerId.toLowerCase()) {
     return 'self_target'
+  }
+  if (!Number.isFinite(job.timeoutMs) || job.timeoutMs < 1) {
+    return 'invalid_timeout'
   }
   for (const header of Object.keys(job.request.headers)) {
     if (!ALLOWED_JOB_HEADERS.has(header.toLowerCase())) {
@@ -322,11 +472,25 @@ export function validateProbeJob(job: ProbeJobRequestPayload, selfPeerId: string
     return 'invalid_body_encoding'
   }
   if (body.length === 0 || body.length > MAX_JOB_BODY_BYTES) return 'body_size_out_of_bounds'
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(body.toString('utf8'))
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'body_not_json_object'
+    parsed = JSON.parse(body.toString('utf8'))
   } catch {
     return 'body_not_json_object'
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'body_not_json_object'
+  const chat = parsed as { model?: unknown; stream?: unknown; max_tokens?: unknown }
+  if (typeof chat.model !== 'string' || chat.model.trim() !== job.service.trim()) {
+    return 'model_service_mismatch'
+  }
+  if (chat.stream === true) {
+    return 'streaming_not_allowed'
+  }
+  if (chat.max_tokens !== undefined) {
+    if (typeof chat.max_tokens !== 'number' || !Number.isInteger(chat.max_tokens)
+      || chat.max_tokens < 1 || chat.max_tokens > MAX_JOB_MAX_TOKENS) {
+      return 'max_tokens_out_of_bounds'
+    }
   }
   return null
 }

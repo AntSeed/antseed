@@ -1118,18 +1118,28 @@ bad probes after seeing responses. Use a standard hash commitment scheme
 1. Before sending audit requests, Buyer computes:
 
    ```text
-   probeSetCommitment = sha256(referenceId || verifierKind || orderedProbeIds || nonce)
+   probeSetCommitment = sha256(canonicalJson({ service, probes, nonce }))
    ```
 
+   where `probes` is the ordered array of COMPLETE probe definitions — every
+   scoring-relevant field (`id`, `name`, `domain`, `template`, `consensus`,
+   `range`, `tolerance`, and any extension fields), canonicalized per RFC 8785
+   (JCS). Committing to probe ids alone is insufficient: a committer could
+   observe responses and then tighten `tolerance` or alter
+   `consensus`/`range`/`template` while an ids-only commitment still verified.
    The nonce MUST be 256 bits and derived from fresh CSPRNG entropy (directly,
-   or via an RFC 5869 HKDF expansion of a per-audit random seed).
+   or via an RFC 5869 HKDF expansion of a per-audit random seed). If the same
+   seed is reused with a rotation exclusion set, the nonce derivation MUST
+   also bind that exclusion set, so a rotated regeneration never reuses an
+   already-revealed nonce.
 
 2. Buyer records the commitment locally and MAY submit it to a cheap timestamping
    or dispute-intent path when the audit starts.
 3. Buyer sends the ordered probe set through normal request flow.
-4. After responses, Buyer reveals `orderedProbeIds` and `nonce` inside the
-   evidence exhibit.
-5. Arbiter verifies that the revealed probes match the pre-response commitment.
+4. After responses, Buyer reveals the full ordered probe definitions and
+   `nonce` inside the evidence exhibit.
+5. Arbiter verifies that the revealed probe definitions — content, order, and
+   scoring parameters, not just ids — match the pre-response commitment.
 
 For local routing, commit-reveal is optional. For slashing, it is mandatory.
 

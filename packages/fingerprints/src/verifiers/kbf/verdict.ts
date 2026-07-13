@@ -3,7 +3,7 @@
  * one-sided binomial test on the target's mismatch count.
  */
 
-import type { FingerprintVerdict, MatchVector } from '../../types.js';
+import { isMatchVector, type FingerprintVerdict, type MatchVector } from '../../types.js';
 import { binomialOneSidedPValue, clopperPearsonUpper } from './stats.js';
 
 export interface KbfVerdictInput {
@@ -78,6 +78,15 @@ export function computeKbfVerdict(input: KbfVerdictInput): KbfVerdictResult {
     return {
       verdict: 'UNKNOWN',
       verdictReason: 'empty target match vector',
+      stats: emptyStats,
+    };
+  }
+  // Runtime-validate at the public boundary: an arbitrary truthy entry (2,
+  // true, "1") must not be silently counted as a match.
+  if (!isMatchVector(targetMatchVector)) {
+    return {
+      verdict: 'UNKNOWN',
+      verdictReason: 'match vector entries must be exactly 0, 1, or null',
       stats: emptyStats,
     };
   }

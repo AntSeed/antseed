@@ -145,6 +145,100 @@ test('throws when too few probes are stable', async () => {
   )
 })
 
+test('hold-out error rate at the configured boundary passes; above it rejects', async () => {
+  const makeFetch = (wrongCount: number) => {
+    let selfTestStarted = false
+    const wrongNames = new Set(Object.keys(STABLE_VALUES).slice(0, wrongCount))
+    return fakeUpstream((name, call) => {
+      if (call >= 3) selfTestStarted = true // temps [0, 0.4, 0.8] → 3 consistency calls
+      if (selfTestStarted && wrongNames.has(name)) return STABLE_VALUES[name]! + 500
+      return STABLE_VALUES[name] ?? 1
+    }).fetchFn
+  }
+  const options = {
+    model: 'm',
+    probeSource: staticProbeSource('test/v1', makeProbes().slice(0, 4)),
+    candidateCount: 4,
+    minProbes: 3,
+    maxSelfTestErrorRate: 0.25,
+  }
+
+  // Exactly at the boundary (1/4 = 0.25): accepted.
+  const reference = await buildKbfReference(
+    { baseUrl: 'https://upstream.test/v1' },
+    { ...options, fetchFn: makeFetch(1) },
+  )
+  assert.equal(reference.selfTest.errorRate, 0.25)
+
+  // One past the boundary (2/4 = 0.5): rejected, nothing usable returned.
+  await assert.rejects(
+    buildKbfReference(
+      { baseUrl: 'https://upstream.test/v1' },
+      { ...options, fetchFn: makeFetch(2) },
+    ),
+    /hold-out error rate/,
+  )
+})
+
+test('hold-out coverage at the configured boundary passes; below it rejects', async () => {
+  const makeFetch = (unparseableCount: number) => {
+    let selfTestStarted = false
+    const badNames = new Set(Object.keys(STABLE_VALUES).slice(0, unparseableCount))
+    return fakeUpstream((name, call) => {
+      if (call >= 3) selfTestStarted = true
+      if (selfTestStarted && badNames.has(name)) return 'no idea' // unparseable
+      return STABLE_VALUES[name] ?? 1
+    }).fetchFn
+  }
+  const options = {
+    model: 'm',
+    probeSource: staticProbeSource('test/v1', makeProbes().slice(0, 4)),
+    candidateCount: 4,
+    minProbes: 3,
+    minSelfTestCoverage: 0.75,
+    maxSelfTestErrorRate: 0.25, // unparseable also counts as mismatch
+  }
+
+  // Exactly at the boundary (3/4 parsed = 0.75): accepted.
+  const reference = await buildKbfReference(
+    { baseUrl: 'https://upstream.test/v1' },
+    { ...options, fetchFn: makeFetch(1) },
+  )
+  assert.equal(reference.selfTest.coverage, 0.75)
+
+  // Below the boundary (2/4 = 0.5): rejected — a reference whose hold-out
+  // pass barely parses must never be persisted or drive verdicts.
+  await assert.rejects(
+    buildKbfReference(
+      { baseUrl: 'https://upstream.test/v1' },
+      { ...options, fetchFn: makeFetch(2) },
+    ),
+    /hold-out coverage/,
+  )
+})
+
+test('a degenerate hold-out (coverage 0, error rate 1) is rejected by defaults', async () => {
+  let selfTestStarted = false
+  const { fetchFn } = fakeUpstream((name, call) => {
+    if (call >= 3) selfTestStarted = true
+    if (selfTestStarted) return 'total garbage'
+    return STABLE_VALUES[name] ?? 1
+  })
+  await assert.rejects(
+    buildKbfReference(
+      { baseUrl: 'https://upstream.test/v1' },
+      {
+        model: 'm',
+        probeSource: staticProbeSource('test/v1', makeProbes().slice(0, 4)),
+        candidateCount: 4,
+        minProbes: 3,
+        fetchFn,
+      },
+    ),
+    /hold-out coverage/,
+  )
+})
+
 test('resolveUpstream reads the key from apiKeyEnv and falls back to apiKey', () => {
   process.env['ANTSEED_TEST_UPSTREAM_KEY'] = 'from-env'
   try {

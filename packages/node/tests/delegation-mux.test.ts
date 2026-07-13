@@ -102,6 +102,65 @@ describe('delegation codec', () => {
     expect(() => decodeDelegateVoucher(new TextEncoder().encode('{"version":1,"buyer":"0xabc"}'))).toThrow();
   });
 
+  it('shape-validates voucher hex fields at decode', () => {
+    const voucher = {
+      version: 1 as const,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 7,
+      nonce: '1',
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(130),
+    };
+    const encode = (over: Record<string, unknown>): Uint8Array =>
+      new TextEncoder().encode(JSON.stringify({ ...voucher, ...over }));
+
+    expect(decodeDelegateVoucher(encode({}))).toEqual(voucher);
+    // EIP-2098 compact (64-byte) signatures are accepted too.
+    expect(() => decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(128) }))).not.toThrow();
+
+    expect(() => decodeDelegateVoucher(encode({ registry: '0x' + 'e'.repeat(38) }))).toThrow(/registry/);
+    expect(() => decodeDelegateVoucher(encode({ buyer: 'a'.repeat(42) }))).toThrow(/buyer/);
+    expect(() => decodeDelegateVoucher(encode({ probeCommitment: '0xcafe' }))).toThrow(/probeCommitment/);
+    expect(() => decodeDelegateVoucher(encode({ probeCommitment: '0x' + 'g'.repeat(64) }))).toThrow(/probeCommitment/);
+    expect(() => decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(131) }))).toThrow(/signature/);
+  });
+
+  it('rejects oversize control payloads at decode', () => {
+    const oversize = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 7,
+      nonce: '9'.repeat(17 * 1024),
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(130),
+    }));
+    expect(oversize.length).toBeGreaterThan(16 * 1024);
+    expect(() => decodeDelegateVoucher(oversize)).toThrow(/too large/);
+    expect(() => decodeDelegateHello(oversize)).toThrow(/too large/);
+  });
+
+  it('rejects oversize control payloads at encode (symmetric with decode)', () => {
+    const hugeNonce = '9'.repeat(17 * 1024);
+    expect(() => encodeDelegateVoucher({
+      version: 1,
+      chainId: 8453,
+      registry: '0x' + 'e'.repeat(40),
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 7,
+      nonce: hugeNonce,
+      deadline: 1_800_000_000,
+      signature: '0x' + '5'.repeat(130),
+    })).toThrow(/too large/);
+    expect(() => encodeDelegateHello({ version: 1, maxConcurrentJobs: 1 })).not.toThrow();
+  });
+
   it('claims the 0x90-0x9F range', () => {
     expect(DelegationMux.isDelegationMessage(MessageType.DelegateHello)).toBe(true);
     expect(DelegationMux.isDelegationMessage(MessageType.ProbeJobResult)).toBe(true);
@@ -139,7 +198,7 @@ describe('DelegationMux', () => {
       chainId: 8453,
       registry: '0x' + 'e'.repeat(40),
       buyer: '0x' + 'a'.repeat(40),
-      probeCommitment: '0xcafe',
+      probeCommitment: '0x' + 'ca'.repeat(32),
       credits: 2,
       nonce: '1',
       deadline: 1_800_000_000,
@@ -147,7 +206,7 @@ describe('DelegationMux', () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(received).toEqual(['0xcafe:2']);
+    expect(received).toEqual(['0x' + 'ca'.repeat(32) + ':2']);
   });
 
   it('correlates job results by jobId', async () => {

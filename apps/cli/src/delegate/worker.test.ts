@@ -11,6 +11,7 @@ function job(overrides?: {
   headers?: Record<string, string>
   body?: string | Buffer
   targetPeerId?: string
+  timeoutMs?: number
 }): ProbeJobRequestPayload {
   const body = overrides?.body ?? JSON.stringify({ model: 'kimi-k2', messages: [] })
   return {
@@ -25,7 +26,7 @@ function job(overrides?: {
       headers: overrides?.headers ?? { 'content-type': 'application/json' },
       bodyBase64: Buffer.from(body).toString('base64'),
     },
-    timeoutMs: 30_000,
+    timeoutMs: overrides?.timeoutMs ?? 30_000,
   }
 }
 
@@ -58,4 +59,52 @@ test('bounds the relayed body and requires a JSON object', () => {
   )
   assert.equal(validateProbeJob(job({ body: 'not json' }), SELF), 'body_not_json_object')
   assert.equal(validateProbeJob(job({ body: '[1,2,3]' }), SELF), 'body_not_json_object')
+})
+
+test('the body model must be exactly the audited service', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'gpt-5.5', messages: [] }) }), SELF),
+    'model_service_mismatch',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ messages: [] }) }), SELF),
+    'model_service_mismatch',
+  )
+})
+
+test('streaming jobs are refused (unbounded paid response)', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], stream: true }) }), SELF),
+    'streaming_not_allowed',
+  )
+  // Explicit stream: false is fine.
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], stream: false }) }), SELF),
+    null,
+  )
+})
+
+test('max_tokens is capped when present, optional otherwise', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 4096 }) }), SELF),
+    null,
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 4097 }) }), SELF),
+    'max_tokens_out_of_bounds',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 0 }) }), SELF),
+    'max_tokens_out_of_bounds',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 'lots' }) }), SELF),
+    'max_tokens_out_of_bounds',
+  )
+})
+
+test('rejects non-finite or non-positive timeouts', () => {
+  assert.equal(validateProbeJob(job({ timeoutMs: Number.NaN }), SELF), 'invalid_timeout')
+  assert.equal(validateProbeJob(job({ timeoutMs: 0 }), SELF), 'invalid_timeout')
+  assert.equal(validateProbeJob(job({ timeoutMs: -1 }), SELF), 'invalid_timeout')
 })

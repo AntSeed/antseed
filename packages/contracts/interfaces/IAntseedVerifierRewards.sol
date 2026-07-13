@@ -16,6 +16,8 @@ interface IAntseedVerifierRewards {
     function pendingDelegateReward(uint256 epoch, address delegate) external view returns (uint256);
     function verifierEpochBudget(uint256 epoch) external view returns (uint256);
     function delegateEpochPool(uint256 epoch) external view returns (uint256);
+    function verifierEpochTotalCredits(uint256 epoch) external view returns (uint256);
+    function delegateEpochTotalCredits(uint256 epoch) external view returns (uint256);
     function epochRewardClaimed(uint256 epoch, address verifier) external view returns (bool);
     function epochDelegateRewardClaimed(uint256 epoch, address delegate) external view returns (bool);
     function epochRemainderSettled(uint256 epoch) external view returns (bool);

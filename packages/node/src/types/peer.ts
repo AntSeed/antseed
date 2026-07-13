@@ -150,6 +150,13 @@ export interface PeerModelVerification {
   undeterminedCount: number;
   /** Distinct approved verifiers that attested this (agent, service). */
   distinctVerifierCount: number;
+  /**
+   * Distinct verifiers whose LATEST verdict is DIFF — a standing, retractable
+   * accusation (a verifier retracts by later attesting SAME), unlike the
+   * monotonic historical `diffCount`. This is the field routing decisions
+   * gate on, mirroring the on-chain points penalty.
+   */
+  activeDiffVerifierCount: number;
   /** Latest on-chain verdict code (0 unknown, 1 same, 2 diff, 3 undetermined). */
   lastVerdict: number;
   /**

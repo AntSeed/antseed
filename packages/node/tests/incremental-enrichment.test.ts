@@ -47,6 +47,115 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainReputationScore).toEqual(expect.any(Number));
   });
 
+  it('includes verifier-registry enrichment in the partial-enrichment queue', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = makePeer();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const discovered = vi.fn();
+
+    node.on('peers:discovered', discovered);
+    (node as any)._started = true;
+    (node as any)._stakingClient = {
+      getAgentId: vi.fn().mockResolvedValue(123),
+      getStake: vi.fn().mockResolvedValue(10_000_000n),
+      getStakedAt: vi.fn().mockResolvedValue(nowSec - 86_400),
+    };
+    (node as any)._channelsClient = {
+      getAgentStats: vi.fn().mockResolvedValue({
+        channelCount: 25,
+        ghostCount: 0,
+        totalVolumeUsdc: 50_000_000n,
+        lastSettledAt: nowSec,
+      }),
+    };
+    (node as any)._verifierRegistryClient = {
+      verificationStats: vi.fn(),
+      agentVerificationStats: vi.fn().mockResolvedValue({
+        sameCount: 4,
+        diffCount: 0,
+        undeterminedCount: 0,
+        distinctVerifierCount: 2,
+        lastVerdict: 1,
+        lastVerifier: '0x' + '1'.repeat(40),
+        activeDiffVerifierCount: 0,
+      }),
+    };
+
+    (node as any)._queuePartialPeerEnrichment([peer]);
+    await (node as any)._partialPeerEnrichmentChain;
+
+    expect(discovered).toHaveBeenCalledTimes(1);
+    const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
+    expect(peers[0]?.modelVerification?.['*']?.sameCount).toBe(4);
+    expect(peers[0]?.modelVerification?.['*']?.activeDiffVerifierCount).toBe(0);
+    expect((node as any)._verifierRegistryClient.agentVerificationStats).toHaveBeenCalledWith(123);
+  });
+
+  it('keeps per-service verification stats when the aggregate read fails (and vice versa)', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const serviceStats = {
+      sameCount: 3,
+      diffCount: 1,
+      undeterminedCount: 0,
+      distinctVerifierCount: 2,
+      lastVerdict: 2,
+      lastVerifier: '0x' + '2'.repeat(40),
+      activeDiffVerifierCount: 1,
+    };
+
+    // Aggregate read fails — per-service stats must survive.
+    const peerA = { ...makePeer('a'.repeat(40)), onChainAgentId: 7 };
+    (node as any)._verifierRegistryClient = {
+      verificationStats: vi.fn().mockResolvedValue(serviceStats),
+      agentVerificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
+    };
+    await (node as any)._enrichPeersWithVerification([peerA], 'Kimi-K2');
+    expect(peerA.modelVerification?.['kimi-k2']?.activeDiffVerifierCount).toBe(1);
+    expect(peerA.modelVerification?.['*']).toBeUndefined();
+
+    // Per-service read fails — aggregate stats must survive.
+    const peerB = { ...makePeer('b'.repeat(40)), onChainAgentId: 8 };
+    (node as any)._verifierRegistryClient = {
+      verificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
+      agentVerificationStats: vi.fn().mockResolvedValue(serviceStats),
+    };
+    await (node as any)._enrichPeersWithVerification([peerB], 'kimi-k2');
+    expect(peerB.modelVerification?.['kimi-k2']).toBeUndefined();
+    expect(peerB.modelVerification?.['*']?.sameCount).toBe(3);
+  });
+
+  it('issues the per-service and aggregate verification reads concurrently', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = { ...makePeer(), onChainAgentId: 9 };
+    let resolveService!: (value: unknown) => void;
+    let resolveAggregate!: (value: unknown) => void;
+    const started: string[] = [];
+    const stats = {
+      sameCount: 1, diffCount: 0, undeterminedCount: 0, distinctVerifierCount: 1,
+      lastVerdict: 1, lastVerifier: '0x0', activeDiffVerifierCount: 0,
+    };
+    (node as any)._verifierRegistryClient = {
+      verificationStats: vi.fn(() => {
+        started.push('service');
+        return new Promise((res) => { resolveService = res; });
+      }),
+      agentVerificationStats: vi.fn(() => {
+        started.push('aggregate');
+        return new Promise((res) => { resolveAggregate = res; });
+      }),
+    };
+
+    const done = (node as any)._enrichPeersWithVerification([peer], 'kimi-k2');
+    await Promise.resolve();
+    // Both reads must be in flight before either resolves.
+    expect(started).toEqual(['service', 'aggregate']);
+    resolveService(stats);
+    resolveAggregate(stats);
+    await done;
+    expect(peer.modelVerification?.['kimi-k2']).toBeDefined();
+    expect(peer.modelVerification?.['*']).toBeDefined();
+  });
+
   it('emits external verification results without blocking initial discovery events', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = makePeer();

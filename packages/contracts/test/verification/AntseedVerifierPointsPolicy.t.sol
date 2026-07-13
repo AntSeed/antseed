@@ -34,6 +34,34 @@ contract MockStaking {
     }
 }
 
+/// @dev Permissive fallback: answers EVERY call with success and EMPTY
+///      returndata. This is the shape try/catch cannot survive — the call
+///      "succeeds", so the catch clause never runs, and the caller-side
+///      returndata decode reverts uncaught.
+contract MockPermissiveFallback {
+    fallback() external { }
+}
+
+/// @dev Answers every call with success and returndata shorter than a word.
+contract MockShortReturnFallback {
+    fallback() external {
+        assembly {
+            return(0, 16)
+        }
+    }
+}
+
+/// @dev Answers every call with success and one word of all-ones garbage —
+///      valid length, invalid content for typed decoding (address/uint32).
+contract MockGarbageWordFallback {
+    fallback() external {
+        assembly {
+            mstore(0, not(0))
+            return(0, 32)
+        }
+    }
+}
+
 contract AntseedVerifierPointsPolicyTest is Test {
     AntseedRegistryV2 registry;
     MockERC8004Registry identity;
@@ -209,6 +237,61 @@ contract AntseedVerifierPointsPolicyTest is Test {
         // Both constructor targets without code: never revert, pass through.
         AntseedVerifierPointsPolicy miswired =
             new AntseedVerifierPointsPolicy(address(0xBEEF), address(0xCAFE));
+        (uint256 sellerPoints, uint256 buyerPoints) = miswired.points(CHANNEL_ID, buyer, seller, RAW_POINTS);
+        assertEq(sellerPoints, RAW_POINTS);
+        assertEq(buyerPoints, RAW_POINTS);
+    }
+
+    function test_permissiveFallbackStakingPassesThrough() public {
+        // Staking repointed at a contract WITH code whose permissive fallback
+        // answers getAgentId with success + empty returndata. try/catch would
+        // not catch the resulting decode failure — the raw staticcall path
+        // must swallow it and pass through.
+        _flagAgent(); // would be penalized if the seller were resolvable
+        registry.setStaking(address(new MockPermissiveFallback()));
+        _assertPassThrough(RAW_POINTS);
+    }
+
+    function test_shortReturndataStakingPassesThrough() public {
+        _flagAgent();
+        registry.setStaking(address(new MockShortReturnFallback()));
+        _assertPassThrough(RAW_POINTS);
+    }
+
+    function test_garbageReturndataStakingPassesThrough() public {
+        // getAgentId "returns" 32 bytes of all-ones: decoded as a raw word it
+        // is just an unknown agentId with empty stats — pass through, never
+        // revert.
+        _flagAgent();
+        registry.setStaking(address(new MockGarbageWordFallback()));
+        _assertPassThrough(RAW_POINTS);
+    }
+
+    function test_permissiveFallbackRegistryPassesThrough() public {
+        // registry.staking() itself answered by a permissive fallback.
+        AntseedVerifierPointsPolicy miswired =
+            new AntseedVerifierPointsPolicy(address(new MockPermissiveFallback()), address(verifierRegistry));
+        (uint256 sellerPoints, uint256 buyerPoints) = miswired.points(CHANNEL_ID, buyer, seller, RAW_POINTS);
+        assertEq(sellerPoints, RAW_POINTS);
+        assertEq(buyerPoints, RAW_POINTS);
+    }
+
+    function test_garbageReturndataRegistryPassesThrough() public {
+        // registry.staking() returns garbage: the masked address has no code,
+        // so resolution degrades to pass-through instead of a decode revert.
+        AntseedVerifierPointsPolicy miswired =
+            new AntseedVerifierPointsPolicy(address(new MockGarbageWordFallback()), address(verifierRegistry));
+        (uint256 sellerPoints, uint256 buyerPoints) = miswired.points(CHANNEL_ID, buyer, seller, RAW_POINTS);
+        assertEq(sellerPoints, RAW_POINTS);
+        assertEq(buyerPoints, RAW_POINTS);
+    }
+
+    function test_permissiveFallbackVerifierRegistryPassesThrough() public {
+        // The seller resolves to an agentId, but agentVerificationStats is
+        // answered by a permissive fallback: the struct read fails its
+        // returndata-length check and the policy passes through.
+        AntseedVerifierPointsPolicy miswired =
+            new AntseedVerifierPointsPolicy(address(registry), address(new MockPermissiveFallback()));
         (uint256 sellerPoints, uint256 buyerPoints) = miswired.points(CHANNEL_ID, buyer, seller, RAW_POINTS);
         assertEq(sellerPoints, RAW_POINTS);
         assertEq(buyerPoints, RAW_POINTS);

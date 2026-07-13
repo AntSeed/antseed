@@ -53,7 +53,14 @@ contract DeployVerifierNetwork is Script {
         AntseedEmissionsGate gate = AntseedEmissionsGate(gateAddress);
         require(registryV2.identityRegistry() != address(0), "identity registry not set");
         require(registryV2.emissions() != address(0), "registry emissions not set");
-        require(address(gate.registry()) != address(0), "gate registry not set");
+        // claimDelegateCredits staticcalls registry.deposits() for the buyer's
+        // operator; an unset deposits address makes every claim revert on a
+        // codeless call.
+        require(registryV2.deposits() != address(0), "registry deposits not set");
+        // The gate and the verifier registry MUST share one registry —
+        // mismatched registries silently cross ownership, operator, and
+        // reserve boundaries between two protocol deployments.
+        require(address(gate.registry()) == registryV2Address, "gate registry mismatch");
         (address currentController, uint32 shareBps,) = gate.minters(VERIFICATION_MINTER_ID);
         require(currentController != address(0), "verification bucket not configured");
 
@@ -72,6 +79,18 @@ contract DeployVerifierNetwork is Script {
 
         AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(gateAddress, address(verifierRegistry));
         console.log("VerifierRewards:        ", address(verifierRewards));
+
+        if (currentController != address(verifierRewards)) {
+            console.log("");
+            console.log("!!! WARNING: the verification bucket is currently controlled by");
+            console.log("!!!   ", currentController);
+            console.log("!!! Flipping the controller DELETES that controller's minter binding");
+            console.log("!!! in the gate: every reward not yet claimed through it is STRANDED");
+            console.log("!!! (its gate.claim reverts NotEmissionMinter; untouched epochs freeze");
+            console.log("!!! a zero budget). Settle ALL pending claims and epoch remainders on");
+            console.log("!!! the old controller BEFORE the flip.");
+            console.log("");
+        }
 
         if (setMinterController) {
             gate.setMinterController(VERIFICATION_MINTER_ID, address(verifierRewards));
@@ -103,8 +122,10 @@ contract DeployVerifierNetwork is Script {
         console.log("- Whitelist each approved verifier peer:");
         console.log("  verifierRegistry.setVerifier(<verifier>, true)");
         console.log("- Verifier rewards only accrue from the NEXT finalized epoch after");
-        console.log("  the controller flip; already-frozen epochs stay with the previous");
-        console.log("  controller's accounting.");
+        console.log("  the controller flip. The flip does NOT preserve the previous");
+        console.log("  controller's claims: the gate deletes its minter binding, so any");
+        console.log("  rewards still unclaimed through it become unmintable. Drain the old");
+        console.log("  controller (claims + settleEpochRemainder) before flipping.");
         console.log("- Zero-credit finalized epochs should be settled via");
         console.log("  verifierRewards.settleEpochRemainder(epoch) to route the bucket");
         console.log("  through burn/reserve.");

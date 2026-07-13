@@ -46,6 +46,13 @@ function rel(value: number): ProbeTolerance {
 
 // ---------------------------------------------------------------------------
 // Entity tables (facts are stable; exact values are supplied by the cohort)
+//
+// UNAMBIGUITY REQUIREMENT: every (entity, attribute) pair must have a single
+// widely-cited value within the schema tolerance. If two honest readings
+// differ by more than the tolerance (sidereal vs synodic month, competing
+// river-length surveys), honest sellers split into sub-tolerance camps and the
+// probe either fails to form consensus or falsely flags honest sellers —
+// either drop the entity or widen the tolerance to cover both readings.
 // ---------------------------------------------------------------------------
 
 /** Chemical elements — used for melting/boiling point and atomic number. */
@@ -63,11 +70,16 @@ const ELEMENTS: readonly string[] = [
   'bismuth', 'thorium', 'uranium', 'tantalum', 'hafnium',
 ];
 
-/** Bodies with a well-defined orbital period around their primary. */
+/**
+ * Bodies with a well-defined orbital period around their primary.
+ * "the Moon" is deliberately absent: its sidereal (27.3 d) and synodic
+ * (29.5 d) periods are both honest answers ~8% apart — far beyond the 2%
+ * relative tolerance.
+ */
 const ORBITAL_BODIES: readonly string[] = [
   'Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus',
   'Neptune', 'Pluto', 'Ceres', 'Eris', 'Haumea', 'Makemake', 'Vesta',
-  'Pallas', 'Hygiea', 'the Moon', 'Io', 'Europa', 'Ganymede', 'Callisto',
+  'Pallas', 'Hygiea', 'Charon', 'Io', 'Europa', 'Ganymede', 'Callisto',
   'Titan', 'Enceladus', 'Triton', 'Phobos', 'Deimos', "Halley's comet",
   'comet Encke', 'the dwarf planet Sedna',
 ];
@@ -83,9 +95,14 @@ const MOUNTAINS: readonly string[] = [
   'Mount Rainier', 'Mount Whitney', 'Mount Fuji', 'Mount Etna', 'the Zugspitze',
 ];
 
-/** Rivers with a well-known length (kilometres). */
+/**
+ * Rivers with a well-known length (kilometres).
+ * "Amazon" is deliberately absent: the traditional ~6,400 km and the
+ * Ucayali-source ~6,992 km figures are both honest answers ~9% apart — beyond
+ * the 5% relative tolerance.
+ */
 const RIVERS: readonly string[] = [
-  'Nile', 'Amazon', 'Yangtze', 'Mississippi', 'Yenisei', 'Yellow River',
+  'Nile', 'Loire', 'Yangtze', 'Mississippi', 'Yenisei', 'Yellow River',
   'Ob', 'Parana', 'Congo', 'Amur', 'Lena', 'Mekong', 'Mackenzie', 'Niger',
   'Murray', 'Volga', 'Indus', 'Danube', 'Euphrates', 'Ganges', 'Rio Grande',
   'Colorado River', 'Rhine', 'Seine', 'Thames', 'Po', 'Tigris', 'Columbia River',
@@ -160,7 +177,12 @@ export const COMPOSITIONAL_SCHEMAS: readonly AttributeSchema[] = [
     property: 'total area',
     template: 'The total area of {name} is approximately ___ square kilometers.',
     range: [0, 20_000_000],
-    tolerance: rel(0.03),
+    // Wide on purpose: land-only vs land+water figures are both honest
+    // readings of "area" and differ by up to ~11% for water-rich countries
+    // (Canada, the United States, India, Sweden). 12% covers both camps in one
+    // consensus cluster while still rejecting a substitute that is wrong about
+    // which country is how big.
+    tolerance: rel(0.12),
     entities: COUNTRIES,
   },
 ];

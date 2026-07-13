@@ -31,9 +31,14 @@ import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry
  *         NEVER-REVERT INVARIANT: `points` must not revert on any input.
  *         AntseedUsageAccounting wraps the policy call in try/catch, but a
  *         reverting policy zeroes the whole usage record, so every external
- *         read here is code-size guarded and try/catch wrapped, falling back
- *         to pass-through `(rawPoints, rawPoints)`. This contract holds no
- *         funds and writes no state on the points path.
+ *         read here goes through a raw, code-size-guarded staticcall with an
+ *         explicit returndata-length check, falling back to pass-through
+ *         `(rawPoints, rawPoints)`. Solidity's try/catch does NOT catch
+ *         returndata-decode failures — a target with a permissive
+ *         non-reverting fallback (success, empty returndata) would revert the
+ *         caller's decode uncaught — so try/catch alone cannot uphold the
+ *         invariant. This contract holds no funds and writes no state on the
+ *         points path.
  */
 contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
     // ─── Constants ───────────────────────────────────────────────────
@@ -108,20 +113,17 @@ contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
         uint256 agentId = _resolveAgentId(seller);
         if (agentId == 0) return (sellerPoints, buyerPoints);
 
-        if (address(verifierRegistry).code.length == 0) return (sellerPoints, buyerPoints);
-        try verifierRegistry.agentVerificationStats(agentId) returns (
-            IAntseedVerifierRegistry.ServiceVerificationStats memory stats
-        ) {
-            // Standing, corroborated accusations only: `activeDiffVerifierCount`
-            // tracks distinct verifiers whose latest verdict is DIFF, so the
-            // flag clears when accusers retract — unlike the monotonic
-            // `diffCount`, which would make one false positive permanent.
-            bool diffFlagged = stats.activeDiffVerifierCount >= minDistinctDiffVerifiers;
-            if (diffFlagged) {
-                sellerPoints = _applyKeepBps(rawPoints, BPS_DENOMINATOR - diffPenaltyBps);
-            }
-        } catch {
-            // Misconfigured verifier registry: pass through unchanged.
+        (bool ok, uint256 activeDiffVerifierCount) = _readActiveDiffVerifierCount(agentId);
+        // Misconfigured verifier registry: pass through unchanged.
+        if (!ok) return (sellerPoints, buyerPoints);
+
+        // Standing, corroborated accusations only: `activeDiffVerifierCount`
+        // tracks distinct verifiers whose latest verdict is DIFF, so the
+        // flag clears when accusers retract — unlike the monotonic
+        // `diffCount`, which would make one false positive permanent.
+        bool diffFlagged = activeDiffVerifierCount >= minDistinctDiffVerifiers;
+        if (diffFlagged) {
+            sellerPoints = _applyKeepBps(rawPoints, BPS_DENOMINATOR - diffPenaltyBps);
         }
     }
 
@@ -131,24 +133,58 @@ contract AntseedVerifierPointsPolicy is IAntseedPointsPolicy, Ownable2Step {
 
     /// @dev Resolve `seller` to its staked agentId via `registry.staking()`.
     ///      Returns 0 (pass-through sentinel) on any failure: registry or
-    ///      staking without code, unset staking address, or a reverting
-    ///      `getAgentId`. Code-size checks are required in addition to
-    ///      try/catch — a code-less target returns empty returndata and the
-    ///      resulting decode failure would NOT be caught by the catch clause.
+    ///      staking without code, unset staking address, or a reverting or
+    ///      malformed `getAgentId`. Both hops use `_guardedStaticcall` — the
+    ///      mutable staking pointer especially could be repointed at a
+    ///      contract whose permissive fallback answers every call with empty
+    ///      returndata, which try/catch cannot survive (see the contract
+    ///      natspec).
     function _resolveAgentId(address seller) internal view returns (uint256) {
-        if (address(registry).code.length == 0) return 0;
-        address staking;
-        try registry.staking() returns (address stakingAddress) {
-            staking = stakingAddress;
-        } catch {
-            return 0;
-        }
-        if (staking == address(0) || staking.code.length == 0) return 0;
-        try IAntseedStaking(staking).getAgentId(seller) returns (uint256 agentId) {
-            return agentId;
-        } catch {
-            return 0;
-        }
+        (bool ok, bytes memory data) =
+            _guardedStaticcall(address(registry), abi.encodeCall(IAntseedRegistry.staking, ()), 32);
+        if (!ok) return 0;
+        // Mask to 160 bits instead of abi.decode-ing an address: garbage in
+        // the upper bits must degrade to "not a staking contract" (the
+        // code-size guard on the next hop), never to a decode revert.
+        address staking = address(uint160(abi.decode(data, (uint256))));
+        if (staking == address(0)) return 0;
+
+        (ok, data) = _guardedStaticcall(staking, abi.encodeCall(IAntseedStaking.getAgentId, (seller)), 32);
+        if (!ok) return 0;
+        return abi.decode(data, (uint256));
+    }
+
+    /// @dev Read `agentVerificationStats(agentId).activeDiffVerifierCount`
+    ///      from the verifier registry. The struct ABI-encodes as seven
+    ///      static 32-byte words with the count last; decoding the words as
+    ///      raw uint256 keeps a malformed (but long-enough) response from
+    ///      reverting the way typed decoding of uint32/address fields would.
+    function _readActiveDiffVerifierCount(uint256 agentId) internal view returns (bool ok, uint256 count) {
+        bytes memory data;
+        (ok, data) = _guardedStaticcall(
+            address(verifierRegistry),
+            abi.encodeCall(IAntseedVerifierRegistry.agentVerificationStats, (agentId)),
+            7 * 32
+        );
+        if (!ok) return (false, 0);
+        (,,,,,, count) = abi.decode(data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+    }
+
+    /// @dev Code-size-guarded raw staticcall that treats every anomaly —
+    ///      code-less target, revert, or returndata shorter than
+    ///      `minReturndataSize` — as failure instead of bubbling a revert.
+    ///      This is the only safe shape for the never-revert invariant:
+    ///      Solidity's try/catch catches the callee's revert but NOT the
+    ///      caller-side returndata-decode failure a permissive non-reverting
+    ///      fallback (success, empty returndata) produces.
+    function _guardedStaticcall(address target, bytes memory callData, uint256 minReturndataSize)
+        internal
+        view
+        returns (bool ok, bytes memory data)
+    {
+        if (target.code.length == 0) return (false, data);
+        (ok, data) = target.staticcall(callData);
+        if (data.length < minReturndataSize) ok = false;
     }
 
     /// @dev floor(amount * keepBps / BPS_DENOMINATOR) without overflow for

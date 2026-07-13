@@ -82,6 +82,65 @@ describe('generateProbeSet', () => {
     expect(computeProbeSetId('s', reversed)).not.toBe(set.probeSetId);
   });
 
+  it('same seed with a different exclude set derives a different nonce', () => {
+    const base = generateProbeSet({ service: 's', count: 10, seed: 'rotate', createdAt: CREATED_AT });
+    // Rotation: the first round's probes are excluded, seed unchanged. The new
+    // set must NOT be blinded with the already-revealed nonce.
+    const exclude = new Set(base.probes.slice(0, 5).map((p) => p.id));
+    const rotated = generateProbeSet({
+      service: 's',
+      count: 10,
+      seed: 'rotate',
+      exclude,
+      createdAt: CREATED_AT,
+    });
+    expect(rotated.nonce).not.toBe(base.nonce);
+    expect(computeProbeCommitment(rotated)).not.toBe(computeProbeCommitment(base));
+
+    // Still deterministic: the same (seed, exclude) pair reproduces the nonce.
+    const again = generateProbeSet({
+      service: 's',
+      count: 10,
+      seed: 'rotate',
+      exclude: new Set([...exclude]),
+      createdAt: CREATED_AT,
+    });
+    expect(again.nonce).toBe(rotated.nonce);
+
+    // Exclude-set iteration order must not matter (canonical serialization).
+    const shuffledExclude = new Set([...exclude].reverse());
+    expect(
+      generateProbeSet({
+        service: 's',
+        count: 10,
+        seed: 'rotate',
+        exclude: shuffledExclude,
+        createdAt: CREATED_AT,
+      }).nonce,
+    ).toBe(rotated.nonce);
+  });
+
+  it('supports arbitrarily deep exclude sets (hkdf info is a fixed-size hash)', () => {
+    // A rotation log thousands of ids deep must not break nonce derivation:
+    // hkdfSync caps `info` at 1024 bytes, so the exclude set is hashed, not
+    // inlined.
+    const deepExclude = new Set(
+      Array.from({ length: 3000 }, (_, i) => `rotated:probe-${i.toString().padStart(4, '0')}`),
+    );
+    const set = generateProbeSet({
+      service: 's',
+      count: 10,
+      seed: 'deep-rotate',
+      exclude: deepExclude,
+      createdAt: CREATED_AT,
+    });
+    expect(set.probes).toHaveLength(10);
+    expect(set.nonce).not.toBe(
+      generateProbeSet({ service: 's', count: 10, seed: 'deep-rotate', createdAt: CREATED_AT })
+        .nonce,
+    );
+  });
+
   it('probe commitment is stable for the same seed and differs across seeds', () => {
     const a1 = generateProbeSet({ service: 's', count: 16, seed: 'commit', createdAt: CREATED_AT });
     const a2 = generateProbeSet({

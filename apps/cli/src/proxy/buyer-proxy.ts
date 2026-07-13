@@ -708,16 +708,21 @@ export class BuyerProxy {
     }
   }
 
-  private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
-    log('Discovering peers via DHT...')
-    const peers = await this._node.discoverPeers()
+  private async _discoverPeersFromNetwork(service?: string): Promise<PeerInfo[]> {
+    log(`Discovering peers via DHT${service ? ` (service: ${service})` : ''}...`)
+    // Passing the requested service lets the node load per-model verification
+    // stats (verifier-registry substitution flags) instead of only the
+    // agent-wide '*' aggregate. The service-filtered result does not evict
+    // other cached peers: _replacePeers carries forward recently-seen entries
+    // missing from a scan.
+    const peers = await this._node.discoverPeers(service)
     if (peers.length > 0) {
       log(`Found ${peers.length} peer(s)`)
     }
     return peers
   }
 
-  private async _refreshPeersNow(): Promise<PeerInfo[]> {
+  private async _refreshPeersNow(service?: string): Promise<PeerInfo[]> {
     if (this._peerRefreshPromise) {
       return this._peerRefreshPromise
     }
@@ -725,7 +730,7 @@ export class BuyerProxy {
     const previousCachedPeers = [...this._cachedPeers]
     const mutationEpochAtStart = this._cacheMutationEpoch
     this._peerRefreshPromise = (async () => {
-      const peers = await this._discoverPeersFromNetwork()
+      const peers = await this._discoverPeersFromNetwork(service)
       if (peers.length > 0) {
         this._replacePeers(peers)
         return peers
@@ -748,14 +753,14 @@ export class BuyerProxy {
     return this._peerRefreshPromise
   }
 
-  private async _getPeers(options?: { forceRefresh?: boolean }): Promise<PeerInfo[]> {
+  private async _getPeers(options?: { forceRefresh?: boolean; service?: string }): Promise<PeerInfo[]> {
     const forceRefresh = options?.forceRefresh === true
     const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
     const cacheFresh = this._cacheLastUpdatedAtMs > 0 && cacheAgeMs <= this._peerCacheTtlMs
 
     if (forceRefresh) {
       log('Forcing peer refresh before routing.')
-      return this._refreshPeersNow()
+      return this._refreshPeersNow(options?.service)
     }
 
     if (this._cachedPeers.length > 0) {
@@ -772,7 +777,7 @@ export class BuyerProxy {
     }
 
     // No cached peers yet — block on initial discovery.
-    return this._refreshPeersNow()
+    return this._refreshPeersNow(options?.service)
   }
 
   private _formatPeerSelectionDiagnostics(peers: PeerInfo[]): string {
@@ -1054,7 +1059,7 @@ export class BuyerProxy {
     }
 
     // Discover peers
-    const peers = await this._getPeers()
+    const peers = await this._getPeers({ service: requestedService ?? undefined })
     if (peers.length === 0) {
       log('No sellers available')
       res.writeHead(502, { 'content-type': 'text/plain' })
@@ -1088,7 +1093,7 @@ export class BuyerProxy {
       }
       hasForcedRefresh = true
       log(`Forcing peer refresh before routing after ${reason}.`)
-      discoveredPeers = await this._getPeers({ forceRefresh: true })
+      discoveredPeers = await this._getPeers({ forceRefresh: true, service: requestedService ?? undefined })
       ;({
         candidatePeers: routingPeers,
         routePlanByPeerId: routingPlans,

@@ -14,11 +14,21 @@ import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
  * @title AntseedVerifierRewardsFuzz
  * @notice Fuzz tests for the verification bucket controller. Invariants:
  *           1. Every claim equals the exact pro-rata share of the frozen
- *              epoch budget.
+ *              epoch budget against the frozen credit total — even when a
+ *              lagging registry epoch clock lands late credits after the
+ *              first claim froze the totals.
  *           2. The sum of all claims never exceeds the frozen budget, and the
  *              controller never mints past its gate bucket budget.
  *           3. Double-claim is impossible per (verifier, epoch).
  */
+contract MockEpochClock {
+    uint256 public currentEpoch;
+
+    function setCurrentEpoch(uint256 epoch) external {
+        currentEpoch = epoch;
+    }
+}
+
 contract AntseedVerifierRewardsFuzzTest is Test {
     ANTSToken token;
     AntseedRegistryV2 registry;
@@ -116,6 +126,7 @@ contract AntseedVerifierRewardsFuzzTest is Test {
         assertEq(budget, gate.minterEpochBudget(VERIFICATION_MINTER_ID, 5));
 
         uint256 totalClaimed;
+        bool lateCreditInjected;
         for (uint256 i = 0; i < verifierCount; i++) {
             if (credits[i] == 0) continue;
 
@@ -129,6 +140,23 @@ contract AntseedVerifierRewardsFuzzTest is Test {
             vm.prank(verifiers[i]);
             vm.expectRevert(AntseedVerifierRewards.AlreadyClaimed.selector);
             verifierRewards.claimVerifierReward(5);
+
+            if (!lateCreditInjected) {
+                // The first claim froze the epoch's totals. Land a late
+                // credit in epoch 5 through a lagging registry epoch clock:
+                // the frozen denominator — and every remaining pre-freeze
+                // claimant's exact share below — must not move.
+                lateCreditInjected = true;
+                MockEpochClock laggingClock = new MockEpochClock();
+                laggingClock.setCurrentEpoch(5);
+                registry.setEmissions(address(laggingClock));
+                address lateVerifier = address(0xF100);
+                verifierRegistry.setVerifier(lateVerifier, true);
+                _credit(lateVerifier, 1);
+                registry.setEmissions(address(gate));
+                assertEq(verifierRegistry.epochTotalCredits(5), totalCredits + 1);
+                assertEq(verifierRewards.verifierEpochTotalCredits(5), totalCredits, "frozen total drifted");
+            }
         }
 
         assertLe(totalClaimed, budget, "claims exceed frozen epoch budget");

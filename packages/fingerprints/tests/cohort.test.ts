@@ -106,6 +106,76 @@ describe('computeCohortConsensus', () => {
     expect(consensus.values[0]).toBeCloseTo(100, 5);
   });
 
+  it('counts one vote per seller: duplicate observations cannot sway consensus', () => {
+    const probes = makeProbes(1);
+    // Three honest sellers vs one attacker replaying its observation 3 times.
+    // Counting duplicates would give 500 a 3-3 split (no strict majority);
+    // deduped, the honest 100-cluster is a 3-of-4 majority.
+    const observations = [
+      observation('a', 1, [100]),
+      observation('b', 2, [100]),
+      observation('c', 3, [100]),
+      observation('0xattacker', 9, [500]),
+      observation('0xattacker', 9, [500]),
+      observation('0xATTACKER', 9, [500]), // case-variant peer id counts as the same seller
+    ];
+    const consensus = computeCohortConsensus(observations, probes);
+    expect(consensus.parseableCounts).toEqual([4]);
+    expect(consensus.values[0]).toBeCloseTo(100, 5);
+    expect(consensus.supportCounts).toEqual([3]);
+  });
+
+  it('a repeated agentId under fresh peer ids is still one vote', () => {
+    const probes = makeProbes(1);
+    const observations = [
+      observation('a', 1, [100]),
+      observation('b', 2, [100]),
+      observation('c', 3, [100]),
+      observation('0xsybil-1', 9, [500]),
+      observation('0xsybil-2', 9, [500]),
+      observation('0xsybil-3', 9, [500]),
+    ];
+    const consensus = computeCohortConsensus(observations, probes);
+    expect(consensus.parseableCounts).toEqual([4]);
+    expect(consensus.values[0]).toBeCloseTo(100, 5);
+  });
+
+  it('emits a consensus value consistent with support and scoring (wide-cluster case)', () => {
+    // {0,0,40,80,80,80} with abs-40 tolerance: every answer is within 40 of
+    // candidate 40, so the raw cluster spans all six sellers — but its median
+    // 60 only covers {40,80,80,80}. Support must reflect the EMITTED value.
+    const probes: KbfProbe[] = [
+      {
+        id: 'test:wide',
+        name: 'wide',
+        domain: 'test_domain',
+        template: 'Wide quantity is ___.',
+        consensus: 0,
+        range: [-1000, 1000],
+        tolerance: { mode: 'absolute', value: 40 },
+      },
+    ];
+    const observations = [
+      observation('a', 1, [0]),
+      observation('b', 2, [0]),
+      observation('c', 3, [40]),
+      observation('d', 4, [80]),
+      observation('e', 5, [80]),
+      observation('f', 6, [80]),
+    ];
+    const consensus = computeCohortConsensus(observations, probes);
+    expect(consensus.values[0]).toBe(60);
+    expect(consensus.supportCounts).toEqual([4]); // NOT the raw 6-member cluster
+    expect(consensus.validProbeIndices).toEqual([0]);
+
+    // supportCounts[i] === number of sellers whose match entry is 1.
+    const matchEntries = observations.map(
+      (o) => scoreAgainstConsensus(o, consensus, probes)[0],
+    );
+    expect(matchEntries).toEqual([0, 0, 1, 1, 1, 1]);
+    expect(matchEntries.filter((e) => e === 1)).toHaveLength(consensus.supportCounts[0]!);
+  });
+
   it('yields empty consensus when all sellers disagree on everything', () => {
     const probes = makeProbes(3);
     const observations = [
@@ -186,6 +256,34 @@ describe('computeCohortVerdicts', () => {
     const result = computeCohortVerdicts(observations, probes);
     const noisyHonest = result.verdicts.find((v) => v.sellerPeerId === '0xhonest0')!;
     expect(noisyHonest.verdict).toBe('SAME');
+    expect(result.verdicts.find((v) => v.sellerPeerId === '0xliar')!.verdict).toBe('DIFF');
+  });
+
+  it('duplicate observations cannot fabricate the minimum cohort size', () => {
+    const probes = makeProbes(20);
+    // One seller's observation replayed 5 times is still a cohort of 1.
+    const solo = observation('0xonly', 1, Array.from({ length: 20 }, (_, i) => 100 + i));
+    const result = computeCohortVerdicts([solo, solo, solo, solo, solo], probes);
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.verdicts[0]!.verdict).toBe('UNDETERMINED');
+    expect(result.verdicts[0]!.verdictReason).toMatch(/too small/);
+  });
+
+  it('a duplicated seller receives exactly one verdict entry', () => {
+    const probeCount = 24;
+    const probes = makeProbes(probeCount);
+    const observations = makeCohort(5, probeCount);
+    // The liar submits its observation three times.
+    const liar = observation(
+      '0xliar',
+      99,
+      Array.from({ length: probeCount }, (_, i) => 500 + i),
+    );
+    observations.push(liar, liar, { ...liar, answers: [...liar.answers] });
+
+    const result = computeCohortVerdicts(observations, probes);
+    expect(result.verdicts.filter((v) => v.sellerPeerId === '0xliar')).toHaveLength(1);
+    expect(result.verdicts).toHaveLength(6);
     expect(result.verdicts.find((v) => v.sellerPeerId === '0xliar')!.verdict).toBe('DIFF');
   });
 

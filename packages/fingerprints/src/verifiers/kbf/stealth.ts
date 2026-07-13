@@ -68,7 +68,9 @@ export function buildStealthChatRequests(
   const maxPerRequest = Math.max(1, Math.floor(options.maxProbesPerRequest ?? DEFAULT_MAX_PROBES_PER_REQUEST));
 
   const probes = probeSet.probes ?? [];
-  const seedString = `${probeSet.nonce}|${probes.map((p) => p.id).join(',')}`;
+  // JSON-encoded so ids containing `,` / `|` can never collide with another
+  // id list that joins to the same string.
+  const seedString = JSON.stringify([probeSet.nonce, probes.map((p) => p.id)]);
   const rng = createRng(seedString, 'stealth');
 
   const plans: StealthRequestPlan[] = [];
@@ -282,9 +284,11 @@ interface NumberCandidate {
 
 /**
  * Global numeric scanner: optional leading ~/≈, optional sign, digits with
- * optional thousands-commas, optional decimals, optional scientific exponent.
+ * optional thousands-commas, optional decimals (including the leading-decimal
+ * `.5` form — matching only the `5` would silently change magnitude), optional
+ * scientific exponent.
  */
-const NUMBER_SCAN_RE = /[~≈]?\s*([-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?)/g;
+const NUMBER_SCAN_RE = /[~≈]?\s*([-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)/g;
 
 /** Words that mark a number as a precision qualifier, never an answer. */
 const QUALIFIER_AFTER_RE = /^\s*(?:decimal|dp\b|sig\b|significant|places\b)/i;
@@ -307,11 +311,13 @@ function scanNumbers(text: string): NumberCandidate[] {
     //  - preceded by a letter or `^` ("K2", "10^34" exponent) — but a sign is ok;
     //  - followed by a letter or `^` ("2n", "10^34" mantissa);
     //  - part of a compound like "base-10" (a `-` glued to a preceding letter);
+    //  - a leading-decimal fragment of a larger token ("1.2.3" → ".3");
     //  - a precision qualifier like "6 decimal places".
     const before = start > 0 ? text[start - 1]! : '';
     const after = end < text.length ? text[end]! : '';
     if (/[A-Za-z^]/.test(before)) continue;
     if (before === '-' && start >= 2 && /[A-Za-z]/.test(text[start - 2]!)) continue;
+    if (raw.startsWith('.') && /\d/.test(before)) continue;
     if (/[A-Za-z^]/.test(after)) continue;
     if (QUALIFIER_AFTER_RE.test(text.slice(end))) continue;
 
@@ -385,12 +391,25 @@ function inRange(value: number, probe: KbfProbe): boolean {
 /** Max char distance between an anchor keyword and its associated number. */
 const ASSOCIATION_WINDOW = 140;
 
-/** A number preceded by one of these cues is the predicate (the actual answer). */
-const PREDICATE_CUE_RE =
-  /(?:\bis|\bequals?|\babout|\bapprox(?:imately)?|\baround|\broughly|[:=≈~])\s*$/i;
+/**
+ * Predicate cues, tiered by strength. A number right after a copula/equality
+ * ("is 3880", "was 46", ": 687") is the answer slot itself; one after an
+ * attaching preposition ("melting point of 3880", "melts at 3880") is
+ * predicate-attached; anything else ("in 2020", a bare subject integer) is
+ * incidental. Two tiers — rather than one predicate flag — let "…point of
+ * 3880" beat "in 2020" while "…of 3 is 1.732051" still resolves to the
+ * strongly-cued 1.732051, not the subject-embedded 3.
+ */
+const STRONG_CUE_RE =
+  /(?:\bis|\bwas|\bare|\bwere|\bequals?|\babout|\bapprox(?:imately)?|\baround|\broughly|[:=≈~])\s*$/i;
+const WEAK_CUE_RE = /(?:\bof|\bat|\bas)\s*$/i;
 
-function hasPredicateCue(text: string, index: number): boolean {
-  return PREDICATE_CUE_RE.test(text.slice(Math.max(0, index - 18), index));
+/** 0 strong cue, 1 weak cue, 2 no cue — lower ranks win in pickInSentence. */
+function cueRank(text: string, index: number): number {
+  const before = text.slice(Math.max(0, index - 18), index);
+  if (STRONG_CUE_RE.test(before)) return 0;
+  if (WEAK_CUE_RE.test(before)) return 1;
+  return 2;
 }
 
 /**
@@ -414,17 +433,34 @@ function rarestAnchors(tokens: readonly string[], haystackLower: string): number
   return offsets;
 }
 
-/** True if a sentence terminator (`.`/newline/`!`/`?`) separates two offsets. */
+/**
+ * True if a sentence terminator (`.`/newline/`!`/`?`) separates two offsets.
+ * A `.` flanked by digits is a decimal separator, not a boundary — "11.86
+ * years is Jupiter's orbital period." is ONE sentence.
+ */
 function terminatorBetween(text: string, a: number, b: number): boolean {
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
-  return /[.\n!?]/.test(text.slice(lo, hi));
+  for (let i = lo; i < hi; i++) {
+    const ch = text[i]!;
+    if (ch === '\n' || ch === '!' || ch === '?') return true;
+    if (ch === '.') {
+      const prev = i > 0 ? text[i - 1]! : '';
+      const next = i + 1 < text.length ? text[i + 1]! : '';
+      if (/\d/.test(prev) && /\d/.test(next)) continue; // decimal point
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
  * Pick the answer from candidates that sit in the SAME sentence as an anchor.
- * Prefers a predicate-cued number, then the nearest to the anchor. Returns null
- * if no in-range candidate shares a sentence with any anchor.
+ * Sorts by cue strength first (strong predicate cue, then weak, then none —
+ * see cueRank), nearest to the anchor within a tier. So the predicate-attached
+ * "…melting point of 3880" beats the incidental "in 2020" even when 2020 sits
+ * closer to the anchor. Returns null if no in-range candidate shares a
+ * sentence with any anchor.
  */
 function pickInSentence(
   text: string,
@@ -436,12 +472,11 @@ function pickInSentence(
   let bestKey = Infinity;
   for (const cand of candidates) {
     if (!inRange(cand.value, probe)) continue;
-    const predicate = hasPredicateCue(text, cand.index);
+    const rank = cueRank(text, cand.index);
     for (const anchor of anchors) {
       if (terminatorBetween(text, anchor, cand.index)) continue; // different sentence
       const dist = Math.abs(cand.index - anchor);
-      // Predicate-cued numbers sort ahead of bare subject integers.
-      const key = (predicate ? 0 : text.length) + dist;
+      const key = rank * text.length + dist;
       if (key < bestKey) {
         bestKey = key;
         best = cand;
@@ -466,6 +501,20 @@ function pickInSentence(
  *
  * Never throws.
  */
+/**
+ * Blank out markdown/numbered-list ordinals ("1. …", "2) …") so they cannot be
+ * mistaken for answers by the positional fallback. Only a short line-leading
+ * integer followed by `.`/`)` and further content on the same line qualifies —
+ * a bare "3880." answer line is left alone. Replacement preserves offsets.
+ */
+function stripListNumbering(text: string): string {
+  return text.replace(
+    /^([ \t]*)(\d{1,3})([.)])([ \t]+\S)/gm,
+    (_m, lead: string, ordinal: string, punct: string, rest: string) =>
+      lead + ' '.repeat(ordinal.length + punct.length) + rest,
+  );
+}
+
 export function extractAnswersFreeText(
   responseText: string,
   probes: readonly KbfProbe[],
@@ -475,11 +524,14 @@ export function extractAnswersFreeText(
     if (typeof responseText !== 'string' || probes.length === 0) {
       return answers;
     }
-    const candidates = scanNumbers(responseText);
+    // U+2212 (Unicode minus) is a plain minus; normalizing (same length, so
+    // offsets are preserved) keeps "−430" from being read as +430.
+    const text = responseText.replace(/−/g, '-');
+    const candidates = scanNumbers(text);
     if (candidates.length === 0) {
       return answers;
     }
-    const lower = responseText.toLowerCase();
+    const lower = text.toLowerCase();
 
     let anyAnchored = false;
     for (let i = 0; i < probes.length; i++) {
@@ -492,10 +544,11 @@ export function extractAnswersFreeText(
 
       // First scope to the SENTENCE holding an anchor: the answer lives in the
       // same clause as its subject, so this walls off numbers bleeding in from
-      // neighbouring sentences. Within the sentence, a predicate-cued number
-      // (after "is"/"≈"/":") beats a bare integer embedded in the subject
-      // ("square root of 3"); otherwise the nearest number to the anchor wins.
-      const local = pickInSentence(responseText, candidates, anchors, probe);
+      // neighbouring sentences. Within the sentence, cue strength decides
+      // (strong "is/:"-cued beats weak "of/at"-cued beats uncued — so the
+      // subject integer in "square root of 3" and the incidental year in "As
+      // measured in 2020" both lose); nearest to the anchor breaks ties.
+      const local = pickInSentence(text, candidates, anchors, probe);
       if (local !== null) {
         answers[i] = local;
         continue;
@@ -522,10 +575,29 @@ export function extractAnswersFreeText(
     }
 
     // Positional fallback: response answered in order without naming probes.
-    if (!anyAnchored && candidates.length >= probes.length) {
-      for (let i = 0; i < probes.length; i++) {
-        const cand = candidates[i]!;
-        answers[i] = inRange(cand.value, probes[i]!) ? cand.value : null;
+    // List ordinals are stripped first ("1. 3880" must yield 3880, not 1), and
+    // the answers are taken from the contiguous candidate window with the most
+    // in-range values (ties → earliest), so preamble numerals ("here are 2
+    // quick answers: …") don't shift the alignment.
+    if (!anyAnchored) {
+      const positional = scanNumbers(stripListNumbering(text));
+      if (positional.length >= probes.length) {
+        let bestStart = 0;
+        let bestScore = -1;
+        for (let start = 0; start + probes.length <= positional.length; start++) {
+          let score = 0;
+          for (let i = 0; i < probes.length; i++) {
+            if (inRange(positional[start + i]!.value, probes[i]!)) score += 1;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestStart = start;
+          }
+        }
+        for (let i = 0; i < probes.length; i++) {
+          const cand = positional[bestStart + i]!;
+          answers[i] = inRange(cand.value, probes[i]!) ? cand.value : null;
+        }
       }
     }
   } catch {

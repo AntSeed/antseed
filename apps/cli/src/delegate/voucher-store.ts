@@ -10,6 +10,13 @@ export interface StoredDelegateVoucher extends DelegateVoucherPayload {
   receivedAt: string
 }
 
+/** Injectable fs surface (tests exercise persistence-failure paths). */
+export interface VoucherStoreFs {
+  appendFile: typeof appendFile
+  mkdir: typeof mkdir
+  readFile: typeof readFile
+}
+
 /**
  * Append-only JSONL store for received DelegateVouchers. A voucher is the
  * only proof of claimable delegate credits — the buyer's operator reads this
@@ -17,30 +24,51 @@ export interface StoredDelegateVoucher extends DelegateVoucherPayload {
  * on-chain via AntseedVerifierRegistry.claimDelegateCredits.
  *
  * Appends are dedup'd by signature: a re-delivered voucher (e.g. a verifier
- * retry) lands once. Claims are NOT tracked here — the contract's
- * voucherClaimed(digest) is the source of truth.
+ * retry) lands once. The signature enters the dedupe set only AFTER the
+ * append succeeded — a transient persistence failure must not suppress
+ * redelivery until restart. Initialization and writes are serialized through
+ * a single promise chain so concurrent first deliveries cannot race the
+ * signature-set load or interleave appends. Claims are NOT tracked here —
+ * the contract's voucherClaimed(digest) is the source of truth.
  */
 export class VoucherStore {
   private readonly _path: string
+  private readonly _fs: VoucherStoreFs
   private _signatures: Set<string> | null = null
+  /** Serializes init + appends; failures are swallowed on the chain itself. */
+  private _writeQueue: Promise<unknown> = Promise.resolve()
 
-  constructor(path: string) {
+  constructor(path: string, fs?: Partial<VoucherStoreFs>) {
     this._path = path
+    this._fs = {
+      appendFile: fs?.appendFile ?? appendFile,
+      mkdir: fs?.mkdir ?? mkdir,
+      readFile: fs?.readFile ?? readFile,
+    }
   }
 
   /** Persist a voucher. Returns false when it was already stored. */
   async add(voucher: DelegateVoucherPayload, verifierPeerId: string): Promise<boolean> {
+    const run = this._writeQueue.then(() => this._addSerialized(voucher, verifierPeerId))
+    // Keep the chain alive after a failed write; the failure still rejects
+    // the caller's promise via `run`.
+    this._writeQueue = run.catch(() => {})
+    return run
+  }
+
+  private async _addSerialized(voucher: DelegateVoucherPayload, verifierPeerId: string): Promise<boolean> {
     const signatures = await this._loadSignatures()
     const key = voucher.signature.toLowerCase()
     if (signatures.has(key)) return false
-    signatures.add(key)
     const stored: StoredDelegateVoucher = {
       ...voucher,
       verifierPeerId,
       receivedAt: new Date().toISOString(),
     }
-    await mkdir(dirname(this._path), { recursive: true })
-    await appendFile(this._path, `${JSON.stringify(stored)}\n`, 'utf8')
+    await this._fs.mkdir(dirname(this._path), { recursive: true })
+    await this._fs.appendFile(this._path, `${JSON.stringify(stored)}\n`, 'utf8')
+    // Only a durably persisted voucher may suppress redelivery.
+    signatures.add(key)
     return true
   }
 
@@ -67,7 +95,7 @@ export class VoucherStore {
   private async _readLines(): Promise<string[]> {
     let raw: string
     try {
-      raw = await readFile(this._path, 'utf8')
+      raw = await this._fs.readFile(this._path, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
       throw err

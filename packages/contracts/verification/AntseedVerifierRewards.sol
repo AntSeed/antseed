@@ -27,12 +27,17 @@ import { IAntseedVerifierRewards } from "../interfaces/IAntseedVerifierRewards.s
  *         delegate reward = delegatePool * delegateCredits / totalDelegateCredits
  *
  *         Epochs with no delegate credits keep the whole budget in the
- *         verifier pool. Budget AND split are frozen at first touch of an
- *         epoch (claim or remainder settlement) so a later gate or share
- *         config change cannot resize a finalized epoch's pots under
- *         remaining claimants. Epochs with no verifier credits route the
- *         verifier pool through the gate's burn/reserve remainder path;
- *         pro-rata rounding dust of credited pools stays unminted by design.
+ *         verifier pool. Budget, split AND both credit totals (the pro-rata
+ *         denominators) are frozen at first touch of an epoch (claim or
+ *         remainder settlement): a later gate or share config change cannot
+ *         resize a finalized epoch's pots under remaining claimants, and
+ *         credits landing late in an already-touched epoch (possible only if
+ *         the registry's swappable emissions clock lags the gate's) cannot
+ *         shift earlier claimants' shares or overdraw the pools — late
+ *         credits are simply outside the frozen claim set. Epochs with no
+ *         verifier credits route the verifier pool through the gate's
+ *         burn/reserve remainder path; pro-rata rounding dust of credited
+ *         pools stays unminted by design.
  *
  *         This contract holds no funds: the gate mints ANTS directly to the
  *         claiming verifier or delegate.
@@ -52,6 +57,12 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     /// @dev Delegate pool frozen together with the budget (pool + 1 sentinel)
     ///      so a delegateShareBps change never resizes a touched epoch.
     mapping(uint256 epoch => uint256 poolPlusOne) private _frozenDelegatePools;
+    /// @dev Verifier-credit total frozen with the pools (total + 1 sentinel):
+    ///      the pro-rata denominator for every claim in the epoch. Credits
+    ///      landing after the freeze are outside the frozen claim set.
+    mapping(uint256 epoch => uint256 totalPlusOne) private _frozenTotalCredits;
+    /// @dev Delegate-credit total frozen with the pools (total + 1 sentinel).
+    mapping(uint256 epoch => uint256 totalPlusOne) private _frozenTotalDelegateCredits;
     mapping(uint256 epoch => mapping(address verifier => bool claimed)) public epochRewardClaimed;
     mapping(uint256 epoch => mapping(address delegate => bool claimed)) public epochDelegateRewardClaimed;
     mapping(uint256 epoch => bool settled) public epochRemainderSettled;
@@ -92,9 +103,11 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
 
         uint256 credits = verifierRegistry.epochCredits(epoch, msg.sender);
         if (credits == 0) revert NothingToClaim();
-        uint256 totalCredits = verifierRegistry.epochTotalCredits(epoch);
 
-        (uint256 verifierPool,) = _freezeEpochPools(epoch);
+        (uint256 verifierPool,, uint256 totalCredits,) = _freezeEpochPools(epoch);
+        // Caller's credits landed after the epoch's totals froze (a lagging
+        // registry epoch clock): outside the frozen claim set.
+        if (totalCredits == 0) revert NothingToClaim();
         uint256 amount = Math.mulDiv(verifierPool, credits, totalCredits);
 
         epochRewardClaimed[epoch][msg.sender] = true;
@@ -113,9 +126,11 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
 
         uint256 credits = verifierRegistry.epochDelegateCredits(epoch, msg.sender);
         if (credits == 0) revert NothingToClaim();
-        uint256 totalCredits = verifierRegistry.epochTotalDelegateCredits(epoch);
 
-        (, uint256 delegatePool) = _freezeEpochPools(epoch);
+        (, uint256 delegatePool,, uint256 totalCredits) = _freezeEpochPools(epoch);
+        // Caller's delegate credits landed after the epoch's totals froze (a
+        // lagging registry epoch clock): outside the frozen claim set.
+        if (totalCredits == 0) revert NothingToClaim();
         uint256 amount = Math.mulDiv(delegatePool, credits, totalCredits);
 
         epochDelegateRewardClaimed[epoch][msg.sender] = true;
@@ -133,9 +148,13 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         returns (uint256 burnedAmount, uint256 reserveAmount)
     {
         if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
-        if (verifierRegistry.epochTotalCredits(epoch) != 0) revert NothingToSettle();
 
-        (uint256 verifierPool,) = _freezeEpochPools(epoch);
+        (uint256 verifierPool,, uint256 totalCredits,) = _freezeEpochPools(epoch);
+        // The frozen total defines the claim set: an epoch frozen with
+        // verifier credits stays claimable even if a lagging registry clock
+        // could no longer credit it, and one frozen without credits is
+        // settleable even if late credits land afterwards.
+        if (totalCredits != 0) revert NothingToSettle();
         if (verifierPool == 0) revert NothingToSettle();
 
         epochRemainderSettled[epoch] = true;
@@ -154,8 +173,12 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         uint256 credits = verifierRegistry.epochCredits(epoch, verifier);
         if (credits == 0) return 0;
 
+        // Credits that landed after the totals froze are unclaimable.
+        uint256 totalCredits = verifierEpochTotalCredits(epoch);
+        if (totalCredits == 0) return 0;
+
         uint256 verifierPool = verifierEpochBudget(epoch) - delegateEpochPool(epoch);
-        return Math.mulDiv(verifierPool, credits, verifierRegistry.epochTotalCredits(epoch));
+        return Math.mulDiv(verifierPool, credits, totalCredits);
     }
 
     function pendingDelegateReward(uint256 epoch, address delegate) external view returns (uint256) {
@@ -165,7 +188,11 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         uint256 credits = verifierRegistry.epochDelegateCredits(epoch, delegate);
         if (credits == 0) return 0;
 
-        return Math.mulDiv(delegateEpochPool(epoch), credits, verifierRegistry.epochTotalDelegateCredits(epoch));
+        // Credits that landed after the totals froze are unclaimable.
+        uint256 totalCredits = delegateEpochTotalCredits(epoch);
+        if (totalCredits == 0) return 0;
+
+        return Math.mulDiv(delegateEpochPool(epoch), credits, totalCredits);
     }
 
     function verifierEpochBudget(uint256 epoch) public view returns (uint256) {
@@ -184,15 +211,40 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         return Math.mulDiv(verifierEpochBudget(epoch), verifierRegistry.delegateShareBps(), 10_000);
     }
 
+    /// @notice Verifier-credit total used as the epoch's pro-rata claim
+    ///         denominator: the snapshot frozen at first epoch touch, live
+    ///         registry values before, exactly like `verifierEpochBudget`.
+    function verifierEpochTotalCredits(uint256 epoch) public view returns (uint256) {
+        uint256 frozen = _frozenTotalCredits[epoch];
+        if (frozen != 0) return frozen - 1;
+        return verifierRegistry.epochTotalCredits(epoch);
+    }
+
+    /// @notice Delegate-credit total used as the epoch's delegate-pool claim
+    ///         denominator, frozen and read like `verifierEpochTotalCredits`.
+    function delegateEpochTotalCredits(uint256 epoch) public view returns (uint256) {
+        uint256 frozen = _frozenTotalDelegateCredits[epoch];
+        if (frozen != 0) return frozen - 1;
+        return verifierRegistry.epochTotalDelegateCredits(epoch);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Freeze the epoch's budget and its verifier/delegate split at
-    ///      first touch. Delegate credit totals are immutable once the epoch
-    ///      is finalized (crediting always lands in the registry's current
-    ///      epoch), so the split computed here is final.
-    function _freezeEpochPools(uint256 epoch) internal returns (uint256 verifierPool, uint256 delegatePool) {
+    /// @dev Freeze the epoch's budget, its verifier/delegate split AND both
+    ///      credit totals at first touch. Crediting always lands in the
+    ///      registry's CURRENT epoch, but that clock is swappable wiring
+    ///      (`registry.emissions()`): were it ever to lag the gate's clock,
+    ///      credits could land in an already-claimable epoch. Snapshotting
+    ///      the totals — the pro-rata denominators — alongside the pools
+    ///      keeps every earlier claim's share final, so late credits can
+    ///      never overdraw the pools under remaining claimants; they are
+    ///      simply outside the frozen claim set.
+    function _freezeEpochPools(uint256 epoch)
+        internal
+        returns (uint256 verifierPool, uint256 delegatePool, uint256 totalCredits, uint256 totalDelegateCredits)
+    {
         uint256 frozenBudget = _frozenBudgets[epoch];
         uint256 budget;
         if (frozenBudget != 0) {
@@ -206,11 +258,16 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         uint256 frozenPool = _frozenDelegatePools[epoch];
         if (frozenPool != 0) {
             delegatePool = frozenPool - 1;
+            totalCredits = _frozenTotalCredits[epoch] - 1;
+            totalDelegateCredits = _frozenTotalDelegateCredits[epoch] - 1;
         } else {
-            delegatePool = verifierRegistry.epochTotalDelegateCredits(epoch) == 0
-                ? 0
-                : Math.mulDiv(budget, verifierRegistry.delegateShareBps(), 10_000);
+            totalCredits = verifierRegistry.epochTotalCredits(epoch);
+            totalDelegateCredits = verifierRegistry.epochTotalDelegateCredits(epoch);
+            delegatePool =
+                totalDelegateCredits == 0 ? 0 : Math.mulDiv(budget, verifierRegistry.delegateShareBps(), 10_000);
             _frozenDelegatePools[epoch] = delegatePool + 1;
+            _frozenTotalCredits[epoch] = totalCredits + 1;
+            _frozenTotalDelegateCredits[epoch] = totalDelegateCredits + 1;
             emit VerifierEpochPoolsFrozen(epoch, budget - delegatePool, delegatePool);
         }
         verifierPool = budget - delegatePool;

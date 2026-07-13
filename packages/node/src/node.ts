@@ -228,6 +228,11 @@ export interface NodeConfig {
   delegationHost?: {
     /** TCP port for the delegate signaling listener. Default: 6882. */
     signalingPort?: number;
+    /**
+     * Maximum delegates registered at once; excess hellos are rejected with
+     * a `delegate_capacity` welcome. Default: DEFAULT_MAX_DELEGATES.
+     */
+    maxDelegates?: number;
   };
 }
 
@@ -682,6 +687,14 @@ export class AntseedNode extends EventEmitter {
       if (!this._started) {
         return;
       }
+      // Verifier-registry enrichment rides the same queue so background /
+      // incremental discovery emits peers with their substitution flags, not
+      // just channel stats. It needs onChainAgentId, which the on-chain stats
+      // pass above just resolved.
+      await this._enrichPeersWithVerification(peersToEnrich);
+      if (!this._started) {
+        return;
+      }
       const enriched = peersToEnrich.filter((peer) => typeof peer.onChainStatsFetchedAt === "number");
       if (enriched.length === 0) {
         return;
@@ -857,6 +870,10 @@ export class AntseedNode extends EventEmitter {
     this._attachCachedExternalVerificationResults([peer]);
     this._queueExternalVerification([peer]);
     await this._enrichPeersWithOnChainStats([peer]);
+    // Same verification enrichment as discoverPeers(): findPeer has no service
+    // hint, so this loads (at minimum) the agent-wide '*' aggregate, which is
+    // what substitution-flag routing gates on for service-less lookups.
+    await this._enrichPeersWithVerification([peer]);
     return peer;
   }
 
@@ -954,20 +971,22 @@ export class AntseedNode extends EventEmitter {
     const enrichOne = async (p: PeerInfo): Promise<void> => {
       const agentId = p.onChainAgentId!;
       const modelVerification: Record<string, ReturnType<typeof toPeerModelVerification>> = {};
-      try {
+      // Both reads are independent — run them concurrently, and keep whichever
+      // succeeds: a failed aggregate read must not discard already-fetched
+      // per-service stats (and vice versa). Failures leave the corresponding
+      // key unset rather than fabricating a score.
+      const [serviceRead, aggregateRead] = await Promise.allSettled([
         // The service the buyer asked for is the one that matters for routing.
-        if (service) {
-          const stats = await client.verificationStats(agentId, service);
-          modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(stats);
-        }
-        // Also expose the cross-service aggregate under the '*' key so callers
+        service ? client.verificationStats(agentId, service) : Promise.resolve(null),
+        // The cross-service aggregate is exposed under the '*' key so callers
         // that route without a specific service still see a substitution flag.
-        const agentStats = await client.agentVerificationStats(agentId);
-        modelVerification['*'] = toPeerModelVerification(agentStats);
-      } catch {
-        // Verifier registry unreachable for this peer — leave modelVerification
-        // unset rather than fabricating a score.
-        return;
+        client.agentVerificationStats(agentId),
+      ]);
+      if (service && serviceRead.status === 'fulfilled' && serviceRead.value) {
+        modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(serviceRead.value);
+      }
+      if (aggregateRead.status === 'fulfilled') {
+        modelVerification['*'] = toPeerModelVerification(aggregateRead.value);
       }
       if (Object.keys(modelVerification).length > 0) {
         p.modelVerification = modelVerification;
@@ -1629,6 +1648,9 @@ export class AntseedNode extends EventEmitter {
     // connection lifecycle and forwards frames/APIs.
     this._delegation = new DelegationManager({
       emit: (event, ...args) => this.emit(event, ...args),
+      ...(this._config.delegationHost?.maxDelegates !== undefined
+        ? { maxDelegates: this._config.delegationHost.maxDelegates }
+        : {}),
     });
 
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
