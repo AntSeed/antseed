@@ -1,8 +1,6 @@
 import type { ServiceVerificationStats } from '../payments/evm/verifier-client.js';
 import type { PeerModelVerification } from '../types/peer.js';
 
-const VERDICT_DIFF = 2;
-
 /**
  * Minimum distinct verifiers before a clean history earns a positive score.
  *
@@ -102,14 +100,20 @@ export function toPeerModelVerification(stats: ServiceVerificationStats): PeerMo
  * least one verifier whose latest verdict is DIFF. Historical (retracted)
  * DIFFs do not flag; they only lower the score ceiling.
  *
- * `lastVerdict === DIFF` is redundant with `activeDiffVerifierCount > 0` for
- * stats read from the current registry (a standing last-DIFF implies an
- * active accuser) and is kept only as a defensive belt-and-braces check.
- * Note it is NOT a graceful-degradation path for old deployments: a registry
- * predating `activeDiffVerifierCount` returns a 6-field tuple that fails ABI
- * decode outright, so such a deployment yields no verification data at all
- * rather than stats with the field decoded as 0.
+ * The flag keys SOLELY on `activeDiffVerifierCount` — the exact on-chain field
+ * the points penalty gates on and that owner remediation
+ * (`clearVerifierStanding`) decrements. Routing must track it and nothing else,
+ * or the two diverge: `clearVerifierStanding` never rewrites `stats.lastVerdict`
+ * (only `submitAttestation` does), so keying on `lastVerdict === DIFF` would
+ * leave routing blocked forever after an owner clear even though the economic
+ * penalty had lifted.
+ *
+ * A `lastVerdict === DIFF` disjunct is deliberately NOT used. It is not a
+ * graceful-degradation path for old deployments either: a registry predating
+ * `activeDiffVerifierCount` returns a 6-field tuple that fails ABI decode
+ * outright (the client declares 7 fields), so such a deployment yields no
+ * verification data at all rather than stats with the field decoded as 0.
  */
 export function hasModelSubstitutionFlag(mv: PeerModelVerification | undefined): boolean {
-  return mv !== undefined && (mv.activeDiffVerifierCount > 0 || mv.lastVerdict === VERDICT_DIFF);
+  return mv !== undefined && mv.activeDiffVerifierCount > 0;
 }

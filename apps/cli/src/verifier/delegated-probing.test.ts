@@ -5,6 +5,7 @@ import type { AntseedNode, ConnectedDelegate, PeerInfo, ProbeJobRequestPayload, 
 import { createResponseAuthPayload } from '@antseed/node'
 import { generateProbeSet, probeBankSource } from '@antseed/fingerprints'
 import { probeSellerViaDelegates } from './delegated-probing.js'
+import { validateProbeJob } from '../delegate/worker.js'
 
 const SELLER_WALLET = new Wallet('0x' + '11'.repeat(32))
 const SELLER_PEER = SELLER_WALLET.address.slice(2).toLowerCase()
@@ -94,6 +95,47 @@ test('verified delegate observations produce an authenticated run and credit the
   assert.ok(run.responseAuths.every((auth) => auth !== null))
   assert.equal(run.errors.length, 0)
   assert.equal(jobsByDelegate.get(DELEGATE_PEER), run.responseAuths.length)
+})
+
+test('relayed probe bodies carry a bounded completion budget the delegate worker accepts', async () => {
+  // The stealth builder omits max_tokens (organic clients do), but a delegate
+  // refuses an unbounded relay. The verifier must stamp a bounded budget so
+  // legitimate probes are accepted rather than rejected as missing.
+  const seenBodies: string[] = []
+  const base = fakeNode() as unknown as {
+    runProbeJob(peerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload>
+  }
+  const capturingNode = {
+    async runProbeJob(delegatePeerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload> {
+      seenBodies.push(job.request.bodyBase64)
+      return base.runProbeJob(delegatePeerId, job)
+    },
+  } as unknown as AntseedNode
+
+  await probeSellerViaDelegates(capturingNode, [delegate()], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS)
+
+  assert.ok(seenBodies.length > 0)
+  for (const bodyBase64 of seenBodies) {
+    const parsed = JSON.parse(Buffer.from(bodyBase64, 'base64').toString('utf8')) as { max_tokens?: unknown }
+    assert.equal(typeof parsed.max_tokens, 'number', 'relayed probe must carry a max_tokens')
+    assert.ok((parsed.max_tokens as number) >= 1 && (parsed.max_tokens as number) <= 4096)
+    // The exact bytes the delegate worker would validate must be accepted.
+    const err = validateProbeJob({
+      version: 1,
+      jobId: 'j',
+      targetPeerId: SELLER_PEER,
+      service: SERVICE,
+      request: {
+        requestId: 'r',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json' },
+        bodyBase64,
+      },
+      timeoutMs: 5_000,
+    }, DELEGATE_PEER)
+    assert.equal(err, null, `delegate worker must accept the relayed probe (got ${err})`)
+  }
 })
 
 test('a tampered response body is rejected even with a genuine seller signature', async () => {

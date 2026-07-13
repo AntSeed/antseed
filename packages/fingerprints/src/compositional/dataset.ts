@@ -55,7 +55,11 @@ function rel(value: number): ProbeTolerance {
 // either drop the entity or widen the tolerance to cover both readings.
 // ---------------------------------------------------------------------------
 
-/** Chemical elements — used for melting/boiling point and atomic number. */
+/**
+ * Chemical elements — used directly for the atomic-number schema, and as the
+ * base list from which the melting-point (MP_ELEMENTS) and boiling-point
+ * (BP_ELEMENTS) subsets are derived.
+ */
 const ELEMENTS: readonly string[] = [
   'hydrogen', 'helium', 'lithium', 'beryllium', 'boron', 'carbon', 'nitrogen',
   'oxygen', 'fluorine', 'neon', 'sodium', 'magnesium', 'aluminium', 'silicon',
@@ -88,6 +92,27 @@ const ELEMENTS: readonly string[] = [
 const MP_ELEMENTS: readonly string[] = [
   ...ELEMENTS.filter((e) => e !== 'helium' && e !== 'carbon' && e !== 'arsenic'),
   'neodymium', 'samarium', 'gadolinium',
+];
+
+/**
+ * Elements with a well-defined 1-atm boiling point. Same sublimation-ambiguity
+ * class as MP_ELEMENTS: carbon and arsenic are absent because at 1 atm they
+ * SUBLIME rather than boil, so a cited "boiling point" is either a sublimation
+ * temperature or a pressure-extrapolated figure, and honest sources diverge far
+ * beyond the abs(60) tolerance:
+ *  - carbon: sublimes ≈3642 °C at 1 atm; "boiling point" figures are
+ *    extrapolated/high-pressure and spread across hundreds of °C.
+ *  - arsenic: sublimes ≈614 °C at 1 atm and has no true 1-atm boiling point;
+ *    honest sources quote either the sublimation point or pressurized figures.
+ * Helium is KEPT here (unlike MP_ELEMENTS, where it never solidifies at 1 atm):
+ * its 1-atm boiling point ≈−269 °C is a sharp, unambiguous figure inside range.
+ * Replaced with refractory lanthanides whose boiling points are single
+ * widely-cited figures well inside abs(60): neodymium ≈3074 °C,
+ * gadolinium ≈3273 °C (cross-source spreads of a few °C).
+ */
+const BP_ELEMENTS: readonly string[] = [
+  ...ELEMENTS.filter((e) => e !== 'carbon' && e !== 'arsenic'),
+  'neodymium', 'gadolinium',
 ];
 
 /**
@@ -187,7 +212,10 @@ export const COMPOSITIONAL_SCHEMAS: readonly AttributeSchema[] = [
     template: 'The boiling point of {name} is ___°C.',
     range: [-270, 6000],
     tolerance: abs(60),
-    entities: ELEMENTS,
+    // Not ELEMENTS: carbon/arsenic sublime at 1 atm and have no well-defined
+    // 1-atm boiling point (see BP_ELEMENTS). Helium stays — its 1-atm boiling
+    // point is sharp — so this differs from MP_ELEMENTS only by keeping helium.
+    entities: BP_ELEMENTS,
   },
   {
     domain: 'element_z',

@@ -8,6 +8,7 @@ import type { PeerInfo } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
+  MODEL_VERIFICATION_MAX_AGE_MS,
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
@@ -936,6 +937,7 @@ function makeDispatchCountingProxy(peer: PeerInfo): { proxy: BuyerProxy; dispatc
 test('pinned peer with an active substitution flag for the requested service is blocked', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { 'gpt-4o': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -955,6 +957,7 @@ test('clean pinned peer is dispatched; a flag on a different service does not bl
     'other-model': FLAGGED_STATS,
     'gpt-4o': CLEAN_STATS,
   }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -969,6 +972,7 @@ test('clean pinned peer is dispatched; a flag on a different service does not bl
 test('substitution gate falls back to the agent-wide aggregate when per-service stats are missing', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { '*': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -984,6 +988,7 @@ test('substitution gate falls back to the agent-wide aggregate when per-service 
 test('retracted substitution flag (no standing accuser) does not block routing', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { 'gpt-4o': RETRACTED_STATS, '*': RETRACTED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -1008,9 +1013,10 @@ test('peers with no verification data are unaffected by the substitution gate', 
   assert.equal(dispatched(), 1)
 })
 
-test('/v1/models service listing is exempt from the substitution gate', async () => {
+test('GET /v1/models service listing is exempt from the substitution gate', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { '*': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -1023,7 +1029,81 @@ test('/v1/models service listing is exempt from the substitution gate', async ()
   assert.equal(dispatched(), 1, 'flagged peers must remain inspectable via /v1/models')
 })
 
-test('parsePersistedPeers round-trips modelVerification so the gate works from the warm cache', () => {
+// Minor 2: the /v1/models exemption is scoped to GET on the exact listing
+// path. A POST to /v1/models is not the read-only control-plane surface, so a
+// flagged peer must NOT be exempt from the substitution gate for it.
+test('POST /v1/models on a flagged peer is NOT exempt from the substitution gate', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { '*': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    method: 'POST',
+    path: '/v1/models',
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /model-substitution flag/)
+  assert.equal(dispatched(), 0, 'a POST to /v1/models must not bypass the gate on a flagged peer')
+})
+
+// F3: a persisted/cached DIFF flag carries a freshness stamp so it ages out.
+// Enrichment only overwrites modelVerification on a successful registry read,
+// so without a TTL a stale flag (registry since unconfigured, or enrichment
+// permanently RPC-failing) would block a peer forever even after its accusers
+// retract. Past MODEL_VERIFICATION_MAX_AGE_MS the gate treats it as absent.
+test('a stale persisted substitution flag past max-age does NOT block routing', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { 'gpt-4o': FLAGGED_STATS, '*': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now() - (MODEL_VERIFICATION_MAX_AGE_MS + 60_000)
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200, 'a flag older than the max age must not block')
+  assert.equal(dispatched(), 1)
+})
+
+test('a fresh substitution flag within max-age still blocks routing', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { 'gpt-4o': FLAGGED_STATS, '*': FLAGGED_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now() - (MODEL_VERIFICATION_MAX_AGE_MS - 60_000)
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /model-substitution flag/)
+  assert.equal(dispatched(), 0)
+})
+
+// A flag with no freshness stamp at all (pre-upgrade on-disk row, or any
+// unstamped source) is treated as absent — fail-open on the liveness side,
+// self-healing on the next enrichment pass which re-stamps it.
+test('a substitution flag with no freshness stamp does NOT block routing', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { '*': FLAGGED_STATS }
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1)
+})
+
+test('parsePersistedPeers round-trips a fresh modelVerification so the gate works from the warm cache', () => {
   const result = parsePersistedPeers(
     {
       discoveredPeers: [
@@ -1032,6 +1112,7 @@ test('parsePersistedPeers round-trips modelVerification so the gate works from t
           providers: ['openai'],
           lastSeen: NOW - 5_000,
           modelVerification: { 'gpt-4o': FLAGGED_STATS, '*': CLEAN_STATS },
+          modelVerificationFetchedAt: NOW - 5_000,
         },
         {
           peerId: 'b'.repeat(40),
@@ -1045,5 +1126,46 @@ test('parsePersistedPeers round-trips modelVerification so the gate works from t
   )
   assert.equal(result.length, 2)
   assert.deepEqual(result[0]?.modelVerification, { 'gpt-4o': FLAGGED_STATS, '*': CLEAN_STATS })
+  assert.equal((result[0] as any)?.modelVerificationFetchedAt, NOW - 5_000)
   assert.equal(result[1]?.modelVerification, undefined)
+})
+
+test('parsePersistedPeers drops a stale modelVerification (past max-age) on rehydration', () => {
+  const [peer] = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - 5_000,
+          lastReachedAt: NOW - 5_000,
+          modelVerification: { '*': FLAGGED_STATS },
+          modelVerificationFetchedAt: NOW - (MODEL_VERIFICATION_MAX_AGE_MS + 60_000),
+        },
+      ],
+    },
+    NOW,
+  )
+  // Peer itself survives (recently reached), but the stale flag is dropped so a
+  // since-unconfigured verifier registry can't block it forever.
+  assert.equal(peer?.peerId, validPeerId)
+  assert.equal(peer?.modelVerification, undefined)
+  assert.equal((peer as any)?.modelVerificationFetchedAt, undefined)
+})
+
+test('parsePersistedPeers drops modelVerification with no freshness stamp on rehydration', () => {
+  const [peer] = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai'],
+          lastSeen: NOW - 5_000,
+          modelVerification: { '*': FLAGGED_STATS },
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(peer?.modelVerification, undefined)
 })

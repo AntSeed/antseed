@@ -475,7 +475,8 @@ function peerAdvertisesService(peer: PeerInfo, service: string): boolean {
  * declared service: the job runs on this buyer's identity and deposit, so the
  * surface is kept as narrow as the probes it exists to carry. In particular,
  * the body's model must be exactly the audited service, streaming is refused
- * (unbounded response), and any explicit completion budget is capped.
+ * (unbounded response), and a bounded completion budget (`max_tokens` or
+ * `max_completion_tokens`) is mandatory — not merely capped when present.
  */
 export function validateProbeJob(job: ProbeJobRequestPayload, selfPeerId: string): string | null {
   if (job.request.method !== 'POST') return 'unsupported_method'
@@ -529,6 +530,15 @@ export function validateProbeJob(job: ProbeJobRequestPayload, selfPeerId: string
   }
   if (chat.max_completion_tokens !== undefined && !isBoundedCompletionBudget(chat.max_completion_tokens)) {
     return 'max_completion_tokens_out_of_bounds'
+  }
+  // A completion budget is mandatory, not optional. The job is relayed
+  // byte-for-byte on this buyer's deposit (the seller signs the request hash,
+  // so nothing can be injected here), meaning a body with neither budget field
+  // relays with no cap on the paid output. Refuse it — the verifier's own probe
+  // builder stamps a bounded `max_tokens`, so a legitimate probe always carries
+  // one; a job that omits both is either malformed or hostile.
+  if (chat.max_tokens === undefined && chat.max_completion_tokens === undefined) {
+    return 'missing_completion_budget'
   }
   // `n` multiplies paid completions; only the no-op value is relayable.
   if (chat.n !== undefined && chat.n !== 1) {

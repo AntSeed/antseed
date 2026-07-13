@@ -37,6 +37,27 @@ describe('compositional dataset — unambiguity corrections', () => {
     expect(schema('element_mp').range[0]).toBeLessThanOrEqual(-260);
   });
 
+  it('element_bp excludes elements that sublime rather than boil at 1 atm', () => {
+    const bp = schema('element_bp');
+    // carbon (sublimes ≈3642 °C) and arsenic (sublimes ≈614 °C) have no
+    // well-defined 1-atm boiling point — same ambiguity class as MP_ELEMENTS.
+    for (const banned of ['carbon', 'arsenic']) {
+      expect(bp.entities, banned).not.toContain(banned);
+    }
+    // Helium is KEPT here (its 1-atm boiling point ≈−269 °C is sharp), unlike
+    // element_mp where helium never solidifies at 1 atm.
+    expect(bp.entities).toContain('helium');
+    // Refractory-lanthanide replacements keep the pool size stable at 71.
+    for (const added of ['neodymium', 'gadolinium']) {
+      expect(bp.entities, added).toContain(added);
+    }
+    expect(bp.entities.length).toBe(71);
+    // The atomic-number schema is unaffected: carbon (Z=6) and arsenic (Z=33)
+    // have unambiguous atomic numbers and stay in the full element list.
+    expect(schema('element_z').entities).toContain('carbon');
+    expect(schema('element_z').entities).toContain('arsenic');
+  });
+
   it('river_len excludes rivers with competing headwater/system figures', () => {
     const rivers = schema('river_len');
     // Each dropped river has honest full-system vs main-stem figures spread
@@ -107,8 +128,11 @@ const KNOWN_TRUTHS: readonly KnownTruth[] = [
   { domain: 'element_mp', entity: 'samarium', truth: 1072, variants: [1072, 1074] },
   { domain: 'element_mp', entity: 'gadolinium', truth: 1313, variants: [1312, 1313] },
   // element_bp — helium stays here (its 1-atm boiling point IS well-defined)
-  // and must clear the range floor.
+  // and must clear the range floor; carbon/arsenic are excluded (they sublime),
+  // replaced by two refractory lanthanides with sharp 1-atm boiling points.
   { domain: 'element_bp', entity: 'helium', truth: -268.93, variants: [-268.9, -269] },
+  { domain: 'element_bp', entity: 'neodymium', truth: 3074, variants: [3074, 3027] },
+  { domain: 'element_bp', entity: 'gadolinium', truth: 3273, variants: [3273, 3266] },
   { domain: 'orbital_period', entity: 'Mars', truth: 686.98, variants: [687] },
   // river_len — the four replacements plus a survivor.
   { domain: 'river_len', entity: 'Rhone', truth: 813, variants: [812, 813] },
