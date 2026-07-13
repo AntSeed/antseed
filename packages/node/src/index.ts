@@ -3,6 +3,7 @@ export {
   AntseedNode,
   type NodeConfig,
   type NodePaymentsConfig,
+  type NodeRelayerConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
@@ -71,6 +72,14 @@ export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
+export {
+  DepositRelayClient,
+  type DepositRelayClientConfig,
+  type SweepParams,
+  type SweepProfitEstimate,
+  type SweepEventConfirmation,
+} from './payments/evm/deposit-relay-client.js';
+export { DepositRelayer, type DepositRelayerConfig, type SweepHandleResult } from './payments/deposit-relayer.js';
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
 export {
   FreeUsageClient,
@@ -98,14 +107,17 @@ export {
   signFreeUsageOpen,
   signFreeUsageAuth,
   signSetOperator,
+  buildReceiveAuthorization,
   makeChannelsDomain,
   makeDepositsDomain,
   makeFreeUsageDomain,
+  makeUsdcDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   FREE_USAGE_OPEN_TYPES,
   FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
+  RECEIVE_WITH_AUTHORIZATION_TYPES,
   computeMetadataHash,
   encodeMetadata,
   computeFreeUsageMetadataHash,
@@ -125,6 +137,8 @@ export type {
   SetOperatorMessage,
   FreeUsageOpenMessage,
   FreeUsageAuthMessage,
+  ReceiveAuthorizationMessage,
+  SignedReceiveAuthorization,
   SpendingAuthMetadata,
   SpendingAuthServiceMetadata,
   FreeUsageMetadata,
@@ -145,6 +159,8 @@ export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } f
 export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
+export { SweepMux, type SweepMessageHandler } from './p2p/sweep-mux.js';
+export { encodeSweepRequest, decodeSweepRequest, encodeSweepReceipt, decodeSweepReceipt } from './p2p/sweep-codec.js';
 export {
   VerificationMux,
   VerificationSampler,

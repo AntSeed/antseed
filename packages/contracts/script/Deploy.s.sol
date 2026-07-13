@@ -100,6 +100,19 @@ contract Deploy is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:     ", emissions);
 
+        // 10. AntseedDepositRelay(usdc, deposits, FEE)
+        //     Keep this LAST among contract creations — the deterministic anvil
+        //     addresses of everything above (nonces 0-8) are hardcoded in
+        //     scripts/setup-local-test.sh and chain-config base-local.
+        bytes memory relayBytecode = abi.encodePacked(
+            vm.getCode("AntseedDepositRelay.sol:AntseedDepositRelay"),
+            abi.encode(usdc, deposits, uint256(50_000)) // fixed fee: $0.05
+        );
+        address depositRelay;
+        assembly { depositRelay := create(0, add(relayBytecode, 0x20), mload(relayBytecode)) }
+        require(depositRelay != address(0), "DepositRelay deploy failed");
+        console.log("AntseedDepositRelay:  ", depositRelay);
+
         // ---- Wire registry ----
         antseedRegistry.setChannels(channels);
         antseedRegistry.setStats(stats);

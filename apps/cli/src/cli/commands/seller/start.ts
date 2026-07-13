@@ -425,6 +425,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
 
       let paymentConfig: PaymentConfig | null = null
+      let depositRelayAddress: string | undefined
       if (preferredMethod === 'crypto') {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
@@ -437,7 +438,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
           emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
+          depositRelayAddress: config.payments.crypto?.depositRelayAddress,
         })
+        depositRelayAddress = cc.depositRelayAddress
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
           config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
           defaultDepositAmountUSDCBaseUnits,
@@ -604,8 +607,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
+            ...(depositRelayAddress ? { depositRelayAddress } : {}),
           } : {}),
         },
+        ...(config.relayer ? { relayer: config.relayer } : {}),
         ...(announcerSellerContract ? { sellerContract: announcerSellerContract } : {}),
       })
 

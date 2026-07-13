@@ -5,6 +5,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
+  decodeSweepRequest,
   type AntseedNode,
   type PeerInfo,
   type PeerMetadata,
@@ -13,6 +14,7 @@ import {
   type SerializedHttpRequest,
   type SerializedHttpResponse,
   type SerializedHttpResponseChunk,
+  type SweepReceiptPayload,
 } from '@antseed/node'
 import {
   createStreamingAdapter,
@@ -370,6 +372,8 @@ export class BuyerProxy {
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
+  /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
+  private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -388,6 +392,19 @@ export class BuyerProxy {
         res.end(`Proxy error: ${err instanceof Error ? err.message : String(err)}`)
       })
     })
+
+    const sweepEventNode = this._node as AntseedNode & {
+      on?: (event: 'sweep:receipt', listener: (event: { peerId: string; payload: SweepReceiptPayload }) => void) => unknown
+    }
+    if (typeof sweepEventNode.on === 'function') {
+      sweepEventNode.on('sweep:receipt', ({ payload }) => {
+        this._sweepReceipts.set(payload.authNonce.toLowerCase(), payload)
+        if (this._sweepReceipts.size > 64) {
+          const oldest = this._sweepReceipts.keys().next().value
+          if (oldest !== undefined) this._sweepReceipts.delete(oldest)
+        }
+      })
+    }
 
     const eventNode = this._node as AntseedNode & {
       on?: (event: 'peers:discovered', listener: (peers: PeerInfo[]) => void) => unknown
@@ -835,6 +852,7 @@ export class BuyerProxy {
         displayName: p.displayName,
         publicAddress: p.publicAddress,
         providers: p.providers,
+        capabilities: p.capabilities ?? p.metadata?.capabilities ?? [],
         providerPricing: p.providerPricing,
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,
@@ -916,6 +934,43 @@ export class BuyerProxy {
       const stats = this._node.getMeteringStatsByPeer(sellerPeerId)
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify(stats))
+      return
+    }
+
+    // Broadcast a signed deposit-sweep request over the daemon's existing
+    // seller connections (see docs/protocol/spec/09-deposit-sweep.md).
+    if (path === '/_antseed/sweep' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      try {
+        // Re-validate through the wire codec — same rules as inbound P2P frames.
+        const payload = decodeSweepRequest(new Uint8Array(Buffer.concat(chunks)))
+        const sent = this._node.broadcastSweepRequest(payload)
+        log(`Sweep request ${payload.nonce.slice(0, 10)}... broadcast to ${sent} peer(s)`)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, sent }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
+    const sweepReceiptMatch = path.match(/^\/_antseed\/sweep\/(0x[0-9a-fA-F]{64})$/)
+    if (sweepReceiptMatch && method === 'GET') {
+      const receipt = this._sweepReceipts.get(sweepReceiptMatch[1]!.toLowerCase()) ?? null
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, receipt }))
       return
     }
 
