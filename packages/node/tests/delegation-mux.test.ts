@@ -1,3 +1,4 @@
+import { Signature, Wallet } from 'ethers';
 import { describe, expect, it } from 'vitest';
 import { DelegationMux } from '../src/verification/delegation-mux.js';
 import {
@@ -10,6 +11,12 @@ import {
   encodeProbeJobRequest,
   encodeProbeJobResult,
 } from '../src/verification/delegation-codec.js';
+import {
+  makeVerifierRegistryDomain,
+  recoverDelegateVoucherSigner,
+  signDelegateVoucher,
+  type DelegateVoucherMessage,
+} from '../src/payments/evm/verifier-client.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import type { ProbeJobRequestPayload, ProbeJobResultPayload } from '../src/types/protocol.js';
@@ -61,7 +68,7 @@ describe('delegation codec', () => {
       credits: 7,
       nonce: '12345678901234567890',
       deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
+      signature: '0x' + '5'.repeat(128) + '1b',
     };
     expect(decodeDelegateVoucher(encodeDelegateVoucher(voucher))).toEqual(voucher);
 
@@ -112,20 +119,70 @@ describe('delegation codec', () => {
       credits: 7,
       nonce: '1',
       deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
+      signature: '0x' + '5'.repeat(128) + '1b',
     };
     const encode = (over: Record<string, unknown>): Uint8Array =>
       new TextEncoder().encode(JSON.stringify({ ...voucher, ...over }));
 
     expect(decodeDelegateVoucher(encode({}))).toEqual(voucher);
-    // EIP-2098 compact (64-byte) signatures are accepted too.
-    expect(() => decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(128) }))).not.toThrow();
+    // EIP-2098 compact (64-byte) signatures are accepted on the wire but
+    // always come back in canonical 65-byte (r,s,v) form.
+    const fromCompact = decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(128) }));
+    expect((fromCompact.signature.length - 2) / 2).toBe(65);
 
     expect(() => decodeDelegateVoucher(encode({ registry: '0x' + 'e'.repeat(38) }))).toThrow(/registry/);
     expect(() => decodeDelegateVoucher(encode({ buyer: 'a'.repeat(42) }))).toThrow(/buyer/);
     expect(() => decodeDelegateVoucher(encode({ probeCommitment: '0xcafe' }))).toThrow(/probeCommitment/);
     expect(() => decodeDelegateVoucher(encode({ probeCommitment: '0x' + 'g'.repeat(64) }))).toThrow(/probeCommitment/);
     expect(() => decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(131) }))).toThrow(/signature/);
+    // Signatures the on-chain claim would reject fail at decode: malleable
+    // high-s (top bit of s set) and an invalid v byte.
+    expect(() => decodeDelegateVoucher(encode({
+      signature: '0x' + '1'.repeat(64) + 'f' + '5'.repeat(63) + '1b',
+    }))).toThrow(/signature/);
+    expect(() => decodeDelegateVoucher(encode({ signature: '0x' + '5'.repeat(128) + '05' }))).toThrow(/signature/);
+  });
+
+  it('normalizes an EIP-2098 compact voucher signature to the on-chain-claimable form', async () => {
+    // A greedy verifier could sign vouchers in compact form: ethers'
+    // verifyTypedData recovers the right signer from it, so the voucher
+    // passes every delegate-side check — but the contract's
+    // ECDSA.recover(bytes32,bytes) reverts on 64-byte signatures, making the
+    // persisted voucher worthless at claim time. Decode must therefore hand
+    // the caller the canonical 65-byte serialization.
+    const wallet = new Wallet('0x' + '7'.repeat(64));
+    const registry = '0x' + 'e'.repeat(40);
+    const domain = makeVerifierRegistryDomain(8453, registry);
+    const msg: DelegateVoucherMessage = {
+      buyer: '0x' + 'a'.repeat(40),
+      probeCommitment: '0x' + '4'.repeat(64),
+      credits: 7,
+      nonce: 1n,
+      deadline: 1_800_000_000,
+    };
+    const canonical = await signDelegateVoucher(wallet, domain, msg);
+    const compact = Signature.from(canonical).compactSerialized;
+    expect((compact.length - 2) / 2).toBe(64);
+    // The delegate-side recovery helper refuses the compact form outright —
+    // it must never bless a signature the contract would revert on.
+    expect(() => recoverDelegateVoucherSigner(domain, msg, compact)).toThrow(/65-byte/);
+
+    const decoded = decodeDelegateVoucher(encodeDelegateVoucher({
+      version: 1,
+      chainId: 8453,
+      registry,
+      buyer: msg.buyer,
+      probeCommitment: msg.probeCommitment,
+      credits: msg.credits,
+      nonce: '1',
+      deadline: msg.deadline,
+      signature: compact,
+    }));
+
+    expect(decoded.signature).toBe(canonical);
+    expect((decoded.signature.length - 2) / 2).toBe(65);
+    // The normalized form still recovers the verifier that signed it.
+    expect(recoverDelegateVoucherSigner(domain, msg, decoded.signature)).toBe(wallet.address);
   });
 
   it('rejects oversize control payloads at decode', () => {
@@ -138,7 +195,7 @@ describe('delegation codec', () => {
       credits: 7,
       nonce: '9'.repeat(17 * 1024),
       deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
+      signature: '0x' + '5'.repeat(128) + '1b',
     }));
     expect(oversize.length).toBeGreaterThan(16 * 1024);
     expect(() => decodeDelegateVoucher(oversize)).toThrow(/too large/);
@@ -156,7 +213,7 @@ describe('delegation codec', () => {
       credits: 7,
       nonce: hugeNonce,
       deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
+      signature: '0x' + '5'.repeat(128) + '1b',
     })).toThrow(/too large/);
     expect(() => encodeDelegateHello({ version: 1, maxConcurrentJobs: 1 })).not.toThrow();
   });
@@ -186,6 +243,21 @@ describe('DelegationMux', () => {
     expect(welcome.accepted).toBe(true);
   });
 
+  it('invokes the onWelcome observer synchronously, before the waitForWelcome microtask', async () => {
+    const { verifier, delegate } = muxPair();
+    const order: string[] = [];
+    delegate.onWelcome((welcome) => order.push(`observer:${welcome.accepted}`));
+    const waited = delegate.waitForWelcome(1_000).then(() => order.push('waiter'));
+
+    verifier.sendWelcome({ version: 1, accepted: true });
+    // The observer must have fired during the synchronous frame dispatch;
+    // the promise waiter only resumes on a later microtask.
+    order.push('after-send');
+    await waited;
+
+    expect(order).toEqual(['observer:true', 'after-send', 'waiter']);
+  });
+
   it('delivers vouchers to the delegate handler', async () => {
     const { verifier, delegate } = muxPair();
     const received: string[] = [];
@@ -202,7 +274,7 @@ describe('DelegationMux', () => {
       credits: 2,
       nonce: '1',
       deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
+      signature: '0x' + '5'.repeat(128) + '1b',
     });
     await new Promise((resolve) => setImmediate(resolve));
 

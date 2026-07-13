@@ -287,6 +287,56 @@ describe('computeCohortVerdicts', () => {
     expect(result.verdicts.find((v) => v.sellerPeerId === '0xliar')!.verdict).toBe('DIFF');
   });
 
+  it('surfaces every dropped duplicate through onWarning (peer-id and agentId)', () => {
+    const probeCount = 24;
+    const probes = makeProbes(probeCount);
+    const observations = makeCohort(3, probeCount); // agents 1..3
+    const answers = Array.from({ length: probeCount }, (_, i) => 100 + i);
+    // Same seller replayed under a case-variant peer id…
+    observations.push(observation('0xHONEST0', 9, answers));
+    // …and a DISTINCT peer id colliding on an already-used agentId. The
+    // collapse is intentional (on-chain identity is the agentId) but callers
+    // that did not resolve agentIds on-chain must be able to see it happen.
+    observations.push(observation('0xdistinct-peer', 2, answers));
+
+    const warnings: string[] = [];
+    const result = computeCohortVerdicts(observations, probes, {
+      onWarning: (message) => warnings.push(message),
+    });
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/0xHONEST0/);
+    expect(warnings[0]).toMatch(/repeated sellerPeerId/);
+    expect(warnings[1]).toMatch(/0xdistinct-peer/);
+    expect(warnings[1]).toMatch(/agentId 2/);
+    // Dropped observations receive no verdict entry; the rest are unaffected.
+    expect(result.verdicts).toHaveLength(3);
+    expect(result.verdicts.some((v) => v.sellerPeerId === '0xdistinct-peer')).toBe(false);
+
+    // A fully unique cohort never warns.
+    const clean: string[] = [];
+    computeCohortVerdicts(makeCohort(3, probeCount), probes, {
+      onWarning: (message) => clean.push(message),
+    });
+    expect(clean).toEqual([]);
+  });
+
+  it('computeCohortConsensus surfaces the same drop diagnostics', () => {
+    const probes = makeProbes(1);
+    const observations = [
+      observation('a', 1, [100]),
+      observation('b', 2, [100]),
+      observation('c', 3, [100]),
+      observation('d', 1, [500]), // distinct peer, agentId 1 already used
+    ];
+    const warnings: string[] = [];
+    const consensus = computeCohortConsensus(observations, probes, {
+      onWarning: (message) => warnings.push(message),
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/agentId 1/);
+    expect(consensus.parseableCounts).toEqual([3]);
+  });
+
   it('cohort of 1-2 sellers → all UNDETERMINED', () => {
     const probes = makeProbes(20);
     for (const size of [1, 2]) {

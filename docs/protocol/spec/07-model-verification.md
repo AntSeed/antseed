@@ -3,11 +3,13 @@
 **Status:** Mixed. `ResponseAuth`, `VerificationMux`, buyer-side response-auth
 storage, and random buyer-side request/response evidence samples are implemented
 in `@antseed/node`. The whitelisted verifier network is implemented:
-`@antseed/fingerprints` (KBF + cohort verdict math), the
-`AntseedVerifierRegistry`/`AntseedVerifierRewards` contracts, and the
-`antseed verifier` CLI daemon. Fingerprint swarm distribution, additional
-verifier families, verifier staking, and seller slashing are proposed
-next-step work.
+`@antseed/fingerprints` (KBF + cohort verdict math, stealth probe engine), the
+`AntseedVerifierRegistry`/`AntseedVerifierRewards` contracts, the
+`antseed verifier` CLI daemon, buyer-delegated probe execution (probe
+delegation protocol, message types `0x90-0x94`) with EIP-712 delegate
+vouchers, and buyer-side routing enforcement of standing substitution flags.
+Fingerprint swarm distribution, additional verifier families, verifier
+staking, and seller slashing are proposed next-step work.
 
 ## Overview
 
@@ -72,7 +74,9 @@ Implemented in the `@antseed/node` package:
   - waits by `requestId`;
   - buffers out-of-order auths;
   - allows one listener for unsolicited response-auth handling;
-  - reserves `0x80-0x8f` for verification messages.
+  - reserves `0x80-0x8F` for verification/attestation messages. The probe
+    delegation protocol occupies the adjacent `0x90-0x9F` range (currently
+    `0x90-0x94`, documented below).
 - Seller behavior:
   - creates `ResponseAuth` after a completed inference response;
   - signs with the Seller identity;
@@ -117,8 +121,16 @@ Also implemented — the whitelisted verifier network:
   tracking (`lastAuditedAt`/`lastCreditedAt`), and per-epoch audit credits
   bounded by a cooldown and a per-verifier cap.
 - `AntseedVerifierRewards` contract: emissions-gate bucket controller for
-  `VERIFICATION_MINTER_ID`; verifiers claim each finalized epoch's bucket pro
-  rata to credited audits; zero-credit epochs settle to burn/reserve.
+  `VERIFICATION_MINTER_ID`. Each finalized epoch's bucket is split by the
+  registry's `delegateShareBps` (default 2000 = 20%) into a verifier pool
+  and a delegate pool. The delegate share is carved out only for epochs that
+  actually recorded delegate credits (a fully direct-probed epoch pays
+  verifiers 100%), and the budget and split are frozen when an epoch is
+  first touched, so a later `delegateShareBps` change never resizes it.
+  Verifiers claim the verifier pool pro rata to credited audits; buyer
+  deposit operators claim the delegate pool pro rata to claimed delegate
+  credits via `claimDelegateReward`. Zero-credit epochs settle to
+  burn/reserve.
 - `antseed verifier start`: a daemon that runs as a full buyer node on the
   network. With no configured services it auto-discovers: one wildcard peer
   discovery per round enumerates every service advertised in signed peer
@@ -141,6 +153,50 @@ Also implemented — the whitelisted verifier network:
   fewer than `cohortMinSize` sellers — down to a single seller. References
   drift as backends update (~7–9 weeks, arXiv:2605.29524); the daemon warns
   when one is older than 7 weeks.
+- Buyer-delegated probe execution (probe delegation protocol). Direct probing
+  originates from the verifier's own buyer identity, which is linked to its
+  publicly whitelisted wallet — a cheating seller could classify that
+  identity and special-case its traffic. Delegation moves probe origin to
+  ordinary opt-in buyer identities. Verifiers hosting delegation announce
+  the `verification.probe-delegation.v1` connection capability on the DHT
+  (delegation hosts are discoverable via its capability topic). The
+  protocol's message types:
+  - `DelegateHello = 0x90` — an opt-in buyer connects to a delegation host
+    and offers to carry probe jobs, advertising its `maxConcurrentJobs`
+    (default 1).
+  - `DelegateWelcome = 0x91` — the verifier accepts or rejects the delegate.
+    A full roster rejects with reason `delegate_capacity` (default cap: 64
+    connected delegates). The delegate side is welcome-gated: it rejects all
+    jobs and drops all vouchers until an ACCEPTED welcome arrives, and tears
+    the channel down on a rejected or timed-out welcome. Delegates also
+    re-check the verifier against the on-chain whitelist on a TTL, dropping
+    revoked verifiers mid-session.
+  - `ProbeJobRequest = 0x92` — one fully verifier-crafted stealth probe job
+    (job id, target peer, service, exact serialized HTTP request). The
+    delegate relays it byte-for-byte over its ordinary paid buyer path after
+    enforcing a strict job schema: the request's model must match the
+    audited service, streaming is refused, and response sizes are capped.
+    The delegate enforces its own advertised `maxConcurrentJobs`.
+  - `ProbeJobResult = 0x93` — the seller's response bytes plus its signed
+    `ResponseAuth`. Delegates are untrusted transport: the verifier
+    re-verifies each seller-signed `ResponseAuth` against the exact request
+    it crafted and the response body returned, so a delegate can drop a job
+    but never alter or fabricate an observation.
+  - `DelegateVoucher = 0x94` — after an audit's attestations land, the
+    verifier signs one EIP-712 `DelegateVoucher` per carrier
+    (`registry`, `buyer`, `probeCommitment`, `credits`, `nonce`,
+    `deadline`) and sends it over the delegation channel. The buyer persists
+    vouchers append-only in `delegate/vouchers.jsonl`, dedup'd by signature.
+- Delegate voucher claiming: the buyer's deposits OPERATOR — never the buyer
+  hot wallet — claims each voucher on-chain via
+  `AntseedVerifierRegistry.claimDelegateCredits`. The contract resolves the
+  operator for the voucher's buyer from `AntseedDeposits` at claim time,
+  caps a verifier's total voucher credits per probe commitment by the summed
+  `probeCount` of that verifier's CREDITED attestations referencing the
+  commitment (grants must be backed by real, cooldown-limited, commit-reveal
+  audit work), and enforces per-verifier per-epoch delegate-credit caps.
+  Claimed credits earn from the delegate pool in `AntseedVerifierRewards`
+  (see above).
 
 Cohort consensus is the key mechanism enabling verification without a trusted
 upstream reference: when N sellers claim the same model, the majority behavior
@@ -186,14 +242,72 @@ and a Fisher–Yates shuffle. Determinism is what makes evidence re-verifiable �
 an arbiter re-derives the exact stealth request bodies from the revealed probe
 set and nonce and checks the set against the pre-audit commitment.
 
+**Evidence bundle and `evidenceHash`.** The `evidenceHash` in each on-chain
+attestation is the bytes32 RFC 8785 (JCS) canonical-JSON hash of the complete
+evidence bundle the daemon writes under
+`<dataDir>/fingerprints/evidence/<service-slug>/`. Reproducing the hash means
+hashing EXACTLY this structure — every field below is part of the hashed
+content, including the per-seller `fullyAuthenticated` flag and the full
+`exchanges` array:
+
+```jsonc
+{
+  "version": 1,
+  "service": "gpt-5.4",            // normalized service key
+  "verifierAddress": "0x...",       // verifier wallet address
+  "probeSet": {                     // the full revealed probe set
+    "probeSetId": "...",            // content id over { service, probes }
+    "service": "gpt-5.4",
+    "probes": [],                   // COMPLETE ordered probe definitions
+    "nonce": "...",                 // HKDF-derived commitment nonce
+    "createdAt": "..."
+  },
+  "sellers": [
+    {
+      "sellerPeerId": "0x...",
+      "agentId": 123,
+      "answers": [3880, null],      // parsed answers, probe-aligned
+      "requestIds": ["req-..."],
+      "responseAuthHashes": [
+        { "requestHash": "0x...", "responseHash": "0x..." }
+      ],
+      "verdict": "SAME | DIFF | UNDETERMINED | UNKNOWN",
+      "stats": {},                  // per-seller cohort stats
+      "fullyAuthenticated": true,   // every probe had a verified ResponseAuth
+      "exchanges": [                // full re-verification material per probe
+        {
+          "requestId": "req-...",
+          "request": { "method": "POST", "path": "...", "headers": {}, "bodyBase64": "..." },
+          "response": { "statusCode": 200, "headers": {}, "bodyBase64": "..." },
+          "responseAuth": {}        // complete signed ResponseAuthPayload, or null
+        }
+      ]
+    }
+  ],
+  "cohort": {},                     // full cohort result (consensus + verdicts)
+  "createdAt": "2026-07-13T00:00:00.000Z"
+}
+```
+
+`exchanges` is what makes the bundle self-contained: it embeds the exact
+request/response bytes each signed `ResponseAuth` commits to, so any third
+party can re-verify every seller signature offline from the bundle alone — no
+daemon state required. A re-verifier that hashes only the schema-minimal
+seller observation (omitting `fullyAuthenticated` and `exchanges`) computes a
+DIFFERENT hash and will fail to match the attested `evidenceHash`.
+
 **Reputation and enforcement.** The registry accumulates per-(agent, service)
 and per-agent verification stats (`sameCount`/`diffCount`/`undeterminedCount`,
 distinct-verifier count, last verdict, and `activeDiffVerifierCount` — the
 number of distinct verifiers whose LATEST verdict is DIFF, a standing
 accusation that a verifier retracts by re-attesting SAME on the same service).
 These are facts-only on-chain; buyers compute a local authenticity score per
-(peer, model) during discovery (`PeerInfo.modelVerification`) and route
-accordingly. `AntseedVerifierPointsPolicy` is a swappable
+(peer, model) during discovery (`PeerInfo.modelVerification`) and enforce it
+in routing: `DefaultRouter` excludes sellers with a standing substitution
+flag for the requested service (falling back to the agent-wide aggregate),
+and the CLI/Desktop buyer proxy — which is pinned-peer-only — refuses to
+dispatch to a flagged peer, including an explicitly pinned one, until every
+accusing verifier retracts. `AntseedVerifierPointsPolicy` is a swappable
 `IAntseedPointsPolicy` that zeroes (or partially discounts) an agent's
 recognized-usage seller points while at least `minDistinctDiffVerifiers`
 (default 2) distinct verifiers hold a standing DIFF against it. Corroboration
@@ -491,6 +605,12 @@ RULES: Output ONLY in (N) <number> format, one per line.
 (1) The melting point of tantalum carbide is ___°C.
 (2) The diploid chromosome number (2n) of <organism> is ___.
 ```
+
+This numbered form is the KBF paper's scoring formulation and is acceptable
+against a TRUSTED reference upstream at enrollment time. On the wire against
+an audited Seller it is a recognizable test battery and MUST NOT be used —
+the implemented stealth engine rewraps the same facts as organic chat
+messages with free-text numeric extraction (see "Request Construction").
 
 KBF is useful because numeric answers are mechanically parsed and scored. It is
 also limited: when multiple frontier models answer a probe set perfectly, that
@@ -880,54 +1000,60 @@ Selection is Buyer-local and MUST NOT be advertised to the Seller.
 
 ### Request Construction
 
-For KBF, the verifier batches probes by domain. Each batch becomes a normal
-upstream-compatible HTTP request. Example for OpenAI-compatible chat:
+Probe requests are built by the stealth engine in `@antseed/fingerprints`
+(`buildStealthChatRequests`). The pre-stealth construction — a fixed system
+prompt plus a numbered `TASK … output ONLY in (N) <number>` cloze battery —
+is exactly the classifiable side-channel this spec's own threat model
+forbids, and MUST NOT be sent to an audited Seller.
 
-```jsonc
-{
-  "model": "gpt-5.4",
-  "messages": [
-    {
-      "role": "system",
-      "content": "Follow the user's instructions exactly. Output only what is requested."
-    },
-    {
-      "role": "user",
-      "content": "TASK: ...\n\n(1) ...\n(2) ..."
-    }
-  ],
-  "temperature": 0,
-  "max_tokens": 800
-}
-```
+Each wire request instead reads like an organic user chat message:
+
+- a seeded natural-language framing (many varied templates and phrasings)
+  wraps 1–`verifier.maxProbesPerRequest` factual questions (default 3);
+- no fixed marker tokens, fixed system prompt, or numbered answer format;
+- the wire `model` field preserves the Seller's advertised spelling;
+- answers are recovered by free-text numeric extraction over the completion,
+  position-aligned with the embedded facts;
+- every phrasing choice derives deterministically from the per-audit seed, so
+  an arbiter re-derives the exact request bodies from the revealed probe set
+  and nonce.
+
+The probes themselves MUST NOT come from a fixed public bank: the default
+probe source is compositional (hundreds of thousands of combinations),
+probes revealed by past audits rotate out per (verifier, service), and the
+stealth-versus-cost trade-off (more, smaller requests read more organic but
+incur more per-request fees) is the verifier's `maxProbesPerRequest` dial.
 
 The Buyer MAY apply protocol adapters for OpenAI Chat, OpenAI Responses,
 Anthropic Messages, or future formats. The adapter belongs in the verifier
-package only if it is transport-agnostic. Actual sending belongs in
-`@antseed/node`.
+package only if it is transport-agnostic. Actual sending belongs in the
+runtime (`@antseed/node` and the CLI daemon).
 
 ### ResponseAuth Requirement
 
-The underlying `ResponseAuth` mechanism is implemented for normal Buyer/Seller
-requests when both peers support `verification.response-auth.v1`. The fingerprint
-audit runner is not implemented yet, but when it is, every audit request MUST
-require a valid `ResponseAuth` before its response can enter a verifier result.
-Missing or invalid auth produces:
-
-```text
-auditProbeStatus = "unauthenticated"
-```
+The underlying `ResponseAuth` mechanism is negotiated for normal Buyer/Seller
+requests when both peers support `verification.response-auth.v1`, and the
+implemented audit runner enforces it on probe traffic: audit cohorts only
+include Sellers advertising the capability, every probe request must yield a
+`ResponseAuth` that verifies against the exact request and response bytes,
+and a Seller whose probe run is not fully authenticated is never attested —
+an adverse verdict that cannot be backed by signed responses stays off-chain.
 
 Unauthenticated probes do not count as model mismatches. They count as Seller
 non-cooperation for routing/reputation policy.
 
 ### Evidence Sampling
 
-Random buyer-side evidence sampling is implemented today for verified
-`ResponseAuth` records. Audit-specific forced sampling is not implemented yet.
-When fingerprint audits are added, audit requests SHOULD be stored even if the
-normal random verification sampler would skip them. The sample directory format
-remains:
+Random buyer-side evidence sampling is implemented for verified `ResponseAuth`
+records on organic traffic. Audit probes do not rely on that sampler: the
+verifier daemon persists the COMPLETE exchange for every probe — exact request
+bytes, exact response bytes, and the full signed `ResponseAuth` payload —
+inside the audit's evidence bundle itself (see "Evidence bundle and
+`evidenceHash`" above), so audit evidence retention is total by construction
+rather than sampled. Evidence bundles embed the bytes directly and do not
+reference `verification_samples` sample ids.
+
+The organic-traffic sample directory format remains:
 
 ```text
 <dataDir>/verification_samples/
@@ -937,9 +1063,6 @@ remains:
       request.bin
       response.bin
 ```
-
-The audit result stores the `sampleId` for each probe batch. It does not duplicate
-request or response bytes.
 
 ### Audit Result Schema
 
@@ -1242,11 +1365,13 @@ step 9, which does not depend on the Buyer's samples at all.
 | Min samples per verdict | `N` | 30 | Below this, no M2 verdict is emitted |
 | Distributional fail threshold | — | tuned on real traffic | Drives *local* flagging only |
 | Probe cadence (if M1 used) | — | 1 / 20 requests | M1 is deterrence/triage only |
-| KBF batch size | — | 10 probes | One AntSeed request per domain batch |
+| Probes per stealth request | `verifier.maxProbesPerRequest` | 3 | 1–3 facts folded into one organic-looking chat request; the stealth-vs-cost dial |
 | KBF min coverage | — | 0.5 | Below this, verdict is `UNDETERMINED` |
 | KBF CP confidence | — | 0.99 | Upper bound for reference self-error |
 | KBF alpha | — | 0.05 | One-sided binomial threshold for `DIFF` |
-| Audit sample retention | — | always for audit probes | Audit probes bypass random sample-rate skipping |
+| Delegate share of verification bucket | `delegateShareBps` | 20% | Split of each epoch's verification emissions between verifier and delegate pools; only carved out for epochs with delegate credits |
+| Max connected delegates per host | — | 64 | Delegation roster cap; excess hellos rejected with `delegate_capacity` |
+| Audit evidence retention | — | all probe exchanges | Evidence bundles embed full request/response bytes and the signed `ResponseAuth` per probe |
 
 Thresholds that affect **local** routing may be liberal. Thresholds that gate
 **on-chain** penalties MUST be conservative and are ultimately the arbiter's
@@ -1266,24 +1391,36 @@ Completed milestones:
    - `verification.db` response-auth storage;
    - random verified request/response evidence samples.
 
+2. `@antseed/fingerprints` pure package:
+   - KBF schemas, numeric parser, tolerance matcher, CP99 and binomial
+     functions, verdict computation;
+   - cohort consensus verdicts;
+   - stealth probe engine and pluggable `ProbeSource` (compositional default);
+   - RFC 8785 canonical JSON hashing and HKDF/HMAC_DRBG deterministic
+     randomness;
+   - probe-set generation and full-content commitments.
+
+3. Verifier network runtime and contracts:
+   - `AntseedVerifierRegistry` (whitelist, commit-reveal, attestations,
+     stats, delegate-credit claiming) and `AntseedVerifierRewards`
+     (verifier/delegate pool split);
+   - `antseed verifier start|status|claim|reference build` daemon and CLI;
+   - audit runner: cohort selection, on-chain commitment before probing,
+     verified `ResponseAuth` required for attestation, self-contained
+     evidence bundles under `<dataDir>/fingerprints/evidence`;
+   - buyer-delegated probe execution (0x90–0x94) with EIP-712 delegate
+     vouchers.
+
+4. Local routing integration:
+   - per-(peer, model) verification stats and authenticity score on
+     `PeerInfo.modelVerification` during discovery;
+   - standing substitution flags excluded by `DefaultRouter` and refused by
+     the CLI/Desktop pinned-peer dispatch path.
+
 The next implementation SHOULD proceed in small PRs with clean package
 boundaries:
 
-1. `@antseed/fingerprints` pure package:
-   - shared `FingerprintVerifier` interface;
-   - schema types for references, fingerprint packs, probes, match vectors, and
-     results;
-   - canonical JSON hash helper;
-   - verifier registry;
-   - public pack import/export helpers;
-   - KBF verifier module;
-   - numeric parser;
-   - tolerance matcher;
-   - CP99 and binomial functions;
-   - verdict computation;
-   - unit tests with small fixture references.
-
-2. Fingerprint swarm support:
+1. Fingerprint swarm support:
    - define pack signing bytes;
    - validate publisher signatures;
    - announce pack metadata on fingerprint swarm topics;
@@ -1293,37 +1430,23 @@ boundaries:
    - import trusted references into local storage;
    - expose pack trust/staleness metadata.
 
-3. Buyer-local reference store in `@antseed/node`:
+2. Buyer-local managed reference store in `@antseed/node`:
    - import public/generated references;
    - validate schema;
    - compute and verify `referenceId`;
    - write under `<dataDir>/fingerprints/references/<referenceId>.json`;
    - list references by `serviceAliases`.
 
-4. KBF audit runner in `@antseed/node`:
-   - select Seller/service/reference;
-   - construct KBF request batches;
-   - send through the ordinary Buyer request path;
-   - require verified `ResponseAuth`;
-   - force-store audit request/response samples;
-   - call `@antseed/fingerprints` to compute the verdict;
-   - write `<dataDir>/fingerprints/audits/<sellerPeerId>/<auditId>.json`.
-
-5. Local routing integration:
-   - avoid Sellers with recent `DIFF` for the requested service;
-   - increase audit rate for `UNDETERMINED` or unauthenticated probes;
-   - surface audit status in diagnostics without broadcasting raw prompts.
-
-6. Additional fingerprint families:
+3. Additional fingerprint families:
    - add behavioral-classifier, perturbation, rare-token, instruction-hierarchy,
      output-distribution, runtime, and passive proxy-reader verifier modules
      behind the day-one `FingerprintVerifier` interface;
    - keep each verifier module transport-agnostic;
    - reuse the same reference store, sample store, and audit-result schema.
 
-7. Dispute/slashing prototype:
-   - add probe-set commitment support;
-   - build an off-chain exhibit verifier;
+4. Dispute/slashing prototype:
+   - build an off-chain exhibit verifier (probe-set commitments are already
+     implemented and enforced on-chain);
    - define verifier committee signatures;
    - add compact slash signal support to `AntseedSlashing`.
 
@@ -1366,12 +1489,12 @@ commit-reveal, reproducible verifier code, and independent adjudication.
 | F2-F9 Fingerprint suite | variable | behavioral/runtime/provenance/model-family mismatch | Local routing and triage unless independently confirmed |
 
 The implemented base is **M3 ResponseAuth + buyer-side verification storage +
-random verified evidence samples**. The recommended next implementation is
-**`@antseed/fingerprints` + public fingerprint packs + buyer-local audit
-storage**: implement the shared fingerprint package with KBF as the first
-verifier, publish and mirror signed public fingerprint packs, store trusted
-references by content hash, run Buyer-side audits through the normal request
-path, and persist auditable manifests that point to signed request/response
-samples. M2 remains the stronger long-term distributional check for real
-traffic; F2-F9 expand the suite through the same package and public fingerprint
-swarm. On-chain slashing comes last.
+random verified evidence samples**, plus the whitelisted verifier network:
+**`@antseed/fingerprints` (KBF + cohort consensus + stealth engine), the
+verifier registry/rewards contracts, the `antseed verifier` daemon with
+commit-reveal and self-contained evidence bundles, buyer-delegated probing
+with delegate vouchers, and substitution-flag enforcement in buyer routing**.
+The recommended next implementation is the public fingerprint swarm (signed,
+content-addressed reference/fingerprint packs) and additional verifier
+families behind the same interfaces. M2 remains the stronger long-term
+distributional check for real traffic. On-chain slashing comes last.

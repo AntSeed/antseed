@@ -102,9 +102,13 @@ export function toPeerModelVerification(stats: ServiceVerificationStats): PeerMo
  * least one verifier whose latest verdict is DIFF. Historical (retracted)
  * DIFFs do not flag; they only lower the score ceiling.
  *
- * `lastVerdict === DIFF` is kept as a fallback signal for stats decoded from
- * registry deployments that predate `activeDiffVerifierCount` (the decoder
- * defaults the missing field to 0).
+ * `lastVerdict === DIFF` is redundant with `activeDiffVerifierCount > 0` for
+ * stats read from the current registry (a standing last-DIFF implies an
+ * active accuser) and is kept only as a defensive belt-and-braces check.
+ * Note it is NOT a graceful-degradation path for old deployments: a registry
+ * predating `activeDiffVerifierCount` returns a 6-field tuple that fails ABI
+ * decode outright, so such a deployment yields no verification data at all
+ * rather than stats with the field decoded as 0.
  */
 export function hasModelSubstitutionFlag(mv: PeerModelVerification | undefined): boolean {
   return mv !== undefined && (mv.activeDiffVerifierCount > 0 || mv.lastVerdict === VERDICT_DIFF);

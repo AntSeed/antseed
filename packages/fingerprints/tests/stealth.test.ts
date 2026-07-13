@@ -70,6 +70,30 @@ const LIGHT = P(
   [0, 500000],
   2,
 );
+const TUNGSTEN_MP = P(
+  'comp:element_mp:tungsten',
+  'tungsten',
+  'The melting point of tungsten is ___°C.',
+  3422,
+  [-260, 4000],
+  40,
+);
+const TUNGSTEN_BP = P(
+  'comp:element_bp:tungsten',
+  'tungsten',
+  'The boiling point of tungsten is ___°C.',
+  5555,
+  [-270, 6000],
+  60,
+);
+const TUNGSTEN_Z = P(
+  'comp:element_z:tungsten',
+  'tungsten',
+  'The atomic number of tungsten is ___.',
+  74,
+  [1, 120],
+  0.5,
+);
 
 describe('buildStealthChatRequests — determinism', () => {
   it('same probe set → byte-identical plans', () => {
@@ -142,6 +166,35 @@ describe('buildStealthChatRequests — partitioning & coverage', () => {
     const single = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest: 0 });
     for (const plan of single) {
       expect(plan.probes.length).toBe(1);
+    }
+  });
+});
+
+describe('buildStealthChatRequests — same-entity separation', () => {
+  // Two probes about the same entity ("melting point of tungsten" + "boiling
+  // point of tungsten") in one message elicit a combined answer like "The
+  // melting point of tungsten is 3422°C, and its boiling point is 5555°C.",
+  // where the shared entity anchor makes the extractor grab the same number
+  // for both probes. The partitioner must never bundle them.
+  const withNonce = (nonce: string): ProbeSet => ({
+    probeSetId: 'test',
+    service: 'kimi-k2',
+    probes: [TUNGSTEN_MP, TUNGSTEN_BP, TUNGSTEN_Z, HUMAN, MARS, LIGHT, TANTALUM],
+    nonce,
+    createdAt: AT,
+  });
+
+  it('never places two probes sharing an entity name in the same request', () => {
+    for (const nonce of ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8']) {
+      const ps = withNonce(nonce);
+      const plans = buildStealthChatRequests('kimi-k2', ps, { maxProbesPerRequest: 3 });
+      for (const plan of plans) {
+        const names = plan.probes.map((p) => p.name.toLowerCase());
+        expect(new Set(names).size, `nonce ${nonce}`).toBe(names.length);
+      }
+      // Splitting must not break coverage: every probe exactly once, in order.
+      const covered = plans.flatMap((p) => p.probeIndices);
+      expect(covered).toEqual([...Array(ps.probes.length).keys()]);
     }
   });
 });
@@ -275,6 +328,42 @@ describe('extractAnswersFreeText — adversarial phrasings', () => {
     ).toEqual([3880, 46]);
   });
 
+  it('breaks window-score ties toward the LAST window (answers follow preambles)', () => {
+    // The preamble "2" is in-range for the 2n probe ([2, 500]), so the windows
+    // [2, 46] and [46, 3880] tie on score. Earliest-window tie-breaking used
+    // to return [2, 46] — both wrong, both in range, so both scored as hard
+    // mismatches.
+    expect(
+      extractAnswersFreeText('Sure, here are 2 quick answers: 46 and 3880.', [HUMAN, TANTALUM]),
+    ).toEqual([46, 3880]);
+  });
+
+  it('tie-break holds for longer probe lists with an in-range preamble numeral', () => {
+    // "3" is in-range for the 2n probe, so [3, 46, 687] ties [46, 687, 3880].
+    expect(
+      extractAnswersFreeText('I have 3 answers for you: 46, 687, and 3880.', [
+        HUMAN,
+        MARS,
+        TANTALUM,
+      ]),
+    ).toEqual([46, 687, 3880]);
+  });
+
+  it('anchors property verb forms: "melts"/"boils" sentences resolve per property', () => {
+    const text = 'Tungsten melts at 3422°C. It boils at around 5555°C.';
+    expect(extractAnswersFreeText(text, [TUNGSTEN_MP, TUNGSTEN_BP])).toEqual([3422, 5555]);
+    // Probe order must not matter — extraction is per-probe.
+    expect(extractAnswersFreeText(text, [TUNGSTEN_BP, TUNGSTEN_MP])).toEqual([5555, 3422]);
+  });
+
+  it('a single-property request stays correct when the response volunteers both properties', () => {
+    // With same-entity probes split into separate requests (see the
+    // partitioning tests), each response is extracted against ONE tungsten
+    // probe — the "melting" anchor keeps the grab on the right clause.
+    const text = 'The melting point of tungsten is 3422°C, and its boiling point is 5555°C.';
+    expect(extractAnswersFreeText(text, [TUNGSTEN_MP])).toEqual([3422]);
+  });
+
   it('a predicate-attached number beats a nearer incidental in-range numeral', () => {
     expect(
       extractAnswersFreeText(
@@ -325,6 +414,45 @@ describe('extractAnswersFreeText — adversarial phrasings', () => {
     expect(extractAnswersFreeText('The natural logarithm of 2 is about .69', [LN2])).toEqual([
       0.69,
     ]);
+  });
+});
+
+describe('extractAnswersFreeText — question-echo suppression', () => {
+  const SQRT3 = P(
+    'math_const:sqrt3-6dp',
+    'square root of 3',
+    'The square root of 3 rounded to 6 decimal places is ___.',
+    1.732051,
+    [0, 10],
+    0.000002,
+  );
+
+  it('a number echoed from the question loses to the uncued true answer', () => {
+    // The echoed 3 carries a weak "of" cue while 1.732051 has no cue at all —
+    // without echo suppression the subject 3 wins (in range, stronger cue).
+    expect(
+      extractAnswersFreeText('For the square root of 3 you get 1.732051 as the value.', [SQRT3]),
+    ).toEqual([1.732051]);
+  });
+
+  it('still prefers the strongly-cued true answer when the echo sits closer', () => {
+    expect(
+      extractAnswersFreeText('The square root of 3 is 1.732051.', [SQRT3]),
+    ).toEqual([1.732051]);
+  });
+
+  it('a legitimate echo answer still extracts when nothing else is in range', () => {
+    // Deprioritize, never exclude: when the true answer coincides with a
+    // number in the question and is the only in-range candidate, it must win.
+    const ECHO = P(
+      'test:echo-answer',
+      'x where x equals 3',
+      'The value of x where x equals 3 is ___.',
+      3,
+      [0, 10],
+      0.5,
+    );
+    expect(extractAnswersFreeText('the answer is 3', [ECHO])).toEqual([3]);
   });
 });
 

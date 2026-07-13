@@ -19,9 +19,9 @@ export interface VoucherStoreFs {
 
 /**
  * Append-only JSONL store for received DelegateVouchers. A voucher is the
- * only proof of claimable delegate credits — the buyer's operator reads this
- * file (or the `antseed delegate vouchers` listing) and claims each voucher
- * on-chain via AntseedVerifierRegistry.claimDelegateCredits.
+ * only proof of claimable delegate credits — the buyer's operator lists them
+ * with `antseed delegate vouchers` and claims them on-chain with
+ * `antseed delegate claim` (AntseedVerifierRegistry.claimDelegateCredits).
  *
  * Appends are dedup'd by signature: a re-delivered voucher (e.g. a verifier
  * retry) lands once. The signature enters the dedupe set only AFTER the
@@ -29,7 +29,8 @@ export interface VoucherStoreFs {
  * redelivery until restart. Initialization and writes are serialized through
  * a single promise chain so concurrent first deliveries cannot race the
  * signature-set load or interleave appends. Claims are NOT tracked here —
- * the contract's voucherClaimed(digest) is the source of truth.
+ * the contract's voucherClaimed(verifier, digest) replay guard is the
+ * source of truth.
  */
 export class VoucherStore {
   private readonly _path: string

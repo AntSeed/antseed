@@ -60,7 +60,14 @@ function serialize(value: unknown, path: string): string {
   }
 
   if (Array.isArray(value)) {
-    const parts = value.map((entry, i) => serialize(entry, `${path}[${i}]`));
+    // Index loop, NOT Array.prototype.map: map skips holes in sparse arrays,
+    // which would emit invalid JSON like "[1,,2]". Indexing a hole reads
+    // undefined, which hits the unsupported-value throw path above — matching
+    // the module contract (undefined is only skippable as an object property).
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      parts.push(serialize(value[i], `${path}[${i}]`));
+    }
     return `[${parts.join(',')}]`;
   }
 

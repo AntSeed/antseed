@@ -50,6 +50,19 @@ describe('canonicalJsonStringify', () => {
     expect(() => canonicalJsonStringify({ a: 1n })).toThrow(/unsupported/);
   });
 
+  it('treats sparse-array holes as undefined (throws) instead of emitting invalid JSON', () => {
+    // Array.prototype.map skips holes, which used to serialize [1, <hole>, 2]
+    // to the invalid "[1,,2]". Holes must hit the same path as an explicit
+    // undefined element.
+    const sparse: unknown[] = [1];
+    sparse[2] = 2; // hole at index 1
+    expect(() => canonicalJsonStringify(sparse)).toThrow(/unsupported undefined at \$\[1\]/);
+    // A trailing hole must throw too, not silently truncate or emit ",".
+    const trailingHole: unknown[] = [1, 2];
+    trailingHole.length = 3;
+    expect(() => canonicalJsonStringify(trailingHole)).toThrow(/unsupported undefined at \$\[2\]/);
+  });
+
   it('honors toJSON (Date)', () => {
     expect(canonicalJsonStringify(new Date('2026-06-14T00:00:00.000Z'))).toBe(
       '"2026-06-14T00:00:00.000Z"',

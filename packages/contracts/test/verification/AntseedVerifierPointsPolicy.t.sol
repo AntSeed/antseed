@@ -330,6 +330,20 @@ contract AntseedVerifierPointsPolicyTest is Test {
         assertEq(sellerPoints, 0);
     }
 
+    function test_ownerClearingDewhitelistedVerifierStandingLiftsPenalty() public {
+        _flagAgent();
+        (uint256 sellerPoints,) = _points(RAW_POINTS);
+        assertEq(sellerPoints, 0, "flagged while both accusations stand");
+
+        // A rogue accuser gets de-whitelisted: it can no longer re-attest
+        // SAME to retract its own DIFF, so the owner clears its standing via
+        // the registry's escape hatch — and the penalty lifts.
+        verifierRegistry.setVerifier(secondVerifier, false);
+        verifierRegistry.clearVerifierStanding(secondVerifier, agentId, SERVICE_HASH);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+        _assertPassThrough(RAW_POINTS);
+    }
+
     function test_repeatDiffFromSameVerifierStaysBelowThreshold() public {
         // The same verifier attesting DIFF repeatedly is still one accuser.
         _commitAndAttest(agentId, 2);

@@ -5,6 +5,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
+  hasModelSubstitutionFlag,
   type AntseedNode,
   type PeerInfo,
   type PeerMetadata,
@@ -337,9 +338,35 @@ export function parsePersistedPeers(
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
     }
+    // Rehydrate per-(peer, model) verification stats so the substitution-flag
+    // routing gate works from the warm cache after a restart, before the
+    // first on-chain enrichment pass completes.
+    if (entry.modelVerification && typeof entry.modelVerification === 'object' && !Array.isArray(entry.modelVerification)) {
+      peer.modelVerification = entry.modelVerification as PeerInfo['modelVerification']
+    }
     peers.push(peer)
   }
   return peers
+}
+
+/**
+ * True when the peer carries a STANDING model-substitution flag for the
+ * requested service — at least one approved verifier whose latest on-chain
+ * verdict is DIFF. Falls back to the agent-wide `'*'` aggregate when there
+ * are no per-service stats for this request, so a flagged seller cannot
+ * dodge the gate by being probed under a differently-keyed service name.
+ * Mirrors `DefaultRouter`'s exclusion so the CLI's pinned-peer dispatch path
+ * enforces the same policy. Peers with no verification data pass (unknown
+ * ≠ known bad). Exported for unit testing.
+ */
+export function peerHasActiveSubstitutionFlag(peer: PeerInfo, requestedService: string | null): boolean {
+  const mv = peer.modelVerification
+  if (!mv) return false
+  if (requestedService) {
+    const perService = mv[requestedService.trim().toLowerCase()]
+    if (perService) return hasModelSubstitutionFlag(perService)
+  }
+  return hasModelSubstitutionFlag(mv['*'])
 }
 
 /**
@@ -654,6 +681,10 @@ export class BuyerProxy {
         // null on first sighting and filled by a later peers:discovered update.
         verifications: p.metadata?.verifications ?? null,
         verificationResults: p.verificationResults ?? null,
+        // Per-(peer, model) on-chain verification stats + buyer-local
+        // authenticity score. Persisted so the substitution-flag routing gate
+        // keeps working from the warm cache across restarts.
+        modelVerification: p.modelVerification ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
@@ -1187,6 +1218,28 @@ export class BuyerProxy {
       log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
+      return
+    }
+    // Substitution-flag gate. The CLI buyer path is pinned-peer-only (auto
+    // selection is disabled), so DefaultRouter's flag exclusion never runs
+    // here — enforce the same gate on the pin itself. An active flag means at
+    // least one approved verifier currently stands by signed on-chain evidence
+    // that this seller served a different model than advertised; the block
+    // lifts as soon as every accusing verifier retracts (attests SAME again).
+    // Pins are deliberately gated too: an explicit pin means "I want this
+    // peer", not "I accept a substituted model". /v1/models service listing
+    // is exempt so a flagged peer stays inspectable without being paid for
+    // inference.
+    if (!isControlPlaneServicesPath(normalizedPath) && peerHasActiveSubstitutionFlag(selectedPeer, requestedService)) {
+      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... blocked: active model-substitution flag (service=${requestedService ?? '*'})`)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(
+        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... carries an active model-substitution flag`
+        + (requestedService ? ` for ${requestedService}` : '')
+        + ': an approved verifier currently stands by on-chain evidence that it served a different model '
+        + 'than advertised. Requests to it are blocked until the accusing verifier(s) retract. '
+        + 'Pick a different peer in Discover.',
+      )
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined

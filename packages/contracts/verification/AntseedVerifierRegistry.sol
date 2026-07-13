@@ -111,8 +111,13 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
     mapping(uint256 epoch => mapping(address delegate => uint256 credits)) public epochDelegateCredits;
     mapping(uint256 epoch => uint256 credits) public epochTotalDelegateCredits;
     mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochDelegateCreditsGrantedBy;
-    /// @notice EIP-712 voucher digests already claimed (replay protection).
-    mapping(bytes32 digest => bool claimed) public voucherClaimed;
+    /// @notice EIP-712 voucher digests already claimed, keyed by the
+    ///         recovered signing verifier (replay protection). The digest
+    ///         itself does not bind the signer — two approved verifiers
+    ///         signing identical voucher fields produce ONE digest — so a
+    ///         signer-keyed guard is required to keep the first claim from
+    ///         permanently consuming the other verifier's voucher.
+    mapping(address verifier => mapping(bytes32 digest => bool claimed)) public voucherClaimed;
     /// @notice Delegate-credit budget per (verifier, probeCommitment): the
     ///         sum of probeCount over the verifier's CREDITED attestations
     ///         that referenced the commitment.
@@ -129,6 +134,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
     event DelegateShareBpsSet(uint16 delegateShareBps);
     event MaxDelegateCreditsPerVerifierPerEpochSet(uint32 maxDelegateCreditsPerVerifierPerEpoch);
     event DelegateCredited(uint256 indexed epoch, address indexed verifier, address indexed delegate, uint32 credits);
+    event VerifierStandingCleared(address indexed verifier, uint256 indexed agentId, bytes32 indexed serviceHash);
     event AttestationSubmitted(
         uint256 indexed agentId,
         bytes32 indexed serviceHash,
@@ -159,6 +165,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
     error VoucherAlreadyClaimed();
     error NotBuyerOperator();
     error CommitmentBudgetExceeded();
+    error NoStandingDiff();
 
     // ─── Modifiers ───────────────────────────────────────────────────
     modifier onlyApprovedVerifier() {
@@ -210,6 +217,34 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
         if (_max == 0) revert InvalidValue();
         maxDelegateCreditsPerVerifierPerEpoch = _max;
         emit MaxDelegateCreditsPerVerifierPerEpochSet(_max);
+    }
+
+    /// @notice Retract `verifier`'s standing DIFF on `(agentId, serviceHash)`
+    ///         exactly as the verifier's own SAME/UNDETERMINED re-attestation
+    ///         would: both `activeDiffVerifierCount` accumulators drop via
+    ///         the shared `_updateActiveDiff` bookkeeping, and the verifier's
+    ///         stored verdict on the key resets to 0 ("never attested" — no
+    ///         fabricated SAME). Historical counters, the stored latest
+    ///         attestation and epoch credits are untouched, and nothing is
+    ///         credited.
+    ///
+    ///         Remediation tool for rogue-verifier damage: a verifier removed
+    ///         from the whitelist can no longer attest, so its standing DIFF
+    ///         accusations — and the points-policy penalty they drive — would
+    ///         otherwise stand forever. Reverts with `NoStandingDiff` when
+    ///         the verifier holds no standing DIFF on the key, so a mistyped
+    ///         key fails loudly instead of emitting a misleading event.
+    function clearVerifierStanding(address verifier, uint256 agentId, bytes32 serviceHash) external onlyOwner {
+        if (_lastVerdictByVerifier[agentId][serviceHash][verifier] != uint8(Verdict.DIFF)) revert NoStandingDiff();
+        _updateActiveDiff(
+            agentId,
+            serviceHash,
+            verifier,
+            uint8(Verdict.UNKNOWN),
+            _verificationStats[agentId][serviceHash],
+            _agentStats[agentId]
+        );
+        emit VerifierStandingCleared(verifier, agentId, serviceHash);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -300,7 +335,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
             agentStats.distinctVerifierCount++;
         }
 
-        _updateActiveDiff(agentId, serviceHash, verdict, stats, agentStats);
+        _updateActiveDiff(agentId, serviceHash, msg.sender, verdict, stats, agentStats);
 
         bool credited = nowTs - lastCreditedAt[agentId][serviceHash] >= auditCooldown
             && epochCredits[epoch][msg.sender] < maxCreditsPerVerifierPerEpoch;
@@ -358,8 +393,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
                 )
             )
         );
-        if (voucherClaimed[digest]) revert VoucherAlreadyClaimed();
         address verifier = ECDSA.recover(digest, signature);
+        if (voucherClaimed[verifier][digest]) revert VoucherAlreadyClaimed();
         if (!approvedVerifiers[verifier]) revert NotApprovedVerifier();
         if (voucher.buyer == verifier) revert SelfDelegate();
 
@@ -376,7 +411,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
         uint256 epochGranted = epochDelegateCreditsGrantedBy[epoch][verifier] + voucher.credits;
         if (epochGranted > maxDelegateCreditsPerVerifierPerEpoch) revert DelegateCreditCapExceeded();
 
-        voucherClaimed[digest] = true;
+        voucherClaimed[verifier][digest] = true;
         commitmentDelegateCredits[verifier][voucher.probeCommitment] = commitmentGranted;
         epochDelegateCreditsGrantedBy[epoch][verifier] = epochGranted;
         epochDelegateCredits[epoch][operator] += voucher.credits;
@@ -437,36 +472,40 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, EIP7
         }
     }
 
-    /// @dev Maintain both `activeDiffVerifierCount` accumulators from the
-    ///      caller's per-service verdict transition. Entering DIFF raises the
-    ///      service-level count once per verifier; leaving DIFF (a later
-    ///      SAME/UNDETERMINED on the same service) lowers it. The agent-level
-    ///      count tracks verifiers with a standing DIFF on ANY of the agent's
-    ///      services via `_verifierDiffServiceCount`, so a SAME on an
-    ///      honestly served service never launders a standing DIFF on the
-    ///      substituted one. A stored verdict of 0 means "never attested"
-    ///      (UNKNOWN is not attestable, so 0 is unambiguous). No counter can
-    ///      underflow: every decrement requires this verifier's stored DIFF
-    ///      on this exact key, which implies the matching earlier increment.
+    /// @dev Maintain both `activeDiffVerifierCount` accumulators from
+    ///      `verifier`'s per-service verdict transition (the attesting
+    ///      caller, or the owner's remediation target in
+    ///      `clearVerifierStanding`). Entering DIFF raises the service-level
+    ///      count once per verifier; leaving DIFF (a later SAME/UNDETERMINED
+    ///      on the same service, or an owner clearance to 0) lowers it. The
+    ///      agent-level count tracks verifiers with a standing DIFF on ANY of
+    ///      the agent's services via `_verifierDiffServiceCount`, so a SAME
+    ///      on an honestly served service never launders a standing DIFF on
+    ///      the substituted one. A stored verdict of 0 means "never attested
+    ///      / cleared" (UNKNOWN is not attestable, so 0 is unambiguous). No
+    ///      counter can underflow: every decrement requires this verifier's
+    ///      stored DIFF on this exact key, which implies the matching earlier
+    ///      increment.
     function _updateActiveDiff(
         uint256 agentId,
         bytes32 serviceHash,
+        address verifier,
         uint8 verdict,
         ServiceVerificationStats storage stats,
         ServiceVerificationStats storage agentStats
     ) internal {
-        uint8 previous = _lastVerdictByVerifier[agentId][serviceHash][msg.sender];
+        uint8 previous = _lastVerdictByVerifier[agentId][serviceHash][verifier];
         if (previous == verdict) return;
-        _lastVerdictByVerifier[agentId][serviceHash][msg.sender] = verdict;
+        _lastVerdictByVerifier[agentId][serviceHash][verifier] = verdict;
 
         if (verdict == uint8(Verdict.DIFF)) {
             stats.activeDiffVerifierCount++;
-            if (++_verifierDiffServiceCount[agentId][msg.sender] == 1) {
+            if (++_verifierDiffServiceCount[agentId][verifier] == 1) {
                 agentStats.activeDiffVerifierCount++;
             }
         } else if (previous == uint8(Verdict.DIFF)) {
             stats.activeDiffVerifierCount--;
-            if (--_verifierDiffServiceCount[agentId][msg.sender] == 0) {
+            if (--_verifierDiffServiceCount[agentId][verifier] == 0) {
                 agentStats.activeDiffVerifierCount--;
             }
         }

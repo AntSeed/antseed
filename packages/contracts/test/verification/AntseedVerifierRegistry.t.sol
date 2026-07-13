@@ -34,6 +34,7 @@ contract AntseedVerifierRegistryTest is Test {
 
     event VerifierApprovalSet(address indexed verifier, bool approved);
     event ProbeSetCommitted(address indexed verifier, bytes32 indexed commitment);
+    event VerifierStandingCleared(address indexed verifier, uint256 indexed agentId, bytes32 indexed serviceHash);
     event AttestationSubmitted(
         uint256 indexed agentId,
         bytes32 indexed serviceHash,
@@ -535,6 +536,88 @@ contract AntseedVerifierRegistryTest is Test {
 
         _assertStats(verifierRegistry.agentVerificationStats(agentId), 0, 1, 0, 1, 2, verifier);
         _assertStats(verifierRegistry.agentVerificationStats(otherAgentId), 0, 0, 0, 0, 0, address(0));
+    }
+
+    // ─── Owner standing clearance ────────────────────────────────────
+
+    function test_clearVerifierStandingRetractsDiff() public {
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        _commitAndAttest(otherVerifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 2);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 2);
+        uint256 totalCreditsBefore = verifierRegistry.epochTotalCredits(5);
+
+        // The rogue verifier is de-whitelisted first — it can no longer
+        // retract its own DIFF, so the owner clears the standing instead.
+        verifierRegistry.setVerifier(verifier, false);
+        vm.expectEmit(true, true, true, true);
+        emit VerifierStandingCleared(verifier, agentId, SERVICE_HASH);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+
+        // The standing accusation drops at both levels…
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+        // …while historical counters stay untouched and no credits mint.
+        assertEq(_stats(agentId, SERVICE_HASH).diffCount, 2);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).diffCount, 2);
+        assertEq(verifierRegistry.epochTotalCredits(5), totalCreditsBefore);
+    }
+
+    function test_clearVerifierStandingOnlyOwner() public {
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", outsider));
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+    }
+
+    function test_clearVerifierStandingWithoutDiffReverts() public {
+        // Documented choice: clearing a key without a standing DIFF reverts
+        // (not a silent no-op), so a mistyped key fails loudly instead of
+        // emitting a misleading event. Never attested…
+        vm.expectRevert(AntseedVerifierRegistry.NoStandingDiff.selector);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+
+        // …standing SAME…
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
+        vm.expectRevert(AntseedVerifierRegistry.NoStandingDiff.selector);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+
+        // …and an already-cleared standing all revert.
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+        vm.expectRevert(AntseedVerifierRegistry.NoStandingDiff.selector);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+    }
+
+    function test_clearVerifierStandingIsPerServiceAtAgentLevel() public {
+        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        _commitAndAttest(verifier, agentId, otherServiceHash, 2);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+
+        // Clearing one service behaves exactly like the verifier's own SAME
+        // on that service: the agent-level accusation stands while ANY other
+        // service still carries this verifier's DIFF.
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 0);
+        assertEq(_stats(agentId, otherServiceHash).activeDiffVerifierCount, 1);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
+
+        verifierRegistry.clearVerifierStanding(verifier, agentId, otherServiceHash);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 0);
+    }
+
+    function test_clearVerifierStandingAllowsReRaise() public {
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        verifierRegistry.clearVerifierStanding(verifier, agentId, SERVICE_HASH);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 0);
+
+        // The cleared verdict resets to "never attested": a still-approved
+        // verifier re-attesting DIFF re-raises the standing without any
+        // double counting or underflow.
+        _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
+        assertEq(_stats(agentId, SERVICE_HASH).activeDiffVerifierCount, 1);
+        assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
     }
 
     // ─── Crediting ───────────────────────────────────────────────────

@@ -48,6 +48,7 @@ export class DelegationMux {
   private _onHello?: DelegationMessageHandler<DelegateHelloPayload>;
   private _onJob?: DelegationMessageHandler<ProbeJobRequestPayload>;
   private _onVoucher?: DelegationMessageHandler<DelegateVoucherPayload>;
+  private _onWelcome?: (payload: DelegateWelcomePayload) => void;
   private readonly _pendingResults = new Map<string, PendingResult>();
   private _pendingWelcome: PendingWelcome | null = null;
 
@@ -65,6 +66,18 @@ export class DelegationMux {
 
   onVoucher(handler: DelegationMessageHandler<DelegateVoucherPayload>): void {
     this._onVoucher = handler;
+  }
+
+  /**
+   * Synchronous observer invoked from the welcome frame's dispatch path,
+   * BEFORE the `waitForWelcome` promise resolves. Frames coalesced into one
+   * network read are dispatched back-to-back without awaiting each other, so
+   * a waiter resumed on a microtask sees any frame behind the welcome first —
+   * callers use this hook to flip accept-state synchronously (deliberately
+   * sync-only: an async handler would reintroduce that ordering gap).
+   */
+  onWelcome(handler: (payload: DelegateWelcomePayload) => void): void {
+    this._onWelcome = handler;
   }
 
   sendHello(payload: DelegateHelloPayload): void {
@@ -157,6 +170,9 @@ export class DelegationMux {
       }
       case MessageType.DelegateWelcome: {
         const payload = decodeDelegateWelcome(frame.payload);
+        // Observer first, synchronously: frames behind this welcome in the
+        // same batch dispatch before any `waitForWelcome` microtask resumes.
+        this._onWelcome?.(payload);
         if (this._pendingWelcome) {
           clearTimeout(this._pendingWelcome.timer);
           const pending = this._pendingWelcome;

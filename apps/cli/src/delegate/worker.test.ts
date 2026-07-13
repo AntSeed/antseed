@@ -103,6 +103,50 @@ test('max_tokens is capped when present, optional otherwise', () => {
   )
 })
 
+test('max_completion_tokens is capped exactly like max_tokens', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_completion_tokens: 4096 }) }), SELF),
+    null,
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_completion_tokens: 100_000 }) }), SELF),
+    'max_completion_tokens_out_of_bounds',
+  )
+})
+
+test('output-multiplying n is refused before dispatch (only the no-op n=1 relays)', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 50 }) }), SELF),
+    'n_out_of_bounds',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: '50' }) }), SELF),
+    'n_out_of_bounds',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 1 }) }), SELF),
+    null,
+  )
+})
+
+test('body fields outside the allowlist are refused (best_of and friends)', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], best_of: 20 }) }), SELF),
+    'disallowed_body_field:best_of',
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], logprobs: true }) }), SELF),
+    'disallowed_body_field:logprobs',
+  )
+  // Fields real probes carry stay relayable.
+  assert.equal(
+    validateProbeJob(job({
+      body: JSON.stringify({ model: 'kimi-k2', messages: [], temperature: 0, max_tokens: 800 }),
+    }), SELF),
+    null,
+  )
+})
+
 test('rejects non-finite or non-positive timeouts', () => {
   assert.equal(validateProbeJob(job({ timeoutMs: Number.NaN }), SELF), 'invalid_timeout')
   assert.equal(validateProbeJob(job({ timeoutMs: 0 }), SELF), 'invalid_timeout')

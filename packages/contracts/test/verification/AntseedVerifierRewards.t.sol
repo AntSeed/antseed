@@ -228,19 +228,59 @@ contract AntseedVerifierRewardsTest is Test {
         assertEq(verifierRegistry.epochTotalCredits(5), 3);
         assertEq(verifierRewards.verifierEpochTotalCredits(5), 2, "frozen total must not move");
 
-        // Remaining pre-freeze claimants keep their exact frozen share — the
-        // late credit neither dilutes them nor makes their claims revert.
+        // The frozen denominator keeps every pre-freeze SHARE intact: B's
+        // pending amount is not diluted by the late credit, and claiming
+        // here — BEFORE the late claimant — pays it in full.
         assertEq(verifierRewards.pendingVerifierReward(5, verifierB), budget / 2);
         vm.prank(verifierB);
         verifierRewards.claimVerifierReward(5);
         assertEq(token.balanceOf(verifierB), budget / 2);
 
-        // The late claimer is outside the frozen claim set: its share against
-        // the frozen total no longer fits the gate bucket, so the gate's
-        // budget guard stops it instead of overdrawing earlier claimants.
+        // With the pool now exhausted, the late claimer's share against the
+        // frozen total no longer fits the gate bucket and the gate's budget
+        // guard stops it. This is claim-order dependent, NOT a reserved
+        // share: had C claimed before B, C would have been paid and B
+        // displaced — see test_lateCreditsCanDisplaceUnclaimedFrozenShares.
         vm.prank(verifierC);
         vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
         verifierRewards.claimVerifierReward(5);
+    }
+
+    function test_lateCreditsCanDisplaceUnclaimedFrozenShares() public {
+        // LIMITATION, pinned executable: freezing the totals finalizes every
+        // share already PAID and caps minting at the gate budget, but it does
+        // NOT reserve the pool for pre-freeze claimants who have not claimed
+        // yet. Under a lagging registry epoch clock (misconfigured wiring —
+        // production runs the registry and the gate on one clock) a late
+        // credit claims against the nonzero frozen denominator first-come-
+        // first-served and can exhaust the pool ahead of them.
+        _credit(verifierA, 1);
+        _credit(verifierB, 1);
+        _warpGateEpoch(6);
+
+        uint256 budget = verifierRewards.verifierEpochBudget(5);
+        vm.prank(verifierA);
+        verifierRewards.claimVerifierReward(5); // freezes the total at 2
+        assertEq(token.balanceOf(verifierA), budget / 2);
+
+        MockEpochClock laggingClock = new MockEpochClock();
+        laggingClock.setCurrentEpoch(5);
+        registry.setEmissions(address(laggingClock));
+        _credit(verifierC, 1);
+
+        // The late claimant claims FIRST: 1 credit against the frozen total
+        // of 2 still fits the gate bucket, so it is paid in full.
+        vm.prank(verifierC);
+        verifierRewards.claimVerifierReward(5);
+        assertEq(token.balanceOf(verifierC), budget / 2);
+
+        // The pre-freeze claimant B is displaced — its frozen share no
+        // longer fits the exhausted bucket.
+        vm.prank(verifierB);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        verifierRewards.claimVerifierReward(5);
+        // The hard guarantee holds: the gate budget was never overdrawn.
+        assertLe(gate.minterEpochMinted(VERIFICATION_MINTER_ID, 5), budget);
     }
 
     function test_lateCreditsAfterZeroCreditFreezeAreUnclaimable() public {

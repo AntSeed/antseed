@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { KbfProbe } from '@antseed/fingerprints'
 import { staticProbeSource, computeReferenceId } from '@antseed/fingerprints'
-import { buildKbfReference, resolveUpstream } from './reference-builder.js'
+import { buildKbfReference, resolveUpstream, resolveUpstreamModel } from './reference-builder.js'
 
 function probe(id: string, name: string): KbfProbe {
   return {
@@ -24,10 +24,12 @@ function probe(id: string, name: string): KbfProbe {
 function fakeUpstream(answerFor: (name: string, call: number) => number | string) {
   let calls = 0
   const seenHeaders: Array<Record<string, string>> = []
+  const seenModels: string[] = []
   const fetchFn = (async (_url: unknown, init?: RequestInit) => {
     const call = calls++
     seenHeaders.push({ ...((init?.headers ?? {}) as Record<string, string>) })
-    const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content: string }> }
+    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ role: string; content: string }> }
+    seenModels.push(body.model)
     const userContent = body.messages.find((m) => m.role === 'user')?.content ?? ''
     const lines: string[] = []
     for (const line of userContent.split('\n')) {
@@ -40,7 +42,7 @@ function fakeUpstream(answerFor: (name: string, call: number) => number | string
       text: async () => '',
     } as unknown as Response
   }) as typeof fetch
-  return { fetchFn, seenHeaders }
+  return { fetchFn, seenHeaders, seenModels }
 }
 
 const STABLE_VALUES: Record<string, number> = {
@@ -236,6 +238,53 @@ test('a degenerate hold-out (coverage 0, error rate 1) is rejected by defaults',
       },
     ),
     /hold-out coverage/,
+  )
+})
+
+test('enrollment sends the model id to the upstream with its original casing', async () => {
+  // Case-sensitive upstreams (Together, OpenRouter) 404 on a lowercased
+  // model id — the advertised spelling must reach the wire verbatim.
+  const { fetchFn, seenModels } = fakeUpstream((name) => STABLE_VALUES[name] ?? 1)
+  await buildKbfReference(
+    { baseUrl: 'https://upstream.test/v1' },
+    {
+      model: 'Qwen/Qwen3-32B',
+      service: 'qwen/qwen3-32b',
+      probeSource: staticProbeSource('test/v1', makeProbes().slice(0, 4)),
+      candidateCount: 4,
+      minProbes: 3,
+      fetchFn,
+    },
+  )
+  assert.ok(seenModels.length > 0)
+  assert.ok(seenModels.every((m) => m === 'Qwen/Qwen3-32B'), `upstream saw ${seenModels[0]}`)
+})
+
+test('resolveUpstreamModel falls back to the ADVERTISED spelling, never the normalized key', () => {
+  assert.equal(resolveUpstreamModel(undefined, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'), 'Qwen/Qwen3-32B')
+  assert.equal(resolveUpstreamModel({}, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'), 'Qwen/Qwen3-32B')
+  // Unrelated entries do not interfere.
+  assert.equal(
+    resolveUpstreamModel({ 'kimi-k2': 'moonshotai/Kimi-K2' }, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'),
+    'Qwen/Qwen3-32B',
+  )
+})
+
+test('resolveUpstreamModel honors modelMap keys in normalized OR advertised spelling', () => {
+  // Normalized key.
+  assert.equal(
+    resolveUpstreamModel({ 'qwen/qwen3-32b': 'qwen3-32b-upstream' }, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'),
+    'qwen3-32b-upstream',
+  )
+  // Advertised spelling as the key — what users naturally copy.
+  assert.equal(
+    resolveUpstreamModel({ 'Qwen/Qwen3-32B': 'qwen3-32b-upstream' }, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'),
+    'qwen3-32b-upstream',
+  )
+  // Any other casing of the same service id also matches.
+  assert.equal(
+    resolveUpstreamModel({ 'QWEN/QWEN3-32B': 'qwen3-32b-upstream' }, 'qwen/qwen3-32b', 'Qwen/Qwen3-32B'),
+    'qwen3-32b-upstream',
   )
 })
 

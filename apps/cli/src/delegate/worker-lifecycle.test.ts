@@ -121,6 +121,43 @@ test('a stopped worker fails closed even though the channel is still open', asyn
   assert.equal(result.error, 'stopped')
 })
 
+test('stop() during the approval await prevents the paid request (TOCTOU)', async () => {
+  const handlers: JobHandler[] = []
+  let requestsSent = 0
+  const node = fakeNode(handlers, {
+    sendRequest: (async () => {
+      requestsSent += 1
+      return {
+        requestId: 'req-1',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode('{"choices":[]}'),
+      }
+    }) as unknown as AntseedNode['sendRequest'],
+  })
+  // First check (registration) resolves immediately; the job-time re-check
+  // hangs until the test releases it — the window stop() lands in.
+  let approvalCalls = 0
+  let releaseApproval: (approved: boolean) => void = () => {}
+  const gated = new Promise<boolean>((resolve) => { releaseApproval = resolve })
+  const worker = makeWorker(node, {
+    isApprovedVerifier: async () => (approvalCalls++ === 0 ? true : gated),
+    approvalTtlMs: 0, // force the on-job re-check
+  })
+  worker.start()
+  await waitFor(() => handlers.length === 1)
+
+  const inFlight = handlers[0]!(job())
+  await waitFor(() => approvalCalls === 2) // job is inside the approval await
+  worker.stop()
+  releaseApproval(true) // approval arrives AFTER stop() — must not dispatch
+
+  const result = await inFlight
+  assert.equal(result.status, 'error')
+  assert.equal(result.error, 'stopped')
+  assert.equal(requestsSent, 0, 'no paid request may be sent after stop()')
+})
+
 test('a revoked verifier stops getting jobs and is dropped from serving', async () => {
   const handlers: JobHandler[] = []
   let approved = true

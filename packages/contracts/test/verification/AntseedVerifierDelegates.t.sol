@@ -223,7 +223,7 @@ contract AntseedVerifierDelegatesTest is Test {
         vm.prank(operatorX);
         verifierRegistry.claimDelegateCredits(v, sig);
 
-        assertTrue(verifierRegistry.voucherClaimed(_digest(v)));
+        assertTrue(verifierRegistry.voucherClaimed(verifierA, _digest(v)));
         assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment), PROBE_COUNT);
         assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment), 4);
     }
@@ -244,6 +244,43 @@ contract AntseedVerifierDelegatesTest is Test {
         vm.prank(operatorX);
         verifierRegistry.claimDelegateCredits(v2, _sign(verifierAKey, v2));
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 4);
+    }
+
+    function test_claimIdenticalVoucherFieldsFromTwoVerifiers() public {
+        // Identical (buyer, commitment, credits, nonce, deadline) from two
+        // verifiers hash to ONE EIP-712 digest — the typehash does not bind
+        // the signer. The replay guard is keyed by the recovered signer, so
+        // neither verifier's claim consumes the other's voucher.
+        bytes32 commitment = keccak256("shared commitment value");
+        _attestCohort(verifierA, commitment, 1);
+        _attestCohort(verifierB, commitment, 1);
+
+        IAntseedVerifierRegistry.DelegateVoucher memory v = IAntseedVerifierRegistry.DelegateVoucher({
+            buyer: buyerX,
+            probeCommitment: commitment,
+            credits: 2,
+            nonce: 42,
+            deadline: block.timestamp + 1 days
+        });
+        bytes memory sigA = _sign(verifierAKey, v);
+        bytes memory sigB = _sign(verifierBKey, v);
+
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(v, sigA);
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(v, sigB);
+
+        assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 4);
+        assertTrue(verifierRegistry.voucherClaimed(verifierA, _digest(v)));
+        assertTrue(verifierRegistry.voucherClaimed(verifierB, _digest(v)));
+
+        // Replaying either signer's voucher still reverts.
+        vm.prank(operatorX);
+        vm.expectRevert(AntseedVerifierRegistry.VoucherAlreadyClaimed.selector);
+        verifierRegistry.claimDelegateCredits(v, sigA);
+        vm.prank(operatorX);
+        vm.expectRevert(AntseedVerifierRegistry.VoucherAlreadyClaimed.selector);
+        verifierRegistry.claimDelegateCredits(v, sigB);
     }
 
     function test_claimRejectsExpiredVoucher() public {
