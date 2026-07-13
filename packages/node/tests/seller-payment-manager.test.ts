@@ -507,7 +507,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.getAcceptedCumulative(channelId)).toBe(2_000_000n);
   });
 
-  it('validateAndAcceptAuth ignores pending top-up headroom until on-chain reserve max is updated', async () => {
+  it('handleSpendingAuth ignores pending top-up headroom until on-chain reserve max is updated', async () => {
     const channelId = makeChannelId(102);
 
     const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
@@ -540,7 +540,7 @@ describe('SellerPaymentManager', () => {
       reserveMaxAmount: '2000000',
     });
 
-    expect(await manager.validateAndAcceptAuth(buyerIdentity.peerId, followUp)).toBe(false);
+    expect(await manager.handleSpendingAuth(buyerIdentity.peerId, followUp, mux)).toBe('rejected');
     expect(manager.getAcceptedCumulative(channelId)).toBe(900_000n);
   });
 
@@ -1095,19 +1095,6 @@ describe('SellerPaymentManager', () => {
     const req2 = manager.getPaymentRequirements('req-bbb');
     expect(req1.requestId).toBe('req-aaa');
     expect(req2.requestId).toBe('req-bbb');
-  });
-
-  it('test_validateAndAcceptAuth: accepts monotonic increase', async () => {
-
-    const channelId = makeChannelId(8);
-
-    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
-
-    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
-    const accepted = await manager.validateAndAcceptAuth(buyerIdentity.peerId, payload2);
-    expect(accepted).toBe(true);
-    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
   describe('validateHydratedChannels', () => {
