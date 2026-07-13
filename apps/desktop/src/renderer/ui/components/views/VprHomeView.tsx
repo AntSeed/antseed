@@ -244,7 +244,7 @@ export function VprHomeView({ onSelectView }: Props) {
                 <button
                   type="button"
                   className={styles.balanceBody}
-                  onClick={() => actions.openPaymentsPortal?.('deposit')}
+                  onClick={() => onSelectView?.('deposit')}
                 >
                   <span className={styles.balanceTitle}>Add Balance</span>
                   <span className={styles.balanceText}>

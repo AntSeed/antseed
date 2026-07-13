@@ -57,6 +57,14 @@ export type DesktopRewardsSummary = {
   error: string | null;
 };
 
+export type DepositWatchStatus = {
+  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  /** USDC base units (6 decimals), bigint string. */
+  amountBaseUnits?: string;
+  txHash?: string;
+  error?: string;
+};
+
 export type LogEvent = {
   mode: RuntimeMode | string;
   stream: 'stdout' | 'stderr' | 'system' | string;
@@ -333,9 +341,14 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize'; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenOnramp?: (opts?: { amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
+  depositsWatchStart?: () => Promise<{ ok: boolean; data?: { address: string; walletUsdcBaseUnits: string; usdcAddress: string; chainId: number }; error?: string }>;
+  depositsWatchStop?: () => Promise<{ ok: boolean }>;
+  onDepositsWatchStatus?: (handler: (data: DepositWatchStatus) => void) => () => void;
 
   systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;

@@ -18,7 +18,7 @@ describe('view registry', () => {
   it('passes navigation callbacks only to views that need to change pages', () => {
     const navigationViews = VIEW_NAMES.filter((view) => getViewRegistryEntry(view).receivesOnSelectView);
 
-    expect(navigationViews).toEqual(['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'chat', 'help', 'developer'] satisfies ViewName[]);
+    expect(navigationViews).toEqual(['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'deposit', 'chat', 'help', 'developer'] satisfies ViewName[]);
   });
 
   it('reuses the same preload promise for repeated preload requests', () => {
@@ -49,7 +49,7 @@ describe('view registry', () => {
     expect(viewsForPreload('eager')).toEqual(
       ['home', 'explore', 'tools', 'credits', 'chat'] satisfies ViewName[],
     );
-    expect(viewsForPreload('idle')).toEqual(['preferences', 'help', 'developer'] satisfies ViewName[]);
+    expect(viewsForPreload('idle')).toEqual(['preferences', 'deposit', 'help', 'developer'] satisfies ViewName[]);
   });
 
   it('assigns every view a slide position', () => {
@@ -59,6 +59,7 @@ describe('view registry', () => {
     // Drill-in views slide in from the right of the tab that opens them.
     expect(getViewRegistryEntry('model').slideIndex).toBeGreaterThan(getViewRegistryEntry('explore').slideIndex);
     expect(getViewRegistryEntry('credits').slideIndex).toBeGreaterThan(getViewRegistryEntry('preferences').slideIndex);
+    expect(getViewRegistryEntry('deposit').slideIndex).toBeGreaterThan(getViewRegistryEntry('credits').slideIndex);
   });
 
   it('covers every view in the shared window-preset map', () => {

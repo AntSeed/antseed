@@ -30,6 +30,8 @@ interface DepositViewProps {
   balance: BalanceData | null;
   buyerAddress: string | null;
   onDeposited: () => void;
+  /** Prefill for the amount field (USD), e.g. when the desktop app hands off. */
+  initialAmount?: string;
 }
 
 const DEPOSITS_ABI = [
@@ -75,7 +77,7 @@ const ERC20_ABI = [
   },
 ] as const;
 
-export function DepositView({ config, balance, buyerAddress, onDeposited }: DepositViewProps) {
+export function DepositView({ config, balance, buyerAddress, onDeposited, initialAmount }: DepositViewProps) {
   return (
     <div className="dv">
       <CryptoDeposit
@@ -83,6 +85,7 @@ export function DepositView({ config, balance, buyerAddress, onDeposited }: Depo
         balance={balance}
         buyerAddress={buyerAddress}
         onDeposited={onDeposited}
+        initialAmount={initialAmount}
       />
     </div>
   );
@@ -95,16 +98,18 @@ function CryptoDeposit({
   balance,
   buyerAddress,
   onDeposited,
+  initialAmount,
 }: {
   config: PaymentConfig | null;
   balance: BalanceData | null;
   buyerAddress: string | null;
   onDeposited: () => void;
+  initialAmount?: string;
 }) {
   const { address, isConnected } = useAccount();
   const walletConnected = isConnected && Boolean(address);
   const connectedChainId = useChainId();
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(initialAmount ?? '');
   const [activeChip, setActiveChip] = useState<number | 'max' | null>(null);
   const [step, setStep] = useState<'idle' | 'approving' | 'checking-allowance' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);

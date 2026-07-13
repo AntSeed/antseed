@@ -1563,6 +1563,164 @@ ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
   }
 });
 
+// Slim payment pages: only actions that need an external wallet signature
+// (deposit via connected wallet, withdraw, authorize-operator) leave the app.
+//
+// Preferred surface: the user's REAL Chromium browser launched in app mode
+// (`--app=<url>`) — a chromeless window (no address bar, no tabs) that runs
+// in their normal profile, so extension wallets like MetaMask work. When no
+// Chromium browser is installed, fall back to a sandboxed Electron popup
+// (WalletConnect/QR flows only). Both close themselves after payment.
+type PayPageKind = 'deposit' | 'withdraw' | 'authorize';
+
+async function tryOpenBrowserAppMode(url: string): Promise<boolean> {
+  // The `open` package resolves browser install locations per platform —
+  // apps.chrome / apps.edge are cross-platform aliases. Brave has no alias,
+  // so it gets a per-platform name.
+  const { apps, openApp } = await import('open');
+  const brave = process.platform === 'darwin' ? 'Brave Browser'
+    : process.platform === 'win32' ? 'brave'
+    : 'brave-browser';
+  const candidates = [apps.chrome, apps.edge, brave] as const;
+  for (const name of candidates) {
+    try {
+      // newInstance matters on macOS: without it, a running browser is just
+      // focused and the --app argument is silently ignored.
+      const child = await openApp(name, { newInstance: true, arguments: [`--app=${url}`, '--window-size=480,820'] });
+      const launched = await new Promise<boolean>((resolve) => {
+        // macOS/Windows go through a launcher that exits immediately (code 1
+        // when the browser isn't installed); on Linux the browser process
+        // itself is spawned and stays alive — treat "still running" as success.
+        const timer = setTimeout(() => resolve(true), 1_500);
+        child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+        child.once('error', () => { clearTimeout(timer); resolve(false); });
+      });
+      if (launched) {
+        console.log(`[payments] pay page opened in app-mode browser: ${String(name)}`);
+        return true;
+      }
+      console.warn(`[payments] app-mode launch failed for ${String(name)} (non-zero exit)`);
+    } catch (err) {
+      console.warn(`[payments] app-mode launch error for ${String(name)}:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  return false;
+}
+
+let paymentsPopup: BrowserWindow | null = null;
+
+function openPaymentsPopup(url: string): void {
+  if (paymentsPopup && !paymentsPopup.isDestroyed()) {
+    void paymentsPopup.loadURL(url);
+    paymentsPopup.focus();
+    return;
+  }
+  const parent = getMainWindow();
+  paymentsPopup = new BrowserWindow({
+    width: 480,
+    height: 800,
+    minWidth: 420,
+    minHeight: 620,
+    ...(parent ? { parent } : {}),
+    title: 'AntSeed — Secure payment',
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  paymentsPopup.setMenuBarVisibility(false);
+  // Wallet deep links and explorer links leave the popup for the system
+  // browser; the popup stays on the payment page only.
+  paymentsPopup.webContents.setWindowOpenHandler(({ url: external }) => {
+    void shell.openExternal(external);
+    return { action: 'deny' };
+  });
+  paymentsPopup.on('closed', () => {
+    paymentsPopup = null;
+  });
+  void paymentsPopup.loadURL(url);
+}
+
+ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKind; amountUsdc?: string }) => {
+  try {
+    const kind: PayPageKind = opts?.kind === 'withdraw' || opts?.kind === 'authorize' ? opts.kind : 'deposit';
+    await startPaymentsPortal();
+    const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    params.set('page', 'pay');
+    params.set('action', kind);
+    const amount = Number(opts?.amountUsdc);
+    if (Number.isFinite(amount) && amount > 0) params.set('amount', String(amount));
+    const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined;
+    const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
+
+    // popup=app → real browser in app mode (extensions available);
+    // popup=win → Electron fallback (WalletConnect/QR only).
+    const appModeUrl = `${base}?${params.toString()}&popup=app`;
+    if (await tryOpenBrowserAppMode(appModeUrl)) {
+      return { ok: true, url: appModeUrl };
+    }
+    const fallbackUrl = `${base}?${params.toString()}&popup=win`;
+    console.log('[payments] no app-mode browser available — using Electron popup');
+    openPaymentsPopup(fallbackUrl);
+    return { ok: true, url: fallbackUrl };
+  } catch (err) {
+    console.error('[payments] open-pay-page failed:', err instanceof Error ? err.message : String(err));
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// Coinbase Onramp hosted buy page. USDC bought with a card is delivered on
+// Base to the buyer hot wallet and credited into AntseedDeposits via the P2P
+// deposit relay — same path as a direct QR transfer.
+//
+// Onramp requires a single-use session token minted with a CDP secret key,
+// which must never ship inside the app — so a small AntSeed backend endpoint
+// (config: payments.onramp.sessionEndpoint) mints the one-click URL for us.
+ipcMain.handle('payments:open-onramp', async (_event, opts?: { amountUsdc?: string }) => {
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) return { ok: false, error: 'Identity not available' };
+    let sessionEndpoint = '';
+    try {
+      const config = await readConfig(ACTIVE_CONFIG_PATH);
+      const payments = asRecord(config.payments);
+      sessionEndpoint = asString(asRecord(payments.onramp).sessionEndpoint as string, '');
+    } catch {
+      // No config — endpoint stays empty
+    }
+    if (!sessionEndpoint) return { ok: false, error: 'onramp-not-configured' };
+    const amount = Number(opts?.amountUsdc);
+    const response = await fetch(sessionEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        destinationAddress: identity.wallet.address,
+        destinationNetwork: 'base',
+        purchaseCurrency: 'USDC',
+        ...(Number.isFinite(amount) && amount > 0 ? { purchaseAmount: String(amount) } : {}),
+      }),
+    });
+    if (!response.ok) {
+      return { ok: false, error: `Onramp session failed (${response.status})` };
+    }
+    const body = await response.json() as { url?: string };
+    if (!body.url || !/^https:\/\/pay(-sandbox)?\.coinbase\.com\//.test(body.url)) {
+      return { ok: false, error: 'Onramp session endpoint returned an invalid URL' };
+    }
+    const { default: open } = await import('open');
+    await open(body.url);
+    return { ok: true, url: body.url };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 function getCombinedProcessState(): RuntimeProcessState[] {
   return processManager.getState();
 }
@@ -2090,6 +2248,106 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
   } catch (err) {
     return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
   }
+});
+
+// ── Incoming USDC watcher ──
+//
+// While the in-app deposit panel is open, the renderer starts this watcher.
+// It polls the hot wallet's USDC balance; any increase is treated as an
+// incoming deposit (QR transfer or Coinbase Onramp delivery) and reported to
+// the renderer. Crediting into AntseedDeposits happens via the P2P deposit
+// relay (sign EIP-3009 + broadcast SweepRequest) — wired once the
+// deposit-relay branch lands here.
+
+type DepositWatchStatus = {
+  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  amountBaseUnits?: string;
+  txHash?: string;
+  error?: string;
+};
+
+const DEPOSIT_WATCH_INTERVAL_MS = 4_000;
+
+let depositWatchTimer: NodeJS.Timeout | null = null;
+let depositWatchBalance = 0n;
+
+function makeDepositsClient(cc: NonNullable<Awaited<ReturnType<typeof loadCachedCryptoConfig>>>): DepositsClient {
+  return new DepositsClient({
+    rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+    contractAddress: cc.depositsAddress,
+    usdcAddress: cc.usdcAddress,
+    ...(cc.chainId ? { evmChainId: cc.chainId } : {}),
+  });
+}
+
+function sendDepositWatchStatus(status: DepositWatchStatus): void {
+  getMainWindow()?.webContents.send('deposits:watch-status', status);
+}
+
+// Detection only: the sweep itself (hot wallet → AntseedDeposits) is done by
+// P2P deposit relayers — the buyer signs an EIP-3009 authorization to the
+// AntseedDepositRelay contract and broadcasts a SweepRequest; the hot wallet
+// never needs ETH. Wired up once the deposit-relay branch lands here.
+async function pollDepositWatch(): Promise<void> {
+  const identity = getSecureIdentity();
+  const cc = await loadCachedCryptoConfig();
+  if (!identity || !cc) return;
+  const client = makeDepositsClient(cc);
+  let balance: bigint;
+  try {
+    balance = await client.getUSDCBalance(identity.wallet.address);
+  } catch {
+    return; // transient RPC failure — try again next tick
+  }
+  if (balance > depositWatchBalance) {
+    const delta = balance - depositWatchBalance;
+    depositWatchBalance = balance;
+    sendDepositWatchStatus({ phase: 'received', amountBaseUnits: delta.toString() });
+  } else if (balance < depositWatchBalance) {
+    depositWatchBalance = balance;
+  }
+}
+
+ipcMain.handle('deposits:watch-start', async () => {
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) return { ok: false, error: 'Identity not available' };
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) return { ok: false, error: 'No payment chain configured' };
+    const client = makeDepositsClient(cc);
+    const address = identity.wallet.address;
+    let balance = 0n;
+    try {
+      balance = await client.getUSDCBalance(address);
+    } catch {
+      // RPC hiccup — the poll loop picks it up
+    }
+    depositWatchBalance = balance;
+    if (!depositWatchTimer) {
+      depositWatchTimer = setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_INTERVAL_MS);
+    }
+    return {
+      ok: true,
+      data: {
+        address,
+        walletUsdcBaseUnits: balance.toString(),
+        usdcAddress: cc.usdcAddress,
+        chainId: cc.chainId,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('deposits:watch-stop', () => {
+  if (depositWatchTimer) {
+    clearInterval(depositWatchTimer);
+    depositWatchTimer = null;
+  }
+  return { ok: true };
 });
 
 // Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces

@@ -95,20 +95,24 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
       </nav>
       {chatMode && <ChatListPanel />}
       <main className={styles.mainPane}>
+        <div className={styles.content}>{children}</div>
         {/* The no-drag carve-out lives on this static wrapper: the pill
             itself runs a compositor scroll-timeline animation, and animated
-            elements don't reliably register app-region rects. */}
+            elements don't reliably register app-region rects. The slot must
+            also come AFTER the view content in the DOM — app-region rects
+            are collected in document order and later drag regions (e.g. the
+            home view's hero banner) would otherwise paint over the pill's
+            no-drag hole and swallow its clicks. */}
         <div className={styles.creditsPillSlot}>
           <button
             type="button"
             className={styles.creditsPill}
-            title="Credits balance"
-            onClick={() => onSelectView('credits')}
+            title="Add credits"
+            onClick={() => onSelectView('deposit')}
           >
             ${formatCredits(snap.creditsAvailableUsdc)}
           </button>
         </div>
-        <div className={styles.content}>{children}</div>
       </main>
       <footer className={styles.statusStrip}>
         <span

@@ -477,9 +477,18 @@ const api = {
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
+  paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
+  paymentsOpenOnramp: (opts?: { amountUsdc?: string }) => ipcRenderer.invoke('payments:open-onramp', opts),
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
+  depositsWatchStart: () => ipcRenderer.invoke('deposits:watch-start'),
+  depositsWatchStop: () => ipcRenderer.invoke('deposits:watch-stop'),
+  onDepositsWatchStatus(handler: (data: unknown) => void): () => void {
+    const listener = (_: unknown, data: unknown) => handler(data);
+    ipcRenderer.on('deposits:watch-status', listener);
+    return () => ipcRenderer.off('deposits:watch-status', listener);
+  },
   systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
     return ipcRenderer.invoke('system-proxy:start', opts) as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   },

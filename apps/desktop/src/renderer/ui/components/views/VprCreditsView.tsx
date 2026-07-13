@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowUpRight01Icon, SquareLock01Icon } from '@hugeicons/core-free-icons';
+import { ArrowUpRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { formatCompactTokens, VprBackTitle, VprCard, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { setDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import styles from './VprCreditsView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
@@ -33,6 +34,11 @@ export function VprCreditsView({ onSelectView }: Props) {
     return () => window.clearInterval(timer);
   }, [actions]);
 
+  const openDeposit = (method: DepositMethod) => {
+    setDepositIntent(method);
+    onSelectView?.('deposit');
+  };
+
   return (
     <section className={`view view-vpr-credits ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
@@ -46,13 +52,13 @@ export function VprCreditsView({ onSelectView }: Props) {
               <span className={styles.balanceHint}>Pay only for what you use - no subscriptions, no lock-in.</span>
             </div>
             <div className={styles.payButtons}>
-              <button type="button" onClick={() => actions.openPaymentsPortal?.('deposit')}>
+              <button type="button" onClick={() => openDeposit('card')}>
+                <HugeiconsIcon icon={CreditCardIcon} size={16} strokeWidth={2} />
                 <span>Credit Card</span>
-                <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
               </button>
-              <button type="button" onClick={() => actions.openPaymentsPortal?.('deposit')}>
+              <button type="button" onClick={() => openDeposit('crypto')}>
+                <HugeiconsIcon icon={Wallet01Icon} size={16} strokeWidth={2} />
                 <span>Crypto</span>
-                <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
               </button>
             </div>
           </VprCard>
@@ -61,12 +67,11 @@ export function VprCreditsView({ onSelectView }: Props) {
             <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
             <span>Encrypted &amp; secure checkout</span>
           </div>
-          <div className={styles.walletNote}>Visa · Mastercard · MetaMask · WalletConnect</div>
 
           <button
             type="button"
             className={styles.withdraw}
-            onClick={() => actions.openPaymentsPortal?.('channels')}
+            onClick={() => window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'withdraw' })}
           >
             Withdraw unused credits
           </button>

@@ -72,7 +72,7 @@ function createViewEntry(
 
 // Legacy dev routes have no slide relationship to the VPR screens; parking
 // them past the end keeps any transition involving them sliding "forward".
-const LEGACY_SLIDE_INDEX = 9;
+const LEGACY_SLIDE_INDEX = 10;
 
 export const VIEW_REGISTRY = {
   home: createViewEntry(
@@ -124,11 +124,15 @@ export const VIEW_REGISTRY = {
       nav: { slot: 'main', label: 'Profile', icon: UserIcon },
     },
   ),
+  deposit: createViewEntry(
+    async () => (await import('./views/VprDepositView')).VprDepositView as ComponentType<RoutedViewProps>,
+    { receivesOnSelectView: true, slideIndex: 6, preloadPriority: 'idle' },
+  ),
   chat: createViewEntry(
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 6,
+      slideIndex: 7,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
@@ -137,7 +141,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 7,
+      slideIndex: 8,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },
@@ -146,7 +150,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/DeveloperConsoleView')).DeveloperConsoleView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 8,
+      slideIndex: 9,
       preloadPriority: 'idle',
       nav: { slot: 'dev', label: 'Developer', icon: ComputerTerminal01Icon },
     },

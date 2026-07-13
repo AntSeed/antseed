@@ -17,6 +17,7 @@ import { SettingsView } from './views/SettingsView';
 import { AuthorizedWalletProvider } from './context/AuthorizedWalletContext';
 import { useAuthorizedWallet } from './context/AuthorizedWalletContext';
 import { AuthorizeWalletAlert } from './layout/AuthorizeWalletAlert';
+import { PayPage, type PayPageAction, type PayPagePopup } from './views/PayPage';
 
 export type OverlayPhase = 'deposit' | 'success' | null;
 
@@ -30,6 +31,27 @@ function parseTabFromUrl(): TabId {
   if (raw === 'channels') return 'activity';
   if (raw === 'emissions') return 'rewards';
   return VALID_TABS.has(raw as TabId) ? (raw as TabId) : 'overview';
+}
+
+/**
+ * Slim pay-only mode (`?page=pay&action=...`): the desktop app opens the
+ * browser only for actions that need an external wallet signature. No
+ * sidebar or tabs — just the single payment card.
+ */
+function parsePayPageFromUrl(): { action: PayPageAction; amount: string | null; popup: PayPagePopup } | null {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('page') !== 'pay') return null;
+  const action = params.get('action');
+  // Set by the desktop app: 'app' = the user's real browser in chromeless
+  // app mode (extension wallets available); 'win' = Electron popup fallback
+  // (WalletConnect/QR only). Both self-close after payment.
+  const popupRaw = params.get('popup');
+  const popup: PayPagePopup = popupRaw === 'app' ? 'app' : popupRaw ? 'win' : null;
+  return {
+    action: action === 'withdraw' || action === 'authorize' ? action : 'deposit',
+    amount: params.get('amount'),
+    popup,
+  };
 }
 
 function shouldOpenDepositFromUrl(): boolean {
@@ -62,6 +84,7 @@ export function App() {
   const [walletDrawerOpen, setWalletDrawerOpen] = useState(false);
   const [actionModal, setActionModal] = useState<'deposit' | 'withdraw' | null>(() => shouldOpenDepositFromUrl() ? 'deposit' : null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [payPage] = useState(() => parsePayPageFromUrl());
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('antseed-payments-theme');
     if (saved) return saved === 'dark';
@@ -75,9 +98,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    localStorage.setItem('antseed-payments-theme', isDark ? 'dark' : 'light');
-  }, [isDark]);
+    // The standalone checkout is always light (white payment page), whatever
+    // the portal theme is. Don't persist that override.
+    document.documentElement.setAttribute('data-theme', payPage ? 'light' : isDark ? 'dark' : 'light');
+    if (!payPage) localStorage.setItem('antseed-payments-theme', isDark ? 'dark' : 'light');
+  }, [isDark, payPage]);
 
   const fetchBalance = useCallback(async () => {
     try {
@@ -120,6 +145,32 @@ export function App() {
   }, []);
 
   const buyerEvmAddress = config?.evmAddress ?? balance?.evmAddress ?? null;
+
+  if (payPage) {
+    return (
+      <AuthorizedWalletProvider config={config}>
+        <PayPage
+          action={payPage.action}
+          amount={payPage.amount}
+          popup={payPage.popup}
+          config={config}
+          balance={balance}
+          buyerEvmAddress={buyerEvmAddress}
+          refreshBalance={refreshBalance}
+        />
+        {sessionExpired && (
+          <div className="session-expired-overlay" role="alert">
+            <div className="session-expired-card">
+              <h2 className="session-expired-title">Session expired</h2>
+              <p className="session-expired-subtitle">
+                Please reopen this page from the desktop app or CLI to get a new session.
+              </p>
+            </div>
+          </div>
+        )}
+      </AuthorizedWalletProvider>
+    );
+  }
 
   return (
     <AuthorizedWalletProvider config={config}>
