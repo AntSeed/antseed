@@ -53,6 +53,7 @@ function makeProxyResponse(): {
   headersSent: boolean
   writableEnded: boolean
   writeHead: (statusCode: number, headers: Record<string, string>) => unknown
+  write: (chunk: string | Buffer | Uint8Array) => unknown
   end: (chunk?: string | Buffer | Uint8Array) => unknown
   once: () => unknown
 } {
@@ -67,6 +68,10 @@ function makeProxyResponse(): {
       this.headers = headers
       this.headersSent = true
       return this
+    },
+    write(chunk: string | Buffer | Uint8Array) {
+      this.body += Buffer.from(chunk).toString('utf8')
+      return true
     },
     end(chunk?: string | Buffer | Uint8Array) {
       if (chunk !== undefined) {
@@ -465,6 +470,149 @@ test('/v1/models retryable response reports router success', async () => {
   assert.match(res.body, /model probe failed/)
   assert.equal(routerResults.length, 1)
   assert.equal(routerResults[0]?.success, true)
+})
+
+test('non-stream transformed responses requests force upstream stream without streaming to client', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  let sendRequestCalls = 0
+  let sendRequestStreamCalls = 0
+  let capturedRequestBody: Record<string, unknown> | null = null
+  let capturedRequestHeaders: Record<string, string> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
+  ) => {
+    sendRequestCalls += 1
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedRequestHeaders = request.headers
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({
+        id: 'resp_1',
+        object: 'response',
+        model: 'gpt-5.6-sol',
+        output: [{
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'hi' }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })),
+    }
+  }
+  ;(proxy as any)._node.sendRequestStream = async () => {
+    sendRequestStreamCalls += 1
+    throw new Error('sendRequestStream should not be used')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(sendRequestCalls, 1)
+  assert.equal(sendRequestStreamCalls, 0)
+  assert.equal(capturedRequestBody?.['stream'], true)
+  assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'false')
+  const body = JSON.parse(res.body) as { content?: Array<{ type: string; text: string }> }
+  assert.equal(body.content?.[0]?.text, 'hi')
+})
+
+test('accept-sse transformed responses requests stream adapted client events without body stream flag', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  let sendRequestCalls = 0
+  let sendRequestStreamCalls = 0
+  let capturedRequestBody: Record<string, unknown> | null = null
+  let capturedRequestHeaders: Record<string, string> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async () => {
+    sendRequestCalls += 1
+    throw new Error('sendRequest should not be used')
+  }
+  ;(proxy as any)._node.sendRequestStream = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
+    callbacks: {
+      onResponseStart: (response: { requestId: string; statusCode: number; headers: Record<string, string>; body: Uint8Array }, metadata: { streaming: boolean }) => void
+      onResponseChunk: (chunk: { requestId: string; data: Uint8Array; done: boolean }) => void
+    },
+  ) => {
+    sendRequestStreamCalls += 1
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedRequestHeaders = request.headers
+    callbacks.onResponseStart({
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(),
+    }, { streaming: true })
+    callbacks.onResponseChunk({
+      requestId: request.requestId,
+      data: Buffer.from(
+        'event: response.created\n'
+        + 'data: {"type":"response.created","response":{"id":"resp_1","object":"response","model":"gpt-5.6-sol","status":"in_progress","output":[],"output_text":"","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"hi","logprobs":[]}\n\n'
+        + 'event: response.completed\n'
+        + 'data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.6-sol","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      ),
+      done: false,
+    })
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: Buffer.from(''),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      'accept': 'text/event-stream',
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(sendRequestCalls, 0)
+  assert.equal(sendRequestStreamCalls, 1)
+  assert.equal(capturedRequestBody?.['stream'], true)
+  assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'true')
+  assert.match(res.body, /event: message_start/)
+  assert.match(res.body, /event: content_block_delta/)
+  assert.match(res.body, /"text":"hi"/)
+  assert.doesNotMatch(res.body, /event: response\.completed/)
 })
 
 test('model peer prefix pins the request peer and strips the routed model', async () => {

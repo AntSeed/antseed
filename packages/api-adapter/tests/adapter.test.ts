@@ -311,6 +311,44 @@ describe('transformRequest anthropic to responses', () => {
     ]);
   });
 
+  it('forces upstream responses streaming without changing original non-stream preference', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.streamRequested).toBe(false);
+    expect(transformed!.request.headers['x-antseed-client-stream-requested']).toBe('false');
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
+  });
+
+  it('honors an explicit streaming preference when rendering responses requests', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses', streamRequested: true });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.streamRequested).toBe(true);
+    expect(transformed!.request.headers['x-antseed-client-stream-requested']).toBe('true');
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
+  });
+
   it('preserves tool calls and tool results through responses input', () => {
     const transformed = transformRequest(makeRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -1200,6 +1238,9 @@ describe('transformRequest chat to responses', () => {
     expect(result).not.toBeNull();
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(result!.streamRequested).toBe(false);
+    expect(result!.request.headers['x-antseed-client-stream-requested']).toBe('false');
+    expect(body.stream).toBe(true);
     expect(body.max_output_tokens).toBe(64);
     expect(body.stop).toEqual(['END']);
     expect(body.metadata).toEqual({ trace: 'abc' });

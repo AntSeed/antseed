@@ -27,12 +27,13 @@ const OPENAI_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OPENAI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_INPUT_PRICE = 10;
 const DEFAULT_OUTPUT_PRICE = 10;
-const DEFAULT_MAX_CONCURRENCY = 5;
+const DEFAULT_MAX_CONCURRENCY = 50;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = DEFAULT_HTTP_TIMEOUT_MS;
 const RESPONSE_PATH_PREFIX = '/v1/responses';
 const RELAY_PATH = '/responses';
 const AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
+const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -284,7 +285,8 @@ function prepareRequestBody(
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
     parsed.store ??= false;
-    const forcedStream = parsed.stream !== true;
+    const clientStreamRequested = parseClientStreamRequestedHeader(request.headers);
+    const forcedStream = clientStreamRequested === false || parsed.stream !== true;
     parsed.stream = true;
 
     const requestedService = (parsed.model ?? parsed.service) as string | undefined;
@@ -335,6 +337,7 @@ function prepareRequestBody(
     return {
       request: {
         ...request,
+        headers: withoutHeader(request.headers, CLIENT_STREAM_REQUESTED_HEADER),
         body: new TextEncoder().encode(JSON.stringify(parsed)),
       },
       forcedStream,
@@ -342,6 +345,29 @@ function prepareRequestBody(
   } catch {
     return { request, forcedStream: false };
   }
+}
+
+function parseClientStreamRequestedHeader(headers: Record<string, string>): boolean | undefined {
+  const value = getHeader(headers, CLIENT_STREAM_REQUESTED_HEADER);
+  if (!value) return undefined;
+  return value.toLowerCase() === 'true';
+}
+
+function getHeader(headers: Record<string, string>, name: string): string {
+  const normalizedName = name.toLowerCase();
+  for (const [headerName, value] of Object.entries(headers)) {
+    if (headerName.toLowerCase() === normalizedName) return value;
+  }
+  return '';
+}
+
+function withoutHeader(headers: Record<string, string>, name: string): Record<string, string> {
+  const normalizedName = name.toLowerCase();
+  const next: Record<string, string> = {};
+  for (const [headerName, value] of Object.entries(headers)) {
+    if (headerName.toLowerCase() !== normalizedName) next[headerName] = value;
+  }
+  return next;
 }
 
 function collapseResponsesSseResponse(response: SerializedHttpResponse): SerializedHttpResponse {
