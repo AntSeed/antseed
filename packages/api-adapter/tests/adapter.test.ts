@@ -291,6 +291,7 @@ describe('transformRequest anthropic to responses', () => {
     expect(body.stop).toEqual(['END']);
     expect(body.metadata).toEqual({ trace: 'abc' });
     expect(body.user).toBe('user-123');
+    expect(body.prompt_cache_key).toBe('user-123');
     expect(body.tool_choice).toEqual({ type: 'function', name: 'write' });
     expect(body.tools).toEqual([{
       type: 'function',
@@ -309,6 +310,37 @@ describe('transformRequest anthropic to responses', () => {
     expect(input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
     ]);
+  });
+
+  it('maps anthropic metadata.user_id to a responses prompt_cache_key', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        metadata: { user_id: 'user_abc_session_f00d' },
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBe('user_abc_session_f00d');
+  });
+
+  it('omits prompt_cache_key when the anthropic request has no session identity', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBeUndefined();
   });
 
   it('forces upstream responses streaming without changing original non-stream preference', () => {
@@ -1303,6 +1335,24 @@ describe('transformRequest chat to responses', () => {
     expect(body.input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
     ]);
+  });
+
+  it('carries an explicit prompt_cache_key through to the responses body', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-cache-key',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'hello' }],
+        prompt_cache_key: 'conv-42',
+      })),
+    };
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBe('conv-42');
   });
 });
 

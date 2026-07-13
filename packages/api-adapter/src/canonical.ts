@@ -36,6 +36,7 @@ export interface CanonicalLlmRequest {
   toolChoice?: CanonicalToolChoice;
   metadata?: Record<string, unknown>;
   user?: string;
+  promptCacheKey?: string;
 }
 
 export type CanonicalOutputItem =
@@ -175,6 +176,7 @@ export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLl
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
+  if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
   return body;
 }
 
@@ -274,6 +276,7 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
     if (typeof metadata.user_id === 'string') request.user = metadata.user_id;
   }
   if (request.user === undefined && typeof body.user === 'string') request.user = body.user;
+  if (request.user !== undefined) request.promptCacheKey = request.user;
   return request;
 }
 
@@ -343,6 +346,9 @@ export function normalizeOpenAIChatRequestBody(body: Record<string, unknown>): C
     request.metadata = body.metadata as Record<string, unknown>;
   }
   if (typeof body.user === 'string') request.user = body.user;
+  if (typeof body.prompt_cache_key === 'string' && body.prompt_cache_key.length > 0) {
+    request.promptCacheKey = body.prompt_cache_key;
+  }
   return request;
 }
 
@@ -401,6 +407,9 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
     request.metadata = body.metadata as Record<string, unknown>;
   }
   if (typeof body.user === 'string') request.user = body.user;
+  if (typeof body.prompt_cache_key === 'string' && body.prompt_cache_key.length > 0) {
+    request.promptCacheKey = body.prompt_cache_key;
+  }
   return request;
 }
 
