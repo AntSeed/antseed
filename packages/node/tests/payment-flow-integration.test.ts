@@ -170,8 +170,7 @@ describe('Full Payment Flow Integration', () => {
     // Cumulative starts at 0, so first request cumulative = accepted cost
     expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(0n);
 
-    const valid1 = await seller.validateAndAcceptAuth(buyerPeerId, auth1);
-    expect(valid1).toBe(true);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
     seller.recordSpend(sessionId, 200n);
 
     const { payload: auth2 } = await buyer.signPerRequestAuth(
@@ -180,8 +179,7 @@ describe('Full Payment Flow Integration', () => {
     );
     expect(BigInt(auth2.cumulativeAmount)).toBeGreaterThan(BigInt(auth1.cumulativeAmount));
 
-    const valid2 = await seller.validateAndAcceptAuth(buyerPeerId, auth2);
-    expect(valid2).toBe(true);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth2, sellerMux)).toBe('accepted');
     seller.recordSpend(sessionId, 300n);
 
     const { payload: auth3 } = await buyer.signPerRequestAuth(
@@ -190,8 +188,7 @@ describe('Full Payment Flow Integration', () => {
     );
     expect(BigInt(auth3.cumulativeAmount)).toBeGreaterThan(BigInt(auth2.cumulativeAmount));
 
-    const valid3 = await seller.validateAndAcceptAuth(buyerPeerId, auth3);
-    expect(valid3).toBe(true);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth3, sellerMux)).toBe('accepted');
     seller.recordSpend(sessionId, 150n);
 
     expect(seller.getCumulativeSpend(sessionId)).toBe(650n);
@@ -237,14 +234,14 @@ describe('Full Payment Flow Integration', () => {
       sellerPeerId,
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 20_000n },
     );
-    expect(await seller.validateAndAcceptAuth(buyerPeerId, auth1)).toBe(true);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
 
-    // auth1 cumulative is 20_000. Fake auth with lower value should be rejected.
+    // Mutating the signed cumulative amount invalidates the SpendingAuth.
     const fakeAuth: SpendingAuthPayload = {
       ...auth1,
-      cumulativeAmount: '10000',
+      cumulativeAmount: '1',
     };
-    expect(await seller.validateAndAcceptAuth(buyerPeerId, fakeAuth)).toBe(false);
+    expect(await seller.handleSpendingAuth(buyerPeerId, fakeAuth, sellerMux)).toBe('rejected');
   });
 
   it('token counts accumulate correctly across multiple requests', async () => {
@@ -287,17 +284,17 @@ describe('Full Payment Flow Integration', () => {
 
     const { payload: auth1 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 200n },
     );
-    await seller.validateAndAcceptAuth(buyerPeerId, auth1);
-    seller.recordSpend(sessionId, 10_000n);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
+    seller.recordSpend(sessionId, 200n);
 
     const { payload: auth2 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 20_000n },
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 300n },
     );
-    await seller.validateAndAcceptAuth(buyerPeerId, auth2);
-    seller.recordSpend(sessionId, 20_000n);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth2, sellerMux)).toBe('accepted');
+    seller.recordSpend(sessionId, 300n);
 
     await seller.settleSession(buyerPeerId);
 
@@ -340,10 +337,10 @@ describe('Full Payment Flow Integration', () => {
 
     const { payload: auth } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 200n },
     );
-    await seller.validateAndAcceptAuth(buyerPeerId, auth);
-    seller.recordSpend(sessionId, 10_000n);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth, sellerMux)).toBe('accepted');
+    seller.recordSpend(sessionId, 200n);
 
     await seller.settleSession(buyerPeerId);
     expect(seller.hasSession(buyerPeerId)).toBe(false);
@@ -471,10 +468,10 @@ describe('Settlement edge cases', () => {
 
     const { payload: auth1 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 200n },
     );
-    await seller.validateAndAcceptAuth(buyerPeerId, auth1);
-    seller.recordSpend(sessionId, 10_000n);
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
+    seller.recordSpend(sessionId, 200n);
 
     seller.onBuyerDisconnect(buyerPeerId);
     await new Promise((r) => setTimeout(r, 50));
