@@ -93,7 +93,7 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
           </button>
         </div>
       </nav>
-      {chatMode && <ChatListPanel />}
+      {chatMode && <ChatListPanel onSelectView={onSelectView} />}
       <main className={styles.mainPane}>
         <div className={styles.content}>{children}</div>
         {/* The no-drag carve-out lives on this static wrapper: the pill

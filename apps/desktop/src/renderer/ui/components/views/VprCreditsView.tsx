@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowUpRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
@@ -96,10 +96,25 @@ export function VprCreditsView({ onSelectView }: Props) {
           <button
             type="button"
             className={styles.rewardsLink}
-            onClick={() => actions.openPaymentsPortal?.('rewards')}
+            onClick={() => onSelectView?.('rewards')}
           >
-            <span>Portal</span>
-            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+            <span>Rewards</span>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+          </button>
+        </VprCard>
+
+        <VprCard className={styles.rewardsCard}>
+          <span className={styles.rewardsText}>
+            <strong>Payment channels</strong>{' '}
+            {`${snap.usage?.activeChannels ?? 0} active — see settlements or close a channel.`}
+          </span>
+          <button
+            type="button"
+            className={styles.rewardsLink}
+            onClick={() => onSelectView?.('activity')}
+          >
+            <span>Activity</span>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
           </button>
         </VprCard>
 
@@ -107,7 +122,20 @@ export function VprCreditsView({ onSelectView }: Props) {
           <div className={styles.detailRow}><span>Reserved</span><span>${formatCredits(snap.reserved)}</span></div>
           <div className={styles.detailRow}><span>Total</span><span>${formatCredits(snap.total)}</span></div>
           <div className={styles.detailRow}><span>Wallet</span><span>{shortAddress(snap.evmAddress)}</span></div>
-          <div className={styles.detailRow}><span>Operator</span><span>{shortAddress(snap.operatorAddress)}</span></div>
+          <div className={styles.detailRow}>
+            <span>Operator</span>
+            {snap.operatorAddress ? (
+              <span>{shortAddress(snap.operatorAddress)}</span>
+            ) : (
+              <button
+                type="button"
+                className={styles.inlineLink}
+                onClick={() => window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'authorize' })}
+              >
+                Authorize a wallet
+              </button>
+            )}
+          </div>
           <div className={styles.detailActions}>
             <button
               type="button"

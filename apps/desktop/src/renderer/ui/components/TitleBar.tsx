@@ -131,15 +131,12 @@ export function TitleBar() {
     ? `$${parseFloat(creditsAvailableUsdc).toFixed(2)}`
     : '$0.00';
 
-  const handleManageCredits = useCallback(() => {
-    setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.();
-  }, [actions]);
-
+  // TitleBar only renders during setup, before the in-app deposit view is
+  // reachable — deposits go straight to the secure checkout page.
   const handleDepositCredits = useCallback(() => {
     setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.('deposit');
-  }, [actions]);
+    void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'deposit' });
+  }, []);
 
   useEffect(() => {
     if (!creditsDropdownOpen) return;
@@ -294,14 +291,6 @@ export function TitleBar() {
                 )}
               </div>
               <div className={styles.creditsDropdownActions}>
-                <Button
-                  className={styles.creditsDropdownManageBtn}
-                  size="sm"
-                  variant="outline"
-                  onClick={handleManageCredits}
-                >
-                  Portal
-                </Button>
                 <Button
                   className={styles.creditsDropdownAddBtn}
                   size="sm"

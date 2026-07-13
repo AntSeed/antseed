@@ -176,6 +176,13 @@ creditsApi = initCreditsModule({
 });
 creditsApi.startPeriodicRefresh();
 
+// A browser pay page finished (deposit/withdraw/claim/channel close) —
+// refresh balances and the payment summary right away, bypassing throttles.
+bridge?.onPaymentsCompleted?.(() => {
+  void creditsApi.refreshCredits();
+  void creditsApi.refreshPaymentSummary(true);
+});
+
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
@@ -508,9 +515,6 @@ registerActions({
     notifyUiStateChanged();
   },
   retryAfterPayment: () => chatApi.retryAfterPayment(),
-  requestChannelClose: () => {
-    void bridge?.paymentsOpenPortal?.('channels');
-  },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPaymentSummary: (force?: boolean) => void creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
@@ -521,9 +525,6 @@ registerActions({
       uiState.pluginHints.router || uiState.connectRouterValue,
     );
     return installPluginPackage(packageName);
-  },
-  openPaymentsPortal: (tab?: string) => {
-    void bridge?.paymentsOpenPortal?.(tab);
   },
   openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
   closeVprFloat: () => vprFloatApi.closeFloat(),

@@ -72,7 +72,7 @@ function createViewEntry(
 
 // Legacy dev routes have no slide relationship to the VPR screens; parking
 // them past the end keeps any transition involving them sliding "forward".
-const LEGACY_SLIDE_INDEX = 10;
+const LEGACY_SLIDE_INDEX = 12;
 
 export const VIEW_REGISTRY = {
   home: createViewEntry(
@@ -128,11 +128,19 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprDepositView')).VprDepositView as ComponentType<RoutedViewProps>,
     { receivesOnSelectView: true, slideIndex: 6, preloadPriority: 'idle' },
   ),
+  activity: createViewEntry(
+    async () => (await import('./views/VprActivityView')).VprActivityView as ComponentType<RoutedViewProps>,
+    { receivesOnSelectView: true, slideIndex: 7, preloadPriority: 'idle' },
+  ),
+  rewards: createViewEntry(
+    async () => (await import('./views/VprRewardsView')).VprRewardsView as ComponentType<RoutedViewProps>,
+    { receivesOnSelectView: true, slideIndex: 8, preloadPriority: 'idle' },
+  ),
   chat: createViewEntry(
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 7,
+      slideIndex: 9,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
@@ -141,7 +149,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 8,
+      slideIndex: 10,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },
@@ -150,7 +158,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/DeveloperConsoleView')).DeveloperConsoleView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 9,
+      slideIndex: 11,
       preloadPriority: 'idle',
       nav: { slot: 'dev', label: 'Developer', icon: ComputerTerminal01Icon },
     },

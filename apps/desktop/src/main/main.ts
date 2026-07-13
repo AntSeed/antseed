@@ -26,7 +26,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { ANTSTokenClient, DepositsClient, DepositRelayClient, EmissionsClient, signSpendingAuth, makeChannelsDomain, makeUsdcDomain, buildReceiveAuthorization, peerRelaysSweeps, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
+import { ANTSTokenClient, ChannelsClient, DepositsClient, DepositRelayClient, EmissionsClient, signSpendingAuth, makeChannelsDomain, makeUsdcDomain, buildReceiveAuthorization, peerRelaysSweeps, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import type { SweepRequestPayload, SweepReceiptPayload } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -1507,6 +1507,15 @@ function refreshTrayMenu(): void {
 let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
 const PAYMENTS_PORT = Number(process.env['ANTSEED_PAYMENTS_PORT']) || 3118;
 
+function focusMainWindow(): void {
+  const win = getMainWindow();
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+  win.focus();
+}
+
 async function startPaymentsPortal(): Promise<void> {
   if (paymentsServer) return;
   try {
@@ -1515,6 +1524,13 @@ async function startPaymentsPortal(): Promise<void> {
     paymentsServer = await createPaymentsServer({
       port: PAYMENTS_PORT,
       identityHex,
+      onPaymentCompleted: () => {
+        // Closing a Chrome app-mode popup hands focus to whatever window the
+        // OS picks (often another Chrome window) — pull the app back up and
+        // let the renderer refresh balances/channels/rewards immediately.
+        focusMainWindow();
+        getMainWindow()?.webContents.send('payments:completed');
+      },
     });
     await paymentsServer.listen({ port: PAYMENTS_PORT, host: LOCALHOST });
     console.log(`[desktop] Payments portal running at ${LOCALHOST_URL}:${PAYMENTS_PORT}`);
@@ -1538,41 +1554,18 @@ async function stopDesktopServices(): Promise<void> {
   await Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]);
 }
 
-ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
-  try {
-    await startPaymentsPortal();
-    const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    if (tab === 'deposit' || tab === 'deposits') {
-      params.set('action', 'deposit');
-    } else if (tab) {
-      params.set('tab', tab);
-    }
-    const qs = params.toString();
-    // In dev mode, open the Vite HMR dev server (which proxies /api to the Fastify port) when configured.
-    // Set ANTSEED_PAYMENTS_DEV_URL to override (default: the Fastify URL).
-    // When dev mode is detected but no dev server URL is configured, we still fall back to the Fastify URL.
-    const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined;
-    const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
-    const url = qs ? `${base}?${qs}` : base;
-    const { default: open } = await import('open');
-    await open(url);
-    return { ok: true, url };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
 // Slim payment pages: only actions that need an external wallet signature
-// (deposit via connected wallet, withdraw, authorize-operator) leave the app.
+// (connected-wallet deposit, withdraw, authorize-operator, channel close,
+// rewards claims) leave the app — everything else renders in-app. The full
+// portal dashboard is retired.
 //
 // Preferred surface: the user's REAL Chromium browser launched in app mode
 // (`--app=<url>`) — a chromeless window (no address bar, no tabs) that runs
 // in their normal profile, so extension wallets like MetaMask work. When no
 // Chromium browser is installed, fall back to a sandboxed Electron popup
 // (WalletConnect/QR flows only). Both close themselves after payment.
-type PayPageKind = 'deposit' | 'withdraw' | 'authorize';
+type PayPageKind = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel';
+const PAY_PAGE_KINDS: readonly PayPageKind[] = ['deposit', 'withdraw', 'authorize', 'claim', 'diem', 'close-channel'];
 
 async function tryOpenBrowserAppMode(url: string): Promise<boolean> {
   // The `open` package resolves browser install locations per platform —
@@ -1641,13 +1634,14 @@ function openPaymentsPopup(url: string): void {
   });
   paymentsPopup.on('closed', () => {
     paymentsPopup = null;
+    focusMainWindow();
   });
   void paymentsPopup.loadURL(url);
 }
 
-ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKind; amountUsdc?: string }) => {
+ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKind; amountUsdc?: string; channelId?: string }) => {
   try {
-    const kind: PayPageKind = opts?.kind === 'withdraw' || opts?.kind === 'authorize' ? opts.kind : 'deposit';
+    const kind: PayPageKind = opts?.kind && PAY_PAGE_KINDS.includes(opts.kind) ? opts.kind : 'deposit';
     await startPaymentsPortal();
     const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
     const params = new URLSearchParams();
@@ -1656,6 +1650,9 @@ ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKi
     params.set('action', kind);
     const amount = Number(opts?.amountUsdc);
     if (Number.isFinite(amount) && amount > 0) params.set('amount', String(amount));
+    if (kind === 'close-channel' && typeof opts?.channelId === 'string' && BYTES32_RE.test(opts.channelId)) {
+      params.set('channel', opts.channelId);
+    }
     const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined;
     const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
 
@@ -2103,6 +2100,7 @@ ipcMain.handle(
       cachedCryptoConfig = null; // Invalidate cached crypto config
       cachedEmissionsClient = null;
       cachedAntsTokenClient = null;
+      cachedChannelsClient = null;
       invalidateOnChainEnrichmentCache();
       creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
       // Restart payments portal if running so it picks up new contract/chain config
@@ -2148,6 +2146,7 @@ let cachedCryptoConfig: {
 // cachedCryptoConfig on config updates.
 let cachedEmissionsClient: EmissionsClient | null = null;
 let cachedAntsTokenClient: ANTSTokenClient | null = null;
+let cachedChannelsClient: ChannelsClient | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -2777,6 +2776,41 @@ ipcMain.handle('payments:get-buyer-usage', async (): Promise<{ ok: boolean; data
   };
 });
 
+// AntseedChannels grace period between requestClose() and withdraw().
+const CHANNEL_CLOSE_GRACE_SECS = 900;
+// Bound the on-chain enrichment fan-out per refresh.
+const CHANNEL_ENRICH_MAX = 12;
+
+// The local ChannelStore can lag the chain (a seller-side settle/close is not
+// always observed), so rows that look active are re-checked on-chain before
+// the activity view offers a Close action on a dead channel.
+async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): Promise<void> {
+  const cc = await loadCachedCryptoConfig();
+  if (!cc?.channelsAddress) return;
+  cachedChannelsClient ??= new ChannelsClient({
+    rpcUrl: cc.rpcUrl,
+    ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+    contractAddress: cc.channelsAddress,
+    evmChainId: cc.chainId,
+  });
+  const client = cachedChannelsClient;
+  const candidates = channels
+    .filter((row) => row.status === 'active' || row.status === 'open')
+    .slice(0, CHANNEL_ENRICH_MAX);
+  await Promise.allSettled(candidates.map(async (row) => {
+    const info = await client.getSession(row.channelId);
+    const closeRequestedAt = Number(info.closeRequestedAt);
+    if (info.status === 2) row.status = 'settled';
+    else if (info.status === 3) row.status = 'timedout';
+    else if (info.status === 1 && closeRequestedAt > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      row.status = now < closeRequestedAt + CHANNEL_CLOSE_GRACE_SECS ? 'closing' : 'withdrawable';
+    }
+    // status 0 (no on-chain record) is ambiguous — a channel may exist
+    // locally before its on-chain reserve lands. Keep the local status.
+  }));
+}
+
 ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
   const body = await fetchBuyerProxyJson('/_antseed/channels?all=1');
   if (!body) {
@@ -2787,6 +2821,7 @@ ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: D
       .map((entry) => normalizePaymentChannelSummary(entry))
       .filter((entry): entry is DesktopPaymentChannelSummary => entry !== null)
     : [];
+  await enrichChannelStatuses(channels).catch(() => {});
   return { ok: true, data: channels, error: null };
 });
 

@@ -190,6 +190,23 @@
   font-weight: 500;
 }
 
+.inlineLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inlineLink:hover {
+  color: var(--brand);
+}
+
 .detailActions {
   display: flex;
   justify-content: flex-end;

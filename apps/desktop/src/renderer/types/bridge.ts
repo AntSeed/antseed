@@ -340,12 +340,13 @@ export type DesktopBridge = {
     error?: string;
   }>;
 
-  paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
-  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize'; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsOpenOnramp?: (opts?: { amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
+  /** Fired when a browser pay page reports a completed payment action. */
+  onPaymentsCompleted?: (handler: () => void) => () => void;
   depositsWatchStart?: () => Promise<{ ok: boolean; data?: { address: string; walletUsdcBaseUnits: string; usdcAddress: string; chainId: number }; error?: string }>;
   depositsWatchStop?: () => Promise<{ ok: boolean }>;
   onDepositsWatchStatus?: (handler: (data: DepositWatchStatus) => void) => () => void;

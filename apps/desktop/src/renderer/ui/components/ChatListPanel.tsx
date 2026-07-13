@@ -443,7 +443,7 @@ function ChatSearchModal({
   );
 }
 
-export function ChatListPanel() {
+export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('../types').ViewName) => void } = {}) {
   const {
     chatConversations,
     chatActiveConversation,
@@ -573,8 +573,10 @@ export function ChatListPanel() {
   }, [activeConversation, chatSelectedPeerId, chatServiceOptions, chatSelectedServiceValue, discoverRows]);
 
   const handleCloseChannel = useCallback(() => {
-    actions.requestChannelClose();
-  }, [actions]);
+    // Channel management moved in-app: the activity view lists channels and
+    // opens the secure checkout page for the close signature.
+    onSelectView?.('activity');
+  }, [onSelectView]);
 
   const handleStartNewChat = useCallback(() => {
     actions.startNewChat();

@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BalanceData, PaymentConfig } from '../types';
 import { useAuthorizedWallet } from '../context/AuthorizedWalletContext';
 import { PayCheckoutDeposit } from '../components/PayCheckoutDeposit';
-import { WithdrawView } from '../components/WithdrawView';
+import { PayCheckoutWithdraw } from '../components/PayCheckoutWithdraw';
+import { PayChannelClose } from '../components/PayChannelClose';
+import { PayClaimRewards } from '../components/PayClaimRewards';
+import { PayDiemClaim } from '../components/PayDiemClaim';
 import { Button } from '../components/Button';
+import { notifyPaymentCompleted } from '../api';
 import { truncateAddress } from '../utils/format';
 import { getExplorerTxUrl } from '../utils/txLink';
 import './PayPage.scss';
 
-export type PayPageAction = 'deposit' | 'withdraw' | 'authorize';
+export type PayPageAction = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel';
 
 /**
  * 'app' — user's real browser launched chromeless (`--app=`): extension
@@ -20,6 +24,7 @@ export type PayPagePopup = 'app' | 'win' | null;
 interface PayPageProps {
   action: PayPageAction;
   amount: string | null;
+  channelId: string | null;
   popup: PayPagePopup;
   config: PaymentConfig | null;
   balance: BalanceData | null;
@@ -43,6 +48,21 @@ const COPY: Record<PayPageAction, { eyebrow: string; title: string; subtitle: st
     title: 'Authorize a wallet',
     subtitle: 'Connect the wallet that will manage withdrawals for your account.',
   },
+  claim: {
+    eyebrow: 'Network rewards',
+    title: 'Claim $ANTS',
+    subtitle: 'Claim the $ANTS you earned from network usage.',
+  },
+  diem: {
+    eyebrow: 'DIEM staking',
+    title: 'Claim DIEM rewards',
+    subtitle: 'Claim $ANTS earned by staking DIEM through the AntSeed proxy.',
+  },
+  'close-channel': {
+    eyebrow: 'Payment channel',
+    title: 'Close channel',
+    subtitle: 'Settle this channel and return its unused reserve to your balance.',
+  },
 };
 
 function LockIcon() {
@@ -59,12 +79,19 @@ function LockIcon() {
  * needs an external wallet signature. Everything else lives in the desktop
  * app (or the CLI); the browser is only opened to sign.
  */
-export function PayPage({ action, amount: amountParam, popup, config, balance, buyerEvmAddress, refreshBalance }: PayPageProps) {
+export function PayPage({ action, amount: amountParam, channelId, popup, config, balance, buyerEvmAddress, refreshBalance }: PayPageProps) {
   const [done, setDone] = useState(false);
   const [doneTxHash, setDoneTxHash] = useState<string | null>(null);
   const [amount, setAmount] = useState(() =>
-    amountParam && Number(amountParam) > 0 ? amountParam : '10');
+    amountParam && Number(amountParam) > 0 ? amountParam : action === 'deposit' ? '10' : '');
   const { requireAuthorization, operatorSet } = useAuthorizedWallet();
+
+  // Withdraw defaults to the full available balance once it loads.
+  useEffect(() => {
+    if (action !== 'withdraw' || amount !== '' || !balance?.available) return;
+    const available = Number(balance.available);
+    if (Number.isFinite(available) && available > 0) setAmount(balance.available);
+  }, [action, amount, balance]);
 
   const handleDeposited = useCallback(async (txHash: string | null) => {
     setDoneTxHash(txHash);
@@ -92,6 +119,14 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
     return () => window.clearTimeout(timer);
   }, [popup, done]);
 
+  // Signal the desktop app so it can pull its window back to the front and
+  // refresh balances immediately (closing a Chrome app-mode window otherwise
+  // hands focus to whatever window the OS picks).
+  useEffect(() => {
+    if (!done) return;
+    void notifyPaymentCompleted().catch(() => {});
+  }, [done]);
+
   const copy = COPY[action];
   const explorerUrl = doneTxHash ? getExplorerTxUrl(doneTxHash, config?.evmChainId) : null;
   // Only the Electron fallback popup lacks extension wallets (MetaMask, …) —
@@ -118,7 +153,7 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
         <div className="pay-checkout-card">
           <div className="pay-checkout-summary">
             <span className="pay-checkout-eyebrow">{copy.eyebrow}</span>
-            {action === 'deposit' ? (
+            {action === 'deposit' || action === 'withdraw' ? (
               <div className="pay-checkout-amount">
                 <span className="pay-checkout-amount-cur" aria-hidden="true">$</span>
                 <input
@@ -126,6 +161,7 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
                   type="text"
                   inputMode="decimal"
                   value={amount}
+                  placeholder="0"
                   size={Math.max(amount.length, 1)}
                   aria-label="Amount in USDC"
                   disabled={done}
@@ -149,16 +185,30 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
                   <dd>{buyerEvmAddress ? <code>{truncateAddress(buyerEvmAddress)}</code> : '—'}</dd>
                 </div>
               )}
+              {action === 'claim' && (
+                <div className="pay-checkout-fact">
+                  <dt>Account</dt>
+                  <dd>{buyerEvmAddress ? <code>{truncateAddress(buyerEvmAddress)}</code> : '—'}</dd>
+                </div>
+              )}
+              {action === 'close-channel' && channelId && (
+                <div className="pay-checkout-fact">
+                  <dt>Channel</dt>
+                  <dd><code>{truncateAddress(channelId)}</code></dd>
+                </div>
+              )}
               {action === 'withdraw' && (
                 <div className="pay-checkout-fact">
                   <dt>Available</dt>
                   <dd>${balance?.available ?? '—'}</dd>
                 </div>
               )}
-              <div className="pay-checkout-fact">
-                <dt>Rate</dt>
-                <dd>1 credit = 1 USDC</dd>
-              </div>
+              {(action === 'deposit' || action === 'withdraw') && (
+                <div className="pay-checkout-fact">
+                  <dt>Rate</dt>
+                  <dd>1 credit = 1 USDC</dd>
+                </div>
+              )}
             </dl>
           </div>
 
@@ -173,7 +223,13 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
                     <path d="M14 22.5l5.5 5.5 11-12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
                   </svg>
                 </div>
-                <h2>{action === 'deposit' ? 'Payment complete' : action === 'withdraw' ? 'Withdrawal sent' : 'Wallet authorized'}</h2>
+                <h2>
+                  {action === 'deposit' ? 'Payment complete'
+                    : action === 'withdraw' ? 'Withdrawal sent'
+                      : action === 'claim' || action === 'diem' ? 'Rewards claimed'
+                        : action === 'close-channel' ? 'Channel updated'
+                          : 'Wallet authorized'}
+                </h2>
                 <p>
                   {popup
                     ? 'Your credits are updating in the app. This window closes automatically.'
@@ -204,9 +260,29 @@ export function PayPage({ action, amount: amountParam, popup, config, balance, b
                   />
                 )}
                 {action === 'withdraw' && (
+                  <PayCheckoutWithdraw
+                    config={config}
+                    balance={balance}
+                    amount={amount}
+                    onWithdrawn={handleDeposited}
+                  />
+                )}
+                {action === 'claim' && (
                   <>
                     <p className="pay-checkout-subtitle">{copy.subtitle}</p>
-                    <WithdrawView config={config} balance={balance} onAction={refreshBalance} />
+                    <PayClaimRewards config={config} onDone={handleDeposited} />
+                  </>
+                )}
+                {action === 'diem' && (
+                  <>
+                    <p className="pay-checkout-subtitle">{copy.subtitle}</p>
+                    <PayDiemClaim config={config} onDone={handleDeposited} />
+                  </>
+                )}
+                {action === 'close-channel' && (
+                  <>
+                    <p className="pay-checkout-subtitle">{copy.subtitle}</p>
+                    <PayChannelClose config={config} channelId={channelId} onDone={handleDeposited} />
                   </>
                 )}
                 {action === 'authorize' && (

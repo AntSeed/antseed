@@ -29,14 +29,12 @@ export type AppActions = {
   decideToolApproval: (decision: ToolApprovalDecision, requestId?: string) => void;
   rejectPaymentSession: () => void;
   retryAfterPayment: () => void;
-  requestChannelClose: () => void;
   refreshCredits: () => void;
   refreshPaymentSummary: (force?: boolean) => void;
   refreshWorkspace: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openPaymentsPortal?: (tab?: string) => void;
   openVprFloat?: (profileName?: string) => Promise<void>;
   closeVprFloat?: () => Promise<void>;
 };

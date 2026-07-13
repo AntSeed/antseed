@@ -476,12 +476,16 @@ const api = {
   },
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
-  paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
-  paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
+  paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsOpenOnramp: (opts?: { amountUsdc?: string }) => ipcRenderer.invoke('payments:open-onramp', opts),
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
+  onPaymentsCompleted(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('payments:completed', listener);
+    return () => ipcRenderer.off('payments:completed', listener);
+  },
   depositsWatchStart: () => ipcRenderer.invoke('deposits:watch-start'),
   depositsWatchStop: () => ipcRenderer.invoke('deposits:watch-stop'),
   onDepositsWatchStatus(handler: (data: unknown) => void): () => void {

@@ -14,6 +14,8 @@ export const VIEW_WINDOW_PRESETS = {
   preferences: 'compact',
   credits: 'compact',
   deposit: 'compact',
+  activity: 'compact',
+  rewards: 'compact',
   help: 'compact',
   // Chat opens at the standard (wide) preset so the conversation-list panel
   // fits next to the nav rail.
