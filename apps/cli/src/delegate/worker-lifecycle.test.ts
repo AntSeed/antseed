@@ -31,7 +31,10 @@ function targetPeer(services: string[] = [SERVICE]): PeerInfo {
 }
 
 function job(overrides?: Partial<ProbeJobRequestPayload> & { model?: string }): ProbeJobRequestPayload {
-  const body = JSON.stringify({ model: overrides?.model ?? SERVICE, messages: [] })
+  // A bounded completion budget is now mandatory (validateProbeJob), so every
+  // lifecycle job carries one — these tests exercise dispatch/approval/slot
+  // behavior, not the budget gate itself.
+  const body = JSON.stringify({ model: overrides?.model ?? SERVICE, messages: [], max_tokens: 256 })
   return {
     version: 1,
     jobId: 'job-1',

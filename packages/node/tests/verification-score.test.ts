@@ -148,11 +148,20 @@ describe('hasModelSubstitutionFlag', () => {
     })))).toBe(false);
   });
 
-  it('falls back to lastVerdict for stats from registries without the active count', () => {
-    // Old deployments decode activeDiffVerifierCount as 0; a DIFF last verdict
-    // still flags.
+  it('does not flag after an owner clear even while lastVerdict is still DIFF', () => {
+    // clearVerifierStanding decrements activeDiffVerifierCount to 0 but never
+    // rewrites stats.lastVerdict (only submitAttestation does), so the exact
+    // post-owner-clear state is activeDiffVerifierCount==0 with lastVerdict==DIFF.
+    // Routing must track activeDiffVerifierCount alone so the block lifts in
+    // lockstep with the on-chain points penalty and the CLI 502 gate.
     expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
       diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 0,
+    })))).toBe(false);
+  });
+
+  it('still flags whenever activeDiffVerifierCount > 0', () => {
+    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
+      diffCount: 1, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
     })))).toBe(true);
   });
 });

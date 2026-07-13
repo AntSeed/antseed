@@ -13,7 +13,7 @@ function job(overrides?: {
   targetPeerId?: string
   timeoutMs?: number
 }): ProbeJobRequestPayload {
-  const body = overrides?.body ?? JSON.stringify({ model: 'kimi-k2', messages: [] })
+  const body = overrides?.body ?? JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 256 })
   return {
     version: 1,
     jobId: 'job-1',
@@ -79,12 +79,28 @@ test('streaming jobs are refused (unbounded paid response)', () => {
   )
   // Explicit stream: false is fine.
   assert.equal(
-    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], stream: false }) }), SELF),
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], stream: false, max_tokens: 256 }) }), SELF),
     null,
   )
 })
 
-test('max_tokens is capped when present, optional otherwise', () => {
+test('a bounded completion budget is mandatory — a body with neither field is refused', () => {
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [] }) }), SELF),
+    'missing_completion_budget',
+  )
+  // Either spelling satisfies the requirement.
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 256 }) }), SELF),
+    null,
+  )
+  assert.equal(
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_completion_tokens: 256 }) }), SELF),
+    null,
+  )
+})
+
+test('max_tokens is capped when present', () => {
   assert.equal(
     validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], max_tokens: 4096 }) }), SELF),
     null,
@@ -116,15 +132,15 @@ test('max_completion_tokens is capped exactly like max_tokens', () => {
 
 test('output-multiplying n is refused before dispatch (only the no-op n=1 relays)', () => {
   assert.equal(
-    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 50 }) }), SELF),
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 50, max_tokens: 256 }) }), SELF),
     'n_out_of_bounds',
   )
   assert.equal(
-    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: '50' }) }), SELF),
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: '50', max_tokens: 256 }) }), SELF),
     'n_out_of_bounds',
   )
   assert.equal(
-    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 1 }) }), SELF),
+    validateProbeJob(job({ body: JSON.stringify({ model: 'kimi-k2', messages: [], n: 1, max_tokens: 256 }) }), SELF),
     null,
   )
 })

@@ -163,7 +163,8 @@ Also implemented — the whitelisted verifier network:
   protocol's message types:
   - `DelegateHello = 0x90` — an opt-in buyer connects to a delegation host
     and offers to carry probe jobs, advertising its `maxConcurrentJobs`
-    (default 1).
+    (shipping delegate default 2). If a hello omits the field, the host
+    falls back to assuming 1.
   - `DelegateWelcome = 0x91` — the verifier accepts or rejects the delegate.
     A full roster rejects with reason `delegate_capacity` (default cap: 64
     connected delegates). The delegate side is welcome-gated: it rejects all
@@ -780,9 +781,11 @@ packages/fingerprints/
     verifiers/
       kbf/
         index.ts
-        domains.ts
         parser.ts
+        prompts.ts
         scoring.ts
+        stats.ts
+        stealth.ts
         verdict.ts
 ```
 

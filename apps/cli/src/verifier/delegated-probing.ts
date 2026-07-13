@@ -14,6 +14,23 @@ import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/finge
 import type { ProbeExchangeEvidence, SellerProbeRun } from './probing.js'
 import { extractCompletionText } from './probing.js'
 
+/**
+ * Per-probe completion budget for delegated stealth probes. Answers are short
+ * factual numbers, so ~192 tokens per bundled probe leaves ample headroom for
+ * conversational framing without truncating the answer the fingerprint reads.
+ * The floor keeps single-probe requests usable; the ceiling stays comfortably
+ * under the delegate worker's own MAX_JOB_MAX_TOKENS (4096) cap so the relay is
+ * never rejected as out-of-bounds.
+ */
+const PROBE_MAX_TOKENS_PER_PROBE = 192
+const PROBE_MAX_TOKENS_FLOOR = 384
+const PROBE_MAX_TOKENS_CEILING = 1024
+
+function boundedProbeMaxTokens(probeCount: number): number {
+  const wanted = Math.max(1, probeCount) * PROBE_MAX_TOKENS_PER_PROBE
+  return Math.min(PROBE_MAX_TOKENS_CEILING, Math.max(PROBE_MAX_TOKENS_FLOOR, wanted))
+}
+
 export interface DelegatedProbeOptions {
   /** Per-job execution budget granted to the delegate. */
   jobTimeoutMs: number
@@ -70,6 +87,16 @@ export async function probeSellerViaDelegates(
 
   let delegateCursor = 0
   for (const plan of plans) {
+    // A delegate carries this probe on ITS deposit and refuses any relay
+    // without a bounded completion budget (see delegate/worker.ts
+    // validateProbeJob). The stealth builder deliberately omits `max_tokens` to
+    // stay organic, so the verifier stamps a budget here: generous enough not
+    // to truncate the short factual answers the fingerprint reads, small enough
+    // to cap the delegate's spend. Sizing it to the probe count (rather than a
+    // fixed round number) keeps it from being a single constant tell.
+    if (plan.body.max_tokens === undefined) {
+      plan.body.max_tokens = boundedProbeMaxTokens(plan.probes.length)
+    }
     const bodyBytes = new TextEncoder().encode(JSON.stringify(plan.body))
     const bodyBase64 = Buffer.from(bodyBytes).toString('base64')
     // One retry on a different delegate: probe secrecy for this plan is
