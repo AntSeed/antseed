@@ -3,7 +3,6 @@ import type { ComponentType, LazyExoticComponent } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
   BubbleChatIcon,
-  ComputerTerminal01Icon,
   ConnectIcon,
   DiscoverCircleIcon,
   HelpCircleIcon,
@@ -21,9 +20,9 @@ export type RoutedViewProps = {
 };
 
 export type ViewNavConfig = {
-  /** 'main' renders in the nav rail's primary group; 'dev' in the bottom
-      group, gated on developer mode. */
-  slot: 'main' | 'dev';
+  /** 'main' renders in the nav rail's primary group; 'bottom' pinned to the
+      rail's bottom. */
+  slot: 'main' | 'bottom';
   label: string;
   icon: IconSvgElement;
 };
@@ -121,7 +120,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 5,
       preloadPriority: 'eager',
-      nav: { slot: 'main', label: 'Profile', icon: UserIcon },
+      nav: { slot: 'bottom', label: 'Profile', icon: UserIcon },
     },
   ),
   deposit: createViewEntry(
@@ -154,38 +153,21 @@ export const VIEW_REGISTRY = {
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },
   ),
-  developer: createViewEntry(
-    async () => (await import('./views/DeveloperConsoleView')).DeveloperConsoleView as ComponentType<RoutedViewProps>,
-    {
-      receivesOnSelectView: true,
-      slideIndex: 11,
-      preloadPriority: 'idle',
-      nav: { slot: 'dev', label: 'Developer', icon: ComputerTerminal01Icon },
-    },
-  ),
-  overview: createViewEntry(
-    async () => (await import('./views/OverviewView')).OverviewView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
-  ),
   peers: createViewEntry(
     async () => (await import('./views/PeersView')).PeersView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
+    { receivesOnSelectView: true, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
   ),
   connection: createViewEntry(
     async () => (await import('./views/ConnectionView')).ConnectionView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
+    { receivesOnSelectView: true, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
   ),
   config: createViewEntry(
     async () => (await import('./views/ConfigView')).ConfigView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
+    { receivesOnSelectView: true, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
   ),
   desktop: createViewEntry(
     async () => (await import('./views/DesktopView')).DesktopView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
-  ),
-  'system-proxy': createViewEntry(
-    async () => (await import('./views/SystemProxyView')).SystemProxyView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: false, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
+    { receivesOnSelectView: true, slideIndex: LEGACY_SLIDE_INDEX, preloadPriority: 'none' },
   ),
 } satisfies Record<ViewName, ViewRegistryEntry>;
 

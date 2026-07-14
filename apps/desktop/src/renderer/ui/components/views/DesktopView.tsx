@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatClock } from '../../../core/format';
+import { VprBackTitle, VprCard } from '../vpr/VprKit';
+import styles from './DiagnosticsView.module.scss';
 
 type DesktopViewProps = {
+  onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
 type RuntimeLogEntry = {
@@ -104,7 +107,7 @@ function downloadLogs(logs: RuntimeLogEntry[]): void {
   }
 }
 
-export function DesktopView(_props: DesktopViewProps) {
+export function DesktopView({ onSelectView }: DesktopViewProps) {
   const [selectedSource, setSelectedSource] = useState(ALL_SOURCES);
   const [searchQuery, setSearchQuery] = useState('');
   const { logs, daemonState } = useUiSelector((state) => ({
@@ -143,77 +146,81 @@ export function DesktopView(_props: DesktopViewProps) {
       : JSON.stringify(daemonState.state, null, 2);
 
   return (
-    <section className={`view view-desktop`} role="tabpanel">
-      <div className="page-header">
-        <h2>Logs</h2>
-        <div className="page-header-right">
-          <button className="secondary" onClick={() => downloadLogs(filteredLogs)} disabled={filteredLogs.length === 0}>
-            Download Visible
-          </button>
-          <button className="secondary" onClick={() => void actions.clearLogs()}>
-            Clear Logs
-          </button>
-          {/* <div className="connection-badge badge-idle">live stream</div> */}
+    <section className={`view view-desktop ${styles.view}`} role="tabpanel">
+      <div className={styles.stack}>
+        <div className={styles.headRow}>
+          <VprBackTitle title="Logs" onBack={() => onSelectView?.('help')} />
+          <div className={styles.headActions}>
+            <button
+              type="button"
+              className={styles.button}
+              onClick={() => downloadLogs(filteredLogs)}
+              disabled={filteredLogs.length === 0}
+            >
+              Download
+            </button>
+            <button type="button" className={styles.button} onClick={() => void actions.clearLogs()}>
+              Clear
+            </button>
+          </div>
         </div>
-      </div>
 
-      <pre hidden>{daemonText}</pre>
-      <div className="panel-grid">
-        <article className="panel">
-          <div className="panel-head">
-            <h3>Runtime Logs</h3>
-            <span className="log-count">
-              {filteredLogs.length} / {logs.length}
-            </span>
-          </div>
-          <div className="log-toolbar" aria-label="Runtime log filters">
-            <div className="log-source-filters" role="list" aria-label="Log sources">
+        <pre hidden>{daemonText}</pre>
+
+        <VprCard className={styles.card}>
+          <span className={styles.cardTitle}>
+            Runtime logs
+            <span className={styles.cardCount}>{filteredLogs.length} / {logs.length}</span>
+          </span>
+          <div className={styles.chipRow} role="list" aria-label="Log sources">
+            <button
+              type="button"
+              className={`${styles.chip}${selectedSource === ALL_SOURCES ? ` ${styles.chipActive}` : ''}`}
+              onClick={() => setSelectedSource(ALL_SOURCES)}
+            >
+              All
+              <span>{logs.length}</span>
+            </button>
+            {sourceSummaries.map(({ source, count }) => (
               <button
+                key={source}
                 type="button"
-                className={`log-filter-chip${selectedSource === ALL_SOURCES ? ' active' : ''}`}
-                onClick={() => setSelectedSource(ALL_SOURCES)}
+                className={`${styles.chip}${selectedSource === source ? ` ${styles.chipActive}` : ''}`}
+                onClick={() => setSelectedSource(source)}
+                title={`Show only ${source} logs`}
               >
-                All
-                <span>{logs.length}</span>
+                {source}
+                <span>{count}</span>
               </button>
-              {sourceSummaries.map(({ source, count }) => (
-                <button
-                  key={source}
-                  type="button"
-                  className={`log-filter-chip${selectedSource === source ? ' active' : ''}`}
-                  onClick={() => setSelectedSource(source)}
-                  title={`Show only ${source} logs`}
-                >
-                  {source}
-                  <span>{count}</span>
-                </button>
-              ))}
-            </div>
-            <input
-              type="search"
-              className="log-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Filter text, source, stream..."
-              aria-label="Filter logs by text"
-            />
+            ))}
           </div>
-          <div className="logs" aria-live="polite">
+          <input
+            type="search"
+            className={styles.input}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Filter text, source, stream..."
+            aria-label="Filter logs by text"
+          />
+          <div className={styles.logs} aria-live="polite">
             {filteredLogs.length === 0 && (
-              <div className="log-empty">No logs match the current filter.</div>
+              <div className={styles.message}>No logs match the current filter.</div>
             )}
             {filteredLogs.map((entry, i) => (
-              <div key={`${entry.timestamp}-${i}-${entry.line}`} className={`log-entry ${entry.stream}`}>
-                <div className="log-meta">
-                  <span className="ts">{formatClock(entry.timestamp)}</span>
-                  <span className="log-source">{getLogSource(entry)}</span>
+              <div
+                key={`${entry.timestamp}-${i}-${entry.line}`}
+                className={`${styles.logEntry}${entry.stream === 'stderr' ? ` ${styles.logError}` : ''}`}
+              >
+                <div className={styles.logMeta}>
+                  <span>{formatClock(entry.timestamp)}</span>
+                  <span>{getLogSource(entry)}</span>
                 </div>
-                <div className="log-text">{`[${entry.mode}] ${entry.line}`}</div>
+                <div className={styles.logText}>{`[${entry.mode}] ${entry.line}`}</div>
               </div>
             ))}
             <div ref={logsEndRef} />
           </div>
-        </article>
+        </VprCard>
       </div>
     </section>
   );

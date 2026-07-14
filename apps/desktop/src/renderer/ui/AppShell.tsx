@@ -29,7 +29,6 @@ export function AppShell() {
     appSetupNeeded: state.appSetupNeeded,
     appSetupComplete: state.appSetupComplete,
     chatServiceCount: state.chatServiceOptions.length,
-    devMode: state.devMode,
   }), shallowEqual);
   const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
@@ -80,23 +79,12 @@ export function AppShell() {
 
   const showSetup = setupVisible;
 
-  // Developer mode only gates the nav-rail entry for the console; the
-  // diagnostic screens themselves stay reachable (Help & Support links to
-  // them), except the console menu which is dev-mode only.
-  useEffect(() => {
-    if (!snap.devMode && activeView === 'developer') {
-      setActiveView('home');
-    }
-  }, [activeView, snap.devMode]);
-
   useEffect(() => {
     return window.antseedDesktop?.onNavigateView?.((viewName) => {
       if (!(VIEW_NAMES as readonly string[]).includes(viewName)) return;
-      const nextView = viewName as ViewName;
-      if (!snap.devMode && nextView === 'developer') return;
-      setActiveView(nextView);
+      setActiveView(viewName as ViewName);
     });
-  }, [snap.devMode]);
+  }, []);
 
   useEffect(() => {
     if (showSetup) return undefined;

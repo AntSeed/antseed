@@ -15,30 +15,30 @@ describe('view registry', () => {
     }
   });
 
-  it('passes navigation callbacks only to views that need to change pages', () => {
+  it('passes navigation callbacks to every view (diagnostics have back buttons)', () => {
     const navigationViews = VIEW_NAMES.filter((view) => getViewRegistryEntry(view).receivesOnSelectView);
 
-    expect(navigationViews).toEqual(['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'deposit', 'activity', 'rewards', 'chat', 'help', 'developer'] satisfies ViewName[]);
+    expect(navigationViews).toEqual([...VIEW_NAMES]);
   });
 
   it('reuses the same preload promise for repeated preload requests', () => {
-    const entry = getViewRegistryEntry('overview');
+    const entry = getViewRegistryEntry('peers');
 
     expect(entry.preload()).toBe(entry.preload());
   });
 
   it('can preload multiple views through the public helper', async () => {
-    const loaded = await preloadViews(['overview']);
+    const loaded = await preloadViews(['peers']);
 
     expect(loaded).toHaveLength(1);
-    expect(loaded[0]).toBe(await preloadView('overview'));
+    expect(loaded[0]).toBe(await preloadView('peers'));
   });
 
   it('derives the nav rail from registry metadata in slide order', () => {
     expect(navViews('main').map((entry) => entry.view)).toEqual(
-      ['home', 'explore', 'tools', 'preferences', 'credits', 'chat', 'help'] satisfies ViewName[],
+      ['home', 'explore', 'tools', 'preferences', 'chat', 'help'] satisfies ViewName[],
     );
-    expect(navViews('dev').map((entry) => entry.view)).toEqual(['developer'] satisfies ViewName[]);
+    expect(navViews('bottom').map((entry) => entry.view)).toEqual(['credits'] satisfies ViewName[]);
     for (const entry of navViews('main')) {
       expect(entry.nav.label).toBeTruthy();
       expect(entry.nav.icon).toBeTruthy();
@@ -49,7 +49,7 @@ describe('view registry', () => {
     expect(viewsForPreload('eager')).toEqual(
       ['home', 'explore', 'tools', 'credits', 'chat'] satisfies ViewName[],
     );
-    expect(viewsForPreload('idle')).toEqual(['preferences', 'deposit', 'activity', 'rewards', 'help', 'developer'] satisfies ViewName[]);
+    expect(viewsForPreload('idle')).toEqual(['preferences', 'deposit', 'activity', 'rewards', 'help'] satisfies ViewName[]);
   });
 
   it('assigns every view a slide position', () => {

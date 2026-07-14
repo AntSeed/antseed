@@ -20,16 +20,13 @@ export const VIEW_WINDOW_PRESETS = {
   // Chat opens at the standard (wide) preset so the conversation-list panel
   // fits next to the nav rail.
   chat: 'standard',
-  // Diagnostic/dev screens stay in the same compact panel as the VPR views
+  // Diagnostic screens stay in the same compact panel as the VPR views
   // (they're reachable from Help & Support) — their tables and panels scroll
   // within the window instead of blowing it up to the wide preset.
-  developer: 'compact',
-  overview: 'compact',
   peers: 'compact',
   connection: 'compact',
   desktop: 'compact',
   config: 'compact',
-  'system-proxy': 'compact',
 } as const satisfies Record<string, WindowSizePresetName>;
 
 export function windowPresetForView(view: string): WindowSizePresetName {

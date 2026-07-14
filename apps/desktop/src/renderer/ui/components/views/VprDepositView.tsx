@@ -64,6 +64,11 @@ function explorerTxUrl(chainId: number | undefined, txHash: string): string | nu
   return null;
 }
 
+type CardProvider = { id: string; label: string };
+
+const CARD_NOT_CONFIGURED_NOTICE =
+  'Card payments are not available yet on this install. You can deposit with a crypto wallet instead.';
+
 const TRUST_POINTS: Array<{ icon: IconSvgElement; text: string }> = [
   { icon: SquareLock01Icon, text: 'Non-custodial — your credits sit in AntSeed’s on-chain escrow contract, and your in-app signer never holds funds itself.' },
   { icon: Wallet01Icon, text: 'Withdraw unused credits back to your own wallet at any time.' },
@@ -73,7 +78,8 @@ const TRUST_POINTS: Array<{ icon: IconSvgElement; text: string }> = [
 /**
  * Deposit flow: a method chooser first (two full-width CTAs), then a
  * per-method screen — Crypto shows the scan-to-pay QR watched by the
- * main-process sweeper; Credit Card hands off to the Coinbase Onramp page.
+ * main-process sweeper; Credit Card hands off to a configured card-payment
+ * provider's hosted checkout page.
  * Only pages that need an external wallet signature leave the app.
  */
 export function VprDepositView({ onSelectView }: Props) {
@@ -95,7 +101,9 @@ export function VprDepositView({ onSelectView }: Props) {
   const [watchStatus, setWatchStatus] = useState<DepositWatchStatus | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [onrampNotice, setOnrampNotice] = useState<string | null>(null);
+  const [cardNotice, setCardNotice] = useState<string | null>(null);
+  // null = not fetched yet; fetched once on first entry to the card stage.
+  const [cardProviders, setCardProviders] = useState<CardProvider[] | null>(null);
   const copyTimer = useRef<number | null>(null);
 
   const goToStage = useCallback((next: Stage) => {
@@ -116,7 +124,7 @@ export function VprDepositView({ onSelectView }: Props) {
 
   // The main process watches the hot wallet for incoming USDC and sweeps it
   // into the Deposits contract while this view is mounted. Both methods use
-  // the watcher: QR transfers and Coinbase Onramp deliveries land in the
+  // the watcher: QR transfers and card-purchase deliveries land in the
   // same wallet.
   useEffect(() => {
     const bridge = window.antseedDesktop;
@@ -190,12 +198,28 @@ export function VprDepositView({ onSelectView }: Props) {
     });
   }, [amount]);
 
-  const openOnramp = useCallback(() => {
-    setOnrampNotice(null);
-    void window.antseedDesktop?.paymentsOpenOnramp?.({ amountUsdc: amount }).then((result) => {
+  useEffect(() => {
+    if (stage !== 'card' || cardProviders !== null) return undefined;
+    const call = window.antseedDesktop?.paymentsCardProviders?.();
+    if (!call) {
+      setCardProviders([]);
+      return undefined;
+    }
+    let cancelled = false;
+    void call.then((result) => {
+      if (!cancelled) setCardProviders(result.ok && result.data ? result.data : []);
+    }).catch(() => {
+      if (!cancelled) setCardProviders([]);
+    });
+    return () => { cancelled = true; };
+  }, [stage, cardProviders]);
+
+  const openCardProvider = useCallback((providerId: string) => {
+    setCardNotice(null);
+    void window.antseedDesktop?.paymentsOpenCardProvider?.({ providerId, amountUsdc: amount }).then((result) => {
       if (!result.ok) {
-        setOnrampNotice(result.error === 'onramp-not-configured'
-          ? 'Card payments are not available yet on this install. You can deposit with a crypto wallet instead.'
+        setCardNotice(result.error === 'card-not-configured'
+          ? CARD_NOT_CONFIGURED_NOTICE
           : result.error ?? 'Could not open the payment page.');
       }
     });
@@ -359,23 +383,45 @@ export function VprDepositView({ onSelectView }: Props) {
       );
     }
 
+    const singleProvider = cardProviders?.length === 1 ? cardProviders[0] : null;
+    const multipleProviders = cardProviders && cardProviders.length > 1 ? cardProviders : null;
+    const noProviders = cardProviders?.length === 0;
+
     return (
       <div className={styles.stack}>
         <VprBackTitle title="Pay with card" onBack={() => goToStage('choose')} />
 
         {amountForm}
 
-        <VprCard className={styles.payCard}>
-          <button type="button" className={styles.onrampButton} onClick={openOnramp}>
-            <span>Pay ${Number(amount) > 0 ? amount : ''} with Coinbase</span>
-            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+        {multipleProviders?.map((provider) => (
+          <button key={provider.id} type="button" className={styles.methodCta} onClick={() => openCardProvider(provider.id)}>
+            <span className={styles.methodCtaIcon}>
+              <HugeiconsIcon icon={CreditCardIcon} size={20} strokeWidth={1.8} />
+            </span>
+            <span className={styles.methodCtaText}>
+              <span className={styles.methodCtaTitle}>Pay with {provider.label}</span>
+            </span>
+            <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
           </button>
-          <div className={styles.methodHint}>
-            You'll finish the payment on Coinbase's secure checkout page — card details
-            never touch AntSeed. The USDC you buy is delivered on Base and deposited to
-            your credits automatically.
-          </div>
-          {onrampNotice && <div className={styles.cardNotice} role="alert">{onrampNotice}</div>}
+        ))}
+
+        <VprCard className={styles.payCard}>
+          {singleProvider && (
+            <button type="button" className={styles.cardPayButton} onClick={() => openCardProvider(singleProvider.id)}>
+              <span>Pay ${Number(amount) > 0 ? amount : ''} with {singleProvider.label}</span>
+              <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+            </button>
+          )}
+          {noProviders ? (
+            <div className={styles.cardNotice} role="alert">{CARD_NOT_CONFIGURED_NOTICE}</div>
+          ) : (
+            <div className={styles.methodHint}>
+              You'll finish the payment on {singleProvider ? `${singleProvider.label}'s` : "the provider's"} secure
+              checkout page — card details never touch AntSeed. The USDC you buy is delivered
+              on Base and deposited to your credits automatically.
+            </div>
+          )}
+          {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
           {watchStatus && statusLine.tone !== 'idle' && watchStatusRow}
           {creditedTxUrl && (
             <button

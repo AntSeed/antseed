@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowRight01Icon,
@@ -9,6 +9,7 @@ import {
 } from '@hugeicons/core-free-icons';
 import { getUiStateRef } from '../../../core/store';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { useActions } from '../../hooks/useActions';
 import { VprBackTitle, VprCard, VprSettingRow, VprToggle } from '../vpr/VprKit';
 import styles from './VprHelpView.module.scss';
 
@@ -19,7 +20,6 @@ type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 const TELEGRAM_URL = 'https://t.me/antseed';
 const X_URL = 'https://x.com/antseed';
 const DOCS_BASE_URL = 'https://antseed.com/docs';
-const DEBUG_LOGS_KEY = 'antseed.desktop.vpr.debugLogs';
 
 type HelpSection = { heading: string; body: string };
 type HelpArticle = {
@@ -286,12 +286,10 @@ function nextArticle(topicKey: string, articleKey: string): { topicKey: string; 
   return index >= 0 ? ARTICLE_ORDER[index + 1] ?? null : null;
 }
 
-/** Diagnostic screens surfaced from Help (same set as the developer console). */
+/** Diagnostic screens surfaced from Help — the only entry point for them. */
 const DIAGNOSTIC_ROUTES: Array<{ view: import('../../types').ViewName; label: string }> = [
   { view: 'peers', label: 'Available peers' },
-  { view: 'overview', label: 'Network overview' },
   { view: 'connection', label: 'Connection details' },
-  { view: 'system-proxy', label: 'System proxy' },
   { view: 'config', label: 'Configuration' },
 ];
 
@@ -312,6 +310,12 @@ function pageKey(page: HelpPage): string {
   return `${page.topicKey ?? ''}/${page.articleKey ?? ''}`;
 }
 
+// Renderer-lifetime scroll positions per help page. Written once per
+// navigation (and on view unmount) — no scroll listeners, no state updates —
+// so drilling into a topic or a diagnostic screen and coming back lands at
+// the same spot.
+const helpScrollByPage = new Map<string, number>();
+
 export function VprHelpView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     connectBadgeLabel: state.connectBadge.label,
@@ -320,7 +324,11 @@ export function VprHelpView({ onSelectView }: Props) {
     peers: state.ovPeers,
     serviceCount: state.ovServiceCount,
     modelLabel: state.vprRouteSelection.model?.label ?? null,
+    devMode: state.devMode,
+    configFormData: state.configFormData,
+    configSaving: state.configSaving,
   }), shallowEqual);
+  const actions = useActions();
 
   // Internal page slide (same ExpressVPN-style transition as the top-level
   // ViewHost): the outgoing page stays mounted for one animation beat.
@@ -330,13 +338,33 @@ export function VprHelpView({ onSelectView }: Props) {
     direction: 'forward',
   });
 
+  const activePaneRef = useRef<HTMLDivElement | null>(null);
+  const currentPageRef = useRef(nav.page);
+  currentPageRef.current = nav.page;
+
   function goTo(page: HelpPage, direction?: 'forward' | 'back'): void {
+    if (activePaneRef.current) {
+      helpScrollByPage.set(pageKey(currentPageRef.current), activePaneRef.current.scrollTop);
+    }
     setNav((current) => ({
       page,
       previous: current.page,
       direction: direction ?? (pageDepth(page) >= pageDepth(current.page) ? 'forward' : 'back'),
     }));
   }
+
+  // Restore the incoming page's scroll before paint; save on unmount (e.g.
+  // when a diagnostic row navigates to another view).
+  useLayoutEffect(() => {
+    const el = activePaneRef.current;
+    if (el) el.scrollTop = helpScrollByPage.get(pageKey(nav.page)) ?? 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageKey(nav.page)]);
+  useEffect(() => () => {
+    if (activePaneRef.current) {
+      helpScrollByPage.set(pageKey(currentPageRef.current), activePaneRef.current.scrollTop);
+    }
+  }, []);
 
   useEffect(() => {
     if (!nav.previous) return undefined;
@@ -350,24 +378,15 @@ export function VprHelpView({ onSelectView }: Props) {
   const [appVersion, setAppVersion] = useState<string>(
     typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
   );
-  const [debugLogs, setDebugLogs] = useState(() => {
-    try {
-      return localStorage.getItem(DEBUG_LOGS_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-
   useEffect(() => {
     window.antseedDesktop?.getAppVersion?.().then(setAppVersion).catch(() => {});
   }, []);
 
-  function toggleDebugLogs(next: boolean): void {
-    setDebugLogs(next);
-    try {
-      localStorage.setItem(DEBUG_LOGS_KEY, next ? '1' : '0');
-    } catch { /* private mode */ }
-    void window.antseedDesktop?.setDebugLogs?.(next);
+  // Developer mode is the single switch for diagnostics: it enables debug
+  // logging (settings module) and reveals the diagnostic screens below.
+  function toggleDevMode(next: boolean): void {
+    if (!snap.configFormData) return;
+    void actions.saveConfig({ ...snap.configFormData, devMode: next });
   }
 
   async function copyDiagnostics(): Promise<void> {
@@ -498,50 +517,51 @@ export function VprHelpView({ onSelectView }: Props) {
           <p className={styles.sectionLabel}>Diagnostic tools</p>
           <VprCard className={styles.settingCard}>
             <VprSettingRow
-              title="Enable debug logging"
-              hint="Record runtime activity to help troubleshoot issues"
+              title="Developer mode"
+              hint="Enables debug logging and the diagnostic screens below"
               control={(
                 <VprToggle
-                  checked={debugLogs}
-                  onChange={toggleDebugLogs}
-                  ariaLabel="Enable debug logging"
+                  checked={snap.devMode}
+                  onChange={toggleDevMode}
+                  ariaLabel="Developer mode"
+                  disabled={!snap.configFormData || snap.configSaving}
                 />
               )}
             />
-            <button
-              type="button"
-              className={`${styles.row} ${styles.rowFlush}`}
-              disabled={!debugLogs}
-              title={debugLogs ? undefined : 'Enable debug logging to view live logs'}
-              onClick={() => onSelectView?.('desktop')}
-            >
-              <span className={styles.rowText}>
-                <span className={styles.rowLabel}>Live logs</span>
-                <span className={styles.rowHint}>
-                  {debugLogs ? 'Runtime activity as it happens' : 'Enable debug logging to view'}
-                </span>
-              </span>
-              <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
-            </button>
-            {DIAGNOSTIC_ROUTES.map((route) => (
-              <button
-                key={route.view}
-                type="button"
-                className={`${styles.row} ${styles.rowFlush}`}
-                onClick={() => onSelectView?.(route.view)}
-              >
-                <span className={styles.rowLabel}>{route.label}</span>
-                <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
-              </button>
-            ))}
-            <button type="button" className={`${styles.row} ${styles.rowFlush}`} onClick={() => { void copyDiagnostics(); }}>
-              <HugeiconsIcon icon={Copy01Icon} size={18} strokeWidth={1.8} className={styles.rowIcon} />
-              <span className={styles.rowText}>
-                <span className={styles.rowLabel}>{copied ? 'Copied to clipboard' : 'Copy diagnostic report'}</span>
-                <span className={styles.rowHint}>Version, runtime status and recent logs</span>
-              </span>
-              <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
-            </button>
+            {snap.devMode && (
+              <>
+                <button
+                  type="button"
+                  className={`${styles.row} ${styles.rowFlush}`}
+                  onClick={() => onSelectView?.('desktop')}
+                >
+                  <span className={styles.rowText}>
+                    <span className={styles.rowLabel}>Live logs</span>
+                    <span className={styles.rowHint}>Runtime activity as it happens</span>
+                  </span>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+                </button>
+                {DIAGNOSTIC_ROUTES.map((route) => (
+                  <button
+                    key={route.view}
+                    type="button"
+                    className={`${styles.row} ${styles.rowFlush}`}
+                    onClick={() => onSelectView?.(route.view)}
+                  >
+                    <span className={styles.rowLabel}>{route.label}</span>
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+                  </button>
+                ))}
+                <button type="button" className={`${styles.row} ${styles.rowFlush}`} onClick={() => { void copyDiagnostics(); }}>
+                  <HugeiconsIcon icon={Copy01Icon} size={18} strokeWidth={1.8} className={styles.rowIcon} />
+                  <span className={styles.rowText}>
+                    <span className={styles.rowLabel}>{copied ? 'Copied to clipboard' : 'Copy diagnostic report'}</span>
+                    <span className={styles.rowHint}>Version, runtime status and recent logs</span>
+                  </span>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+                </button>
+              </>
+            )}
           </VprCard>
         </div>
 
@@ -604,6 +624,7 @@ export function VprHelpView({ onSelectView }: Props) {
       )}
       <div
         key={pageKey(nav.page)}
+        ref={activePaneRef}
         className={`view view-vpr-help ${styles.view} ${styles.pane}${sliding ? ` ${styles.paneIn}` : ''}`}
       >
         {renderPage(nav.page)}

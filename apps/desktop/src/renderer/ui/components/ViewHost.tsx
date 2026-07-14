@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ViewName } from '../types';
 import { getViewRegistryEntry } from './viewRegistry';
 
@@ -10,6 +10,17 @@ type ViewHostProps = {
 // Must match the animation duration of .view-pane-in/.view-pane-out in
 // global.scss — the outgoing view unmounts after this delay.
 const VIEW_SLIDE_MS = 300;
+
+// Renderer-lifetime scroll position per view. Views unmount when navigated
+// away from, so drilling into another screen and coming back would otherwise
+// land at the top. Written once when a pane unmounts and restored before
+// paint on mount — no scroll listeners, no state updates.
+const viewScrollCache = new Map<ViewName, number>();
+
+// Each view's scrolling element is its root `.view` section. The Suspense
+// fallback also carries `.view`, so exclude it — restoring must wait for the
+// real view.
+const SCROLL_EL_SELECTOR = '.view:not(.route-loading)';
 
 function slideIndex(view: ViewName): number {
   return getViewRegistryEntry(view).slideIndex;
@@ -39,6 +50,45 @@ function RoutedView({ view, onSelectView }: { view: ViewName; onSelectView: (vie
   );
 }
 
+function ViewPane({ view, className, hidden, onSelectView }: {
+  view: ViewName;
+  className: string;
+  hidden?: boolean;
+  onSelectView: (view: ViewName) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const pane = ref.current;
+    if (!pane) return undefined;
+    const apply = (): boolean => {
+      const el = pane.querySelector<HTMLElement>(SCROLL_EL_SELECTOR);
+      if (!el) return false;
+      const top = viewScrollCache.get(view) ?? 0;
+      if (top > 0) el.scrollTop = top;
+      return true;
+    };
+    if (apply()) return undefined;
+    // Lazy chunk still loading — restore once the view replaces the fallback.
+    const observer = new MutationObserver(() => {
+      if (apply()) observer.disconnect();
+    });
+    observer.observe(pane, { childList: true });
+    return () => observer.disconnect();
+  }, [view]);
+
+  useEffect(() => () => {
+    const el = ref.current?.querySelector<HTMLElement>(SCROLL_EL_SELECTOR);
+    if (el) viewScrollCache.set(view, el.scrollTop);
+  }, [view]);
+
+  return (
+    <div ref={ref} className={className} {...(hidden ? { 'aria-hidden': true } : {})}>
+      <RoutedView view={view} onSelectView={onSelectView} />
+    </div>
+  );
+}
+
 export function ViewHost({ activeView, onSelectView }: ViewHostProps) {
   const [slide, setSlide] = useState<SlideState>({ view: activeView, previous: null, direction: 'forward' });
 
@@ -65,13 +115,20 @@ export function ViewHost({ activeView, onSelectView }: ViewHostProps) {
   return (
     <section className={`view-host${sliding ? ` view-host-sliding view-host-${slide.direction}` : ''}`}>
       {slide.previous && (
-        <div key={`out-${slide.previous}`} className="view-pane view-pane-out" aria-hidden="true">
-          <RoutedView view={slide.previous} onSelectView={onSelectView} />
-        </div>
+        <ViewPane
+          key={`out-${slide.previous}`}
+          view={slide.previous}
+          className="view-pane view-pane-out"
+          hidden
+          onSelectView={onSelectView}
+        />
       )}
-      <div key={slide.view} className={`view-pane${sliding ? ' view-pane-in' : ''}`}>
-        <RoutedView view={slide.view} onSelectView={onSelectView} />
-      </div>
+      <ViewPane
+        key={slide.view}
+        view={slide.view}
+        className={`view-pane${sliding ? ' view-pane-in' : ''}`}
+        onSelectView={onSelectView}
+      />
     </section>
   );
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Settings02Icon } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { formatCredits } from '../../core/format';
@@ -17,12 +16,11 @@ type VprShellProps = {
 };
 
 const mainNavEntries = navViews('main');
-const devNavEntries = navViews('dev');
+const bottomNavEntries = navViews('bottom');
 
 export function VprShell({ activeView, onSelectView, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
     creditsAvailableUsdc: state.creditsAvailableUsdc,
-    devMode: state.devMode,
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
@@ -69,28 +67,18 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
           })}
         </div>
         <div className={styles.navBottom}>
-          {snap.devMode && devNavEntries.map(({ view, nav }) => (
+          {bottomNavEntries.map(({ view, nav }) => (
             <button
               key={view}
               type="button"
               className={`${styles.navButton}${activeView === view ? ` ${styles.navButtonActive}` : ''}`}
-              aria-label={nav.label}
               aria-current={activeView === view ? 'page' : undefined}
-              title={nav.label}
               onClick={() => onSelectView(view)}
             >
               <HugeiconsIcon icon={nav.icon} size={24} strokeWidth={1.8} />
+              <span className={styles.navLabel}>{nav.label}</span>
             </button>
           ))}
-          <button
-            type="button"
-            className={`${styles.navButton} ${styles.navIconOnly}${activeView === 'preferences' ? ` ${styles.navButtonActive}` : ''}`}
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => onSelectView('preferences')}
-          >
-            <HugeiconsIcon icon={Settings02Icon} size={24} strokeWidth={1.8} />
-          </button>
         </div>
       </nav>
       {chatMode && <ChatListPanel onSelectView={onSelectView} />}

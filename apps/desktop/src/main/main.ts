@@ -1672,48 +1672,90 @@ ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKi
   }
 });
 
-// Coinbase Onramp hosted buy page. USDC bought with a card is delivered on
-// Base to the buyer hot wallet and credited into AntseedDeposits via the P2P
-// deposit relay — same path as a direct QR transfer.
+// Card payments open a hosted checkout page. USDC bought with a card is
+// delivered on Base to the buyer hot wallet and credited into AntseedDeposits
+// via the P2P deposit relay — same path as a direct QR transfer.
 //
-// Onramp requires a single-use session token minted with a CDP secret key,
-// which must never ship inside the app — so a small AntSeed backend endpoint
-// (config: payments.onramp.sessionEndpoint) mints the one-click URL for us.
-ipcMain.handle('payments:open-onramp', async (_event, opts?: { amountUsdc?: string }) => {
+// Providers come from config (payments.card.providers) as HTTPS URL templates
+// with {address} and optional {amount} placeholders. The default is AntSeed's
+// hosted card page, which handles the Coinbase Onramp session server-side so
+// the CDP secret key never ships inside the app.
+type CardProvider = { id: string; label: string; url: string };
+
+const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
+  { id: 'coinbase', label: 'Coinbase', url: 'https://pay.antseed.com/?address={address}&amount={amount}' },
+];
+
+// A configured empty array is respected (zero providers = card disabled);
+// only a missing/invalid config falls back to the built-in default.
+async function readCardProviders(): Promise<CardProvider[]> {
+  let entries: unknown;
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    entries = asRecord(asRecord(config.payments).card).providers;
+  } catch {
+    return DEFAULT_CARD_PROVIDERS;
+  }
+  if (!Array.isArray(entries)) return DEFAULT_CARD_PROVIDERS;
+  const providers: CardProvider[] = [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    const id = asString(record.id as string, '');
+    const label = asString(record.label as string, '');
+    const url = asString(record.url as string, '');
+    if (id && label && url) providers.push({ id, label, url });
+  }
+  return providers;
+}
+
+ipcMain.handle('payments:card-providers', async () => {
+  try {
+    const providers = await readCardProviders();
+    // Only id + label cross into the renderer — URLs stay in the main process.
+    return { ok: true, data: providers.map(({ id, label }) => ({ id, label })) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('payments:open-card-provider', async (_event, opts?: { providerId?: string; amountUsdc?: string }) => {
   try {
     await ensureSecureIdentity();
     const identity = getSecureIdentity();
     if (!identity) return { ok: false, error: 'Identity not available' };
-    let sessionEndpoint = '';
-    try {
-      const config = await readConfig(ACTIVE_CONFIG_PATH);
-      const payments = asRecord(config.payments);
-      sessionEndpoint = asString(asRecord(payments.onramp).sessionEndpoint as string, '');
-    } catch {
-      // No config — endpoint stays empty
-    }
-    if (!sessionEndpoint) return { ok: false, error: 'onramp-not-configured' };
+    const providers = await readCardProviders();
+    const provider = opts?.providerId
+      ? providers.find((entry) => entry.id === opts.providerId)
+      : providers[0];
+    if (!provider) return { ok: false, error: 'card-not-configured' };
+
     const amount = Number(opts?.amountUsdc);
-    const response = await fetch(sessionEndpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        destinationAddress: identity.wallet.address,
-        destinationNetwork: 'base',
-        purchaseCurrency: 'USDC',
-        ...(Number.isFinite(amount) && amount > 0 ? { purchaseAmount: String(amount) } : {}),
-      }),
-    });
-    if (!response.ok) {
-      return { ok: false, error: `Onramp session failed (${response.status})` };
+    const hasAmount = Number.isFinite(amount) && amount > 0;
+    let template = provider.url.split('{address}').join(identity.wallet.address);
+    if (hasAmount) template = template.split('{amount}').join(String(amount));
+    let parsed: URL;
+    try {
+      parsed = new URL(template);
+    } catch {
+      return { ok: false, error: 'Card provider URL is invalid' };
     }
-    const body = await response.json() as { url?: string };
-    if (!body.url || !/^https:\/\/pay(-sandbox)?\.coinbase\.com\//.test(body.url)) {
-      return { ok: false, error: 'Onramp session endpoint returned an invalid URL' };
+    if (parsed.protocol !== 'https:') {
+      return { ok: false, error: 'Card provider URL must be https' };
     }
-    const { default: open } = await import('open');
-    await open(body.url);
-    return { ok: true, url: body.url };
+    if (!hasAmount) {
+      // No amount entered — drop query params still carrying the placeholder.
+      for (const [key, value] of [...parsed.searchParams.entries()]) {
+        if (value.includes('{amount}')) parsed.searchParams.delete(key);
+      }
+    }
+    const url = parsed.toString();
+
+    if (await tryOpenBrowserAppMode(url)) {
+      return { ok: true, url };
+    }
+    console.log('[payments] no app-mode browser available — using Electron popup');
+    openPaymentsPopup(url);
+    return { ok: true, url };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2567,8 +2609,8 @@ ipcMain.handle('deposits:watch-start', async () => {
     if (!depositWatchTimer) {
       depositWatchTimer = setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_INTERVAL_MS);
     }
-    // USDC already sitting in the wallet (sent before the panel opened, or an
-    // onramp purchase that landed while the app was closed) — sweep it now.
+    // USDC already sitting in the wallet (sent before the panel opened, or a
+    // card purchase that landed while the app was closed) — sweep it now.
     if (balance > 0n) void sweepIncomingUsdc(client, address);
     return {
       ok: true,
