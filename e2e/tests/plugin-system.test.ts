@@ -225,7 +225,7 @@ describe('Plugin Registry', () => {
   it('all trusted plugins have required fields (name, type, package, description)', () => {
     for (const plugin of TRUSTED_PLUGINS) {
       expect(plugin.name).toBeTruthy();
-      expect(['provider', 'router']).toContain(plugin.type);
+      expect(['provider', 'router', 'verifier']).toContain(plugin.type);
       expect(plugin.package).toBeTruthy();
       expect(plugin.description).toBeTruthy();
     }
