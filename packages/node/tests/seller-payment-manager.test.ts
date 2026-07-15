@@ -122,6 +122,16 @@ function makeOnChainChannel(buyer: Identity, seller: Identity, overrides: Record
   };
 }
 
+function makeInFlightTxLimitError(): Error & { error: { code: number; message: string }; code: string } {
+  return Object.assign(new Error('could not coalesce error'), {
+    error: {
+      code: -32000,
+      message: 'in-flight transaction limit reached for delegated accounts',
+    },
+    code: 'UNKNOWN_ERROR',
+  });
+}
+
 describe('SellerPaymentManager', () => {
   let tempDir: string;
   let store: ChannelStore;
@@ -350,6 +360,41 @@ describe('SellerPaymentManager', () => {
     expect(topUpSpy.mock.calls[1]?.[5]).toBe(3_000_000n);
   });
 
+  it('defers top-up when delegated account tx backpressure rejects submission', async () => {
+    const channelId = makeChannelId(106);
+
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    const auth900k = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 900_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth900k, mux);
+    manager.recordSpend(channelId, 900_000n);
+
+    const topUpSpy = vi.spyOn(manager.channelsClient, 'topUp')
+      .mockRejectedValue(makeInFlightTxLimitError());
+
+    const topUp2m = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '2000000',
+      salt: '0x' + '08'.repeat(32),
+    });
+
+    expect(await manager.handleSpendingAuth(buyerIdentity.peerId, topUp2m, mux)).toBe('accepted');
+    expect(topUpSpy).toHaveBeenCalledOnce();
+    expect(manager.hasPendingTopUp(channelId)).toBe(true);
+    expect(manager.getReserveMax(channelId)).toBe(1_000_000n);
+    expect(manager.isChannelBlocked(channelId)).toBe(false);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+    expect(manager.channelsClient.close).not.toHaveBeenCalled();
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+  });
+
   it('rejects a top-up that fails because buyer deposits are insufficient', async () => {
     const channelId = makeChannelId(103);
 
@@ -417,6 +462,52 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasPendingTopUp(channelId)).toBe(false);
     expect(manager.isChannelBlocked(channelId)).toBe(true);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+  });
+
+  it('keeps a deferred top-up pending when retry hits delegated account tx backpressure', async () => {
+    const channelId = makeChannelId(107);
+
+    const reservePayload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reservePayload, mux);
+
+    const auth900k = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 900_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth900k, mux);
+    manager.recordSpend(channelId, 900_000n);
+
+    const topUpSpy = vi.spyOn(manager.channelsClient, 'topUp')
+      .mockRejectedValueOnce(new Error('TopUpThresholdNotMet'))
+      .mockRejectedValueOnce(makeInFlightTxLimitError());
+
+    const topUp2m = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '2000000',
+      salt: '0x' + '09'.repeat(32),
+    });
+    expect(await manager.handleSpendingAuth(buyerIdentity.peerId, topUp2m, mux)).toBe('accepted');
+    expect(manager.hasPendingTopUp(channelId)).toBe(true);
+
+    const withinReserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 950_000n,
+      reserveMaxAmount: '1000000',
+    });
+    delete withinReserve.reserveSalt;
+    delete withinReserve.reserveMaxAmount;
+    delete withinReserve.reserveDeadline;
+    expect(await manager.handleSpendingAuth(buyerIdentity.peerId, withinReserve, mux)).toBe('accepted');
+
+    expect(topUpSpy).toHaveBeenCalledTimes(2);
+    expect(manager.hasPendingTopUp(channelId)).toBe(true);
+    expect(manager.getReserveMax(channelId)).toBe(1_000_000n);
+    expect(manager.isChannelBlocked(channelId)).toBe(false);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+    expect(manager.channelsClient.close).not.toHaveBeenCalled();
     expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
   });
 
@@ -801,6 +892,44 @@ describe('SellerPaymentManager', () => {
     expect(closeArgs[4]).toBe(payload2.spendingAuthSig);
   });
 
+  it('keeps session state when close hits delegated account tx backpressure on disconnect', async () => {
+    const channelId = makeChannelId(13);
+
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+    manager.recordSpend(channelId, 50_000n);
+
+    vi.spyOn(manager.channelsClient, 'close').mockRejectedValue(makeInFlightTxLimitError());
+
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+    while ((manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls.length === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    await new Promise<void>((r) => setImmediate(r));
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+
+    vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+      makeOnChainChannel(buyerIdentity, sellerIdentity, {
+        deposit: 1_000_000n,
+        settled: 0n,
+        status: 1,
+      }),
+    );
+    (manager.channelsClient.close as ReturnType<typeof vi.fn>).mockResolvedValue('0xclose-hash');
+
+    await manager.checkTimeouts();
+
+    expect(manager.channelsClient.close).toHaveBeenCalledTimes(2);
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
+  });
+
   it('settleSession suppresses duplicate in-flight close attempts for the same channel', async () => {
     const channelId = makeChannelId(12);
 
@@ -1016,6 +1145,35 @@ describe('SellerPaymentManager', () => {
     await manager.checkTimeouts();
 
     expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+  });
+
+  it('checkTimeouts keeps retrying zombie close when delegated account tx backpressure persists', async () => {
+    const channelId = makeChannelId(75);
+    const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+      deadline: Math.floor(Date.now() / 1000) - 1,
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+
+    vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+      makeOnChainChannel(buyerIdentity, sellerIdentity, {
+        deposit: 1_000_000n,
+        settled: 0n,
+        status: 1,
+      }),
+    );
+    vi.spyOn(manager.channelsClient, 'close').mockRejectedValue(makeInFlightTxLimitError());
+
+    await manager.checkTimeouts();
+    await manager.checkTimeouts();
+    await manager.checkTimeouts();
+    await manager.checkTimeouts();
+
+    expect(manager.channelsClient.close).toHaveBeenCalledTimes(4);
     expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
   });
