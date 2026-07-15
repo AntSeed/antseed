@@ -75,12 +75,12 @@ contract AntseedVerifierPointsPolicyTest is Test, ResponseAuthFixture {
     address verifier = address(0x1001);
     address secondVerifier = address(0x1002);
     address outsider = address(0x1003);
-    address seller = address(0x3001);
+    address seller;
     address buyer = address(0x4001);
 
     uint256 agentId;
     bytes32 constant CHANNEL_ID = keccak256("channel");
-    bytes32 constant SERVICE_HASH = keccak256("model:gpt-99");
+    bytes32 constant SERVICE_HASH = keccak256("anthropic/claude-opus-4");
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 constant RAW_POINTS = 1_000_000;
     uint256 commitSalt;
@@ -106,18 +106,15 @@ contract AntseedVerifierPointsPolicyTest is Test, ResponseAuthFixture {
 
         policy = new AntseedVerifierPointsPolicy(address(registry), address(verifierRegistry));
 
+        seller = vm.addr(RECORD_SELLER_KEY);
         agentId = identity.register();
         identity.setOwner(agentId, seller);
         staking.setAgentId(seller, agentId);
-
-        recordAgentId = identity.register();
-        identity.setOwner(recordAgentId, vm.addr(RECORD_SELLER_KEY));
     }
 
     /// @dev Signing key + registered agent for the seller whose signed
     ///      exchanges `_anchorBatch` anchors (signature-verified on-chain).
     uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
-    uint256 recordAgentId;
 
     function _commitAndAttest(uint256 agentId_, uint8 verdict) internal {
         _commitAndAttestFrom(verifier, agentId_, verdict);
@@ -128,7 +125,7 @@ contract AntseedVerifierPointsPolicyTest is Test, ResponseAuthFixture {
         vm.prank(verifier_);
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchorBatch(verifier_, commitment);
+        bytes32 batchRoot = _anchorBatch(verifier_, commitment, agentId_);
         vm.prank(verifier_);
         verifierRegistry.submitAttestation(
             agentId_, SERVICE_HASH, verdict, EVIDENCE_HASH, commitment, batchRoot, 10, 3
@@ -140,12 +137,15 @@ contract AntseedVerifierPointsPolicyTest is Test, ResponseAuthFixture {
     ///      the commitment so every batch has a distinct root; the buyer in
     ///      every signed payload is the anchoring verifier (no delegate
     ///      accrual side effects).
-    function _anchorBatch(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
+    function _anchorBatch(address verifier_, bytes32 commitment, uint256 targetAgentId)
+        internal
+        returns (bytes32 batchRoot)
+    {
         (
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,
             uint32[] memory counts
-        ) = makeSignedBatch(12, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
+        ) = makeSignedBatch(12, targetAgentId, RECORD_SELLER_KEY, verifier_, commitment);
         vm.prank(verifier_);
         batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
     }

@@ -26,10 +26,11 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     address verifier = address(0x1001);
     address otherVerifier = address(0x1002);
     address outsider = address(0x1003);
-    address sellerOwner = address(0x2001);
+    address sellerOwner;
 
     uint256 agentId;
-    bytes32 constant SERVICE_HASH = keccak256("model:gpt-99");
+    bytes32 constant SERVICE_HASH = keccak256("anthropic/claude-opus-4");
+    bytes32 constant OTHER_SERVICE_HASH = keccak256("model:gpt-100");
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 commitSalt;
 
@@ -38,7 +39,6 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     ///      each record's ResponseAuth signature on-chain against the
     ///      ERC-8004 owner of the record's agentId).
     uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
-    uint256 recordAgentId;
 
     event VerifierApprovalSet(address indexed verifier, bool approved);
     event ProbeSetCommitted(address indexed verifier, bytes32 indexed commitment);
@@ -71,8 +71,8 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
         verifierRegistry.setVerifier(verifier, true);
         verifierRegistry.setVerifier(otherVerifier, true);
 
+        sellerOwner = vm.addr(RECORD_SELLER_KEY);
         agentId = _registerAgent(sellerOwner);
-        recordAgentId = _registerAgent(vm.addr(RECORD_SELLER_KEY));
     }
 
     function _registerAgent(address owner) internal returns (uint256 id) {
@@ -92,12 +92,24 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     ///      the commitment so every batch has a distinct root; the buyer in
     ///      every signed payload is the anchoring verifier (no delegate
     ///      accrual side effects).
-    function _anchor(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
-        (
-            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
-            bytes[] memory payloads,
-            uint32[] memory counts
-        ) = makeSignedBatch(16, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
+    function _anchor(address verifier_, bytes32 commitment, uint256 targetAgentId, bytes32 serviceHash)
+        internal
+        returns (bytes32 batchRoot)
+    {
+        string memory advertisedService = serviceHash == SERVICE_HASH ? "anthropic/claude-opus-4" : "model:gpt-100";
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](16);
+        bytes[] memory payloads = new bytes[](16);
+        uint32[] memory counts = new uint32[](16);
+        for (uint256 i = 0; i < records.length; i++) {
+            (records[i], payloads[i]) = makeSignedRecordForService(
+                targetAgentId,
+                RECORD_SELLER_KEY,
+                verifier_,
+                keccak256(abi.encode(commitment, i)),
+                advertisedService
+            );
+            counts[i] = 1;
+        }
         vm.prank(verifier_);
         batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
     }
@@ -117,7 +129,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     function _commitAndAttest(address verifier_, uint256 agentId_, bytes32 serviceHash, uint8 verdict) internal {
         bytes32 commitment = _commit(verifier_);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchor(verifier_, commitment);
+        bytes32 batchRoot = _anchor(verifier_, commitment, agentId_, serviceHash);
         _attest(verifier_, agentId_, serviceHash, verdict, commitment, batchRoot);
     }
 
@@ -344,7 +356,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     function test_submitUnknownAgentReverts() public {
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchor(verifier, commitment);
+        bytes32 batchRoot = _anchor(verifier, commitment, agentId, SERVICE_HASH);
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.UnknownAgent.selector);
@@ -369,7 +381,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,
             uint32[] memory counts
-        ) = makeSignedBatch(10, recordAgentId, RECORD_SELLER_KEY, verifier, keccak256("c"));
+        ) = makeSignedBatch(10, agentId, RECORD_SELLER_KEY, verifier, keccak256("c"));
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.UnknownAgent.selector);
         bareVerifierRegistry.anchorExchangeBatch(keccak256("c"), records, payloads, counts);
@@ -385,7 +397,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
         uint256 ownAgentId = _registerAgent(verifier);
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchor(verifier, commitment);
+        bytes32 batchRoot = _anchor(verifier, commitment, agentId, SERVICE_HASH);
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.SelfAudit.selector);
@@ -397,7 +409,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     function test_attestationStoredAndCredited() public {
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchor(verifier, commitment);
+        bytes32 batchRoot = _anchor(verifier, commitment, agentId, SERVICE_HASH);
 
         vm.expectEmit(true, true, true, true);
         emit AttestationSubmitted(
@@ -467,7 +479,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     }
 
     function test_distinctVerifierCountIsPerPair() public {
-        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        bytes32 otherServiceHash = OTHER_SERVICE_HASH;
         uint256 otherAgentId = _registerAgent(sellerOwner);
 
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
@@ -518,7 +530,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     }
 
     function test_activeDiffVerifierCountIsPerPairAndAnyServiceAtAgentLevel() public {
-        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        bytes32 otherServiceHash = OTHER_SERVICE_HASH;
 
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
         _commitAndAttest(verifier, agentId, otherServiceHash, 2);
@@ -566,7 +578,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     }
 
     function test_agentVerificationStatsAggregatesAcrossServices() public {
-        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        bytes32 otherServiceHash = OTHER_SERVICE_HASH;
 
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
         _commitAndAttest(verifier, agentId, otherServiceHash, 2);
@@ -580,7 +592,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     }
 
     function test_agentDistinctVerifierCountCountsVerifierOnceAcrossServices() public {
-        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        bytes32 otherServiceHash = OTHER_SERVICE_HASH;
 
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 1);
         _commitAndAttest(verifier, agentId, otherServiceHash, 1);
@@ -656,7 +668,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
     }
 
     function test_clearVerifierStandingIsPerServiceAtAgentLevel() public {
-        bytes32 otherServiceHash = keccak256("model:gpt-100");
+        bytes32 otherServiceHash = OTHER_SERVICE_HASH;
         _commitAndAttest(verifier, agentId, SERVICE_HASH, 2);
         _commitAndAttest(verifier, agentId, otherServiceHash, 2);
         assertEq(verifierRegistry.agentVerificationStats(agentId).activeDiffVerifierCount, 1);
@@ -696,7 +708,7 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
         // Within the cooldown the attestation is stored but not credited.
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
-        bytes32 batchRoot = _anchor(verifier, commitment);
+        bytes32 batchRoot = _anchor(verifier, commitment, agentId, SERVICE_HASH);
         vm.expectEmit(true, true, true, true);
         emit AttestationSubmitted(
             agentId, SERVICE_HASH, verifier, 2, EVIDENCE_HASH, commitment, batchRoot, 10, 3, false, 5

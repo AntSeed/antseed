@@ -81,6 +81,16 @@ abstract contract ResponseAuthFixture is CommonBase {
         pure
         returns (IAntseedVerifierRegistry.ExchangeRecord memory record, bytes memory payload)
     {
+        return makeSignedRecordForService(agentId, sellerKey, buyer, salt, "anthropic/claude-opus-4");
+    }
+
+    function makeSignedRecordForService(
+        uint256 agentId,
+        uint256 sellerKey,
+        address buyer,
+        bytes32 salt,
+        string memory advertisedService
+    ) internal pure returns (IAntseedVerifierRegistry.ExchangeRecord memory record, bytes memory payload) {
         bytes32 requestHash = keccak256(abi.encode("request", salt));
         bytes32 responseHash = keccak256(abi.encode("response", salt));
         payload = buildSigningPayload(
@@ -89,7 +99,7 @@ abstract contract ResponseAuthFixture is CommonBase {
                 channelId: "",
                 buyer: buyer,
                 seller: vm.addr(sellerKey),
-                advertisedService: "anthropic/claude-opus-4",
+                advertisedService: advertisedService,
                 provider: "claude-oauth",
                 statusCode: 200,
                 requestHash: requestHash,

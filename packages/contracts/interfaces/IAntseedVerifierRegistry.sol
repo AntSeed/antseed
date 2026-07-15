@@ -109,7 +109,7 @@ interface IAntseedVerifierRegistry {
     function parseResponseAuthPayload(bytes calldata payload)
         external
         pure
-        returns (address buyer, bytes32 requestHash, bytes32 responseHash);
+        returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash);
     function submitAttestation(
         uint256 agentId,
         bytes32 serviceHash,
@@ -127,6 +127,14 @@ interface IAntseedVerifierRegistry {
         view
         returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount, bytes32 commitment);
     function commitmentBatchRoot(address verifier, bytes32 commitment) external view returns (bytes32);
+    function batchTargetProbeCount(address verifier, bytes32 batchRoot, uint256 agentId, bytes32 serviceHash)
+        external
+        view
+        returns (uint32);
+    function batchTargetAttested(address verifier, bytes32 batchRoot, uint256 agentId, bytes32 serviceHash)
+        external
+        view
+        returns (bool);
     function probeRevealedAt(address verifier, bytes32 commitment) external view returns (uint64);
     function attestationCountByCommitment(address verifier, bytes32 commitment) external view returns (uint32);
 

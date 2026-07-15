@@ -61,16 +61,17 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
     address buyerY = address(0xBD2);
     address operatorX = address(0x0D1);
     address operatorY = address(0x0D2);
-    address sellerOwner = address(0x51);
 
-    bytes32 constant SERVICE_HASH = keccak256("model:gpt-99");
+    bytes32 constant SERVICE_HASH = keccak256("anthropic/claude-opus-4");
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 commitSalt;
 
     /// @dev Signing key + registered agent for the seller whose signed
     ///      exchanges the anchor helpers anchor (signature-verified on-chain).
     uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
-    uint256 recordAgentId;
+    uint256 constant TARGETS_PER_BATCH = 4;
+    mapping(bytes32 batchRoot => uint256[] targetAgentIds) private _batchTargetAgents;
+    mapping(bytes32 batchRoot => uint256 cursor) private _batchTargetCursor;
 
     event DelegateCreditsAccrued(
         address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint32 credits
@@ -111,9 +112,6 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         deposits.setOperator(buyerX, operatorX);
         deposits.setOperator(buyerY, operatorY);
 
-        recordAgentId = identity.register();
-        identity.setOwner(recordAgentId, vm.addr(RECORD_SELLER_KEY));
-
         _warpGateEpoch(5);
     }
 
@@ -131,6 +129,33 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         internal
         returns (bytes32 batchRoot)
     {
+        uint256[] memory targetAgentIds = new uint256[](TARGETS_PER_BATCH);
+        for (uint256 i = 0; i < targetAgentIds.length; i++) {
+            targetAgentIds[i] = identity.register();
+            identity.setOwner(targetAgentIds[i], vm.addr(RECORD_SELLER_KEY));
+        }
+        return _anchorTargetsWithCarrier(verifier_, commitment, carrier, carrierProbes, targetAgentIds);
+    }
+
+    function _anchorForAgentWithCarrier(
+        address verifier_,
+        bytes32 commitment,
+        uint256 targetAgentId,
+        address carrier,
+        uint32 carrierProbes
+    ) internal returns (bytes32 batchRoot) {
+        uint256[] memory targetAgentIds = new uint256[](1);
+        targetAgentIds[0] = targetAgentId;
+        return _anchorTargetsWithCarrier(verifier_, commitment, carrier, carrierProbes, targetAgentIds);
+    }
+
+    function _anchorTargetsWithCarrier(
+        address verifier_,
+        bytes32 commitment,
+        address carrier,
+        uint32 carrierProbes,
+        uint256[] memory targetAgentIds
+    ) internal returns (bytes32 batchRoot) {
         // NOTE: external self-call (`this.`) on purpose — it keeps the
         // signed-record construction out of the caller's inlined stack
         // frame; fully inlined under via-ir the accrue+claim test bodies
@@ -139,13 +164,22 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,
             uint32[] memory counts
-        ) = this.buildCarrierBatch(verifier_, commitment, carrier, carrierProbes);
+        ) = this.buildCarrierBatch(verifier_, commitment, carrier, carrierProbes, targetAgentIds);
         vm.prank(verifier_);
         batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+        for (uint256 i = 0; i < targetAgentIds.length; i++) {
+            _batchTargetAgents[batchRoot].push(targetAgentIds[i]);
+        }
     }
 
     /// @dev See `_anchorWithCarrier` — called via `this.` only.
-    function buildCarrierBatch(address verifier_, bytes32 commitment, address carrier, uint32 carrierProbes)
+    function buildCarrierBatch(
+        address verifier_,
+        bytes32 commitment,
+        address carrier,
+        uint32 carrierProbes,
+        uint256[] calldata targetAgentIds
+    )
         external
         view
         returns (
@@ -154,47 +188,32 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
             uint32[] memory counts
         )
     {
-        uint256 carrierRecords = (uint256(carrierProbes) + 2) / 3;
-        uint256 paddingRecords = (uint256(PROBE_COUNT) + 2) / 3;
-        records = new IAntseedVerifierRegistry.ExchangeRecord[](carrierRecords + paddingRecords);
+        records = new IAntseedVerifierRegistry.ExchangeRecord[](targetAgentIds.length * PROBE_COUNT);
         payloads = new bytes[](records.length);
         counts = new uint32[](records.length);
-        uint32 remaining = carrierProbes;
-        for (uint256 i = 0; i < carrierRecords; i++) {
+        require(carrierProbes <= records.length, "carrier probes exceed target capacity");
+        for (uint256 i = 0; i < records.length; i++) {
+            uint256 targetAgentId = targetAgentIds[i / PROBE_COUNT];
+            address buyer = i < carrierProbes ? carrier : verifier_;
             (records[i], payloads[i]) = makeSignedRecord(
-                recordAgentId, RECORD_SELLER_KEY, carrier, keccak256(abi.encode(commitment, "carrier", commitSalt, i))
+                targetAgentId, RECORD_SELLER_KEY, buyer, keccak256(abi.encode(commitment, commitSalt, i))
             );
-            counts[i] = remaining > 3 ? 3 : remaining;
-            remaining -= counts[i];
-        }
-        remaining = PROBE_COUNT;
-        for (uint256 i = 0; i < paddingRecords; i++) {
-            uint256 index = carrierRecords + i;
-            (records[index], payloads[index]) = makeSignedRecord(
-                recordAgentId, RECORD_SELLER_KEY, verifier_, keccak256(abi.encode(commitment, "pad", commitSalt, i))
-            );
-            counts[index] = remaining > 3 ? 3 : remaining;
-            remaining -= counts[index];
+            counts[i] = 1;
         }
     }
 
     /// @dev Anchor a fully SIGNED exchange batch bound to `commitment`,
     ///      self-carried by the verifier (no delegate accrual side effects).
     function _anchorBatch(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
-        (
-            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
-            bytes[] memory payloads,
-            uint32[] memory counts
-        ) = makeSignedBatch(12, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
-        vm.prank(verifier_);
-        batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+        return _anchorWithCarrier(verifier_, commitment, verifier_, 0);
     }
 
     /// @dev Credited attestation referencing `commitment`/`batchRoot` on a
     ///      fresh agent (fresh agent → the per-service cooldown never trips).
     function _attestOn(address verifier_, bytes32 commitment, bytes32 batchRoot) internal {
-        uint256 agentId = identity.register();
-        identity.setOwner(agentId, sellerOwner);
+        uint256 cursor = _batchTargetCursor[batchRoot];
+        uint256 agentId = _batchTargetAgents[batchRoot][cursor];
+        _batchTargetCursor[batchRoot] = cursor + 1;
         vm.prank(verifier_);
         verifierRegistry.submitAttestation(
             agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, PROBE_COUNT, 3
@@ -258,8 +277,6 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
 
-        vm.expectEmit(true, true, true, true);
-        emit DelegateCreditsAccrued(verifierA, commitment, buyerX, 4);
         _anchorWithCarrier(verifierA, commitment, buyerX, 4);
 
         assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, buyerX), 4);
@@ -485,24 +502,27 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
 
-        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](4);
-        bytes[] memory payloads = new bytes[](4);
-        uint32[] memory counts = new uint32[](4);
-        for (uint256 i = 0; i < 2; i++) {
+        uint256 targetAgentId = identity.register();
+        identity.setOwner(targetAgentId, vm.addr(RECORD_SELLER_KEY));
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](11);
+        bytes[] memory payloads = new bytes[](11);
+        uint32[] memory counts = new uint32[](11);
+        for (uint256 i = 0; i < 6; i++) {
             (records[i], payloads[i]) = makeSignedRecord(
-                recordAgentId, RECORD_SELLER_KEY, buyerX, keccak256(abi.encode(commitment, "x", i))
+                targetAgentId, RECORD_SELLER_KEY, buyerX, keccak256(abi.encode(commitment, "x", i))
             );
-            counts[i] = 3;
+            counts[i] = 1;
         }
-        for (uint256 i = 0; i < 2; i++) {
-            uint256 index = i + 2;
+        for (uint256 i = 0; i < 5; i++) {
+            uint256 index = i + 6;
             (records[index], payloads[index]) = makeSignedRecord(
-                recordAgentId, RECORD_SELLER_KEY, buyerY, keccak256(abi.encode(commitment, "y", i))
+                targetAgentId, RECORD_SELLER_KEY, buyerY, keccak256(abi.encode(commitment, "y", i))
             );
-            counts[index] = i == 0 ? 3 : 2;
+            counts[index] = 1;
         }
         vm.prank(verifierA);
         bytes32 batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+        _batchTargetAgents[batchRoot].push(targetAgentId);
         _attestOn(verifierA, commitment, batchRoot);
 
         vm.prank(operatorX);
@@ -519,13 +539,13 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         // First attestation on the agent/service is credited (budget 10);
         // an immediate re-audit is inside the cooldown → uncredited.
         uint256 agentId = identity.register();
-        identity.setOwner(agentId, sellerOwner);
+        identity.setOwner(agentId, vm.addr(RECORD_SELLER_KEY));
 
         bytes32 first = keccak256(abi.encode(verifierA, ++commitSalt));
         vm.prank(verifierA);
         verifierRegistry.commitProbeSet(first);
         vm.warp(block.timestamp + 1);
-        bytes32 firstRoot = _anchorWithCarrier(verifierA, first, buyerX, PROBE_COUNT);
+        bytes32 firstRoot = _anchorForAgentWithCarrier(verifierA, first, agentId, buyerX, PROBE_COUNT);
         vm.prank(verifierA);
         verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, first, firstRoot, PROBE_COUNT, 3);
         assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, first), PROBE_COUNT);
@@ -534,7 +554,7 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         vm.prank(verifierA);
         verifierRegistry.commitProbeSet(second);
         vm.warp(block.timestamp + 1);
-        bytes32 secondRoot = _anchorWithCarrier(verifierA, second, buyerX, PROBE_COUNT);
+        bytes32 secondRoot = _anchorForAgentWithCarrier(verifierA, second, agentId, buyerX, PROBE_COUNT);
         vm.prank(verifierA);
         verifierRegistry.submitAttestation(
             agentId, SERVICE_HASH, 1, EVIDENCE_HASH, second, secondRoot, PROBE_COUNT, 3

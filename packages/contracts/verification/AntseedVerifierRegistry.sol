@@ -119,6 +119,14 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///         and the claim is recomputable by third parties from the
     ///         revealed probe set + anchored records.
     mapping(address verifier => mapping(bytes32 batchRoot => BatchAnchor anchor)) public batchAnchors;
+    mapping(
+        address verifier
+            => mapping(bytes32 batchRoot => mapping(uint256 agentId => mapping(bytes32 serviceHash => uint32 probeCount)))
+    ) public batchTargetProbeCount;
+    mapping(
+        address verifier
+            => mapping(bytes32 batchRoot => mapping(uint256 agentId => mapping(bytes32 serviceHash => bool attested)))
+    ) public batchTargetAttested;
     /// @notice The sole batch root anchored for a verifier's probe commitment.
     ///         One batch per commitment prevents replaying the same signed
     ///         exchange across several roots to multiply delegate accrual.
@@ -259,6 +267,9 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     error RevealBeforeAttest();
     error AlreadyRevealed();
     error ProbeCountExceedsBatch();
+    error TargetNotInBatch();
+    error TargetAlreadyAttested();
+    error ProbeCountExceedsTarget();
 
     // ─── Modifiers ───────────────────────────────────────────────────
     modifier onlyApprovedVerifier() {
@@ -421,7 +432,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         batchRoot = computeBatchRoot(records);
         if (batchAnchors[msg.sender][batchRoot].anchoredAt != 0) revert BatchAlreadyAnchored();
 
-        uint32 probeCount = _verifyRecordsAndAccrue(probeCommitment, records, signingPayloads, recordProbeCounts);
+        uint32 probeCount =
+            _verifyRecordsAndAccrue(probeCommitment, batchRoot, records, signingPayloads, recordProbeCounts);
 
         // Single struct assignment: anchoredAt/recordCount/probeCount pack
         // into one slot, commitment takes the second — two SSTOREs total.
@@ -469,6 +481,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///      uint32 sum of `recordProbeCounts`.
     function _verifyRecordsAndAccrue(
         bytes32 probeCommitment,
+        bytes32 batchRoot,
         ExchangeRecord[] calldata records,
         bytes[] calldata signingPayloads,
         uint32[] calldata recordProbeCounts
@@ -486,6 +499,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         address[] memory buyers = new address[](n);
         uint256[] memory buyerProbes = new uint256[](n);
         uint256 buyerCount = 0;
+        uint256[] memory targetAgentIds = new uint256[](n);
+        bytes32[] memory targetServiceHashes = new bytes32[](n);
+        uint256[] memory targetProbes = new uint256[](n);
+        uint256 targetCount = 0;
 
         uint256 totalProbes = 0;
         for (uint256 i = 0; i < n; i++) {
@@ -515,10 +532,24 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             if (err != ECDSA.RecoverError.NoError || recovered != seller) revert RecordSignerMismatch(i);
 
             // The payload must describe the anchored exchange.
-            (address buyer, bytes32 requestHash, bytes32 responseHash) =
+            (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
                 parseResponseAuthPayload(signingPayloads[i]);
             if (requestHash != records[i].requestHash || responseHash != records[i].responseHash) {
                 revert RecordHashMismatch(i);
+            }
+            bool targetFound = false;
+            for (uint256 j = 0; j < targetCount; j++) {
+                if (targetAgentIds[j] == agentId && targetServiceHashes[j] == advertisedServiceHash) {
+                    targetProbes[j] += recordProbeCounts[i];
+                    targetFound = true;
+                    break;
+                }
+            }
+            if (!targetFound) {
+                targetAgentIds[targetCount] = agentId;
+                targetServiceHashes[targetCount] = advertisedServiceHash;
+                targetProbes[targetCount] = recordProbeCounts[i];
+                targetCount++;
             }
 
             // A verifier probing directly (buyer == verifier) and a seller
@@ -541,6 +572,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             }
         }
         if (totalProbes > type(uint32).max) revert ProbeCountOverflow();
+
+        for (uint256 j = 0; j < targetCount; j++) {
+            batchTargetProbeCount[msg.sender][batchRoot][targetAgentIds[j]][targetServiceHashes[j]] =
+                uint32(targetProbes[j]);
+        }
 
         for (uint256 j = 0; j < buyerCount; j++) {
             uint32 credits = uint32(buyerProbes[j]); // <= totalProbes, checked above
@@ -602,7 +638,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     function parseResponseAuthPayload(bytes calldata payload)
         public
         pure
-        returns (address buyer, bytes32 requestHash, bytes32 responseHash)
+        returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash)
     {
         uint256 offset = 0;
         for (uint256 f = 0; f < RESPONSE_AUTH_FIELD_COUNT; f++) {
@@ -622,6 +658,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
                 if (keccak256(field) != RESPONSE_AUTH_DOMAIN_HASH) revert MalformedSigningPayload();
             } else if (f == 4) {
                 buyer = address(uint160(_parseHex(field, 40)));
+            } else if (f == 6) {
+                advertisedServiceHash = _normalizedServiceHash(field);
             } else if (f == 9) {
                 requestHash = bytes32(_parseHex(field, 64));
             } else if (f == 10) {
@@ -629,6 +667,26 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             }
         }
         if (offset != payload.length) revert MalformedSigningPayload();
+    }
+
+    function _normalizedServiceHash(bytes calldata field) private pure returns (bytes32) {
+        uint256 start;
+        uint256 end = field.length;
+        while (start < end && _isAsciiWhitespace(uint8(field[start]))) start++;
+        while (end > start && _isAsciiWhitespace(uint8(field[end - 1]))) end--;
+        if (start == end) revert MalformedSigningPayload();
+
+        bytes memory normalized = new bytes(end - start);
+        for (uint256 i = start; i < end; i++) {
+            uint8 c = uint8(field[i]);
+            if (c >= 0x41 && c <= 0x5A) c += 0x20;
+            normalized[i - start] = bytes1(c);
+        }
+        return keccak256(normalized);
+    }
+
+    function _isAsciiWhitespace(uint8 c) private pure returns (bool) {
+        return c == 0x20 || (c >= 0x09 && c <= 0x0D);
     }
 
     /// @dev Parse an ASCII-hex field (optionally 0x-prefixed, either case)
@@ -832,8 +890,14 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         // Once the commitment's probes are public no new verdict may credit
         // against it (matches the anchor-after-reveal seal).
         if (probeRevealedAt[msg.sender][probeCommitment] != 0) revert AlreadyRevealed();
-
         _checkAuditedAgent(agentId);
+
+        uint32 targetProbeCount = batchTargetProbeCount[msg.sender][batchRoot][agentId][serviceHash];
+        if (targetProbeCount == 0) revert TargetNotInBatch();
+        if (probeCount > targetProbeCount) revert ProbeCountExceedsTarget();
+        if (batchTargetAttested[msg.sender][batchRoot][agentId][serviceHash]) revert TargetAlreadyAttested();
+
+        batchTargetAttested[msg.sender][batchRoot][agentId][serviceHash] = true;
 
         uint64 nowTs = uint64(block.timestamp);
         uint256 epoch = currentEpoch();

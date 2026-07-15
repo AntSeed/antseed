@@ -57,7 +57,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     uint256 agentB;
 
     uint256 agentId; // attestation target
-    bytes32 constant SERVICE_HASH = keccak256("model:gpt-99");
+    bytes32 constant SERVICE_HASH = keccak256("anthropic/claude-opus-4");
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
 
     /// @dev Exact canonical probe-set JSON bytes, as produced by
@@ -96,12 +96,11 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         verifierRegistry.setVerifier(verifier, true);
         verifierRegistry.setVerifier(otherVerifier, true);
 
-        agentId = identity.register();
-        identity.setOwner(agentId, sellerOwner);
         agentA = identity.register();
         identity.setOwner(agentA, vm.addr(SELLER_A_KEY));
         agentB = identity.register();
         identity.setOwner(agentB, vm.addr(SELLER_B_KEY));
+        agentId = agentA;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
@@ -111,15 +110,14 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     ///      delegate accrual), one probe declared per record.
     function _signedBatch(uint256 n, bytes32 salt)
         internal
-        pure
+        view
         returns (
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,
             uint32[] memory counts
         )
     {
-        // agentA is deterministic in setUp (second registered agent).
-        (records, payloads, counts) = makeSignedBatch(n, 2, SELLER_A_KEY, address(0x1001), salt);
+        (records, payloads, counts) = makeSignedBatch(n, agentA, SELLER_A_KEY, address(0x1001), salt);
     }
 
     /// @dev Synthetic (UNSIGNED) records — only for `computeBatchRoot` pure
@@ -275,19 +273,50 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         assertEq(verifierRegistry.probeRevealedAt(verifier, commitment), uint64(block.timestamp), "revealedAt");
     }
 
-    function test_multipleAttestationsGrowCommitmentCount() public {
+    function test_multipleTargetsInBatchGrowCommitmentCount() public {
         bytes32 commitment = sha256(PROBE_SET_JSON);
         _commit(verifier, commitment);
         vm.warp(block.timestamp + 1);
-        bytes32 root = _anchorSigned(verifier, commitment, 10, "batch");
-
-        uint256 secondAgent = identity.register();
-        identity.setOwner(secondAgent, sellerOwner);
-
-        _attest(verifier, commitment, root);
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](20);
+        bytes[] memory payloads = new bytes[](20);
+        uint32[] memory counts = new uint32[](20);
+        for (uint256 i = 0; i < 10; i++) {
+            (records[i], payloads[i]) = makeSignedRecord(agentA, SELLER_A_KEY, verifier, keccak256(abi.encode("a", i)));
+            (records[i + 10], payloads[i + 10]) =
+                makeSignedRecord(agentB, SELLER_B_KEY, verifier, keccak256(abi.encode("b", i)));
+            counts[i] = 1;
+            counts[i + 10] = 1;
+        }
         vm.prank(verifier);
-        verifierRegistry.submitAttestation(secondAgent, SERVICE_HASH, 2, EVIDENCE_HASH, commitment, root, 10, 3);
+        bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+
+        vm.prank(verifier);
+        verifierRegistry.submitAttestation(agentA, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, root, 10, 3);
+        vm.prank(verifier);
+        verifierRegistry.submitAttestation(agentB, SERVICE_HASH, 2, EVIDENCE_HASH, commitment, root, 10, 3);
         assertEq(verifierRegistry.attestationCountByCommitment(verifier, commitment), 2);
+    }
+
+    function test_attestationTargetMustAppearInSignedBatch() public {
+        bytes32 commitment = _committed();
+        bytes32 root = _anchorSigned(verifier, commitment, 10, "target-binding");
+        uint256 unrelatedAgent = identity.register();
+        identity.setOwner(unrelatedAgent, sellerOwner);
+
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerifierRegistry.TargetNotInBatch.selector);
+        verifierRegistry.submitAttestation(unrelatedAgent, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, root, 10, 3);
+    }
+
+    function test_batchTargetCanOnlyBeAttestedOnce() public {
+        bytes32 commitment = _committed();
+        bytes32 root = _anchorSigned(verifier, commitment, 10, "duplicate-target");
+
+        vm.prank(verifier);
+        verifierRegistry.submitAttestation(agentA, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, root, 10, 3);
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerifierRegistry.TargetAlreadyAttested.selector);
+        verifierRegistry.submitAttestation(agentA, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, root, 10, 3);
     }
 
     // ─── anchorExchangeBatch reverts ─────────────────────────────────
@@ -666,9 +695,10 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
 
     function test_parsePayloadExtractsBoundFields() public view {
         (, bytes memory payload) = makeSignedRecord(agentA, SELLER_A_KEY, carrierX, "parse");
-        (address buyer, bytes32 requestHash, bytes32 responseHash) =
+        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
             verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, carrierX);
+        assertEq(advertisedServiceHash, SERVICE_HASH);
         assertEq(requestHash, keccak256(abi.encode("request", bytes32("parse"))));
         assertEq(responseHash, keccak256(abi.encode("response", bytes32("parse"))));
     }
@@ -745,9 +775,10 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
             _lpx("1"),
             _lpx("2")
         );
-        (address buyer, bytes32 requestHash, bytes32 responseHash) =
+        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
             verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, address(0xCAB1000000000000000000000000000000000000));
+        assertEq(advertisedServiceHash, keccak256("svc"));
         assertEq(requestHash, bytes32(uint256(type(uint256).max / 15 * 10))); // 0xaaa...a
         assertEq(responseHash, bytes32(uint256(type(uint256).max / 15 * 11))); // 0xbbb...b
     }
@@ -796,9 +827,10 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         assertEq(verifierRegistry.responseAuthDigest(payload), PINNED_DIGEST, "pinned digest");
         assertEq(signResponseAuth(PINNED_SELLER_KEY, payload), PINNED_SIG, "pinned signature (RFC 6979)");
 
-        (address buyer, bytes32 requestHash, bytes32 responseHash) =
+        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
             verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, PINNED_BUYER, "pinned buyer");
+        assertEq(advertisedServiceHash, SERVICE_HASH, "pinned serviceHash");
         assertEq(requestHash, keccak256("fixture-request-body"), "pinned requestHash");
         assertEq(responseHash, keccak256("fixture-response-body"), "pinned responseHash");
     }
@@ -1196,9 +1228,9 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     /// @dev THE gas gate this feature shipped under: the design target for
     ///      the per-record marginal execution overhead of on-chain signature
     ///      verification + payload parsing was ~25k gas. MEASURED 2026-07-14
-    ///      (solc 0.8.24, via-ir, 200 runs): ~26.3k marginal per record,
-    ///      ~690k total for a realistic 24-record batch (3 sellers, 2
-    ///      carriers) — essentially at target; the breakdown is roughly
+    ///      (solc 0.8.24, via-ir, 200 runs): ~38k marginal per record after
+    ///      binding each target/service pair to its declared probe count.
+    ///      The breakdown is roughly
     ///      hex-field decoding + payload walk ~10k, EIP-191 digest ~2.5k,
     ///      ecrecover ~3.5k, Merkle leaf/root ~3.5k, agent lookup + accrual
     ///      + memory growth the rest. The asserts below are regression
@@ -1212,8 +1244,8 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         emit log_named_uint("anchor 48 signed records: total execution gas", gas48);
         emit log_named_uint("marginal execution gas per record", marginalPerRecord);
 
-        assertLt(marginalPerRecord, 35_000, "per-record marginal execution gas regressed (was ~26.3k)");
-        assertLt(gas24, 900_000, "24-record anchor execution gas regressed (was ~690k)");
+        assertLt(marginalPerRecord, 40_000, "per-record marginal execution gas regressed (was ~38k)");
+        assertLt(gas24, 1_100_000, "24-record anchor execution gas regressed (was ~1.04M)");
     }
 
     /// @dev Practical batch-size ceiling. Memory growth is quadratic in

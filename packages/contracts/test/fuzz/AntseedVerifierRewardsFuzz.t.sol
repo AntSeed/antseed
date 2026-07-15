@@ -47,14 +47,12 @@ contract AntseedVerifierRewardsFuzzTest is Test, ResponseAuthFixture {
 
     address teamWallet = address(0x7EA3);
     address reserve = address(0x5E5E);
-    address sellerOwner = address(0x51);
 
     /// @dev Signing key + registered agent for the seller whose signed
     ///      exchanges `_anchorBatch` anchors (signature-verified on-chain).
     uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
-    uint256 recordAgentId;
 
-    bytes32 constant SERVICE_HASH = keccak256("model:gpt-99");
+    bytes32 constant SERVICE_HASH = keccak256("anthropic/claude-opus-4");
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 commitSalt;
 
@@ -80,9 +78,6 @@ contract AntseedVerifierRewardsFuzzTest is Test, ResponseAuthFixture {
         gate.setMinter(VERIFICATION_MINTER_ID, address(verifierRewards), VERIFICATION_SHARE_BPS, true);
         registry.setEmissions(address(gate));
 
-        recordAgentId = identity.register();
-        identity.setOwner(recordAgentId, vm.addr(RECORD_SELLER_KEY));
-
         _warpGateEpoch(5);
     }
 
@@ -96,12 +91,15 @@ contract AntseedVerifierRewardsFuzzTest is Test, ResponseAuthFixture {
     ///      the commitment so every batch has a distinct root; the buyer in
     ///      every signed payload is the anchoring verifier (no delegate
     ///      accrual side effects).
-    function _anchorBatch(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
+    function _anchorBatch(address verifier_, bytes32 commitment, uint256 targetAgentId)
+        internal
+        returns (bytes32 batchRoot)
+    {
         (
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,
             uint32[] memory counts
-        ) = makeSignedBatch(12, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
+        ) = makeSignedBatch(12, targetAgentId, RECORD_SELLER_KEY, verifier_, commitment);
         vm.prank(verifier_);
         batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
     }
@@ -109,13 +107,13 @@ contract AntseedVerifierRewardsFuzzTest is Test, ResponseAuthFixture {
     function _credit(address verifier_, uint256 credits) internal {
         for (uint256 i = 0; i < credits; i++) {
             uint256 agentId = identity.register();
-            identity.setOwner(agentId, sellerOwner);
+            identity.setOwner(agentId, vm.addr(RECORD_SELLER_KEY));
 
             bytes32 commitment = keccak256(abi.encode(verifier_, ++commitSalt));
             vm.prank(verifier_);
             verifierRegistry.commitProbeSet(commitment);
             vm.warp(block.timestamp + 1);
-            bytes32 batchRoot = _anchorBatch(verifier_, commitment);
+            bytes32 batchRoot = _anchorBatch(verifier_, commitment, agentId);
             vm.prank(verifier_);
             verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, 10, 3);
         }
