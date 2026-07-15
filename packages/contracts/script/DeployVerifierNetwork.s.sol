@@ -6,13 +6,13 @@ import "forge-std/Script.sol";
 import { AntseedEmissionsGate } from "../emissions/AntseedEmissionsGate.sol";
 import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
 import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
-import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 
 /**
  * @title DeployVerifierNetwork
  * @notice Deploys the verifier network (AntseedVerifierRegistry +
  *         AntseedVerifierRewards) against an ALREADY-deployed emissions gate
- *         and v2 registry, replacing the current verification bucket
+ *         and protocol registry, replacing the current verification bucket
  *         controller.
  *
  *         The controller flip (`gate.setMinterController`) belongs to the
@@ -21,7 +21,7 @@ import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
  *
  * Required env:
  *   DEPLOYER_PRIVATE_KEY   Broadcaster key (becomes VerifierRegistry owner).
- *   ANTSEED_REGISTRY_V2    Deployed AntseedRegistryV2 address.
+ *   ANTSEED_REGISTRY       Deployed AntseedRegistry address.
  *   EMISSIONS_GATE         Deployed AntseedEmissionsGate address.
  *
  * Optional env:
@@ -45,28 +45,28 @@ contract DeployVerifierNetwork is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        address registryV2Address = vm.envAddress("ANTSEED_REGISTRY_V2");
+        address registryAddress = vm.envAddress("ANTSEED_REGISTRY");
         address gateAddress = vm.envAddress("EMISSIONS_GATE");
         bool setMinterController = vm.envOr("SET_MINTER_CONTROLLER", false);
 
-        IAntseedRegistryV2 registryV2 = IAntseedRegistryV2(registryV2Address);
+        IAntseedRegistry registry = IAntseedRegistry(registryAddress);
         AntseedEmissionsGate gate = AntseedEmissionsGate(gateAddress);
-        require(registryV2.identityRegistry() != address(0), "identity registry not set");
-        require(registryV2.emissions() != address(0), "registry emissions not set");
+        require(registry.identityRegistry() != address(0), "identity registry not set");
+        require(registry.emissions() != address(0), "registry emissions not set");
         // claimDelegateCredits staticcalls registry.deposits() for the buyer's
         // operator; an unset deposits address makes every claim revert on a
         // codeless call.
-        require(registryV2.deposits() != address(0), "registry deposits not set");
+        require(registry.deposits() != address(0), "registry deposits not set");
         // The gate and the verifier registry MUST share one registry —
         // mismatched registries silently cross ownership, operator, and
         // reserve boundaries between two protocol deployments.
-        require(address(gate.registry()) == registryV2Address, "gate registry mismatch");
+        require(address(gate.registry()) == registryAddress, "gate registry mismatch");
         (address currentController, uint32 shareBps,) = gate.minters(VERIFICATION_MINTER_ID);
         require(currentController != address(0), "verification bucket not configured");
 
         console.log("=== AntSeed Verifier Network Deployment ===");
         console.log("Deployer:               ", deployer);
-        console.log("RegistryV2:             ", registryV2Address);
+        console.log("Registry:               ", registryAddress);
         console.log("EmissionsGate:          ", gateAddress);
         console.log("Current bucket minter:  ", currentController);
         console.log("Bucket share (bps/1e5): ", shareBps);
@@ -74,7 +74,7 @@ contract DeployVerifierNetwork is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryV2Address);
+        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress);
         console.log("VerifierRegistry:       ", address(verifierRegistry));
 
         AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(gateAddress, address(verifierRegistry));
@@ -131,7 +131,7 @@ contract DeployVerifierNetwork is Script {
         console.log("  through burn/reserve.");
         // NOTE: To shape recognized-usage points by verification standing,
         // the UsageAccounting owner may deploy AntseedVerifierPointsPolicy
-        // (constructor: registryV2 + verifierRegistry) and wire it via
+        // (constructor: registry + verifierRegistry) and wire it via
         // `UsageAccounting.setPointsPolicy(address)`. Like the
         // SET_MINTER_CONTROLLER pattern above, that wiring is an owner
         // action behind its own env flag in a follow-up script — it is

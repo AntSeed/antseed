@@ -79,6 +79,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
         lastVerifier: '0x' + '1'.repeat(40),
         activeDiffVerifierCount: 0,
       }),
+      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(3),
     };
 
     (node as any)._queuePartialPeerEnrichment([peer]);
@@ -88,6 +89,9 @@ describe('AntseedNode incremental discovery enrichment', () => {
     const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
     expect(peers[0]?.modelVerification?.['*']?.sameCount).toBe(4);
     expect(peers[0]?.modelVerification?.['*']?.activeDiffVerifierCount).toBe(0);
+    // The chain-read points-policy exclusion threshold is stamped onto the
+    // enrichment result so routing exclusion fires at the on-chain bar.
+    expect(peers[0]?.modelVerification?.['*']?.exclusionThreshold).toBe(3);
     expect((node as any)._verifierRegistryClient.agentVerificationStats).toHaveBeenCalledWith(123);
   });
 
@@ -108,6 +112,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     (node as any)._verifierRegistryClient = {
       verificationStats: vi.fn().mockResolvedValue(serviceStats),
       agentVerificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
+      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
     };
     await (node as any)._enrichPeersWithVerification([peerA], 'Kimi-K2');
     expect(peerA.modelVerification?.['kimi-k2']?.activeDiffVerifierCount).toBe(1);
@@ -118,6 +123,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     (node as any)._verifierRegistryClient = {
       verificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
       agentVerificationStats: vi.fn().mockResolvedValue(serviceStats),
+      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
     };
     await (node as any)._enrichPeersWithVerification([peerB], 'kimi-k2');
     expect(peerB.modelVerification?.['kimi-k2']).toBeUndefined();
@@ -143,10 +149,13 @@ describe('AntseedNode incremental discovery enrichment', () => {
         started.push('aggregate');
         return new Promise((res) => { resolveAggregate = res; });
       }),
+      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
     };
 
     const done = (node as any)._enrichPeersWithVerification([peer], 'kimi-k2');
-    await Promise.resolve();
+    // Flush microtasks past the (mock-resolved) exclusion-threshold read that
+    // precedes the per-peer stat reads.
+    await new Promise((resolve) => setImmediate(resolve));
     // Both reads must be in flight before either resolves.
     expect(started).toEqual(['service', 'aggregate']);
     resolveService(stats);

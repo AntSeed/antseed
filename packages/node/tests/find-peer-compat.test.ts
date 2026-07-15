@@ -93,6 +93,7 @@ describe('AntseedNode.findPeer compatibility', () => {
         lastVerifier: '0x' + '9'.repeat(40),
         activeDiffVerifierCount: 1,
       }),
+      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
     };
 
     const peer = await node.findPeer(targetId);

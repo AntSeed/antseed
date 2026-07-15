@@ -4,7 +4,7 @@ import { DelegationMux } from '../src/verification/delegation-mux.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import type { PeerId, PeerInfo } from '../src/types/peer.js';
-import type { DelegateVoucherPayload, ProbeJobRequestPayload, ProbeJobResultPayload } from '../src/types/protocol.js';
+import type { ProbeJobRequestPayload, ProbeJobResultPayload } from '../src/types/protocol.js';
 
 const VERIFIER_ID = 'f'.repeat(40) as PeerId;
 const DELEGATE_ID = 'd'.repeat(40) as PeerId;
@@ -95,7 +95,7 @@ describe('DelegationManager delegate side (serveProbeJobs)', () => {
     const handler = vi.fn();
 
     // Verifier stays silent on hello: registration is pending.
-    const serving = manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler, undefined, {
+    const serving = manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler, {
       welcomeTimeoutMs: 5_000,
     });
 
@@ -163,7 +163,7 @@ describe('DelegationManager delegate side (serveProbeJobs)', () => {
     const handler = vi.fn();
 
     await expect(
-      manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler, undefined, { welcomeTimeoutMs: 20 }),
+      manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, handler, { welcomeTimeoutMs: 20 }),
     ).rejects.toThrow(/timed out/);
 
     const pending = verifierMux.runJob({ version: 1, ...jobPayload('after-timeout') }, 50);
@@ -241,38 +241,6 @@ describe('DelegationManager delegate side (serveProbeJobs)', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('accepts a voucher coalesced into the same synchronous batch as the welcome', async () => {
-    const manager = new DelegationManager({ emit: vi.fn() });
-    const { verifierMux, conn } = delegateHarness(manager);
-    const voucher: DelegateVoucherPayload = {
-      version: 1,
-      chainId: 8453,
-      registry: '0x' + 'e'.repeat(40),
-      buyer: '0x' + 'a'.repeat(40),
-      probeCommitment: '0x' + '4'.repeat(64),
-      credits: 3,
-      nonce: '1',
-      deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(128) + '1b',
-    };
-    verifierMux.onHello(() => {
-      // Welcome and voucher dispatched back-to-back in one synchronous
-      // batch, as when both frames arrive in a single network read. The
-      // voucher is the delegate's only claim proof — it must not be dropped
-      // because the accept-state flag flips a microtask after the welcome.
-      verifierMux.sendWelcome({ version: 1, accepted: true });
-      verifierMux.sendVoucher(voucher);
-    });
-
-    const vouchers: DelegateVoucherPayload[] = [];
-    await expect(
-      manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, vi.fn(), (v) => {
-        vouchers.push(v);
-      }),
-    ).resolves.toEqual({ accepted: true });
-    await flush();
-    expect(vouchers).toEqual([voucher]);
-  });
 });
 
 describe('DelegationManager host side (registerInboundDelegate)', () => {
@@ -349,16 +317,87 @@ describe('DelegationManager host side (registerInboundDelegate)', () => {
     const connectedEvents = emit.mock.calls.filter(([event]) => event === 'delegate:connected');
     expect(connectedEvents).toHaveLength(1);
     // Channel torn down: nothing routes to the rejected peer anymore.
-    expect(() => manager.sendDelegateVoucher('b'.repeat(40) as PeerId, {
-      version: 1,
-      chainId: 1,
-      registry: '0x' + 'e'.repeat(40),
-      buyer: '0x' + 'a'.repeat(40),
-      probeCommitment: '0x' + '4'.repeat(64),
-      credits: 1,
-      nonce: '1',
-      deadline: 1_800_000_000,
-      signature: '0x' + '5'.repeat(130),
-    })).toThrow(/No delegation channel/);
+    await expect(
+      manager.runProbeJob('b'.repeat(40) as PeerId, jobPayload('rejected'), 1_000),
+    ).rejects.toThrow(/not registered/);
+  });
+});
+
+describe('DelegationManager target solicitation (TargetQuery/TargetSuggestion)', () => {
+  it('delegate side answers a TargetQuery through the onTargetQuery handler after an accepted welcome', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    const { verifierMux, conn } = delegateHarness(manager);
+    verifierMux.onHello(() => verifierMux.sendWelcome({ version: 1, accepted: true }));
+
+    const sellers = [{ peerId: 's'.repeat(40), agentId: 7 }];
+    await manager.serveProbeJobs(
+      peerInfo(VERIFIER_ID), conn, {}, vi.fn(), undefined,
+      async (query) => {
+        expect(query.service).toBe('kimi-k2');
+        return sellers;
+      },
+    );
+
+    const suggestion = await verifierMux.runTargetQuery(
+      { version: 1, queryId: 'q-1', service: 'kimi-k2' },
+      1_000,
+    );
+    expect(suggestion).toEqual({ version: 1, queryId: 'q-1', service: 'kimi-k2', sellers });
+  });
+
+  it('delegate side answers empty when no handler is supplied or the handler throws', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    const { verifierMux, conn } = delegateHarness(manager);
+    verifierMux.onHello(() => verifierMux.sendWelcome({ version: 1, accepted: true }));
+
+    await manager.serveProbeJobs(peerInfo(VERIFIER_ID), conn, {}, vi.fn());
+    const noHandler = await verifierMux.runTargetQuery(
+      { version: 1, queryId: 'q-none', service: 'kimi-k2' },
+      1_000,
+    );
+    expect(noHandler.sellers).toEqual([]);
+
+    const failing = new DelegationManager({ emit: vi.fn() });
+    const pipe = delegateHarness(failing);
+    pipe.verifierMux.onHello(() => pipe.verifierMux.sendWelcome({ version: 1, accepted: true }));
+    await failing.serveProbeJobs(
+      peerInfo(VERIFIER_ID), pipe.conn, {}, vi.fn(), undefined, undefined,
+      async () => { throw new Error('history unavailable'); },
+    );
+    const onError = await pipe.verifierMux.runTargetQuery(
+      { version: 1, queryId: 'q-err', service: 'kimi-k2' },
+      1_000,
+    );
+    expect(onError.sellers).toEqual([]);
+  });
+
+  it('host side queryDelegateTargets round-trips to a registered delegate and rejects unknown ones', async () => {
+    const manager = new DelegationManager({ emit: vi.fn() });
+    const { delegateMux, conn } = hostHarness(manager);
+
+    manager.registerInboundDelegate(conn);
+    const welcome = delegateMux.waitForWelcome(1_000);
+    delegateMux.sendHello({ version: 1, maxConcurrentJobs: 1 });
+    await welcome;
+
+    delegateMux.onTargetQuery((query) => {
+      delegateMux.sendTargetSuggestion({
+        version: 1,
+        queryId: query.queryId,
+        service: query.service,
+        sellers: [{ peerId: 't'.repeat(40), agentId: 9 }],
+      });
+    });
+
+    const suggestion = await manager.queryDelegateTargets(
+      DELEGATE_ID,
+      { queryId: 'q-2', service: 'kimi-k2' },
+      1_000,
+    );
+    expect(suggestion.sellers).toEqual([{ peerId: 't'.repeat(40), agentId: 9 }]);
+
+    await expect(
+      manager.queryDelegateTargets('9'.repeat(40) as PeerId, { queryId: 'q-3', service: 'kimi-k2' }),
+    ).rejects.toThrow(/not registered/);
   });
 });

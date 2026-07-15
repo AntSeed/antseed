@@ -415,6 +415,13 @@ export function parsePersistedPeers(
  * Mirrors `DefaultRouter`'s exclusion so the CLI's pinned-peer dispatch path
  * enforces the same policy. Peers with no verification data pass (unknown
  * ≠ known bad). Exported for unit testing.
+ *
+ * The corroboration bar (distinct standing-DIFF verifiers needed to exclude)
+ * comes from the chain-read points-policy `minDistinctDiffVerifiers` that
+ * enrichment stamps onto each entry as `exclusionThreshold` —
+ * `hasModelSubstitutionFlag` consumes the stamp (offline fallback: 2). The
+ * stamp rides through persistence, so warm-cache decisions use the same bar
+ * the entry was fetched under.
  */
 export function peerHasActiveSubstitutionFlag(
   peer: PeerInfo,

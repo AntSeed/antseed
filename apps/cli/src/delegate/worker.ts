@@ -1,6 +1,6 @@
 import type {
   AntseedNode,
-  DelegateVoucherPayload,
+  DelegateCreditsAccrual,
   PeerId,
   PeerInfo,
   ProbeJobRequestPayload,
@@ -11,11 +11,9 @@ import type {
 import {
   CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
   ConnectionState,
-  makeVerifierRegistryDomain,
   peerIdToAddress,
-  recoverDelegateVoucherSigner,
 } from '@antseed/node'
-import type { VoucherStore } from './voucher-store.js'
+import type { CreditStore } from './credit-store.js'
 
 const DEFAULT_MAX_CONCURRENT_JOBS = 2
 const DEFAULT_MAX_JOBS_PER_HOUR = 60
@@ -75,14 +73,22 @@ export interface DelegateWorkerOptions {
    */
   isApprovedVerifier: (address: string) => Promise<boolean>
   /**
-   * Chain + registry the received vouchers must be claimable on. A voucher
-   * naming any other domain is worthless to this buyer's operator and is
-   * dropped with a warning.
+   * Durable store for discovered delegate-credit accruals + the log-scan block
+   * cursor. Optional: when omitted (or `discoverAccruals` is), the worker only
+   * carries probe jobs and does no credit discovery (the operator can still
+   * discover accruals out-of-band). When present, both must be supplied.
    */
-  expectedChainId: number
-  verifierRegistryAddress: string
-  /** Durable store for verified vouchers — the only proof of credits. */
-  voucherStore: Pick<VoucherStore, 'add'>
+  creditStore?: Pick<CreditStore, 'getCursor' | 'recordScan'>
+  /**
+   * Scan `DelegateCreditsAccrued` logs for `buyer` from `fromBlock` (inclusive)
+   * to the chain head, returning the accruals and the block scanned up to. The
+   * buyer's own address is an indexed topic, so this is a cheap server-side
+   * filtered read. Paired with `creditStore`.
+   */
+  discoverAccruals?: (
+    buyer: string,
+    fromBlock: number,
+  ) => Promise<{ accruals: DelegateCreditsAccrual[]; toBlock: number }>
   maxConcurrentJobs?: number
   maxJobsPerHour?: number
   discoveryIntervalMs?: number
@@ -101,10 +107,13 @@ export interface DelegateWorkerOptions {
  * buyer identity, which is the whole point — the verifier whitelist is
  * public, so verifier-originated probes are classifiable by cheating sellers.
  *
- * Carried jobs earn verifier-signed DelegateVouchers naming this buyer. The
- * worker verifies each voucher's signature and domain and persists it; the
- * buyer's deposits operator claims them on-chain
- * (AntseedVerifierRegistry.claimDelegateCredits) and later collects the
+ * Carried jobs earn delegate credits that accrue ON-CHAIN when the verifier
+ * anchors the seller-signed exchanges naming this buyer
+ * (AntseedVerifierRegistry.anchorExchangeBatch) — no voucher is exchanged. The
+ * worker discovers those accruals by scanning `DelegateCreditsAccrued` logs
+ * for its own buyer address (an indexed topic) from a persisted block cursor,
+ * and records them for the operator to claim on-chain
+ * (AntseedVerifierRegistry.claimDelegateCredits) and later collect the
  * delegate share of the verification emissions bucket.
  */
 export class DelegateWorker {
@@ -122,6 +131,8 @@ export class DelegateWorker {
   private readonly _approvalCache = new Map<string, { approved: boolean; checkedAt: number }>()
   /** Abort controllers of in-flight jobs, aborted on stop(). */
   private readonly _activeJobAborts = new Set<AbortController>()
+  /** Guards against overlapping credit-accrual scans. */
+  private _accrualScanning = false
 
   constructor(options: DelegateWorkerOptions) {
     this._options = {
@@ -205,6 +216,41 @@ export class DelegateWorker {
     } finally {
       this._scanning = false
     }
+
+    // Independent of registration: discover on-chain credit accruals for this
+    // buyer since the last scanned block. Runs on the same cadence so a carrier
+    // learns about its claimable credits without any voucher over the wire.
+    await this._scanAccruals()
+  }
+
+  /**
+   * Scan `DelegateCreditsAccrued` logs for this buyer from the persisted block
+   * cursor and record any new accruals for the operator to claim. No-op unless
+   * both `creditStore` and `discoverAccruals` are configured. Never throws;
+   * failures are warned and retried on the next scan (the cursor only advances
+   * on a successful, persisted scan).
+   */
+  private async _scanAccruals(): Promise<void> {
+    const { creditStore, discoverAccruals, node } = this._options
+    if (!creditStore || !discoverAccruals || this._stopped || this._accrualScanning) return
+    const buyer = node.peerId ? peerIdToAddress(node.peerId) : null
+    if (!buyer) return
+    this._accrualScanning = true
+    try {
+      const cursor = await creditStore.getCursor()
+      const { accruals, toBlock } = await discoverAccruals(buyer, cursor)
+      if (this._stopped) return
+      const added = await creditStore.recordScan(accruals, toBlock)
+      if (added > 0) {
+        this._options.log(
+          `delegate: discovered ${added} new credit accrual(s) on-chain — claimable by the operator with \`antseed delegate claim\``,
+        )
+      }
+    } catch (err) {
+      this._options.warn(`delegate: credit accrual scan failed: ${(err as Error).message}`)
+    } finally {
+      this._accrualScanning = false
+    }
   }
 
   private _isRejected(peerId: PeerId): boolean {
@@ -266,7 +312,7 @@ export class DelegateWorker {
         verifier,
         { maxConcurrentJobs: this._options.maxConcurrentJobs },
         (job) => this._handleJob(verifier, job),
-        (voucher) => this._handleVoucher(verifier, voucher),
+        (query) => this._handleTargetQuery(verifier, query),
       )
       if (!welcome.accepted) {
         this._options.warn(`delegate: verifier ${verifier.peerId.slice(0, 12)}… rejected registration: ${welcome.reason ?? 'unknown'}`)
@@ -281,52 +327,23 @@ export class DelegateWorker {
   }
 
   /**
-   * Verify and persist a DelegateVoucher. Everything checkable locally is
-   * checked before the voucher is stored: the claim domain must be the chain
-   * + registry this buyer runs on, the named buyer must be this node, and
-   * the EIP-712 signer must be the exact verifier peer being served — the
-   * same identity the on-chain whitelist admitted at registration.
+   * Answer a verifier TargetQuery from this buyer's own history: sellers of
+   * the service the buyer has ALREADY routed paid traffic to. Probes carried
+   * to such sellers blend into the buyer's normal traffic — which is exactly
+   * what the verifier is soliciting. An empty answer is valid and common
+   * (this buyer simply has no organic history with the service); errors are
+   * swallowed into an empty answer too, since suggesting is best-effort.
    */
-  private async _handleVoucher(verifier: PeerInfo, voucher: DelegateVoucherPayload): Promise<void> {
-    const short = verifier.peerId.slice(0, 12)
-    if (voucher.chainId !== this._options.expectedChainId
-      || voucher.registry.toLowerCase() !== this._options.verifierRegistryAddress.toLowerCase()) {
-      this._options.warn(`delegate: dropping voucher from ${short}… for foreign domain (chain ${voucher.chainId}, registry ${voucher.registry.slice(0, 10)}…)`)
-      return
-    }
-    const selfAddress = this._options.node.peerId ? peerIdToAddress(this._options.node.peerId) : null
-    if (!selfAddress || voucher.buyer.toLowerCase() !== selfAddress.toLowerCase()) {
-      this._options.warn(`delegate: dropping voucher from ${short}… naming a different buyer ${voucher.buyer.slice(0, 10)}…`)
-      return
-    }
-    let signer: string
+  private async _handleTargetQuery(
+    verifier: PeerInfo,
+    query: { queryId: string; service: string },
+  ): Promise<Array<{ peerId: string; agentId: number }>> {
+    if (this._stopped || !this._serving.has(verifier.peerId)) return []
     try {
-      signer = recoverDelegateVoucherSigner(
-        makeVerifierRegistryDomain(voucher.chainId, voucher.registry),
-        {
-          buyer: voucher.buyer,
-          probeCommitment: voucher.probeCommitment,
-          credits: voucher.credits,
-          nonce: BigInt(voucher.nonce),
-          deadline: voucher.deadline,
-        },
-        voucher.signature,
-      )
+      return await buildTargetSuggestions(this._options.node, query.service)
     } catch (err) {
-      this._options.warn(`delegate: dropping voucher from ${short}… with unrecoverable signature: ${(err as Error).message}`)
-      return
-    }
-    if (signer.toLowerCase() !== peerIdToAddress(verifier.peerId).toLowerCase()) {
-      this._options.warn(`delegate: dropping voucher from ${short}… signed by ${signer.slice(0, 10)}… (not the serving verifier)`)
-      return
-    }
-    try {
-      const added = await this._options.voucherStore.add(voucher, verifier.peerId)
-      if (added) {
-        this._options.log(`delegate: voucher received from ${short}… — ${voucher.credits} credit(s), claimable by the operator until ${new Date(voucher.deadline * 1000).toISOString()}`)
-      }
-    } catch (err) {
-      this._options.warn(`delegate: failed to persist voucher from ${short}…: ${(err as Error).message}`)
+      this._options.warn(`delegate: target query for ${query.service} failed: ${(err as Error).message}`)
+      return []
     }
   }
 
@@ -452,6 +469,42 @@ export class DelegateWorker {
       await new Promise((resolve) => setTimeout(resolve, RESPONSE_AUTH_POLL_INTERVAL_MS))
     }
   }
+}
+
+/** Cap on sellers suggested per TargetQuery answer. */
+export const MAX_TARGET_SUGGESTIONS = 8
+
+/**
+ * Sellers of `service` this buyer has organic history with: currently visible
+ * on the network, attestable (on-chain agent id), and with at least one paid
+ * request in this buyer's channel history. Empty when the buyer never used
+ * the service — a perfectly good answer.
+ */
+export async function buildTargetSuggestions(
+  node: AntseedNode,
+  service: string,
+): Promise<Array<{ peerId: string; agentId: number }>> {
+  const wanted = service.trim().toLowerCase()
+  if (wanted.length === 0) return []
+  let peers: PeerInfo[]
+  try {
+    // Pass the service so the node filters on metadata BEFORE its per-peer
+    // on-chain enrichment — a wildcard discovery would enrich the entire DHT
+    // population just to discard most of it here.
+    peers = await node.discoverPeers(wanted)
+  } catch {
+    return []
+  }
+  const suggestions: Array<{ peerId: string; agentId: number }> = []
+  for (const peer of peers) {
+    if (!peer.onChainAgentId) continue
+    if (!peerAdvertisesService(peer, wanted)) continue
+    const stats = node.getMeteringStatsByPeer(peer.peerId)
+    if (!stats || stats.lifetimeRequests < 1) continue
+    suggestions.push({ peerId: peer.peerId, agentId: peer.onChainAgentId })
+    if (suggestions.length >= MAX_TARGET_SUGGESTIONS) break
+  }
+  return suggestions
 }
 
 function peerAdvertisesService(peer: PeerInfo, service: string): boolean {

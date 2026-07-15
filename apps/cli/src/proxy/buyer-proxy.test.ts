@@ -887,14 +887,29 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
 // pinned peer itself (pins are deliberately gated: an explicit pin means
 // "I want this peer", not "I accept a substituted model").
 
+// A CORROBORATED flag: >= 2 distinct verifiers currently stand by a DIFF, the
+// same bar the on-chain emissions penalty gates on. Only this level of
+// corroboration excludes; a single accuser (SINGLE_ACCUSER_STATS) does not.
 const FLAGGED_STATS = {
   sameCount: 1,
   diffCount: 3,
   undeterminedCount: 0,
   distinctVerifierCount: 2,
-  activeDiffVerifierCount: 1,
+  activeDiffVerifierCount: 2,
   lastVerdict: 2,
   score: 10,
+}
+
+// One verifier alone stands by a DIFF: not enough to exclude (that would make a
+// single wrong/malicious verifier a routing kill-switch). Deprioritizes only.
+const SINGLE_ACCUSER_STATS = {
+  sameCount: 1,
+  diffCount: 1,
+  undeterminedCount: 0,
+  distinctVerifierCount: 1,
+  activeDiffVerifierCount: 1,
+  lastVerdict: 2,
+  score: 20,
 }
 
 const CLEAN_STATS = {
@@ -949,6 +964,21 @@ test('pinned peer with an active substitution flag for the requested service is 
   assert.match(res.body, /model-substitution flag/)
   assert.match(res.body, /gpt-4o/)
   assert.equal(dispatched(), 0, 'no request may be dispatched to a flagged peer')
+})
+
+test('a single standing DIFF (one verifier) does NOT block the pinned peer — corroboration required', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = { 'gpt-4o': SINGLE_ACCUSER_STATS }
+  ;(peer as any).modelVerificationFetchedAt = Date.now()
+  const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: { model: 'gpt-4o', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1, 'a lone accuser must not blackball an honest seller')
 })
 
 test('clean pinned peer is dispatched; a flag on a different service does not block', async () => {

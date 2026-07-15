@@ -3,7 +3,7 @@
  * See docs/protocol/spec/07-model-verification.md.
  */
 
-import { canonicalHash, canonicalHashBytes32 } from './canonical-json.js';
+import { canonicalHash, canonicalHashBytes32, canonicalJsonStringify, sha256Hex } from './canonical-json.js';
 
 export const FINGERPRINTS_PACKAGE_NAME = '@antseed/fingerprints';
 export const FINGERPRINTS_PACKAGE_VERSION = '0.1.0';
@@ -178,7 +178,21 @@ export function computeProbeSetId(service: string, probes: readonly KbfProbe[]):
 export function computeProbeCommitment(
   probeSet: Pick<ProbeSet, 'service' | 'probes' | 'nonce'>,
 ): string {
-  return canonicalHashBytes32({
+  return `0x${sha256Hex(canonicalProbeSetJson(probeSet))}`;
+}
+
+/**
+ * THE canonical probe-set reveal bytes: the exact canonical-JSON string whose
+ * `SHA-256(utf8(...))` (0x-prefixed) IS `computeProbeCommitment` — i.e. the
+ * preimage `revealProbeSet` hashes on-chain against the pre-audit commitment.
+ * Single source of truth: `computeProbeCommitment` is DEFINED as the hash of
+ * exactly this string, so the commitment and the published reveal bytes can
+ * never diverge (divergence would make the on-chain reveal revert forever).
+ */
+export function canonicalProbeSetJson(
+  probeSet: Pick<ProbeSet, 'service' | 'probes' | 'nonce'>,
+): string {
+  return canonicalJsonStringify({
     service: probeSet.service,
     probes: probeSet.probes,
     nonce: probeSet.nonce,
@@ -414,12 +428,62 @@ export interface EvidenceProbeExchange {
 }
 
 export interface EvidenceSeller extends SellerObservation {
+  /**
+   * The COMBINED verdict actually attested on-chain — cohort consensus merged
+   * with the reference verdict (see `cohortVerdict` / `referenceVerdict`). A
+   * re-runner recomputes both components and requires their combination to
+   * equal this value exactly.
+   */
   verdict: FingerprintVerdict;
+  /**
+   * Pure cohort-consensus verdict, BEFORE any reference override. Persisted so
+   * a re-runner can recompute the combination that produced `verdict` instead
+   * of blanket-trusting a bare DIFF (a fabricated DIFF with no reference and a
+   * recomputed cohort of SAME/UNDETERMINED must be rejected).
+   */
+  cohortVerdict: FingerprintVerdict;
+  /**
+   * Reference (KBF) verdict, present only in reference mode. Combined with
+   * `cohortVerdict` via the shared combine rule to yield `verdict`.
+   */
+  referenceVerdict?: FingerprintVerdict;
   stats: CohortSellerStats;
+  /**
+   * Distinct delegate carriers that produced at least one VERIFIED exchange
+   * for this seller (delegated probing only; absent for direct probing). A
+   * SAME verdict backed by a single carrier is corroboration-weak — an
+   * accomplice could have served the real model only to itself — and a
+   * re-runner surfaces that as a soft signal.
+   */
+  carrierCount?: number;
   /** Full re-verifiable exchange evidence, aligned with requestIds. */
   exchanges?: EvidenceProbeExchange[];
   /** True when every probe request produced a verified ResponseAuth. */
   fullyAuthenticated?: boolean;
+}
+
+/**
+ * The numeric cohort-grading knobs the auditor actually used, persisted in the
+ * pack so a re-runner re-grades with the EXACT options (not library defaults,
+ * which is only faithful by coincidence). Mirrors the numeric fields of
+ * `CohortVerdictOptions` — the non-serializable `onWarning` sink is excluded.
+ */
+export interface PersistedCohortOptions {
+  alpha: number;
+  minConsensusProbes: number;
+  minCoverage: number;
+  epsilon: number;
+  minConsensusSellers: number;
+}
+
+/**
+ * Reference-mode inputs a re-runner needs to recompute each seller's reference
+ * (KBF) verdict: the reference model's own self-test error, which bounds the
+ * honest-mismatch rate p₀ in `computeKbfVerdict`. Present only when the audit
+ * ran in reference mode.
+ */
+export interface EvidenceReference {
+  selfTest: { hamming: number; total: number };
 }
 
 export interface EvidenceBundle {
@@ -429,6 +493,19 @@ export interface EvidenceBundle {
   probeSet: ProbeSet;
   sellers: EvidenceSeller[];
   cohort?: CohortResult;
+  /**
+   * Effective cohort-grading options used to produce the verdicts. A re-runner
+   * MUST re-grade with these, not defaults.
+   */
+  cohortOptions: PersistedCohortOptions;
+  /**
+   * Stealth bundling factor used to build the probe requests. Not secret after
+   * reveal, and needed to re-derive the exact request plans (rather than
+   * brute-forcing candidate factors).
+   */
+  maxProbesPerRequest: number;
+  /** Reference-mode inputs; present only when the audit used a reference. */
+  reference?: EvidenceReference;
   createdAt: string;
 }
 

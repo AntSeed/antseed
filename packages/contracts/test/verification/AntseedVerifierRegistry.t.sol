@@ -3,10 +3,11 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegistry.sol";
 import { IAntseedVerifierRegistry } from "../../interfaces/IAntseedVerifierRegistry.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
+import { ResponseAuthFixture } from "./ResponseAuthFixture.sol";
 
 contract MockEpochClock {
     uint256 public currentEpoch;
@@ -16,8 +17,8 @@ contract MockEpochClock {
     }
 }
 
-contract AntseedVerifierRegistryTest is Test {
-    AntseedRegistryV2 registry;
+contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
+    AntseedRegistry registry;
     MockERC8004Registry identity;
     MockEpochClock clock;
     AntseedVerifierRegistry verifierRegistry;
@@ -32,6 +33,13 @@ contract AntseedVerifierRegistryTest is Test {
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 commitSalt;
 
+    /// @dev Signing key + registered agent for the sellers whose signed
+    ///      exchanges are anchored by `_anchor` (anchorExchangeBatch verifies
+    ///      each record's ResponseAuth signature on-chain against the
+    ///      ERC-8004 owner of the record's agentId).
+    uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
+    uint256 recordAgentId;
+
     event VerifierApprovalSet(address indexed verifier, bool approved);
     event ProbeSetCommitted(address indexed verifier, bytes32 indexed commitment);
     event VerifierStandingCleared(address indexed verifier, uint256 indexed agentId, bytes32 indexed serviceHash);
@@ -42,6 +50,7 @@ contract AntseedVerifierRegistryTest is Test {
         uint8 verdict,
         bytes32 evidenceHash,
         bytes32 probeCommitment,
+        bytes32 batchRoot,
         uint32 probeCount,
         uint32 cohortSize,
         bool credited,
@@ -51,7 +60,7 @@ contract AntseedVerifierRegistryTest is Test {
     function setUp() public {
         vm.warp(1_700_000_000);
 
-        registry = new AntseedRegistryV2();
+        registry = new AntseedRegistry();
         identity = new MockERC8004Registry();
         clock = new MockEpochClock();
         clock.setCurrentEpoch(5);
@@ -63,6 +72,7 @@ contract AntseedVerifierRegistryTest is Test {
         verifierRegistry.setVerifier(otherVerifier, true);
 
         agentId = _registerAgent(sellerOwner);
+        recordAgentId = _registerAgent(vm.addr(RECORD_SELLER_KEY));
     }
 
     function _registerAgent(address owner) internal returns (uint256 id) {
@@ -76,17 +86,39 @@ contract AntseedVerifierRegistryTest is Test {
         verifierRegistry.commitProbeSet(commitment);
     }
 
-    function _attest(address verifier_, uint256 agentId_, bytes32 serviceHash, uint8 verdict, bytes32 commitment)
-        internal
-    {
+    /// @dev Anchor a fully SIGNED exchange batch bound to `commitment`,
+    ///      sized to cover the probe counts these tests attest (>= 12) so
+    ///      the anchored probe-count cap never trips. Records derive from
+    ///      the commitment so every batch has a distinct root; the buyer in
+    ///      every signed payload is the anchoring verifier (no delegate
+    ///      accrual side effects).
+    function _anchor(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
+        (
+            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
+            bytes[] memory payloads,
+            uint32[] memory counts
+        ) = makeSignedBatch(16, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
         vm.prank(verifier_);
-        verifierRegistry.submitAttestation(agentId_, serviceHash, verdict, EVIDENCE_HASH, commitment, 10, 3);
+        batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+    }
+
+    function _attest(
+        address verifier_,
+        uint256 agentId_,
+        bytes32 serviceHash,
+        uint8 verdict,
+        bytes32 commitment,
+        bytes32 batchRoot
+    ) internal {
+        vm.prank(verifier_);
+        verifierRegistry.submitAttestation(agentId_, serviceHash, verdict, EVIDENCE_HASH, commitment, batchRoot, 10, 3);
     }
 
     function _commitAndAttest(address verifier_, uint256 agentId_, bytes32 serviceHash, uint8 verdict) internal {
         bytes32 commitment = _commit(verifier_);
         vm.warp(block.timestamp + 1);
-        _attest(verifier_, agentId_, serviceHash, verdict, commitment);
+        bytes32 batchRoot = _anchor(verifier_, commitment);
+        _attest(verifier_, agentId_, serviceHash, verdict, commitment, batchRoot);
     }
 
     function _stats(uint256 agentId_, bytes32 serviceHash)
@@ -234,7 +266,9 @@ contract AntseedVerifierRegistryTest is Test {
     function test_submitOnlyApprovedVerifier() public {
         vm.prank(outsider);
         vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("c"), 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("c"), keccak256("root"), 10, 3
+        );
     }
 
     function test_submitZeroInputsRevert() public {
@@ -243,11 +277,11 @@ contract AntseedVerifierRegistryTest is Test {
 
         vm.startPrank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
-        verifierRegistry.submitAttestation(0, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(0, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3);
         vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
-        verifierRegistry.submitAttestation(agentId, bytes32(0), 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(agentId, bytes32(0), 1, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3);
         vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, bytes32(0), commitment, 10, 3);
+        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, bytes32(0), commitment, keccak256("root"), 10, 3);
         vm.stopPrank();
     }
 
@@ -257,9 +291,13 @@ contract AntseedVerifierRegistryTest is Test {
 
         vm.startPrank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.InvalidVerdict.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 0, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 0, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3
+        );
         vm.expectRevert(AntseedVerifierRegistry.InvalidVerdict.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 4, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 4, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3
+        );
         vm.stopPrank();
     }
 
@@ -269,13 +307,17 @@ contract AntseedVerifierRegistryTest is Test {
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.ProbeCountTooLow.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 9, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, keccak256("root"), 9, 3
+        );
     }
 
     function test_submitUnknownCommitmentReverts() public {
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.ProbeSetNotCommitted.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("never"), 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("never"), keccak256("root"), 10, 3
+        );
     }
 
     function test_submitOtherVerifiersCommitmentReverts() public {
@@ -284,7 +326,9 @@ contract AntseedVerifierRegistryTest is Test {
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.ProbeSetNotCommitted.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3
+        );
     }
 
     function test_submitSameTimestampAsCommitReverts() public {
@@ -292,20 +336,27 @@ contract AntseedVerifierRegistryTest is Test {
         // No warp: commit and attest land in the same second.
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.ProbeSetTooRecent.selector);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, keccak256("root"), 10, 3
+        );
     }
 
     function test_submitUnknownAgentReverts() public {
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
+        bytes32 batchRoot = _anchor(verifier, commitment);
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.UnknownAgent.selector);
-        verifierRegistry.submitAttestation(999, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(999, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, 10, 3);
     }
 
     function test_submitWithUnsetIdentityRegistryReverts() public {
-        AntseedRegistryV2 bareRegistry = new AntseedRegistryV2();
+        // With no identity registry set, agentId → seller resolution is
+        // impossible, so the pipeline now fails at ANCHOR time (every
+        // anchored record must be signature-verified against the agent's
+        // owner) — and submitAttestation against any root stays unreachable.
+        AntseedRegistry bareRegistry = new AntseedRegistry();
         bareRegistry.setEmissions(address(clock));
         AntseedVerifierRegistry bareVerifierRegistry = new AntseedVerifierRegistry(address(bareRegistry));
         bareVerifierRegistry.setVerifier(verifier, true);
@@ -314,19 +365,31 @@ contract AntseedVerifierRegistryTest is Test {
         bareVerifierRegistry.commitProbeSet(keccak256("c"));
         vm.warp(block.timestamp + 1);
 
+        (
+            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
+            bytes[] memory payloads,
+            uint32[] memory counts
+        ) = makeSignedBatch(10, recordAgentId, RECORD_SELLER_KEY, verifier, keccak256("c"));
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.UnknownAgent.selector);
-        bareVerifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("c"), 10, 3);
+        bareVerifierRegistry.anchorExchangeBatch(keccak256("c"), records, payloads, counts);
+
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerifierRegistry.BatchNotAnchored.selector);
+        bareVerifierRegistry.submitAttestation(
+            agentId, SERVICE_HASH, 1, EVIDENCE_HASH, keccak256("c"), keccak256("no-root"), 10, 3
+        );
     }
 
     function test_submitSelfAuditReverts() public {
         uint256 ownAgentId = _registerAgent(verifier);
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
+        bytes32 batchRoot = _anchor(verifier, commitment);
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.SelfAudit.selector);
-        verifierRegistry.submitAttestation(ownAgentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(ownAgentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, 10, 3);
     }
 
     // ─── Attestation storage ─────────────────────────────────────────
@@ -334,11 +397,14 @@ contract AntseedVerifierRegistryTest is Test {
     function test_attestationStoredAndCredited() public {
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
+        bytes32 batchRoot = _anchor(verifier, commitment);
 
         vm.expectEmit(true, true, true, true);
-        emit AttestationSubmitted(agentId, SERVICE_HASH, verifier, 1, EVIDENCE_HASH, commitment, 12, 4, true, 5);
+        emit AttestationSubmitted(
+            agentId, SERVICE_HASH, verifier, 1, EVIDENCE_HASH, commitment, batchRoot, 12, 4, true, 5
+        );
         vm.prank(verifier);
-        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 12, 4);
+        verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, 12, 4);
 
         IAntseedVerifierRegistry.Attestation memory attestation =
             verifierRegistry.latestAttestation(agentId, SERVICE_HASH);
@@ -630,9 +696,12 @@ contract AntseedVerifierRegistryTest is Test {
         // Within the cooldown the attestation is stored but not credited.
         bytes32 commitment = _commit(verifier);
         vm.warp(block.timestamp + 1);
+        bytes32 batchRoot = _anchor(verifier, commitment);
         vm.expectEmit(true, true, true, true);
-        emit AttestationSubmitted(agentId, SERVICE_HASH, verifier, 2, EVIDENCE_HASH, commitment, 10, 3, false, 5);
-        _attest(verifier, agentId, SERVICE_HASH, 2, commitment);
+        emit AttestationSubmitted(
+            agentId, SERVICE_HASH, verifier, 2, EVIDENCE_HASH, commitment, batchRoot, 10, 3, false, 5
+        );
+        _attest(verifier, agentId, SERVICE_HASH, 2, commitment, batchRoot);
 
         assertEq(verifierRegistry.epochCredits(5, verifier), 1);
         assertEq(verifierRegistry.epochTotalCredits(5), 1);

@@ -165,4 +165,13 @@ export interface PeerModelVerification {
    * verifier only). Never fabricated — reflects only recorded attestations.
    */
   score: number | null;
+  /**
+   * Effective `AntseedVerifierPointsPolicy.minDistinctDiffVerifiers` at
+   * enrichment time — the number of distinct standing-DIFF verifiers at which
+   * the on-chain economic penalty triggers, read from chain (TTL-cached) and
+   * stamped here so routing exclusion (`hasModelSubstitutionFlag`) fires at
+   * the same bar. Absent when the value could not be determined at enrichment
+   * (consumers then fall back to MIN_DISTINCT_DIFF_VERIFIERS_FOR_EXCLUSION).
+   */
+  exclusionThreshold?: number;
 }

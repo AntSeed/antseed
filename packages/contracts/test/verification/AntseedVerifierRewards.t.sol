@@ -4,11 +4,13 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { ANTSToken } from "../../core/ANTSToken.sol";
-import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegistry.sol";
 import { AntseedVerifierRewards } from "../../verification/AntseedVerifierRewards.sol";
+import { IAntseedVerifierRegistry } from "../../interfaces/IAntseedVerifierRegistry.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
+import { ResponseAuthFixture } from "./ResponseAuthFixture.sol";
 
 /// @dev Stand-in for `registry.emissions()` pinned at a fixed epoch: models
 ///      a registry epoch clock lagging the gate's, so credits can land in an
@@ -21,9 +23,9 @@ contract MockEpochClock {
     }
 }
 
-contract AntseedVerifierRewardsTest is Test {
+contract AntseedVerifierRewardsTest is Test, ResponseAuthFixture {
     ANTSToken token;
-    AntseedRegistryV2 registry;
+    AntseedRegistry registry;
     AntseedEmissionsGate gate;
     MockERC8004Registry identity;
     AntseedVerifierRegistry verifierRegistry;
@@ -51,12 +53,17 @@ contract AntseedVerifierRewardsTest is Test {
     bytes32 constant EVIDENCE_HASH = keccak256("evidence");
     uint256 commitSalt;
 
+    /// @dev Signing key + registered agent for the seller whose signed
+    ///      exchanges `_anchorBatch` anchors (signature-verified on-chain).
+    uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
+    uint256 recordAgentId;
+
     function setUp() public {
         vm.warp(1_700_000_000);
         deployCodeTo("ANTSToken.sol:ANTSToken", KNOWN_ANTS_TOKEN);
         token = ANTSToken(KNOWN_ANTS_TOKEN);
 
-        registry = new AntseedRegistryV2();
+        registry = new AntseedRegistry();
         identity = new MockERC8004Registry();
         registry.setAntsToken(address(token));
         registry.setTeamWallet(teamWallet);
@@ -87,11 +94,30 @@ contract AntseedVerifierRewardsTest is Test {
         verifierRegistry.setVerifier(verifierB, true);
         verifierRegistry.setVerifier(verifierC, true);
 
+        recordAgentId = identity.register();
+        identity.setOwner(recordAgentId, vm.addr(RECORD_SELLER_KEY));
+
         _warpGateEpoch(5);
     }
 
     function _warpGateEpoch(uint256 epoch) internal {
         vm.warp(gate.genesis() + gate.epochDuration() * epoch + 1);
+    }
+
+    /// @dev Anchor a fully SIGNED exchange batch bound to `commitment`,
+    ///      sized (12 records) to cover the probe counts these tests attest
+    ///      so the anchored probe-count cap never trips. Records derive from
+    ///      the commitment so every batch has a distinct root; the buyer in
+    ///      every signed payload is the anchoring verifier (no delegate
+    ///      accrual side effects).
+    function _anchorBatch(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
+        (
+            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
+            bytes[] memory payloads,
+            uint32[] memory counts
+        ) = makeSignedBatch(12, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
+        vm.prank(verifier_);
+        batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
     }
 
     /// @dev Earn `credits` verification credits for `verifier_` in the current
@@ -106,8 +132,9 @@ contract AntseedVerifierRewardsTest is Test {
             vm.prank(verifier_);
             verifierRegistry.commitProbeSet(commitment);
             vm.warp(block.timestamp + 1);
+            bytes32 batchRoot = _anchorBatch(verifier_, commitment);
             vm.prank(verifier_);
-            verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, 10, 3);
+            verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, 10, 3);
         }
     }
 
@@ -398,7 +425,7 @@ contract AntseedVerifierRewardsTest is Test {
     }
 
     function test_remainderPaysEmissionsReserveWhenSplitConfigured() public {
-        registry.setEmissionsReserve(emissionsReserveDest);
+        gate.setMinterController(gate.RESERVE_MINTER_ID(), emissionsReserveDest);
         _warpGateEpoch(6);
 
         // Exhaust the burn cap so the whole remainder routes to the reserve
@@ -406,9 +433,8 @@ contract AntseedVerifierRewardsTest is Test {
         uint256 emission = gate.getEpochEmission(5);
         vm.prank(teamWallet);
         gate.claimRemainder(5, emissionsReserveDest, (emission * 15_000) / 100_000);
-        // The reserve bucket controller was bound to protocolReserve at gate
-        // construction (emissionsReserve was unset then).
-        vm.prank(reserve);
+        // The configured emissions reserve now controls the reserve bucket.
+        vm.prank(emissionsReserveDest);
         gate.claimRemainder(5, emissionsReserveDest, (emission * 15_000) / 100_000);
 
         uint256 budget = verifierRewards.verifierEpochBudget(5);

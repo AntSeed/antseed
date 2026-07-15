@@ -12,5 +12,6 @@ export * from './registry.js';
 export * from './cohort.js';
 export * from './probe-source.js';
 export * from './probe-bank.js';
+export * from './probe-author-schema.js';
 export * from './compositional/index.js';
 export * from './verifiers/kbf/index.js';

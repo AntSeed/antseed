@@ -35,12 +35,24 @@ export interface SellerProbeRun {
   /** Parsed numeric answers, position-aligned with probeSet.probes. */
   answers: Array<number | null>
   requestIds: string[]
+  /**
+   * Probes bundled into each stealth request, aligned with requestIds. Summed
+   * over the requests whose exchanges are actually anchored, this is the
+   * probe evidence an on-chain batch anchor declares (`probeCount`).
+   */
+  probesPerRequest: number[]
   /** Verified ResponseAuth hashes per request, aligned with requestIds (null = missing/unverified). */
   responseAuths: Array<{ requestHash: string; responseHash: string; signature: string } | null>
   /** Full re-verifiable exchange evidence, aligned with requestIds. */
   exchanges: ProbeExchangeEvidence[]
   /** True when every probe request produced a verified ResponseAuth. */
   fullyAuthenticated: boolean
+  /**
+   * Distinct delegate carriers that produced ≥1 verified exchange for this
+   * seller (delegated probing only; undefined for direct probing). Surfaced so
+   * a SAME verdict corroborated by only a single carrier can be flagged.
+   */
+  carrierCount?: number
   errors: string[]
 }
 
@@ -118,6 +130,7 @@ export async function probeSeller(
   // subsets, so we scatter each plan's extracted answers back by index.
   const answers: Array<number | null> = new Array(probeSet.probes.length).fill(null)
   const requestIds: string[] = []
+  const probesPerRequest: number[] = []
   const responseAuths: SellerProbeRun['responseAuths'] = []
   const exchanges: ProbeExchangeEvidence[] = []
   const errors: string[] = []
@@ -147,6 +160,7 @@ export async function probeSeller(
     }
 
     requestIds.push(requestId)
+    probesPerRequest.push(plan.probes.length)
     exchanges.push(exchange)
     try {
       const response = await node.sendRequest(peer, req)
@@ -191,6 +205,7 @@ export async function probeSeller(
     agentId: peer.onChainAgentId,
     answers,
     requestIds,
+    probesPerRequest,
     responseAuths,
     exchanges,
     fullyAuthenticated: responseAuths.length > 0 && responseAuths.every((auth) => auth !== null),

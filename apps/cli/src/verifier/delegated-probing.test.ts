@@ -4,7 +4,7 @@ import { Wallet } from 'ethers'
 import type { AntseedNode, ConnectedDelegate, PeerInfo, ProbeJobRequestPayload, ProbeJobResultPayload } from '@antseed/node'
 import { createResponseAuthPayload } from '@antseed/node'
 import { generateProbeSet, probeBankSource } from '@antseed/fingerprints'
-import { probeSellerViaDelegates } from './delegated-probing.js'
+import { assignPrimaryCarriers, makeNodeTargetQuerier, probeSellerViaDelegates, solicitDelegateTargets } from './delegated-probing.js'
 import { validateProbeJob } from '../delegate/worker.js'
 
 const SELLER_WALLET = new Wallet('0x' + '11'.repeat(32))
@@ -191,4 +191,167 @@ test('requires at least one delegate', async () => {
     probeSellerViaDelegates(fakeNode(), [], sellerPeer(), SERVICE, probeSet(), 3, OPTIONS),
     /no delegates/,
   )
+})
+
+// ---------------------------------------------------------------------------
+// Target solicitation: TargetQuery fan-out + organic-pair preference
+// ---------------------------------------------------------------------------
+
+test('solicitDelegateTargets fans out with allSettled: one delegate suggesting, one failing, one timing out', async () => {
+  const delegates = [delegate('a'.repeat(40)), delegate('b'.repeat(40)), delegate('c'.repeat(40))]
+  const warned: string[] = []
+  const suggestions = await solicitDelegateTargets(
+    delegates,
+    SERVICE,
+    async (delegatePeerId, _service, timeoutMs) => {
+      if (delegatePeerId === delegates[0]!.peerId) return [{ peerId: SELLER_PEER, agentId: 7 }]
+      if (delegatePeerId === delegates[1]!.peerId) throw new Error('delegate exploded')
+      // The querier itself enforces the timeout (DelegationMux.runTargetQuery):
+      // a silent delegate surfaces as the callee's own timeout rejection.
+      throw new Error(`TargetQuery timed out after ${timeoutMs}ms`)
+    },
+    { timeoutMs: 50, log: noop, warn: (m) => { warned.push(m) } },
+  )
+  assert.deepEqual(suggestions.get(SELLER_PEER), [delegates[0]!.peerId])
+  assert.equal(warned.length, 2, 'the failing and the timed-out delegate are each warned about')
+  assert.ok(warned.some((m) => m.includes('delegate exploded')))
+  assert.ok(warned.some((m) => m.includes('timed out')))
+})
+
+test('solicitDelegateTargets aggregates multiple suggesting delegates per seller and ignores malformed entries', async () => {
+  const delegates = [delegate('a'.repeat(40)), delegate('b'.repeat(40))]
+  const suggestions = await solicitDelegateTargets(
+    delegates,
+    SERVICE,
+    async () => [
+      { peerId: SELLER_PEER.toUpperCase(), agentId: 7 },
+      { peerId: '', agentId: 3 } as { peerId: string; agentId: number },
+    ],
+    { timeoutMs: 50, log: noop, warn: noop },
+  )
+  assert.deepEqual(suggestions.get(SELLER_PEER), [delegates[0]!.peerId, delegates[1]!.peerId])
+  assert.equal(suggestions.size, 1, 'the empty peerId entry is dropped')
+})
+
+test('a suggested delegate is PREFERRED but never the sole carrier — some probes ride a non-suggesting delegate', async () => {
+  const carriers: string[] = []
+  const base = fakeNode() as unknown as {
+    runProbeJob(peerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload>
+  }
+  const capturingNode = {
+    async runProbeJob(delegatePeerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload> {
+      carriers.push(delegatePeerId)
+      return base.runProbeJob(delegatePeerId, job)
+    },
+  } as unknown as AntseedNode
+
+  const suggesting = delegate('e'.repeat(40))
+  const other = delegate('f'.repeat(40))
+  // Many single-probe plans so the assignment is observable.
+  const set = generateProbeSet({ service: SERVICE, count: 6, seed: 'ee'.repeat(32), source: probeBankSource() })
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
+    capturingNode, [suggesting, other], sellerPeer(), SERVICE, set, 1,
+    { ...OPTIONS, preferredDelegatePeerIds: [suggesting.peerId] },
+  )
+  assert.equal(run.fullyAuthenticated, true)
+  const suggestingJobs = jobsByDelegate.get(suggesting.peerId) ?? 0
+  const otherJobs = jobsByDelegate.get(other.peerId) ?? 0
+  // A colluding lone accomplice must NOT be able to carry every probe.
+  assert.ok(otherJobs >= 1, `a non-suggesting delegate must carry ≥1 probe, got ${otherJobs}`)
+  // …but the suggested (organic) delegate still carries the majority for stealth.
+  assert.ok(suggestingJobs > otherJobs, `the suggested delegate should carry the majority, got ${suggestingJobs} vs ${otherJobs}`)
+  assert.ok(run.carrierCount !== undefined && run.carrierCount >= 2, 'carrierCount reflects both carriers')
+})
+
+test('a failing preferred delegate falls back to the ordinary rotation for the retry', async () => {
+  const carriers: string[] = []
+  const suggesting = delegate('e'.repeat(40))
+  const other = delegate('f'.repeat(40))
+  const honest = fakeNode() as unknown as {
+    runProbeJob(peerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload>
+  }
+  const flakyNode = {
+    async runProbeJob(delegatePeerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload> {
+      carriers.push(delegatePeerId)
+      if (delegatePeerId === suggesting.peerId) {
+        return { version: 1, jobId: job.jobId, status: 'error', error: 'preferred delegate offline' }
+      }
+      return honest.runProbeJob(delegatePeerId, job)
+    },
+  } as unknown as AntseedNode
+
+  const { run, jobsByDelegate } = await probeSellerViaDelegates(
+    flakyNode, [suggesting, other], sellerPeer(), SERVICE, probeSet(), 3,
+    { ...OPTIONS, preferredDelegatePeerIds: [suggesting.peerId] },
+  )
+  assert.equal(run.fullyAuthenticated, true, 'the retry carrier completes the run')
+  assert.ok(carriers.includes(other.peerId), 'the non-preferred delegate carries the retry')
+  assert.ok(!jobsByDelegate.has(suggesting.peerId), 'failed attempts earn no credit')
+  assert.ok((jobsByDelegate.get(other.peerId) ?? 0) > 0)
+})
+
+test('unsuggested sellers keep the existing rotation across all delegates', async () => {
+  const carriers: string[] = []
+  const base = fakeNode() as unknown as {
+    runProbeJob(peerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload>
+  }
+  const capturingNode = {
+    async runProbeJob(delegatePeerId: string, job: Omit<ProbeJobRequestPayload, 'version'>): Promise<ProbeJobResultPayload> {
+      carriers.push(delegatePeerId)
+      return base.runProbeJob(delegatePeerId, job)
+    },
+  } as unknown as AntseedNode
+
+  const a = delegate('a'.repeat(40))
+  const b = delegate('b'.repeat(40))
+  // 4 probes at 1 per request → 4 plans → rotation must alternate carriers.
+  const set = generateProbeSet({ service: SERVICE, count: 4, seed: 'bb'.repeat(32), source: probeBankSource() })
+  await probeSellerViaDelegates(capturingNode, [a, b], sellerPeer(), SERVICE, set, 1, OPTIONS)
+  assert.ok(carriers.includes(a.peerId))
+  assert.ok(carriers.includes(b.peerId))
+})
+
+test('makeNodeTargetQuerier adapts the node TargetQuery API and filters malformed sellers', async () => {
+  const seen: Array<{ delegatePeerId: string; service: string; timeoutMs?: number }> = []
+  const capable = {
+    async queryDelegateTargets(delegatePeerId: string, query: { queryId: string; service: string }, timeoutMs?: number) {
+      seen.push({ delegatePeerId, service: query.service, ...(timeoutMs !== undefined ? { timeoutMs } : {}) })
+      assert.ok(query.queryId.length > 0)
+      return { sellers: [{ peerId: SELLER_PEER, agentId: 7 }, { peerId: '', agentId: 1 }] }
+    },
+  } as unknown as AntseedNode
+  const querier = makeNodeTargetQuerier(capable)
+  const sellers = await querier('d'.repeat(40), SERVICE, 1234)
+  assert.deepEqual(sellers, [{ peerId: SELLER_PEER, agentId: 7 }])
+  assert.equal(seen[0]!.timeoutMs, 1234)
+})
+
+// ---------------------------------------------------------------------------
+// assignPrimaryCarriers (HIGH-2): suggestions PREFER but never MONOPOLIZE
+// ---------------------------------------------------------------------------
+
+test('assignPrimaryCarriers: with both pools, the suggested pool gets the majority but a non-suggesting delegate always gets ≥1', () => {
+  const pref = [delegate('a'.repeat(40))]
+  const other = [delegate('b'.repeat(40))]
+  for (const planCount of [1, 2, 3, 6, 24]) {
+    const carriers = assignPrimaryCarriers(planCount, pref, other, [...pref, ...other])
+    assert.equal(carriers.length, planCount)
+    const otherCount = carriers.filter((c) => c.peerId === other[0]!.peerId).length
+    assert.ok(otherCount >= 1, `planCount ${planCount}: a non-suggesting delegate must carry ≥1 (got ${otherCount})`)
+    if (planCount >= 2) {
+      const prefCount = planCount - otherCount
+      assert.ok(prefCount >= otherCount, `planCount ${planCount}: suggested pool should keep the majority (${prefCount} vs ${otherCount})`)
+    }
+  }
+})
+
+test('assignPrimaryCarriers: with no suggestions it round-robins the full roster; with only suggestions it round-robins those', () => {
+  const a = delegate('a'.repeat(40))
+  const b = delegate('b'.repeat(40))
+  // No preferred pool → rotate all.
+  const none = assignPrimaryCarriers(4, [], [a, b], [a, b])
+  assert.deepEqual(none.map((c) => c.peerId), [a.peerId, b.peerId, a.peerId, b.peerId])
+  // No non-suggesting pool (everyone suggested) → rotate the preferred pool.
+  const allPref = assignPrimaryCarriers(3, [a, b], [], [a, b])
+  assert.deepEqual(allPref.map((c) => c.peerId), [a.peerId, b.peerId, a.peerId])
 })

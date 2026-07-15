@@ -50,6 +50,7 @@ export type {
   VerifierRegistryClientConfig,
   VerifierRewardsClientConfig,
   VerifierAttestation,
+  BatchAnchor,
 } from './evm/verifier-client.js';
 
 export {

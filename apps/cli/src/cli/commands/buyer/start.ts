@@ -11,7 +11,7 @@ import { AntseedNode, DepositsClient, VerifierRegistryClient, getInstance, resol
 import { ZeroAddress } from 'ethers'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { DelegateWorker } from '../../../delegate/worker.js'
-import { VoucherStore } from '../../../delegate/voucher-store.js'
+import { CreditStore } from '../../../delegate/credit-store.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
@@ -459,9 +459,11 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       // Opt-in probe carrier: serve probe jobs for on-chain-approved
       // verifiers over this buyer's ordinary paid request path. Carried jobs
-      // earn verifier-signed DelegateVouchers naming this buyer; the buyer's
-      // deposits operator claims them on-chain for a share of the
-      // verification emissions bucket.
+      // earn delegate credits that accrue ON-CHAIN when the verifier anchors
+      // the seller-signed exchanges naming this buyer; the worker discovers
+      // those accruals from DelegateCreditsAccrued logs and the buyer's
+      // deposits operator claims them on-chain for a share of the verification
+      // emissions bucket.
       let delegateWorker: DelegateWorker | null = null
       const delegateConfig = config.buyer?.delegate
       if (delegateConfig?.enabled) {
@@ -470,10 +472,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         } else if (!chainConfig.verifierRegistryAddress) {
           console.log(chalk.yellow('Delegate mode configured but no verifier registry address is available for this chain. Skipping.'))
         } else {
-          // Vouchers are claimable only by the operator registered for this
+          // Credits are claimable only by the operator registered for this
           // buyer in AntseedDeposits — resolved by the contract at claim
           // time, so carrying can start before the operator exists. Warn
-          // early anyway: unclaimed vouchers expire.
+          // early anyway so unclaimed accruals are not a surprise.
           try {
             const operatorDeposits = new DepositsClient({
               rpcUrl: chainConfig.rpcUrl,
@@ -484,7 +486,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             })
             const operator = await operatorDeposits.getOperator(node.identity!.wallet.address)
             if (!operator || operator === ZeroAddress) {
-              console.log(chalk.yellow('Delegate mode: no operator registered on AntseedDeposits yet — vouchers can be earned but only a registered operator can claim them.'))
+              console.log(chalk.yellow('Delegate mode: no operator registered on AntseedDeposits yet — credits can be earned but only a registered operator can claim them.'))
             }
           } catch (err) {
             console.log(chalk.yellow(`Delegate mode: operator lookup failed (${(err as Error).message}); continuing — the binding is enforced on-chain at claim time.`))
@@ -495,13 +497,19 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             contractAddress: chainConfig.verifierRegistryAddress,
             evmChainId: chainConfig.evmChainId,
           })
-          const voucherStore = new VoucherStore(join(globalOpts.dataDir, 'delegate', 'vouchers.jsonl'))
+          const creditStore = new CreditStore(join(globalOpts.dataDir, 'delegate', 'credits.json'))
           delegateWorker = new DelegateWorker({
             node,
             isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
-            expectedChainId: chainConfig.evmChainId,
-            verifierRegistryAddress: chainConfig.verifierRegistryAddress,
-            voucherStore,
+            creditStore,
+            discoverAccruals: async (buyer, fromBlock) => {
+              const accruals = await verifierRegistry.queryDelegateCreditsAccrued(buyer, fromBlock)
+              // The scan is bounded by the accruals' own blocks; advance the
+              // cursor to the highest block seen (or hold at `fromBlock` when
+              // no new logs landed) so the next scan resumes cleanly.
+              const toBlock = accruals.reduce((max, a) => Math.max(max, a.blockNumber), fromBlock)
+              return { accruals, toBlock }
+            },
             ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
             ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
             ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),
@@ -509,7 +517,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             warn: (m) => console.warn(chalk.yellow(`[delegate] ${m}`)),
           })
           delegateWorker.start()
-          console.log(chalk.dim('Delegate mode: carrying probe jobs for approved verifiers (vouchers land in delegate/vouchers.jsonl, claimable by the operator)'))
+          console.log(chalk.dim('Delegate mode: carrying probe jobs for approved verifiers (credit accruals land in delegate/credits.json, claimable by the operator)'))
           console.log('')
         }
       }

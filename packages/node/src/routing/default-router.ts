@@ -57,6 +57,11 @@ export class DefaultRouter implements Router {
    * construction — the flag lifts as soon as every accusing verifier retracts
    * (attests SAME again), at which point the peer re-enters the candidate set.
    * Peers with no verification data are unaffected (unknown ≠ known bad).
+   *
+   * The corroboration bar (how many distinct standing-DIFF verifiers exclude)
+   * is NOT hardcoded here: enrichment stamps the chain-read points-policy
+   * `minDistinctDiffVerifiers` onto each entry as `exclusionThreshold`, and
+   * `hasModelSubstitutionFlag` consumes the stamp (offline fallback: 2).
    */
   private _hasActiveSubstitutionFlag(peer: PeerInfo, requestedService: string | null): boolean {
     const mv = peer.modelVerification;

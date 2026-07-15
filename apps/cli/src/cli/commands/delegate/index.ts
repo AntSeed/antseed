@@ -1,18 +1,19 @@
 import type { Command } from 'commander'
-import { registerDelegateVouchersCommand } from './vouchers.js'
+import { registerDelegateCreditsCommand } from './credits.js'
 import { registerDelegateClaimCommand } from './claim.js'
 
 /**
  * Delegate (probe carrier) commands. A buyer running with
- * `buyer.delegate.enabled` earns verifier-signed DelegateVouchers in
- * `<dataDir>/delegate/vouchers.jsonl`; these commands are how the buyer's
- * deposits operator turns them into on-chain credits and ANTS rewards
- * before their 30-day deadline.
+ * `buyer.delegate.enabled` earns delegate credits that accrue on-chain when
+ * verifiers anchor the seller-signed exchanges it carried; the worker records
+ * the discovered accruals in `<dataDir>/delegate/credits.json`. These commands
+ * are how the buyer's deposits operator turns them into on-chain credits and
+ * ANTS rewards.
  */
 export function registerDelegateCommands(program: Command): void {
   const delegateCmd = program
     .command('delegate')
-    .description('Delegate commands — list and claim DelegateVouchers earned by carrying verifier probe traffic')
-  registerDelegateVouchersCommand(delegateCmd)
+    .description('Delegate commands — list and claim delegate credits earned by carrying verifier probe traffic')
+  registerDelegateCreditsCommand(delegateCmd)
   registerDelegateClaimCommand(delegateCmd)
 }

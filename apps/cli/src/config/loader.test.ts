@@ -298,6 +298,15 @@ test('loadConfig rejects mistyped verifier numeric fields', async () => {
   );
 });
 
+test('loadConfig rejects maxProbesPerRequest above the contract limit', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { maxProbesPerRequest: 4 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.maxProbesPerRequest must be <= 3/);
+    }
+  );
+});
+
 test('loadConfig rejects an invalid verifier probeSource', async () => {
   await withTempConfig(
     JSON.stringify({ verifier: { probeSource: 'compositoinal' } }),
@@ -330,9 +339,18 @@ test('loadConfig rejects a mistyped verifier upstream instead of silently disabl
 
 test('loadConfig rejects mistyped verifier directories', async () => {
   await withTempConfig(
-    JSON.stringify({ verifier: { evidenceDir: 42 } }),
+    JSON.stringify({ verifier: { publishDir: 42 } }),
     async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.evidenceDir/);
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.publishDir/);
+    }
+  );
+});
+
+test('loadConfig rejects an invalid verifier revealDelayMs', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { revealDelayMs: -1 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.revealDelayMs/);
     }
   );
 });
@@ -343,7 +361,10 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
       verifier: {
         services: ['Kimi-K2'],
         probesPerAudit: 24,
-        probeSource: 'bank',
+        probeSource: 'llm',
+        probeAuthorModel: 'gpt-5.2',
+        publishDir: './packs',
+        revealDelayMs: 5000,
         referencesDir: './refs',
         upstream: {
           baseUrl: 'https://openrouter.ai/api/v1',
@@ -356,7 +377,10 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
       const config = await loadConfig(configPath);
       assert.deepEqual(config.verifier?.services, ['Kimi-K2']);
       assert.equal(config.verifier?.probesPerAudit, 24);
-      assert.equal(config.verifier?.probeSource, 'bank');
+      assert.equal(config.verifier?.probeSource, 'llm');
+      assert.equal(config.verifier?.probeAuthorModel, 'gpt-5.2');
+      assert.equal(config.verifier?.publishDir, './packs');
+      assert.equal(config.verifier?.revealDelayMs, 5000);
       assert.equal(config.verifier?.referencesDir, './refs');
       assert.deepEqual(config.verifier?.upstream, {
         baseUrl: 'https://openrouter.ai/api/v1',

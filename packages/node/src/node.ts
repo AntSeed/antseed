@@ -57,9 +57,10 @@ import {
   MessageType,
   CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
   type DelegateHelloPayload,
-  type DelegateVoucherPayload,
   type ProbeJobRequestPayload,
   type ProbeJobResultPayload,
+  type TargetQueryPayload,
+  type TargetSuggestionPayload,
 } from "./types/protocol.js";
 import type {
   Provider,
@@ -968,6 +969,13 @@ export class AntseedNode extends EventEmitter {
 
     const VERIFICATION_RPC_CONCURRENCY = 8;
     const queue = peers.filter((p) => typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0);
+    if (queue.length === 0) return;
+    // Effective points-policy exclusion threshold (minDistinctDiffVerifiers),
+    // stamped onto every enrichment result so routing exclusion fires at the
+    // same corroboration bar as the on-chain economic penalty. TTL-cached in
+    // the client and never throws (falls back to the offline default), so
+    // this adds at most one resolution walk per TTL, not per peer.
+    const exclusionThreshold = await client.getMinDistinctDiffVerifiers();
     const enrichOne = async (p: PeerInfo): Promise<void> => {
       const agentId = p.onChainAgentId!;
       const modelVerification: Record<string, ReturnType<typeof toPeerModelVerification>> = {};
@@ -983,10 +991,10 @@ export class AntseedNode extends EventEmitter {
         client.agentVerificationStats(agentId),
       ]);
       if (service && serviceRead.status === 'fulfilled' && serviceRead.value) {
-        modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(serviceRead.value);
+        modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(serviceRead.value, exclusionThreshold);
       }
       if (aggregateRead.status === 'fulfilled') {
-        modelVerification['*'] = toPeerModelVerification(aggregateRead.value);
+        modelVerification['*'] = toPeerModelVerification(aggregateRead.value, exclusionThreshold);
       }
       if (Object.keys(modelVerification).length > 0) {
         p.modelVerification = modelVerification;
@@ -1737,35 +1745,44 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Ask a registered delegate which sellers of `query.service` it ALREADY
+   * uses (Transparent Audits v2 target solicitation). The answer is a
+   * routing hint from an untrusted peer — callers must not treat it as
+   * anything stronger. An empty seller list is a valid answer.
+   */
+  async queryDelegateTargets(
+    delegatePeerId: PeerId,
+    query: Omit<TargetQueryPayload, "version">,
+    timeoutMs?: number,
+  ): Promise<TargetSuggestionPayload> {
+    if (!this._delegation) {
+      throw new Error("Node not started or not in buyer mode");
+    }
+    return this._delegation.queryDelegateTargets(delegatePeerId, query, timeoutMs);
+  }
+
+  /**
    * Register with a delegation host (verifier) and serve its probe jobs.
    * `handler` receives each job and must return the result payload; errors
    * thrown by the handler are reported to the verifier as failed jobs.
-   * `onVoucher` receives signed DelegateVouchers for carried probes — the
-   * caller must verify and persist them. Resolves with the verifier's
-   * welcome (accepted or rejected).
+   * Delegate credits for carried probes accrue on-chain when the verifier
+   * anchors the seller-signed exchanges; the carrier discovers and claims
+   * them from chain events, so nothing is delivered over this channel to
+   * persist. `onTargetQuery` answers the verifier's target solicitations from
+   * local history (empty list is fine; omitted = every query answered empty).
+   * Resolves with the verifier's welcome (accepted or rejected).
    */
   async serveProbeJobs(
     verifierPeer: PeerInfo,
     hello: Omit<DelegateHelloPayload, "version">,
     handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, "version" | "jobId">>,
-    onVoucher?: (voucher: DelegateVoucherPayload) => void | Promise<void>,
+    onTargetQuery?: (query: TargetQueryPayload) => Promise<TargetSuggestionPayload["sellers"]>,
   ): Promise<{ accepted: boolean; reason?: string }> {
     if (!this._delegation) {
       throw new Error("Node not started or not in buyer mode");
     }
     const conn = await this._getOrCreateConnection(verifierPeer);
-    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler, onVoucher);
-  }
-
-  /**
-   * Send a signed DelegateVoucher to a registered delegate (host side).
-   * Throws when no delegation channel to the delegate exists.
-   */
-  sendDelegateVoucher(delegatePeerId: PeerId, voucher: DelegateVoucherPayload): void {
-    if (!this._delegation) {
-      throw new Error("Node not started or not in buyer mode");
-    }
-    this._delegation.sendDelegateVoucher(delegatePeerId, voucher);
+    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler, undefined, onTargetQuery);
   }
 
   private _handleIncomingConnection(conn: PeerConnection): void {

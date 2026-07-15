@@ -102,7 +102,7 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('a'.repeat(40));
     });
 
-    it('should exclude a cheaper seller with an active substitution flag for the requested model', () => {
+    it('should exclude a cheaper seller with a CORROBORATED substitution flag (>= 2 verifiers) for the requested model', () => {
       const router = new DefaultRouter();
       const flagged = makePeer({
         peerId: 'a'.repeat(40) as any,
@@ -110,10 +110,10 @@ describe('DefaultRouter', () => {
         modelVerification: {
           'kimi-k2': {
             sameCount: 0,
-            diffCount: 1,
+            diffCount: 2,
             undeterminedCount: 0,
-            distinctVerifierCount: 1,
-            activeDiffVerifierCount: 1,
+            distinctVerifierCount: 2,
+            activeDiffVerifierCount: 2,
             lastVerdict: 2,
             score: 0,
           },
@@ -143,6 +143,37 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('b'.repeat(40));
     });
 
+    it('should NOT exclude on a single standing DIFF (one verifier is not corroboration)', () => {
+      // A lone accuser must not blackball the seller: it may deprioritize via
+      // the authenticity score, but exclusion requires the same >=2 distinct
+      // DIFF verifiers the on-chain emissions penalty gates on.
+      const router = new DefaultRouter();
+      const singleAccuser = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': {
+            sameCount: 0,
+            diffCount: 1,
+            undeterminedCount: 0,
+            distinctVerifierCount: 1,
+            activeDiffVerifierCount: 1,
+            lastVerdict: 2,
+            score: 10,
+          },
+        },
+      });
+      const pricier = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
+      const req: SerializedHttpRequest = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+
+      // The single-accuser seller stays eligible (and here wins on price).
+      const selected = router.selectPeer(req, [singleAccuser, pricier]);
+      expect(selected?.peerId).toBe('a'.repeat(40));
+    });
+
     it('should fall back to the agent-wide substitution flag when the request names no service', () => {
       const router = new DefaultRouter();
       const flagged = makePeer({
@@ -151,10 +182,10 @@ describe('DefaultRouter', () => {
         modelVerification: {
           '*': {
             sameCount: 0,
-            diffCount: 1,
+            diffCount: 2,
             undeterminedCount: 0,
-            distinctVerifierCount: 1,
-            activeDiffVerifierCount: 1,
+            distinctVerifierCount: 2,
+            activeDiffVerifierCount: 2,
             lastVerdict: 2,
             score: 0,
           },

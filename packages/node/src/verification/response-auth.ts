@@ -113,7 +113,7 @@ export function hashResponse(response: SerializedHttpResponse): string {
   return keccak256(encodeHttpResponse(stripStreamingHeader(response)));
 }
 
-function buildResponseAuthSigningBytes(payload: Omit<ResponseAuthPayload, 'signature'>): Uint8Array {
+export function buildResponseAuthSigningBytes(payload: Omit<ResponseAuthPayload, 'signature'>): Uint8Array {
   const encoder = new TextEncoder();
   const fields = [
     RESPONSE_AUTH_DOMAIN,

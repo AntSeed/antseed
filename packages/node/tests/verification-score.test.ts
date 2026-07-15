@@ -125,6 +125,13 @@ describe('toPeerModelVerification', () => {
     expect(mv.undeterminedCount).toBe(1);
     expect(mv.activeDiffVerifierCount).toBe(1);
     expect(mv.score).not.toBeNull();
+    // No threshold supplied at enrichment: the field is absent, not stamped 0.
+    expect('exclusionThreshold' in mv).toBe(false);
+  });
+
+  it('stamps the chain-read exclusion threshold when supplied', () => {
+    const mv = toPeerModelVerification(fullStats({ sameCount: 1 }), 3);
+    expect(mv.exclusionThreshold).toBe(3);
   });
 });
 
@@ -136,10 +143,70 @@ describe('hasModelSubstitutionFlag', () => {
     })))).toBe(false);
   });
 
-  it('is true while at least one verifier stands by a DIFF', () => {
+  it('does NOT exclude on a single standing DIFF (one verifier is not corroboration)', () => {
+    // A lone accuser only deprioritizes (lowers the authenticity score); it
+    // must not blackball the seller, or one wrong/malicious verifier becomes a
+    // routing kill-switch while the on-chain emissions penalty (which needs
+    // >=2 distinct DIFF verifiers) has not even triggered.
     expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
       diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+    })))).toBe(false);
+  });
+
+  it('excludes once a second distinct verifier corroborates the DIFF (>= threshold)', () => {
+    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
+      diffCount: 2, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
     })))).toBe(true);
+  });
+
+  it('uses the exclusionThreshold stamped at enrichment time (chain-read policy value)', () => {
+    // Policy raised to 3: two standing accusers no longer exclude…
+    const twoAccusers = toPeerModelVerification(fullStats({
+      diffCount: 2, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
+    }), 3);
+    expect(hasModelSubstitutionFlag(twoAccusers)).toBe(false);
+    // …but three do.
+    const threeAccusers = toPeerModelVerification(fullStats({
+      diffCount: 3, distinctVerifierCount: 3, lastVerdict: 2, activeDiffVerifierCount: 3,
+    }), 3);
+    expect(hasModelSubstitutionFlag(threeAccusers)).toBe(true);
+    // Policy lowered to 1: a lone accuser excludes.
+    const oneAccuser = toPeerModelVerification(fullStats({
+      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+    }), 1);
+    expect(hasModelSubstitutionFlag(oneAccuser)).toBe(true);
+  });
+
+  it('ignores an invalid persisted stamp and falls back to the offline default', () => {
+    // Persisted peer state can carry arbitrary JSON: anything outside the
+    // contract setter's domain (integer >= 1) must not be trusted.
+    const base = fullStats({
+      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+    });
+    for (const bad of [0, -1, 1.5, NaN]) {
+      const mv = { ...toPeerModelVerification(base), exclusionThreshold: bad };
+      expect(hasModelSubstitutionFlag(mv)).toBe(false); // falls back to 2
+    }
+    const stringStamp = { ...toPeerModelVerification(base), exclusionThreshold: '1' as unknown as number };
+    expect(hasModelSubstitutionFlag(stringStamp)).toBe(false);
+  });
+
+  it('lets an explicit caller override beat the stamped threshold', () => {
+    const mv = toPeerModelVerification(fullStats({
+      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+    }), 2);
+    expect(hasModelSubstitutionFlag(mv)).toBe(false);
+    expect(hasModelSubstitutionFlag(mv, 1)).toBe(true);
+  });
+
+  it('honors an explicit corroboration threshold override', () => {
+    const mv = toPeerModelVerification(fullStats({
+      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+    }));
+    // With the default (2) a single accuser does not exclude; a caller that
+    // deliberately lowers the bar to 1 gets the stricter exclusion.
+    expect(hasModelSubstitutionFlag(mv)).toBe(false);
+    expect(hasModelSubstitutionFlag(mv, 1)).toBe(true);
   });
 
   it('clears once every DIFF is retracted, despite the historical diffCount', () => {
@@ -159,9 +226,9 @@ describe('hasModelSubstitutionFlag', () => {
     })))).toBe(false);
   });
 
-  it('still flags whenever activeDiffVerifierCount > 0', () => {
+  it('flags whenever activeDiffVerifierCount reaches the corroboration threshold', () => {
     expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
+      diffCount: 3, distinctVerifierCount: 3, lastVerdict: 2, activeDiffVerifierCount: 3,
     })))).toBe(true);
   });
 });

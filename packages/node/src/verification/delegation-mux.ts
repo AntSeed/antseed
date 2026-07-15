@@ -1,26 +1,29 @@
 import {
   MessageType,
   type DelegateHelloPayload,
-  type DelegateVoucherPayload,
   type DelegateWelcomePayload,
   type FramedMessage,
   type ProbeJobRequestPayload,
   type ProbeJobResultPayload,
+  type TargetQueryPayload,
+  type TargetSuggestionPayload,
 } from '../types/protocol.js';
 import type { PeerConnection } from '../p2p/connection-manager.js';
 import { encodeFrame } from '../p2p/message-protocol.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import {
   decodeDelegateHello,
-  decodeDelegateVoucher,
   decodeDelegateWelcome,
   decodeProbeJobRequest,
   decodeProbeJobResult,
+  decodeTargetQuery,
+  decodeTargetSuggestion,
   encodeDelegateHello,
-  encodeDelegateVoucher,
   encodeDelegateWelcome,
   encodeProbeJobRequest,
   encodeProbeJobResult,
+  encodeTargetQuery,
+  encodeTargetSuggestion,
 } from './delegation-codec.js';
 
 const MESSAGE_TYPE_NAME: Record<number, string> = {
@@ -28,7 +31,8 @@ const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.DelegateWelcome]: 'DelegateWelcome',
   [MessageType.ProbeJobRequest]: 'ProbeJobRequest',
   [MessageType.ProbeJobResult]: 'ProbeJobResult',
-  [MessageType.DelegateVoucher]: 'DelegateVoucher',
+  [MessageType.TargetQuery]: 'TargetQuery',
+  [MessageType.TargetSuggestion]: 'TargetSuggestion',
 };
 
 const DEFAULT_WELCOME_TIMEOUT_MS = 15_000;
@@ -47,9 +51,10 @@ export class DelegationMux {
   private _messageIdCounter = 0;
   private _onHello?: DelegationMessageHandler<DelegateHelloPayload>;
   private _onJob?: DelegationMessageHandler<ProbeJobRequestPayload>;
-  private _onVoucher?: DelegationMessageHandler<DelegateVoucherPayload>;
+  private _onTargetQuery?: DelegationMessageHandler<TargetQueryPayload>;
   private _onWelcome?: (payload: DelegateWelcomePayload) => void;
   private readonly _pendingResults = new Map<string, PendingResult>();
+  private readonly _pendingSuggestions = new Map<string, PendingSuggestion>();
   private _pendingWelcome: PendingWelcome | null = null;
 
   constructor(connection: PeerConnection) {
@@ -64,8 +69,8 @@ export class DelegationMux {
     this._onJob = handler;
   }
 
-  onVoucher(handler: DelegationMessageHandler<DelegateVoucherPayload>): void {
-    this._onVoucher = handler;
+  onTargetQuery(handler: DelegationMessageHandler<TargetQueryPayload>): void {
+    this._onTargetQuery = handler;
   }
 
   /**
@@ -96,8 +101,12 @@ export class DelegationMux {
     this._send(MessageType.ProbeJobResult, encodeProbeJobResult(payload));
   }
 
-  sendVoucher(payload: DelegateVoucherPayload): void {
-    this._send(MessageType.DelegateVoucher, encodeDelegateVoucher(payload));
+  sendTargetQuery(payload: TargetQueryPayload): void {
+    this._send(MessageType.TargetQuery, encodeTargetQuery(payload));
+  }
+
+  sendTargetSuggestion(payload: TargetSuggestionPayload): void {
+    this._send(MessageType.TargetSuggestion, encodeTargetSuggestion(payload));
   }
 
   waitForWelcome(timeoutMs = DEFAULT_WELCOME_TIMEOUT_MS): Promise<DelegateWelcomePayload> {
@@ -144,12 +153,44 @@ export class DelegationMux {
     return promise;
   }
 
+  /** Dispatch a target query and await its correlated suggestion. */
+  runTargetQuery(payload: TargetQueryPayload, timeoutMs: number): Promise<TargetSuggestionPayload> {
+    const existing = this._pendingSuggestions.get(payload.queryId);
+    if (existing) return existing.promise;
+
+    let resolve!: (suggestion: TargetSuggestionPayload) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<TargetSuggestionPayload>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    const timer = setTimeout(() => {
+      this._pendingSuggestions.delete(payload.queryId);
+      reject(new Error(`Target query ${payload.queryId} timed out after ${timeoutMs}ms`));
+    }, Math.max(1, timeoutMs));
+    this._pendingSuggestions.set(payload.queryId, { promise, resolve, reject, timer });
+
+    try {
+      this.sendTargetQuery(payload);
+    } catch (err) {
+      clearTimeout(timer);
+      this._pendingSuggestions.delete(payload.queryId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    return promise;
+  }
+
   close(): void {
     for (const pending of this._pendingResults.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error('DelegationMux closed'));
     }
     this._pendingResults.clear();
+    for (const pending of this._pendingSuggestions.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('DelegationMux closed'));
+    }
+    this._pendingSuggestions.clear();
     if (this._pendingWelcome) {
       clearTimeout(this._pendingWelcome.timer);
       this._pendingWelcome.reject(new Error('DelegationMux closed'));
@@ -203,13 +244,26 @@ export class DelegationMux {
         }
         return true;
       }
-      case MessageType.DelegateVoucher: {
-        const payload = decodeDelegateVoucher(frame.payload);
-        if (!this._onVoucher) {
-          debugWarn('[DelegationMux] DelegateVoucher dropped — no voucher handler registered');
+      case MessageType.TargetQuery: {
+        const payload = decodeTargetQuery(frame.payload);
+        if (!this._onTargetQuery) {
+          debugWarn(`[DelegationMux] TargetQuery ${payload.queryId} dropped — no target-query handler registered`);
+          this.sendTargetSuggestion({ version: 1, queryId: payload.queryId, service: payload.service, sellers: [] });
           return true;
         }
-        await this._onVoucher(payload);
+        await this._onTargetQuery(payload);
+        return true;
+      }
+      case MessageType.TargetSuggestion: {
+        const payload = decodeTargetSuggestion(frame.payload);
+        const pending = this._pendingSuggestions.get(payload.queryId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this._pendingSuggestions.delete(payload.queryId);
+          pending.resolve(payload);
+        } else {
+          debugWarn(`[DelegationMux] Unmatched TargetSuggestion for query ${payload.queryId}`);
+        }
         return true;
       }
       default:
@@ -235,6 +289,13 @@ export class DelegationMux {
 interface PendingResult {
   promise: Promise<ProbeJobResultPayload>;
   resolve: (result: ProbeJobResultPayload) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingSuggestion {
+  promise: Promise<TargetSuggestionPayload>;
+  resolve: (suggestion: TargetSuggestionPayload) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }

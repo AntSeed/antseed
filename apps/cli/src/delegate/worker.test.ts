@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ProbeJobRequestPayload } from '@antseed/node'
-import { validateProbeJob } from './worker.js'
+import type { AntseedNode, ProbeJobRequestPayload } from '@antseed/node'
+import { buildTargetSuggestions, MAX_TARGET_SUGGESTIONS, validateProbeJob } from './worker.js'
 
 const SELF = 'a'.repeat(40)
 
@@ -167,4 +167,78 @@ test('rejects non-finite or non-positive timeouts', () => {
   assert.equal(validateProbeJob(job({ timeoutMs: Number.NaN }), SELF), 'invalid_timeout')
   assert.equal(validateProbeJob(job({ timeoutMs: 0 }), SELF), 'invalid_timeout')
   assert.equal(validateProbeJob(job({ timeoutMs: -1 }), SELF), 'invalid_timeout')
+})
+
+// ---------------------------------------------------------------------------
+// TargetQuery answering (v2): suggest only sellers with organic paid history
+// ---------------------------------------------------------------------------
+
+function catalogPeer(peerId: string, service: string, agentId?: number): unknown {
+  return {
+    peerId,
+    ...(agentId !== undefined ? { onChainAgentId: agentId } : {}),
+    providerPricing: { openai: { services: { [service]: {} } } },
+  }
+}
+
+function suggestionNode(options: {
+  peers: unknown[]
+  lifetimeRequestsByPeer?: Record<string, number>
+  discoverError?: Error
+  discoverCalls?: Array<string | undefined>
+}): AntseedNode {
+  return {
+    async discoverPeers(service?: string): Promise<unknown[]> {
+      options.discoverCalls?.push(service)
+      if (options.discoverError) throw options.discoverError
+      return options.peers
+    },
+    getMeteringStatsByPeer(peerId: string): { lifetimeRequests: number } | null {
+      const lifetime = options.lifetimeRequestsByPeer?.[peerId]
+      if (lifetime === undefined) return null
+      return { lifetimeRequests: lifetime }
+    },
+  } as unknown as AntseedNode
+}
+
+test('buildTargetSuggestions returns only attestable sellers of the service with paid history', async () => {
+  const discoverCalls: Array<string | undefined> = []
+  const node = suggestionNode({
+    peers: [
+      catalogPeer('c'.repeat(40), 'kimi-k2', 7),       // history → suggested
+      catalogPeer('d'.repeat(40), 'kimi-k2', 8),       // no history → dropped
+      catalogPeer('e'.repeat(40), 'kimi-k2'),          // no agent id → dropped
+      catalogPeer('f'.repeat(40), 'other-model', 9),   // wrong service → dropped
+    ],
+    lifetimeRequestsByPeer: { ['c'.repeat(40)]: 12, ['d'.repeat(40)]: 0, ['f'.repeat(40)]: 3 },
+    discoverCalls,
+  })
+  const suggestions = await buildTargetSuggestions(node, 'Kimi-K2')
+  assert.deepEqual(suggestions, [{ peerId: 'c'.repeat(40), agentId: 7 }])
+  // Discovery must be scoped to the queried service (normalized), so the
+  // node filters before its per-peer on-chain enrichment — never a wildcard.
+  assert.deepEqual(discoverCalls, ['kimi-k2'])
+})
+
+test('buildTargetSuggestions answers empty on discovery failure or a blank service', async () => {
+  const failing = suggestionNode({ peers: [], discoverError: new Error('dht down') })
+  assert.deepEqual(await buildTargetSuggestions(failing, 'kimi-k2'), [])
+  const healthyCalls: Array<string | undefined> = []
+  const healthy = suggestionNode({ peers: [catalogPeer('c'.repeat(40), 'kimi-k2', 7)], discoverCalls: healthyCalls })
+  assert.deepEqual(await buildTargetSuggestions(healthy, '   '), [])
+  // A blank service never reaches discovery at all.
+  assert.deepEqual(healthyCalls, [])
+})
+
+test('buildTargetSuggestions caps the answer at MAX_TARGET_SUGGESTIONS', async () => {
+  const peers: unknown[] = []
+  const lifetime: Record<string, number> = {}
+  for (let i = 0; i < 12; i++) {
+    const peerId = String(i).padStart(2, '0').repeat(20)
+    peers.push(catalogPeer(peerId, 'kimi-k2', i + 1))
+    lifetime[peerId] = 5
+  }
+  const node = suggestionNode({ peers, lifetimeRequestsByPeer: lifetime })
+  const suggestions = await buildTargetSuggestions(node, 'kimi-k2')
+  assert.equal(suggestions.length, MAX_TARGET_SUGGESTIONS)
 })

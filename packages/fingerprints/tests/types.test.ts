@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  canonicalProbeSetJson,
   computeEvidenceHash,
   computeProbeCommitment,
   computeProbeSetId,
@@ -107,9 +109,18 @@ describe('evidence bundle hashing', () => {
       sellers: observations.map((o, s) => ({
         ...o,
         verdict: cohort.verdicts[s]!.verdict,
+        cohortVerdict: cohort.verdicts[s]!.verdict,
         stats: cohort.verdicts[s]!.stats,
       })),
       cohort,
+      cohortOptions: {
+        alpha: 0.05,
+        minConsensusProbes: 5,
+        minCoverage: 0.5,
+        epsilon: 0.02,
+        minConsensusSellers: 3,
+      },
+      maxProbesPerRequest: 3,
       createdAt: '2026-07-03T00:00:00.000Z',
     };
   }
@@ -118,12 +129,16 @@ describe('evidence bundle hashing', () => {
     const hash = computeEvidenceHash(makeBundle());
     // Pinned over the HKDF/HMAC_DRBG derivation (prng.ts). If this breaks, the
     // wire format changed — bump the HKDF salt version, don't silently re-pin.
-    // (Last re-pinned deliberately: nonce derivation now binds (service,
-    // count, source id, domains filter) alongside the exclude set so sibling
-    // probe sets sharing a seed never share a blinding nonce, round-2 review.
-    // Previously: content-binding probeSetId/commitment and hashed
+    // (Re-pinned 2026-07-14 (transparent-audits review): EvidenceBundle now
+    // carries the effective `cohortOptions` and `maxProbesPerRequest`, and
+    // each EvidenceSeller carries `cohortVerdict`, so a re-runner re-grades
+    // with the auditor's exact options and recomputes the reference/cohort
+    // combination behind a DIFF instead of blanket-trusting it.
+    // Previously: nonce derivation binding (service, count, source id, domains
+    // filter) alongside the exclude set, round-2 review — 0x670a7f33…7d78.
+    // Before that: content-binding probeSetId/commitment + hashed
     // exclude-aware nonce, PR #720.)
-    expect(hash).toBe('0x670a7f3395ab739ecf9125a8ae083684b8140d5b866ba8f233d876188e5b7d78');
+    expect(hash).toBe('0x43abf84e542c5fe6056369d5cf27ed7970d2635427f2bfe8bc7dda5bcd53319c');
     expect(computeEvidenceHash(makeBundle())).toBe(hash);
   });
 
@@ -207,6 +222,24 @@ describe('probe set ids and commitments', () => {
     });
     const reversedId = computeProbeSetId('s', [...probeSet.probes].reverse());
     expect(reversedId).not.toBe(probeSet.probeSetId);
+  });
+
+  it('commitment IS the sha256 of the canonical probe-set reveal bytes', () => {
+    const probeSet = generateProbeSet({
+      service: 's',
+      count: 6,
+      seed: 'reveal-bytes',
+      createdAt: '2026-07-03T00:00:00.000Z',
+    });
+    const revealBytes = canonicalProbeSetJson(probeSet);
+    const hash = createHash('sha256').update(revealBytes, 'utf8').digest('hex');
+    expect(computeProbeCommitment(probeSet)).toBe(`0x${hash}`);
+    // The reveal string binds exactly {service, probes, nonce} — nothing else.
+    expect(JSON.parse(revealBytes)).toEqual({
+      service: probeSet.service,
+      probes: probeSet.probes,
+      nonce: probeSet.nonce,
+    });
   });
 
   it('commitment depends on nonce', () => {

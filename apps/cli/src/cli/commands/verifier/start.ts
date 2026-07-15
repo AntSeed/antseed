@@ -2,18 +2,13 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
 import {
   AntseedNode,
-  makeVerifierRegistryDomain,
-  peerIdToAddress,
   resolveChainConfig,
-  signDelegateVoucher,
-  toPeerId,
 } from '@antseed/node'
-import type { DelegateVoucherMessage, NodePaymentsConfig, PeerInfo } from '@antseed/node'
+import type { NodePaymentsConfig, PeerInfo } from '@antseed/node'
 import { mergeBootstrapNodes, OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import {
@@ -23,9 +18,19 @@ import {
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
 import { loadReferences, findReferenceForService } from '../../../verifier/references.js'
-import { selectCohort, runCohortAudit } from '../../../verifier/audit-runner.js'
-import type { ProbeExecutor, ProbeSourceKind } from '../../../verifier/audit-runner.js'
-import { probeSellerViaDelegates } from '../../../verifier/delegated-probing.js'
+import {
+  drainPendingReveals,
+  loadBurnedReferenceIds,
+  runCohortAudit,
+  selectCohort,
+} from '../../../verifier/audit-runner.js'
+import type { ProbeAuthor, ProbeExecutor, ProbeSourceKind } from '../../../verifier/audit-runner.js'
+import { authorProbes } from '../../../verifier/probe-author.js'
+import {
+  makeNodeTargetQuerier,
+  probeSellerViaDelegates,
+  solicitDelegateTargets,
+} from '../../../verifier/delegated-probing.js'
 import { discoverServices } from '../../../verifier/service-discovery.js'
 import { buildKbfReference, resolveUpstream, resolveUpstreamModel } from '../../../verifier/reference-builder.js'
 import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
@@ -41,16 +46,10 @@ const DEFAULT_MAX_PROBES_PER_REQUEST = 3
 const DEFAULT_COHORT_MIN_SIZE = 3
 const DEFAULT_COHORT_MAX_SIZE = 10
 const DEFAULT_AUDIT_INTERVAL_MS = 300_000
-const DEFAULT_PROBE_SOURCE = 'compositional' as const
 const DEFAULT_PROBE_ROTATION_HISTORY = 2000
+const DEFAULT_REVEAL_DELAY_MS = 0
 const DEFAULT_DELEGATE_JOB_TIMEOUT_MS = 60_000
 const DEFAULT_MIN_DELEGATES = 1
-/**
- * How long an issued DelegateVoucher stays claimable. Generous by design:
- * claims land in the claim-time epoch, so a delegate whose verifier already
- * exhausted its per-epoch grant cap simply claims in a later epoch.
- */
-const VOUCHER_TTL_SECS = 30 * 24 * 60 * 60
 /**
  * KBF references drift as upstream backends update — the published KBF study
  * (arXiv:2605.29524) measured probe staleness at ~7–9 weeks. Warn (once per
@@ -77,9 +76,13 @@ interface ResolvedVerifierOptions {
   auditIntervalMs: number
   stalenessWindowSecs: number | undefined
   probeSource: ProbeSourceKind
+  probeAuthorModel: string | undefined
   probeRotationHistory: number
   referencesDir: string
-  evidenceDir: string
+  publishDir: string
+  publishBaseUrl: string | undefined
+  revealDelayMs: number
+  revealQueueDir: string
   probeLogDir: string
   delegation: {
     enabled: boolean
@@ -110,10 +113,19 @@ function resolveVerifierOptions(
     cohortMaxSize: verifierConfig?.cohortMaxSize ?? DEFAULT_COHORT_MAX_SIZE,
     auditIntervalMs: flags.interval ?? verifierConfig?.auditIntervalMs ?? DEFAULT_AUDIT_INTERVAL_MS,
     stalenessWindowSecs: verifierConfig?.stalenessWindowSecs,
-    probeSource: verifierConfig?.probeSource ?? DEFAULT_PROBE_SOURCE,
+    // llm authoring needs an upstream to author + certify against; without
+    // one the compositional space remains the default.
+    probeSource: verifierConfig?.probeSource
+      ?? (verifierConfig?.upstream?.baseUrl ? 'llm' : 'compositional'),
+    probeAuthorModel: verifierConfig?.probeAuthorModel,
     probeRotationHistory: verifierConfig?.probeRotationHistory ?? DEFAULT_PROBE_ROTATION_HISTORY,
     referencesDir: verifierConfig?.referencesDir ?? join(dataDir, 'fingerprints', 'references'),
-    evidenceDir: verifierConfig?.evidenceDir ?? join(dataDir, 'fingerprints', 'evidence'),
+    publishDir: verifierConfig?.publishDir ?? join(dataDir, 'verifier', 'packs'),
+    publishBaseUrl: verifierConfig?.publishBaseUrl,
+    revealDelayMs: verifierConfig?.revealDelayMs ?? DEFAULT_REVEAL_DELAY_MS,
+    // Durable pending-reveal queue (pending-reveals.json) — failed or delayed
+    // reveals are retried at round boundaries, across restarts.
+    revealQueueDir: join(dataDir, 'verifier'),
     probeLogDir: verifierConfig?.probeLogDir ?? join(dataDir, 'fingerprints', 'probe-log'),
     delegation: {
       enabled: verifierConfig?.delegation?.enabled ?? false,
@@ -265,6 +277,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       console.log(chalk.dim(`  services: ${verifierOptions.services.length > 0 ? verifierOptions.services.join(', ') : 'auto-discover (all advertised on the network)'}`))
       console.log(chalk.dim(`  probes per audit: ${verifierOptions.probesPerAudit} (${verifierOptions.maxProbesPerRequest}/request, stealth)`))
       console.log(chalk.dim(`  probe source: ${verifierOptions.probeSource} (rotation history: ${verifierOptions.probeRotationHistory})`))
+      console.log(chalk.dim(`  audit packs: ${verifierOptions.publishDir} (reveal delay: ${verifierOptions.revealDelayMs}ms)`))
       console.log(chalk.dim(`  cohort size: ${verifierOptions.cohortMinSize}-${verifierOptions.cohortMaxSize}`))
       console.log(chalk.dim(`  audits per epoch: ${verifierOptions.maxAuditsPerEpoch} (on-chain cap: ${policy.maxCreditsPerVerifierPerEpoch})`))
       console.log(chalk.dim(`  staleness window: ${stalenessWindowSecs}s`))
@@ -310,83 +323,6 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       const log = (m: string) => console.log(chalk.dim(`[verifier] ${m}`))
       const warn = (m: string) => console.warn(chalk.yellow(`[verifier] ${m}`))
 
-      /**
-       * Sign and deliver one EIP-712 DelegateVoucher per carrier for a cohort
-       * audit's probe commitment. Nothing goes on-chain here — the delegate's
-       * operator claims the voucher itself, and the contract enforces the
-       * commitment budget (credited attestations only), the operator binding,
-       * and the per-epoch cap. We clamp to the commitment's remaining budget
-       * up front so we never issue vouchers that can only revert.
-       */
-      const issueDelegateVouchers = async (probeCommitment: string, roundJobs: Map<string, number>): Promise<void> => {
-        if (roundJobs.size === 0) return
-        const registryAddress = chainConfig.verifierRegistryAddress
-        if (!registryAddress) {
-          warn('verifierRegistryAddress missing from chain config; cannot issue delegate vouchers')
-          return
-        }
-        try {
-          const [budget, granted] = await Promise.all([
-            registryClient.commitmentDelegateBudget(address, probeCommitment),
-            registryClient.commitmentDelegateCredits(address, probeCommitment),
-          ])
-          const available = budget - granted
-          if (available <= 0) {
-            log(`No delegate-credit budget on commitment ${probeCommitment.slice(0, 10)}… (no credited attestations); skipping vouchers`)
-            return
-          }
-          // Largest contributors first; scale down when carried jobs exceed
-          // what the credited attestations can back.
-          let entries = [...roundJobs.entries()].sort((a, b) => b[1] - a[1])
-          let total = entries.reduce((sum, [, jobs]) => sum + jobs, 0)
-          if (total > available) {
-            const scale = available / total
-            entries = entries
-              .map(([peerId, jobs]) => [peerId, Math.floor(jobs * scale)] as [string, number])
-              .filter(([, credits]) => credits > 0)
-            total = entries.reduce((sum, [, credits]) => sum + credits, 0)
-            if (entries.length === 0 || total === 0) {
-              log(`Commitment budget too low to voucher this round (${available} left)`)
-              return
-            }
-          }
-          const domain = makeVerifierRegistryDomain(chainConfig.evmChainId, registryAddress)
-          const deadline = Math.floor(Date.now() / 1000) + VOUCHER_TTL_SECS
-          let issued = 0
-          for (const [delegatePeerId, credits] of entries) {
-            const msg: DelegateVoucherMessage = {
-              buyer: peerIdToAddress(delegatePeerId),
-              probeCommitment,
-              credits,
-              nonce: BigInt('0x' + randomBytes(16).toString('hex')),
-              deadline,
-            }
-            const signature = await signDelegateVoucher(identity.wallet, domain, msg)
-            try {
-              node.sendDelegateVoucher(toPeerId(delegatePeerId), {
-                version: 1,
-                chainId: chainConfig.evmChainId,
-                registry: registryAddress,
-                buyer: msg.buyer,
-                probeCommitment,
-                credits,
-                nonce: msg.nonce.toString(),
-                deadline,
-                signature,
-              })
-              issued += 1
-            } catch (err) {
-              // The delegate disconnected between carrying and crediting; its
-              // budget share stays unissued rather than being reassigned.
-              warn(`voucher delivery to ${delegatePeerId.slice(0, 12)}… failed: ${(err as Error).message}`)
-            }
-          }
-          log(`Issued ${issued}/${entries.length} delegate voucher(s) for ${total} credit(s) on commitment ${probeCommitment.slice(0, 10)}…`)
-        } catch (err) {
-          warn(`delegate voucher issuance failed: ${(err as Error).message}`)
-        }
-      }
-
       // Claims scan the full on-chain claimable window (effectiveEpoch..)
       // like `verifier claim`/`verifier status`; the settled floor from each
       // pass avoids re-reading finished epochs every round. One failing epoch
@@ -426,7 +362,22 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       )
       const backoffKey = (peerId: string, service: string): string => `${peerId}:${service}`
 
+      const revealQueueOptions = {
+        revealQueueDir: verifierOptions.revealQueueDir,
+        probeLogDir: verifierOptions.probeLogDir,
+        probeRotationHistory: verifierOptions.probeRotationHistory,
+        log,
+        warn,
+      }
+
       const runRound = async (): Promise<void> => {
+        // Drain the durable reveal queue first: due reveals that failed or
+        // were revealDelayMs-held in prior rounds — or prior daemon runs —
+        // are retried here (the contract has no reveal deadline, so retrying
+        // across restarts is safe). This first-round drain also covers
+        // daemon startup.
+        await drainPendingReveals(identity, registryClient, revealQueueOptions)
+
         await claimFinalizedRewards()
 
         // Refresh the on-chain audit policy every round; keep the last-known
@@ -506,6 +457,25 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           })
 
           let reference = findReferenceForService(references, service)
+
+          // Burn-and-refresh: a reference whose certified probes were revealed
+          // in a past audit is burned — its expected answers are public, so a
+          // substituting seller could replay them (and a reference SAME
+          // overrides a cohort DIFF). Never grade against it; re-enroll a
+          // fresh reference instead (one attempt per burned reference per
+          // daemon run), falling back to cohort-only grading until one exists.
+          let enrollKey = service
+          let burnedReferenceIndex = -1
+          if (reference?.selfTest) {
+            const burnedIds = await loadBurnedReferenceIds(verifierOptions.probeLogDir, service)
+            if (burnedIds.has(reference.referenceId)) {
+              log(`${service}: reference ${reference.referenceId.slice(0, 18)}… is burned (revealed in a past audit); a fresh one is needed`)
+              enrollKey = `${service}:${reference.referenceId}`
+              burnedReferenceIndex = references.indexOf(reference)
+              reference = undefined
+            }
+          }
+
           const cohort = await selectCohort(probeablePeers, service, registryClient, {
             cohortMaxSize: Math.min(verifierOptions.cohortMaxSize, remaining, remainingAttempts),
             stalenessWindowSecs,
@@ -516,21 +486,33 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             continue
           }
 
-          // No reference yet but an upstream is configured: enroll one now
-          // (once per service per daemon run). A certified reference both
+          // No usable reference (none, or the existing one is burned) but an
+          // upstream is configured: enroll one now (once per service — or per
+          // burned reference — per daemon run). A certified reference both
           // anchors cohort consensus and unlocks auditing lone sellers.
-          if (!reference?.selfTest && upstream && !enrollAttempted.has(service)) {
-            enrollAttempted.add(service)
+          // Under the llm probe source a reference is only enrolled when the
+          // cohort is too small for consensus: transparent audits reveal every probe after
+          // its audit, so a reference's certified probes are burned by their
+          // first reveal — freshly authored probes cost nothing
+          // to reveal, which is the point of llm mode.
+          const wantReference = verifierOptions.probeSource !== 'llm'
+            || cohort.length < verifierOptions.cohortMinSize
+          if (!reference?.selfTest && upstream && wantReference && !enrollAttempted.has(enrollKey)) {
+            enrollAttempted.add(enrollKey)
             // Upstreams match model ids case-sensitively: enroll with the
             // advertised spelling, never the lowercased grouping key.
             const upstreamModel = resolveUpstreamModel(config.verifier?.upstream?.modelMap, service, advertised)
-            log(`${service}: no reference — enrolling via ${upstream.baseUrl} as "${upstreamModel}"`)
+            log(`${service}: no usable reference — enrolling via ${upstream.baseUrl} as "${upstreamModel}"`)
             try {
               const built = await buildKbfReference(upstream, { model: upstreamModel, service, log })
               await mkdir(verifierOptions.referencesDir, { recursive: true })
               const outPath = join(verifierOptions.referencesDir, `${safeServiceSlug(service)}.json`)
               await writeFile(outPath, JSON.stringify(built, null, 2))
-              references.push(built)
+              // A fresh reference REPLACES a burned one in the in-memory list
+              // (findReferenceForService returns the first match, which would
+              // otherwise keep resolving to the burned entry every round).
+              if (burnedReferenceIndex >= 0) references[burnedReferenceIndex] = built
+              else references.push(built)
               reference = built
               log(`${service}: reference enrolled (${built.probes.length} probes, self-error ${(built.selfTest.errorRate * 100).toFixed(1)}%) → ${outPath}`)
             } catch (err) {
@@ -565,6 +547,13 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           if (verifierOptions.delegation.enabled) {
             const delegates = node.getConnectedDelegates()
             if (delegates.length >= verifierOptions.delegation.minDelegates) {
+              // Target solicitation: ask each delegate which sellers of this
+              // service it ALREADY uses, and prefer those organic pairings
+              // when assigning probe jobs. Unsuggested sellers fall back to
+              // the ordinary carrier rotation.
+              const suggestionsBySeller = await solicitDelegateTargets(
+                delegates, service, makeNodeTargetQuerier(node), { log, warn },
+              )
               probeExecutor = (peer, svc, probeSet, maxPerRequest) =>
                 probeSellerViaDelegates(
                   node,
@@ -573,13 +562,38 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                   svc,
                   probeSet,
                   maxPerRequest,
-                  { jobTimeoutMs: verifierOptions.delegation.jobTimeoutMs, log, warn },
+                  {
+                    jobTimeoutMs: verifierOptions.delegation.jobTimeoutMs,
+                    preferredDelegatePeerIds: suggestionsBySeller.get(peer.peerId.toLowerCase()) ?? [],
+                    log,
+                    warn,
+                  },
                 )
             } else if (verifierOptions.delegation.requireDelegates) {
               log(`${service}: ${delegates.length}/${verifierOptions.delegation.minDelegates} delegate(s) connected; skipping (delegates required)`)
               continue
             } else {
               log(`${service}: ${delegates.length}/${verifierOptions.delegation.minDelegates} delegate(s) connected — probing directly this round`)
+            }
+          }
+
+          // LLM probe authoring: candidates are authored (probeAuthorModel or
+          // the service's reference model) and certified against the
+          // service's reference model — always with the ADVERTISED spelling,
+          // since upstreams match model ids case-sensitively.
+          let probeAuthor: ProbeAuthor | undefined
+          if (upstream && verifierOptions.probeSource === 'llm') {
+            const upstreamModel = resolveUpstreamModel(config.verifier?.upstream?.modelMap, service, advertised)
+            probeAuthor = async (params) => {
+              const authored = await authorProbes(upstream, {
+                service: params.service,
+                model: upstreamModel,
+                ...(verifierOptions.probeAuthorModel ? { authorModel: verifierOptions.probeAuthorModel } : {}),
+                count: params.count,
+                exclude: params.exclude,
+                log,
+              })
+              return authored.probes
             }
           }
 
@@ -598,8 +612,12 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                 cohortMaxSize: verifierOptions.cohortMaxSize,
                 stalenessWindowSecs,
                 maxProbesPerRequest: verifierOptions.maxProbesPerRequest,
-                evidenceDir: verifierOptions.evidenceDir,
+                publishDir: verifierOptions.publishDir,
+                ...(verifierOptions.publishBaseUrl ? { publishBaseUrl: verifierOptions.publishBaseUrl } : {}),
+                revealDelayMs: verifierOptions.revealDelayMs,
+                revealQueueDir: verifierOptions.revealQueueDir,
                 probeSource: verifierOptions.probeSource,
+                ...(probeAuthor ? { probeAuthor } : {}),
                 probeLogDir: verifierOptions.probeLogDir,
                 probeRotationHistory: verifierOptions.probeRotationHistory,
                 // Sellers match the wire model id case-sensitively: probe
@@ -626,11 +644,11 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
               if (outcome.credited) sellerBackoff.recordSuccess(key)
               else sellerBackoff.recordFailure(key)
             }
-            // Vouchers are per probe commitment: issue right after the
-            // audit's attestations funded the commitment's delegate budget.
-            if (verifierOptions.delegation.enabled && result.delegateJobs.size > 0) {
-              await issueDelegateVouchers(result.probeCommitment, result.delegateJobs)
-            }
+            // No voucher issuance: delegate credits already accrued on-chain
+            // when this round's exchange batch was anchored (the anchor
+            // verifies each seller-signed ResponseAuth and credits the buyer
+            // named in it). Each carrier discovers and claims them from chain
+            // events — the verifier signs and sends nothing.
             console.log(chalk.bold(`${service}: audited ${result.cohortSize} sellers — ${attested} attested (${credited} credited), ${diffs} DIFF`))
           } catch (err) {
             // Probes may have been dispatched before the failure — count the

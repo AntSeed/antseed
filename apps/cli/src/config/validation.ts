@@ -7,6 +7,7 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { MAX_AUDIT_PROBES_PER_REQUEST } from '../verifier/limits.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -332,14 +333,31 @@ function validateVerifierConfig(
     }
   }
   if (
+    verifier.maxProbesPerRequest !== undefined &&
+    verifier.maxProbesPerRequest > MAX_AUDIT_PROBES_PER_REQUEST
+  ) {
+    errors.push(`${path}.maxProbesPerRequest must be <= ${MAX_AUDIT_PROBES_PER_REQUEST}`);
+  }
+  if (
     verifier.cohortMinSize !== undefined &&
     verifier.cohortMaxSize !== undefined &&
     verifier.cohortMaxSize < verifier.cohortMinSize
   ) {
     errors.push(`${path}.cohortMaxSize must be >= ${path}.cohortMinSize`);
   }
-  if (verifier.probeSource !== undefined && verifier.probeSource !== 'compositional' && verifier.probeSource !== 'bank') {
-    errors.push(`${path}.probeSource must be "compositional" or "bank"`);
+  if (
+    verifier.probeSource !== undefined &&
+    verifier.probeSource !== 'llm' &&
+    verifier.probeSource !== 'compositional' &&
+    verifier.probeSource !== 'bank'
+  ) {
+    errors.push(`${path}.probeSource must be "llm", "compositional" or "bank"`);
+  }
+  if (
+    verifier.probeAuthorModel !== undefined &&
+    (typeof verifier.probeAuthorModel !== 'string' || verifier.probeAuthorModel.trim().length === 0)
+  ) {
+    errors.push(`${path}.probeAuthorModel must be a non-empty string when provided`);
   }
   if (
     verifier.probeRotationHistory !== undefined &&
@@ -347,9 +365,16 @@ function validateVerifierConfig(
   ) {
     errors.push(`${path}.probeRotationHistory must be an integer >= 0`);
   }
+  if (
+    verifier.revealDelayMs !== undefined &&
+    (!Number.isInteger(verifier.revealDelayMs) || verifier.revealDelayMs < 0)
+  ) {
+    errors.push(`${path}.revealDelayMs must be an integer >= 0`);
+  }
   const dirKeys: Array<[string, unknown]> = [
     ['referencesDir', verifier.referencesDir],
-    ['evidenceDir', verifier.evidenceDir],
+    ['publishDir', verifier.publishDir],
+    ['publishBaseUrl', verifier.publishBaseUrl],
     ['probeLogDir', verifier.probeLogDir],
   ];
   for (const [key, value] of dirKeys) {

@@ -130,14 +130,18 @@ interface ChatCompletionResponse {
   error?: { message?: string }
 }
 
-async function queryBatch(
+/**
+ * POST a chat-completions request to an OpenAI-compatible upstream and return
+ * the first choice's text content. Shared by reference enrollment (queryBatch)
+ * and probe authoring (probe-author.ts). `errorContext` prefixes error
+ * messages so callers keep their distinct diagnostics.
+ */
+export async function postChatCompletion(
   upstream: UpstreamApiConfig,
-  model: string,
-  batch: readonly KbfProbe[],
-  temperature: number,
+  body: unknown,
   fetchFn: typeof fetch,
-): Promise<Array<number | null>> {
-  const body = { ...buildKbfChatRequestBody(model, batch), temperature }
+  errorContext = 'upstream',
+): Promise<string> {
   const response = await fetchFn(`${upstream.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -149,13 +153,27 @@ async function queryBatch(
   })
   if (!response.ok) {
     const text = await response.text().catch(() => '')
-    throw new Error(`upstream ${response.status}: ${text.slice(0, 200)}`)
+    throw new Error(`${errorContext} ${response.status}: ${text.slice(0, 200)}`)
   }
   const parsed = (await response.json()) as ChatCompletionResponse
   const content = parsed.choices?.[0]?.message?.content
   if (typeof content !== 'string') {
-    throw new Error(`upstream returned no text content${parsed.error?.message ? `: ${parsed.error.message}` : ''}`)
+    throw new Error(
+      `${errorContext} returned no text content${parsed.error?.message ? `: ${parsed.error.message}` : ''}`,
+    )
   }
+  return content
+}
+
+async function queryBatch(
+  upstream: UpstreamApiConfig,
+  model: string,
+  batch: readonly KbfProbe[],
+  temperature: number,
+  fetchFn: typeof fetch,
+): Promise<Array<number | null>> {
+  const body = { ...buildKbfChatRequestBody(model, batch), temperature }
+  const content = await postChatCompletion(upstream, body, fetchFn)
   return parseKbfAnswers(content, batch.length)
 }
 

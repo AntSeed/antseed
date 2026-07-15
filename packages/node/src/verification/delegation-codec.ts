@@ -1,10 +1,10 @@
-import { Signature } from 'ethers';
 import type {
   DelegateHelloPayload,
-  DelegateVoucherPayload,
   DelegateWelcomePayload,
   ProbeJobRequestPayload,
   ProbeJobResultPayload,
+  TargetQueryPayload,
+  TargetSuggestionPayload,
 } from '../types/protocol.js';
 import { parseJsonObject, requireFiniteNumberField, requireStringField } from '../utils/json-codec.js';
 import { decodeResponseAuth } from './codec.js';
@@ -33,43 +33,6 @@ function checkEncodedSize(bytes: Uint8Array, maxBytes: number, payloadName: stri
     throw new Error(`${payloadName} too large to encode: ${bytes.length} > ${maxBytes}`);
   }
   return bytes;
-}
-
-/** Require a 0x-prefixed hex string of one of the given byte lengths. */
-function requireHexBytesField(
-  obj: Record<string, unknown>,
-  field: string,
-  byteLengths: number[],
-): string {
-  const value = requireStringField(obj, field);
-  if (!/^0x[0-9a-fA-F]*$/.test(value) || !byteLengths.includes((value.length - 2) / 2)) {
-    throw new Error(
-      `Delegation payload field "${field}" must be 0x-prefixed hex of ${byteLengths.join(' or ')} byte(s)`,
-    );
-  }
-  return value;
-}
-
-/**
- * Require an ECDSA signature field and normalize it to the canonical 65-byte
- * (r,s,v) serialization. EIP-2098 compact (64-byte) signatures are accepted
- * on the wire, but the on-chain claim path (OZ `ECDSA.recover(bytes32,bytes)`)
- * reverts on any length other than 65 — a voucher persisted in compact form
- * would verify locally (ethers accepts both forms) yet be unclaimable, so
- * canonicalize before the payload reaches any caller. This also rejects
- * malleable high-s signatures and normalizes v to 27/28, matching what the
- * contract accepts.
- */
-function requireCanonicalSignatureField(obj: Record<string, unknown>, field: string): string {
-  const value = requireHexBytesField(obj, field, [64, 65]);
-  try {
-    return Signature.from(value).serialized;
-  } catch (err) {
-    throw new Error(
-      `Delegation payload field "${field}" is not a valid ECDSA signature: `
-      + (err instanceof Error ? err.message : String(err)),
-    );
-  }
 }
 
 function requireVersion1(obj: Record<string, unknown>): 1 {
@@ -109,28 +72,6 @@ export function decodeDelegateHello(data: Uint8Array): DelegateHelloPayload {
   return result;
 }
 
-export function encodeDelegateVoucher(payload: DelegateVoucherPayload): Uint8Array {
-  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'DelegateVoucher');
-}
-
-export function decodeDelegateVoucher(data: Uint8Array): DelegateVoucherPayload {
-  const obj = parseDelegationJson(data, MAX_CONTROL_PAYLOAD_SIZE);
-  return {
-    version: requireVersion1(obj),
-    chainId: requireFiniteNumberField(obj, 'chainId'),
-    // Addresses are 20 bytes; the probe-set commitment is a bytes32 hash; the
-    // signature is canonicalized to the 65-byte (r,s,v) form the on-chain
-    // claim accepts (see requireCanonicalSignatureField).
-    registry: requireHexBytesField(obj, 'registry', [20]),
-    buyer: requireHexBytesField(obj, 'buyer', [20]),
-    probeCommitment: requireHexBytesField(obj, 'probeCommitment', [32]),
-    credits: requireFiniteNumberField(obj, 'credits'),
-    nonce: requireStringField(obj, 'nonce'),
-    deadline: requireFiniteNumberField(obj, 'deadline'),
-    signature: requireCanonicalSignatureField(obj, 'signature'),
-  };
-}
-
 export function encodeDelegateWelcome(payload: DelegateWelcomePayload): Uint8Array {
   return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'DelegateWelcome');
 }
@@ -148,6 +89,47 @@ export function decodeDelegateWelcome(data: Uint8Array): DelegateWelcomePayload 
     result.reason = obj.reason;
   }
   return result;
+}
+
+export function encodeTargetQuery(payload: TargetQueryPayload): Uint8Array {
+  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'TargetQuery');
+}
+
+export function decodeTargetQuery(data: Uint8Array): TargetQueryPayload {
+  const obj = parseDelegationJson(data, MAX_CONTROL_PAYLOAD_SIZE);
+  return {
+    version: requireVersion1(obj),
+    queryId: requireStringField(obj, 'queryId'),
+    service: requireStringField(obj, 'service'),
+  };
+}
+
+export function encodeTargetSuggestion(payload: TargetSuggestionPayload): Uint8Array {
+  return checkEncodedSize(encoder.encode(JSON.stringify(payload)), MAX_CONTROL_PAYLOAD_SIZE, 'TargetSuggestion');
+}
+
+export function decodeTargetSuggestion(data: Uint8Array): TargetSuggestionPayload {
+  const obj = parseDelegationJson(data, MAX_CONTROL_PAYLOAD_SIZE);
+  const rawSellers = obj.sellers;
+  if (!Array.isArray(rawSellers)) {
+    throw new Error('Delegation payload field "sellers" must be an array');
+  }
+  const sellers = rawSellers.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`Delegation payload field "sellers[${index}]" must be an object`);
+    }
+    const sellerObj = entry as Record<string, unknown>;
+    return {
+      peerId: requireStringField(sellerObj, 'peerId'),
+      agentId: requireFiniteNumberField(sellerObj, 'agentId'),
+    };
+  });
+  return {
+    version: requireVersion1(obj),
+    queryId: requireStringField(obj, 'queryId'),
+    service: requireStringField(obj, 'service'),
+    sellers,
+  };
 }
 
 export function encodeProbeJobRequest(payload: ProbeJobRequestPayload): Uint8Array {

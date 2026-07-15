@@ -40,7 +40,14 @@ export enum MessageType {
   DelegateWelcome = 0x91,
   ProbeJobRequest = 0x92,
   ProbeJobResult = 0x93,
-  DelegateVoucher = 0x94,
+  // 0x94 RETIRED (reserved, never reassign): formerly DelegateVoucher, the
+  // off-chain EIP-712 voucher a verifier signed for a carrier. Delegate
+  // credits now accrue on-chain at anchor time (AntseedVerifierRegistry
+  // .anchorExchangeBatch verifies each seller-signed ResponseAuth and credits
+  // the buyer named in it); carriers discover accruals from the
+  // DelegateCreditsAccrued event and claim them via claimDelegateCredits.
+  TargetQuery = 0x95,
+  TargetSuggestion = 0x96,
 
   Disconnect = 0xF0,
   Error = 0xFF,
@@ -235,8 +242,9 @@ export interface ResponseAuthPayload {
 /**
  * Delegate buyer introduces itself to a verifier after connecting. The
  * delegate's on-chain identity IS the connection's peerId (an EVM address),
- * so there is nothing to assert: vouchers are issued to that address and the
- * contract resolves its deposits operator at claim time.
+ * so there is nothing to assert: that address is the buyer named in the
+ * seller-signed ResponseAuth payloads the verifier anchors, and the contract
+ * credits it (resolving its deposits operator at claim time).
  */
 export interface DelegateHelloPayload {
   version: 1;
@@ -276,29 +284,27 @@ export interface ProbeJobRequestPayload {
 }
 
 /**
- * Verifier-signed EIP-712 DelegateVoucher for probe traffic this delegate
- * carried, sent over the delegation channel after the audit's attestations
- * land on-chain. The buyer's deposits OPERATOR claims it via
- * AntseedVerifierRegistry.claimDelegateCredits — this payload is the claim's
- * entire input, so the delegate must persist it durably.
+ * Verifier asks a connected delegate which sellers of `service` the delegate
+ * ALREADY uses, so probe jobs can be routed over organic buyer→seller pairs
+ * (traffic indistinguishable from the delegate's real usage). Correlated with
+ * its TargetSuggestion by `queryId`.
  */
-export interface DelegateVoucherPayload {
+export interface TargetQueryPayload {
   version: 1;
-  /** EVM chain the voucher is claimable on. */
-  chainId: number;
-  /** AntseedVerifierRegistry address (the EIP-712 verifying contract). */
-  registry: string;
-  /** Buyer (this delegate's peer/hot-wallet) address named in the voucher. */
-  buyer: string;
-  /** Probe-set commitment whose credited attestations back these credits. */
-  probeCommitment: string;
-  credits: number;
-  /** uint256 nonce as a decimal string (unique per verifier). */
-  nonce: string;
-  /** Claim deadline, unix seconds. */
-  deadline: number;
-  /** Verifier's EIP-712 signature over the DelegateVoucher struct. */
-  signature: string;
+  queryId: string;
+  service: string;
+}
+
+/**
+ * Delegate's answer to a TargetQuery: sellers of `service` it has organically
+ * routed to. An empty list is a valid answer (the verifier falls back to
+ * assignment); the verifier trusts nothing here beyond a routing hint.
+ */
+export interface TargetSuggestionPayload {
+  version: 1;
+  queryId: string;
+  service: string;
+  sellers: Array<{ peerId: string; agentId: number }>;
 }
 
 /**

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type {
   AntseedNode,
+  DelegateCreditsAccrual,
   PeerInfo,
   ProbeJobRequestPayload,
   ProbeJobResultPayload,
@@ -91,9 +92,6 @@ function makeWorker(node: AntseedNode, overrides?: {
   return new DelegateWorker({
     node,
     isApprovedVerifier: overrides?.isApprovedVerifier ?? (async () => true),
-    expectedChainId: 8453,
-    verifierRegistryAddress: '0x' + '11'.repeat(20),
-    voucherStore: { add: async () => true },
     ...(overrides?.approvalTtlMs !== undefined ? { approvalTtlMs: overrides.approvalTtlMs } : {}),
     ...(overrides?.rejectedTtlMs !== undefined ? { rejectedTtlMs: overrides.rejectedTtlMs } : {}),
     ...(overrides?.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: overrides.discoveryIntervalMs } : {}),
@@ -255,6 +253,55 @@ test('a transient rejection expires instead of blacklisting the verifier until r
     // …but once it expires, a later scan re-evaluates and serves it.
     await waitFor(() => worker.servingVerifiers.length === 1)
     assert.deepEqual(worker.servingVerifiers, [VERIFIER_PEER])
+  } finally {
+    worker.stop()
+  }
+})
+
+test('discovers on-chain credit accruals for its own buyer and records them from the persisted cursor', async () => {
+  const handlers: JobHandler[] = []
+  const node = fakeNode(handlers)
+  const scans: Array<{ buyer: string; fromBlock: number }> = []
+  const recorded: DelegateCreditsAccrual[] = []
+  let cursor = 0
+  const accrual: DelegateCreditsAccrual = {
+    verifier: 'v'.repeat(40),
+    probeCommitment: '0x' + 'ab'.repeat(32),
+    buyer: SELF_PEER,
+    credits: 4,
+    blockNumber: 500,
+  }
+  const worker = new DelegateWorker({
+    node,
+    isApprovedVerifier: async () => true,
+    discoveryIntervalMs: 20,
+    creditStore: {
+      getCursor: async () => cursor,
+      recordScan: async (accruals, toBlock) => {
+        recorded.push(...accruals)
+        cursor = toBlock
+        return accruals.length
+      },
+    },
+    discoverAccruals: async (buyer, fromBlock) => {
+      scans.push({ buyer, fromBlock })
+      // First scan returns the accrual; later scans (from the advanced cursor)
+      // return nothing — the buyer address is the log filter.
+      return fromBlock <= 500 ? { accruals: [accrual], toBlock: 500 } : { accruals: [], toBlock: fromBlock }
+    },
+    log: () => {},
+    warn: () => {},
+  })
+  try {
+    worker.start()
+    await waitFor(() => recorded.length === 1)
+    assert.equal(recorded[0]!.probeCommitment, accrual.probeCommitment)
+    // The scan is filtered by this node's own buyer address and resumes from
+    // the persisted cursor (0 on the first pass, then 500).
+    assert.equal(scans[0]!.buyer.toLowerCase(), ('0x' + SELF_PEER).toLowerCase())
+    assert.equal(scans[0]!.fromBlock, 0)
+    await waitFor(() => scans.length >= 2)
+    assert.equal(scans[1]!.fromBlock, 500)
   } finally {
     worker.stop()
   }

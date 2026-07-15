@@ -8,7 +8,7 @@ import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
 } from '@antseed/node'
-import { verifyResponseAuth } from '@antseed/node'
+import { toPeerId, verifyResponseAuth } from '@antseed/node'
 import type { ProbeSet } from '@antseed/fingerprints'
 import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/fingerprints'
 import type { ProbeExchangeEvidence, SellerProbeRun } from './probing.js'
@@ -34,14 +34,161 @@ function boundedProbeMaxTokens(probeCount: number): number {
 export interface DelegatedProbeOptions {
   /** Per-job execution budget granted to the delegate. */
   jobTimeoutMs: number
+  /**
+   * Delegates that reported ORGANIC history with this seller (TargetQuery
+   * solicitation). They are tried first: a probe carried by a buyer that
+   * already uses the seller is indistinguishable from its normal traffic,
+   * which is the whole stealth argument. Unknown/absent entries fall back to
+   * the ordinary rotation.
+   */
+  preferredDelegatePeerIds?: readonly string[]
   log: (message: string) => void
   warn: (message: string) => void
 }
 
+/** How long the verifier waits for each delegate's TargetSuggestion. */
+export const TARGET_QUERY_TIMEOUT_MS = 10_000
+
+export interface SuggestedSeller {
+  peerId: string
+  agentId: number
+}
+
+/**
+ * Sends one TargetQuery to one delegate and resolves with its suggested
+ * sellers for the service (empty array is a valid answer). Production wiring
+ * adapts the node's delegation channel (`makeNodeTargetQuerier`); tests
+ * inject fakes.
+ */
+export type TargetQuerier = (
+  delegatePeerId: string,
+  service: string,
+  timeoutMs: number,
+) => Promise<SuggestedSeller[]>
+
+/**
+ * Ask every connected delegate which sellers of `service` it ALREADY uses,
+ * before probe jobs are assigned. Failures and timeouts are per-delegate
+ * (Promise.allSettled) — a slow or silent delegate costs nothing but its own
+ * suggestions.
+ *
+ * Returns sellerPeerId (lowercased) → delegate peerIds that suggested it.
+ */
+export async function solicitDelegateTargets(
+  delegates: readonly ConnectedDelegate[],
+  service: string,
+  queryDelegate: TargetQuerier,
+  options: { timeoutMs?: number; log: (m: string) => void; warn: (m: string) => void },
+): Promise<Map<string, string[]>> {
+  const timeoutMs = options.timeoutMs ?? TARGET_QUERY_TIMEOUT_MS
+  const bySeller = new Map<string, string[]>()
+  if (delegates.length === 0) return bySeller
+
+  // Per-delegate isolation only: the querier itself enforces the timeout
+  // (DelegationMux.runTargetQuery rejects after `timeoutMs`), so allSettled
+  // just keeps one failure from costing anything but its own suggestions.
+  const settled = await Promise.allSettled(delegates.map(async (delegate) => ({
+    delegatePeerId: delegate.peerId,
+    sellers: await queryDelegate(delegate.peerId, service, timeoutMs),
+  })))
+
+  let suggestions = 0
+  settled.forEach((outcome, i) => {
+    const delegatePeerId = delegates[i]!.peerId
+    if (outcome.status === 'rejected') {
+      options.warn(`target query to ${delegatePeerId.slice(0, 10)}… failed: ${(outcome.reason as Error).message}`)
+      return
+    }
+    for (const seller of outcome.value.sellers) {
+      if (typeof seller?.peerId !== 'string' || seller.peerId.length === 0) continue
+      const key = seller.peerId.toLowerCase()
+      const list = bySeller.get(key) ?? []
+      if (!list.includes(delegatePeerId)) list.push(delegatePeerId)
+      bySeller.set(key, list)
+      suggestions += 1
+    }
+  })
+  options.log(`target solicitation for ${service}: ${suggestions} suggestion(s) across ${delegates.length} delegate(s)`)
+  return bySeller
+}
+
+/** Adapt the node's delegation channel (TargetQuery 0x95/0x96) into a TargetQuerier. */
+export function makeNodeTargetQuerier(node: AntseedNode): TargetQuerier {
+  return async (delegatePeerId, service, timeoutMs) => {
+    const suggestion = await node.queryDelegateTargets(
+      toPeerId(delegatePeerId),
+      { queryId: randomUUID(), service },
+      timeoutMs,
+    )
+    return (suggestion.sellers ?? []).filter(
+      (s): s is SuggestedSeller => typeof s?.peerId === 'string' && s.peerId.length > 0,
+    )
+  }
+}
+
 export interface DelegatedProbeOutcome {
   run: SellerProbeRun
-  /** VERIFIED jobs carried per delegate peerId, for voucher issuance. */
+  /**
+   * VERIFIED jobs carried per delegate peerId. Surfaced for corroboration
+   * (a single-carrier SAME is weak); delegate crediting itself is on-chain at
+   * anchor time (the buyer named in each seller-signed ResponseAuth), not
+   * driven by this count.
+   */
   jobsByDelegate: Map<string, number>
+}
+
+/**
+ * Minimum share of a seller's probe plans routed through a NON-suggesting
+ * delegate when both suggesting and non-suggesting delegates are connected.
+ * Suggestions may PREFER an organic carrier, but must never let it become the
+ * sole carrier: a colluding delegate that "suggests" a seller it controls
+ * would otherwise carry every probe, reviving "serve the real model only to my
+ * accomplice." ~1/3 keeps the stealth benefit (the suggested pool still
+ * carries the majority) while guaranteeing independent coverage.
+ */
+const MIN_NON_SUGGESTING_SHARE = 1 / 3
+
+/**
+ * Choose the primary carrier for each plan index. When both a suggesting pool
+ * and a non-suggesting pool are connected, an evenly-spread minimum fraction
+ * of plans is forced onto the non-suggesting pool (the rest prefer the
+ * suggesting pool); otherwise plans round-robin over the only available pool.
+ * Deterministic given the pools and plan count.
+ */
+export function assignPrimaryCarriers(
+  planCount: number,
+  preferredPool: readonly ConnectedDelegate[],
+  otherPool: readonly ConnectedDelegate[],
+  allDelegates: readonly ConnectedDelegate[],
+): ConnectedDelegate[] {
+  if (planCount <= 0) return []
+  // No suggestions, or every delegate suggested this seller: plain rotation
+  // over the relevant pool — there is no accomplice-monopoly risk to mitigate.
+  if (preferredPool.length === 0) {
+    return Array.from({ length: planCount }, (_, i) => allDelegates[i % allDelegates.length]!)
+  }
+  if (otherPool.length === 0) {
+    return Array.from({ length: planCount }, (_, i) => preferredPool[i % preferredPool.length]!)
+  }
+
+  // Both pools present: reserve evenly-spread slots for the non-suggesting
+  // pool (at least one), assign the rest to the suggesting pool.
+  const otherCount = Math.min(planCount, Math.max(1, Math.round(planCount * MIN_NON_SUGGESTING_SHARE)))
+  const otherSlots = new Set<number>()
+  for (let k = 0; k < otherCount; k += 1) {
+    otherSlots.add(Math.min(planCount - 1, Math.floor(((k + 0.5) * planCount) / otherCount)))
+  }
+  const carriers: ConnectedDelegate[] = []
+  let preferredCursor = 0
+  let otherCursor = 0
+  for (let i = 0; i < planCount; i += 1) {
+    if (otherSlots.has(i)) {
+      carriers.push(otherPool[otherCursor++ % otherPool.length]!)
+    } else {
+      carriers.push(preferredPool[preferredCursor++ % preferredPool.length]!)
+    }
+  }
+  return carriers
 }
 
 interface VerifiedJob {
@@ -78,6 +225,7 @@ export async function probeSellerViaDelegates(
 
   const answers: Array<number | null> = new Array(probeSet.probes.length).fill(null)
   const requestIds: string[] = []
+  const probesPerRequest: number[] = []
   const responseAuths: SellerProbeRun['responseAuths'] = []
   const exchanges: ProbeExchangeEvidence[] = []
   const errors: string[] = []
@@ -85,8 +233,19 @@ export async function probeSellerViaDelegates(
 
   const plans = buildStealthChatRequests(service, probeSet, { maxProbesPerRequest })
 
-  let delegateCursor = 0
-  for (const plan of plans) {
+  // Delegates that suggested this seller (organic history with it) are PREFERRED
+  // carriers — their probe traffic is indistinguishable from their normal use
+  // of the seller — but never the SOLE carrier: a guaranteed fraction of plans
+  // rides a non-suggesting delegate so a lone accomplice can't monopolize the
+  // seller's audit. Retries always draw from the full roster.
+  const preferred = new Set((options.preferredDelegatePeerIds ?? []).map((id) => id.toLowerCase()))
+  const preferredPool = delegates.filter((d) => preferred.has(d.peerId.toLowerCase()))
+  const otherPool = delegates.filter((d) => !preferred.has(d.peerId.toLowerCase()))
+  const primaryCarriers = assignPrimaryCarriers(plans.length, preferredPool, otherPool, delegates)
+
+  let fallbackCursor = 0
+  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
+    const plan = plans[planIdx]!
     // A delegate carries this probe on ITS deposit and refuses any relay
     // without a bounded completion budget (see delegate/worker.ts
     // validateProbeJob). The stealth builder deliberately omits `max_tokens` to
@@ -101,15 +260,21 @@ export async function probeSellerViaDelegates(
     const bodyBase64 = Buffer.from(bodyBytes).toString('base64')
     // One retry on a different delegate: probe secrecy for this plan is
     // already spent after the first dispatch, so a second carrier costs
-    // nothing extra in leak exposure.
-    const attempts = Math.min(2, delegates.length)
+    // nothing extra in leak exposure. The primary carrier is the anti-collusion
+    // assignment above; the retry may be any other connected delegate.
+    const primary = primaryCarriers[planIdx]!
+    const carriers: ConnectedDelegate[] = [primary]
+    for (let k = 0; k < delegates.length && carriers.length < 2; k += 1) {
+      const candidate = delegates[fallbackCursor % delegates.length]!
+      fallbackCursor += 1
+      if (candidate.peerId !== primary.peerId) carriers.push(candidate)
+    }
     let verified: VerifiedJob | null = null
     let requestId = ''
     let lastError = 'no attempt made'
 
-    for (let attempt = 0; attempt < attempts && !verified; attempt += 1) {
-      const delegate = delegates[delegateCursor % delegates.length]!
-      delegateCursor += 1
+    for (const delegate of carriers) {
+      if (verified) break
       // Fresh requestId per attempt — the request hash covers it, so a retry
       // is a distinct signed exchange rather than a replay.
       requestId = randomUUID()
@@ -130,6 +295,7 @@ export async function probeSellerViaDelegates(
     }
 
     requestIds.push(requestId)
+    probesPerRequest.push(plan.probes.length)
     exchanges.push({
       requestId,
       request: {
@@ -169,9 +335,12 @@ export async function probeSellerViaDelegates(
       agentId: peer.onChainAgentId,
       answers,
       requestIds,
+      probesPerRequest,
       responseAuths,
       exchanges,
       fullyAuthenticated: responseAuths.length > 0 && responseAuths.every((auth) => auth !== null),
+      // Distinct delegates that produced a verified exchange for this seller.
+      carrierCount: jobsByDelegate.size,
       errors,
     },
     jobsByDelegate,

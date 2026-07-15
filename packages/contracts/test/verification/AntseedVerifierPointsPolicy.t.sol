@@ -3,10 +3,12 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import { AntseedRegistryV2 } from "../../core/AntseedRegistryV2.sol";
+import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedVerifierPointsPolicy } from "../../verification/AntseedVerifierPointsPolicy.sol";
 import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegistry.sol";
+import { IAntseedVerifierRegistry } from "../../interfaces/IAntseedVerifierRegistry.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
+import { ResponseAuthFixture } from "./ResponseAuthFixture.sol";
 
 contract MockEpochClock {
     uint256 public currentEpoch;
@@ -62,8 +64,8 @@ contract MockGarbageWordFallback {
     }
 }
 
-contract AntseedVerifierPointsPolicyTest is Test {
-    AntseedRegistryV2 registry;
+contract AntseedVerifierPointsPolicyTest is Test, ResponseAuthFixture {
+    AntseedRegistry registry;
     MockERC8004Registry identity;
     MockEpochClock clock;
     MockStaking staking;
@@ -89,7 +91,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
     function setUp() public {
         vm.warp(1_700_000_000);
 
-        registry = new AntseedRegistryV2();
+        registry = new AntseedRegistry();
         identity = new MockERC8004Registry();
         clock = new MockEpochClock();
         staking = new MockStaking();
@@ -107,7 +109,15 @@ contract AntseedVerifierPointsPolicyTest is Test {
         agentId = identity.register();
         identity.setOwner(agentId, seller);
         staking.setAgentId(seller, agentId);
+
+        recordAgentId = identity.register();
+        identity.setOwner(recordAgentId, vm.addr(RECORD_SELLER_KEY));
     }
+
+    /// @dev Signing key + registered agent for the seller whose signed
+    ///      exchanges `_anchorBatch` anchors (signature-verified on-chain).
+    uint256 constant RECORD_SELLER_KEY = 0x5E11E4;
+    uint256 recordAgentId;
 
     function _commitAndAttest(uint256 agentId_, uint8 verdict) internal {
         _commitAndAttestFrom(verifier, agentId_, verdict);
@@ -118,9 +128,28 @@ contract AntseedVerifierPointsPolicyTest is Test {
         vm.prank(verifier_);
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
+        bytes32 batchRoot = _anchorBatch(verifier_, commitment);
         vm.prank(verifier_);
-        verifierRegistry.submitAttestation(agentId_, SERVICE_HASH, verdict, EVIDENCE_HASH, commitment, 10, 3);
+        verifierRegistry.submitAttestation(
+            agentId_, SERVICE_HASH, verdict, EVIDENCE_HASH, commitment, batchRoot, 10, 3
+        );
     }
+    /// @dev Anchor a fully SIGNED exchange batch bound to `commitment`,
+    ///      sized (12 records) to cover the probe counts these tests attest
+    ///      so the anchored probe-count cap never trips. Records derive from
+    ///      the commitment so every batch has a distinct root; the buyer in
+    ///      every signed payload is the anchoring verifier (no delegate
+    ///      accrual side effects).
+    function _anchorBatch(address verifier_, bytes32 commitment) internal returns (bytes32 batchRoot) {
+        (
+            IAntseedVerifierRegistry.ExchangeRecord[] memory records,
+            bytes[] memory payloads,
+            uint32[] memory counts
+        ) = makeSignedBatch(12, recordAgentId, RECORD_SELLER_KEY, verifier_, commitment);
+        vm.prank(verifier_);
+        batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+    }
+
 
     /// @dev DIFF standing from two distinct verifiers — the default
     ///      corroboration threshold for the penalty to fire.
@@ -216,7 +245,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
     function test_unsetStakingPassesThrough() public {
         // A registry whose staking address was never set resolves to
         // address(0) — the policy must not revert and passes through.
-        AntseedRegistryV2 bareRegistry = new AntseedRegistryV2();
+        AntseedRegistry bareRegistry = new AntseedRegistry();
         AntseedVerifierPointsPolicy barePolicy =
             new AntseedVerifierPointsPolicy(address(bareRegistry), address(verifierRegistry));
         (uint256 sellerPoints, uint256 buyerPoints) = barePolicy.points(CHANNEL_ID, buyer, seller, RAW_POINTS);

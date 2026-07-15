@@ -153,10 +153,11 @@ export interface BuyerCLIConfig {
  * Opt-in delegate (probe carrier) settings. A participating buyer connects
  * to on-chain-approved verifiers discovered on the DHT and relays their
  * probe requests over its ordinary paid buyer path. Carried jobs earn
- * verifier-signed DelegateVouchers naming this buyer; the buyer's deposits
- * operator claims them on-chain for a share of the verification emissions
- * bucket. There is no payout setting — the contract resolves the operator
- * at claim time.
+ * delegate credits that accrue ON-CHAIN when the verifier anchors the
+ * seller-signed exchanges naming this buyer; the worker discovers them from
+ * DelegateCreditsAccrued logs and the buyer's deposits operator claims them
+ * on-chain for a share of the verification emissions bucket. There is no
+ * payout setting — the contract resolves the operator at claim time.
  */
 export interface DelegateCLIConfig {
   enabled: boolean;
@@ -270,13 +271,24 @@ export interface VerifierCLIConfig {
   /** Skip sellers audited on-chain within this many seconds. Default: on-chain auditCooldown. */
   stalenessWindowSecs?: number;
   /**
-   * Origin of probes when no reference matches the service. `compositional`
-   * (default) draws from a large procedural entity/attribute space so a seller
-   * cannot memorize a finite bank; `bank` uses the small built-in fixture
-   * (tests/bootstrap). A matching reference always takes precedence (reference
-   * mode). Default: "compositional".
+   * Origin of probes when no reference matches the service. `llm` authors
+   * fresh candidates per audit via the configured `upstream` and certifies
+   * them with the existing reference machinery (cheap, unbounded supply, no
+   * fixed generator fingerprint — falls back to `compositional` when
+   * authoring fails); `compositional` draws from a large procedural
+   * entity/attribute space so a seller cannot memorize a finite bank; `bank`
+   * uses the small built-in fixture (tests/bootstrap). A matching reference
+   * always takes precedence (reference mode). Default: "llm" when `upstream`
+   * is configured, otherwise "compositional".
    */
-  probeSource?: 'compositional' | 'bank';
+  probeSource?: 'llm' | 'compositional' | 'bank';
+  /**
+   * Upstream model id used to AUTHOR probe candidates in `llm` probe-source
+   * mode (certification always runs against the audited service's reference
+   * model). Defaults to the certification model, i.e. the upstream model
+   * resolved for the audited service.
+   */
+  probeAuthorModel?: string;
   /**
    * Recently-used probe ids remembered per service and excluded from later
    * rounds, so a revealed probe is not reused until the pool cycles. 0 disables
@@ -289,8 +301,29 @@ export interface VerifierCLIConfig {
    * are computed in addition to cohort consensus. Default: <dataDir>/fingerprints/references.
    */
   referencesDir?: string;
-  /** Directory where evidence bundles are written. Default: <dataDir>/fingerprints/evidence. */
-  evidenceDir?: string;
+  /**
+   * Directory where audit packs are published, one per audit round
+   * (`<publishDir>/<probeCommitment>.json`, canonical JSON bytes whose
+   * SHA-256 is the on-chain evidenceHash). The pack holds the revealed probe
+   * set plus every request/response plaintext and seller ResponseAuth, so
+   * anyone can re-run the audit from public data (`antseed audit verify`).
+   * Default: <dataDir>/verifier/packs.
+   */
+  publishDir?: string;
+  /**
+   * Public base URL under which packs written to `publishDir` are served
+   * (e.g. "https://packs.example.com/audits"). When set, each round posts the
+   * pack URI `<publishBaseUrl>/<probeCommitment>.json` on-chain in the reveal,
+   * so a re-runner (`antseed audit verify`) can fetch the pack from chain data
+   * alone. Unset publishes packs locally only (verifiers must pass --pack).
+   */
+  publishBaseUrl?: string;
+  /**
+   * Milliseconds to wait between the round's attestations and revealing the
+   * probe set on-chain. 0 (default) reveals immediately after attesting;
+   * end-of-epoch reveal batching is a future knob.
+   */
+  revealDelayMs?: number;
   /** Directory for the per-service probe rotation log. Default: <dataDir>/fingerprints/probe-log. */
   probeLogDir?: string;
   /**
@@ -305,8 +338,9 @@ export interface VerifierCLIConfig {
   /**
    * Delegated probing: announce as a delegation host on the DHT and route
    * probes through opt-in organic buyers instead of this daemon's own
-   * (whitelist-linkable) buyer identity. Verified jobs earn signed
-   * DelegateVouchers, claimed on-chain by each carrier's operator.
+   * (whitelist-linkable) buyer identity. Carried exchanges credit each carrier
+   * on-chain at anchor time; carriers claim those credits themselves via their
+   * operator (no voucher is signed or sent).
    */
   delegation?: VerifierDelegationConfig;
 }

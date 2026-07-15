@@ -6,10 +6,17 @@ in `@antseed/node`. The whitelisted verifier network is implemented:
 `@antseed/fingerprints` (KBF + cohort verdict math, stealth probe engine), the
 `AntseedVerifierRegistry`/`AntseedVerifierRewards` contracts, the
 `antseed verifier` CLI daemon, buyer-delegated probe execution (probe
-delegation protocol, message types `0x90-0x94`) with EIP-712 delegate
-vouchers, and buyer-side routing enforcement of standing substitution flags.
-Fingerprint swarm distribution, additional verifier families, verifier
-staking, and seller slashing are proposed next-step work.
+delegation protocol, message types `0x90-0x96`) with on-chain anchor-time
+carrier crediting, and buyer-side routing enforcement of standing
+substitution flags.
+The audit pipeline is **transparent**: every audit follows the normative
+**commit → carry → anchor → attest → reveal** order — the probe set is sealed
+on-chain before it runs, every seller answer is signature-anchored on-chain
+before anything is revealed, and the probes themselves are published on-chain
+afterward, so anyone can re-run the entire audit from public data with
+`antseed audit verify` and reach the same verdict. Fingerprint swarm
+distribution, additional verifier families, verifier staking, and seller
+slashing are proposed next-step work.
 
 ## Overview
 
@@ -76,7 +83,7 @@ Implemented in the `@antseed/node` package:
   - allows one listener for unsolicited response-auth handling;
   - reserves `0x80-0x8F` for verification/attestation messages. The probe
     delegation protocol occupies the adjacent `0x90-0x9F` range (currently
-    `0x90-0x94`, documented below).
+    `0x90-0x96`, documented below).
 - Seller behavior:
   - creates `ResponseAuth` after a completed inference response;
   - signs with the Seller identity;
@@ -119,7 +126,50 @@ Also implemented — the whitelisted verifier network:
   pre-audit probe-set commitments (commit-reveal), per-audit attestations
   keyed by `(agentId, serviceHash)` with verdict + `evidenceHash`, staleness
   tracking (`lastAuditedAt`/`lastCreditedAt`), and per-epoch audit credits
-  bounded by a cooldown and a per-verifier cap.
+  bounded by a cooldown and a per-verifier cap. The transparent-audit
+  extensions enforce the commit → anchor → attest → reveal order on-chain:
+  - `anchorExchangeBatch(probeCommitment, ExchangeRecord[] records,
+    bytes[] signingPayloads, uint32[] recordProbeCounts)` — the verifier
+    posts the full exchange batch as calldata, one `(agentId, requestHash,
+    responseHash, responseAuthSig)` record per SIGNED STEALTH REQUEST (each
+    request bundles 1–`maxProbesPerRequest` probes, so a batch's probe count
+    generally exceeds its record count). `signingPayloads[i]` is the exact
+    ResponseAuth signing preimage for record i (13 length-prefixed UTF-8
+    fields; see `parseResponseAuthPayload`), and the contract VERIFIES EVERY
+    SELLER SIGNATURE ON-CHAIN: `responseAuthSig` must recover — over the
+    EIP-191 digest of `"antseed-data-v1:" || signingPayloads[i]` — to the
+    ERC-8004 owner of `agentId`, and the payload's embedded request/response
+    hashes must equal the anchored ones, so a verifier cannot anchor an
+    exchange the audited seller never signed. `recordProbeCounts[i]` (each
+    >= 1) declares the probes bundled in record i; the batch's probe count
+    is their contract-enforced sum, fixed at anchor time and recomputable by
+    third parties from the revealed probe set plus the anchored records.
+    The buyer peer named inside each verified payload accrues that record's
+    probe count as delegate credits (`commitmentDelegateAccrued`) when it is
+    neither the anchoring verifier nor the record's seller. The contract
+    recomputes the Merkle root FROM the calldata records (leaf =
+    `keccak256(abi.encode(agentId, requestHash, responseHash,
+    keccak256(sig)))`, pairwise keccak, odd node promoted), so the root ↔
+    data binding is on-chain-verified, and stores one packed
+    `BatchAnchor { anchoredAt, recordCount, probeCount, commitment }` keyed
+    by `(verifier, batchRoot)` (readable via `batchAnchors(verifier,
+    batchRoot)`); the referenced probe commitment must have landed strictly
+    earlier. Each commitment has exactly one batch, bounded to `[1, 256]`
+    records; duplicate request hashes are rejected, and each record declares
+    `1..3` probes.
+    anchor transaction is the practical ceiling (see the cost table below).
+  - `submitAttestation(..., batchRoot)` — every attestation must reference an
+    anchored batch whose stored commitment matches the attestation's probe
+    commitment, so a verdict can never point at evidence that was not sealed
+    on-chain first. The attestation's `probeCount` is capped by the batch's
+    anchor-time probe-count sum, so credited audit work — and the delegate
+    budget it backs — is bounded by a claim sealed before the verdict.
+  - `revealProbeSet(probeCommitment, probeSetJson)` — after at least one
+    attestation references the commitment, the verifier posts the exact
+    canonical probe-set JSON bytes on-chain; the contract checks
+    `sha256(probeSetJson) == probeCommitment` (an on-chain-verified
+    commitment opening) and marks the commitment revealed. Revealing before
+    any attestation is rejected, which prevents a reveal-then-probe ordering.
 - `AntseedVerifierRewards` contract: emissions-gate bucket controller for
   `VERIFICATION_MINTER_ID`. Each finalized epoch's bucket is split by the
   registry's `delegateShareBps` (default 2000 = 20%) into a verifier pool
@@ -135,13 +185,31 @@ Also implemented — the whitelisted verifier network:
   network. With no configured services it auto-discovers: one wildcard peer
   discovery per round enumerates every service advertised in signed peer
   metadata, and all of them become audit targets. Per service it selects
-  stalest-first cohorts, commits a fresh private probe set on-chain, probes
+  stalest-first cohorts and runs the transparent audit pipeline: author a
+  fresh probe set (LLM-generated when `verifier.upstream` is configured,
+  certified by the existing reference machinery), commit it on-chain, probe
   every cohort member with identical paid chat-completion batches over the
-  ordinary buyer path (indistinguishable from organic traffic), requires
-  verified `ResponseAuth` on probe traffic, computes cohort (and optional
-  KBF-reference) verdicts, writes evidence bundles under
-  `<dataDir>/fingerprints/evidence`, and submits attestations.
+  ordinary buyer path (indistinguishable from organic traffic, carried by
+  delegates where possible), require verified `ResponseAuth` on probe
+  traffic, anchor the full exchange batch on-chain, compute cohort (and
+  optional KBF-reference) verdicts, submit attestations bound to the anchored
+  `batchRoot`, reveal the probe set on-chain (through a durable pending-reveal
+  queue honoring an optional `verifier.revealDelayMs` holdback — see "Probe
+  Reveal"), and publish the full response pack under
+  `verifier.publishDir` (default `<dataDir>/verifier/packs/<commitment>.json`).
   `antseed verifier status` / `claim` cover credits and reward claims.
+- LLM probe authoring: with `verifier.upstream` configured the daemon defaults
+  to `probeSource: "llm"` — an upstream frontier model authors ~2× candidate
+  numeric-answer probes for the target service, each candidate is validated
+  structurally (template shape, finite numbers, sane range/tolerance, a
+  banned-volatile-pattern screen against time-varying facts), deduplicated
+  against the rotation log, and then certified by the EXISTING reference
+  machinery (consistency filtering across temperatures plus hold-out
+  self-error). `verifier.probeAuthorModel` optionally overrides the authoring
+  model. Fallback order when no upstream is configured: `llm` →
+  `compositional` → `bank`. Fresh generation is what makes per-audit probe
+  burn cheap: revealed probes are never reused, and there is no fixed
+  generator fingerprint for a seller to classify.
 - Reference enrollment: `antseed verifier reference build` enrolls a model
   through a trusted OpenAI-compatible upstream (canonical provider,
   OpenRouter, or a local deployment of the open weights) — consistency-filter
@@ -152,7 +220,11 @@ Also implemented — the whitelisted verifier network:
   reference is ground truth on its own, so it unlocks auditing services with
   fewer than `cohortMinSize` sellers — down to a single seller. References
   drift as backends update (~7–9 weeks, arXiv:2605.29524); the daemon warns
-  when one is older than 7 weeks.
+  when one is older than 7 weeks. Under transparent audits a reference is
+  also **single-use per service**: the first reveal that includes its
+  certified probes burns it (the reveal publishes each probe's expected
+  answer), and the daemon re-enrolls a fresh reference for the service —
+  burn-and-refresh, see "Probe Reveal".
 - Buyer-delegated probe execution (probe delegation protocol). Direct probing
   originates from the verifier's own buyer identity, which is linked to its
   publicly whitelisted wallet — a cheating seller could classify that
@@ -168,10 +240,9 @@ Also implemented — the whitelisted verifier network:
   - `DelegateWelcome = 0x91` — the verifier accepts or rejects the delegate.
     A full roster rejects with reason `delegate_capacity` (default cap: 64
     connected delegates). The delegate side is welcome-gated: it rejects all
-    jobs and drops all vouchers until an ACCEPTED welcome arrives, and tears
-    the channel down on a rejected or timed-out welcome. Delegates also
-    re-check the verifier against the on-chain whitelist on a TTL, dropping
-    revoked verifiers mid-session.
+    jobs until an ACCEPTED welcome arrives, and tears the channel down on a
+    rejected or timed-out welcome. Delegates also re-check the verifier against
+    the on-chain whitelist on a TTL, dropping revoked verifiers mid-session.
   - `ProbeJobRequest = 0x92` — one fully verifier-crafted stealth probe job
     (job id, target peer, service, exact serialized HTTP request). The
     delegate relays it byte-for-byte over its ordinary paid buyer path after
@@ -183,28 +254,60 @@ Also implemented — the whitelisted verifier network:
     re-verifies each seller-signed `ResponseAuth` against the exact request
     it crafted and the response body returned, so a delegate can drop a job
     but never alter or fabricate an observation.
-  - `DelegateVoucher = 0x94` — after an audit's attestations land, the
-    verifier signs one EIP-712 `DelegateVoucher` per carrier
-    (`registry`, `buyer`, `probeCommitment`, `credits`, `nonce`,
-    `deadline`) and sends it over the delegation channel. The buyer persists
-    vouchers append-only in `delegate/vouchers.jsonl`, dedup'd by signature.
-- Delegate voucher claiming: the buyer's deposits OPERATOR — never the buyer
-  hot wallet — claims each voucher on-chain via
-  `AntseedVerifierRegistry.claimDelegateCredits`. The contract resolves the
-  operator for the voucher's buyer from `AntseedDeposits` at claim time,
-  caps a verifier's total voucher credits per probe commitment by the summed
-  `probeCount` of that verifier's CREDITED attestations referencing the
-  commitment (grants must be backed by real, cooldown-limited, commit-reveal
-  audit work), and enforces per-verifier per-epoch delegate-credit caps.
-  Claimed credits earn from the delegate pool in `AntseedVerifierRewards`
-  (see above).
+  - `0x94` — RETIRED and RESERVED (never reassign). Formerly `DelegateVoucher`,
+    an off-chain EIP-712 voucher the verifier signed and pushed to a carrier.
+    Carrier crediting now accrues at anchor time from the buyer named inside
+    each seller-signed ResponseAuth payload, verified on-chain by
+    `anchorExchangeBatch`; there is no voucher to sign, send, or claim. No
+    message is emitted or handled on this type — a peer that still sends one is
+    ignored. Carriers discover their accruals from the `DelegateCreditsAccrued`
+    event (see below), not from any delegation-channel message.
+  - `TargetQuery = 0x95` — before assigning probe jobs, the verifier asks each
+    connected delegate which sellers of the audited service that delegate
+    ALREADY uses (`{ queryId, service }`).
+  - `TargetSuggestion = 0x96` — the delegate answers from its own local
+    routing/connection history (`{ queryId, service, sellers: [{peerId,
+    agentId}] }`; an empty list is fine). The verifier prefers assigning a
+    seller's probes to a delegate that suggested it — the probe then arrives
+    over a buyer→seller relationship that genuinely predates the audit —
+    and falls back to ordinary assignment for sellers no delegate suggested.
+    Suggestions time out after 10 s and are advisory only: they influence
+    job placement, never job content.
+- Delegate credit discovery: a carrier learns its accruals trustlessly from the
+  chain. `anchorExchangeBatch` emits `DelegateCreditsAccrued(verifier,
+  probeCommitment, buyer, credits)` per credited buyer, with `buyer` an INDEXED
+  topic — so a carrier `queryFilter`s the log filtered by its own address from a
+  persisted block cursor (its worker advances the cursor each scan), or polls
+  `commitmentDelegateAccrued(verifier, commitment, buyer)` for commitments it
+  learned from those events. No off-chain message carries this; the verifier
+  signs and sends nothing.
+- Delegate credit claiming: the buyer's deposits OPERATOR — never the buyer
+  hot wallet — claims on-chain via
+  `AntseedVerifierRegistry.claimDelegateCredits(verifier, probeCommitment,
+  buyer)`. WHO carried WHAT is not claimed by anyone: it accrued at anchor
+  time from the buyer named inside each seller-signed (and on-chain
+  signature-verified) ResponseAuth payload. The claim pays out the buyer's
+  unclaimed accrual, clamped to the commitment's remaining delegate budget —
+  the summed `probeCount` of the verifier's CREDITED attestations
+  referencing the commitment, so nothing is claimable before real,
+  cooldown-limited, commit-reveal audit work exists — and to the verifier's
+  remaining per-epoch delegate-credit allowance; a clamped remainder stays
+  claimable later. The contract resolves the buyer's operator from
+  `AntseedDeposits` at claim time. Claimed credits earn from the delegate
+  pool in `AntseedVerifierRewards` (see above). This anchor-time accrual
+  REPLACED the earlier off-chain EIP-712 `DelegateVoucher` claim flow.
 
 Cohort consensus is the key mechanism enabling verification without a trusted
 upstream reference: when N sellers claim the same model, the majority behavior
 is the reference and statistical outliers are the substitutes. A verifier
 cannot fabricate results after the fact — the probe-set commitment must land
-on-chain strictly before the attestation, and the evidence bundle behind
-`evidenceHash` carries the seller-signed `ResponseAuth` hashes for every probe.
+on-chain strictly before the exchange batch is anchored, the anchored batch
+carries the seller-signed `ResponseAuth` signature for every probe exchange,
+every attestation must reference an anchored `batchRoot` bound to its probe
+commitment, and the probe set itself is opened on-chain after attestation.
+The full chain of custody — commitment, exchange hashes, signatures, verdicts,
+probes — lives in calldata, so anyone can recompute the verdict from public
+data alone (see "Recomputing an Audit").
 
 Probe requests are generated by a **stealth engine**: rather than a recognizable
 numbered cloze battery ("TASK … output ONLY in (N) <number>"), each request
@@ -219,21 +322,34 @@ over all traffic can still try, at the cost of real-model spend on false
 positives; the endgame remains verification over genuinely organic buyer
 traffic.
 
-Where the probes come from is a pluggable **`ProbeSource`**. The daemon defaults
-to a compositional source that crosses large entity lists with numeric attribute
-schemas (element atomic numbers, orbital periods, country calling codes, …),
-yielding a probe space of hundreds of thousands of combinations rather than a
-memorizable checked-in bank; the static bank survives as a test/bootstrap
-fixture (`probeSource: "bank"`). Compositional probes carry only advisory
-consensus values and are scored exclusively by cohort consensus — never against
-a reference self-test. When a trusted KBF reference matches the audited service,
-its certified probes are used instead (reference mode) and reference verdicts
-are computed alongside cohort verdicts. Because commit-reveal necessarily
-reveals every probe once an audit completes, the daemon also keeps a
-per-(verifier, service) **rotation log**: the ids of recently revealed probes
-(default: last 2000) are excluded from future rounds against that service, so a
-seller cannot profit from memorizing past audits. Rotation applies only to
-large non-certified sources; certified reference probes are meant to be reused.
+Where the probes come from is a pluggable **`ProbeSource`**. The default when
+an upstream is configured is `"llm"` — fresh, per-audit LLM-authored probes
+certified by the reference machinery (see the authoring bullet above). Without
+an upstream the daemon falls back to a compositional source that crosses large
+entity lists with numeric attribute schemas (element atomic numbers, orbital
+periods, country calling codes, …), yielding a probe space of hundreds of
+thousands of combinations rather than a memorizable checked-in bank; the
+static bank survives as a test/bootstrap fixture (`probeSource: "bank"`).
+Compositional probes carry only advisory consensus values and are scored
+exclusively by cohort consensus — never against a reference self-test. When a
+trusted KBF reference matches the audited service, its certified probes drive
+reference verdicts computed alongside cohort verdicts. Because every audit now
+ends with an on-chain reveal, every used probe is burned by construction: the
+daemon keeps a per-(verifier, service) **rotation log** — the ids of recently
+revealed probes (default: last 2000) are excluded from future rounds against
+that service, so a seller cannot profit from memorizing past audits. Rotation
+applies to all probe sources — certified reference probes included: a reveal
+publishes each probe WITH its expected consensus answer, so a substituting
+seller could scrape a past reveal and replay the published answers, and a
+reference `SAME` overrides a cohort `DIFF`. The daemon therefore
+**burn-and-refreshes** references: when the reveal that published a
+reference's probes lands, it persists a per-service burn marker for that
+reference, records the revealed probe ids in the rotation log, never grades
+against the burned reference again, and re-enrolls a fresh reference for the
+service; until one is available it falls back to cohort-only grading (no
+reference verdict at all). A probe that has appeared in a revealed audit
+MUST NOT be reused against the same service, and the LLM author regenerates
+and re-certifies a fresh set each round, which is what keeps the burn cheap.
 
 All probe selection, commitment nonces, and stealth phrasing choices derive
 from one per-audit CSPRNG seed through standard primitives: RFC 5869
@@ -243,11 +359,12 @@ and a Fisher–Yates shuffle. Determinism is what makes evidence re-verifiable �
 an arbiter re-derives the exact stealth request bodies from the revealed probe
 set and nonce and checks the set against the pre-audit commitment.
 
-**Evidence bundle and `evidenceHash`.** The `evidenceHash` in each on-chain
+**Response pack and `evidenceHash`.** The `evidenceHash` in each on-chain
 attestation is the bytes32 RFC 8785 (JCS) canonical-JSON hash of the complete
-evidence bundle the daemon writes under
-`<dataDir>/fingerprints/evidence/<service-slug>/`. Reproducing the hash means
-hashing EXACTLY this structure — every field below is part of the hashed
+response pack the daemon publishes under `verifier.publishDir` (default
+`<dataDir>/verifier/packs/<commitment>.json`; the pack schema is the existing
+evidence-bundle schema from `@antseed/fingerprints`). Reproducing the hash
+means hashing EXACTLY this structure — every field below is part of the hashed
 content, including the per-seller `fullyAuthenticated` flag and the full
 `exchanges` array:
 
@@ -290,12 +407,21 @@ content, including the per-seller `fullyAuthenticated` flag and the full
 }
 ```
 
-`exchanges` is what makes the bundle self-contained: it embeds the exact
+`exchanges` is what makes the pack self-contained: it embeds the exact
 request/response bytes each signed `ResponseAuth` commits to, so any third
-party can re-verify every seller signature offline from the bundle alone — no
+party can re-verify every seller signature offline from the pack alone — no
 daemon state required. A re-verifier that hashes only the schema-minimal
 seller observation (omitting `fullyAuthenticated` and `exchanges`) computes a
 DIFFERENT hash and will fail to match the attested `evidenceHash`.
+
+The pack is the only audit artifact whose availability depends on anyone
+hosting anything, and even it is not load-bearing for accountability: response
+BODIES are too big for calldata, but their hashes, the seller signatures over
+them, and the full probe set all live in calldata forever. A verifier that
+withholds or loses its pack cannot un-anchor what it attested to — the
+exchange hashes and signatures it committed to remain publicly checkable, and
+a pack that later surfaces either matches them or is provably not the audit's
+evidence.
 
 **Reputation and enforcement.** The registry accumulates per-(agent, service)
 and per-agent verification stats (`sameCount`/`diffCount`/`undeterminedCount`,
@@ -330,7 +456,9 @@ Still proposed:
 - buyer-local fingerprint reference store (the verifier daemon reads local
   reference files; a managed import/store surface is still open);
 - verifier staking and slashing for misbehaving verifiers;
-- off-chain exhibit verifier for third-party re-checking of evidence bundles;
+- off-chain exhibit verifier for third-party re-checking of M2 real-traffic
+  dispute exhibits (verifier-network audits are already third-party
+  recomputable via `antseed audit verify`);
 - on-chain seller stake slashing for confirmed substitution (the current
   enforcement is a reversible usage-points penalty, not stake slashing);
 - two-round re-query against mixed routing (re-probe only first-round
@@ -984,9 +1112,39 @@ Generation rules:
 
 ## Buyer Audit Execution
 
-A Buyer audit is a normal AntSeed request sequence with extra local bookkeeping.
-The Seller should not be able to tell whether a request is user traffic or audit
-traffic.
+On the wire, an audit is a normal AntSeed request sequence: the Seller MUST NOT
+be able to tell whether a request is user traffic or audit traffic while the
+audit is in flight. Around that wire traffic, the verifier network's audit
+pipeline is transparent and its normative order is:
+
+> **commit → carry → anchor → attest → reveal.**
+
+1. **Generate** — author a fresh probe set for the target service. With an
+   upstream configured, an LLM authors candidates and the existing reference
+   machinery certifies them (see "Probe Authoring").
+2. **Commit** — seal `sha256(canonicalJson({ service, probes, nonce }))`
+   on-chain via `commitProbeSet` before any probe is sent.
+3. **Carry** — solicit organic targets from connected delegates
+   (`TargetQuery`/`TargetSuggestion`), dispatch verifier-crafted probe jobs
+   over delegate buyer paths (verifier-direct fallback), and collect responses
+   with verified `ResponseAuth` on every exchange.
+4. **Anchor** — post the full exchange batch on-chain as calldata (records
+   plus the exact seller-signed ResponseAuth payloads); the contract verifies
+   every seller signature against the agent's ERC-8004 owner, accrues carrier
+   delegate credits from the buyer named in each payload, recomputes the
+   Merkle root from the records and binds it to the probe commitment.
+5. **Attest** — submit per-seller verdicts referencing the anchored
+   `batchRoot`. Grading (cohort consensus + optional KBF reference) is
+   unchanged from the math described above.
+6. **Reveal** — open the probe commitment on-chain by posting the exact
+   canonical probe-set JSON bytes, and publish the response pack to
+   `verifier.publishDir`.
+
+Each on-chain step is order-enforced by the contract: commit strictly before
+anchor, anchor strictly before (or in the same transaction as) attest, reveal
+only after at least one attestation references the commitment. After step 6
+the audit is a closed, public record — anyone can re-run it (see "Recomputing
+an Audit").
 
 ### Audit Selection
 
@@ -1000,6 +1158,32 @@ using local policy:
 - lower sampling after recent clean audits.
 
 Selection is Buyer-local and MUST NOT be advertised to the Seller.
+
+### Probe Authoring
+
+Because every audit ends with an on-chain reveal, probe supply must be
+unbounded and per-audit fresh. The default probe author when
+`verifier.upstream` is configured is an upstream frontier LLM
+(`probeSource: "llm"`; `verifier.probeAuthorModel` optionally overrides the
+authoring model):
+
+1. The author requests roughly `2×` the needed count of candidate probes for
+   the target service — numeric-answer factual questions the model answers
+   stably, explicitly excluding time-varying facts — as a strict JSON array of
+   `{name, domain, template, consensus, range, tolerance}` objects.
+2. Every candidate is validated mechanically: the template contains the cloze
+   slot, all numbers are finite, `lo < consensus < hi`, the tolerance is sane,
+   and the text passes a banned-volatile-pattern screen (population, price,
+   current, latest, today, …).
+3. Surviving candidates are deduplicated against the rotation log and fed into
+   the EXISTING certification path — consistency filtering across temperatures
+   against the trusted upstream reference plus a hold-out self-error
+   measurement — and the required count of certified probes is kept.
+
+LLM authoring produces no fixed generator fingerprint a seller could learn to
+classify, and it makes probe burn (see "Probe Reveal") a per-audit operating
+cost rather than the exhaustion of a finite bank. Fallback order without an
+upstream: `llm` → `compositional` → `bank`.
 
 ### Request Construction
 
@@ -1022,15 +1206,40 @@ Each wire request instead reads like an organic user chat message:
   and nonce.
 
 The probes themselves MUST NOT come from a fixed public bank: the default
-probe source is compositional (hundreds of thousands of combinations),
-probes revealed by past audits rotate out per (verifier, service), and the
-stealth-versus-cost trade-off (more, smaller requests read more organic but
-incur more per-request fees) is the verifier's `maxProbesPerRequest` dial.
+probe source is LLM authoring (fresh certified probes per audit, compositional
+generation as the upstream-less fallback), probes revealed by past audits
+rotate out per (verifier, service), and the stealth-versus-cost trade-off
+(more, smaller requests read more organic but incur more per-request fees) is
+the verifier's `maxProbesPerRequest` dial.
 
 The Buyer MAY apply protocol adapters for OpenAI Chat, OpenAI Responses,
 Anthropic Messages, or future formats. The adapter belongs in the verifier
 package only if it is transport-agnostic. Actual sending belongs in the
 runtime (`@antseed/node` and the CLI daemon).
+
+### Target Solicitation and Carriage
+
+Delegated carriage (message types `0x90-0x93`, plus target solicitation
+`0x95`/`0x96`; `0x94` is retired/reserved — see "Implementation Status")
+remains the in-flight stealth mechanism: probes
+originate from ordinary opt-in buyer identities, not from the publicly
+whitelisted verifier wallet, and delegates relay verifier-crafted requests
+byte-for-byte (the verbatim-relay invariant — a delegate can drop a job but
+never alter or fabricate an observation, because the verifier re-verifies each
+seller-signed `ResponseAuth` against the exact request it crafted).
+
+Job placement is target-solicited. Before assigning probe jobs the verifier
+sends a `TargetQuery (0x95)` for the audited service to each connected
+delegate; each delegate answers with a `TargetSuggestion (0x96)` listing the
+sellers of that service it ALREADY uses, drawn from its own local
+routing/connection history (empty list allowed; 10 s collection timeout). The
+verifier prefers assigning a seller's probes to a delegate that suggested that
+seller — the probe then travels a buyer→seller relationship that predates the
+audit and carries that relationship's ordinary traffic pattern. Sellers no
+delegate suggested fall back to ordinary delegate assignment, and sellers
+unreachable through any delegate fall back to verifier-direct probing.
+Suggestions are advisory routing hints only: they never influence probe
+content, and a lying delegate can at worst place a job suboptimally.
 
 ### ResponseAuth Requirement
 
@@ -1045,16 +1254,156 @@ an adverse verdict that cannot be backed by signed responses stays off-chain.
 Unauthenticated probes do not count as model mismatches. They count as Seller
 non-cooperation for routing/reputation policy.
 
-### Evidence Sampling
+### Exchange-Batch Anchoring
+
+Once all probe responses for an audit round are collected and their
+`ResponseAuth`s verified, and BEFORE any verdict is attested, the verifier
+anchors the complete exchange batch on-chain via
+`AntseedVerifierRegistry.anchorExchangeBatch(probeCommitment, records,
+signingPayloads, recordProbeCounts)`. One `ExchangeRecord` per SIGNED STEALTH
+REQUEST goes into calldata — each request bundles 1–`maxProbesPerRequest`
+probes (the stealth engine folds several facts into one organic-looking chat
+request), so a batch's total probe count generally exceeds its record count:
+
+```solidity
+struct ExchangeRecord {
+    uint256 agentId;         // audited seller
+    bytes32 requestHash;     // keccak256 of the exact request bytes sent
+    bytes32 responseHash;    // keccak256 of the exact response bytes received
+    bytes   responseAuthSig; // seller's 65-byte ECDSA over the ResponseAuth payload
+}
+```
+
+`signingPayloads[i]` is the exact ResponseAuth signing preimage for record i
+(13 length-prefixed UTF-8 fields — domain, version, requestId, channelId,
+buyerPeerId, sellerPeerId, advertisedService, provider, statusCode,
+requestHash, responseHash, responseStartedAt, responseCompletedAt — the FROZEN
+wire format of `buildResponseAuthSigningBytes` in packages/node), and the
+contract verifies every record ON-CHAIN at anchor time:
+
+- `responseAuthSig` must recover, over the EIP-191 personal-sign digest of
+  `"antseed-data-v1:" || signingPayloads[i]`, to the seller behind
+  `records[i].agentId` — resolved as the agent's ERC-8004 IdentityRegistry
+  owner, the same canonical peer ↔ agent binding `AntseedStaking` enforces at
+  stake time (agentId → address resolution is cached in memory across the
+  batch, since a cohort repeats few sellers);
+- the payload's embedded `requestHash`/`responseHash` hex fields must equal
+  the anchored record's hashes;
+- the payload's `buyerPeerId` field names the carrier that transported the
+  exchange — the basis for delegate crediting (see "Delegate Crediting").
+
+A verifier therefore cannot anchor an exchange the audited seller never
+signed, and cannot misattribute a carried exchange to a different carrier.
+
+`recordProbeCounts[i]` (each 1..3) declares the number of probes bundled in
+record i's request. The batch's total probe count is the contract-enforced
+SUM of these declarations — fixed at anchor time, before any verdict exists,
+and publicly recomputable by third parties once the probe set is revealed:
+count the probes each anchored request carries in the response pack. It caps
+the `probeCount` any later attestation referencing the batch may claim.
+
+The contract — not the verifier — recomputes the Merkle root from the calldata
+records (leaf = `keccak256(abi.encode(agentId, requestHash, responseHash,
+keccak256(sig)))`, pairwise keccak256, odd node promoted) and stores a single
+packed anchor struct keyed by `(verifier, batchRoot)` — readable via
+`batchAnchors(verifier, batchRoot)`:
+
+```solidity
+struct BatchAnchor {
+    uint64  anchoredAt;  // when the batch was anchored (0 = never)
+    uint32  recordCount; // ExchangeRecords anchored (one per signed request)
+    uint32  probeCount;  // declared probes bundled across the records
+    bytes32 commitment;  // probe-set commitment the batch was anchored under
+}
+```
+
+The referenced probe commitment MUST have been committed strictly earlier.
+Because the root is derived on-chain from the posted data, a verifier cannot
+anchor a root whose preimage it withholds: anchoring IS publication of the
+seller-signed exchange skeleton.
+
+One anchor call covers up to ~256 records; a larger audit round anchors
+one batch under each probe commitment. Records are hard-bounded to `[1, 256]`
+per batch, duplicate request hashes are rejected, and on-chain
+signature verification prices each record at ~26k execution gas marginal
+(~690k total for a realistic 24-record batch), so ~256 records per
+transaction is the practical ceiling. Calldata cost is the deliberate trade
+for permanence, and on Base it is small:
+
+| Audit size | Records | Calldata | Execution gas | Cost on Base |
+|---|---|---|---|---|
+| 8 sellers × 24 probes (defaults) | ~64 | ~40 KB | ~1.8M | well under a cent |
+| 50 sellers × 20 probes | 1000 (4 batches of 250) | ~600 KB | ~8M per batch | cents |
+
+Anchoring makes evidence availability serverless: the hashes, signatures AND
+the exact signed payloads a verdict rests on live in calldata forever,
+independent of any verifier, website, or storage service staying online — and
+because the contract verified every signature before accepting the batch,
+what is anchored is seller-authenticated, not merely verifier-published.
+
+### Attestation Binding
+
+`submitAttestation` carries a `batchRoot` parameter. The contract requires the
+root to be anchored by the attesting verifier and requires the anchored
+batch's stored probe commitment to equal the attestation's probe commitment.
+A verdict therefore always points at a specific, already-public,
+seller-signed evidence set — there is no such thing as an attestation whose
+evidence "will be provided later" or turns out to belong to a different probe
+set. The attestation's `probeCount` is additionally capped by the batch's
+anchor-time probe-count sum (NOT its record count — records bundle
+multiple probes), so the credited audit work and the delegate budget
+it backs are bounded by a claim that was sealed on-chain before the verdict.
+Verdict computation itself (cohort consensus, CP99/binomial reference
+tests, SAME/DIFF/UNDETERMINED/UNKNOWN semantics) is unchanged.
+
+### Probe Reveal
+
+After attestations land, the verifier opens the probe commitment on-chain:
+`revealProbeSet(probeCommitment, probeSetJson)` posts the exact canonical JSON
+bytes of `{ service, probes, nonce }`, and the contract verifies
+`sha256(probeSetJson) == probeCommitment` before accepting. The contract
+rejects a reveal for a commitment no attestation references (a verifier could
+otherwise reveal first and probe with known-public probes) and rejects
+double reveals.
+
+Reveals are **durable**: after the round's attestations, the daemon enqueues
+the reveal to an on-disk pending queue with a due time of
+`now + verifier.revealDelayMs` (default 0 = due immediately, so the reveal
+still goes out in the same round, right after attestation) and drains all due
+entries at every round boundary and at daemon startup. The delay is a due
+time on the queue, never an inline sleep in the sequential audit loop. A
+failed reveal stays queued with a warning and is simply retried at the next
+drain — the contract imposes no reveal deadline, so retrying across daemon
+restarts is always safe.
+
+Reveal is what turns the audit from a trust-me claim into a public record: the
+probes, their scoring parameters, and the commitment nonce are now on-chain
+next to the anchored exchange hashes and signatures. Revealed probes are
+burned — the rotation log excludes them from all future rounds against the
+service — and the LLM author replaces them at the next round. When the
+revealed set was a certified reference's probes, the reveal published each
+probe's expected answer, so the reference itself is burned as the reveal
+lands: the daemon persists a per-service burn marker, rotation-logs the
+revealed reference probe ids, re-enrolls a fresh reference for the service,
+and grades cohort-only until one exists. A burned reference can therefore
+never again produce the reference `SAME` that would exonerate a seller
+replaying published answers.
+
+### Evidence Publication
 
 Random buyer-side evidence sampling is implemented for verified `ResponseAuth`
 records on organic traffic. Audit probes do not rely on that sampler: the
 verifier daemon persists the COMPLETE exchange for every probe — exact request
 bytes, exact response bytes, and the full signed `ResponseAuth` payload —
-inside the audit's evidence bundle itself (see "Evidence bundle and
-`evidenceHash`" above), so audit evidence retention is total by construction
-rather than sampled. Evidence bundles embed the bytes directly and do not
-reference `verification_samples` sample ids.
+inside the audit's response pack (see "Response pack and `evidenceHash`"
+above), so audit evidence retention is total by construction rather than
+sampled. Packs embed the bytes directly, do not reference
+`verification_samples` sample ids, and are written to `verifier.publishDir`
+(default `<dataDir>/verifier/packs/<commitment>.json`) after the reveal;
+`evidenceHash` in the attestation is the canonical hash of the pack. The pack
+carries the response plaintexts, which are the only audit data too large for
+calldata — everything needed to check that a pack is genuine (probe set,
+exchange hashes, seller signatures) is already on-chain.
 
 The organic-traffic sample directory format remains:
 
@@ -1153,18 +1502,55 @@ Reference maintenance rules:
 Growing references is both a local Buyer capability and a network capability.
 From day one, AntSeed SHOULD support public signed fingerprint packs so the
 network can accumulate shared model fingerprints over time. Private Buyer
-references remain local and SHOULD NOT be published. On-chain storage of probe
-files is explicitly out of scope. Storing probes on-chain makes them public,
-expensive, and easy for Sellers to route around.
+references remain local and SHOULD NOT be published while unused: a probe is
+secret exactly until the audit that uses it completes. The verifier network
+then DOES store the used probe set on-chain — the post-attestation reveal —
+because on Base the calldata is cheap and the routing-around concern is
+answered by rotation plus fresh per-audit LLM authoring: a Seller that
+memorizes every revealed probe learns nothing about the next round's set.
+What remains out of scope is publishing probes BEFORE use, which would
+recreate the fixed-public-bank defeat device.
 
 ---
 
 ## Verification Flow
 
 The end-to-end flow combines the mechanisms. Note what is continuous, what is
-sampled, and what is rare:
+sampled, what is periodic, and what is rare.
 
-**Every request (100%):**
+**Verifier audit round (whitelisted verifier network; periodic, per service):**
+
+The normative order is **commit → carry → anchor → attest → reveal**, each
+on-chain step order-enforced by `AntseedVerifierRegistry`:
+
+1. **Generate.** An upstream frontier LLM authors candidate probes for the
+   target service; the existing reference machinery certifies them
+   (temperature-consistency filter + hold-out self-error). Fallback:
+   compositional generation, then the bank fixture.
+2. **Commit.** `commitProbeSet(sha256(canonicalJson({service, probes,
+   nonce})))` lands on-chain before any probe is sent. The probe set is secret
+   from this point until step 6 — and only until then.
+3. **Carry.** The verifier solicits organic targets from its delegates
+   (`TargetQuery`/`TargetSuggestion`, `0x95`/`0x96`), dispatches stealth probe
+   jobs preferring delegates that already use the audited seller, and
+   collects responses with a verified seller-signed `ResponseAuth` per
+   exchange. Delegates are untrusted verbatim relays.
+4. **Anchor.** `anchorExchangeBatch` posts every
+   `(agentId, requestHash, responseHash, responseAuthSig)` record plus its
+   exact ResponseAuth signing payload as calldata; the contract verifies each
+   seller signature on-chain (recovered signer must be the agent's ERC-8004
+   owner and the payload's hashes must match the record), accrues delegate
+   credits to the carrier buyer named in each payload, recomputes the Merkle
+   root and binds it to the commitment. The seller-signed evidence skeleton
+   is now public, immutable and chain-authenticated.
+5. **Attest.** Cohort/KBF grading runs unchanged; `submitAttestation`
+   verdicts must reference the anchored `batchRoot`.
+6. **Reveal.** `revealProbeSet` opens the commitment on-chain
+   (`sha256` checked by the contract); the response pack is published to
+   `verifier.publishDir`. Anyone can now recompute the whole audit — see
+   "Recomputing an Audit".
+
+**Buyer-local flow (every request, 100%):**
 
 1. Buyer → Seller request; Seller → response; Seller also sends `ResponseAuth`
    when both peers negotiated `verification.response-auth.v1` (M3).
@@ -1190,7 +1576,14 @@ sampled, and what is rare:
 7. A flagged Seller is dropped from this Buyer's `selectPeer()` candidate pool.
    This is the Buyer's own routing choice and requires no external agreement.
 
-**Escalation (rare; only on a flagged, signed Seller):**
+**Escalation (rare; only on a flagged, signed Seller; M2 real-traffic evidence
+only):**
+
+Verifier-network audits never reach this path — their evidence is anchored and
+revealed on-chain, so there is no exhibit to assemble and no arbiter needed to
+check it. The dispute-exhibit machinery below exists for M2 real-traffic
+sampling, where the evidence is a Buyer's own private prompts and completions
+and MUST NOT be published.
 
 8. If the Buyer seeks on-chain consequences, it assembles an **evidence exhibit**:
    the signed sample set plus the corresponding reference responses.
@@ -1204,6 +1597,69 @@ sampled, and what is rare:
    itself with fresh requests, since a real substitution reproduces over fresh
    samples while a fabricated accusation does not. On confirmation, the swappable
    slashing contract (`AntseedSlashing`) burns the Seller's stake.
+
+---
+
+## Recomputing an Audit
+
+The point of the transparent pipeline is that a verdict is not a claim to
+trust but a computation to repeat. `antseed audit verify
+<txHashOrCommitment>` re-runs an audit end-to-end from public data:
+
+1. **Fetch.** Given an RPC URL, the verifier address, and a probe commitment
+   (or the anchor transaction hash), fetch the anchor calldata (the full
+   `ExchangeRecord[]`) and the revealed canonical probe-set JSON from chain.
+2. **Recompute the root.** Rebuild the Merkle root from the fetched records
+   with the same leaf/pairing rules as the contract and check it against the
+   anchored `batchRoot`.
+3. **Check the opening.** Verify `sha256(probeSetJson)` equals the probe
+   commitment, and that the commitment landed strictly before the anchor.
+4. **Verify signatures.** With `--pack <path|url>` pointing at the published
+   response pack, verify every seller `ResponseAuth` signature against the
+   pack's request/response plaintexts, and check that each exchange's
+   request/response hashes match the anchored records.
+5. **Re-grade.** Re-extract numeric answers from the pack's responses with
+   the fingerprints parser, re-run the cohort/KBF verdict math over the
+   revealed probe definitions, and compare the resulting per-seller verdicts
+   with the on-chain attestations.
+
+The command prints per-seller verdicts and whether each MATCHES its on-chain
+attestation, and exits non-zero on any mismatch — root, opening, signature,
+hash, or verdict. Steps 1-3 need nothing but an RPC endpoint; steps 4-5
+additionally need the response pack, whose authenticity is itself checked
+against the anchored hashes, so a re-verifier never has to trust the party
+that hosted it.
+
+### Trade-offs
+
+The design buys public recomputability with three honest costs:
+
+- **Per-audit probe burn.** Every revealed probe is spent — the rotation log
+  never reuses it against that service. LLM authoring is the mitigation:
+  probe supply is generated, certified, and replaced each round instead of
+  drawn down from a finite bank, so the burn is an operating cost, not an
+  exhaustible resource. Without a configured upstream, the compositional
+  space (hundreds of thousands of combinations) absorbs the burn instead.
+- **Carrier identification post-reveal.** Once the probes are public, an
+  audited seller can grep its request logs, identify which buyer carried
+  which probe, and de-prioritize or profile that buyer. In-flight stealth is
+  unaffected — the seller learns this only after answering under a signed
+  `ResponseAuth` — but delegates SHOULD be rotated across audits rather than
+  reused against the same seller, `verifier.revealDelayMs` can hold the
+  reveal back to blur the mapping between recent traffic and a published
+  probe set, and end-of-epoch reveal batching is a planned future knob.
+  A seller that retaliates by degrading a suspected carrier's future traffic
+  is degrading a paying customer it can no longer distinguish from the next
+  audit's fresh carrier.
+- **Optimistic acceptance.** The contract does not re-grade responses; it
+  enforces ordering, data binding, and openings, and acts on attestations
+  from whitelisted verifiers optimistically. The enforcement lever is the
+  whitelist plus public recomputability: a wrong or fabricated verdict is
+  demonstrable by ANYONE running `antseed audit verify`, and the demonstrated
+  failure is grounds for de-whitelisting (and, in the proposed roadmap,
+  verifier stake slashing). Trust is not eliminated; it is reduced to
+  "someone, anyone, will check" — which the cents-per-audit cost of checking
+  makes realistic.
 
 ---
 
@@ -1268,6 +1724,13 @@ bad probes after seeing responses. Use a standard hash commitment scheme
    scoring parameters, not just ids — match the pre-response commitment.
 
 For local routing, commit-reveal is optional. For slashing, it is mandatory.
+
+The whitelisted verifier network implements this scheme entirely on-chain:
+`commitProbeSet` is the commitment, `anchorExchangeBatch` timestamps the
+signed observations, and `revealProbeSet` is the opening — checked by the
+contract, not by an arbiter. The off-chain exhibit variant above remains the
+path for Buyer-local M2 evidence, where the underlying bytes are private user
+traffic that cannot be published.
 
 ### Evidence Exhibit
 
@@ -1335,25 +1798,69 @@ Recommended enforcement ladder:
 
 ## Privacy
 
-Verification MUST NOT broadcast Buyer traffic. Real prompts and completions are
-sensitive. Accordingly:
+Two different things travel through verification, with opposite privacy
+requirements.
+
+**Real Buyer traffic MUST NOT be broadcast.** Real prompts and completions are
+sensitive:
 
 - M2 samples are stored Buyer-locally and discarded on a pass.
-- Raw bytes leave the Buyer only inside a dispute exhibit, addressed to an
-  arbiter, and only for a Seller already flagged.
-- On-chain artifacts are commitments (hashes), never plaintext.
+- Raw real-traffic bytes leave the Buyer only inside a dispute exhibit,
+  addressed to an arbiter, and only for a Seller already flagged.
+- For real traffic, on-chain artifacts are commitments (hashes), never
+  plaintext.
+
+**Verifier probes are secret only until reveal.** A probe is synthetic — it
+contains no user data — and its secrecy exists solely to prevent the Seller
+from special-casing it in flight. Accordingly:
+
+- Before and during the audit, the probe set is hidden behind its on-chain
+  commitment, and in-flight stealth via delegate carriers is unchanged: the
+  Seller cannot distinguish a probe from organic traffic while answering it.
+- After attestation, the probe set is deliberately published on-chain, and the
+  full probe request/response pack is published to `verifier.publishDir`.
+  Probe exchanges have no privacy interest once used — publication is what
+  makes the verdict recomputable.
+- Evidence availability does not depend on any server: the exchange hashes,
+  seller signatures, and probe definitions live in calldata forever. Only the
+  response plaintexts live off-chain (in the pack), and their integrity is
+  checkable against the anchored hashes.
 
 ---
 
-## Abuse Resistance (malicious Buyer)
+## Abuse Resistance (malicious Buyer or Verifier)
 
 Signed responses (M3) make the Seller non-repudiable, which neutralizes the
-naive forge-evidence attack: a Buyer cannot invent a signed response. The
-residual attack is **selective omission** — a Buyer presenting only unfavorable
-samples. This is countered by requiring the exhibit's sample set to reconcile
-against the Buyer's metered request history (already retained for billing per
-[03-metering.md](./03-metering.md)) and by the arbiter's own fresh re-query in
-step 9, which does not depend on the Buyer's samples at all.
+naive forge-evidence attack: a Buyer cannot invent a signed response. For M2
+real-traffic exhibits the residual attack is **selective omission** — a Buyer
+presenting only unfavorable samples. This is countered by requiring the
+exhibit's sample set to reconcile against the Buyer's metered request history
+(already retained for billing per [03-metering.md](./03-metering.md)) and by
+the arbiter's own fresh re-query in step 10, which does not depend on the
+Buyer's samples at all.
+
+For verifier-network audits the transparent pipeline makes the corresponding
+attacks publicly disprovable rather than arbiter-adjudicated:
+
+- **Fabrication.** Every seller signature a verdict rests on is anchored
+  on-chain BEFORE anything is revealed, and the batch root is recomputed by
+  the contract from the posted records. A verifier cannot invent an exchange
+  (it has no seller signature for it), cannot swap probes after seeing
+  answers (the commitment predates the anchor and its opening is
+  contract-checked), and cannot attest against evidence it never published
+  (attestations must reference an anchored root bound to the same
+  commitment).
+- **Wrong or dishonest verdicts.** Grading is deterministic over public
+  inputs, so a verdict that does not follow from the anchored evidence and
+  revealed probes is demonstrable by anyone via `antseed audit verify` —
+  recomputation either matches the attestation or exhibits the discrepancy.
+  Selective omission by a verifier (probing 20 times, anchoring the worst 10)
+  is visible as a thin batch and is the kind of pattern corroboration
+  (`minDistinctDiffVerifiers`) and whitelist governance exist to punish.
+- **Colluding cohorts** feeding a verifier consistent wrong answers remain
+  the reason a single DIFF is never enough: the standing-flag penalty
+  requires multiple distinct verifiers, and stake slashing still requires the
+  dispute path.
 
 ---
 
@@ -1374,11 +1881,18 @@ step 9, which does not depend on the Buyer's samples at all.
 | KBF alpha | — | 0.05 | One-sided binomial threshold for `DIFF` |
 | Delegate share of verification bucket | `delegateShareBps` | 20% | Split of each epoch's verification emissions between verifier and delegate pools; only carved out for epochs with delegate credits |
 | Max connected delegates per host | — | 64 | Delegation roster cap; excess hellos rejected with `delegate_capacity` |
-| Audit evidence retention | — | all probe exchanges | Evidence bundles embed full request/response bytes and the signed `ResponseAuth` per probe |
+| Audit evidence retention | — | all probe exchanges | Response packs embed full request/response bytes and the signed `ResponseAuth` per probe |
+| Probe source | `verifier.probeSource` | `"llm"` when `verifier.upstream` is configured | Fallback order `llm` → `compositional` → `bank` |
+| Probe author model | `verifier.probeAuthorModel` | upstream default model | Optional override for the LLM that authors candidate probes |
+| Target solicitation timeout | — | 10s | Wait for `TargetSuggestion` replies before assigning probe jobs |
+| Anchor batch size | — | 1-256 records | `ExchangeRecord`s per `anchorExchangeBatch` call (one per signed stealth request); exactly one batch per probe commitment |
+| Anchor probe count | `probeCount` (anchor param) | ≥ record count | Declared total probes bundled across the batch's records; caps every attestation's claimed `probeCount` |
+| Reveal delay | `verifier.revealDelayMs` | 0 (reveal immediately after attestations) | Due-time holdback on the durable pending-reveal queue before `revealProbeSet` (drained at round boundaries, retried across restarts); end-of-epoch reveal batching is a planned future knob |
+| Pack publish directory | `verifier.publishDir` | `<dataDir>/verifier/packs` | Response packs written as `<commitment>.json`; `evidenceHash` = canonical hash of the pack |
 
 Thresholds that affect **local** routing may be liberal. Thresholds that gate
 **on-chain** penalties MUST be conservative and are ultimately the arbiter's
-decision in step 9, not a Buyer-side constant.
+decision in step 10, not a Buyer-side constant.
 
 ---
 
@@ -1409,12 +1923,27 @@ Completed milestones:
      (verifier/delegate pool split);
    - `antseed verifier start|status|claim|reference build` daemon and CLI;
    - audit runner: cohort selection, on-chain commitment before probing,
-     verified `ResponseAuth` required for attestation, self-contained
-     evidence bundles under `<dataDir>/fingerprints/evidence`;
-   - buyer-delegated probe execution (0x90–0x94) with EIP-712 delegate
-     vouchers.
+     verified `ResponseAuth` required for attestation;
+   - buyer-delegated probe execution (0x90–0x93; 0x94 retired/reserved) with
+     anchor-time carrier crediting (seller-signed payloads name the carrier;
+     on-chain accrual + `DelegateCreditsAccrued` event-based discovery replaced
+     EIP-712 delegate vouchers).
 
-4. Local routing integration:
+4. Transparent audit pipeline (commit → carry → anchor → attest → reveal):
+   - LLM probe authoring through `verifier.upstream`, certified by the
+     existing reference machinery (`probeSource: "llm"`,
+     `verifier.probeAuthorModel`);
+   - delegate target solicitation (`TargetQuery = 0x95`,
+     `TargetSuggestion = 0x96`) with organic-pair-preferring job assignment;
+   - on-chain exchange-batch anchoring (`anchorExchangeBatch`,
+     contract-recomputed Merkle root over `ExchangeRecord` calldata);
+   - attestations bound to the anchored `batchRoot`;
+   - post-attestation on-chain probe reveal (`revealProbeSet`,
+     contract-checked sha256 opening) with `verifier.revealDelayMs`;
+   - response packs published under `verifier.publishDir`;
+   - `antseed audit verify` third-party recomputation.
+
+5. Local routing integration:
    - per-(peer, model) verification stats and authenticity score on
      `PeerInfo.modelVerification` during discovery;
    - standing substitution flags excluded by `DefaultRouter` and refused by
@@ -1448,8 +1977,10 @@ boundaries:
    - reuse the same reference store, sample store, and audit-result schema.
 
 4. Dispute/slashing prototype:
-   - build an off-chain exhibit verifier (probe-set commitments are already
-     implemented and enforced on-chain);
+   - build an off-chain exhibit verifier for M2 real-traffic exhibits
+     (verifier-network audits are already third-party recomputable via
+     `antseed audit verify`; commit, anchor, and reveal are enforced
+     on-chain);
    - define verifier committee signatures;
    - add compact slash signal support to `AntseedSlashing`.
 
@@ -1462,7 +1993,7 @@ commit-reveal, reproducible verifier code, and independent adjudication.
 
 - **Reputation ([05](./05-reputation.md)):** a confirmed substitution is the kind
   of signal the future ERC-8004 `Accuracy` path could carry — but only after
-  arbiter confirmation (step 9), never directly from an M1/M2 fail verdict.
+  arbiter confirmation (step 10), never directly from an M1/M2 fail verdict.
 - **Metering ([03](./03-metering.md)):** carries `responseAuth` (M3) and the
   retained request history used for abuse resistance. Audit requests are normal
   paid requests unless the Buyer and Seller later agree on a separate audit
@@ -1494,10 +2025,15 @@ commit-reveal, reproducible verifier code, and independent adjudication.
 The implemented base is **M3 ResponseAuth + buyer-side verification storage +
 random verified evidence samples**, plus the whitelisted verifier network:
 **`@antseed/fingerprints` (KBF + cohort consensus + stealth engine), the
-verifier registry/rewards contracts, the `antseed verifier` daemon with
-commit-reveal and self-contained evidence bundles, buyer-delegated probing
-with delegate vouchers, and substitution-flag enforcement in buyer routing**.
-The recommended next implementation is the public fingerprint swarm (signed,
-content-addressed reference/fingerprint packs) and additional verifier
-families behind the same interfaces. M2 remains the stronger long-term
-distributional check for real traffic. On-chain slashing comes last.
+verifier registry/rewards contracts, the `antseed verifier` daemon running the
+transparent commit → carry → anchor → attest → reveal pipeline (LLM-authored
+certified probes, delegate-carried stealth probing with target solicitation,
+on-chain exchange-batch anchoring, batchRoot-bound attestations, on-chain
+probe reveal, published response packs), buyer-delegated probing with
+on-chain anchor-time carrier crediting, `antseed audit verify` third-party
+recomputation, and
+substitution-flag enforcement in buyer routing**. The recommended next
+implementation is the public fingerprint swarm (signed, content-addressed
+reference/fingerprint packs) and additional verifier families behind the same
+interfaces. M2 remains the stronger long-term distributional check for real
+traffic. On-chain slashing comes last.

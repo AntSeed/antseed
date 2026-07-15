@@ -4,17 +4,25 @@ export { DelegationMux, type DelegationMessageHandler } from './delegation-mux.j
 export { DelegationManager, type ConnectedDelegate, type DelegationManagerDeps } from './delegation-manager.js';
 export {
   decodeDelegateHello,
-  decodeDelegateVoucher,
   decodeDelegateWelcome,
   decodeProbeJobRequest,
   decodeProbeJobResult,
+  decodeTargetQuery,
+  decodeTargetSuggestion,
   encodeDelegateHello,
-  encodeDelegateVoucher,
   encodeDelegateWelcome,
   encodeProbeJobRequest,
   encodeProbeJobResult,
+  encodeTargetQuery,
+  encodeTargetSuggestion,
 } from './delegation-codec.js';
 export {
+  computeBatchRoot,
+  computeExchangeLeaf,
+  type ExchangeRecord,
+} from './exchange-batch.js';
+export {
+  buildResponseAuthSigningBytes,
   createResponseAuthPayload,
   hashRequest,
   hashResponse,

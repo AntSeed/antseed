@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistryV2 } from "../interfaces/IAntseedRegistryV2.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
 import { IAntseedVerifierRewards } from "../interfaces/IAntseedVerifierRewards.sol";
 
@@ -287,14 +286,10 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         verifierPool = budget - delegatePool;
     }
 
-    /// @dev ANTS reserve flows go to the registry's dedicated emissions
-    ///      reserve; while the split is unset they fall back to the fee
-    ///      reserve (`protocolReserve`). The verifier registry this controller
-    ///      is wired to must live on a v2 registry.
+    /// @dev The gate owns reserve routing for every emissions bucket, so the
+    ///      verifier controller must use the same resolved destination.
     function _emissionsReserve() internal view returns (address reserve) {
-        IAntseedRegistryV2 registry = IAntseedRegistryV2(address(verifierRegistry.registry()));
-        reserve = registry.emissionsReserve();
-        if (reserve == address(0)) reserve = registry.protocolReserve();
+        reserve = gate.emissionsReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }
 }

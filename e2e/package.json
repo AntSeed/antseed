@@ -7,13 +7,16 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs"
+    "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs",
+    "flow:transparent-audit": "node ./scripts/transparent-audit-lifecycle.mjs"
   },
   "dependencies": {
+    "@antseed/fingerprints": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-anthropic": "workspace:*",
     "@antseed/provider-core": "workspace:*",
-    "@antseed/router-local": "workspace:*"
+    "@antseed/router-local": "workspace:*",
+    "ethers": "^6.13.5"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

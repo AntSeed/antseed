@@ -431,11 +431,14 @@ function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
     ...(value['auditIntervalMs'] !== undefined ? { auditIntervalMs: value['auditIntervalMs'] as number } : {}),
     ...(value['stalenessWindowSecs'] !== undefined ? { stalenessWindowSecs: value['stalenessWindowSecs'] as number } : {}),
     ...(value['probeSource'] !== undefined
-      ? { probeSource: value['probeSource'] as 'compositional' | 'bank' }
+      ? { probeSource: value['probeSource'] as 'llm' | 'compositional' | 'bank' }
       : {}),
+    ...(value['probeAuthorModel'] !== undefined ? { probeAuthorModel: value['probeAuthorModel'] as string } : {}),
     ...(value['probeRotationHistory'] !== undefined ? { probeRotationHistory: value['probeRotationHistory'] as number } : {}),
     ...(value['referencesDir'] !== undefined ? { referencesDir: value['referencesDir'] as string } : {}),
-    ...(value['evidenceDir'] !== undefined ? { evidenceDir: value['evidenceDir'] as string } : {}),
+    ...(value['publishDir'] !== undefined ? { publishDir: value['publishDir'] as string } : {}),
+    ...(value['publishBaseUrl'] !== undefined ? { publishBaseUrl: value['publishBaseUrl'] as string } : {}),
+    ...(value['revealDelayMs'] !== undefined ? { revealDelayMs: value['revealDelayMs'] as number } : {}),
     ...(value['probeLogDir'] !== undefined ? { probeLogDir: value['probeLogDir'] as string } : {}),
     ...mergeVerifierUpstream(value['upstream']),
     ...mergeVerifierDelegation(value['delegation']),
