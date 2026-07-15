@@ -12,6 +12,7 @@ import { ZeroAddress } from 'ethers'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { DelegateWorker } from '../../../delegate/worker.js'
 import { CreditStore } from '../../../delegate/credit-store.js'
+import { discoverDelegateAccruals } from '../../../delegate/credit-discovery.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
@@ -502,14 +503,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
             node,
             isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
             creditStore,
-            discoverAccruals: async (buyer, fromBlock) => {
-              const accruals = await verifierRegistry.queryDelegateCreditsAccrued(buyer, fromBlock)
-              // The scan is bounded by the accruals' own blocks; advance the
-              // cursor to the highest block seen (or hold at `fromBlock` when
-              // no new logs landed) so the next scan resumes cleanly.
-              const toBlock = accruals.reduce((max, a) => Math.max(max, a.blockNumber), fromBlock)
-              return { accruals, toBlock }
-            },
+            discoverAccruals: (buyer, fromBlock) =>
+              discoverDelegateAccruals(verifierRegistry, buyer, fromBlock),
             ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
             ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
             ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),

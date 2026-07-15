@@ -285,9 +285,9 @@ test('discovers on-chain credit accruals for its own buyer and records them from
     },
     discoverAccruals: async (buyer, fromBlock) => {
       scans.push({ buyer, fromBlock })
-      // First scan returns the accrual; later scans (from the advanced cursor)
-      // return nothing — the buyer address is the log filter.
-      return fromBlock <= 500 ? { accruals: [accrual], toBlock: 500 } : { accruals: [], toBlock: fromBlock }
+      if (fromBlock <= 500) return { accruals: [accrual], toBlock: 500 }
+      if (fromBlock <= 550) return { accruals: [], toBlock: 550 }
+      return { accruals: [], toBlock: fromBlock }
     },
     log: () => {},
     warn: () => {},
@@ -297,11 +297,12 @@ test('discovers on-chain credit accruals for its own buyer and records them from
     await waitFor(() => recorded.length === 1)
     assert.equal(recorded[0]!.probeCommitment, accrual.probeCommitment)
     // The scan is filtered by this node's own buyer address and resumes from
-    // the persisted cursor (0 on the first pass, then 500).
+    // the block after the persisted cursor (1 on the first pass, then 501).
     assert.equal(scans[0]!.buyer.toLowerCase(), ('0x' + SELF_PEER).toLowerCase())
-    assert.equal(scans[0]!.fromBlock, 0)
-    await waitFor(() => scans.length >= 2)
-    assert.equal(scans[1]!.fromBlock, 500)
+    assert.equal(scans[0]!.fromBlock, 1)
+    await waitFor(() => scans.length >= 3)
+    assert.equal(scans[1]!.fromBlock, 501)
+    assert.equal(scans[2]!.fromBlock, 551)
   } finally {
     worker.stop()
   }

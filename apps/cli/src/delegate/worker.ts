@@ -81,7 +81,8 @@ export interface DelegateWorkerOptions {
   creditStore?: Pick<CreditStore, 'getCursor' | 'recordScan'>
   /**
    * Scan `DelegateCreditsAccrued` logs for `buyer` from `fromBlock` (inclusive)
-   * to the chain head, returning the accruals and the block scanned up to. The
+   * through a fixed chain head, returning the accruals and the block scanned
+   * up to. The
    * buyer's own address is an indexed topic, so this is a cheap server-side
    * filtered read. Paired with `creditStore`.
    */
@@ -238,7 +239,7 @@ export class DelegateWorker {
     this._accrualScanning = true
     try {
       const cursor = await creditStore.getCursor()
-      const { accruals, toBlock } = await discoverAccruals(buyer, cursor)
+      const { accruals, toBlock } = await discoverAccruals(buyer, cursor + 1)
       if (this._stopped) return
       const added = await creditStore.recordScan(accruals, toBlock)
       if (added > 0) {
