@@ -91,7 +91,7 @@ export interface SellerRecheck {
    * itself). Only meaningful when the pack records carrierCount.
    */
   singleCarrierSame: boolean
-  /** On-chain latest attestation for this (agentId, service), when supplied. */
+  /** On-chain attestation for this published audit, when supplied. */
   onChainVerdict: FingerprintVerdict | null
   /** 'match' | 'mismatch' | 'absent' | 'superseded' | 'unchecked' */
   attestationStatus: 'match' | 'mismatch' | 'absent' | 'superseded' | 'unchecked'
@@ -108,7 +108,7 @@ export interface AuditVerifyInput {
   revealedProbeSetJson: string
   /** Published audit pack; without it only the chain-side checks run. */
   pack?: EvidenceBundle
-  /** agentId → latest on-chain attestation for the audited service. */
+  /** agentId → historical on-chain attestation matching this audit. */
   attestations?: ReadonlyMap<number, OnChainAttestation>
 }
 

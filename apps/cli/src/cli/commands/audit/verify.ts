@@ -4,10 +4,11 @@ import { lookup } from 'node:dns/promises'
 import { readFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
-import { Interface, JsonRpcProvider, toUtf8String, zeroPadValue } from 'ethers'
+import { Interface, JsonRpcProvider, toBeHex, toUtf8String, zeroPadValue } from 'ethers'
 import type { ExchangeRecord } from '@antseed/node'
-import { VerifierRegistryClient } from '@antseed/node'
+import { serviceHash } from '@antseed/node'
 import type { EvidenceBundle, EvidenceSeller } from '@antseed/fingerprints'
+import { computeEvidenceHash } from '@antseed/fingerprints'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
 import { requireCryptoConfig } from '../../payment-utils.js'
@@ -28,10 +29,12 @@ const REGISTRY_IFACE = new Interface([
   'function revealProbeSet(bytes32 probeCommitment, bytes probeSetJson, string packUri)',
   'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
   'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
+  'event AttestationSubmitted(uint256 indexed agentId, bytes32 indexed serviceHash, address indexed verifier, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot, uint32 probeCount, uint32 cohortSize, bool credited, uint256 epoch)',
 ])
 
 const ANCHOR_EVENT_TOPIC = REGISTRY_IFACE.getEvent('ExchangeBatchAnchored')!.topicHash
 const REVEAL_EVENT_TOPIC = REGISTRY_IFACE.getEvent('ProbeSetRevealed')!.topicHash
+const ATTESTATION_EVENT_TOPIC = REGISTRY_IFACE.getEvent('AttestationSubmitted')!.topicHash
 const MAX_REMOTE_PACK_BYTES = 64 * 1024 * 1024
 const REMOTE_PACK_TIMEOUT_MS = 30_000
 
@@ -321,27 +324,45 @@ export async function fetchAnchorAndReveal(
   return { anchor, reveal }
 }
 
-/**
- * Read the latest on-chain attestation for every audited seller, in parallel.
- * A failed read for one seller warns and is skipped; the rest still populate
- * the map (keyed by agentId).
- */
-export async function fetchLatestAttestations(
-  client: Pick<VerifierRegistryClient, 'latestAttestation'>,
+/** Read the historical attestation event tied to this exact published audit. */
+export async function fetchMatchingAttestations(
+  provider: JsonRpcProvider,
+  registry: string,
+  verifier: string,
   sellers: ReadonlyArray<Pick<EvidenceSeller, 'agentId'>>,
   service: string,
+  probeCommitment: string,
+  batchRoot: string,
+  evidenceHash: string,
+  fromBlock: number,
 ): Promise<Map<number, OnChainAttestation>> {
   const attestations = new Map<number, OnChainAttestation>()
+  const expectedServiceHash = serviceHash(service)
   await Promise.all(sellers.map(async (seller) => {
     if (!seller.agentId) return
     try {
-      const latest = await client.latestAttestation(seller.agentId, service)
-      if (latest) {
+      const logs = await provider.getLogs({
+        address: registry,
+        fromBlock,
+        toBlock: 'latest',
+        topics: [
+          ATTESTATION_EVENT_TOPIC,
+          zeroPadValue(toBeHex(seller.agentId), 32),
+          expectedServiceHash,
+          zeroPadValue(verifier, 32),
+        ],
+      })
+      const matching = logs.map((log) => REGISTRY_IFACE.parseLog(log)).find((parsed) =>
+        parsed
+        && parsed.args.probeCommitment.toLowerCase() === probeCommitment.toLowerCase()
+        && parsed.args.batchRoot.toLowerCase() === batchRoot.toLowerCase()
+        && parsed.args.evidenceHash.toLowerCase() === evidenceHash.toLowerCase())
+      if (matching) {
         attestations.set(seller.agentId, {
-          verdict: latest.verdict,
-          probeCommitment: latest.probeCommitment,
-          evidenceHash: latest.evidenceHash,
-          batchRoot: latest.batchRoot,
+          verdict: Number(matching.args.verdict),
+          probeCommitment: matching.args.probeCommitment,
+          evidenceHash: matching.args.evidenceHash,
+          batchRoot: matching.args.batchRoot,
         })
       }
     } catch (err) {
@@ -447,12 +468,21 @@ export function registerAuditVerifyCommand(auditCmd: Command): void {
           console.log(chalk.yellow('Remote pack not fetched automatically. Pass --fetch-pack to opt in, or --pack <path> to use a local copy.'))
         }
 
-        // Latest on-chain attestations per audited seller (pack mode only —
-        // agent ids come from the pack).
+        // Historical attestations for this exact audit (pack mode only —
+        // agent ids and the evidence hash come from the pack).
         let attestations: Map<number, OnChainAttestation> | undefined
         if (pack) {
-          const client = new VerifierRegistryClient({ rpcUrl, contractAddress: registry })
-          attestations = await fetchLatestAttestations(client, pack.sellers, pack.service)
+          attestations = await fetchMatchingAttestations(
+            provider,
+            registry,
+            anchor.verifier,
+            pack.sellers,
+            pack.service,
+            anchor.probeCommitment,
+            anchor.batchRoot,
+            computeEvidenceHash(pack),
+            anchor.blockNumber,
+          )
         }
 
         const report = verifyAudit({

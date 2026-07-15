@@ -2,12 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Interface, keccak256, toUtf8Bytes, zeroPadValue } from 'ethers'
 import type { JsonRpcProvider } from 'ethers'
-import type { VerifierRegistryClient } from '@antseed/node'
+import { serviceHash } from '@antseed/node'
 import {
   decodeAnchorCalldata,
   decodeRevealCalldata,
   fetchAnchorAndReveal,
-  fetchLatestAttestations,
+  fetchMatchingAttestations,
   resolvePackFetchTarget,
   validatePackFetchUrl,
 } from './verify.js'
@@ -17,6 +17,7 @@ const IFACE = new Interface([
   'function revealProbeSet(bytes32 probeCommitment, bytes probeSetJson, string packUri)',
   'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
   'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
+  'event AttestationSubmitted(uint256 indexed agentId, bytes32 indexed serviceHash, address indexed verifier, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot, uint32 probeCount, uint32 cohortSize, bool credited, uint256 epoch)',
 ])
 
 const ANCHOR_TOPIC = IFACE.getEvent('ExchangeBatchAnchored')!.topicHash
@@ -153,32 +154,46 @@ test('commitment path scans the anchor from --from-block and the reveal from the
   assert.equal(getLogsCalls[1]!.fromBlock, 777)
 })
 
-test('fetchLatestAttestations reads in parallel and tolerates one seller failing', async (t) => {
+test('fetchMatchingAttestations finds the historical audit and tolerates one seller failing', async (t) => {
   t.mock.method(console, 'warn', () => {})
   let inFlight = 0
   let maxInFlight = 0
-  const client: Pick<VerifierRegistryClient, 'latestAttestation'> = {
-    async latestAttestation(agentId, _service) {
+  const attestationEvent = IFACE.getEvent('AttestationSubmitted')!
+  const provider = {
+    async getLogs(filter: GetLogsFilter) {
       inFlight += 1
       maxInFlight = Math.max(maxInFlight, inFlight)
       await new Promise((resolve) => setTimeout(resolve, 5))
       inFlight -= 1
+      const agentId = Number(BigInt(filter.topics[1]!))
       if (agentId === 8) throw new Error('rpc boom')
-      if (agentId === 9) return null
-      return {
-        verifier: VERIFIER,
-        attestedAt: 1,
-        verdict: 2,
-        probeCount: 3,
-        cohortSize: 4,
-        evidenceHash: BATCH_ROOT,
-        probeCommitment: COMMITMENT,
-        batchRoot: BATCH_ROOT,
-      }
+      if (agentId === 9) return []
+      const superseded = IFACE.encodeEventLog(attestationEvent, [
+        agentId, serviceHash('kimi-k2'), VERIFIER, 1, BATCH_ROOT,
+        '0x' + 'ee'.repeat(32), '0x' + 'ff'.repeat(32), 3, 4, true, 1,
+      ])
+      const historical = IFACE.encodeEventLog(attestationEvent, [
+        agentId, serviceHash('kimi-k2'), VERIFIER, 2, BATCH_ROOT,
+        COMMITMENT, BATCH_ROOT, 3, 4, true, 1,
+      ])
+      return [
+        { ...historical, blockNumber: 600, transactionHash: ANCHOR_TX },
+        { ...superseded, blockNumber: 700, transactionHash: REVEAL_TX },
+      ]
     },
-  }
+  } as unknown as JsonRpcProvider
 
-  const attestations = await fetchLatestAttestations(client, [{ agentId: 7 }, { agentId: 8 }, { agentId: 9 }], 'kimi-k2')
+  const attestations = await fetchMatchingAttestations(
+    provider,
+    REGISTRY,
+    VERIFIER,
+    [{ agentId: 7 }, { agentId: 8 }, { agentId: 9 }],
+    'kimi-k2',
+    COMMITMENT,
+    BATCH_ROOT,
+    BATCH_ROOT,
+    500,
+  )
 
   assert.equal(maxInFlight, 3)
   assert.equal(attestations.size, 1)
