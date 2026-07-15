@@ -183,6 +183,39 @@ test('a revoked verifier stops getting jobs and is dropped from serving', async 
   worker.stop()
 })
 
+test('an expired approval rejects paid jobs when the RPC is unavailable', async () => {
+  const handlers: JobHandler[] = []
+  let requestsSent = 0
+  let approvalCalls = 0
+  const node = fakeNode(handlers, {
+    sendRequest: (async () => {
+      requestsSent += 1
+      throw new Error('must not dispatch')
+    }) as unknown as AntseedNode['sendRequest'],
+  })
+  const worker = makeWorker(node, {
+    isApprovedVerifier: async () => {
+      approvalCalls += 1
+      if (approvalCalls === 1) return true
+      throw new Error('rpc unavailable')
+    },
+    approvalTtlMs: 5,
+    discoveryIntervalMs: 60_000,
+  })
+  try {
+    worker.start()
+    await waitFor(() => handlers.length === 1)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const result = await handlers[0]!(job())
+    assert.equal(result.status, 'error')
+    assert.equal(result.error, 'verifier_not_approved')
+    assert.equal(requestsSent, 0)
+  } finally {
+    worker.stop()
+  }
+})
+
 test('job timeout aborts the in-flight request and releases the concurrency slot', async () => {
   const handlers: JobHandler[] = []
   const node = fakeNode(handlers, {

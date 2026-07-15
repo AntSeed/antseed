@@ -276,8 +276,8 @@ export class DelegateWorker {
 
   /**
    * TTL-cached on-chain approval. Returns the cached value while fresh;
-   * otherwise re-checks. On a transient RPC failure the last known value is
-   * reused (stale-while-error); with no known value the caller must refuse.
+   * otherwise re-checks. RPC failures after the TTL fail closed rather than
+   * extending an approval that may have been revoked on-chain.
    */
   private async _checkApproval(address: string): Promise<boolean | null> {
     const key = address.toLowerCase()
@@ -292,7 +292,7 @@ export class DelegateWorker {
       return approved
     } catch (err) {
       this._options.warn(`delegate: whitelist check failed for ${address.slice(0, 10)}…: ${(err as Error).message}`)
-      return cached ? cached.approved : null
+      return null
     }
   }
 
