@@ -37,13 +37,15 @@ interface GetLogsFilter { fromBlock: number; toBlock: string; topics: string[] }
 /** Minimal RPC stub: canned txs/receipt, recorded getLogs calls. */
 function stubProvider(opts: {
   anchorBlock: number
+  anchorTo?: string
+  anchorLogAddress?: string
   onGetLogs: (filter: GetLogsFilter) => Array<{ transactionHash: string; blockNumber: number; topics: string[] }>
 }): { provider: JsonRpcProvider; getLogsCalls: GetLogsFilter[] } {
   const anchorData = IFACE.encodeFunctionData('anchorExchangeBatch', [COMMITMENT, [], [], []])
   const revealData = IFACE.encodeFunctionData('revealProbeSet', [COMMITMENT, toUtf8Bytes(PROBE_SET_JSON), PACK_URI])
-  const txs: Record<string, { data: string; from: string }> = {
-    [ANCHOR_TX]: { data: anchorData, from: VERIFIER },
-    [REVEAL_TX]: { data: revealData, from: VERIFIER },
+  const txs: Record<string, { data: string; from: string; to: string }> = {
+    [ANCHOR_TX]: { data: anchorData, from: VERIFIER, to: opts.anchorTo ?? REGISTRY },
+    [REVEAL_TX]: { data: revealData, from: VERIFIER, to: REGISTRY },
   }
   const getLogsCalls: GetLogsFilter[] = []
   const provider = {
@@ -54,7 +56,10 @@ function stubProvider(opts: {
       if (hash !== ANCHOR_TX) return null
       return {
         blockNumber: opts.anchorBlock,
-        logs: [{ topics: [ANCHOR_TOPIC, zeroPadValue(VERIFIER, 32), COMMITMENT, BATCH_ROOT] }],
+        logs: [{
+          address: opts.anchorLogAddress ?? REGISTRY,
+          topics: [ANCHOR_TOPIC, zeroPadValue(VERIFIER, 32), COMMITMENT, BATCH_ROOT],
+        }],
       }
     },
     async getLogs(filter: GetLogsFilter) {
@@ -124,6 +129,32 @@ test('--tx path bounds the reveal scan to the anchor block (never fromBlock 0)',
   assert.equal(getLogsCalls.length, 1)
   assert.equal(getLogsCalls[0]!.fromBlock, 1234)
   assert.equal(getLogsCalls[0]!.topics[0], REVEAL_TOPIC)
+})
+
+test('--tx path rejects an anchor call sent to a different contract', async () => {
+  const { provider } = stubProvider({
+    anchorBlock: 1234,
+    anchorTo: '0x' + '99'.repeat(20),
+    onGetLogs: () => [],
+  })
+
+  await assert.rejects(
+    fetchAnchorAndReveal(provider, REGISTRY, { txHash: ANCHOR_TX, fromBlock: 0 }),
+    /was not sent to registry/,
+  )
+})
+
+test('--tx path rejects a matching event emitted by a different contract', async () => {
+  const { provider } = stubProvider({
+    anchorBlock: 1234,
+    anchorLogAddress: '0x' + '99'.repeat(20),
+    onGetLogs: () => [],
+  })
+
+  await assert.rejects(
+    fetchAnchorAndReveal(provider, REGISTRY, { txHash: ANCHOR_TX, fromBlock: 0 }),
+    /emitted no ExchangeBatchAnchored event/,
+  )
 })
 
 test('commitment path scans the anchor from --from-block and the reveal from the anchor block', async () => {

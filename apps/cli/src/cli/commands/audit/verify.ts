@@ -4,7 +4,7 @@ import { lookup } from 'node:dns/promises'
 import { readFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
-import { Interface, JsonRpcProvider, toBeHex, toUtf8String, zeroPadValue } from 'ethers'
+import { getAddress, Interface, JsonRpcProvider, toBeHex, toUtf8String, zeroPadValue } from 'ethers'
 import type { ExchangeRecord } from '@antseed/node'
 import { serviceHash } from '@antseed/node'
 import type { EvidenceBundle, EvidenceSeller } from '@antseed/fingerprints'
@@ -230,14 +230,20 @@ export interface FetchedAnchor extends DecodedAnchor {
 
 async function fetchAnchorByTx(
   provider: JsonRpcProvider,
+  registry: string,
   txHash: string,
 ): Promise<FetchedAnchor> {
   const tx = await provider.getTransaction(txHash)
   if (!tx) throw new Error(`anchor transaction ${txHash} not found`)
+  const expectedRegistry = getAddress(registry)
+  if (!tx.to || getAddress(tx.to) !== expectedRegistry) {
+    throw new Error(`anchor transaction ${txHash} was not sent to registry ${expectedRegistry}`)
+  }
   const decoded = decodeAnchorCalldata(tx.data)
   const receipt = await provider.getTransactionReceipt(txHash)
   if (!receipt) throw new Error(`anchor transaction ${txHash} has no receipt (still pending?)`)
-  const log = receipt.logs.find((l) => l.topics[0] === ANCHOR_EVENT_TOPIC)
+  const log = receipt.logs.find((l) =>
+    getAddress(l.address) === expectedRegistry && l.topics[0] === ANCHOR_EVENT_TOPIC)
   if (!log || !log.topics[3]) {
     throw new Error('anchor transaction emitted no ExchangeBatchAnchored event (reverted or wrong contract?)')
   }
@@ -318,7 +324,7 @@ export async function fetchAnchorAndReveal(
   opts: { txHash?: string; verifier?: string; commitment?: string; fromBlock: number },
 ): Promise<{ anchor: FetchedAnchor; reveal: { probeSetJson: string; packUri: string } }> {
   const anchor = opts.txHash
-    ? await fetchAnchorByTx(provider, opts.txHash)
+    ? await fetchAnchorByTx(provider, registry, opts.txHash)
     : await fetchAnchorByCommitment(provider, registry, opts.verifier!, opts.commitment!, opts.fromBlock)
   const reveal = await fetchReveal(provider, registry, anchor.verifier, anchor.probeCommitment, anchor.blockNumber)
   return { anchor, reveal }
