@@ -270,6 +270,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     error TargetNotInBatch();
     error TargetAlreadyAttested();
     error ProbeCountExceedsTarget();
+    error ExchangePredatesCommitment(uint256 index);
+    error InvalidResponseTiming(uint256 index);
 
     // ─── Modifiers ───────────────────────────────────────────────────
     modifier onlyApprovedVerifier() {
@@ -383,7 +385,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///
     ///         The referenced probe-set commitment must have been committed
     ///         in a strictly earlier second (commit before anchor), and the
-    ///         same root cannot be anchored twice by the same verifier.
+    ///         seller-signed response must have started at or after that
+    ///         commitment. The same root cannot be anchored twice by the
+    ///         same verifier. Together these checks prevent an old signed
+    ///         exchange from being replayed under a fresh commitment.
     ///
     ///         `recordProbeCounts[i]` is the number of probes bundled in
     ///         record i's signed stealth request (each request carries
@@ -432,8 +437,9 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         batchRoot = computeBatchRoot(records);
         if (batchAnchors[msg.sender][batchRoot].anchoredAt != 0) revert BatchAlreadyAnchored();
 
-        uint32 probeCount =
-            _verifyRecordsAndAccrue(probeCommitment, batchRoot, records, signingPayloads, recordProbeCounts);
+        uint32 probeCount = _verifyRecordsAndAccrue(
+            probeCommitment, committedAt, batchRoot, records, signingPayloads, recordProbeCounts
+        );
 
         // Single struct assignment: anchoredAt/recordCount/probeCount pack
         // into one slot, commitment takes the second — two SSTOREs total.
@@ -481,6 +487,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///      uint32 sum of `recordProbeCounts`.
     function _verifyRecordsAndAccrue(
         bytes32 probeCommitment,
+        uint64 committedAt,
         bytes32 batchRoot,
         ExchangeRecord[] calldata records,
         bytes[] calldata signingPayloads,
@@ -532,10 +539,20 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             if (err != ECDSA.RecoverError.NoError || recovered != seller) revert RecordSignerMismatch(i);
 
             // The payload must describe the anchored exchange.
-            (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
-                parseResponseAuthPayload(signingPayloads[i]);
+            (
+                address buyer,
+                bytes32 advertisedServiceHash,
+                bytes32 requestHash,
+                bytes32 responseHash,
+                uint64 responseStartedAt,
+                uint64 responseCompletedAt
+            ) = parseResponseAuthPayload(signingPayloads[i]);
             if (requestHash != records[i].requestHash || responseHash != records[i].responseHash) {
                 revert RecordHashMismatch(i);
+            }
+            if (responseCompletedAt < responseStartedAt) revert InvalidResponseTiming(i);
+            if (uint256(responseStartedAt) < uint256(committedAt) * 1000) {
+                revert ExchangePredatesCommitment(i);
             }
             bool targetFound = false;
             for (uint256 j = 0; j < targetCount; j++) {
@@ -638,7 +655,14 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     function parseResponseAuthPayload(bytes calldata payload)
         public
         pure
-        returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash)
+        returns (
+            address buyer,
+            bytes32 advertisedServiceHash,
+            bytes32 requestHash,
+            bytes32 responseHash,
+            uint64 responseStartedAt,
+            uint64 responseCompletedAt
+        )
     {
         uint256 offset = 0;
         for (uint256 f = 0; f < RESPONSE_AUTH_FIELD_COUNT; f++) {
@@ -664,6 +688,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
                 requestHash = bytes32(_parseHex(field, 64));
             } else if (f == 10) {
                 responseHash = bytes32(_parseHex(field, 64));
+            } else if (f == 11) {
+                responseStartedAt = _parseUint64(field);
+            } else if (f == 12) {
+                responseCompletedAt = _parseUint64(field);
             }
         }
         if (offset != payload.length) revert MalformedSigningPayload();
@@ -687,6 +715,25 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
     function _isAsciiWhitespace(uint8 c) private pure returns (bool) {
         return c == 0x20 || (c >= 0x09 && c <= 0x0D);
+    }
+
+    function _parseUint64(bytes calldata field) private pure returns (uint64 value) {
+        if (field.length == 0 || field.length > 20) revert MalformedSigningPayload();
+        uint256 parsed;
+        assembly ("memory-safe") {
+            let cursor := field.offset
+            let end := add(cursor, field.length)
+            for {} lt(cursor, end) { cursor := add(cursor, 1) } {
+                let c := byte(0, calldataload(cursor))
+                if or(lt(c, 0x30), gt(c, 0x39)) {
+                    mstore(0, shl(224, 0x8f159627))
+                    revert(0, 4)
+                }
+                parsed := add(mul(parsed, 10), sub(c, 0x30))
+            }
+        }
+        if (parsed > type(uint64).max) revert MalformedSigningPayload();
+        return uint64(parsed);
     }
 
     /// @dev Parse an ASCII-hex field (optionally 0x-prefixed, either case)

@@ -78,7 +78,7 @@ abstract contract ResponseAuthFixture is CommonBase {
     ///      both content hashes, so distinct salts give distinct leaves.
     function makeSignedRecord(uint256 agentId, uint256 sellerKey, address buyer, bytes32 salt)
         internal
-        pure
+        view
         returns (IAntseedVerifierRegistry.ExchangeRecord memory record, bytes memory payload)
     {
         return makeSignedRecordForService(agentId, sellerKey, buyer, salt, "anthropic/claude-opus-4");
@@ -90,6 +90,27 @@ abstract contract ResponseAuthFixture is CommonBase {
         address buyer,
         bytes32 salt,
         string memory advertisedService
+    ) internal view returns (IAntseedVerifierRegistry.ExchangeRecord memory record, bytes memory payload) {
+        uint256 responseStartedAt = block.timestamp * 1000;
+        return makeSignedRecordForServiceAndTiming(
+            agentId,
+            sellerKey,
+            buyer,
+            salt,
+            advertisedService,
+            responseStartedAt,
+            responseStartedAt + 1_500
+        );
+    }
+
+    function makeSignedRecordForServiceAndTiming(
+        uint256 agentId,
+        uint256 sellerKey,
+        address buyer,
+        bytes32 salt,
+        string memory advertisedService,
+        uint256 responseStartedAt,
+        uint256 responseCompletedAt
     ) internal pure returns (IAntseedVerifierRegistry.ExchangeRecord memory record, bytes memory payload) {
         bytes32 requestHash = keccak256(abi.encode("request", salt));
         bytes32 responseHash = keccak256(abi.encode("response", salt));
@@ -104,8 +125,8 @@ abstract contract ResponseAuthFixture is CommonBase {
                 statusCode: 200,
                 requestHash: requestHash,
                 responseHash: responseHash,
-                responseStartedAt: 1_752_444_000_000,
-                responseCompletedAt: 1_752_444_001_500
+                responseStartedAt: responseStartedAt,
+                responseCompletedAt: responseCompletedAt
             })
         );
         record = IAntseedVerifierRegistry.ExchangeRecord({
@@ -120,7 +141,7 @@ abstract contract ResponseAuthFixture is CommonBase {
     ///      all carried by `buyer`, with one probe declared per record.
     function makeSignedBatch(uint256 n, uint256 agentId, uint256 sellerKey, address buyer, bytes32 salt)
         internal
-        pure
+        view
         returns (
             IAntseedVerifierRegistry.ExchangeRecord[] memory records,
             bytes[] memory payloads,

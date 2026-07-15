@@ -97,7 +97,9 @@ interface IAntseedVerifierRegistry {
     ///         declares the probes bundled in record i; the anchored batch's
     ///         probeCount is their checked sum. The buyer named in each
     ///         verified payload accrues delegate credits when it is neither
-    ///         the anchoring verifier nor the record's seller.
+    ///         the anchoring verifier nor the record's seller. Each signed
+    ///         response must start at or after the referenced commitment and
+    ///         complete no earlier than it started.
     function anchorExchangeBatch(
         bytes32 probeCommitment,
         ExchangeRecord[] calldata records,
@@ -109,7 +111,14 @@ interface IAntseedVerifierRegistry {
     function parseResponseAuthPayload(bytes calldata payload)
         external
         pure
-        returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash);
+        returns (
+            address buyer,
+            bytes32 advertisedServiceHash,
+            bytes32 requestHash,
+            bytes32 responseHash,
+            uint64 responseStartedAt,
+            uint64 responseCompletedAt
+        );
     function submitAttestation(
         uint256 agentId,
         bytes32 serviceHash,

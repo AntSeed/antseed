@@ -223,6 +223,27 @@ describe('VerifierRegistryClient.getBatchAnchor', () => {
   });
 });
 
+describe('VerifierRegistryClient.parseResponseAuthPayload', () => {
+  it('decodes the signed exchange timestamps', async () => {
+    const client = new VerifierRegistryClient({
+      rpcUrl: 'http://127.0.0.1:1',
+      contractAddress: '0x' + '11'.repeat(20),
+    });
+    const raw = {
+      buyer: '0x' + '22'.repeat(20),
+      advertisedServiceHash: '0x' + '33'.repeat(32),
+      requestHash: '0x' + '44'.repeat(32),
+      responseHash: '0x' + '55'.repeat(32),
+      responseStartedAt: 1_752_444_000_000n,
+      responseCompletedAt: 1_752_444_001_500n,
+    };
+    const stubContract = { getFunction: () => async () => raw };
+    (client as unknown as { _contract: () => unknown })._contract = () => stubContract;
+
+    await expect(client.parseResponseAuthPayload(new Uint8Array([1]))).resolves.toEqual(raw);
+  });
+});
+
 describe('VerifierRegistryClient delegate-credit discovery', () => {
   const verifier = '0x' + '22'.repeat(20);
   const buyer = '0x' + '33'.repeat(20);

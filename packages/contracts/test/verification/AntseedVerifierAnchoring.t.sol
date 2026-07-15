@@ -466,6 +466,94 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         assertGt(anchoredAtB, 0);
     }
 
+    function test_anchorReusedExchangeUnderFreshCommitmentReverts() public {
+        bytes32 firstCommitment = keccak256("first-replay-commitment");
+        _commit(verifier, firstCommitment);
+        vm.warp(block.timestamp + 1);
+
+        uint256 responseStartedAt = block.timestamp * 1000;
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](2);
+        bytes[] memory payloads = new bytes[](2);
+        uint32[] memory counts = _ones(2);
+        for (uint256 i = 0; i < 2; i++) {
+            (records[i], payloads[i]) = makeSignedRecordForServiceAndTiming(
+                agentA,
+                SELLER_A_KEY,
+                carrierX,
+                keccak256(abi.encode("replay", i)),
+                "anthropic/claude-opus-4",
+                responseStartedAt,
+                responseStartedAt + 1_500
+            );
+        }
+        vm.prank(verifier);
+        verifierRegistry.anchorExchangeBatch(firstCommitment, records, payloads, counts);
+
+        vm.warp(block.timestamp + 1);
+        bytes32 secondCommitment = keccak256("second-replay-commitment");
+        _commit(verifier, secondCommitment);
+        vm.warp(block.timestamp + 1);
+
+        (records[0], records[1]) = (records[1], records[0]);
+        (payloads[0], payloads[1]) = (payloads[1], payloads[0]);
+        vm.prank(verifier);
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangePredatesCommitment.selector, 0));
+        verifierRegistry.anchorExchangeBatch(secondCommitment, records, payloads, counts);
+    }
+
+    function test_anchorExchangePredatingCommitmentReverts() public {
+        bytes32 commitment = keccak256("stale-exchange-commitment");
+        _commit(verifier, commitment);
+        (
+            IAntseedVerifierRegistry.ExchangeRecord memory record,
+            bytes memory payload
+        ) = makeSignedRecordForServiceAndTiming(
+            agentA,
+            SELLER_A_KEY,
+            carrierX,
+            "stale-exchange",
+            "anthropic/claude-opus-4",
+            block.timestamp * 1000 - 1,
+            block.timestamp * 1000
+        );
+        vm.warp(block.timestamp + 1);
+
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](1);
+        records[0] = record;
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = payload;
+        vm.prank(verifier);
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangePredatesCommitment.selector, 0));
+        verifierRegistry.anchorExchangeBatch(commitment, records, payloads, _ones(1));
+    }
+
+    function test_anchorResponseCompletionBeforeStartReverts() public {
+        bytes32 commitment = keccak256("invalid-timing-commitment");
+        _commit(verifier, commitment);
+        uint256 startedAt = block.timestamp * 1000;
+        (
+            IAntseedVerifierRegistry.ExchangeRecord memory record,
+            bytes memory payload
+        ) = makeSignedRecordForServiceAndTiming(
+            agentA,
+            SELLER_A_KEY,
+            carrierX,
+            "invalid-timing",
+            "anthropic/claude-opus-4",
+            startedAt,
+            startedAt - 1
+        );
+        vm.warp(block.timestamp + 1);
+
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](1);
+        records[0] = record;
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = payload;
+        vm.prank(verifier);
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.InvalidResponseTiming.selector, 0));
+        verifierRegistry.anchorExchangeBatch(commitment, records, payloads, _ones(1));
+    }
+
     // ─── On-chain ResponseAuth verification ──────────────────────────
 
     /// @dev Committed + warped fixture commitment, ready to anchor against.
@@ -695,12 +783,20 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
 
     function test_parsePayloadExtractsBoundFields() public view {
         (, bytes memory payload) = makeSignedRecord(agentA, SELLER_A_KEY, carrierX, "parse");
-        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
-            verifierRegistry.parseResponseAuthPayload(payload);
+        (
+            address buyer,
+            bytes32 advertisedServiceHash,
+            bytes32 requestHash,
+            bytes32 responseHash,
+            uint64 responseStartedAt,
+            uint64 responseCompletedAt
+        ) = verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, carrierX);
         assertEq(advertisedServiceHash, SERVICE_HASH);
         assertEq(requestHash, keccak256(abi.encode("request", bytes32("parse"))));
         assertEq(responseHash, keccak256(abi.encode("response", bytes32("parse"))));
+        assertEq(responseStartedAt, block.timestamp * 1000);
+        assertEq(responseCompletedAt, block.timestamp * 1000 + 1_500);
     }
 
     function test_parsePayloadMalformedReverts() public {
@@ -742,6 +838,12 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         // Empty payload.
         vm.expectRevert(AntseedVerifierRegistry.MalformedSigningPayload.selector);
         verifierRegistry.parseResponseAuthPayload("");
+
+        // Timestamp fields are strict unsigned decimal integers.
+        bytes memory badTimestamp = payload;
+        badTimestamp[badTimestamp.length - 30] = "x";
+        vm.expectRevert(AntseedVerifierRegistry.MalformedSigningPayload.selector);
+        verifierRegistry.parseResponseAuthPayload(badTimestamp);
     }
 
     function test_parsePayloadBadHexReverts() public {
@@ -775,12 +877,20 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
             _lpx("1"),
             _lpx("2")
         );
-        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
-            verifierRegistry.parseResponseAuthPayload(payload);
+        (
+            address buyer,
+            bytes32 advertisedServiceHash,
+            bytes32 requestHash,
+            bytes32 responseHash,
+            uint64 responseStartedAt,
+            uint64 responseCompletedAt
+        ) = verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, address(0xCAB1000000000000000000000000000000000000));
         assertEq(advertisedServiceHash, keccak256("svc"));
         assertEq(requestHash, bytes32(uint256(type(uint256).max / 15 * 10))); // 0xaaa...a
         assertEq(responseHash, bytes32(uint256(type(uint256).max / 15 * 11))); // 0xbbb...b
+        assertEq(responseStartedAt, 1);
+        assertEq(responseCompletedAt, 2);
     }
 
     function _lpx(bytes memory field) private pure returns (bytes memory) {
@@ -827,12 +937,20 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         assertEq(verifierRegistry.responseAuthDigest(payload), PINNED_DIGEST, "pinned digest");
         assertEq(signResponseAuth(PINNED_SELLER_KEY, payload), PINNED_SIG, "pinned signature (RFC 6979)");
 
-        (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash) =
-            verifierRegistry.parseResponseAuthPayload(payload);
+        (
+            address buyer,
+            bytes32 advertisedServiceHash,
+            bytes32 requestHash,
+            bytes32 responseHash,
+            uint64 responseStartedAt,
+            uint64 responseCompletedAt
+        ) = verifierRegistry.parseResponseAuthPayload(payload);
         assertEq(buyer, PINNED_BUYER, "pinned buyer");
         assertEq(advertisedServiceHash, SERVICE_HASH, "pinned serviceHash");
         assertEq(requestHash, keccak256("fixture-request-body"), "pinned requestHash");
         assertEq(responseHash, keccak256("fixture-response-body"), "pinned responseHash");
+        assertEq(responseStartedAt, 1_752_444_000_000, "pinned responseStartedAt");
+        assertEq(responseCompletedAt, 1_752_444_001_500, "pinned responseCompletedAt");
     }
 
     function test_pinnedPayloadAnchorsEndToEnd() public {
@@ -1228,8 +1346,9 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     /// @dev THE gas gate this feature shipped under: the design target for
     ///      the per-record marginal execution overhead of on-chain signature
     ///      verification + payload parsing was ~25k gas. MEASURED 2026-07-14
-    ///      (solc 0.8.24, via-ir, 200 runs): ~38k marginal per record after
-    ///      binding each target/service pair to its declared probe count.
+    ///      (solc 0.8.24, via-ir, 200 runs): ~42k marginal per record after
+    ///      binding each target/service pair to its declared probe count and
+    ///      validating the signed exchange timestamps.
     ///      The breakdown is roughly
     ///      hex-field decoding + payload walk ~10k, EIP-191 digest ~2.5k,
     ///      ecrecover ~3.5k, Merkle leaf/root ~3.5k, agent lookup + accrual
@@ -1244,21 +1363,21 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         emit log_named_uint("anchor 48 signed records: total execution gas", gas48);
         emit log_named_uint("marginal execution gas per record", marginalPerRecord);
 
-        assertLt(marginalPerRecord, 40_000, "per-record marginal execution gas regressed (was ~38k)");
-        assertLt(gas24, 1_100_000, "24-record anchor execution gas regressed (was ~1.04M)");
+        assertLt(marginalPerRecord, 45_000, "per-record marginal execution gas regressed (was ~42k)");
+        assertLt(gas24, 1_200_000, "24-record anchor execution gas regressed (was ~1.14M)");
     }
 
     /// @dev Practical batch-size ceiling. Memory growth is quadratic in
     ///      batch size (every record's digest/recover path allocates), so
-    ///      per-record cost rises with the batch: ~26k marginal at 24-48
+    ///      per-record cost rises with the batch: ~42k marginal at 24-48
     ///      records, ~57k averaged over 1000. 256 records is a sane
-    ///      per-transaction ceiling on Base (execution ~8M plus ~2-3M
+    ///      per-transaction ceiling on Base (execution ~12.5M plus ~2-3M
     ///      tx-intrinsic calldata). The protocol caps one commitment's sole
     ///      batch at 256 records so a signed exchange cannot be replayed across
     ///      several roots to multiply delegate accrual.
-    function test_anchor256RecordsGasUnder12M() public {
+    function test_anchor256RecordsGasUnder13M() public {
         uint256 gasUsed = _anchorGas(256, "g256");
         emit log_named_uint("anchor 256 signed records: total execution gas", gasUsed);
-        assertLt(gasUsed, 12_000_000, "anchor of 256 records must stay under 12M execution gas");
+        assertLt(gasUsed, 13_000_000, "anchor of 256 records must stay under 13M execution gas");
     }
 }

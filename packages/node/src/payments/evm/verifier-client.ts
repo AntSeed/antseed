@@ -113,7 +113,7 @@ const VERIFIER_REGISTRY_ABI = [
   'function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256)',
   'function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256)',
   'function responseAuthDigest(bytes signingPayload) external pure returns (bytes32)',
-  'function parseResponseAuthPayload(bytes payload) external pure returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash)',
+  'function parseResponseAuthPayload(bytes payload) external pure returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash, uint64 responseStartedAt, uint64 responseCompletedAt)',
   // Events
   'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
   'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
@@ -524,13 +524,22 @@ export class VerifierRegistryClient extends BaseEvmClient {
    */
   async parseResponseAuthPayload(
     payload: BytesLike,
-  ): Promise<{ buyer: string; advertisedServiceHash: string; requestHash: string; responseHash: string }> {
+  ): Promise<{
+    buyer: string;
+    advertisedServiceHash: string;
+    requestHash: string;
+    responseHash: string;
+    responseStartedAt: bigint;
+    responseCompletedAt: bigint;
+  }> {
     const raw = await this._contract().getFunction('parseResponseAuthPayload')(hexlify(payload));
     return {
       buyer: String(raw.buyer ?? raw[0]),
       advertisedServiceHash: String(raw.advertisedServiceHash ?? raw[1]),
       requestHash: String(raw.requestHash ?? raw[2]),
       responseHash: String(raw.responseHash ?? raw[3]),
+      responseStartedAt: BigInt(raw.responseStartedAt ?? raw[4]),
+      responseCompletedAt: BigInt(raw.responseCompletedAt ?? raw[5]),
     };
   }
 
