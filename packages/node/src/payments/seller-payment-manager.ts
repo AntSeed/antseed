@@ -46,8 +46,9 @@ const DEFAULT_MIN_SETTLE_DELTA = BigInt(DEFAULT_MIN_SETTLE_DELTA_STR);
 
 const TOP_UP_THRESHOLD_NOT_MET_SELECTOR = '0x1ea4506b';
 const INSUFFICIENT_BALANCE_SELECTOR = '0xf4d678b8';
+const IN_FLIGHT_TX_LIMIT_PHRASE = 'in-flight transaction limit';
 
-type TopUpFailureKind = 'retryable-threshold' | 'insufficient-balance' | 'non-retryable';
+type TopUpFailureKind = 'retryable-threshold' | 'retryable-tx-backpressure' | 'insufficient-balance' | 'non-retryable';
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -572,12 +573,14 @@ export class SellerPaymentManager {
           debugLog(`[SellerPayment] Top-up completed: channel=${channelId.slice(0, 18)}... new ceiling=${newMaxAmount}`);
         } catch (topUpErr) {
           const failureKind = this._classifyTopUpFailure(topUpErr);
-          if (failureKind === 'retryable-threshold') {
-            // TopUpThresholdNotMet is a timing/settlement race: keep the
-            // ReserveAuth pending and retry after a later SpendingAuth raises
-            // the settle amount enough to satisfy the contract's 85% gate.
+          if (failureKind === 'retryable-threshold' || failureKind === 'retryable-tx-backpressure') {
+            // TopUpThresholdNotMet is a timing/settlement race; tx backpressure
+            // means the RPC/delegated-account queue is saturated. In both cases
+            // keep the ReserveAuth pending and retry after a later SpendingAuth
+            // instead of treating the active channel as permanently broken.
+            const reason = failureKind === 'retryable-threshold' ? 'threshold not met' : 'transaction backpressure';
             debugWarn(
-              `[SellerPayment] Top-up threshold not met: channel=${channelId.slice(0, 18)}... ` +
+              `[SellerPayment] Top-up ${reason}: channel=${channelId.slice(0, 18)}... ` +
               `error=${this._formatError(topUpErr)} — ` +
               `deferring topUp (will retry after next SpendingAuth)`,
             );
@@ -720,10 +723,20 @@ export class SellerPaymentManager {
     if (text.includes('topupthresholdnotmet') || text.includes(TOP_UP_THRESHOLD_NOT_MET_SELECTOR)) {
       return 'retryable-threshold';
     }
+    if (this._isRetryableTxSubmissionFailure(text)) {
+      return 'retryable-tx-backpressure';
+    }
     if (text.includes('insufficientbalance') || text.includes(INSUFFICIENT_BALANCE_SELECTOR)) {
       return 'insufficient-balance';
     }
     return 'non-retryable';
+  }
+
+  private _isRetryableTxSubmissionFailure(errOrText: unknown): boolean {
+    const text = typeof errOrText === 'string'
+      ? errOrText.toLowerCase()
+      : this._flattenErrorText(errOrText).toLowerCase();
+    return text.includes(IN_FLIGHT_TX_LIMIT_PHRASE);
   }
 
   private _flattenErrorText(value: unknown, seen = new Set<object>(), depth = 0): string {
@@ -842,9 +855,10 @@ export class SellerPaymentManager {
       return 'succeeded';
     } catch (retryErr) {
       const failureKind = this._classifyTopUpFailure(retryErr);
-      if (failureKind === 'retryable-threshold') {
+      if (failureKind === 'retryable-threshold' || failureKind === 'retryable-tx-backpressure') {
+        const reason = failureKind === 'retryable-threshold' ? 'threshold not met' : 'transaction backpressure';
         debugWarn(
-          `[SellerPayment] Deferred topUp threshold not met: channel=${channelId.slice(0, 18)}... ` +
+          `[SellerPayment] Deferred topUp ${reason}: channel=${channelId.slice(0, 18)}... ` +
           `error=${this._formatError(retryErr)} — keeping pending`,
         );
         this._storePendingTopUp(channelId, pendingTopUp);
@@ -1035,6 +1049,16 @@ export class SellerPaymentManager {
           this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
           this._closeRetryCount.delete(channelId);
         } catch (err) {
+          if (this._isRetryableTxSubmissionFailure(err)) {
+            debugWarn(
+              `[SellerPayment] Close hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
+              `— keeping channel state for retry: ${this._formatError(err)}`,
+            );
+            if (cleanupOnFailure) {
+              this._activeBuyers.delete(buyerPeerId);
+            }
+            return;
+          }
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
           this._closeRetryCount.set(channelId, retries + 1);
           if (!cleanupOnFailure) return;
@@ -1071,7 +1095,8 @@ export class SellerPaymentManager {
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
       if (accepted > 0n) {
         debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — closing channel immediately`);
-        // Fire and forget settlement — clean up maps even if close() fails
+        // Fire and forget settlement. Permanent close failures clean up according
+        // to cleanupOnFailure; transient tx backpressure keeps channel state for retry.
         this.settleSession(buyerPeerId, { cleanupOnFailure: true }).catch((err) => {
           debugWarn(`[SellerPayment] Failed to close on disconnect: ${err instanceof Error ? err.message : err}`);
         });
@@ -1177,8 +1202,15 @@ export class SellerPaymentManager {
       this._closeRetryCount.delete(channelId);
       this._evictStaleChannel(channelId, peerId, 'zombie closed on-chain', CHANNEL_STATUS.SETTLED);
     } catch (err) {
-      this._closeRetryCount.set(channelId, retries + 1);
-      debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
+      if (this._isRetryableTxSubmissionFailure(err)) {
+        debugWarn(
+          `[SellerPayment] Zombie close hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
+          `— keeping channel for retry: ${this._formatError(err)}`,
+        );
+      } else {
+        this._closeRetryCount.set(channelId, retries + 1);
+        debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
+      }
     } finally {
       this._closingChannels.delete(channelId);
     }
