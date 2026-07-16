@@ -205,12 +205,28 @@
   height: 176px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: #fff;
-  padding: 6px;
+  background: var(--bg-card);
+  padding: 8px;
 }
 
-.qrPlaceholder {
-  background: var(--bg-card);
+/* Dots follow the theme (dark-on-light / light-on-dark, Polymarket-style). */
+.qr {
+  color: var(--text-primary);
+}
+
+/* Backing ring behind the Base badge — blends the punched-out hole into the
+   QR tile so the logo floats with a quiet zone around it. */
+.qrBadgeBg {
+  fill: var(--bg-card);
+}
+
+.qrMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-secondary);
 }
 
 .methodHint {
@@ -248,13 +264,25 @@
   font-size: 12px;
 }
 
+/* Deposit progress as a quiet status line — the leading mark carries the
+   state: orange pulse (waiting), green pulse (funds detected / depositing),
+   green check (credited), red dot (error). */
 .watchStatus {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 16px;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  text-align: center;
   color: var(--text-secondary);
+}
+
+.watchStatus_busy {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .watchStatus_done {
@@ -266,17 +294,51 @@
   color: var(--accent-red, #d64545);
 }
 
+/* Live dot: solid core plus an expanding halo ring (pseudo-element inherits
+   the core color; transform/opacity only, so it renders everywhere). */
 .watchPulse {
-  width: 8px;
-  height: 8px;
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--accent-green);
-  animation: watch-pulse 1.6s ease-in-out infinite;
+  background: #f59e0b; /* waiting = orange */
 }
 
-@keyframes watch-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+.watchStatus_busy .watchPulse {
+  background: var(--accent-green);
+}
+
+.watchStatus_error .watchPulse {
+  background: var(--accent-red, #d64545);
+}
+
+.watchPulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: watch-dot-ring 1.8s ease-out infinite;
+}
+
+.watchPulseStatic::after {
+  animation: none;
+  display: none;
+}
+
+.watchCheck {
+  flex-shrink: 0;
+  color: var(--accent-green);
+}
+
+/* NOTE: must not be named `watch-pulse` — CSS modules export keyframe names
+   alongside classes, and camelized it collides with (and clobbers) the
+   `.watchPulse` class in the styles object, leaving the dot unstyled. */
+@keyframes watch-dot-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(2.7); opacity: 0; }
 }
 
 .networkWarn {

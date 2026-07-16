@@ -2394,10 +2394,10 @@ type DepositWatchStatus = {
   error?: string;
 };
 
-const DEPOSIT_WATCH_INTERVAL_MS = 4_000;
+const DEPOSIT_WATCH_INTERVAL_MS = 2_000;
 const SWEEP_AUTH_VALIDITY_SECS = 3_600;
 const SWEEP_CONFIRM_TIMEOUT_MS = 120_000;
-const SWEEP_POLL_INTERVAL_MS = 3_000;
+const SWEEP_POLL_INTERVAL_MS = 1_000;
 // After a failed/incomplete sweep the funds stay in the wallet; retry on the
 // watcher tick once this cooldown passes instead of hammering the network.
 const SWEEP_RETRY_COOLDOWN_MS = 60_000;
@@ -2437,20 +2437,23 @@ async function buyerDaemonFetch(pathname: string, init?: RequestInit, timeoutMs 
   }
 }
 
-/** POST the signed sweep payload to the daemon. Returns the peers-sent count,
- *  or null when no daemon is listening on the proxy port. */
-async function daemonBroadcastSweep(payload: SweepRequestPayload): Promise<number | null> {
+/** POST the signed sweep payload to the daemon, which offers it to relayers
+ *  one at a time so they never race the same nonce. Returns the offer-round
+ *  result, or null when no daemon is listening on the proxy port. The long
+ *  timeout covers the sequential round (~10s per candidate relayer);
+ *  `accepted` is undefined when an older daemon predates sequential dispatch. */
+async function daemonBroadcastSweep(payload: SweepRequestPayload): Promise<{ sent: number; accepted?: boolean } | null> {
   const res = await buyerDaemonFetch('/_antseed/sweep', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }, 90_000);
   if (!res) return null;
-  const body = await res.json().catch(() => null) as { ok?: boolean; sent?: number; error?: string } | null;
+  const body = await res.json().catch(() => null) as { ok?: boolean; sent?: number; accepted?: boolean; error?: string } | null;
   if (!res.ok || !body?.ok || typeof body.sent !== 'number') {
     throw new Error(`Buyer daemon rejected the sweep request: ${body?.error ?? `HTTP ${res.status}`}`);
   }
-  return body.sent;
+  return { sent: body.sent, ...(typeof body.accepted === 'boolean' ? { accepted: body.accepted } : {}) };
 }
 
 /** Ask the daemon to refresh discovery and eagerly connect to a few peers
@@ -2475,6 +2478,19 @@ async function daemonGetSweepReceipt(nonce: string): Promise<SweepReceiptPayload
   return body?.receipt ?? null;
 }
 
+/** The on-chain fallbacks usually confirm a sweep before the relayer's
+ *  'confirmed' receipt (which carries the tx hash) arrives — grace-poll the
+ *  receipt briefly so the credited status can still link the transaction. */
+async function pollReceiptTxHash(nonce: string, graceMs: number): Promise<string | undefined> {
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    const receipt = await daemonGetSweepReceipt(nonce).catch(() => null);
+    if (receipt?.txHash) return receipt.txHash;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  return undefined;
+}
+
 // ─── Sweep confirmation ───
 // Source of truth is on-chain: a matching SweepExecuted relay event, the
 // consumed EIP-3009 authorization, or the deposits-balance increase. Relayer
@@ -2494,8 +2510,6 @@ async function waitForSweepConfirmation(params: {
   let txHash: string | undefined;
 
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_INTERVAL_MS));
-
     const receipt = await daemonGetSweepReceipt(authNonce).catch(() => null);
     if (receipt?.txHash) txHash = receipt.txHash;
 
@@ -2520,6 +2534,8 @@ async function waitForSweepConfirmation(params: {
     if (current && current.available + current.reserved >= initialTotal + expectedNet) {
       return { credited: current.available + current.reserved - initialTotal, ...(txHash ? { txHash } : {}) };
     }
+
+    await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_INTERVAL_MS));
   }
   return null;
 }
@@ -2607,16 +2623,22 @@ async function sweepIncomingUsdc(client: DepositsClient, buyer: string): Promise
       sig3009,
     };
 
-    let sent = await daemonBroadcastSweep(payload);
-    if (sent === null) {
+    let dispatch = await daemonBroadcastSweep(payload);
+    if (dispatch === null) {
       throw new Error('The AntSeed connection is not running — start it to complete the deposit. Your USDC is safe in the wallet.');
     }
-    if (sent === 0) {
+    if (dispatch.sent === 0) {
       await daemonConnectSweepRelayers();
-      sent = await daemonBroadcastSweep(payload) ?? 0;
+      dispatch = await daemonBroadcastSweep(payload) ?? { sent: 0 };
     }
-    if (sent === 0) {
+    if (dispatch.sent === 0) {
       throw new Error('No deposit relayers are reachable right now. Your USDC is safe in the wallet — retrying automatically.');
+    }
+    // accepted === false means every relayer in the round declined (or stayed
+    // silent) — fail fast into the watcher's retry instead of waiting out the
+    // full confirmation window. undefined (older daemon) falls through.
+    if (dispatch.accepted === false) {
+      throw new Error('No deposit relayer accepted the request right now. Your USDC is safe in the wallet — retrying automatically.');
     }
 
     const result = await waitForSweepConfirmation({
@@ -2640,6 +2662,19 @@ async function sweepIncomingUsdc(client: DepositsClient, buyer: string): Promise
       amountBaseUnits: result.credited.toString(),
       ...(result.txHash ? { txHash: result.txHash } : {}),
     });
+    // The on-chain fallbacks often confirm before the relayer's 'confirmed'
+    // receipt (the only carrier of the tx hash) arrives. Never delay the
+    // credited status for it — backfill the hash when the receipt lands.
+    if (!result.txHash) {
+      void pollReceiptTxHash(message.nonce, 15_000).then((txHash) => {
+        if (!txHash) return;
+        sendDepositWatchStatus({
+          phase: 'credited',
+          amountBaseUnits: result.credited.toString(),
+          txHash,
+        });
+      });
+    }
   } catch (err) {
     sendDepositWatchStatus({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
   } finally {

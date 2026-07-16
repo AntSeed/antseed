@@ -59,6 +59,90 @@ function buildPaymentUri(info: DepositWatchInfo, amount: string): string {
   return baseUnits ? `${base}&uint256=${baseUnits.toString()}` : base;
 }
 
+// ─── Styled QR (round dots, rounded finders, Base badge) ───
+
+/** Official Base mark (24×24): blue disc with the white horizontal slot. */
+const BASE_LOGO_PATH =
+  'M12 24C18.6274 24 24 18.6274 24 12C24 5.37258 18.6274 0 12 0C5.72532 0 ' +
+  '0.578514 4.81465 0.0491943 10.9512H15.8916V13.0488H0.0491943C0.578514 ' +
+  '19.1853 5.72532 24 12 24Z';
+
+function roundedRectPath(x: number, y: number, w: number, h: number, r: number): string {
+  return `M${x + r},${y} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} ` +
+    `a${r},${r} 0 0 1 ${-r},${r} h${-(w - 2 * r)} a${r},${r} 0 0 1 ${-r},${-r} ` +
+    `v${-(h - 2 * r)} a${r},${r} 0 0 1 ${r},${-r} z`;
+}
+
+/** One finder eye: outer rounded ring (even-odd hole) + solid rounded pupil. */
+function finderPaths(x: number, y: number): [string, string] {
+  return [
+    roundedRectPath(x, y, 7, 7, 2.2) + ' ' + roundedRectPath(x + 1, y + 1, 5, 5, 1.6),
+    roundedRectPath(x + 2, y + 2, 3, 3, 1.05),
+  ];
+}
+
+/**
+ * Renders the payment QR as themed SVG: round data dots, rounded finder
+ * eyes, and the Base logo in a punched-out center badge. Error correction is
+ * 'Q' (25%) so the ~4% of modules hidden by the badge stay well within the
+ * recovery budget.
+ */
+function StyledQr({ text, label }: { text: string; label: string }) {
+  const matrix = useMemo(() => {
+    try {
+      const qr = QRCode.create(text, { errorCorrectionLevel: 'Q' });
+      return { size: qr.modules.size, data: qr.modules.data as Uint8Array };
+    } catch {
+      return null;
+    }
+  }, [text]);
+
+  if (!matrix) return <div className={styles.qrPlaceholder} aria-hidden="true" />;
+  const { size, data } = matrix;
+  const center = size / 2;
+  const badgeR = size * 0.11; // badge diameter ≈ 22% of QR width
+  const clearR = badgeR + 0.6; // dot clearance around the badge
+  const logoR = badgeR * 0.82;
+
+  const inFinder = (row: number, col: number): boolean =>
+    (row < 7 && col < 7) || (row < 7 && col >= size - 7) || (row >= size - 7 && col < 7);
+  const underBadge = (row: number, col: number): boolean =>
+    Math.hypot(row + 0.5 - center, col + 0.5 - center) < clearR;
+
+  const dots: JSX.Element[] = [];
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      if (!data[row * size + col]) continue;
+      if (inFinder(row, col) || underBadge(row, col)) continue;
+      dots.push(<circle key={`${row}-${col}`} cx={col + 0.5} cy={row + 0.5} r={0.34} />);
+    }
+  }
+
+  return (
+    <svg className={styles.qr} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={label}>
+      <g fill="currentColor">
+        {dots}
+        {[[0, 0], [size - 7, 0], [0, size - 7]].map(([x, y]) => {
+          const [ring, pupil] = finderPaths(x!, y!);
+          return (
+            <g key={`${x}-${y}`}>
+              <path d={ring} fillRule="evenodd" />
+              <path d={pupil} />
+            </g>
+          );
+        })}
+      </g>
+      <circle cx={center} cy={center} r={badgeR} className={styles.qrBadgeBg} />
+      <circle cx={center} cy={center} r={logoR} fill="#fff" />
+      <path
+        d={BASE_LOGO_PATH}
+        fill="#0052FF"
+        transform={`translate(${center - logoR}, ${center - logoR}) scale(${(logoR * 2) / 24})`}
+      />
+    </svg>
+  );
+}
+
 function explorerTxUrl(chainId: number | undefined, txHash: string): string | null {
   if (chainId === 8453) return `https://basescan.org/tx/${txHash}`;
   if (chainId === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
@@ -103,7 +187,6 @@ export function VprDepositView({ onSelectView }: Props) {
   const [watchInfo, setWatchInfo] = useState<DepositWatchInfo | null>(null);
   const [watchError, setWatchError] = useState<string | null>(null);
   const [watchStatus, setWatchStatus] = useState<DepositWatchStatus | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [cardNotice, setCardNotice] = useState<string | null>(null);
   // null = not fetched yet; [] = fetched, none configured.
@@ -157,25 +240,6 @@ export function VprDepositView({ onSelectView }: Props) {
       void bridge?.depositsWatchStop?.();
     };
   }, [actions]);
-
-  // QR follows the entered amount so a scanning wallet prefills the transfer.
-  useEffect(() => {
-    if (stage !== 'crypto' || !watchInfo) {
-      setQrDataUrl(null);
-      return;
-    }
-    let cancelled = false;
-    void QRCode.toDataURL(buildPaymentUri(watchInfo, amount), {
-      margin: 1,
-      width: 360,
-      errorCorrectionLevel: 'M',
-    }).then((url) => {
-      if (!cancelled) setQrDataUrl(url);
-    }).catch(() => {
-      if (!cancelled) setQrDataUrl(null);
-    });
-    return () => { cancelled = true; };
-  }, [stage, watchInfo, amount]);
 
   useEffect(() => () => {
     if (copyTimer.current) window.clearTimeout(copyTimer.current);
@@ -267,9 +331,26 @@ export function VprDepositView({ onSelectView }: Props) {
     ? explorerTxUrl(watchInfo?.chainId, watchStatus.txHash)
     : null;
 
+  // Status line, tone told by the leading mark: orange pulse while waiting,
+  // green pulse once funds are detected/sweeping, a check mark when credited.
+  // Dot color is inlined (not a CSS descendant rule) so the tone switch can
+  // never be lost to stylesheet scoping.
+  const dotColor = statusLine.tone === 'busy'
+    ? 'var(--accent-green)'
+    : statusLine.tone === 'error'
+      ? 'var(--accent-red, #d64545)'
+      : '#f59e0b';
   const watchStatusRow = (
     <div className={`${styles.watchStatus} ${styles[`watchStatus_${statusLine.tone}`] ?? ''}`} role="status">
-      {(statusLine.tone === 'idle' || statusLine.tone === 'busy') && <span className={styles.watchPulse} aria-hidden="true" />}
+      {statusLine.tone === 'done' ? (
+        <HugeiconsIcon icon={Tick02Icon} size={15} strokeWidth={2.5} className={styles.watchCheck} />
+      ) : (
+        <span
+          className={`${styles.watchPulse}${statusLine.tone === 'error' ? ` ${styles.watchPulseStatic}` : ''}`}
+          style={{ background: dotColor }}
+          aria-hidden="true"
+        />
+      )}
       {statusLine.text}
     </div>
   );
@@ -365,15 +446,11 @@ export function VprDepositView({ onSelectView }: Props) {
           {amountForm}
 
           <VprCard className={styles.payCard}>
-            {qrDataUrl ? (
-              <img className={styles.qr} src={qrDataUrl} alt="Scan to send USDC on Base" />
+            {watchInfo ? (
+              <StyledQr text={buildPaymentUri(watchInfo, amount)} label="Scan to send USDC on Base" />
             ) : (
               <div className={styles.qrPlaceholder} aria-hidden="true" />
             )}
-            <div className={styles.methodHint}>
-              Scan to send <strong>USDC on Base</strong>, or copy the address below.
-              Credits update automatically within seconds of the transfer landing.
-            </div>
             {watchInfo && (
               <button type="button" className={styles.addressRow} onClick={copyAddress} title={watchInfo.address}>
                 <code>{shortAddress(watchInfo.address)}</code>
@@ -382,6 +459,11 @@ export function VprDepositView({ onSelectView }: Props) {
               </button>
             )}
             {watchStatusRow}
+            <div className={styles.qrMeta}>
+              <span>Credits update automatically</span>
+              <span aria-hidden="true">·</span>
+              <span>$0.05 network fee</span>
+            </div>
             {creditedTxUrl && (
               <button
                 type="button"
@@ -393,8 +475,8 @@ export function VprDepositView({ onSelectView }: Props) {
               </button>
             )}
             <div className={styles.networkWarn}>
-              Only send USDC on the <strong>Base</strong> network — assets sent on other
-              networks can't be recovered.
+              Only send USDC on <strong>Base</strong> — other networks won't
+              auto-deposit.
             </div>
           </VprCard>
 
@@ -497,7 +579,8 @@ export function VprDepositView({ onSelectView }: Props) {
           ) : (
             <div className={styles.methodHint}>
               Card details never touch AntSeed. The USDC you buy is delivered on Base and
-              deposited to your credits automatically.
+              deposited to your credits automatically (a $0.05 network fee is deducted
+              per auto-deposit).
             </div>
           )}
           {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
