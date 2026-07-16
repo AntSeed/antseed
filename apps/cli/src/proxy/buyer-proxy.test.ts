@@ -185,7 +185,7 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
-test('sweep control endpoint validates and broadcasts via the running node', async () => {
+test('sweep control endpoint validates and dispatches sequentially via the running node', async () => {
   const validSweep = {
     version: 1,
     evmChainId: 31337,
@@ -198,7 +198,7 @@ test('sweep control endpoint validates and broadcasts via the running node', asy
     sig3009: '0x' + 'ab'.repeat(65),
   }
 
-  const broadcasts: unknown[] = []
+  const dispatches: unknown[] = []
   const listeners = new Map<string, (event: unknown) => void>()
   const proxy = new BuyerProxy({
     port: 0,
@@ -206,25 +206,25 @@ test('sweep control endpoint validates and broadcasts via the running node', asy
     node: {
       router: null,
       on: (event: string, listener: (event: unknown) => void) => listeners.set(event, listener),
-      broadcastSweepRequest: (payload: unknown) => {
-        broadcasts.push(payload)
-        return 3
+      dispatchSweepRequest: async (payload: unknown) => {
+        dispatches.push(payload)
+        return { offered: 3, accepted: true }
       },
     } as any,
   })
 
   const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/sweep', body: validSweep }))
   assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3 })
-  assert.equal(broadcasts.length, 1)
+  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3, accepted: true })
+  assert.equal(dispatches.length, 1)
 
-  // Malformed payloads are rejected by the wire codec, not broadcast.
+  // Malformed payloads are rejected by the wire codec, not dispatched.
   const bad = await invokeProxy(proxy, makeProxyRequest({
     path: '/_antseed/sweep',
     body: { ...validSweep, sig3009: 'garbage' },
   }))
   assert.equal(bad.statusCode, 400)
-  assert.equal(broadcasts.length, 1)
+  assert.equal(dispatches.length, 1)
 
   // Receipts surfaced via node events are readable per-nonce.
   const emit = listeners.get('sweep:receipt')

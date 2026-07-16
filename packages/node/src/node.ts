@@ -262,6 +262,16 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
 
 const EXTERNAL_VERIFICATION_RESULT_TTL_MS = 15 * 60_000;
 
+/** How long one relayer gets exclusive first refusal on a sweep offer before
+ *  it passes to the next candidate. The relayer replies 'submitted' right
+ *  after its local checks + one Base RPC simulation (~1-2s on healthy RPCs),
+ *  so a peer that hasn't answered in 3s isn't going to win the deposit —
+ *  move on. */
+const DEFAULT_SWEEP_OFFER_TIMEOUT_MS = 3_000;
+/** Don't offer a sweep whose authorization expires too soon to safely land —
+ *  mirrors MIN_REMAINING_VALIDITY_SECS in the seller-side relayer. */
+const MIN_SWEEP_DISPATCH_VALIDITY_SECS = 30;
+
 export class AntseedNode extends EventEmitter {
   private _config: NodeConfig;
   private _identity: Identity | null = null;
@@ -1985,9 +1995,93 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Offer a signed deposit-sweep request to connected relayers ONE AT A TIME.
+   * Broadcasting to everyone makes relayers race the same EIP-3009 nonce and
+   * the losers burn gas on reverted transactions; offering sequentially gives
+   * each relayer an uncontested window. Candidates are shuffled so no single
+   * relayer always gets first refusal. A relayer that reports 'rejected' (or
+   * stays silent past `perPeerTimeoutMs`) forfeits its turn; 'submitted' or
+   * 'confirmed' ends the round. Progress still arrives as 'sweep:receipt'
+   * events, and the wire protocol is unchanged — relayers need no upgrade.
+   */
+  async dispatchSweepRequest(
+    payload: SweepRequestPayload,
+    opts?: { perPeerTimeoutMs?: number },
+  ): Promise<{ offered: number; accepted: boolean }> {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    const perPeerTimeoutMs = opts?.perPeerTimeoutMs ?? DEFAULT_SWEEP_OFFER_TIMEOUT_MS;
+
+    const candidates: Array<{ peerId: PeerId; conn: PeerConnection }> = [];
+    for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      candidates.push({ peerId, conn });
+    }
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];
+    }
+
+    const wantNonce = payload.nonce.toLowerCase();
+    let offered = 0;
+    for (const { peerId, conn } of candidates) {
+      // Stop offering when the authorization is too close to expiry for a
+      // relayer to safely land it (mirrors the relayer's own guard).
+      const nowSecs = Math.floor(Date.now() / 1000);
+      if (nowSecs >= payload.validBefore - MIN_SWEEP_DISPATCH_VALIDITY_SECS) break;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+      } catch (err) {
+        debugWarn(`[Node] Failed to offer sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+      offered++;
+      const receipt = await this._waitForSweepReceipt(peerId, wantNonce, perPeerTimeoutMs);
+      if (receipt && (receipt.status === 'submitted' || receipt.status === 'confirmed')) {
+        return { offered, accepted: true };
+      }
+      // 'rejected' or silence — pass the opportunity to the next relayer.
+    }
+    return { offered, accepted: false };
+  }
+
+  /** Resolve with the first 'sweep:receipt' from `peerId` for `authNonce`
+   *  (lowercased), or null after `timeoutMs`. */
+  private _waitForSweepReceipt(
+    peerId: PeerId,
+    authNonce: string,
+    timeoutMs: number,
+  ): Promise<SweepReceiptPayload | null> {
+    return new Promise((resolve) => {
+      const listener = (event: { peerId: string; payload: SweepReceiptPayload }): void => {
+        if (event.peerId !== peerId) return;
+        if (event.payload.authNonce.toLowerCase() !== authNonce) return;
+        cleanup();
+        resolve(event.payload);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.off('sweep:receipt', listener);
+      };
+      this.on('sweep:receipt', listener);
+    });
+  }
+
+  /**
    * Broadcast a signed deposit-sweep request to all currently connected peers.
    * Relayers submit it on-chain permissionlessly; progress reports arrive as
    * 'sweep:receipt' events. Returns the number of peers the request was sent to.
+   * Prefer {@link dispatchSweepRequest} — simultaneous broadcast makes relayers
+   * race each other and losers burn gas on reverted transactions.
    */
   broadcastSweepRequest(payload: SweepRequestPayload): number {
     if (!this._connectionManager) {

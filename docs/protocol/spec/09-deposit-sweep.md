@@ -124,6 +124,27 @@ Losing the submission race (3009 nonce already consumed by another relayer) is
 normal: log and move on. The relayer is enabled by default for sellers and
 disabled with `relayer.enabled: false`.
 
+## Buyer dispatch strategy (sequential offers)
+
+Broadcasting one sweep to every relay-capable peer simultaneously makes
+relayers race the same 3009 nonce: exactly one submission lands and every
+other relayer burns gas on a reverted transaction. Buyers SHOULD instead offer
+a sweep to candidate relayers **one at a time**:
+
+1. Shuffle the connected relay-capable peers so no relayer always gets first
+   refusal.
+2. Send the `SweepRequest` to one peer and wait for its `SweepReceipt`
+   (recommended ~10s): `submitted`/`confirmed` ends the round; `rejected` or
+   silence passes the offer to the next candidate.
+3. Stop offering when the authorization is within ~30s of `validBefore`
+   (mirroring the relayer's own expiry guard).
+
+This is purely a buyer-side dispatch policy — the wire format is unchanged and
+relayers need no upgrade. Receipts remain informational: even after a relayer
+accepts, the buyer's source of truth is its on-chain Deposits balance, and the
+per-relayer simulation still protects an accepting relayer that raced an
+out-of-band submission of the same authorization.
+
 ## Privacy note
 
 Broadcasting a sweep reveals the buyer address and amount to connected peers.

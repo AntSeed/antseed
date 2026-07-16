@@ -1001,8 +1001,11 @@ export class BuyerProxy {
       return
     }
 
-    // Broadcast a signed deposit-sweep request over the daemon's existing
-    // seller connections (see docs/protocol/spec/09-deposit-sweep.md).
+    // Offer a signed deposit-sweep request to the daemon's connected relayers
+    // one at a time (see docs/protocol/spec/09-deposit-sweep.md) — sequential
+    // dispatch keeps relayers from racing the same nonce and burning gas on
+    // reverted transactions. Responds only after a relayer accepts, every
+    // candidate declines, or the offer round runs out of peers.
     if (path === '/_antseed/sweep' && method === 'POST') {
       const chunks: Buffer[] = []
       let totalSize = 0
@@ -1018,10 +1021,10 @@ export class BuyerProxy {
       try {
         // Re-validate through the wire codec — same rules as inbound P2P frames.
         const payload = decodeSweepRequest(new Uint8Array(Buffer.concat(chunks)))
-        const sent = this._node.broadcastSweepRequest(payload)
-        log(`Sweep request ${payload.nonce.slice(0, 10)}... broadcast to ${sent} peer(s)`)
+        const { offered, accepted } = await this._node.dispatchSweepRequest(payload)
+        log(`Sweep request ${payload.nonce.slice(0, 10)}... offered to ${offered} peer(s), accepted=${accepted}`)
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, sent }))
+        res.end(JSON.stringify({ ok: true, sent: offered, accepted }))
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         res.writeHead(400, { 'content-type': 'application/json' })

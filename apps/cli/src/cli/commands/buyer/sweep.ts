@@ -56,14 +56,16 @@ async function daemonFetch(
   }
 }
 
-/** POST the signed payload to the daemon. Returns peers-sent count, or null
- *  when no daemon is reachable on the proxy port. */
+/** POST the signed payload to the daemon, which offers it to relayers one at
+ *  a time. Returns the peers-offered count, or null when no daemon is
+ *  reachable on the proxy port. The generous timeout covers the daemon's
+ *  sequential offer round (~10s per candidate relayer). */
 async function daemonBroadcast(port: number, payload: SweepRequestPayload): Promise<number | null> {
   const res = await daemonFetch(port, '/_antseed/sweep', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
-  })
+  }, 90_000)
   if (!res) return null
   const body = await res.json().catch(() => null) as { ok?: boolean; sent?: number; error?: string } | null
   if (!res.ok || !body?.ok || typeof body.sent !== 'number') {
@@ -351,12 +353,16 @@ export function registerBuyerSweepCommand(buyerCmd: Command): void {
           })
           getReceipt = async () => latestReceipt
 
-          sent = node.broadcastSweepRequest(payload)
+          netSpinner.text = 'Offering sweep request to relayers one at a time...'
+          const dispatch = await node.dispatchSweepRequest(payload)
+          sent = dispatch.offered
           if (sent === 0) {
             netSpinner.fail(chalk.red('Could not reach any peers. Your funds have not moved — try again later.'))
             process.exit(1)
           }
-          netSpinner.text = `Broadcast sweep request to ${sent} peer${sent === 1 ? '' : 's'} — waiting for a relayer...`
+          netSpinner.text = dispatch.accepted
+            ? 'A relayer accepted the sweep — waiting for on-chain confirmation...'
+            : `Offered to ${sent} peer${sent === 1 ? '' : 's'} with no acceptance yet — watching for confirmation...`
         }
 
         const timeout = parseTimeoutSecs(options.timeout)
