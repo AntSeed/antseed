@@ -4,7 +4,7 @@ import { ArrowRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
-import { formatCompactTokens, VprBackTitle, VprCard, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import { setDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import styles from './VprCreditsView.module.scss';
 
@@ -52,9 +52,9 @@ export function VprCreditsView({ onSelectView }: Props) {
   };
 
   return (
-    <section className={`view view-vpr-credits ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-credits view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Balance" onBack={() => onSelectView?.('home')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Balance" onBack={() => onSelectView?.('home')} />
 
         <div className={styles.balanceGroup}>
           <VprCard className={styles.balanceCard}>
@@ -159,6 +159,7 @@ export function VprCreditsView({ onSelectView }: Props) {
           </div>
         </VprCard>
       </div>
+      </VprPage>
     </section>
   );
 }

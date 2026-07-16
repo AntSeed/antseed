@@ -2,6 +2,69 @@
 
 /* ---------- Back title ---------- */
 
+/* ---------- Pinned page chrome (VprPage) ---------- */
+
+/* Fixed header zone at the top of a view. The body below scrolls on its own,
+   so the scrollbar thumb starts under the header. Requires the global
+   `view-pinned-header` class on the view's root section. */
+.pageTop {
+  flex: 0 0 auto;
+  padding: 8px 16px 4px;
+  background: var(--bg-primary);
+}
+
+/* Same width constraint as the views' .stack so pinned rows align with the
+   scrolled content below. */
+.pageTopInner {
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.pageHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Credits pill inside the pinned header — same look as the shell's floating
+   pill (VprShell hides that one on views that render this). */
+.headerCredits {
+  flex: 0 0 auto;
+  max-width: 180px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.headerCredits:hover,
+.headerCredits:focus-visible {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}
+
+.pageBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
+}
+
 .backTitle {
   align-self: flex-start;
   min-height: 24px;

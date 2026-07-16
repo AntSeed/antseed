@@ -17,10 +17,15 @@ const VIEW_SLIDE_MS = 300;
 // paint on mount — no scroll listeners, no state updates.
 const viewScrollCache = new Map<ViewName, number>();
 
-// Each view's scrolling element is its root `.view` section. The Suspense
-// fallback also carries `.view`, so exclude it — restoring must wait for the
-// real view.
-const SCROLL_EL_SELECTOR = '.view:not(.route-loading)';
+// Each view's scrolling element is its root `.view` section, except views
+// that pin a header outside the scroll area and mark their inner scroller
+// with `data-view-scroll` (e.g. home's fixed hero) — that marker wins. The
+// Suspense fallback also carries `.view`, so exclude it — restoring must
+// wait for the real view.
+function findScrollEl(pane: HTMLElement): HTMLElement | null {
+  return pane.querySelector<HTMLElement>('[data-view-scroll]')
+    ?? pane.querySelector<HTMLElement>('.view:not(.route-loading)');
+}
 
 function slideIndex(view: ViewName): number {
   return getViewRegistryEntry(view).slideIndex;
@@ -62,7 +67,7 @@ function ViewPane({ view, className, hidden, onSelectView }: {
     const pane = ref.current;
     if (!pane) return undefined;
     const apply = (): boolean => {
-      const el = pane.querySelector<HTMLElement>(SCROLL_EL_SELECTOR);
+      const el = findScrollEl(pane);
       if (!el) return false;
       const top = viewScrollCache.get(view) ?? 0;
       if (top > 0) el.scrollTop = top;
@@ -78,7 +83,7 @@ function ViewPane({ view, className, hidden, onSelectView }: {
   }, [view]);
 
   useEffect(() => () => {
-    const el = ref.current?.querySelector<HTMLElement>(SCROLL_EL_SELECTOR);
+    const el = ref.current ? findScrollEl(ref.current) : null;
     if (el) viewScrollCache.set(view, el.scrollTop);
   }, [view]);
 

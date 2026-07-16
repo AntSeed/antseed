@@ -24,43 +24,101 @@
 /* Compact mode: just the app badge in a round chip (56px content in an 88px
    window — the window can't go much smaller without macOS dropping its
    transparency). Fixed size so it stays a circle even mid-resize; centered
-   with a 16px margin for the drop shadow. The chip rim stays draggable;
-   clicking the badge expands back. */
-.compactChip {
+   with a 16px margin for the drop shadow.
+
+   The whole window — chip AND the transparent margin around it — is one big
+   drag handle; only the small icon button in the middle opts out. Clicking
+   the icon flips the chip over to reveal the expand button (the flip makes
+   the intent explicit — no accidental expands while grabbing the chip to
+   move it). */
+.compactRoot {
   position: fixed;
+  inset: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.compactChip {
+  position: absolute;
   top: 16px;
   right: 16px;
   width: 56px;
   height: 56px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--bg-card);
-  box-shadow: var(--shadow-float);
-  -webkit-app-region: drag;
-  user-select: none;
+  perspective: 320px;
 }
 
 .compactChip button {
   -webkit-app-region: no-drag;
 }
 
-/* Hovering the badge previews the expand action. */
-.compactExpandHint {
+.chipFlip {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 320ms ease;
+}
+
+.chipFlipped {
+  transform: rotateY(180deg);
+}
+
+.chipFace {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
-.compactChip .appBadge:hover .compactExpandHint {
-  opacity: 1;
+.chipFaceBack {
+  transform: rotateY(180deg);
+}
+
+/* On the compact chip the badge is a passive visual (part of the drag
+   handle), not a button — only the icon inside it is clickable. */
+.chipFace .appBadge {
+  cursor: default;
+}
+
+/* The only click target on the front face: the brand icon itself. Everything
+   around it stays draggable. */
+.chipIconButton {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.chipExpandButton {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.chipExpandButton:hover {
+  color: var(--accent-green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chipFlip {
+    transition: none;
+  }
 }
 
 .appBadge {

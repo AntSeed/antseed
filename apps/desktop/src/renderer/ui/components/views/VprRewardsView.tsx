@@ -4,7 +4,7 @@ import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits } from '../../../core/format';
-import { VprBackTitle, VprBadge, VprCard } from '../vpr/VprKit';
+import { VprBadge, VprCard, VprPage } from '../vpr/VprKit';
 import styles from './VprRewardsView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
@@ -49,9 +49,9 @@ export function VprRewardsView({ onSelectView }: Props) {
   };
 
   return (
-    <section className={`view view-vpr-rewards ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-rewards view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Rewards" onBack={() => onSelectView?.('credits')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Rewards" onBack={() => onSelectView?.('credits')} />
 
         <VprCard className={styles.heroCard}>
           <div className={styles.heroText}>
@@ -103,6 +103,7 @@ export function VprRewardsView({ onSelectView }: Props) {
 
         {rewards?.error && <span className={styles.errorNote}>{rewards.error}</span>}
       </div>
+      </VprPage>
     </section>
   );
 }

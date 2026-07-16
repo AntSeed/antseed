@@ -17,6 +17,7 @@ import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
+import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BrandIcon } from '../brand/BrandIcon';
 import { formatCompactTokens, VprBadge, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
@@ -144,6 +145,9 @@ export function VprHomeView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
+      {/* The hero is pinned outside the scroller — only the content below it
+          scrolls, like a fixed app header. */}
+      <div className={styles.heroPane}>
       <div className={styles.stack}>
         {/* Power / status hero over the brand gradient banner */}
         <div className={styles.hero}>
@@ -192,7 +196,15 @@ export function VprHomeView({ onSelectView }: Props) {
             <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
           </button>
         </div>
+      </div>
+      </div>
 
+      <OverlayScrollArea
+        className={styles.scroller}
+        viewportClassName={styles.scrollerViewport}
+        dataViewScroll
+      >
+      <div className={styles.stack}>
         {hasConnectedApps ? (
           /* Connected variant: per-app route cards instead of the ask input */
           <div className={styles.connectedGroup}>
@@ -316,6 +328,7 @@ export function VprHomeView({ onSelectView }: Props) {
         </div>
         )}
       </div>
+      </OverlayScrollArea>
     </section>
   );
 }

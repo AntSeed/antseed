@@ -43,7 +43,56 @@ export function FloatApp() {
   const [appChoice, setAppChoice] = useState<string | null>(null);
   const [pulsing, setPulsing] = useState(false);
   const [compact, setCompact] = useState(() => window.innerWidth <= COMPACT_MAX_WIDTH);
+  // Compact chip flipped over, showing the expand button on its back face.
+  const [flipped, setFlipped] = useState(false);
   const pulseTimer = useRef<number | null>(null);
+
+  // The chip's center buttons must be clickable AND draggable, which
+  // -webkit-app-region can't express (drag regions swallow clicks). So the
+  // buttons are no-drag and dragging is done by hand: pointer deltas stream
+  // to the main process, and a press that never moved past the threshold
+  // counts as the click.
+  const chipDrag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const chipDragHandlers = {
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      chipDrag.current = { x: event.screenX, y: event.screenY, moved: false };
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => {
+      const state = chipDrag.current;
+      if (!state) return;
+      const dx = event.screenX - state.x;
+      const dy = event.screenY - state.y;
+      if (!state.moved && Math.hypot(dx, dy) < 3) return;
+      state.moved = true;
+      state.x = event.screenX;
+      state.y = event.screenY;
+      bridge?.vprFloatMoveBy?.(dx, dy);
+    },
+    onPointerUp: () => {
+      // Leave `moved` for onClick (fires right after) to consume.
+      if (chipDrag.current && !chipDrag.current.moved) chipDrag.current = null;
+    },
+    onPointerCancel: () => {
+      chipDrag.current = null;
+    },
+  };
+  /** True when the press that triggered this click was actually a drag. */
+  const chipClickWasDrag = () => {
+    const dragged = chipDrag.current?.moved ?? false;
+    chipDrag.current = null;
+    return dragged;
+  };
+
+  // Reset the flip whenever the chip leaves/enters compact mode, and flip
+  // back on its own if the user doesn't take the expand action.
+  useEffect(() => setFlipped(false), [compact]);
+  useEffect(() => {
+    if (!flipped) return undefined;
+    const timer = window.setTimeout(() => setFlipped(false), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [flipped]);
 
   // The main process resizes the window; this component just swaps layouts.
   const setCompactMode = (next: boolean) => {
@@ -113,21 +162,42 @@ export function FloatApp() {
 
   if (compact) {
     return (
+      <div className={styles.compactRoot}>
       <div className={styles.compactChip}>
-        <button
-          type="button"
-          className={badgeClassName}
-          onClick={() => setCompactMode(false)}
-          title="Expand"
-          aria-label="Expand floating window"
-        >
-          {selectedApp ? (
-            <BrandIcon name={selectedApp.name} hints={[selectedApp.displayName]} size={26} />
-          ) : null}
-          <span className={styles.compactExpandHint} aria-hidden="true">
-            <HugeiconsIcon icon={ArrowExpand02Icon} size={16} strokeWidth={2} />
-          </span>
-        </button>
+        <div className={`${styles.chipFlip}${flipped ? ` ${styles.chipFlipped}` : ''}`}>
+          {/* Front: the status badge. Only the icon itself is clickable —
+              the rest of the chip stays a drag handle. */}
+          <div className={styles.chipFace}>
+            <div className={badgeClassName}>
+              <button
+                type="button"
+                className={styles.chipIconButton}
+                {...chipDragHandlers}
+                onClick={() => { if (!chipClickWasDrag()) setFlipped(true); }}
+                title="Options"
+                aria-label="Show expand button"
+              >
+                {selectedApp ? (
+                  <BrandIcon name={selectedApp.name} hints={[selectedApp.displayName]} size={26} />
+                ) : null}
+              </button>
+            </div>
+          </div>
+          {/* Back: the explicit expand action. */}
+          <div className={`${styles.chipFace} ${styles.chipFaceBack}`}>
+            <button
+              type="button"
+              className={styles.chipExpandButton}
+              {...chipDragHandlers}
+              onClick={() => { if (!chipClickWasDrag()) setCompactMode(false); }}
+              title="Expand"
+              aria-label="Expand floating window"
+            >
+              <HugeiconsIcon icon={ArrowExpand02Icon} size={18} strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      </div>
       </div>
     );
   }

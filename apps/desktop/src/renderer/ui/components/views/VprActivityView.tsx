@@ -4,7 +4,7 @@ import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { shortAddress } from '../../../core/format';
-import { VprBackTitle, VprCard, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprActivityView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
@@ -97,9 +97,9 @@ export function VprActivityView({ onSelectView }: Props) {
   };
 
   return (
-    <section className={`view view-vpr-activity ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-activity view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Activity" onBack={() => onSelectView?.('credits')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Activity" onBack={() => onSelectView?.('credits')} />
 
         <VprStatRow>
           <VprStatTile label="Active" value={activeCount} />
@@ -150,6 +150,7 @@ export function VprActivityView({ onSelectView }: Props) {
           wallet&apos;s signature, so it opens in a secure browser window.
         </span>
       </div>
+      </VprPage>
     </section>
   );
 }

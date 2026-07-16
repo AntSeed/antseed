@@ -81,8 +81,8 @@
   --drop-overlay-bg: rgba(251, 249, 244, 0.82);
 
   /* Scrollbar */
-  --scrollbar-thumb: rgba(17, 23, 20, 0.12);
-  --scrollbar-thumb-hover: rgba(17, 23, 20, 0.2);
+  --scrollbar-thumb: rgba(17, 23, 20, 0.18);
+  --scrollbar-thumb-hover: rgba(17, 23, 20, 0.3);
 }
 
 body.dark-theme {
@@ -123,8 +123,8 @@ body.dark-theme {
   --chat-header-bg: #252527;
   --chat-area-bg: #1c1c1e;
   --drop-overlay-bg: rgba(28, 28, 30, 0.82);
-  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
 }
 
 /* ===================================================================
@@ -340,6 +340,17 @@ textarea {
      transitions), so its translate is bound to this timeline instead —
      compositor-driven, unlike a JS scroll listener. */
   scroll-timeline: --active-view-scroll y;
+}
+
+/* Views that pin a header (VprPage) outside their scroller: the section
+   itself stops scrolling and stacks header + body. Doubled specificity beats
+   the per-view module `.view` rules (overflow-y/padding) regardless of
+   stylesheet injection order. */
+.view-pinned-header.view {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 
 .route-loading {
@@ -1208,9 +1219,15 @@ select.form-input {
    Scrollbars
    =================================================================== */
 
+/* Native-feeling custom scrollbar (ExpressVPN-style): a slim rounded thumb
+   floating just off the right edge, no visible track. The 12px gutter is
+   invisible (transparent track); the thumb is inset from both edges by the
+   transparent border + background-clip trick, so it reads as a 6px pill
+   hovering over the content rather than a web scrollbar strip. */
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {
@@ -1218,12 +1235,22 @@ select.form-input {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 3px;
+  min-height: 48px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* No jump arrows / corner square — just the thumb. */
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-corner {
+  display: none;
 }
 
 /* ===================================================================

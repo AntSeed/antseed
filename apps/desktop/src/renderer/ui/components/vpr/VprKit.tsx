@@ -1,6 +1,10 @@
+import { useContext } from 'react';
 import type { CSSProperties, JSX, ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowLeft01Icon, Search01Icon } from '@hugeicons/core-free-icons';
+import { formatCredits } from '../../../core/format';
+import { useUiSelector } from '../../hooks/useUiSelector';
+import { VprNavContext } from './VprNavContext';
 import styles from './VprKit.module.scss';
 
 /**
@@ -28,6 +32,48 @@ export function VprBackTitle({ title, onBack }: {
       <HugeiconsIcon icon={ArrowLeft01Icon} size={16} strokeWidth={2} />
       <span>{title}</span>
     </button>
+  );
+}
+
+/**
+ * Pinned page chrome for inner screens: a fixed header zone (back title on
+ * the left, the credits pill on the right, plus optional extra pinned rows
+ * like a search field or tabs) above a body that scrolls on its own — so the
+ * scrollbar starts below the header, native-app style. The view's root
+ * section must add the global `view-pinned-header` class, which turns it
+ * into a non-scrolling flex column.
+ */
+export function VprPage({ title, onBack, header, children }: {
+  title: string;
+  onBack: () => void;
+  /** Extra rows pinned with the header (e.g. search, tabs). */
+  header?: ReactNode;
+  children: ReactNode;
+}): JSX.Element {
+  const navigate = useContext(VprNavContext);
+  const credits = useUiSelector((state) => state.creditsAvailableUsdc);
+  return (
+    <>
+      <div className={styles.pageTop}>
+        <div className={styles.pageTopInner}>
+          <div className={styles.pageHeaderRow}>
+            <VprBackTitle title={title} onBack={onBack} />
+            <button
+              type="button"
+              className={styles.headerCredits}
+              onClick={() => navigate?.('deposit')}
+              title="Add credits"
+            >
+              ${formatCredits(credits)}
+            </button>
+          </div>
+          {header}
+        </div>
+      </div>
+      <div className={styles.pageBody} data-view-scroll>
+        {children}
+      </div>
+    </>
   );
 }
 

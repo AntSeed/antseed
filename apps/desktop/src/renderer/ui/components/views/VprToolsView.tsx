@@ -11,7 +11,7 @@ import {
 } from '../../../modules/vpr-tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { BrandIcon } from '../brand/BrandIcon';
-import { VprBackTitle, VprBadge, VprCard, VprSearch } from '../vpr/VprKit';
+import { VprBadge, VprCard, VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprToolsView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -289,9 +289,9 @@ export function VprToolsView({ onSelectView }: Props) {
   }, [profiles, search, activeProfiles]);
 
   return (
-    <section className={`view view-vpr-tools ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Connected apps" onBack={() => onSelectView?.('home')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Connected apps" onBack={() => onSelectView?.('home')} />
 
         <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
 
@@ -449,6 +449,7 @@ export function VprToolsView({ onSelectView }: Props) {
           </div>
         ) : null}
       </div>
+      </VprPage>
     </section>
   );
 }

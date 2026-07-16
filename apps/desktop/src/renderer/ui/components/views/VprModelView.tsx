@@ -8,7 +8,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
 import { BrandIcon } from '../brand/BrandIcon';
-import { formatUsdShort, VprBackTitle, VprBadge, VprCard, VprSettingRow, VprStatRow, VprStatTile, VprToggle } from '../vpr/VprKit';
+import { formatUsdShort, VprBadge, VprCard, VprPage, VprSettingRow, VprStatRow, VprStatTile, VprToggle } from '../vpr/VprKit';
 import styles from './VprModelView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
@@ -70,9 +70,9 @@ export function VprModelView({ onSelectView }: Props) {
   }
 
   return (
-    <section className={`view view-vpr-model ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-model view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Models" onBack={() => onSelectView?.('explore')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Models" onBack={() => onSelectView?.('explore')} />
 
         <div className={styles.headRow}>
           <div className={styles.headText}>
@@ -167,6 +167,7 @@ export function VprModelView({ onSelectView }: Props) {
           )}
         </div>
       </div>
+      </VprPage>
     </section>
   );
 }

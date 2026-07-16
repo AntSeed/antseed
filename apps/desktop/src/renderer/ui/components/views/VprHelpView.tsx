@@ -10,7 +10,7 @@ import {
 import { getUiStateRef } from '../../../core/store';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { VprBackTitle, VprCard, VprSettingRow, VprToggle } from '../vpr/VprKit';
+import { VprCard, VprPage, VprSettingRow, VprToggle } from '../vpr/VprKit';
 import styles from './VprHelpView.module.scss';
 
 declare const __APP_VERSION__: string;
@@ -326,10 +326,15 @@ export function VprHelpView({ onSelectView }: Props) {
   const currentPageRef = useRef(nav.page);
   currentPageRef.current = nav.page;
 
+  // The pane itself is a pinned-header flex column; the scrolling element is
+  // the VprPage body inside it.
+  function paneScroller(): HTMLElement | null {
+    return activePaneRef.current?.querySelector<HTMLElement>('[data-view-scroll]') ?? null;
+  }
+
   function goTo(page: HelpPage, direction?: 'forward' | 'back'): void {
-    if (activePaneRef.current) {
-      helpScrollByPage.set(pageKey(currentPageRef.current), activePaneRef.current.scrollTop);
-    }
+    const el = paneScroller();
+    if (el) helpScrollByPage.set(pageKey(currentPageRef.current), el.scrollTop);
     setNav((current) => ({
       page,
       previous: current.page,
@@ -340,14 +345,13 @@ export function VprHelpView({ onSelectView }: Props) {
   // Restore the incoming page's scroll before paint; save on unmount (e.g.
   // when a diagnostic row navigates to another view).
   useLayoutEffect(() => {
-    const el = activePaneRef.current;
+    const el = paneScroller();
     if (el) el.scrollTop = helpScrollByPage.get(pageKey(nav.page)) ?? 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageKey(nav.page)]);
   useEffect(() => () => {
-    if (activePaneRef.current) {
-      helpScrollByPage.set(pageKey(currentPageRef.current), activePaneRef.current.scrollTop);
-    }
+    const el = paneScroller();
+    if (el) helpScrollByPage.set(pageKey(currentPageRef.current), el.scrollTop);
   }, []);
 
   useEffect(() => {
@@ -397,8 +401,8 @@ export function VprHelpView({ onSelectView }: Props) {
   function renderArticlePage(topic: HelpTopic, article: HelpArticle) {
     const next = nextArticle(topic.key, article.key);
     return (
+      <VprPage title={topic.label} onBack={() => goTo({ topicKey: topic.key, articleKey: null })}>
       <div className={styles.stack}>
-        <VprBackTitle title={topic.label} onBack={() => goTo({ topicKey: topic.key, articleKey: null })} />
         <h2 className={styles.title}>{article.label}</h2>
         <VprCard className={styles.articleCard}>
           <p className={styles.paragraph}>{article.intro}</p>
@@ -431,13 +435,14 @@ export function VprHelpView({ onSelectView }: Props) {
           </button>
         )}
       </div>
+      </VprPage>
     );
   }
 
   function renderTopicPage(topic: HelpTopic) {
     return (
+      <VprPage title="Help & Support" onBack={() => goTo({ topicKey: null, articleKey: null })}>
       <div className={styles.stack}>
-        <VprBackTitle title="Help & Support" onBack={() => goTo({ topicKey: null, articleKey: null })} />
         <h2 className={styles.title}>{topic.label}</h2>
         <VprCard>
           {topic.articles.map((entry) => (
@@ -453,13 +458,14 @@ export function VprHelpView({ onSelectView }: Props) {
           ))}
         </VprCard>
       </div>
+      </VprPage>
     );
   }
 
   function renderRootPage() {
     return (
+      <VprPage title="Help & Support" onBack={() => onSelectView?.('home')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Help & Support" onBack={() => onSelectView?.('home')} />
 
         <div className={styles.section}>
           <p className={styles.sectionLabel}>Community</p>
@@ -577,6 +583,7 @@ export function VprHelpView({ onSelectView }: Props) {
           </VprCard>
         </div>
       </div>
+      </VprPage>
     );
   }
 
@@ -600,7 +607,7 @@ export function VprHelpView({ onSelectView }: Props) {
       {nav.previous && (
         <div
           key={`out-${pageKey(nav.previous)}`}
-          className={`view view-vpr-help ${styles.view} ${styles.pane} ${styles.paneOut}`}
+          className={`view view-vpr-help view-pinned-header ${styles.view} ${styles.pane} ${styles.paneOut}`}
           aria-hidden="true"
         >
           {renderPage(nav.previous)}
@@ -609,7 +616,7 @@ export function VprHelpView({ onSelectView }: Props) {
       <div
         key={pageKey(nav.page)}
         ref={activePaneRef}
-        className={`view view-vpr-help ${styles.view} ${styles.pane}${sliding ? ` ${styles.paneIn}` : ''}`}
+        className={`view view-vpr-help view-pinned-header ${styles.view} ${styles.pane}${sliding ? ` ${styles.paneIn}` : ''}`}
       >
         {renderPage(nav.page)}
       </div>

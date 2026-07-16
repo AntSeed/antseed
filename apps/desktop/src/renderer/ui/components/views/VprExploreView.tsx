@@ -6,7 +6,7 @@ import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import type { ViewName } from '../../types';
 import { VprModelRowList } from '../vpr/VprModelRows';
-import { VprBackTitle, VprSearch } from '../vpr/VprKit';
+import { VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprExploreView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
@@ -53,33 +53,38 @@ export function VprExploreView({ onSelectView }: Props) {
   );
 
   return (
-    <section className={`view view-vpr-explore ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-explore view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage
+        title="Models"
+        onBack={() => onSelectView?.('home')}
+        header={(
+          <>
+            <VprSearch value={search} onChange={setSearch} placeholder="Search models" />
+
+            <div className={styles.tabs} role="tablist" aria-label="Model list scope">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'Recommended'}
+                className={`${styles.tab}${tab === 'Recommended' ? ` ${styles.tabActive}` : ''}`}
+                onClick={() => setTab('Recommended')}
+              >
+                Recommended
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'All'}
+                className={`${styles.tab}${tab === 'All' ? ` ${styles.tabActive}` : ''}`}
+                onClick={() => setTab('All')}
+              >
+                All Models ({snap.catalog.length})
+              </button>
+            </div>
+          </>
+        )}
+      >
       <div className={styles.stack}>
-        <VprBackTitle title="Models" onBack={() => onSelectView?.('home')} />
-
-        <VprSearch value={search} onChange={setSearch} placeholder="Search models" />
-
-        <div className={styles.tabs} role="tablist" aria-label="Model list scope">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'Recommended'}
-            className={`${styles.tab}${tab === 'Recommended' ? ` ${styles.tabActive}` : ''}`}
-            onClick={() => setTab('Recommended')}
-          >
-            Recommended
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'All'}
-            className={`${styles.tab}${tab === 'All' ? ` ${styles.tabActive}` : ''}`}
-            onClick={() => setTab('All')}
-          >
-            All Models ({snap.catalog.length})
-          </button>
-        </div>
-
         {tab === 'All' ? (
           <div className={styles.filterRow}>
             <label className={styles.filterPill}>
@@ -140,6 +145,7 @@ export function VprExploreView({ onSelectView }: Props) {
           </div>
         )}
       </div>
+      </VprPage>
     </section>
   );
 }

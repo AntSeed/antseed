@@ -5,7 +5,7 @@ import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
-import { formatUsdShort, VprBackTitle, VprCard, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
+import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -36,9 +36,9 @@ export function VprPreferencesView({ onSelectView }: Props) {
   }, [snap.discoverRows, snap.selection]);
 
   return (
-    <section className={`view view-vpr-preferences ${styles.view}`} role="tabpanel">
+    <section className={`view view-vpr-preferences view-pinned-header ${styles.view}`} role="tabpanel">
+      <VprPage title="Preferences" onBack={() => onSelectView?.('home')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Preferences" onBack={() => onSelectView?.('home')} />
         <p className={styles.lede}>These preferences apply to every model with Auto select turned on</p>
 
         <VprCard className={styles.card}>
@@ -164,6 +164,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
           </div>
         ) : null}
       </div>
+      </VprPage>
     </section>
   );
 }

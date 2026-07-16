@@ -14,7 +14,7 @@ import type { IconSvgElement } from '@hugeicons/react';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
-import { VprBackTitle, VprCard } from '../vpr/VprKit';
+import { VprCard, VprPage } from '../vpr/VprKit';
 import { takeDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import type { DepositWatchStatus } from '../../../types/bridge';
 import { CrossmintCheckout, crossmintChain } from './CrossmintCheckout';
@@ -308,8 +308,8 @@ export function VprDepositView({ onSelectView }: Props) {
   function renderStage(current: Stage): JSX.Element {
     if (current === 'choose') {
       return (
+        <VprPage title="Add credits" onBack={() => onSelectView?.('credits')}>
         <div className={styles.stack}>
-          <VprBackTitle title="Add credits" onBack={() => onSelectView?.('credits')} />
 
           <VprCard className={styles.balanceCard}>
             <span className={styles.balanceLabel}>Available balance</span>
@@ -353,13 +353,14 @@ export function VprDepositView({ onSelectView }: Props) {
             ))}
           </VprCard>
         </div>
+        </VprPage>
       );
     }
 
     if (current === 'crypto') {
       return (
+        <VprPage title="Pay with USDC on Base" onBack={() => goToStage('choose')}>
         <div className={styles.stack}>
-          <VprBackTitle title="Pay with USDC on Base" onBack={() => goToStage('choose')} />
 
           {amountForm}
 
@@ -403,6 +404,7 @@ export function VprDepositView({ onSelectView }: Props) {
           </button>
           {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
         </div>
+        </VprPage>
       );
     }
 
@@ -421,8 +423,8 @@ export function VprDepositView({ onSelectView }: Props) {
     if (cardMethod === 'crossmint') {
       const cmChain = crossmintChain(watchInfo?.chainId);
       return (
+        <VprPage title="Pay with Crossmint" onBack={() => { setCardMethod(null); setCardNotice(null); }}>
         <div className={styles.stack}>
-          <VprBackTitle title="Pay with Crossmint" onBack={() => { setCardMethod(null); setCardNotice(null); }} />
 
           {amountForm}
 
@@ -454,13 +456,14 @@ export function VprDepositView({ onSelectView }: Props) {
             <span>Encrypted &amp; secure checkout</span>
           </div>
         </div>
+        </VprPage>
       );
     }
 
     // Card option chooser: hosted providers (Coinbase, …) plus Crossmint.
     return (
+      <VprPage title="Pay with card" onBack={() => goToStage('choose')}>
       <div className={styles.stack}>
-        <VprBackTitle title="Pay with card" onBack={() => goToStage('choose')} />
 
         {amountForm}
 
@@ -507,6 +510,7 @@ export function VprDepositView({ onSelectView }: Props) {
           <span>Encrypted &amp; secure checkout</span>
         </div>
       </div>
+      </VprPage>
     );
   }
 
@@ -519,11 +523,11 @@ export function VprDepositView({ onSelectView }: Props) {
     >
       {slide.previous && (
         <div key={`out-${slide.previous}`} className="view-pane view-pane-out" aria-hidden="true">
-          <div className={`view ${styles.view}`}>{renderStage(slide.previous)}</div>
+          <div className={`view view-pinned-header ${styles.view}`}>{renderStage(slide.previous)}</div>
         </div>
       )}
       <div key={stage} className={`view-pane${sliding ? ' view-pane-in' : ''}`}>
-        <div className={`view ${styles.view}`}>{renderStage(stage)}</div>
+        <div className={`view view-pinned-header ${styles.view}`}>{renderStage(stage)}</div>
       </div>
     </section>
   );

@@ -3309,6 +3309,17 @@ ipcMain.handle('vpr-float:is-open', () => Boolean(getFloatWindow()));
 
 ipcMain.handle('vpr-float:get-compact', () => getFloatWindowCompact());
 
+// Manual window drag for the compact chip's center button: it must stay a
+// click target (flip/expand), so it can't be a -webkit-app-region drag
+// handle — the renderer streams pointer deltas instead.
+ipcMain.on('vpr-float:move-by', (_event, dx: unknown, dy: unknown) => {
+  const win = getFloatWindow();
+  if (!win || typeof dx !== 'number' || typeof dy !== 'number') return;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  const bounds = win.getBounds();
+  win.setPosition(Math.round(bounds.x + dx), Math.round(bounds.y + dy));
+});
+
 ipcMain.on('vpr-float:update', (_event, data: unknown) => {
   lastVprFloatData = data;
   getFloatWindow()?.webContents.send('vpr-float:data', data);

@@ -5,7 +5,23 @@ import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
+import { VprNavContext } from './vpr/VprNavContext';
 import styles from './VprShell.module.scss';
+
+/* Views built on VprPage carry the credits pill inside their pinned header,
+   so the shell's floating pill would duplicate it. Home and chat keep the
+   floating one. */
+const VIEWS_WITH_HEADER_CREDITS: ReadonlySet<ViewName> = new Set([
+  'explore',
+  'model',
+  'tools',
+  'credits',
+  'deposit',
+  'activity',
+  'rewards',
+  'preferences',
+  'help',
+]);
 
 declare const __APP_VERSION__: string;
 
@@ -83,7 +99,9 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
       </nav>
       {chatMode && <ChatListPanel onSelectView={onSelectView} />}
       <main className={styles.mainPane}>
-        <div className={styles.content}>{children}</div>
+        <div className={styles.content}>
+          <VprNavContext.Provider value={onSelectView}>{children}</VprNavContext.Provider>
+        </div>
         {/* The no-drag carve-out lives on this static wrapper: the pill
             itself runs a compositor scroll-timeline animation, and animated
             elements don't reliably register app-region rects. The slot must
@@ -91,16 +109,18 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
             are collected in document order and later drag regions (e.g. the
             home view's hero banner) would otherwise paint over the pill's
             no-drag hole and swallow its clicks. */}
-        <div className={styles.creditsPillSlot}>
-          <button
-            type="button"
-            className={styles.creditsPill}
-            title="Add credits"
-            onClick={() => onSelectView('deposit')}
-          >
-            ${formatCredits(snap.creditsAvailableUsdc)}
-          </button>
-        </div>
+        {!VIEWS_WITH_HEADER_CREDITS.has(activeView) && (
+          <div className={styles.creditsPillSlot}>
+            <button
+              type="button"
+              className={styles.creditsPill}
+              title="Add credits"
+              onClick={() => onSelectView('deposit')}
+            >
+              ${formatCredits(snap.creditsAvailableUsdc)}
+            </button>
+          </div>
+        )}
       </main>
       <footer className={styles.statusStrip}>
         <span
