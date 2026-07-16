@@ -66,6 +66,8 @@ import {
   openFloatWindow,
   closeFloatWindow,
   getFloatWindow,
+  setFloatWindowCompact,
+  getFloatWindowCompact,
 } from './window.js';
 import { createDesktopTray, updateDesktopTray } from './tray.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
@@ -74,6 +76,7 @@ import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
+import { mergeWithDefaultAppProfiles } from './default-apps.js';
 import {
   customAppName,
   customAppToCliProfile,
@@ -168,14 +171,14 @@ function loadDesktopSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): {
   const raw = envJson
     || (envFile ? readFileSync(envFile, 'utf8') : '')
     || (packagedFile ? readFileSync(packagedFile, 'utf8') : '');
-  if (!raw) return { profiles: [], raw: [] };
-  const parsed = JSON.parse(raw) as unknown;
+  const parsed = raw ? JSON.parse(raw) as unknown : [];
   if (!Array.isArray(parsed)) {
     throw new Error(`${SYSTEM_PROXY_PROFILES_JSON_ENV} / ${SYSTEM_PROXY_PROFILES_FILE_ENV} must define a JSON array`);
   }
+  const merged = mergeWithDefaultAppProfiles(parsed);
   return {
-    profiles: parsed.map((profile, index) => normalizeDesktopSystemProxyProfile(profile, index)),
-    raw: parsed,
+    profiles: merged.map((profile, index) => normalizeDesktopSystemProxyProfile(profile, index)),
+    raw: merged,
   };
 }
 
@@ -205,24 +208,14 @@ function packagedSystemProxyProfilesPath(): string | null {
 }
 
 function systemProxyProfilesEnv(): Record<string, string> {
-  const customApps = loadCustomAppRecords();
-  if (customApps.length > 0) {
-    // The CLI child reads profiles once at startup, so hand it a merged file
-    // combining the packaged/base profiles with the user's custom apps.
-    const merged = [...SYSTEM_PROXY_PROFILES_RAW, ...customApps.map(customAppToCliProfile)];
-    const filePath = path.join(systemProxyDataDir(), 'profiles.merged.json');
-    mkdirSync(systemProxyDataDir(), { recursive: true });
-    writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-    return { [SYSTEM_PROXY_PROFILES_FILE_ENV]: filePath };
-  }
-  if (process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]?.trim()) {
-    return { [SYSTEM_PROXY_PROFILES_JSON_ENV]: process.env[SYSTEM_PROXY_PROFILES_JSON_ENV]! };
-  }
-  if (process.env[SYSTEM_PROXY_PROFILES_FILE_ENV]?.trim()) {
-    return { [SYSTEM_PROXY_PROFILES_FILE_ENV]: process.env[SYSTEM_PROXY_PROFILES_FILE_ENV]! };
-  }
-  const packaged = packagedSystemProxyProfilesPath();
-  return packaged ? { [SYSTEM_PROXY_PROFILES_FILE_ENV]: packaged } : {};
+  // The CLI child reads profiles once at startup, so hand it a merged file
+  // combining the built-in defaults, the packaged/env profiles, and the
+  // user's custom apps.
+  const merged = [...SYSTEM_PROXY_PROFILES_RAW, ...loadCustomAppRecords().map(customAppToCliProfile)];
+  const filePath = path.join(systemProxyDataDir(), 'profiles.merged.json');
+  mkdirSync(systemProxyDataDir(), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  return { [SYSTEM_PROXY_PROFILES_FILE_ENV]: filePath };
 }
 
 function normalizeDesktopSystemProxyProfile(value: unknown, index: number): DesktopSystemProxyProfile {
@@ -274,12 +267,37 @@ function readConfigPatch(value: unknown, profileName: string): ConfigPatchDef | 
     throw new Error(`configPatch for ${profileName} must be an object`);
   }
   const raw = value as Record<string, unknown>;
+  const configPath = readRequiredString(raw, 'configPath', profileName);
+  const providerKey = readRequiredString(raw, 'providerKey', profileName);
+  const baseURL = readRequiredString(raw, 'baseURL', profileName);
+  const format = readString(raw, 'format');
+  if (format === 'codex') {
+    return {
+      format: 'codex',
+      configPath,
+      providerKey,
+      providerName: readRequiredString(raw, 'providerName', profileName),
+      baseURL,
+    };
+  }
+  if (format === 'pi') {
+    const api = raw['api'];
+    return {
+      format: 'pi',
+      configPath,
+      settingsPath: readRequiredString(raw, 'settingsPath', profileName),
+      providerKey,
+      baseURL,
+      api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
+    };
+  }
   return {
-    configPath: readRequiredString(raw, 'configPath', profileName),
-    providerKey: readRequiredString(raw, 'providerKey', profileName),
+    format: 'opencode',
+    configPath,
+    providerKey,
     npm: readRequiredString(raw, 'npm', profileName),
     providerName: readRequiredString(raw, 'providerName', profileName),
-    baseURL: readRequiredString(raw, 'baseURL', profileName),
+    baseURL,
     modelFormat: 'peer-routed',
   };
 }
@@ -1230,12 +1248,20 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
   }
 
   const buyerProxyPort = await resolveBuyerProxyPort();
+  // Keep the buyer's default route on the current selection so configs that
+  // carry the routed-model alias follow route changes without a rewrite.
+  const defaultRoute = routeForTool(opts, '');
+  await postBuyerDefaultRoute(buyerProxyPort, defaultRoute.peerId, defaultRoute.model);
   for (const name of configPatchProfiles) {
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (profile?.configPatch) {
       const route = routeForTool(opts, name);
-      applyConfigPatch(profile.configPatch, route.peerId, route.model, buyerProxyPort, route.services);
-      appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(route.peerId)}, model=${route.model || 'auto'})`);
+      // Tools on the default route get the alias, so the model picked in the
+      // floating pill / VPR applies to running sessions; per-app overrides
+      // pin a concrete peer@model in the tool config.
+      const followsDefault = route.peerId === defaultRoute.peerId && route.model === defaultRoute.model;
+      applyConfigPatch(profile.configPatch, route.peerId, route.model, buyerProxyPort, route.services, followsDefault);
+      appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(route.peerId)}, model=${followsDefault ? `${route.model || 'auto'} via selection` : route.model || 'auto'})`);
     }
   }
 
@@ -1356,6 +1382,27 @@ async function setTrayModel(model: string): Promise<void> {
 
 function isConfigPatchProfileName(name: string): boolean {
   return SYSTEM_PROXY_PROFILES.find((p) => p.name === name)?.kind === 'config-patch';
+}
+
+/**
+ * Tell the running buyer what the routed-model alias should resolve to.
+ * Best-effort: the buyer also persists the route in buyer.state.json, so a
+ * missed update self-heals on the next connect or route change.
+ */
+async function postBuyerDefaultRoute(buyerPort: number, peerId: string, model: string): Promise<void> {
+  const service = model.trim();
+  const peer = peerId.trim();
+  if (!service || !/^(0x)?[0-9a-fA-F]{40}$/.test(peer)) return;
+  try {
+    await fetch(`http://127.0.0.1:${buyerPort}/_antseed/route`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: `${peer}@${service}` }),
+      signal: AbortSignal.timeout(3_000),
+    });
+  } catch (err) {
+    appendLog('system-proxy', 'system', `Default route update failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function setTrayProfile(profileName: string, enabled: boolean): Promise<void> {
@@ -1739,7 +1786,10 @@ ipcMain.handle('payments:open-card-provider', async (_event, opts?: { providerId
     } catch {
       return { ok: false, error: 'Card provider URL is invalid' };
     }
-    if (parsed.protocol !== 'https:') {
+    // https only — except loopback, so a locally-run payment page can be
+    // tested from the app before it is deployed.
+    const isLoopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback)) {
       return { ok: false, error: 'Card provider URL must be https' };
     }
     if (!hasAmount) {
@@ -1756,6 +1806,38 @@ ipcMain.handle('payments:open-card-provider', async (_event, opts?: { providerId
     console.log('[payments] no app-mode browser available — using Electron popup');
     openPaymentsPopup(url);
     return { ok: true, url };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// Crossmint Stablecoin Onramp — in-app embedded checkout for buying USDC on
+// Base with a card, delivered to the buyer hot wallet (then swept into
+// deposits by the same watcher as QR/card transfers). The client-side key is
+// public by design: it ships in the app and is origin-restricted in the
+// Crossmint console, exactly like DEFAULT_CARD_PROVIDERS embeds AntSeed's
+// hosted URL. Overridable via config.payments.crossmint.clientKey.
+const DEFAULT_CROSSMINT_CLIENT_KEY = 'ck_production_ABDYKwqzx1t6ZCbkVTyWGUMQvnARXTXHMkjgQY5LS7TFy81sDDQnRez9aY3ogznqmWM4uQ7PuUzm9S4Tj7WxPdFj1Rj5BEzZJB9sSErLxC7qmKrPFPBvhqsYCvWL6wHfzWQqtekvcXUZhuFCiWHcRALx4UsZdTZ7MHb11xCesc56WizPx9o6BKtLqA9yQhcLppJX3sYngJPn7sBCT6n9sqHt';
+
+function crossmintApiBase(clientKey: string): string {
+  return clientKey.startsWith('ck_staging_') ? 'https://staging.crossmint.com' : 'https://www.crossmint.com';
+}
+
+async function readCrossmintClientKey(): Promise<string> {
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const key = asString(asRecord(asRecord(config.payments).crossmint).clientKey as string, '');
+    return key || DEFAULT_CROSSMINT_CLIENT_KEY;
+  } catch {
+    return DEFAULT_CROSSMINT_CLIENT_KEY;
+  }
+}
+
+ipcMain.handle('payments:crossmint-config', async () => {
+  try {
+    const clientKey = await readCrossmintClientKey();
+    if (!clientKey) return { ok: true, data: null };
+    return { ok: true, data: { clientKey, apiBase: crossmintApiBase(clientKey) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2806,15 +2888,17 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
   }
 });
 
-ipcMain.handle('payments:get-buyer-usage', async (): Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }> => {
+ipcMain.handle('payments:get-buyer-usage', async (): Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt: number | null }> => {
   const body = await fetchBuyerProxyJson('/_antseed/buyer-usage');
   if (!body) {
-    return { ok: false, data: null, error: 'buyer proxy unreachable' };
+    return { ok: false, data: null, error: 'buyer proxy unreachable', lastActivityAt: null };
   }
+  const lastActivityAt = typeof body['lastActivityAt'] === 'number' ? body['lastActivityAt'] : null;
   return {
     ok: true,
     data: normalizeBuyerUsageTotals(body['totals']),
     error: null,
+    lastActivityAt,
   };
 });
 
@@ -3182,55 +3266,21 @@ ipcMain.handle('system-proxy:ca-exists', () => {
     && existsSync(path.join(dataDir, 'system-proxy', 'ca.key'));
 });
 
-ipcMain.handle('system-proxy:add-to-shell', async (_event, opts?: { port?: number }) => {
-  const { readFile, appendFile, writeFile } = await import('node:fs/promises');
-  const { join: pjoin } = path;
-  const home = homedir();
-  const port = opts?.port ?? DEFAULT_SYSTEM_PROXY_PORT;
+// Where the local HTTPS-interception CA lives on this device, for the Apps
+// page's transparency panel. The cert is generated only when an intercepted
+// (custom HTTPS) app first connects, so `exists` is false by default.
+ipcMain.handle('system-proxy:ca-info', (): { path: string; exists: boolean } => {
   const caPath = systemProxyCaPath();
-  const hookFile = systemProxyHookPath();
-  const marker = '# AntSeed System Proxy';
-  const block = [
-    '',
-    marker,
-    `export HTTPS_PROXY=http://localhost:${port}`,
-    `export NODE_EXTRA_CA_CERTS="${caPath}"`,
-    `export NODE_OPTIONS="--require ${hookFile}"`,
-    '# End AntSeed System Proxy',
-    '',
-  ].join('\n');
+  return { path: caPath, exists: existsSync(caPath) };
+});
 
-  const candidates = [
-    pjoin(home, '.zshrc'),
-    pjoin(home, '.bash_profile'),
-    pjoin(home, '.bashrc'),
-  ];
-  const added: string[] = [];
-
-  for (const profilePath of candidates) {
-    let existing = '';
-    try { existing = await readFile(profilePath, 'utf8'); } catch { continue; }
-    // Remove any prior block before appending the current one
-    const cleaned = removeSystemProxyShellBlock(existing);
-    if (cleaned !== existing) {
-      await writeFile(profilePath, cleaned + block, 'utf8');
-    } else {
-      await appendFile(profilePath, block, 'utf8');
-    }
-    added.push(profilePath);
+ipcMain.handle('system-proxy:reveal-ca', (): { ok: boolean; error?: string } => {
+  const caPath = systemProxyCaPath();
+  if (!existsSync(caPath)) {
+    return { ok: false, error: 'No certificate has been created yet. Connect an intercepted HTTPS app first.' };
   }
-
-  // If none existed, create .zshrc
-  if (added.length === 0) {
-    const zshrc = pjoin(home, '.zshrc');
-    let existing = '';
-    try { existing = await readFile(zshrc, 'utf8'); } catch { /* doesn't exist */ }
-    const cleaned = removeSystemProxyShellBlock(existing);
-    await writeFile(zshrc, cleaned + block, 'utf8');
-    added.push(zshrc);
-  }
-
-  return { ok: true, added };
+  shell.showItemInFolder(caPath);
+  return { ok: true };
 });
 
 /* ------------------------------------------------------------------ */
@@ -3257,6 +3307,8 @@ ipcMain.handle('vpr-float:close', () => {
 
 ipcMain.handle('vpr-float:is-open', () => Boolean(getFloatWindow()));
 
+ipcMain.handle('vpr-float:get-compact', () => getFloatWindowCompact());
+
 ipcMain.on('vpr-float:update', (_event, data: unknown) => {
   lastVprFloatData = data;
   getFloatWindow()?.webContents.send('vpr-float:data', data);
@@ -3272,35 +3324,16 @@ ipcMain.on('vpr-float:action', (_event, action: unknown) => {
     }
     return;
   }
+  if (
+    typeof action === 'object' && action !== null
+    && (action as { type?: unknown }).type === 'set-compact'
+  ) {
+    setFloatWindowCompact((action as { compact?: unknown }).compact === true);
+    return;
+  }
   // Structured actions (e.g. model selection) are handled by the main
   // window's renderer, which owns routing state.
   getMainWindow()?.webContents.send('vpr-float:action', action);
-});
-
-ipcMain.handle('system-proxy:remove-from-shell', async () => {
-  const { readFile, writeFile } = await import('node:fs/promises');
-  const { join: pjoin } = path;
-  const home = homedir();
-  clearSystemProxyNodeEnv();
-
-  const candidates = [
-    pjoin(home, '.zshrc'),
-    pjoin(home, '.bash_profile'),
-    pjoin(home, '.bashrc'),
-  ];
-  const removed: string[] = [];
-
-  for (const profilePath of candidates) {
-    let existing = '';
-    try { existing = await readFile(profilePath, 'utf8'); } catch { continue; }
-    const cleaned = removeSystemProxyShellBlock(existing);
-    if (cleaned !== existing) {
-      await writeFile(profilePath, cleaned, 'utf8');
-      removed.push(profilePath);
-    }
-  }
-
-  return { ok: true, removed };
 });
 
 app.whenReady().then(async () => {

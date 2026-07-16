@@ -259,7 +259,6 @@ export type RendererUiState = {
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
-  creditsLoading: boolean;
   creditsBuyerUsage: DesktopBuyerUsageTotals | null;
   creditsChannels: DesktopPaymentChannelSummary[];
   creditsRewards: DesktopRewardsSummary | null;
@@ -405,7 +404,6 @@ export function createInitialUiState(): RendererUiState {
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
-    creditsLoading: false,
     creditsBuyerUsage: null,
     creditsChannels: [],
     creditsRewards: null,

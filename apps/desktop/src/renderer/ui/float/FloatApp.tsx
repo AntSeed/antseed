@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Cancel01Icon } from '@hugeicons/core-free-icons';
+import { ArrowExpand02Icon, ArrowShrink02Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatData } from '../../types/bridge';
 import { BrandIcon } from '../components/brand/BrandIcon';
 import styles from './FloatApp.module.scss';
@@ -27,6 +27,10 @@ const APP_FONT = '400 12px Geist, sans-serif';
    traffic reads as a continuous heartbeat. */
 const PULSE_HOLD_MS = 4_500;
 
+/* Viewport width below this means the window is at compact-chip size (88px)
+   rather than the full pill (272px). */
+const COMPACT_MAX_WIDTH = 160;
+
 /**
  * Content of the detachable always-on-top pill window (Figma "flowing
  * window", 4075:1842). The main window pushes VprFloatData over IPC; the
@@ -38,9 +42,25 @@ export function FloatApp() {
   const [data, setData] = useState<VprFloatData | null>(null);
   const [appChoice, setAppChoice] = useState<string | null>(null);
   const [pulsing, setPulsing] = useState(false);
+  const [compact, setCompact] = useState(() => window.innerWidth <= COMPACT_MAX_WIDTH);
   const pulseTimer = useRef<number | null>(null);
 
+  // The main process resizes the window; this component just swaps layouts.
+  const setCompactMode = (next: boolean) => {
+    setCompact(next);
+    bridge?.vprFloatAction?.({ type: 'set-compact', compact: next });
+  };
+
   useEffect(() => bridge?.onVprFloatData?.(setData) ?? undefined, [bridge]);
+
+  // The main process owns the compact state (it does the resize). Query it on
+  // mount (covers reloads and the push-before-listener race) and subscribe to
+  // live changes, so the layout can't desync from the window — even across a
+  // dev HMR reload or if the OS clamps the resize size.
+  useEffect(() => {
+    void bridge?.vprFloatGetCompact?.().then((value) => setCompact(Boolean(value)));
+    return bridge?.onVprFloatCompact?.(setCompact);
+  }, [bridge]);
 
   const apps = data?.apps ?? [];
   // The user's local dropdown choice wins while that app is still connected;
@@ -52,9 +72,10 @@ export function FloatApp() {
     return apps.find((app) => app.name === data?.selectedApp) ?? apps[0] ?? null;
   }, [appChoice, apps, data?.selectedApp]);
 
-  // Pulse the app icon while traffic is moving through the proxies. Active
-  // payloads extend a safety hold; an explicit inactive payload stops the
-  // pulse right away so it stays in sync with the actual traffic.
+  // Turn the status ring green while traffic is moving through the proxies.
+  // Active payloads extend a safety hold; an explicit inactive payload drops
+  // back to the orange "ready" ring right away so it stays in sync with the
+  // actual traffic.
   const trafficActive = data?.trafficActive ?? false;
   useEffect(() => {
     if (pulseTimer.current !== null) window.clearTimeout(pulseTimer.current);
@@ -83,11 +104,39 @@ export function FloatApp() {
   const appLabel = selectedApp?.displayName ?? 'No app connected';
   const appSelectWidth = measureLabel(appLabel, APP_FONT) + SELECT_CHEVRON_SPACE;
 
+  const badgeClassName = [
+    styles.appBadge,
+    // Ready ring whenever an app is connected; green while traffic moves.
+    selectedApp ? styles.appBadgeReady : '',
+    pulsing ? styles.appBadgeActive : '',
+  ].filter(Boolean).join(' ');
+
+  if (compact) {
+    return (
+      <div className={styles.compactChip}>
+        <button
+          type="button"
+          className={badgeClassName}
+          onClick={() => setCompactMode(false)}
+          title="Expand"
+          aria-label="Expand floating window"
+        >
+          {selectedApp ? (
+            <BrandIcon name={selectedApp.name} hints={[selectedApp.displayName]} size={26} />
+          ) : null}
+          <span className={styles.compactExpandHint} aria-hidden="true">
+            <HugeiconsIcon icon={ArrowExpand02Icon} size={16} strokeWidth={2} />
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.pill}>
       <button
         type="button"
-        className={`${styles.appBadge}${pulsing ? ` ${styles.appBadgeActive}` : ''}`}
+        className={badgeClassName}
         onClick={() => bridge?.vprFloatAction?.('open-main')}
         title="Open AntSeed"
         aria-label="Open AntSeed"
@@ -137,6 +186,16 @@ export function FloatApp() {
 
         {data?.usageLabel ? <span className={styles.usage}>{data.usageLabel}</span> : null}
       </div>
+
+      <button
+        type="button"
+        className={styles.shrink}
+        onClick={() => setCompactMode(true)}
+        aria-label="Shrink to badge"
+        title="Shrink"
+      >
+        <HugeiconsIcon icon={ArrowShrink02Icon} size={13} strokeWidth={2} />
+      </button>
 
       <button
         type="button"

@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import type { LogEvent, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
-import { getUiStateRef } from '../../../core/store';
+import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
-  buildVprProfileTraffic,
   resolveVprToolRouteForPeerOptions,
-  statusLabel,
-  type VprToolRoute,
 } from '../../../modules/vpr-tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { BrandIcon } from '../brand/BrandIcon';
@@ -41,24 +37,19 @@ export function VprToolsView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
-  // Traffic counters are computed from a periodic sample of the logs instead
-  // of the live store reference: state.logs gets a new identity per appended
-  // line, which would re-run the (regex-heavy) traffic scan on every log
-  // event. A few seconds of staleness is fine here.
-  const [sampledLogs, setSampledLogs] = useState<LogEvent[]>([]);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
-  const [toolRoutes, setToolRoutes] = useState<Record<string, VprToolRoute>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [guiTest, setGuiTest] = useState<GuiTestResult | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState('');
   const [addBusy, setAddBusy] = useState(false);
+  const [caInfo, setCaInfo] = useState<{ path: string; exists: boolean } | null>(null);
+  const [caCopied, setCaCopied] = useState(false);
 
   const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
@@ -70,17 +61,20 @@ export function VprToolsView({ onSelectView }: Props) {
   const hasConnectedProxyProfile = useMemo(() => (
     profiles.some((profile) => profile.kind === 'proxy' && (activeProfiles?.has(profile.name) ?? false))
   ), [activeProfiles, profiles]);
-  const traffic = useMemo(() => buildVprProfileTraffic(sampledLogs, profiles), [sampledLogs, profiles]);
+
+  const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
 
   const refresh = useCallback(async () => {
     const bridge = window.antseedDesktop;
     try {
-      const [nextProfiles, nextState] = await Promise.all([
+      const [nextProfiles, nextState, nextCa] = await Promise.all([
         bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
         bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
+        bridge?.systemProxyCaInfo?.() ?? Promise.resolve(null),
       ]);
       setProfiles(nextProfiles);
       setProxyState(nextState);
+      setCaInfo(nextCa);
     } catch {
       setProfiles([]);
       setProxyState(null);
@@ -88,15 +82,8 @@ export function VprToolsView({ onSelectView }: Props) {
   }, []);
 
   useEffect(() => {
-    // state.logs is reassigned wholesale on append, so sampling the reference
-    // is enough: identity only changes when the logs actually changed.
-    const sampleLogs = () => setSampledLogs(getUiStateRef().logs);
-    sampleLogs();
     void refresh();
-    const timer = setInterval(() => {
-      sampleLogs();
-      void refresh();
-    }, 3000);
+    const timer = setInterval(() => { void refresh(); }, 3000);
     return () => clearInterval(timer);
   }, [refresh]);
 
@@ -126,14 +113,17 @@ export function VprToolsView({ onSelectView }: Props) {
     void testGui();
   }, [hasConnectedProxyProfile, testGui]);
 
-  const startProfiles = useCallback(async (names: string[], routes = toolRoutes) => {
+  // Every connected app follows the default VPR route; the model itself is
+  // resolved live by the buyer (the `antseed` alias), so there are no per-app
+  // model overrides here anymore.
+  const startProfiles = useCallback(async (names: string[]) => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyStart || !defaultPeerId) return;
     setBusy(names.join(','));
     setMessage(null);
     const defaultRoute = { peerId: defaultPeerId, model: defaultModel };
     const routeOverrides = Object.fromEntries(
-      names.map((name) => [name, resolveVprToolRouteForPeerOptions(routes, name, defaultRoute, peerOptions)]),
+      names.map((name) => [name, resolveVprToolRouteForPeerOptions({}, name, defaultRoute, peerOptions)]),
     );
     const result = await bridge.systemProxyStart({
       peerId: defaultPeerId,
@@ -150,7 +140,7 @@ export function VprToolsView({ onSelectView }: Props) {
       return;
     }
     setProxyState(result.state ?? null);
-  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, proxyState?.running, toolRoutes]);
+  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, proxyState?.running]);
 
   const disconnect = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -177,16 +167,6 @@ export function VprToolsView({ onSelectView }: Props) {
     }
     void startProfiles(remaining);
   }, [activeProfileNames, disconnect, startProfiles]);
-
-  const updateToolRoute = useCallback((profileName: string, route: VprToolRoute, connected: boolean) => {
-    const nextRoutes = { ...toolRoutes, [profileName]: route };
-    setToolRoutes(nextRoutes);
-    if (!connected) return;
-    const names = activeProfileNames.includes(profileName)
-      ? activeProfileNames
-      : [...activeProfileNames, profileName];
-    void startProfiles(names.length > 0 ? names : [profileName], nextRoutes);
-  }, [activeProfileNames, startProfiles, toolRoutes]);
 
   const openUrl = useCallback(async (url: string) => {
     const result = await window.antseedDesktop?.openExternalUrl?.(url);
@@ -233,41 +213,21 @@ export function VprToolsView({ onSelectView }: Props) {
     }
   }, [testGui]);
 
-  const addShellSetup = useCallback(async () => {
-    const bridge = window.antseedDesktop;
-    if (!bridge?.systemProxyAddToShell) return;
-    setActionBusy('shell-setup');
-    setMessage(null);
-    try {
-      const result = await bridge.systemProxyAddToShell({ port: DEFAULT_PORT });
-      setMessage(result.ok
-        ? (result.added.length > 0 ? `Updated ${result.added.map((file) => file.split('/').pop()).join(', ')}. Open a new terminal for it to take effect.` : 'Shell setup already configured')
-        : (result.error ?? 'Unable to update shell setup'));
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActionBusy(null);
-    }
+  const revealCa = useCallback(async () => {
+    const result = await window.antseedDesktop?.systemProxyRevealCa?.();
+    if (result && !result.ok) setMessage(result.error ?? 'Could not reveal the certificate');
   }, []);
 
-  const removeShellSetup = useCallback(async () => {
-    const bridge = window.antseedDesktop;
-    if (!bridge?.systemProxyRemoveFromShell) return;
-    setActionBusy('shell-remove');
-    setMessage(null);
+  const copyCaPath = useCallback(async () => {
+    if (!caInfo?.path) return;
     try {
-      const result = await bridge.systemProxyRemoveFromShell();
-      setMessage(result.ok
-        ? (result.removed.length > 0
-          ? `Removed from ${result.removed.map((file) => file.split('/').pop()).join(', ')}. Already-open terminals keep the old environment until restarted.`
-          : 'Shell setup was already removed. Already-open terminals keep the old environment until restarted.')
-        : (result.error ?? 'Unable to remove shell setup'));
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActionBusy(null);
+      await navigator.clipboard.writeText(caInfo.path);
+      setCaCopied(true);
+      window.setTimeout(() => setCaCopied(false), 1500);
+    } catch {
+      setCaCopied(false);
     }
-  }, []);
+  }, [caInfo?.path]);
 
   const addCustomApp = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -282,7 +242,6 @@ export function VprToolsView({ onSelectView }: Props) {
       }
       setAddOpen(false);
       setAddUrl('');
-      if (result.name) setExpanded(result.name);
       await refresh();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -310,7 +269,6 @@ export function VprToolsView({ onSelectView }: Props) {
         setMessage(result.error ?? 'Unable to remove app');
         return;
       }
-      setExpanded((current) => (current === profileName ? null : current));
       await refresh();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -321,9 +279,14 @@ export function VprToolsView({ onSelectView }: Props) {
 
   const visibleProfiles = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return profiles;
-    return profiles.filter((profile) => profile.displayName.toLowerCase().includes(query) || profile.name.toLowerCase().includes(query));
-  }, [profiles, search]);
+    const filtered = query
+      ? profiles.filter((profile) => profile.displayName.toLowerCase().includes(query) || profile.name.toLowerCase().includes(query))
+      : profiles;
+    // Connected apps float to the top; the sort is stable, so each group keeps
+    // its original order.
+    const isConnected = (name: string): boolean => activeProfiles?.has(name) ?? false;
+    return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
+  }, [profiles, search, activeProfiles]);
 
   return (
     <section className={`view view-vpr-tools ${styles.view}`} role="tabpanel">
@@ -337,26 +300,19 @@ export function VprToolsView({ onSelectView }: Props) {
         {visibleProfiles.length === 0 ? (
           <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
         ) : (
-          <VprCard>
+          <div className={styles.appList}>
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
-              const isExpanded = expanded === profile.name;
-              const route = resolveVprToolRouteForPeerOptions(
-                toolRoutes,
-                profile.name,
-                { peerId: defaultPeerId, model: defaultModel },
-                peerOptions,
-              );
-              const profileTraffic = traffic.get(profile.name);
+              const canOpenUrl = connected && profile.appAction === 'open-url' && !!profile.openUrl;
+              const canOpenTool = connected && profile.appAction === 'open-tool';
+              const canOpen = canOpenUrl || canOpenTool;
+              const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
+              const canTrust = connected && profile.kind === 'proxy' && !!guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable;
+              const hasActions = canRestart || canTrust || profile.custom;
               return (
-                <div key={profile.name} className={styles.appRow}>
+                <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
-                    <button
-                      type="button"
-                      className={styles.appToggle}
-                      aria-expanded={isExpanded}
-                      onClick={() => setExpanded(isExpanded ? null : profile.name)}
-                    >
+                    <span className={styles.appIdentity}>
                       {profile.iconDataUri ? (
                         <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       ) : (
@@ -364,78 +320,32 @@ export function VprToolsView({ onSelectView }: Props) {
                       )}
                       <span className={styles.appName}>{profile.displayName}</span>
                       {connected && <VprBadge tone="green">Connected</VprBadge>}
-                      <HugeiconsIcon
-                        icon={isExpanded ? ArrowDown01Icon : ArrowRight01Icon}
-                        size={14}
-                        strokeWidth={2}
-                        className={styles.appChevron}
-                      />
-                    </button>
+                    </span>
+                    {canOpen ? (
+                      <button
+                        type="button"
+                        className={styles.appOpen}
+                        onClick={() => { void (canOpenUrl ? openUrl(profile.openUrl!) : openTool(profile.toolName ?? profile.name)); }}
+                        aria-label={`Open ${profile.displayName}`}
+                        title={`Open ${profile.displayName}`}
+                      >
+                        <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className={`${styles.appAction}${connected ? ` ${styles.appActionQuiet}` : ''}`}
                       disabled={busy !== null || (!connected && !defaultPeerId)}
-                      onClick={() => {
-                        if (connected) {
-                          disconnectProfile(profile.name);
-                        } else {
-                          connectProfile(profile.name);
-                          setExpanded(profile.name);
-                        }
-                      }}
+                      onClick={() => { connected ? disconnectProfile(profile.name) : connectProfile(profile.name); }}
                     >
                       {connected ? 'Disconnect' : 'Connect'}
                     </button>
                   </div>
 
-                  {isExpanded && (
+                  {hasActions && (
                     <div className={styles.appBody}>
-                      <div className={styles.meta}>
-                        {profile.method} · {connected ? 'Connected' : 'Disconnected'} · {profileTraffic?.count ?? 0} requests
-                        {profileTraffic?.lastStatus ? ` · ${statusLabel(profileTraffic.lastStatus)}` : ''}
-                      </div>
-
-                      <div className={styles.controls}>
-                        <label>
-                          <span>Seller</span>
-                          <select
-                            value={route.peerId}
-                            onChange={(event) => {
-                              const peerId = event.currentTarget.value;
-                              const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
-                              const model = services.includes(route.model) ? route.model : (services[0] ?? '');
-                              updateToolRoute(profile.name, { peerId, model }, connected);
-                            }}
-                            disabled={busy !== null}
-                          >
-                            {peerOptions.map((peer) => <option key={peer.peerId} value={peer.peerId}>{peer.label}</option>)}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Model</span>
-                          <select
-                            value={route.model}
-                            onChange={(event) => {
-                              const model = event.currentTarget.value;
-                              updateToolRoute(profile.name, { ...route, model }, connected);
-                            }}
-                            disabled={busy !== null}
-                          >
-                            {(peerOptions.find((peer) => peer.peerId === route.peerId)?.services ?? [route.model]).filter(Boolean).map((service) => (
-                              <option key={service} value={service}>{service}</option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
                       <div className={styles.actions}>
-                        {connected && profile.appAction === 'open-url' && profile.openUrl ? (
-                          <button type="button" onClick={() => { void openUrl(profile.openUrl!); }}>Open</button>
-                        ) : null}
-                        {connected && profile.appAction === 'open-tool' ? (
-                          <button type="button" onClick={() => { void openTool(profile.toolName ?? profile.name); }}>Open</button>
-                        ) : null}
-                        {connected && (profile.kind === 'config-patch' || profile.canRestart || profile.appAction === 'restart-app') ? (
+                        {canRestart ? (
                           <button
                             type="button"
                             onClick={() => { void restartApp(profile.name, profile.displayName); }}
@@ -444,20 +354,10 @@ export function VprToolsView({ onSelectView }: Props) {
                             {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
                           </button>
                         ) : null}
-                        {connected && profile.kind === 'proxy' && guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable ? (
+                        {canTrust ? (
                           <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
                             {trustBusy ? 'Trusting...' : 'Trust CA'}
                           </button>
-                        ) : null}
-                        {profile.kind === 'proxy' && !profile.custom ? (
-                          <>
-                            <button type="button" onClick={() => { void addShellSetup(); }} disabled={actionBusy === 'shell-setup'}>
-                              {actionBusy === 'shell-setup' ? 'Updating...' : 'Shell setup'}
-                            </button>
-                            <button type="button" onClick={() => { void removeShellSetup(); }} disabled={actionBusy === 'shell-remove'}>
-                              {actionBusy === 'shell-remove' ? 'Removing...' : 'Remove shell setup'}
-                            </button>
-                          </>
                         ) : null}
                         {profile.custom ? (
                           <button
@@ -475,7 +375,7 @@ export function VprToolsView({ onSelectView }: Props) {
                 </div>
               );
             })}
-          </VprCard>
+          </div>
         )}
 
         {addOpen ? (
@@ -522,6 +422,32 @@ export function VprToolsView({ onSelectView }: Props) {
             Add custom app
           </button>
         )}
+
+        {caInfo && (hasProxyProfile || caInfo.exists) ? (
+          <div className={styles.caCard}>
+            <div className={styles.caHead}>
+              <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
+              <span className={styles.caTitle}>HTTPS certificate</span>
+              <VprBadge tone={caInfo.exists ? 'green' : 'neutral'}>
+                {caInfo.exists ? 'Installed' : 'Not created yet'}
+              </VprBadge>
+            </div>
+            <p className={styles.caHint}>
+              Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this
+              device. It never leaves your machine — inspect it any time.
+            </p>
+            <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+              <code>{caInfo.path}</code>
+              <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+              <span>{caCopied ? 'Copied' : 'Copy'}</span>
+            </button>
+            {caInfo.exists ? (
+              <div className={styles.actions}>
+                <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

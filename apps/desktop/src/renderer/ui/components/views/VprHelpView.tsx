@@ -76,12 +76,12 @@ const HELP_TOPICS: HelpTopic[] = [
         intro: 'On the main screen, click any app under "Use it on your favorite app" to connect it in one click. The app keeps its normal interface, but its AI requests now route through AntSeed.',
         sections: [
           {
-            heading: 'Restarts and terminal tools',
-            body: 'Some apps read a config file and need a restart to pick up the change — the Apps page offers a restart button next to those. Terminal tools use Shell setup instead, which adds the routing environment to your shell profile (open a new terminal afterwards).',
+            heading: 'Restarts',
+            body: 'Some apps read a config file and need a restart to pick up the change — the Apps page offers a restart button next to those.',
           },
           {
-            heading: 'Route cards and the pop-out',
-            body: 'Each connected app shows a route card on the main screen with its model and live request count. The pop-out button detaches a small floating window you can keep above the app you are working in.',
+            heading: 'App pills and the pop-out',
+            body: 'Each connected app shows a pill on the main screen. The pop-out button detaches a small floating window you can keep above the app you are working in.',
           },
         ],
         docsPath: '/getting-started/configuration',
@@ -109,7 +109,7 @@ const HELP_TOPICS: HelpTopic[] = [
         sections: [
           {
             heading: 'Add and track balance',
-            body: 'Add balance from the Profile screen with a card or crypto wallet. Your balance, reserved funds, and per-channel spending are all visible there, and unused credits can be withdrawn at any time.',
+            body: 'Add balance from the Profile screen with a card or USDC on Base. Your balance, reserved funds, and per-channel spending are all visible there, and unused credits can be withdrawn at any time.',
           },
           {
             heading: 'How sellers get paid',
@@ -187,22 +187,6 @@ const HELP_TOPICS: HelpTopic[] = [
           },
         ],
         docsPath: '/faq',
-      },
-      {
-        key: 'shell',
-        label: 'Terminal tools',
-        intro: 'Shell setup adds HTTPS_PROXY and certificate variables to your shell profile so CLI tools route through AntSeed.',
-        sections: [
-          {
-            heading: 'New terminals only',
-            body: 'The change only affects new terminals — open a fresh terminal window after running Shell setup or Remove shell setup.',
-          },
-          {
-            heading: 'Removing shell setup',
-            body: 'Removing shell setup deletes the block AntSeed added; already-open terminals keep the old environment until restarted.',
-          },
-        ],
-        docsPath: '/getting-started/configuration',
       },
     ],
   },

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
@@ -22,8 +22,20 @@ export function VprCreditsView({ onSelectView }: Props) {
     operatorAddress: state.creditsOperatorAddress,
     usage: state.creditsBuyerUsage,
     rewards: state.creditsRewards,
-    loading: state.creditsLoading || state.creditsSummaryLoading,
   }), shallowEqual);
+  // Local to the button: background pollers (floating pill, payment events)
+  // also refresh the summary, and mirroring their in-flight state here made
+  // the button flip to "Refreshing..." constantly while traffic flowed.
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([actions.refreshCredits(), actions.refreshPaymentSummary(true)]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [actions]);
 
   // Drive the payment-summary poll only while this view is mounted. The
   // module-level 55s self-throttle absorbs mount/focus bursts while still
@@ -58,7 +70,7 @@ export function VprCreditsView({ onSelectView }: Props) {
               </button>
               <button type="button" onClick={() => openDeposit('crypto')}>
                 <HugeiconsIcon icon={Wallet01Icon} size={16} strokeWidth={2} />
-                <span>Crypto</span>
+                <span>USDC on Base</span>
               </button>
             </div>
           </VprCard>
@@ -139,10 +151,10 @@ export function VprCreditsView({ onSelectView }: Props) {
           <div className={styles.detailActions}>
             <button
               type="button"
-              disabled={snap.loading}
-              onClick={() => { actions.refreshCredits(); actions.refreshPaymentSummary(true); }}
+              disabled={refreshing}
+              onClick={() => { void refresh(); }}
             >
-              {snap.loading ? 'Refreshing...' : 'Refresh'}
+              {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
         </VprCard>

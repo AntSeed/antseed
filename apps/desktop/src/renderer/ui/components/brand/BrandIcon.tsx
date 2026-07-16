@@ -16,6 +16,7 @@ export type BrandKey =
   | 'openai'
   | 'codex'
   | 'opencode'
+  | 'pi'
   | 'deepseek'
   | 'qwen'
   | 'generic';
@@ -70,6 +71,16 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       <rect x="8.5" y="8.5" width="7" height="7" rx="1.5" fill="currentColor" />
     </svg>
   ),
+  // pi — π mark.
+  pi: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+        <path d="M4.5 7.2C5.5 6.2 7 6 9 6h10.5" />
+        <path d="M8.5 6.4V18" />
+        <path d="M15.5 6.4v9.1c0 1.5.9 2.5 2.3 2.5.6 0 1.1-.2 1.5-.5" />
+      </g>
+    </svg>
+  ),
   // Deepseek — stylized whale.
   deepseek: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -107,6 +118,8 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['opencode', /(opencode|open-code)/i],
   ['deepseek', /deep-?seek/i],
   ['qwen', /(qwen|tongyi)/i],
+  // Standalone word only — "pi" appears inside too many other identifiers.
+  ['pi', /(^|[^a-z0-9])pi([^a-z0-9]|$)/i],
 ];
 
 export function resolveBrandKey(...candidates: Array<string | null | undefined>): BrandKey {

@@ -479,6 +479,7 @@ const api = {
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
+  paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
@@ -518,11 +519,11 @@ const api = {
   systemProxyCaExists(): Promise<boolean> {
     return ipcRenderer.invoke('system-proxy:ca-exists') as Promise<boolean>;
   },
-  systemProxyAddToShell(opts?: { port?: number }): Promise<{ ok: boolean; added: string[]; error?: string }> {
-    return ipcRenderer.invoke('system-proxy:add-to-shell', opts) as Promise<{ ok: boolean; added: string[]; error?: string }>;
+  systemProxyCaInfo(): Promise<{ path: string; exists: boolean }> {
+    return ipcRenderer.invoke('system-proxy:ca-info') as Promise<{ path: string; exists: boolean }>;
   },
-  systemProxyRemoveFromShell(): Promise<{ ok: boolean; removed: string[]; error?: string }> {
-    return ipcRenderer.invoke('system-proxy:remove-from-shell') as Promise<{ ok: boolean; removed: string[]; error?: string }>;
+  systemProxyRevealCa(): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:reveal-ca') as Promise<{ ok: boolean; error?: string }>;
   },
   systemProxyTestGui(opts?: { port?: number }) {
     return ipcRenderer.invoke('system-proxy:test-gui', opts);
@@ -541,6 +542,9 @@ const api = {
   vprFloatIsOpen(): Promise<boolean> {
     return ipcRenderer.invoke('vpr-float:is-open') as Promise<boolean>;
   },
+  vprFloatGetCompact(): Promise<boolean> {
+    return ipcRenderer.invoke('vpr-float:get-compact') as Promise<boolean>;
+  },
   vprFloatUpdate(data: unknown): void {
     ipcRenderer.send('vpr-float:update', data);
   },
@@ -551,6 +555,11 @@ const api = {
     const listener = (_: unknown, data: unknown) => handler(data);
     ipcRenderer.on('vpr-float:data', listener);
     return () => ipcRenderer.off('vpr-float:data', listener);
+  },
+  onVprFloatCompact(handler: (compact: boolean) => void): () => void {
+    const listener = (_: unknown, compact: boolean) => handler(Boolean(compact));
+    ipcRenderer.on('vpr-float:compact', listener);
+    return () => ipcRenderer.off('vpr-float:compact', listener);
   },
   onVprFloatClosed(handler: () => void): () => void {
     const listener = () => handler();

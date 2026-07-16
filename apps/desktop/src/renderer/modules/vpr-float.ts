@@ -10,6 +10,10 @@ const FLOAT_UPDATE_INTERVAL_MS = 3_000;
 const FLOAT_MODEL_LIMIT = 50;
 /** How long after the last traffic log line the pulse stays considered live. */
 const TRAFFIC_HOLD_MS = 1_500;
+/** How long after the buyer's last-activity timestamp traffic reads as live.
+    Longer than the poll interval so a stream that pauses briefly between
+    frames (or finishes mid-interval) doesn't flicker the pill dark. */
+const BUYER_ACTIVITY_HOLD_MS = 4_000;
 /** Coalesce burst of completion lines into one forced usage refresh. */
 const COMPLETION_REFRESH_DEBOUNCE_MS = 400;
 
@@ -170,24 +174,42 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
 
   /**
    * Live traffic through the buyer proxy (chat and direct API clients as
-   * well as system-proxy forwards): the control-plane request total grew
-   * since the previous tick. Backstops buyer daemons whose logs don't
-   * stream into the desktop.
+   * well as system-proxy forwards). Primary signal is the buyer's
+   * `lastActivityAt` timestamp — stamped per dispatch and per streamed frame,
+   * independent of debug logging — so config-patch tools (Codex, OpenCode,
+   * pi) that talk straight to the buyer light up even with logs off, and
+   * stay lit mid-stream. Falls back to the request-total delta for older
+   * buyers that don't report the timestamp.
    */
-  async function buyerProxyTrafficActive(): Promise<boolean> {
+  async function buyerProxyTraffic(): Promise<{ active: boolean; completed: boolean }> {
     try {
       const result = await bridge?.paymentsGetBuyerUsage?.();
-      const total = result?.ok ? result.data?.totalRequests ?? null : null;
-      if (total === null) return false;
-      const previous = lastBuyerRequestTotal;
-      lastBuyerRequestTotal = total;
-      return previous !== null && total > previous;
+      if (!result?.ok) return { active: false, completed: false };
+
+      // A metered request finished since the last tick — drives the forced
+      // usage refresh (kept infrequent: only on completion, not per frame).
+      const total = result.data?.totalRequests ?? null;
+      let completed = false;
+      if (total !== null) {
+        const previous = lastBuyerRequestTotal;
+        lastBuyerRequestTotal = total;
+        completed = previous !== null && total > previous;
+      }
+
+      // Green signal: recent per-frame activity when the buyer reports it,
+      // otherwise fall back to the completion delta for older buyers.
+      const lastActivityAt = result.lastActivityAt ?? null;
+      const active = lastActivityAt !== null
+        ? Date.now() - lastActivityAt < BUYER_ACTIVITY_HOLD_MS
+        : completed;
+
+      return { active, completed };
     } catch {
-      return false;
+      return { active: false, completed: false };
     }
   }
 
-  // Set while a buyer request-total delta keeps the pulse alive between the
+  // Set while recent buyer activity keeps the pulse alive between the
   // event-driven log signal's holds (detached daemons without log streaming).
   let buyerDeltaActive = false;
 
@@ -217,11 +239,11 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   }
 
   async function tick(): Promise<void> {
-    const responseCompleted = await buyerProxyTrafficActive();
-    buyerDeltaActive = responseCompleted;
+    const { active, completed } = await buyerProxyTraffic();
+    buyerDeltaActive = active;
     bridge?.vprFloatUpdate?.(await buildData());
 
-    if (responseCompleted) {
+    if (completed) {
       // A response was metered since the last tick — pull fresh channel
       // totals now instead of waiting out the summary throttle, then push
       // the updated token/cost numbers straight to the pill.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -17,6 +17,7 @@ import { formatCredits, shortAddress } from '../../../core/format';
 import { VprBackTitle, VprCard } from '../vpr/VprKit';
 import { takeDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import type { DepositWatchStatus } from '../../../types/bridge';
+import { CrossmintCheckout, crossmintChain } from './CrossmintCheckout';
 import styles from './VprDepositView.module.scss';
 
 const AMOUNT_PRESETS = ['5', '10', '25'];
@@ -64,10 +65,13 @@ function explorerTxUrl(chainId: number | undefined, txHash: string): string | nu
   return null;
 }
 
+/** A selectable card option: hosted URL providers (Coinbase, etc.) plus the
+    in-app Crossmint embedded checkout. */
 type CardProvider = { id: string; label: string };
+type CardOption = { id: string; label: string; kind: 'url' | 'crossmint' };
 
 const CARD_NOT_CONFIGURED_NOTICE =
-  'Card payments are not available yet on this install. You can deposit with a crypto wallet instead.';
+  'Card payments are not available yet on this install. You can deposit USDC on Base instead.';
 
 const TRUST_POINTS: Array<{ icon: IconSvgElement; text: string }> = [
   { icon: SquareLock01Icon, text: 'Non-custodial — your credits sit in AntSeed’s on-chain escrow contract, and your in-app signer never holds funds itself.' },
@@ -102,8 +106,12 @@ export function VprDepositView({ onSelectView }: Props) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [cardNotice, setCardNotice] = useState<string | null>(null);
-  // null = not fetched yet; fetched once on first entry to the card stage.
+  // null = not fetched yet; [] = fetched, none configured.
   const [cardProviders, setCardProviders] = useState<CardProvider[] | null>(null);
+  const [crossmintAvailable, setCrossmintAvailable] = useState(false);
+  // Which card option is being paid in-app; null shows the option chooser.
+  // Only Crossmint renders in-app; URL providers open an external page.
+  const [cardMethod, setCardMethod] = useState<'crossmint' | null>(null);
   const copyTimer = useRef<number | null>(null);
 
   const goToStage = useCallback((next: Stage) => {
@@ -198,21 +206,29 @@ export function VprDepositView({ onSelectView }: Props) {
     });
   }, [amount]);
 
+  // Fetch card options (hosted URL providers + whether Crossmint is
+  // configured) once on first entry to the card stage.
   useEffect(() => {
     if (stage !== 'card' || cardProviders !== null) return undefined;
-    const call = window.antseedDesktop?.paymentsCardProviders?.();
-    if (!call) {
-      setCardProviders([]);
-      return undefined;
-    }
     let cancelled = false;
-    void call.then((result) => {
-      if (!cancelled) setCardProviders(result.ok && result.data ? result.data : []);
+    const bridge = window.antseedDesktop;
+    void Promise.all([
+      bridge?.paymentsCardProviders?.() ?? Promise.resolve(null),
+      bridge?.paymentsCrossmintConfig?.() ?? Promise.resolve(null),
+    ]).then(([providers, crossmint]) => {
+      if (cancelled) return;
+      setCardProviders(providers?.ok && providers.data ? providers.data : []);
+      setCrossmintAvailable(Boolean(crossmint?.ok && crossmint.data?.clientKey));
     }).catch(() => {
-      if (!cancelled) setCardProviders([]);
+      if (!cancelled) { setCardProviders([]); setCrossmintAvailable(false); }
     });
     return () => { cancelled = true; };
   }, [stage, cardProviders]);
+
+  // Re-entering the card stage always starts at the option chooser.
+  useEffect(() => {
+    if (stage !== 'card') setCardMethod(null);
+  }, [stage]);
 
   const openCardProvider = useCallback((providerId: string) => {
     setCardNotice(null);
@@ -224,6 +240,13 @@ export function VprDepositView({ onSelectView }: Props) {
       }
     });
   }, [amount]);
+
+  const cardOptions = useMemo<CardOption[]>(() => {
+    const urlOptions: CardOption[] = (cardProviders ?? []).map((p) => ({ id: p.id, label: p.label, kind: 'url' }));
+    return crossmintAvailable
+      ? [...urlOptions, { id: 'crossmint', label: 'Crossmint', kind: 'crossmint' }]
+      : urlOptions;
+  }, [cardProviders, crossmintAvailable]);
 
   const statusLine = (() => {
     if (watchError) return { tone: 'error' as const, text: watchError };
@@ -304,8 +327,8 @@ export function VprDepositView({ onSelectView }: Props) {
               <HugeiconsIcon icon={Wallet01Icon} size={20} strokeWidth={1.8} />
             </span>
             <span className={styles.methodCtaText}>
-              <span className={styles.methodCtaTitle}>Crypto</span>
-              <span className={styles.methodCtaCaption}>Send USDC on Base from any wallet or exchange</span>
+              <span className={styles.methodCtaTitle}>USDC on Base</span>
+              <span className={styles.methodCtaCaption}>Send from any wallet or exchange</span>
             </span>
             <HugeiconsIcon icon={ArrowRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
           </button>
@@ -336,7 +359,7 @@ export function VprDepositView({ onSelectView }: Props) {
     if (current === 'crypto') {
       return (
         <div className={styles.stack}>
-          <VprBackTitle title="Pay with crypto" onBack={() => goToStage('choose')} />
+          <VprBackTitle title="Pay with USDC on Base" onBack={() => goToStage('choose')} />
 
           {amountForm}
 
@@ -383,56 +406,100 @@ export function VprDepositView({ onSelectView }: Props) {
       );
     }
 
-    const singleProvider = cardProviders?.length === 1 ? cardProviders[0] : null;
-    const multipleProviders = cardProviders && cardProviders.length > 1 ? cardProviders : null;
-    const noProviders = cardProviders?.length === 0;
+    const creditedTxLink = creditedTxUrl ? (
+      <button
+        type="button"
+        className={styles.txLink}
+        onClick={() => void window.antseedDesktop?.openExternalUrl?.(creditedTxUrl)}
+      >
+        <span>View transaction</span>
+        <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={2} />
+      </button>
+    ) : null;
 
+    // In-app Crossmint embedded checkout — one of the card options.
+    if (cardMethod === 'crossmint') {
+      const cmChain = crossmintChain(watchInfo?.chainId);
+      return (
+        <div className={styles.stack}>
+          <VprBackTitle title="Pay with Crossmint" onBack={() => { setCardMethod(null); setCardNotice(null); }} />
+
+          {amountForm}
+
+          <VprCard className={styles.payCard}>
+            {watchError ? (
+              <div className={styles.cardNotice} role="alert">{watchError}</div>
+            ) : !watchInfo ? (
+              <div className={styles.methodHint}>Preparing your deposit address…</div>
+            ) : !cmChain ? (
+              <div className={styles.cardNotice} role="alert">
+                Crossmint card purchases are available on Base. Switch to Base in Chain Config to use it.
+              </div>
+            ) : (
+              <CrossmintCheckout
+                recipient={watchInfo.address}
+                chain={cmChain}
+                tokenAddress={watchInfo.usdcAddress}
+                amount={amount}
+                onError={(msg) => setCardNotice(msg || null)}
+              />
+            )}
+            {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
+            {watchStatus && statusLine.tone !== 'idle' && watchStatusRow}
+            {creditedTxLink}
+          </VprCard>
+
+          <div className={styles.secureNote}>
+            <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
+            <span>Encrypted &amp; secure checkout</span>
+          </div>
+        </div>
+      );
+    }
+
+    // Card option chooser: hosted providers (Coinbase, …) plus Crossmint.
     return (
       <div className={styles.stack}>
         <VprBackTitle title="Pay with card" onBack={() => goToStage('choose')} />
 
         {amountForm}
 
-        {multipleProviders?.map((provider) => (
-          <button key={provider.id} type="button" className={styles.methodCta} onClick={() => openCardProvider(provider.id)}>
+        {cardOptions.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={styles.methodCta}
+            onClick={() => (option.kind === 'crossmint' ? setCardMethod('crossmint') : openCardProvider(option.id))}
+          >
             <span className={styles.methodCtaIcon}>
               <HugeiconsIcon icon={CreditCardIcon} size={20} strokeWidth={1.8} />
             </span>
             <span className={styles.methodCtaText}>
-              <span className={styles.methodCtaTitle}>Pay with {provider.label}</span>
+              <span className={styles.methodCtaTitle}>Pay with {option.label}</span>
             </span>
-            <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+            <HugeiconsIcon
+              icon={option.kind === 'crossmint' ? ArrowRight01Icon : ArrowUpRight01Icon}
+              size={18}
+              strokeWidth={2}
+              className={styles.methodCtaArrow}
+            />
           </button>
         ))}
 
         <VprCard className={styles.payCard}>
-          {singleProvider && (
-            <button type="button" className={styles.cardPayButton} onClick={() => openCardProvider(singleProvider.id)}>
-              <span>Pay ${Number(amount) > 0 ? amount : ''} with {singleProvider.label}</span>
-              <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
-            </button>
-          )}
-          {noProviders ? (
+          {cardProviders === null ? (
+            <div className={styles.methodHint}>Loading card options…</div>
+          ) : cardOptions.length === 0 ? (
             <div className={styles.cardNotice} role="alert">{CARD_NOT_CONFIGURED_NOTICE}</div>
           ) : (
             <div className={styles.methodHint}>
-              You'll finish the payment on {singleProvider ? `${singleProvider.label}'s` : "the provider's"} secure
-              checkout page — card details never touch AntSeed. The USDC you buy is delivered
-              on Base and deposited to your credits automatically.
+              Card details never touch AntSeed. The USDC you buy is delivered on Base and
+              deposited to your credits automatically.
             </div>
           )}
           {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
           {watchStatus && statusLine.tone !== 'idle' && watchStatusRow}
-          {creditedTxUrl && (
-            <button
-              type="button"
-              className={styles.txLink}
-              onClick={() => void window.antseedDesktop?.openExternalUrl?.(creditedTxUrl)}
-            >
-              <span>View transaction</span>
-              <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={2} />
-            </button>
-          )}
+          {creditedTxLink}
         </VprCard>
 
         <div className={styles.secureNote}>

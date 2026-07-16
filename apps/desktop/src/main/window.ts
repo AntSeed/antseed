@@ -24,6 +24,27 @@ let mainWindow: BrowserWindow | null = null;
 let floatWindow: BrowserWindow | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 88;
+/* Compact mode: just the 40px app badge in a 56px round chip, centered with a
+   16px shadow margin on each side. Kept at 88px (not a tighter 72) because
+   macOS drops a transparent frameless window's transparency below ~80px,
+   painting the backing opaque — an opaque box around the chip. 88 also matches
+   FLOAT_WINDOW_HEIGHT, so shrinking only changes the window width. */
+const FLOAT_WINDOW_COMPACT_SIZE = 88;
+/* The main process owns the pill's compact state (it does the resize), and
+   pushes it to the float renderer on change and on load. The renderer can't
+   reliably infer it from its own size, so this is the source of truth. */
+let floatCompact = false;
+
+function sendFloatCompact(): void {
+  const win = getFloatWindow();
+  if (win && !win.webContents.isDestroyed()) {
+    win.webContents.send('vpr-float:compact', floatCompact);
+  }
+}
+
+export function getFloatWindowCompact(): boolean {
+  return floatCompact;
+}
 
 type WindowSizePreset = {
   width: number;
@@ -72,6 +93,36 @@ export function closeFloatWindow(): void {
   getFloatWindow()?.close();
 }
 
+/**
+ * Resize the pill window between the full pill and the compact badge chip.
+ * Anchored at the top-right corner (the pill's default home is the screen's
+ * top-right), clamped into the work area.
+ */
+export function setFloatWindowCompact(compact: boolean): void {
+  const win = getFloatWindow();
+  if (!win) return;
+  floatCompact = compact;
+  // Tell the renderer first so the layout swaps even if the OS clamps the
+  // resize below — the shape must always match the intended state.
+  sendFloatCompact();
+  const bounds = win.getBounds();
+  const width = compact ? FLOAT_WINDOW_COMPACT_SIZE : FLOAT_WINDOW_WIDTH;
+  const height = compact ? FLOAT_WINDOW_COMPACT_SIZE : FLOAT_WINDOW_HEIGHT;
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  // macOS ignores setBounds on non-resizable windows; lift the flag around
+  // the programmatic resize. setMinimumSize guards against a default minimum
+  // clamping the compact size above FLOAT_WINDOW_COMPACT_SIZE.
+  win.setResizable(true);
+  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_COMPACT_SIZE);
+  win.setBounds({
+    x: clamp(bounds.x + bounds.width - width, workArea.x, workArea.x + workArea.width - width),
+    y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - height),
+    width,
+    height,
+  });
+  win.setResizable(false);
+}
+
 function floatRendererUrl(rendererUrl: string): string {
   // Dev: http://127.0.0.1:5174/ -> .../float.html
   // Prod: file://.../renderer/index.html -> .../renderer/float.html
@@ -95,9 +146,14 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
     : { x: 0, y: 0, width: 0, height: 0 };
   const workArea = screen.getDisplayMatching(anchor).workArea;
 
+  // A freshly opened pill always starts full-size.
+  floatCompact = false;
+
   floatWindow = new BrowserWindow({
     width: FLOAT_WINDOW_WIDTH,
     height: FLOAT_WINDOW_HEIGHT,
+    minWidth: FLOAT_WINDOW_COMPACT_SIZE,
+    minHeight: FLOAT_WINDOW_COMPACT_SIZE,
     x: workArea.x + workArea.width - FLOAT_WINDOW_WIDTH - 24,
     y: workArea.y + 24,
     title: config.appName,
@@ -129,8 +185,28 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
   created.setVisibleOnAllWorkspaces(true);
 
   created.webContents.once('did-finish-load', () => {
-    if (initialData !== undefined && !created.isDestroyed()) {
+    if (created.isDestroyed()) return;
+    if (initialData !== undefined) {
       created.webContents.send('vpr-float:data', initialData);
+    }
+    // Push the authoritative compact state so a reload can't leave the layout
+    // out of sync with the window's real state.
+    created.webContents.send('vpr-float:compact', floatCompact);
+    // The pill is a separate window, so the main window's DevTools can't
+    // inspect it. Open its own DevTools in dev; the shortcut below reopens it.
+    if (config.isDev) {
+      created.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  // ⌘⌥I (macOS) / Ctrl+Shift+I to (re)open the pill's DevTools. Focus the
+  // pill first (click it) so it receives the keystroke.
+  created.webContents.on('before-input-event', (_event, input) => {
+    const toggle =
+      (input.meta && input.alt && input.key === 'i')
+      || (input.control && input.shift && input.key === 'I');
+    if (toggle && !created.isDestroyed()) {
+      created.webContents.openDevTools({ mode: 'detach' });
     }
   });
 

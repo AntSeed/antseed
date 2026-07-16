@@ -1,7 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Moon02Icon, Sun02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
 import { formatUsdShort, VprBackTitle, VprCard, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import styles from './VprPreferencesView.module.scss';
 
@@ -19,6 +22,12 @@ export function VprPreferencesView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     discoverRows: state.discoverRows,
   }), shallowEqual);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
+
+  const selectTheme = (mode: ThemeMode) => {
+    applyThemeMode(mode);
+    setThemeMode(mode);
+  };
 
   const pinnedRoute = useMemo(() => {
     if (snap.selection.mode !== 'pinned-peer' || !snap.selection.peerId) return null;
@@ -98,6 +107,36 @@ export function VprPreferencesView({ onSelectView }: Props) {
             <div className={styles.sliderHint}>Sellers charging more than this per million input tokens are never used</div>
           </div>
         </VprCard>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Appearance</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Theme"
+              hint="Applies to every AntStation window."
+              control={(
+                <div className={styles.themeSegment} role="radiogroup" aria-label="Theme">
+                  {([
+                    { mode: 'light' as const, label: 'Light', icon: Sun02Icon },
+                    { mode: 'dark' as const, label: 'Dark', icon: Moon02Icon },
+                  ]).map(({ mode, label, icon }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={themeMode === mode}
+                      className={`${styles.themeSegmentButton}${themeMode === mode ? ` ${styles.themeSegmentActive}` : ''}`}
+                      onClick={() => selectTheme(mode)}
+                    >
+                      <HugeiconsIcon icon={icon} size={14} strokeWidth={1.8} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            />
+          </VprCard>
+        </div>
 
         {pinnedRoute ? (
           <div className={styles.pinnedSection}>

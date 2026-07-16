@@ -12,7 +12,7 @@ import {
 import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
-import { activeProfilesFromRuntimeState, buildVprProfileTraffic } from '../../../modules/vpr-tools';
+import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
 import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -44,7 +44,6 @@ export function VprHomeView({ onSelectView }: Props) {
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
-  const [trafficTick, setTrafficTick] = useState(0);
   const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
@@ -75,7 +74,6 @@ export function VprHomeView({ onSelectView }: Props) {
         if (cancelled) return;
         setProfiles(nextProfiles);
         setProxyState(nextState);
-        setTrafficTick((tick) => tick + 1);
       } catch {
         if (!cancelled) setProxyState(null);
       }
@@ -93,15 +91,6 @@ export function VprHomeView({ onSelectView }: Props) {
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
     [activeProfiles, profiles],
   );
-  const traffic = useMemo(
-    // Attribute against the full profile list so counts match the floating
-    // pills (vpr-float.ts) regardless of how many profiles are connected.
-    () => buildVprProfileTraffic(getUiStateRef().logs, profiles),
-    // trafficTick re-samples the (wholesale-reassigned) logs on the poll timer.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profiles, trafficTick],
-  );
-
   const expectedSavingsPct = useMemo(() => {
     const values = snap.catalog
       .map((entry) => entry.expectedSavingsPct)
@@ -164,6 +153,16 @@ export function VprHomeView({ onSelectView }: Props) {
           />
           <button
             type="button"
+            className={styles.heroPop}
+            onClick={() => { void actions.openVprFloat?.(); }}
+            disabled={snap.floatOpen}
+            aria-label="Pop out floating window"
+            title={snap.floatOpen ? 'Floating window is open' : 'Pop out floating window'}
+          >
+            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
             className={`${styles.power}${runtimeOn ? ` ${styles.powerOn}` : ''}`}
             onClick={() => { void (runtimeOn ? actions.stopAll() : actions.startAll()); }}
             aria-pressed={runtimeOn}
@@ -197,42 +196,21 @@ export function VprHomeView({ onSelectView }: Props) {
         {hasConnectedApps ? (
           /* Connected variant: per-app route cards instead of the ask input */
           <div className={styles.connectedGroup}>
-            {connectedProfiles.map((profile) => {
-              const profileTraffic = traffic.get(profile.name);
-              return (
-                <div key={profile.name} className={styles.routeCard}>
-                  <button
-                    type="button"
-                    className={styles.routeMain}
-                    onClick={() => onSelectView?.('tools')}
-                    title={`Manage ${profile.displayName}`}
-                  >
-                    <span className={styles.routeTitle}>
-                      <span className={styles.routeModel}>{selectedModel?.label ?? 'No model selected'}</span>
-                      {snap.selection.mode === 'auto' && <VprBadge tone="green">· Auto</VprBadge>}
-                    </span>
-                    <span className={styles.routeMeta}>
-                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={14} />
-                      <span className={styles.routeApp}>{profile.displayName}</span>
-                      <span className={styles.routeTraffic}>
-                        {profileTraffic?.count ?? 0} {profileTraffic?.count === 1 ? 'request' : 'requests'}
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.routePop}
-                    onClick={() => { void actions.openVprFloat?.(profile.name); }}
-                    disabled={snap.floatOpen}
-                    aria-label="Pop out floating window"
-                    title={snap.floatOpen ? 'Floating window is open' : 'Pop out as floating window'}
-                  >
-                    <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
-                  </button>
-                  <HugeiconsIcon icon={ArrowRight01Icon} size={20} strokeWidth={2} className={styles.routeChevron} />
-                </div>
-              );
-            })}
+            {connectedProfiles.map((profile) => (
+              <div key={profile.name} className={styles.routeCard}>
+                <button
+                  type="button"
+                  className={styles.routeMain}
+                  onClick={() => onSelectView?.('tools')}
+                  title={`Manage ${profile.displayName}`}
+                >
+                  <BrandIcon name={profile.name} hints={[profile.displayName]} size={22} />
+                  <span className={styles.routeApp}>{profile.displayName}</span>
+                  <VprBadge tone="green">Connected</VprBadge>
+                </button>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={20} strokeWidth={2} className={styles.routeChevron} />
+              </div>
+            ))}
 
             <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
               <span>Connect more apps</span>
@@ -248,7 +226,7 @@ export function VprHomeView({ onSelectView }: Props) {
                 >
                   <span className={styles.balanceTitle}>Add Balance</span>
                   <span className={styles.balanceText}>
-                    Pay only for what you use - no subscriptions, no lock-in. Card or crypto, your choice.
+                    Pay only for what you use - no subscriptions, no lock-in. Card or USDC, your choice.
                   </span>
                 </button>
                 <button

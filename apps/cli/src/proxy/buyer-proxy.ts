@@ -31,7 +31,10 @@ import {
   summarizeRequestShape,
   summarizeErrorResponse,
   requestWantsStreaming,
+  parsePeerPinnedService,
   rewritePeerPinnedServiceInBody,
+  substituteRoutedModelAlias,
+  ROUTED_MODEL_ALIAS,
 } from './request-utils.js'
 import {
   getExplicitProviderOverride,
@@ -50,7 +53,7 @@ import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
-export { parsePeerPinnedService, rewritePeerPinnedServiceInBody } from './request-utils.js'
+export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoutedModelAlias, ROUTED_MODEL_ALIAS } from './request-utils.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -361,6 +364,19 @@ export class BuyerProxy {
   private readonly _stateFile: string
   private _stateFileWatching = false
   private _pinnedPeer: string | null
+  /**
+   * Route substituted for the `antseed` model alias (`<peerId>@<service>`).
+   * Set via `POST /_antseed/route` (the desktop keeps it on the current VPR
+   * selection) and persisted in buyer.state.json like the session peer pin.
+   */
+  private _defaultRoutedModel: string | null = null
+  /**
+   * Wall-clock of the last model-request activity (dispatch or streamed
+   * frame). Exposed on /_antseed/buyer-usage so the desktop pill can show a
+   * live "traffic" signal without depending on debug logging. A single field
+   * write per frame — negligible next to the routing/payment/stream work.
+   */
+  private _lastModelActivityAt = 0
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -424,12 +440,11 @@ export class BuyerProxy {
     // startup route from the warm cache without blocking on DHT discovery.
     // The background refresh still runs to pick up fresh peers and IP changes.
     await this._hydratePeersFromStateFile()
-    // If the CLI didn't pass --peer, adopt whatever a previous
-    // `antseed buyer connection set --peer` wrote to buyer.state.json so the
-    // pin survives daemon restart.
-    if (this._pinnedPeer === null) {
-      await this._reloadSessionOverrides()
-    }
+    // Adopt persisted session overrides (peer pin, default routed model) so
+    // they survive daemon restart. A --peer CLI flag beats the persisted pin
+    // at startup; runtime `connection set` writes still take over via the
+    // state-file watcher.
+    await this._reloadSessionOverrides({ preservePeerPin: this._pinnedPeer !== null })
     await new Promise<void>((resolve, reject) => {
       this._server.once('error', reject)
       this._server.listen(this._port, '127.0.0.1', () => {
@@ -510,18 +525,27 @@ export class BuyerProxy {
     }
   }
 
-  private async _reloadSessionOverrides(): Promise<void> {
+  private async _reloadSessionOverrides(opts: { preservePeerPin?: boolean } = {}): Promise<void> {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
-      const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
-        ? parsed.pinnedPeerId.trim().toLowerCase()
-        : null
-      this._pinnedPeer = pinnedPeer
-      log(`Session overrides reloaded: peer=${pinnedPeer ?? 'none'}`)
+      if (!opts.preservePeerPin) {
+        const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
+          ? parsed.pinnedPeerId.trim().toLowerCase()
+          : null
+        this._pinnedPeer = pinnedPeer
+      }
+      const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
+      this._defaultRoutedModel = parsePeerPinnedService(routedModel) ? routedModel : null
+      log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
     }
+  }
+
+  /** Stamp the last model-request activity time (dispatch or streamed frame). */
+  private _markModelActivity(): void {
+    this._lastModelActivityAt = Date.now()
   }
 
   /** Serialised read-modify-write to buyer.state.json. Returns the queued write promise. */
@@ -548,11 +572,11 @@ export class BuyerProxy {
   }
 
   private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
-    // When stopping, preserve whatever pinnedPeerId is already
+    // When stopping, preserve whatever session overrides are already
     // in the file — the debounce may have been cancelled before
     // _reloadSessionOverrides could commit the latest CLI-written values.
     const sessionOverrides = state === 'connected'
-      ? { pinnedPeerId: this._pinnedPeer }
+      ? { pinnedPeerId: this._pinnedPeer, defaultRoutedModel: this._defaultRoutedModel }
       : {}
     await this._mergeStateFile({
       state,
@@ -864,6 +888,46 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/route' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, model: this._defaultRoutedModel }))
+      return
+    }
+
+    if (path === '/_antseed/route' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let model: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        model = typeof body.model === 'string' ? body.model.trim() : ''
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (model.length > 0 && !parsePeerPinnedService(model)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'model must be "<peerId>@<service>" (or empty to clear)' }))
+        return
+      }
+      this._defaultRoutedModel = model.length > 0 ? model : null
+      await this._mergeStateFile({ defaultRoutedModel: this._defaultRoutedModel })
+      log(`Default routed model set: ${this._defaultRoutedModel ?? 'none'}`)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, model: this._defaultRoutedModel }))
+      return
+    }
+
     if (path === '/_antseed/connect' && method === 'POST') {
       const chunks: Buffer[] = []
       let totalSize = 0
@@ -924,7 +988,7 @@ export class BuyerProxy {
     if (path.startsWith('/_antseed/buyer-usage') && method === 'GET') {
       const totals = this._node.getBuyerUsageTotals()
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, totals }))
+      res.end(JSON.stringify({ ok: true, totals, lastActivityAt: this._lastModelActivityAt || null }))
       return
     }
 
@@ -1029,9 +1093,35 @@ export class BuyerProxy {
       body: new Uint8Array(body),
     }
 
-    // Snapshot the session peer pin before any await so a concurrent
+    // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
     const effectivePinnedPeer = this._pinnedPeer
+    const effectiveRoutedModel = this._defaultRoutedModel
+
+    // Resolve the `antseed` model alias to the session's default route first,
+    // so the regular `<peerId>@<service>` pin rewrite below picks up the
+    // substituted value. Tool configs written by the desktop carry the alias
+    // so route changes apply to running sessions without config rewrites.
+    const aliasResult = substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, effectiveRoutedModel)
+    if (aliasResult.aliasRequested && !aliasResult.substituted) {
+      log(`Request rejected: model alias "${ROUTED_MODEL_ALIAS}" with no default route set`)
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        error: {
+          type: 'no_default_route',
+          code: 'no_default_route',
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in AntStation, but no route is set. `
+            + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
+          param: 'model',
+        },
+      }))
+      return
+    }
+    if (aliasResult.substituted) {
+      serializedReq = { ...serializedReq, body: aliasResult.body, headers: aliasResult.headers }
+      log(`Model alias applied: ${ROUTED_MODEL_ALIAS} -> ${effectiveRoutedModel}`)
+    }
+
     const {
       body: servicePinBody,
       headers: servicePinHeaders,
@@ -1435,6 +1525,7 @@ export class BuyerProxy {
       log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
     }
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
+    this._markModelActivity()
 
     // Forward through P2P
     const wantsStreaming = clientWantsStreaming
@@ -1467,6 +1558,7 @@ export class BuyerProxy {
           },
           onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
             if (!streamed) return
+            this._markModelActivity()
             const adaptedChunks = streamResponseAdapter
               ? streamResponseAdapter.adaptChunk(chunk)
               : [chunk]
@@ -1560,6 +1652,7 @@ export class BuyerProxy {
           response = inject402PeerId(response, selectedPeer.peerId)
         }
         const latencyMs = Date.now() - startTime
+        this._markModelActivity()
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
         if (response.statusCode >= 400) {

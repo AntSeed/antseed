@@ -33,7 +33,10 @@ name: Release Desktop
 #   Desktop profile config (optional):
 #     ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64
 #                               base64 of the private System Proxy profile JSON.
-#                               If unset, the packaged app ships with [].
+#                               Entries merge with (and override, by name) the
+#                               built-in open-source app catalog in
+#                               apps/desktop/src/main/default-apps.ts. If unset,
+#                               the packaged app ships with just the built-ins.
 #
 # Publishing auth uses the built-in GITHUB_TOKEN (contents: write).
 

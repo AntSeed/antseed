@@ -246,8 +246,9 @@
 .routeMain {
   flex: 1 1 auto;
   min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 0;
   border: none;
   background: transparent;
@@ -262,74 +263,51 @@
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-.routeTitle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.routeModel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
-.routeMeta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
 .routeApp {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.routeTraffic {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-}
-
-.routePop {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
-}
-
-.routePop:hover:not(:disabled) {
-  color: var(--accent-green);
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-.routePop:disabled {
-  opacity: 0.4;
-  cursor: default;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
 }
 
 .routeChevron {
   flex: 0 0 auto;
   color: var(--text-secondary);
+}
+
+/* Top-level pop-out control over the banner (top-left), for detaching the
+   floating window. White chip so it reads over the brand gradient. */
+.heroPop {
+  position: absolute;
+  top: 12px;
+  left: 4px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.heroPop:hover:not(:disabled) {
+  color: var(--accent-green);
+}
+
+.heroPop:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .balanceBanner {

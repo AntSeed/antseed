@@ -48,39 +48,42 @@
   text-align: center;
 }
 
-/* ---------- App rows ---------- */
+/* ---------- App pills ---------- */
 
-.appRow + .appRow {
-  border-top: 1px solid var(--border);
+.appList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Each connected tool is a self-contained rounded pill. */
+.appPill {
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid transparent;
+  transition: border-color 0.12s ease;
+}
+
+.appPillConnected {
+  border-color: rgba(var(--accent-green-rgb), 0.45);
 }
 
 .appHead {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 8px 16px;
+  min-height: 48px;
+  padding: 8px 14px;
 }
 
-.appToggle {
+.appIdentity {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0;
-  border: none;
-  background: transparent;
   color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.appToggle:focus-visible {
-  outline: none;
-  border-radius: 8px;
-  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
 .appName {
@@ -93,9 +96,24 @@
   line-height: 20px;
 }
 
-.appChevron {
+.appOpen {
   flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.appOpen:hover {
+  color: var(--accent-green);
+  background: var(--bg-surface);
 }
 
 .appAction {
@@ -133,43 +151,7 @@
 .appBody {
   display: grid;
   gap: 10px;
-  padding: 0 16px 14px;
-}
-
-.meta {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.controls label {
-  display: grid;
-  gap: 4px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.controls select {
-  width: 100%;
-  min-height: 32px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 12px;
-  outline: none;
-}
-
-.controls select:focus-visible {
-  border-color: rgba(var(--brand-rgb), 0.5);
+  padding: 0 14px 12px;
 }
 
 .actions {
@@ -273,8 +255,70 @@
   line-height: 15px;
 }
 
-@media (max-width: 560px) {
-  .controls {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* ---------- Certificate transparency ---------- */
+
+.caCard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.caHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.caTitle {
+  flex: 1 1 auto;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.caHint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.caPath {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.caPath:hover {
+  border-color: var(--border-strong);
+}
+
+.caPath code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-align: left;
+}
+
+.caPath span {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
 }

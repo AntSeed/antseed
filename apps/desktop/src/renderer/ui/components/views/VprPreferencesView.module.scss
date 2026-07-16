@@ -93,6 +93,48 @@
   gap: 8px;
 }
 
+.appearanceSection {
+  display: grid;
+  gap: 8px;
+}
+
+.sectionLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* Light/Dark segmented control. */
+.themeSegment {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.themeSegmentButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.themeSegmentActive {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
 .pinnedLabel {
   color: var(--text-secondary);
   font-size: 12px;

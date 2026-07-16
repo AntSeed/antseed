@@ -260,6 +260,60 @@ export function isLoopbackPeer(peer: PeerInfo): boolean {
   return isLoopbackHost(host)
 }
 
+/**
+ * Model alias that tool configs can carry instead of a concrete
+ * `<peerId>@<service>` key. The buyer substitutes the session's default
+ * routed model at request time, so the route selected in the desktop
+ * (floating pill / VPR) applies to already-running tool sessions without
+ * rewriting their configs.
+ */
+export const ROUTED_MODEL_ALIAS = 'antseed'
+
+export function substituteRoutedModelAlias(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  defaultRoutedModel: string | null,
+): { body: Uint8Array; headers: Record<string, string>; aliasRequested: boolean; substituted: boolean } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+
+  const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  const rawService = typeof obj['service'] === 'string' ? obj['service'].trim() : ''
+  const modelIsAlias = rawModel.toLowerCase() === ROUTED_MODEL_ALIAS
+  const serviceIsAlias = rawService.toLowerCase() === ROUTED_MODEL_ALIAS
+  if (!modelIsAlias && !serviceIsAlias) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+
+  const target = defaultRoutedModel?.trim()
+  if (!target) {
+    return { body, headers, aliasRequested: true, substituted: false }
+  }
+  if (modelIsAlias) obj['model'] = target
+  if (serviceIsAlias) obj['service'] = target
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
+  return { body: rewritten, headers: updatedHeaders, aliasRequested: true, substituted: true }
+}
+
+function encodeRewrittenJsonBody(
+  obj: Record<string, unknown>,
+  headers: Record<string, string>,
+): { body: Uint8Array; headers: Record<string, string> } {
+  const rewritten = new TextEncoder().encode(JSON.stringify(obj))
+  const updatedHeaders = { ...headers }
+  if ('content-length' in updatedHeaders) {
+    updatedHeaders['content-length'] = String(rewritten.length)
+  } else if ('Content-Length' in updatedHeaders) {
+    updatedHeaders['Content-Length'] = String(rewritten.length)
+  }
+  return { body: rewritten, headers: updatedHeaders }
+}
+
 export function rewritePeerPinnedServiceInBody(
   body: Uint8Array,
   headers: Record<string, string>,
@@ -293,12 +347,6 @@ export function rewritePeerPinnedServiceInBody(
     }
   }
 
-  const rewritten = new TextEncoder().encode(JSON.stringify(obj))
-  const updatedHeaders = { ...headers }
-  if ('content-length' in updatedHeaders) {
-    updatedHeaders['content-length'] = String(rewritten.length)
-  } else if ('Content-Length' in updatedHeaders) {
-    updatedHeaders['Content-Length'] = String(rewritten.length)
-  }
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
   return { body: rewritten, headers: updatedHeaders, pinnedPeerId: parsed.peerId }
 }

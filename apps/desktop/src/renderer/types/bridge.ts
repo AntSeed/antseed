@@ -343,7 +343,8 @@ export type DesktopBridge = {
   paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-  paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null }>;
+  paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
+  paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
   /** Fired when a browser pay page reports a completed payment action. */
@@ -360,8 +361,8 @@ export type DesktopBridge = {
   systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
   systemProxyInstallCa?: () => Promise<{ ok: boolean; warning?: string; error?: string }>;
   systemProxyCaExists?: () => Promise<boolean>;
-  systemProxyAddToShell?: (opts?: { port?: number }) => Promise<{ ok: boolean; added: string[]; error?: string }>;
-  systemProxyRemoveFromShell?: () => Promise<{ ok: boolean; removed: string[]; error?: string }>;
+  systemProxyCaInfo?: () => Promise<{ path: string; exists: boolean }>;
+  systemProxyRevealCa?: () => Promise<{ ok: boolean; error?: string }>;
   systemProxyTestGui?: (opts?: { port?: number }) => Promise<{
     ok: boolean;
     proxyConfigured: boolean;
@@ -379,9 +380,11 @@ export type DesktopBridge = {
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
+  vprFloatGetCompact?: () => Promise<boolean>;
   vprFloatUpdate?: (data: VprFloatData) => void;
   vprFloatAction?: (action: VprFloatAction) => void;
   onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
+  onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
 };
@@ -420,4 +423,5 @@ export type VprFloatData = {
 
 export type VprFloatAction =
   | 'open-main'
-  | { type: 'select-model'; provider: string; serviceId: string };
+  | { type: 'select-model'; provider: string; serviceId: string }
+  | { type: 'set-compact'; compact: boolean };

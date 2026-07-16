@@ -77,12 +77,9 @@ function normalizeConfigPatch(value: unknown, profileName: string): SystemProxyC
   }
   const raw = value as Record<string, unknown>
   return {
+    ...raw,
     configPath: requiredString(raw, 'configPath', profileName),
     providerKey: requiredString(raw, 'providerKey', profileName),
-    npm: requiredString(raw, 'npm', profileName),
-    providerName: requiredString(raw, 'providerName', profileName),
-    baseURL: requiredString(raw, 'baseURL', profileName),
-    modelFormat: 'peer-routed',
   }
 }
 

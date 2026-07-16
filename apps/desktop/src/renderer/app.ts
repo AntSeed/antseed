@@ -23,6 +23,7 @@ import {
   saveVprRoutingPreferences,
 } from './modules/vpr-preferences';
 import { mountAppShell } from './ui/mount';
+import { initThemeMode } from './ui/lib/theme';
 import { registerActions } from './ui/actions';
 import {
   DEFAULT_DASHBOARD_PORT,
@@ -56,6 +57,9 @@ const isMacPlatform = bridge?.platform
   ? bridge.platform === 'darwin'
   : detectApplePlatformFromNavigator();
 document.body.classList.toggle('platform-macos', isMacPlatform);
+
+// Paint the persisted light/dark mode before anything renders.
+initThemeMode();
 
 // On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
 // the window traffic-light buttons are mirrored to the top-right and would
@@ -515,8 +519,8 @@ registerActions({
     notifyUiStateChanged();
   },
   retryAfterPayment: () => chatApi.retryAfterPayment(),
-  refreshCredits: () => void creditsApi.refreshCredits(),
-  refreshPaymentSummary: (force?: boolean) => void creditsApi.refreshPaymentSummary(force),
+  refreshCredits: () => creditsApi.refreshCredits(),
+  refreshPaymentSummary: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
   chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,

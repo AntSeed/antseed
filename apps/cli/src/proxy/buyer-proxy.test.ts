@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,6 +12,7 @@ import {
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
   selectCandidatePeersForRouting,
+  substituteRoutedModelAlias,
 } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
@@ -1082,6 +1083,101 @@ test('rewritePeerPinnedServiceInBody returns original when body is not JSON cont
   assert.equal(result.body, body)
   assert.equal(result.headers, headers)
   assert.equal(result.pinnedPeerId, null)
+})
+
+test('substituteRoutedModelAlias replaces the alias model with the default routed model', () => {
+  const body = makeJsonBody({ model: 'antseed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.aliasRequested, true)
+  assert.equal(result.substituted, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], `${validPeerId}@gpt-4o`)
+})
+
+test('substituteRoutedModelAlias handles the alias in the service field and is case-insensitive', () => {
+  const body = makeJsonBody({ service: 'AntSeed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.substituted, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['service'], `${validPeerId}@gpt-4o`)
+})
+
+test('substituteRoutedModelAlias reports an unresolvable alias when no default route is set', () => {
+  const body = makeJsonBody({ model: 'antseed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, null)
+  assert.equal(result.aliasRequested, true)
+  assert.equal(result.substituted, false)
+  assert.equal(result.body, body)
+})
+
+test('substituteRoutedModelAlias leaves non-alias models untouched', () => {
+  const body = makeJsonBody({ model: 'gpt-4o', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.aliasRequested, false)
+  assert.equal(result.substituted, false)
+  assert.equal(result.body, body)
+})
+
+test('route control endpoint sets, persists, and returns the default routed model', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-route-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: { router: null } as any,
+  })
+
+  const set = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: `${validPeerId}@gpt-4o` } }))
+  assert.equal(set.statusCode, 200)
+  assert.deepEqual(JSON.parse(set.body), { ok: true, model: `${validPeerId}@gpt-4o` })
+
+  const get = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+  assert.deepEqual(JSON.parse(get.body), { ok: true, model: `${validPeerId}@gpt-4o` })
+
+  const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
+  assert.equal(persisted['defaultRoutedModel'], `${validPeerId}@gpt-4o`)
+
+  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'gpt-4o' } }))
+  assert.equal(invalid.statusCode, 400)
+
+  const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: '' } }))
+  assert.deepEqual(JSON.parse(cleared.body), { ok: true, model: null })
+})
+
+test('buyer-usage endpoint reports lastActivityAt, null until a request is dispatched', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null, getBuyerUsageTotals: () => ({ totalRequests: 0 }) } as any,
+  })
+
+  const before = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/buyer-usage' }))
+  assert.equal(before.statusCode, 200)
+  assert.equal((JSON.parse(before.body) as { lastActivityAt: number | null }).lastActivityAt, null)
+
+  ;(proxy as any)._markModelActivity()
+
+  const after = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/buyer-usage' }))
+  const parsed = JSON.parse(after.body) as { ok: boolean; lastActivityAt: number | null }
+  assert.equal(parsed.ok, true)
+  assert.equal(typeof parsed.lastActivityAt, 'number')
+  assert.ok((parsed.lastActivityAt ?? 0) > 0)
+})
+
+test('requests with the routed-model alias fail clearly when no default route is set', async () => {
+  const proxy = makeBuyerProxyWithPeers([makePeer('a', ['openai'])])
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [] } }))
+  assert.equal(res.statusCode, 400)
+  const parsed = JSON.parse(res.body) as { error?: { code?: string } }
+  assert.equal(parsed.error?.code, 'no_default_route')
+})
+
+test('substituteRoutedModelAlias updates content-length when substituting', () => {
+  const original = makeJsonBody({ model: 'antseed', messages: [] })
+  const headers = { 'content-type': 'application/json', 'content-length': String(original.length) }
+  const result = substituteRoutedModelAlias(original, headers, `${validPeerId}@gpt-4o`)
+  assert.equal(result.headers['content-length'], String(result.body.length))
 })
 
 test('rewritePeerPinnedServiceInBody returns original when body is empty', () => {
