@@ -2403,6 +2403,11 @@ const SWEEP_POLL_INTERVAL_MS = 1_000;
 const SWEEP_RETRY_COOLDOWN_MS = 60_000;
 // AntseedDeposits enforces a 1 USDC minimum first deposit (net of the fee).
 const MIN_FIRST_DEPOSIT_BASE_UNITS = 1_000_000n;
+// Minimum top-up when the sweep is clamped by the credit-limit headroom.
+// Without a floor, a wallet holding more than the remaining headroom would
+// grind it into the limit gap in dust increments — paying the fixed relay
+// fee on each sliver every time spending frees a few cents of headroom.
+const MIN_TOPUP_BASE_UNITS = 1_000_000n;
 
 let depositWatchTimer: NodeJS.Timeout | null = null;
 let depositWatchBalance = 0n;
@@ -2583,6 +2588,15 @@ async function sweepIncomingUsdc(client: DepositsClient, buyer: string): Promise
       sendDepositWatchStatus({
         phase: 'error',
         error: `Your credits are at the account limit (${formatUsdc(creditLimit)} USDC). Spend or withdraw before depositing more.`,
+      });
+      return;
+    }
+    // Headroom-clamped top-up: wait until at least MIN_TOPUP_BASE_UNITS of
+    // headroom is free instead of sweeping fee-heavy slivers repeatedly.
+    if (usdcBalance - fee > headroom && headroom < MIN_TOPUP_BASE_UNITS) {
+      sendDepositWatchStatus({
+        phase: 'error',
+        error: `Your credits are near the account limit (${formatUsdc(creditLimit)} USDC). The USDC in your wallet tops up automatically as you spend.`,
       });
       return;
     }
