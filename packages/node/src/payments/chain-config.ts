@@ -61,7 +61,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',
-    // depositRelayAddress: TODO — set after AntseedDepositRelay mainnet deployment
+    depositRelayAddress: '0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD',
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
