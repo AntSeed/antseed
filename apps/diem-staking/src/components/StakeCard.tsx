@@ -40,7 +40,7 @@ import { MAX_USDC_PER_DIEM_PER_DAY } from '../lib/protocol';
 type Tab = 'stake' | 'unstake' | 'claim';
 
 const DEFAULT_STAKE_AMOUNT = parseEther('1');
-const DIEM_TERMS_URL = 'https://diem.antseed.com/terms-of-service.html';
+const DIEM_TERMS_URL = 'https://diemantseed.com/terms-of-service.html';
 
 function formatDiemInput(value: bigint): string {
   const formatted = formatEther(value);
