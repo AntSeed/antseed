@@ -348,6 +348,7 @@ export function verifyAudit(input: AuditVerifyInput): AuditVerifyReport {
     answers: Array<number | null> | null
     carrierCount: number | undefined
     suspiciousAnchorSubset: boolean
+    fullyAuthenticated: boolean | undefined
   }
   const perSeller: PerSeller[] = []
 
@@ -408,6 +409,7 @@ export function verifyAudit(input: AuditVerifyInput): AuditVerifyReport {
       answers,
       carrierCount: seller.carrierCount,
       suspiciousAnchorSubset,
+      fullyAuthenticated: seller.fullyAuthenticated,
     })
   }
 
@@ -467,12 +469,25 @@ export function verifyAudit(input: AuditVerifyInput): AuditVerifyReport {
     const singleCarrierSame =
       seller.packVerdict === 'SAME' && seller.carrierCount !== undefined && seller.carrierCount < 2
 
+    // The auditor deliberately never attests a seller whose verdict is UNKNOWN,
+    // who has no agentId, or whose probe traffic lacked verified ResponseAuths
+    // (see the attestation loop in audit-runner). For those sellers 'absent' is
+    // the EXPECTED on-chain state, not evidence of tampering — only sellers the
+    // auditor was obliged to attest must resolve to 'match'. An attestation
+    // that EXISTS is always held to the match check regardless.
+    const attestable =
+      seller.packVerdict !== 'UNKNOWN' &&
+      seller.agentId > 0 &&
+      seller.fullyAuthenticated !== false
+
     const ok =
       seller.responseAuthsValid &&
       seller.anchored &&
       seller.answersMatch &&
       verdictReproduces &&
-      (input.attestations === undefined || attestationStatus === 'match')
+      (input.attestations === undefined ||
+        attestationStatus === 'match' ||
+        (attestationStatus === 'absent' && !attestable))
 
     sellers.push({
       sellerPeerId: seller.sellerPeerId,

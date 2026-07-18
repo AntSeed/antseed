@@ -247,9 +247,12 @@ async function fetchAnchorByTx(
   if (!log || !log.topics[3]) {
     throw new Error('anchor transaction emitted no ExchangeBatchAnchored event (reverted or wrong contract?)')
   }
+  if (!log.topics[1]) throw new Error('malformed ExchangeBatchAnchored event')
   return {
     ...decoded,
-    verifier: tx.from,
+    // The indexed event topic, NOT tx.from — under a relayed/AA submission the
+    // tx sender is not the verifier the contract recorded as msg.sender.
+    verifier: getAddress(`0x${log.topics[1].slice(26)}`),
     batchRoot: log.topics[3],
     txHash,
     blockNumber: receipt.blockNumber,

@@ -50,6 +50,12 @@ interface FixtureOptions {
   answerWithConsensus?: boolean
   /** Sellers in the cohort (default 2; cohort consensus needs ≥3). */
   sellerCount?: number
+  /**
+   * Agents whose probe traffic lacked verified ResponseAuths. Mirrors the
+   * runner: marked `fullyAuthenticated: false` in the pack and (deliberately)
+   * never attested on-chain.
+   */
+  unauthenticatedAgentIds?: number[]
 }
 
 const DEFAULT_FIXTURE_COHORT_OPTIONS = {
@@ -158,7 +164,7 @@ function buildFixture(opts: FixtureOptions = {}): Fixture {
       verdict: 'UNDETERMINED',
       cohortVerdict: 'UNDETERMINED',
       stats: {} as EvidenceBundle['sellers'][number]['stats'],
-      fullyAuthenticated: true,
+      fullyAuthenticated: !(opts.unauthenticatedAgentIds ?? []).includes(seller.agentId),
       exchanges,
     })
   }
@@ -198,6 +204,8 @@ function buildFixture(opts: FixtureOptions = {}): Fixture {
   const attestations = new Map<number, OnChainAttestation>()
   const probeCommitment = computeProbeCommitment(probeSet)
   for (const seller of sellers) {
+    // Mirror the runner: an unauthenticated seller is never attested.
+    if ((opts.unauthenticatedAgentIds ?? []).includes(seller.agentId)) continue
     attestations.set(seller.agentId, {
       verdict: verdictToCode(seller.verdict),
       probeCommitment,
@@ -344,6 +352,20 @@ test('an attestation for a different commitment reports superseded, not mismatch
   assert.equal(seller.attestationStatus, 'superseded')
   assert.equal(seller.ok, false, 'verification must fail closed when this audit is not the on-chain attestation')
   assert.equal(report.ok, false)
+})
+
+test('a legitimately un-attested seller (no verified ResponseAuths) does not fail the audit', () => {
+  // The runner deliberately never attests a seller whose probe traffic lacked
+  // verified ResponseAuths — for that seller 'absent' is the expected on-chain
+  // state, not tampering, and must not turn an honest audit into a MISMATCH.
+  const { input } = buildFixture({ unauthenticatedAgentIds: [8] })
+  const report = verifyAudit(input)
+  assert.ok(report.ok, JSON.stringify(report.sellers.filter((s) => !s.ok)))
+  const unattested = report.sellers.find((s) => s.agentId === 8)!
+  assert.equal(unattested.attestationStatus, 'absent')
+  assert.ok(unattested.ok)
+  const attested = report.sellers.find((s) => s.agentId === 7)!
+  assert.equal(attested.attestationStatus, 'match')
 })
 
 test('a missing on-chain attestation fails verification', () => {

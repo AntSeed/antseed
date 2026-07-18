@@ -127,15 +127,28 @@ const PEER_FAILURE_WINDOW_MS = 5 * 60_000
  * `peer-lookup.ts` `maxAnnouncementAgeMs` — the DHT-announcement staleness the
  * code already trusts elsewhere — and sits comfortably above the refresh
  * cadence.
+ *
+ * The value is the shared bound from packages/node (the SDK's DefaultRouter
+ * ages flags out at the same ceiling), re-exported so the two exclusion paths
+ * cannot drift.
  */
-export const MODEL_VERIFICATION_MAX_AGE_MS = 30 * 60_000
+export { MODEL_VERIFICATION_MAX_AGE_MS } from '@antseed/node'
+import { MODEL_VERIFICATION_MAX_AGE_MS } from '@antseed/node'
+
+/**
+ * Debounce for persisting `lastReachedAt` stamps to buyer.state.json. Every
+ * successful proxied request stamps its peer; an immediate write per request
+ * is a whole-state-file serialize + rename on the hot path. The stamp lands
+ * in memory immediately — only the disk write is coalesced (flushed on stop).
+ */
+const PEER_PERSIST_DEBOUNCE_MS = 5_000
 
 /**
  * `PeerInfo` augmented with the buyer-local freshness stamp for
- * `modelVerification`. The stamp is not part of the shared `PeerInfo` contract
- * (packages/node never sets it) — it is written when a live enrichment read
- * lands (see `_replacePeers`), carried forward otherwise, persisted, and
- * rehydrated so the substitution gate can age a stale flag out.
+ * `modelVerification`. packages/node stamps it on a live enrichment read; the
+ * proxy also writes it in `_replacePeers`, carries it forward otherwise,
+ * persists it, and rehydrates it so the substitution gate can age a stale
+ * flag out.
  */
 type CachedPeerInfo = PeerInfo & { modelVerificationFetchedAt?: number }
 
@@ -465,6 +478,7 @@ export class BuyerProxy {
   private _stateFileWatching = false
   private _pinnedPeer: string | null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
+  private _peerPersistDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -562,6 +576,12 @@ export class BuyerProxy {
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
+    }
+    if (this._peerPersistDebounce) {
+      // Flush the coalesced lastReachedAt stamps before recording the stop.
+      clearTimeout(this._peerPersistDebounce)
+      this._peerPersistDebounce = null
+      this._persistPeersToState()
     }
     if (this._stateFileWatching) {
       unwatchFile(this._stateFile)
@@ -843,8 +863,18 @@ export class BuyerProxy {
     const cached = this._cachedPeers.find((p) => p.peerId === peerId)
     if (cached) {
       cached.lastReachedAt = Date.now()
-      this._persistPeersToState()
+      this._schedulePersistPeersToState()
     }
+  }
+
+  /** Coalesce hot-path `lastReachedAt` persists into one write per debounce window. */
+  private _schedulePersistPeersToState(): void {
+    if (this._peerPersistDebounce) return
+    this._peerPersistDebounce = setTimeout(() => {
+      this._peerPersistDebounce = null
+      this._persistPeersToState()
+    }, PEER_PERSIST_DEBOUNCE_MS)
+    this._peerPersistDebounce.unref?.()
   }
 
   private async _discoverPeersFromNetwork(service?: string): Promise<PeerInfo[]> {

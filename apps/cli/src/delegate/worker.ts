@@ -14,6 +14,7 @@ import {
   peerIdToAddress,
 } from '@antseed/node'
 import type { CreditStore } from './credit-store.js'
+import { toResponseAuthPayload } from '../verifier/probing.js'
 
 const DEFAULT_MAX_CONCURRENT_JOBS = 2
 const DEFAULT_MAX_JOBS_PER_HOUR = 60
@@ -605,20 +606,3 @@ function isBoundedCompletionBudget(value: unknown): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_JOB_MAX_TOKENS
 }
 
-function toResponseAuthPayload(stored: StoredResponseAuth): ProbeJobResultPayload['responseAuth'] {
-  return {
-    version: stored.version,
-    requestId: stored.requestId,
-    ...(stored.channelId ? { channelId: stored.channelId } : {}),
-    buyerPeerId: stored.buyerPeerId,
-    sellerPeerId: stored.sellerPeerId,
-    advertisedService: stored.advertisedService,
-    provider: stored.provider,
-    statusCode: stored.statusCode,
-    requestHash: stored.requestHash,
-    responseHash: stored.responseHash,
-    responseStartedAt: stored.responseStartedAt,
-    responseCompletedAt: stored.responseCompletedAt,
-    signature: stored.signature,
-  }
-}

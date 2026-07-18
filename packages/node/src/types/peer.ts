@@ -138,6 +138,15 @@ export interface PeerInfo {
    * with a verifier registry address and the peer has an on-chain agent id.
    */
   modelVerification?: Record<string, PeerModelVerification>;
+  /**
+   * When `modelVerification` was last read from the registry (epoch ms).
+   * Stamped by enrichment; consumers age a substitution flag out past
+   * `MODEL_VERIFICATION_MAX_AGE_MS` so a peer retained after enrichment
+   * stops updating (registry unconfigured, RPC down) is not blocked forever
+   * on a flag that can no longer lift. Absent on entries set before stamping
+   * existed — treated as no age information (flag honored).
+   */
+  modelVerificationFetchedAt?: number;
 }
 
 /** Buyer-computed model-verification reputation for one (peer, model). */

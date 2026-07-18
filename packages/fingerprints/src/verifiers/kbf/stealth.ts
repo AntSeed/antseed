@@ -571,7 +571,11 @@ export function extractAnswersFreeText(
     if (candidates.length === 0) {
       return answers;
     }
-    const lower = text.toLowerCase();
+    // ASCII-only fold: full Unicode toLowerCase can change string LENGTH
+    // (e.g. 'İ' → 'i̇'), which would misalign anchor offsets (found in
+    // `lower`) against candidate/sentence offsets (found in `text`). Anchors
+    // are lowercased ASCII keywords, so ASCII folding keeps offsets 1:1.
+    const lower = text.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
     let anyAnchored = false;
     for (let i = 0; i < probes.length; i++) {

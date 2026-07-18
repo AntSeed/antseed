@@ -998,6 +998,7 @@ export class AntseedNode extends EventEmitter {
       }
       if (Object.keys(modelVerification).length > 0) {
         p.modelVerification = modelVerification;
+        p.modelVerificationFetchedAt = Date.now();
       }
     };
 

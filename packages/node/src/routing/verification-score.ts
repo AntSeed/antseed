@@ -164,6 +164,16 @@ export function toPeerModelVerification(
  * outright (the client declares 7 fields), so such a deployment yields no
  * verification data at all rather than stats with the field decoded as 0.
  */
+/**
+ * How long an enrichment-stamped `modelVerification` read stays trusted for
+ * routing exclusion. Enrichment refreshes far more often than this in normal
+ * operation, so a genuinely-flagged seller stays excluded; the bound only
+ * closes the liveness gap when enrichment is degraded (registry unconfigured,
+ * RPC permanently failing), where a stale DIFF flag would otherwise block a
+ * seller forever. Mirrors the CLI proxy's substitution-gate freshness bound.
+ */
+export const MODEL_VERIFICATION_MAX_AGE_MS = 30 * 60_000;
+
 export function hasModelSubstitutionFlag(
   mv: PeerModelVerification | undefined,
   minDistinctDiffVerifiers?: number,

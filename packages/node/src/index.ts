@@ -103,6 +103,7 @@ export {
   toPeerModelVerification,
   hasModelSubstitutionFlag,
   MIN_DISTINCT_DIFF_VERIFIERS_FOR_EXCLUSION,
+  MODEL_VERIFICATION_MAX_AGE_MS,
 } from './routing/verification-score.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {

@@ -2,12 +2,20 @@ import type { Router } from '../interfaces/buyer-router.js';
 import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest } from '../types/http.js';
 import { computeOnChainReputationScore } from '../reputation/on-chain-reputation.js';
-import { hasModelSubstitutionFlag } from './verification-score.js';
+import { hasModelSubstitutionFlag, MODEL_VERIFICATION_MAX_AGE_MS } from './verification-score.js';
 import { tryParseJsonObject } from '../utils/json-codec.js';
 
 export interface DefaultRouterConfig {
   minReputation?: number;  // Default: 0 (no reputation gate)
 }
+
+/**
+ * Largest request body decoded to extract `service`/`model` for the
+ * substitution gate. Larger bodies fall back to the '*' aggregate stats.
+ */
+const MAX_SERVICE_EXTRACTION_BODY_BYTES = 256 * 1024;
+/** ASCII whitespace allowed before a JSON object's opening brace. */
+const WHITESPACE_BYTES = new Set([0x20, 0x09, 0x0a, 0x0d]);
 
 export class DefaultRouter implements Router {
   private _minReputation: number;
@@ -66,6 +74,15 @@ export class DefaultRouter implements Router {
   private _hasActiveSubstitutionFlag(peer: PeerInfo, requestedService: string | null): boolean {
     const mv = peer.modelVerification;
     if (!mv) return false;
+    // A flag older than the freshness bound is treated as absent: enrichment
+    // stopped refreshing this peer (registry unconfigured, RPC down), so the
+    // flag could never lift and would block the seller forever. A stamp-less
+    // entry carries no age information and is honored as-is.
+    const fetchedAt = peer.modelVerificationFetchedAt;
+    if (typeof fetchedAt === 'number' && Number.isFinite(fetchedAt)
+      && Date.now() - fetchedAt >= MODEL_VERIFICATION_MAX_AGE_MS) {
+      return false;
+    }
     if (requestedService) {
       const perService = mv[requestedService];
       if (perService) return hasModelSubstitutionFlag(perService);
@@ -81,7 +98,18 @@ export class DefaultRouter implements Router {
    * back to `model`), normalized the way `modelVerification` keys are.
    */
   private _extractRequestedService(req: SerializedHttpRequest): string | null {
-    if (req.body.length === 0) return null;
+    if (req.body.length === 0 || req.body.length > MAX_SERVICE_EXTRACTION_BODY_BYTES) {
+      // Oversized bodies skip per-service extraction rather than paying an
+      // unbounded decode+parse on every routing decision; the substitution
+      // gate still fires via the '*' aggregate, which is never below any
+      // per-service count.
+      return null;
+    }
+    // Cheap non-JSON precheck: a JSON object body starts with '{' after
+    // optional whitespace — skip decoding binary/non-object payloads.
+    let i = 0;
+    while (i < req.body.length && WHITESPACE_BYTES.has(req.body[i]!)) i += 1;
+    if (req.body[i] !== 0x7b /* '{' */) return null;
     const body = tryParseJsonObject(req.body);
     const service = body?.['service'] ?? body?.['model'];
     if (typeof service !== 'string' || service.trim().length === 0) return null;

@@ -421,7 +421,9 @@ function extractModelFromBody(body: Uint8Array): string | undefined {
   try {
     const parsed = JSON.parse(new TextDecoder().decode(body)) as { model?: unknown; service?: unknown }
     const service = parsed.service ?? parsed.model
-    return typeof service === 'string' && service.length > 0 ? service : undefined
+    // Trim like the proxy's extractRequestedService — the two paths must derive
+    // the same service key or ResponseAuth verification diverges on delegates.
+    return typeof service === 'string' && service.trim().length > 0 ? service.trim() : undefined
   } catch {
     return undefined
   }
