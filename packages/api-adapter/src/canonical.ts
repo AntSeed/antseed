@@ -93,13 +93,17 @@ export function renderCanonicalRequestToOpenAIChatBody(
         type: 'function',
         function: { name: item.name, arguments: stringifyToolArguments(item.arguments) },
       };
-      if (options.groupAssistantToolCallsWithPreviousMessage) {
-        const previous = messages[messages.length - 1];
-        if (isAssistantMessage(previous)) {
-          const toolCalls = Array.isArray(previous.tool_calls) ? previous.tool_calls : [];
-          previous.tool_calls = [...toolCalls, toolCall];
-          continue;
-        }
+      const previous = messages[messages.length - 1];
+      // Parallel tool calls must share one assistant message: an assistant
+      // message with tool_calls must be immediately followed by its tool
+      // responses, so consecutive function_call items always merge.
+      if (isAssistantMessageWithToolCalls(previous)) {
+        previous.tool_calls = [...previous.tool_calls as unknown[], toolCall];
+        continue;
+      }
+      if (options.groupAssistantToolCallsWithPreviousMessage && isAssistantMessage(previous)) {
+        previous.tool_calls = [toolCall];
+        continue;
       }
       messages.push({
         role: 'assistant',
@@ -392,7 +396,11 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
       }
 
       const role = msg.role === 'assistant' ? 'assistant' : 'user';
-      request.input.push({ type: 'message', role, text: textFromResponsesContent(msg.content) });
+      const text = textFromResponsesContent(msg.content);
+      // Non-message items (reasoning, web_search_call, ...) carry no renderable
+      // text — dropping them avoids injecting empty user messages mid-history.
+      if (type !== 'message' && text.length === 0) continue;
+      request.input.push({ type: 'message', role, text });
     }
   }
 
