@@ -308,7 +308,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         uint256 agentId = pools.agentIdForSeller(seller);
         if (agentId == 0) return;
 
-        uint256 poolPower = pools.poolPowerWeightAtEpoch(agentId, epoch);
+        uint256 poolPower = pools.poolWeightAtEpoch(agentId, epoch);
         if (poolPower < minimumAccountedPoolPower) return;
 
         (uint256 poolWeight, bool poolWeightOk) = _policyPoolWeight(agentId, epoch, poolPower);
@@ -317,44 +317,49 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         (uint256 sellerPoints, uint256 buyerPoints) = _policyPoints(channelId, buyer, seller, rawPoints);
         if (sellerPoints == 0 && buyerPoints == 0) return;
 
-        {
-            UsageTotals storage totalUsage_ = _totalUsage;
-            totalUsage_.buyers.points += buyerPoints;
-            totalUsage_.sellers.points += sellerPoints;
-        }
-        {
-            UsageTotals storage epochUsage_ = _epochUsage[epoch];
-            epochUsage_.buyers.points += buyerPoints;
-            epochUsage_.sellers.points += sellerPoints;
-        }
-        _buyerUsageTotal[buyer].points += buyerPoints;
-        _buyerAgentUsageTotal[buyer][agentId].points += buyerPoints;
-        _buyerEpochUsage[epoch][buyer].points += buyerPoints;
-        _buyerAgentEpochUsage[epoch][buyer][agentId].points += buyerPoints;
-        _agentEpochUsage[epoch][agentId].points += sellerPoints;
-        if (_sellerAgentIdByEpoch[epoch][seller] == 0) _sellerAgentIdByEpoch[epoch][seller] = agentId;
-
         uint256 sellerWeightedPoints = sellerPoints * poolWeight;
         uint256 buyerWeightedPoints = buyerPoints * poolWeight;
 
         {
             UsageTotals storage totalUsage_ = _totalUsage;
+            totalUsage_.buyers.points += buyerPoints;
             totalUsage_.buyers.weightedPoints += buyerWeightedPoints;
+            totalUsage_.sellers.points += sellerPoints;
             totalUsage_.sellers.weightedPoints += sellerWeightedPoints;
-            totalUsage_.sellers.poolPoints += sellerPoints;
         }
         {
             UsageTotals storage epochUsage_ = _epochUsage[epoch];
+            epochUsage_.buyers.points += buyerPoints;
             epochUsage_.buyers.weightedPoints += buyerWeightedPoints;
+            epochUsage_.sellers.points += sellerPoints;
             epochUsage_.sellers.weightedPoints += sellerWeightedPoints;
-            epochUsage_.sellers.poolPoints += sellerPoints;
         }
-        _buyerUsageTotal[buyer].weightedPoints += buyerWeightedPoints;
-        _buyerAgentUsageTotal[buyer][agentId].weightedPoints += buyerWeightedPoints;
-        _buyerEpochUsage[epoch][buyer].weightedPoints += buyerWeightedPoints;
-        _buyerAgentEpochUsage[epoch][buyer][agentId].weightedPoints += buyerWeightedPoints;
-        _agentEpochUsage[epoch][agentId].poolPoints += sellerPoints;
-        _agentEpochUsage[epoch][agentId].weightedPoints += sellerWeightedPoints;
+        {
+            BuyerUsage storage buyerTotal_ = _buyerUsageTotal[buyer];
+            buyerTotal_.points += buyerPoints;
+            buyerTotal_.weightedPoints += buyerWeightedPoints;
+        }
+        {
+            BuyerUsage storage buyerAgentTotal_ = _buyerAgentUsageTotal[buyer][agentId];
+            buyerAgentTotal_.points += buyerPoints;
+            buyerAgentTotal_.weightedPoints += buyerWeightedPoints;
+        }
+        {
+            BuyerUsage storage buyerEpoch_ = _buyerEpochUsage[epoch][buyer];
+            buyerEpoch_.points += buyerPoints;
+            buyerEpoch_.weightedPoints += buyerWeightedPoints;
+        }
+        {
+            BuyerUsage storage buyerAgentEpoch_ = _buyerAgentEpochUsage[epoch][buyer][agentId];
+            buyerAgentEpoch_.points += buyerPoints;
+            buyerAgentEpoch_.weightedPoints += buyerWeightedPoints;
+        }
+        {
+            SellerUsage storage agentEpoch_ = _agentEpochUsage[epoch][agentId];
+            agentEpoch_.points += sellerPoints;
+            agentEpoch_.weightedPoints += sellerWeightedPoints;
+        }
+        if (_sellerAgentIdByEpoch[epoch][seller] == 0) _sellerAgentIdByEpoch[epoch][seller] = agentId;
 
         emit UsagePointsAccrued(
             epoch,
@@ -415,16 +420,14 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         return _epochUsage[epoch].sellers.points;
     }
 
+    /// @notice Alias of `totalSellerPointsByEpoch`: pool points equal seller
+    ///         points (the sole recorder increments both with the same value).
     function totalPoolPointsByEpoch(uint256 epoch) external view returns (uint256) {
-        return _epochUsage[epoch].sellers.poolPoints;
+        return _epochUsage[epoch].sellers.points;
     }
 
     function totalWeightedBuyerPointsByEpoch(uint256 epoch) external view returns (uint256) {
         return _epochUsage[epoch].buyers.weightedPoints;
-    }
-
-    function totalWeightedSellerPointsByEpoch(uint256 epoch) external view returns (uint256) {
-        return _epochUsage[epoch].sellers.weightedPoints;
     }
 
     function buyerPointsByEpoch(uint256 epoch, address buyer) external view returns (uint256) {
@@ -440,17 +443,10 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
         return _buyerEpochUsage[epoch][buyer].weightedPoints;
     }
 
-    function weightedAgentSellerPointsByEpoch(uint256 epoch, uint256 agentId) external view returns (uint256) {
-        return _agentEpochUsage[epoch][agentId].weightedPoints;
-    }
-
-    function weightedSellerPointsByEpoch(uint256 epoch, address seller) external view returns (uint256) {
-        uint256 agentId = _sellerAgentIdByEpoch[epoch][seller];
-        return agentId == 0 ? 0 : _agentEpochUsage[epoch][agentId].weightedPoints;
-    }
-
+    /// @notice Alias of `agentEpochUsage(epoch, agentId).points`: pool points
+    ///         equal seller points.
     function agentPoolPointsByEpoch(uint256 epoch, uint256 agentId) external view returns (uint256) {
-        return _agentEpochUsage[epoch][agentId].poolPoints;
+        return _agentEpochUsage[epoch][agentId].points;
     }
 
     function sellerAgentIdByEpoch(uint256 epoch, address seller) external view returns (uint256) {
@@ -460,7 +456,7 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     function poolPointsByEpoch(uint256 epoch, address seller) public view returns (uint256) {
         uint256 agentId = _sellerAgentIdByEpoch[epoch][seller];
         if (agentId == 0) return 0;
-        return _agentEpochUsage[epoch][agentId].poolPoints;
+        return _agentEpochUsage[epoch][agentId].points;
     }
 
     function weightedPoolPointsByEpoch(uint256 epoch, uint256 agentId) public view returns (uint256 weightedPoints) {

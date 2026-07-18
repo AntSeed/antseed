@@ -54,6 +54,11 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     IAntseedEmissionsGate public immutable emissionsGate;
     IAntseedSellerPools public immutable sellerPools;
     IAntseedUsageAccounting public immutable usageAccounting;
+    /// @dev ANTS resolved once at construction (same pattern as
+    ///      AntseedSellerPools): the gate this contract mints through pins
+    ///      the same token immutably, so per-claim registry resolution only
+    ///      costs two external calls without buying flexibility.
+    IERC20 private immutable _antsToken;
 
     // ─── Claim State ─────────────────────────────────────────────────
     mapping(uint256 => bool) public epochRemainderSettled;
@@ -81,33 +86,19 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         bool emitClaimEvents;
     }
 
+    /// @dev Pool-level APY clipping was removed, so the settled pool budget
+    ///      is fully claimable — one amount. Burn/reserve routing happens in
+    ///      `settleEpochRemainder`.
     struct PoolEpochEmission {
         bool settled;
-        uint256 grossAmount;
-        uint256 claimableAmount;
-        // Retained for event/storage compatibility. Pool-level APY clipping
-        // was removed; burn/reserve routing now happens in settleEpochRemainder.
-        uint256 burnedAmount;
-        uint256 reserveAmount;
+        uint256 amount;
     }
 
     // ─── Events ──────────────────────────────────────────────────────
     event StakerUsageRewardRestaked(
-        uint256 indexed sourcePositionId,
-        uint256 indexed newPositionId,
-        address indexed staker,
-        uint256 amount,
-        uint256 burnedAmount,
-        uint256 reserveAmount
+        uint256 indexed sourcePositionId, uint256 indexed newPositionId, address indexed staker, uint256 amount
     );
-    event PoolUsageRewardSettled(
-        uint256 indexed agentId,
-        uint256 indexed epoch,
-        uint256 grossAmount,
-        uint256 claimableAmount,
-        uint256 burnedAmount,
-        uint256 reserveAmount
-    );
+    event PoolUsageRewardSettled(uint256 indexed agentId, uint256 indexed epoch, uint256 amount);
     event PoolUsageRewardIndexed(
         uint256 indexed agentId,
         uint256 indexed epoch,
@@ -145,6 +136,9 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         sellerPools = IAntseedSellerPools(_sellerPools);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
         initialIndexEpoch = IAntseedUsageAccounting(_usageAccounting).currentEpoch();
+        address token = IAntseedSellerPools(_sellerPools).registry().antsToken();
+        if (token == address(0)) revert InvalidAddress();
+        _antsToken = IERC20(token);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -208,7 +202,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
             _claimIndexedStakerRewards(positionId, ClaimRoute(address(sellerPools), msg.sender, false));
         if (totalRestaked == 0) revert NothingToClaim();
         newPositionId = sellerPools.stakeMintedReward(msg.sender, positionId, totalRestaked, stakeEpochs);
-        emit StakerUsageRewardRestaked(positionId, newPositionId, msg.sender, totalRestaked, 0, 0);
+        emit StakerUsageRewardRestaked(positionId, newPositionId, msg.sender, totalRestaked);
     }
 
     function restakeStakerRewardsBatch(uint256[] calldata positionIds, uint256 stakeEpochs)
@@ -228,7 +222,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
             totalRestakedAll += totalRestaked;
             newPositionIds[p] = sellerPools.stakeMintedReward(msg.sender, positionIds[p], totalRestaked, stakeEpochs);
-            emit StakerUsageRewardRestaked(positionIds[p], newPositionIds[p], msg.sender, totalRestaked, 0, 0);
+            emit StakerUsageRewardRestaked(positionIds[p], newPositionIds[p], msg.sender, totalRestaked);
         }
         if (totalRestakedAll == 0) revert NothingToClaim();
     }
@@ -237,14 +231,10 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     //                        VIEWS
     // ═══════════════════════════════════════════════════════════════════
 
-    function pendingStakerReward(uint256 positionId, uint256 epoch)
-        external
-        view
-        returns (uint256 grossAmount, uint256 claimableAmount, uint256 burnedAmount)
-    {
+    function pendingStakerReward(uint256 positionId, uint256 epoch) external view returns (uint256 amount) {
         (address owner, uint256 agentId,,,,,,) = sellerPools.positions(positionId);
         if (owner == address(0)) revert InvalidValue();
-        (grossAmount, claimableAmount, burnedAmount) = _positionReward(positionId, agentId, epoch);
+        amount = _positionReward(positionId, agentId, epoch);
     }
 
     function pendingIndexedStakerReward(uint256 positionId) external view returns (uint256 claimableAmount) {
@@ -260,7 +250,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (closedAtEpoch != 0 && toEpoch > closedAtEpoch) toEpoch = closedAtEpoch;
         if (toEpoch <= fromEpoch) return 0;
 
-        claimableAmount = _positionIndexedReward(positionId, weightAmount, fromEpoch, toEpoch);
+        claimableAmount = _positionIndexedReward(agentId, weightAmount, fromEpoch, toEpoch, positionId);
     }
 
     function poolCumulativeRewardPerWeightAt(uint256 agentId, uint256 epoch) external view returns (uint256) {
@@ -303,20 +293,31 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _liveStakerEpochBudget(uint256 epoch) internal view returns (uint256) {
+        return _liveStakerEpochBudget(epoch, emissionsGate.controllerEpochBudget(address(this), epoch));
+    }
+
+    /// @dev `maxBudget` is passed in so a caller that already holds the gate
+    ///      budget saves the duplicate external call.
+    function _liveStakerEpochBudget(uint256 epoch, uint256 maxBudget) internal view returns (uint256) {
         uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
         uint32 shareBps =
             AntseedShareMath.saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
         if (shareBps == 0) return 0;
 
         uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
-        uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
         return desiredBudget < maxBudget ? desiredBudget : maxBudget;
     }
 
     function _freezeStakerEpochBudget(uint256 epoch) internal returns (uint256 budget) {
         uint256 frozen = _frozenStakerBudgets[epoch];
         if (frozen != 0) return frozen - 1;
-        budget = _liveStakerEpochBudget(epoch);
+        return _freezeStakerEpochBudget(epoch, emissionsGate.controllerEpochBudget(address(this), epoch));
+    }
+
+    function _freezeStakerEpochBudget(uint256 epoch, uint256 maxBudget) internal returns (uint256 budget) {
+        uint256 frozen = _frozenStakerBudgets[epoch];
+        if (frozen != 0) return frozen - 1;
+        budget = _liveStakerEpochBudget(epoch, maxBudget);
         _frozenStakerBudgets[epoch] = budget + 1;
         emit StakerEpochBudgetFrozen(epoch, budget);
     }
@@ -334,7 +335,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         // settlement, so its whole bucket is remainder — the stake-based
         // budget would otherwise be stranded outside the burn/reserve route.
         uint256 allocatedBudget =
-            usageAccounting.totalWeightedPoolPointsByEpoch(epoch) == 0 ? 0 : _freezeStakerEpochBudget(epoch);
+            usageAccounting.totalWeightedPoolPointsByEpoch(epoch) == 0 ? 0 : _freezeStakerEpochBudget(epoch, maxBudget);
         if (allocatedBudget >= maxBudget) revert NothingToClaim();
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
@@ -364,7 +365,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (closedAtEpoch != 0 && toEpoch > closedAtEpoch) toEpoch = closedAtEpoch;
         if (toEpoch <= fromEpoch) return 0;
 
-        claimableAmount = _positionIndexedReward(positionId, weightAmount, fromEpoch, toEpoch);
+        claimableAmount = _positionIndexedReward(agentId, weightAmount, fromEpoch, toEpoch, positionId);
         if (claimableAmount == 0) return 0;
 
         positionClaimCursor[positionId] = toEpoch;
@@ -376,11 +377,13 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    function _positionIndexedReward(uint256 positionId, uint256 weightAmount, uint256 fromEpoch, uint256 toEpoch)
-        internal
-        view
-        returns (uint256 rewardAmount)
-    {
+    function _positionIndexedReward(
+        uint256 agentId,
+        uint256 weightAmount,
+        uint256 fromEpoch,
+        uint256 toEpoch,
+        uint256 positionId
+    ) internal view returns (uint256 rewardAmount) {
         uint256 cursor = fromEpoch;
         while (cursor < toEpoch) {
             (uint256 normalEndEpoch, uint256 maxLockPower, uint256 nextChangeEpoch) =
@@ -389,12 +392,13 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
             if (segmentEnd <= cursor) break;
 
             if (maxLockPower != 0) {
-                uint256 rewardDelta = _cumulativeRewardDelta(positionId, cursor, segmentEnd);
+                uint256 rewardDelta = _cumulativeDelta(_poolCumulativeRewardPerWeight[agentId], cursor, segmentEnd);
                 rewardAmount += Math.mulDiv(maxLockPower, rewardDelta, INDEX_SCALE);
             } else if (normalEndEpoch != 0 && cursor < normalEndEpoch) {
                 if (segmentEnd > normalEndEpoch) segmentEnd = normalEndEpoch;
-                uint256 rewardDelta = _cumulativeRewardDelta(positionId, cursor, segmentEnd);
-                uint256 epochRewardDelta = _cumulativeEpochRewardDelta(positionId, cursor, segmentEnd);
+                uint256 rewardDelta = _cumulativeDelta(_poolCumulativeRewardPerWeight[agentId], cursor, segmentEnd);
+                uint256 epochRewardDelta =
+                    _cumulativeDelta(_poolCumulativeEpochRewardPerWeight[agentId], cursor, segmentEnd);
                 rewardAmount += Math.mulDiv(weightAmount, normalEndEpoch * rewardDelta - epochRewardDelta, INDEX_SCALE);
             }
 
@@ -403,12 +407,12 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _indexPoolRewardEpoch(uint256 agentId, uint256 epoch) internal {
-        (PoolEpochEmission storage emission,,) = _settlePoolEpoch(agentId, epoch);
+        PoolEpochEmission storage emission = _settlePoolEpoch(agentId, epoch);
 
         uint256 rewardPerWeight;
         uint256 poolWeight = sellerPools.poolWeightAtEpoch(agentId, epoch);
-        if (poolWeight != 0 && emission.claimableAmount != 0) {
-            rewardPerWeight = Math.mulDiv(emission.claimableAmount, INDEX_SCALE, poolWeight);
+        if (poolWeight != 0 && emission.amount != 0) {
+            rewardPerWeight = Math.mulDiv(emission.amount, INDEX_SCALE, poolWeight);
         }
 
         uint256 cumulativeReward = _poolCumulativeRewardPerWeight[agentId].latest() + rewardPerWeight;
@@ -421,81 +425,51 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         emit PoolUsageRewardIndexed(agentId, epoch, rewardPerWeight, cumulativeReward, cumulativeEpochReward);
     }
 
-    function _cumulativeRewardDelta(uint256 positionId, uint256 fromEpoch, uint256 toEpoch)
+    function _cumulativeDelta(Checkpoints.Trace256 storage trace, uint256 fromEpoch, uint256 toEpoch)
         internal
         view
         returns (uint256)
     {
-        (, uint256 agentId,,,,,,) = sellerPools.positions(positionId);
-        return _poolCumulativeRewardPerWeight[agentId].upperLookupRecent(toEpoch)
-            - _poolCumulativeRewardPerWeight[agentId].upperLookupRecent(fromEpoch);
-    }
-
-    function _cumulativeEpochRewardDelta(uint256 positionId, uint256 fromEpoch, uint256 toEpoch)
-        internal
-        view
-        returns (uint256)
-    {
-        (, uint256 agentId,,,,,,) = sellerPools.positions(positionId);
-        return _poolCumulativeEpochRewardPerWeight[agentId].upperLookupRecent(toEpoch)
-            - _poolCumulativeEpochRewardPerWeight[agentId].upperLookupRecent(fromEpoch);
+        return trace.upperLookupRecent(toEpoch) - trace.upperLookupRecent(fromEpoch);
     }
 
     function _positionReward(uint256 positionId, uint256 agentId, uint256 epoch)
         internal
         view
-        returns (uint256 grossAmount, uint256 claimableAmount, uint256 burnedAmount)
+        returns (uint256 amount)
     {
-        if (agentId == 0 || epoch < positionClaimCursor[positionId]) return (0, 0, 0);
+        if (agentId == 0 || epoch < positionClaimCursor[positionId]) return 0;
 
         IAntseedSellerPools pools = sellerPools;
         uint256 positionWeight = pools.positionWeightAtEpoch(positionId, epoch);
-        if (positionWeight == 0) return (0, 0, 0);
+        if (positionWeight == 0) return 0;
 
         uint256 poolWeight = pools.poolWeightAtEpoch(agentId, epoch);
-        if (poolWeight == 0) return (0, 0, 0);
+        if (poolWeight == 0) return 0;
 
-        (uint256 poolGrossReward, uint256 poolClaimableReward) = _poolRewardPreview(agentId, epoch);
-        if (poolGrossReward == 0) return (0, 0, 0);
+        uint256 poolReward = _poolRewardPreview(agentId, epoch);
+        if (poolReward == 0) return 0;
 
-        grossAmount = Math.mulDiv(poolGrossReward, positionWeight, poolWeight);
-        claimableAmount = Math.mulDiv(poolClaimableReward, positionWeight, poolWeight);
-        burnedAmount = grossAmount - claimableAmount;
+        amount = Math.mulDiv(poolReward, positionWeight, poolWeight);
     }
 
-    function _settlePoolEpoch(uint256 agentId, uint256 epoch)
-        internal
-        returns (PoolEpochEmission storage emission, uint256 burnedAmount, uint256 reserveAmount)
-    {
+    function _settlePoolEpoch(uint256 agentId, uint256 epoch) internal returns (PoolEpochEmission storage emission) {
         emission = poolEpochEmissions[epoch][agentId];
-        if (emission.settled) return (emission, 0, 0);
+        if (emission.settled) return emission;
 
         _freezeStakerEpochBudget(epoch);
-        (uint256 grossAmount, uint256 claimableAmount) = _poolRewardPreview(agentId, epoch);
+        uint256 amount = _poolRewardPreview(agentId, epoch);
         emission.settled = true;
-        emission.grossAmount = grossAmount;
-        emission.claimableAmount = claimableAmount;
-        emission.burnedAmount = burnedAmount;
-        emission.reserveAmount = reserveAmount;
+        emission.amount = amount;
 
-        _mint(epoch, address(this), claimableAmount);
-        emit PoolUsageRewardSettled(agentId, epoch, grossAmount, claimableAmount, burnedAmount, reserveAmount);
+        _mint(epoch, address(this), amount);
+        emit PoolUsageRewardSettled(agentId, epoch, amount);
     }
 
-    function _poolRewardPreview(uint256 agentId, uint256 epoch)
-        internal
-        view
-        returns (uint256 grossAmount, uint256 claimableAmount)
-    {
+    function _poolRewardPreview(uint256 agentId, uint256 epoch) internal view returns (uint256 amount) {
         PoolEpochEmission memory settledEmission = poolEpochEmissions[epoch][agentId];
-        if (settledEmission.settled) {
-            return (settledEmission.grossAmount, settledEmission.claimableAmount);
-        }
-
-        grossAmount = _poolGrossReward(agentId, epoch);
-        if (grossAmount == 0) return (0, 0);
-
-        claimableAmount = grossAmount;
+        if (settledEmission.settled) return settledEmission.amount;
+        return _poolGrossReward(agentId, epoch);
     }
 
     function _poolGrossReward(uint256 agentId, uint256 epoch) internal view returns (uint256) {
@@ -516,17 +490,12 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _transferReward(address recipient, uint256 amount) internal {
         if (amount == 0) return;
-        IERC20(_antsToken()).safeTransfer(recipient, amount);
+        _antsToken.safeTransfer(recipient, amount);
     }
 
     function _emissionsReserve() internal view returns (address reserve) {
         reserve = emissionsGate.emissionsReserve();
         if (reserve == address(0)) reserve = sellerPools.registry().protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
-    }
-
-    function _antsToken() internal view returns (address token) {
-        token = sellerPools.registry().antsToken();
-        if (token == address(0)) revert InvalidAddress();
     }
 }

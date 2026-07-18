@@ -108,17 +108,21 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     // ═══════════════════════════════════════════════════════════════════
 
     function getStake(address seller) public view returns (uint256) {
-        IAntseedSellerPools pools = sellerPools;
-        uint256 epoch = pools.currentEpoch();
-        uint256 agentId = getAgentId(seller);
-        if (agentId == 0 || !pools.hasPoolAtEpoch(agentId, epoch)) return 0;
-        return pools.poolActiveStakeAtEpoch(agentId, epoch);
+        return _stakeForAgent(getAgentId(seller));
     }
 
     function isStakedAboveMin(address seller) external view returns (bool) {
-        if (getAgentId(seller) == 0) return false;
-        if (getStake(seller) >= minSellerPoolStake) return true;
+        uint256 agentId = getAgentId(seller);
+        if (agentId == 0) return false;
+        if (_stakeForAgent(agentId) >= minSellerPoolStake) return true;
         return _legacyStakedAboveMin(seller);
+    }
+
+    function _stakeForAgent(uint256 agentId) internal view returns (uint256) {
+        IAntseedSellerPools pools = sellerPools;
+        uint256 epoch = pools.currentEpoch();
+        if (agentId == 0 || !pools.hasPoolAtEpoch(agentId, epoch)) return 0;
+        return pools.poolActiveStakeAtEpoch(agentId, epoch);
     }
 
     function getAgentId(address seller) public view returns (uint256) {

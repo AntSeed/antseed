@@ -105,8 +105,6 @@ interface IAntseedSellerPools {
         external
         view
         returns (uint256 normalEndEpoch, uint256 maxLockPower, uint256 nextChangeEpoch);
-    function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) external view returns (uint256 weight);
-    function poolPowerWeightAtEpoch(address seller, uint256 epoch) external view returns (uint256 weight);
     function totalPowerWeightAtEpoch(uint256 epoch) external view returns (uint256 weight);
     function currentPoolSecurityWeight(uint256 agentId) external returns (uint256 weight);
     function currentPoolSecurityWeight(address seller) external returns (uint256 weight);
