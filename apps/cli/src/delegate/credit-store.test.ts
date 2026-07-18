@@ -16,6 +16,8 @@ function accrual(overrides?: Partial<DelegateCreditsAccrual>): DelegateCreditsAc
     verifier: VERIFIER,
     probeCommitment: COMMIT_A,
     buyer: BUYER,
+    agentId: 7,
+    serviceHash: '0x' + 'cc'.repeat(32),
     credits: 3,
     blockNumber: 100,
     ...overrides,

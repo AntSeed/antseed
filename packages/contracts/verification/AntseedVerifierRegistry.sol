@@ -147,21 +147,28 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     // anchored ExchangeRecord's seller-signed ResponseAuth payload names the
     // buyer peer the seller actually answered, the signature is verified
     // on-chain at anchor time, and the carried probe counts accrue here per
-    // (verifier, commitment, buyer). The buyer's OPERATOR later claims the
-    // accrued credits and collects the delegate share of the verification
-    // emissions bucket via AntseedVerifierRewards.
+    // (verifier, commitment, TARGET, buyer) — the target being the audited
+    // (agentId, serviceHash) the buyer's exchange actually probed. The
+    // buyer's OPERATOR later claims the accrued credits and collects the
+    // delegate share of the verification emissions bucket via
+    // AntseedVerifierRewards.
     //
     // The claim resolves and pays the buyer's deposits operator, so the
     // iron rule holds — the buyer hot wallet never receives funds — and the
     // "is this a real, operator-bound buyer" check is enforced on-chain.
     //
-    // Grants remain anchored to audit work: every CREDITED attestation adds
-    // its probeCount to the referenced commitment's delegate budget, and
-    // cumulative claims against a commitment may never exceed that budget.
-    // Since credited attestations are themselves rate-limited (per-service
-    // cooldown + per-verifier epoch cap), a verifier cannot farm the
-    // delegate pool without doing real, commit-anchor-attest-reveal audit
-    // work — accrued-but-unbacked credits are simply unclaimable.
+    // Grants remain anchored to audit work, PER TARGET: every CREDITED
+    // attestation adds its probeCount to the delegate budget of the exact
+    // (commitment, target) it attested, and cumulative claims against that
+    // target may never exceed its budget. Keying the budget by target (not
+    // just by commitment) stops cross-target siphoning: a buyer that
+    // carried probes only for a target the verifier never got credited on
+    // has no budget to claim from, and cannot race the carriers of a
+    // credited target for theirs. Since credited attestations are
+    // themselves rate-limited (per-service cooldown + per-verifier epoch
+    // cap), a verifier cannot farm the delegate pool without doing real,
+    // commit-anchor-attest-reveal audit work — accrued-but-unbacked
+    // credits are simply unclaimable.
 
     /// @notice Share of the verification bucket reserved for delegates, in
     ///         bps of the epoch budget. Applied by AntseedVerifierRewards
@@ -173,23 +180,42 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     mapping(uint256 epoch => mapping(address delegate => uint256 credits)) public epochDelegateCredits;
     mapping(uint256 epoch => uint256 credits) public epochTotalDelegateCredits;
     mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochDelegateCreditsGrantedBy;
-    /// @notice Delegate-credit budget per (verifier, probeCommitment): the
-    ///         sum of probeCount over the verifier's CREDITED attestations
-    ///         that referenced the commitment.
-    mapping(address verifier => mapping(bytes32 commitment => uint256 budget)) public commitmentDelegateBudget;
+    /// @notice Delegate-credit budget per (verifier, probeCommitment,
+    ///         target): the sum of probeCount over the verifier's CREDITED
+    ///         attestations of that target under the commitment (at most
+    ///         one — targets attest once per batch). The target key is
+    ///         `delegateTargetKey(agentId, serviceHash)`. Budget is keyed
+    ///         by target so a credited attestation only backs claims from
+    ///         the buyers that carried THAT target's probes — carriers of
+    ///         a never-credited target cannot siphon it.
+    mapping(address verifier => mapping(bytes32 commitment => mapping(bytes32 targetKey => uint256 budget))) public
+        commitmentDelegateBudget;
     /// @notice Credits already granted (claimed) against (verifier,
-    ///         commitment), across all buyers. Never exceeds
+    ///         commitment, target), across all buyers. Never exceeds
     ///         `commitmentDelegateBudget` for the same key.
-    mapping(address verifier => mapping(bytes32 commitment => uint256 granted)) public commitmentDelegateCredits;
-    /// @notice Probe counts accrued at anchor time per carrier buyer, from
-    ///         the buyer named inside each seller-signed ResponseAuth
-    ///         payload: (verifier, probeCommitment, buyer) → carried probes.
-    mapping(address verifier => mapping(bytes32 commitment => mapping(address buyer => uint32 accrued))) public
-        commitmentDelegateAccrued;
+    mapping(address verifier => mapping(bytes32 commitment => mapping(bytes32 targetKey => uint256 granted))) public
+        commitmentDelegateCredits;
+    /// @notice Probe counts accrued at anchor time per carrier buyer and
+    ///         audited target, from the buyer named inside each
+    ///         seller-signed ResponseAuth payload: (verifier,
+    ///         probeCommitment, target, buyer) → carried probes.
+    mapping(
+        address verifier
+            => mapping(bytes32 commitment => mapping(bytes32 targetKey => mapping(address buyer => uint32 accrued)))
+    ) public commitmentDelegateAccrued;
     /// @notice Portion of `commitmentDelegateAccrued` already claimed for
-    ///         the same (verifier, probeCommitment, buyer) triple.
-    mapping(address verifier => mapping(bytes32 commitment => mapping(address buyer => uint32 claimed))) public
-        commitmentDelegateClaimed;
+    ///         the same (verifier, probeCommitment, target, buyer) key.
+    mapping(
+        address verifier
+            => mapping(bytes32 commitment => mapping(bytes32 targetKey => mapping(address buyer => uint32 claimed)))
+    ) public commitmentDelegateClaimed;
+    /// @notice Which verifier anchored a given seller-signed request hash
+    ///         (address(0) = never anchored). GLOBAL across verifiers and
+    ///         commitments: a signed exchange is anchorable exactly once,
+    ///         so the same witnessed exchange cannot be replayed under
+    ///         other commitments or by other verifiers to multiply
+    ///         delegate accrual or attestation evidence.
+    mapping(bytes32 requestHash => address verifier) public anchoredExchangeBy;
 
     // ─── Events ──────────────────────────────────────────────────────
     event VerifierApprovalSet(address indexed verifier, bool approved);
@@ -209,14 +235,21 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     event MaxDelegateCreditsPerVerifierPerEpochSet(uint32 maxDelegateCreditsPerVerifierPerEpoch);
     /// @notice Probe credits accrued to a carrier buyer at anchor time,
     ///         derived from the buyer named inside the seller-signed
-    ///         ResponseAuth payloads (aggregated per distinct buyer per
-    ///         anchor call).
+    ///         ResponseAuth payloads (aggregated per distinct
+    ///         (buyer, target) per anchor call). `agentId`/`serviceHash`
+    ///         name the audited target the probes were carried for — the
+    ///         buyer's operator passes them back to `claimDelegateCredits`.
     event DelegateCreditsAccrued(
-        address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint32 credits
+        address indexed verifier,
+        bytes32 indexed probeCommitment,
+        address indexed buyer,
+        uint256 agentId,
+        bytes32 serviceHash,
+        uint32 credits
     );
     event DelegateCredited(
         uint256 indexed epoch, address indexed verifier, address indexed delegate, bytes32 probeCommitment,
-        uint32 credits
+        bytes32 targetKey, uint32 credits
     );
     event VerifierStandingCleared(address indexed verifier, uint256 indexed agentId, bytes32 indexed serviceHash);
     event AttestationSubmitted(
@@ -260,7 +293,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     error RecordHashMismatch(uint256 index);
     error RecordProbeCountZero(uint256 index);
     error RecordProbeCountTooHigh(uint256 index);
-    error DuplicateExchangeRecord(uint256 index);
+    error ExchangeAlreadyAnchored(uint256 index);
     error ZeroRecordHash(uint256 index);
     error ProbeCountOverflow();
     error RevealMismatch();
@@ -404,11 +437,12 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///         payload names the buyer peer that carried the exchange; for
     ///         every buyer that is neither the verifier itself nor the
     ///         record's seller, `recordProbeCounts[i]` accrues to
-    ///         `commitmentDelegateAccrued[msg.sender][probeCommitment][buyer]`
-    ///         (aggregated per distinct buyer — one store + one
-    ///         `DelegateCreditsAccrued` event per buyer per call), claimable
-    ///         later by the buyer's deposits operator via
-    ///         `claimDelegateCredits` within the commitment's budget.
+    ///         `commitmentDelegateAccrued[msg.sender][probeCommitment]
+    ///         [delegateTargetKey(agentId, serviceHash)][buyer]` (aggregated
+    ///         per distinct (buyer, target) — one store + one
+    ///         `DelegateCreditsAccrued` event each), claimable later by the
+    ///         buyer's deposits operator via `claimDelegateCredits` within
+    ///         that target's credited-attestation budget.
     function anchorExchangeBatch(
         bytes32 probeCommitment,
         ExchangeRecord[] calldata records,
@@ -453,24 +487,27 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         emit ExchangeBatchAnchored(msg.sender, probeCommitment, batchRoot, uint32(records.length), probeCount);
     }
 
-    /// @dev Reject a zero request/response hash and duplicate request hashes in
-    ///      one batch. Combined with one-batch-per-commitment, this makes every
-    ///      seller-signed request usable for delegate accrual at most once.
-    function _checkUniqueRequestHashes(ExchangeRecord[] calldata records) private pure {
-        uint256 tableSize = 1;
-        while (tableSize < records.length * 2) tableSize <<= 1;
-        bytes32[] memory table = new bytes32[](tableSize);
-        uint256 mask = tableSize - 1;
-
+    /// @dev Reject a zero request/response hash, duplicate request hashes in
+    ///      one batch, and any request hash ever anchored before — by ANY
+    ///      verifier under ANY commitment (`anchoredExchangeBy`). The global
+    ///      registry makes every seller-signed exchange usable for delegate
+    ///      accrual and attestation evidence at most once network-wide: a
+    ///      witnessed organic exchange (or another verifier's probe traffic)
+    ///      cannot be re-anchored under other commitments to multiply
+    ///      accrual. Honest verifiers never collide — probe requests derive
+    ///      from verifier-specific committed nonces, so their hashes are
+    ///      unique per audit. Marks happen before signature checks; a later
+    ///      revert in the same anchor call rolls them back.
+    function _checkUniqueRequestHashes(ExchangeRecord[] calldata records) private {
         for (uint256 i = 0; i < records.length; i++) {
             bytes32 requestHash = records[i].requestHash;
             if (requestHash == bytes32(0) || records[i].responseHash == bytes32(0)) revert ZeroRecordHash(i);
-            uint256 slot = uint256(requestHash) & mask;
-            while (table[slot] != bytes32(0)) {
-                if (table[slot] == requestHash) revert DuplicateExchangeRecord(i);
-                slot = (slot + 1) & mask;
+            // The global registry doubles as the in-batch duplicate check:
+            // a repeat inside this batch was marked by an earlier iteration.
+            if (anchoredExchangeBy[requestHash] != address(0)) {
+                revert ExchangeAlreadyAnchored(i);
             }
-            table[slot] = requestHash;
+            anchoredExchangeBy[requestHash] = msg.sender;
         }
     }
 
@@ -502,8 +539,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         uint256[] memory cachedAgentIds = new uint256[](n);
         address[] memory cachedSellers = new address[](n);
         uint256 cachedCount = 0;
-        // Per-buyer accrual aggregation.
+        // Per-(buyer, target) accrual aggregation: accrual is keyed by the
+        // audited target so claims can only draw on that target's budget.
         address[] memory buyers = new address[](n);
+        uint256[] memory buyerAgentIds = new uint256[](n);
+        bytes32[] memory buyerServiceHashes = new bytes32[](n);
         uint256[] memory buyerProbes = new uint256[](n);
         uint256 buyerCount = 0;
         uint256[] memory targetAgentIds = new uint256[](n);
@@ -575,7 +615,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             if (buyer != msg.sender && buyer != seller) {
                 bool found = false;
                 for (uint256 j = 0; j < buyerCount; j++) {
-                    if (buyers[j] == buyer) {
+                    if (
+                        buyers[j] == buyer && buyerAgentIds[j] == agentId
+                            && buyerServiceHashes[j] == advertisedServiceHash
+                    ) {
                         buyerProbes[j] += recordProbeCounts[i];
                         found = true;
                         break;
@@ -583,6 +626,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
                 }
                 if (!found) {
                     buyers[buyerCount] = buyer;
+                    buyerAgentIds[buyerCount] = agentId;
+                    buyerServiceHashes[buyerCount] = advertisedServiceHash;
                     buyerProbes[buyerCount] = recordProbeCounts[i];
                     buyerCount++;
                 }
@@ -597,8 +642,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
         for (uint256 j = 0; j < buyerCount; j++) {
             uint32 credits = uint32(buyerProbes[j]); // <= totalProbes, checked above
-            commitmentDelegateAccrued[msg.sender][probeCommitment][buyers[j]] += credits;
-            emit DelegateCreditsAccrued(msg.sender, probeCommitment, buyers[j], credits);
+            bytes32 targetKey = delegateTargetKey(buyerAgentIds[j], buyerServiceHashes[j]);
+            commitmentDelegateAccrued[msg.sender][probeCommitment][targetKey][buyers[j]] += credits;
+            emit DelegateCreditsAccrued(
+                msg.sender, probeCommitment, buyers[j], buyerAgentIds[j], buyerServiceHashes[j], credits
+            );
         }
         return uint32(totalProbes);
     }
@@ -995,11 +1043,14 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             epochCredits[epoch][msg.sender]++;
             epochTotalCredits[epoch]++;
             // Credited audit work backs delegate vouchers: cumulative voucher
-            // claims against this commitment are capped by the probes it
-            // attested to. Only CREDITED attestations grow the budget —
-            // uncredited re-attestations are unlimited and would otherwise
-            // let a verifier mint voucher budget for free.
-            commitmentDelegateBudget[msg.sender][probeCommitment] += probeCount;
+            // claims against this commitment's TARGET are capped by the
+            // probes its attestation attested to — only carriers of this
+            // exact (agentId, serviceHash) can draw on it. Only CREDITED
+            // attestations grow the budget — uncredited re-attestations are
+            // unlimited and would otherwise let a verifier mint voucher
+            // budget for free.
+            commitmentDelegateBudget[msg.sender][probeCommitment][delegateTargetKey(agentId, serviceHash)] +=
+                probeCount;
         }
 
         emit AttestationSubmitted(
@@ -1030,18 +1081,28 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     ///         AntseedVerifierRewards.
     ///
     ///         The claimable amount is the buyer's unclaimed accrual on the
-    ///         (verifier, commitment) pair, clamped to
-    ///           - the commitment's remaining delegate budget (the summed
-    ///             probeCount of the verifier's CREDITED attestations on the
-    ///             commitment, minus credits already granted) — so nothing
-    ///             is claimable before a credited attestation exists, and a
-    ///             verifier cannot farm the delegate pool by anchoring
-    ///             unattested batches; and
+    ///         (verifier, commitment, target) key — the target being the
+    ///         audited (agentId, serviceHash) named in the accrual event —
+    ///         clamped to
+    ///           - that target's remaining delegate budget (the probeCount
+    ///             of the verifier's CREDITED attestation of the target
+    ///             under the commitment, minus credits already granted) —
+    ///             so nothing is claimable before the target's own credited
+    ///             attestation exists: a verifier cannot farm the delegate
+    ///             pool by anchoring unattested batches, and carriers of
+    ///             one target cannot drain the budget another target's
+    ///             attestation minted; and
     ///           - the verifier's remaining per-epoch delegate-credit
     ///             allowance (`maxDelegateCreditsPerVerifierPerEpoch`).
     ///         A clamped remainder stays claimable later (next epoch, or
     ///         after further credited attestations grow the budget).
-    function claimDelegateCredits(address verifier, bytes32 probeCommitment, address buyer) external {
+    function claimDelegateCredits(
+        address verifier,
+        bytes32 probeCommitment,
+        address buyer,
+        uint256 agentId,
+        bytes32 serviceHash
+    ) external {
         if (verifier == address(0) || buyer == address(0)) revert InvalidValue();
         if (!approvedVerifiers[verifier]) revert NotApprovedVerifier();
         if (buyer == verifier) revert SelfDelegate();
@@ -1050,11 +1111,12 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         if (operator == address(0) || msg.sender != operator) revert NotBuyerOperator();
         if (operator == verifier) revert SelfDelegate();
 
-        uint256 alreadyClaimed = commitmentDelegateClaimed[verifier][probeCommitment][buyer];
-        uint256 claimable = commitmentDelegateAccrued[verifier][probeCommitment][buyer] - alreadyClaimed;
+        bytes32 targetKey = delegateTargetKey(agentId, serviceHash);
+        uint256 alreadyClaimed = commitmentDelegateClaimed[verifier][probeCommitment][targetKey][buyer];
+        uint256 claimable = commitmentDelegateAccrued[verifier][probeCommitment][targetKey][buyer] - alreadyClaimed;
 
-        uint256 granted = commitmentDelegateCredits[verifier][probeCommitment];
-        uint256 budget = commitmentDelegateBudget[verifier][probeCommitment];
+        uint256 granted = commitmentDelegateCredits[verifier][probeCommitment][targetKey];
+        uint256 budget = commitmentDelegateBudget[verifier][probeCommitment][targetKey];
         uint256 budgetLeft = budget > granted ? budget - granted : 0;
         if (claimable > budgetLeft) claimable = budgetLeft;
 
@@ -1066,13 +1128,21 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
         if (claimable == 0) revert NothingToClaim();
 
-        commitmentDelegateClaimed[verifier][probeCommitment][buyer] = uint32(alreadyClaimed + claimable);
-        commitmentDelegateCredits[verifier][probeCommitment] = granted + claimable;
+        commitmentDelegateClaimed[verifier][probeCommitment][targetKey][buyer] = uint32(alreadyClaimed + claimable);
+        commitmentDelegateCredits[verifier][probeCommitment][targetKey] = granted + claimable;
         epochDelegateCreditsGrantedBy[epoch][verifier] = epochGranted + claimable;
         epochDelegateCredits[epoch][operator] += claimable;
         epochTotalDelegateCredits[epoch] += claimable;
 
-        emit DelegateCredited(epoch, verifier, operator, probeCommitment, uint32(claimable));
+        emit DelegateCredited(epoch, verifier, operator, probeCommitment, targetKey, uint32(claimable));
+    }
+
+    /// @notice Storage key binding delegate accrual/budget to the audited
+    ///         target: keccak256(agentId || serviceHash). Public so
+    ///         off-chain mirrors and the public budget/accrual mappings can
+    ///         be queried without re-deriving the packing.
+    function delegateTargetKey(uint256 agentId, bytes32 serviceHash) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(agentId, serviceHash));
     }
 
     // ═══════════════════════════════════════════════════════════════════

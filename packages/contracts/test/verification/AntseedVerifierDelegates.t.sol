@@ -21,8 +21,11 @@ import { ResponseAuthFixture } from "./ResponseAuthFixture.sol";
 ///         carrier buyer, `anchorExchangeBatch` verifies the signature
 ///         on-chain and accrues the record's probe count to that buyer, and
 ///         the buyer's deposits operator claims the accrued credits via
-///         `claimDelegateCredits(verifier, probeCommitment, buyer)` — this
-///         replaced the off-chain EIP-712 DelegateVoucher flow.
+///         `claimDelegateCredits(verifier, probeCommitment, buyer, agentId,
+///         serviceHash)` — accrual and budget are keyed by the audited
+///         target, so a credited attestation only backs the carriers of
+///         that exact target. This replaced the off-chain EIP-712
+///         DelegateVoucher flow.
 /// @dev Stand-in for `registry.emissions()` pinned at a fixed epoch: models
 ///      a registry epoch clock lagging the gate's, so delegate credits can
 ///      land in an epoch the gate already finalized.
@@ -72,13 +75,19 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
     uint256 constant TARGETS_PER_BATCH = 4;
     mapping(bytes32 batchRoot => uint256[] targetAgentIds) private _batchTargetAgents;
     mapping(bytes32 batchRoot => uint256 cursor) private _batchTargetCursor;
+    mapping(bytes32 verifierCommitment => uint256 agentId) private _commitmentFirstAgent;
 
     event DelegateCreditsAccrued(
-        address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint32 credits
+        address indexed verifier,
+        bytes32 indexed probeCommitment,
+        address indexed buyer,
+        uint256 agentId,
+        bytes32 serviceHash,
+        uint32 credits
     );
     event DelegateCredited(
         uint256 indexed epoch, address indexed verifier, address indexed delegate, bytes32 probeCommitment,
-        uint32 credits
+        bytes32 targetKey, uint32 credits
     );
 
     function setUp() public {
@@ -170,6 +179,7 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         for (uint256 i = 0; i < targetAgentIds.length; i++) {
             _batchTargetAgents[batchRoot].push(targetAgentIds[i]);
         }
+        _commitmentFirstAgent[keccak256(abi.encodePacked(verifier_, commitment))] = targetAgentIds[0];
     }
 
     /// @dev See `_anchorWithCarrier` — called via `this.` only.
@@ -261,12 +271,36 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         }
     }
 
+    /// @dev The agentId carrier accrual landed on for `commitment`: the
+    ///      anchored batch's first target (the batch builders route carrier
+    ///      records to the front targets in order, PROBE_COUNT records
+    ///      each). Tracked in test storage — NOT read back from the
+    ///      registry — so `_claimAs`/`_key` make no external call and stay
+    ///      safe inside vm.expectRevert / vm.expectEmit windows.
+    function _accrualAgent(address verifier_, bytes32 commitment) internal view returns (uint256) {
+        return _commitmentFirstAgent[keccak256(abi.encodePacked(verifier_, commitment))];
+    }
+
+    /// @dev Target key of the commitment's first target — where carrier
+    ///      accrual (≤ PROBE_COUNT probes) and the first attestation's
+    ///      budget both land. Local mirror of `delegateTargetKey`.
+    function _key(address verifier_, bytes32 commitment) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked(_accrualAgent(verifier_, commitment), SERVICE_HASH));
+    }
+
+    /// @dev Claim `buyer`'s accrual on the commitment's first target as
+    ///      `operator`.
+    function _claimAs(address operator, address verifier_, bytes32 commitment, address buyer) internal {
+        uint256 agentId = _accrualAgent(verifier_, commitment);
+        vm.prank(operator);
+        verifierRegistry.claimDelegateCredits(verifier_, commitment, buyer, agentId, SERVICE_HASH);
+    }
+
     /// @dev Full happy path for one carrier: accrue + back with budget +
     ///      claim as the buyer's operator.
     function _carryAndClaim(address verifier_, address buyer, address operator, uint32 credits) internal {
         bytes32 commitment = _accrueAndAttest(verifier_, buyer, credits);
-        vm.prank(operator);
-        verifierRegistry.claimDelegateCredits(verifier_, commitment, buyer);
+        _claimAs(operator, verifier_, commitment, buyer);
     }
 
     // ─── Registry: accrual bookkeeping ───────────────────────────────
@@ -279,15 +313,19 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
 
         _anchorWithCarrier(verifierA, commitment, buyerX, 4);
 
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, buyerX), 4);
+        bytes32 key = _key(verifierA, commitment);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key, buyerX), 4);
         // The verifier-carried pad record accrues nothing.
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, verifierA), 0);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key, verifierA), 0);
     }
 
     function test_verifierCarriedBatchAccruesNothing() public {
         // buyer == verifier in every signed payload → zero accrual.
         bytes32 commitment = _accrueOnly(verifierA, verifierA, 5);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, verifierA), 0);
+        assertEq(
+            verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, _key(verifierA, commitment), verifierA),
+            0
+        );
     }
 
     // ─── Registry: claimDelegateCredits ──────────────────────────────
@@ -309,31 +347,31 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
 
     function test_claimMarksAccrualAndCommitmentAccounting() public {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 4);
+        bytes32 key = _key(verifierA, commitment);
 
         vm.expectEmit(true, true, true, true);
-        emit DelegateCredited(5, verifierA, operatorX, commitment, 4);
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        emit DelegateCredited(5, verifierA, operatorX, commitment, key, 4);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
 
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, buyerX), 4);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, buyerX), 4);
-        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment), PROBE_COUNT);
-        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment), 4);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key, buyerX), 4);
+        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, key, buyerX), 4);
+        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment, key), PROBE_COUNT);
+        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment, key), 4);
     }
 
     function test_doubleClaimYieldsNothing() public {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 2);
 
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 2);
 
-        // Nothing left on the triple: the second claim reverts.
-        vm.prank(operatorX);
+        // Nothing left on the key: the second claim reverts.
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
 
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, buyerX), 2);
+        assertEq(
+            verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, _key(verifierA, commitment), buyerX), 2
+        );
     }
 
     function test_sameCommitmentValueAccruesIndependentlyPerVerifier() public {
@@ -350,57 +388,57 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
             _attestOn(v, shared, root);
         }
 
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, shared, buyerX);
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierB, shared, buyerX);
+        _claimAs(operatorX, verifierA, shared, buyerX);
+        _claimAs(operatorX, verifierB, shared, buyerX);
 
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 4);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, shared, buyerX), 2);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierB, shared, buyerX), 2);
+        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, shared, _key(verifierA, shared), buyerX), 2);
+        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierB, shared, _key(verifierB, shared), buyerX), 2);
     }
 
     function test_claimRejectsNonOperatorCaller() public {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 1);
+        uint256 agentId = _accrualAgent(verifierA, commitment);
 
         // The buyer hot wallet itself cannot claim…
         vm.prank(buyerX);
         vm.expectRevert(AntseedVerifierRegistry.NotBuyerOperator.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agentId, SERVICE_HASH);
         // …nor an unrelated operator.
         vm.prank(operatorY);
         vm.expectRevert(AntseedVerifierRegistry.NotBuyerOperator.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agentId, SERVICE_HASH);
     }
 
     function test_claimRejectsBuyerWithoutOperator() public {
         address orphanBuyer = address(0xBD3);
         bytes32 commitment = _accrueAndAttest(verifierA, orphanBuyer, 1);
 
-        vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NotBuyerOperator.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, orphanBuyer);
+        _claimAs(operatorX, verifierA, commitment, orphanBuyer);
     }
 
     function test_claimRejectsUnapprovedVerifier() public {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 1);
+        uint256 agentId = _accrualAgent(verifierA, commitment);
 
         // Naming a never-approved verifier (regardless of any accrual).
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
-        verifierRegistry.claimDelegateCredits(stranger, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(stranger, commitment, buyerX, agentId, SERVICE_HASH);
     }
 
     function test_claimValidation() public {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 1);
+        uint256 agentId = _accrualAgent(verifierA, commitment);
 
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
-        verifierRegistry.claimDelegateCredits(address(0), commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(address(0), commitment, buyerX, agentId, SERVICE_HASH);
 
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, address(0));
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, address(0), agentId, SERVICE_HASH);
     }
 
     function test_claimRejectsSinceDewhitelistedVerifier() public {
@@ -410,14 +448,12 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 1);
 
         verifierRegistry.setVerifier(verifierA, false);
-        vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
 
         // Re-approving restores claimability — the accrual itself is intact.
         verifierRegistry.setVerifier(verifierA, true);
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 1);
     }
 
@@ -426,17 +462,18 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         // accrues at anchor time AND the claim reverts outright.
         deposits.setOperator(verifierA, operatorX);
         bytes32 commitment = _accrueOnly(verifierA, verifierA, 1);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, verifierA), 0);
-        vm.prank(operatorX);
+        assertEq(
+            verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, _key(verifierA, commitment), verifierA),
+            0
+        );
         vm.expectRevert(AntseedVerifierRegistry.SelfDelegate.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, verifierA);
+        _claimAs(operatorX, verifierA, commitment, verifierA);
 
         // Verifier as the buyer's operator: operator == verifier.
         deposits.setOperator(buyerX, verifierA);
         bytes32 commitment2 = _accrueAndAttest(verifierA, buyerX, 1);
-        vm.prank(verifierA);
         vm.expectRevert(AntseedVerifierRegistry.SelfDelegate.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment2, buyerX);
+        _claimAs(verifierA, verifierA, commitment2, buyerX);
     }
 
     // ─── Registry: commitment budget anchoring ───────────────────────
@@ -446,12 +483,12 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         // commitment budget is 0, so nothing is claimable — anchoring alone
         // can never farm the delegate pool.
         bytes32 commitment = _accrueOnly(verifierA, buyerX, 5);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, buyerX), 5);
-        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment), 0);
+        bytes32 key = _key(verifierA, commitment);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key, buyerX), 5);
+        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment, key), 0);
 
-        vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
     }
 
     function test_claimNeverAccruedCommitmentReverts() public {
@@ -459,39 +496,107 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         bytes32 commitment = keccak256("never accrued");
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, 1, SERVICE_HASH);
     }
 
-    function test_claimClampsAtCommitmentBudget() public {
-        // 15 accrued but only ONE credited attestation: budget 10 → the
-        // claim clamps to 10, the remainder stays pending.
+    function test_claimClampsAtTargetBudget() public {
+        // 15 carried probes span TWO targets (10 on target 0, 5 on target
+        // 1). One credited attestation on target 0 backs ONLY target 0's
+        // accrual; target 1's accrual stays unclaimable until its own
+        // attestation is credited.
         bytes32 commitment = keccak256(abi.encode(verifierA, ++commitSalt));
         vm.prank(verifierA);
         verifierRegistry.commitProbeSet(commitment);
         vm.warp(block.timestamp + 1);
         bytes32 batchRoot = _anchorWithCarrier(verifierA, commitment, buyerX, 15);
-        _attestOn(verifierA, commitment, batchRoot);
-        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment), PROBE_COUNT);
+        _attestOn(verifierA, commitment, batchRoot); // credits target 0
+
+        uint256 agent0 = _batchTargetAgents[batchRoot][0];
+        uint256 agent1 = _batchTargetAgents[batchRoot][1];
+        bytes32 key0 = keccak256(abi.encodePacked(agent0, SERVICE_HASH));
+        bytes32 key1 = keccak256(abi.encodePacked(agent1, SERVICE_HASH));
+        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, commitment, key0), PROBE_COUNT);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key0, buyerX), PROBE_COUNT);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifierA, commitment, key1, buyerX), 5);
 
         vm.expectEmit(true, true, true, true);
-        emit DelegateCredited(5, verifierA, operatorX, commitment, PROBE_COUNT);
+        emit DelegateCredited(5, verifierA, operatorX, commitment, key0, PROBE_COUNT);
         vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
-        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment), PROBE_COUNT);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, buyerX), PROBE_COUNT);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agent0, SERVICE_HASH);
+        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment, key0), PROBE_COUNT);
+        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, key0, buyerX), PROBE_COUNT);
 
-        // Budget exhausted → nothing more now.
+        // Target 0 fully claimed → nothing more there.
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agent0, SERVICE_HASH);
 
-        // A further credited attestation grows the budget to 20 — the
-        // clamped remainder (5) becomes claimable.
-        _attestOn(verifierA, commitment, batchRoot);
+        // Target 1 accrued but not attested → its budget is 0.
         vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, buyerX), 15);
+        vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agent1, SERVICE_HASH);
+
+        // A credited attestation on target 1 unlocks exactly its accrual.
+        _attestOn(verifierA, commitment, batchRoot); // credits target 1
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agent1, SERVICE_HASH);
+        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, key1, buyerX), 5);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 15);
+    }
+
+    function test_creditedBudgetIsTargetBound() public {
+        // Regression for the cross-target siphon: an "ally" buyer that
+        // carried probes ONLY for a never-attested target must not be able
+        // to drain the budget minted by another target's credited
+        // attestation — in any claim order.
+        bytes32 commitment = keccak256(abi.encode(verifierA, ++commitSalt));
+        vm.prank(verifierA);
+        verifierRegistry.commitProbeSet(commitment);
+        vm.warp(block.timestamp + 1);
+
+        uint256 agentHonest = identity.register();
+        identity.setOwner(agentHonest, vm.addr(RECORD_SELLER_KEY));
+        uint256 agentAlly = identity.register();
+        identity.setOwner(agentAlly, vm.addr(RECORD_SELLER_KEY));
+
+        IAntseedVerifierRegistry.ExchangeRecord[] memory records = new IAntseedVerifierRegistry.ExchangeRecord[](20);
+        bytes[] memory payloads = new bytes[](20);
+        uint32[] memory counts = new uint32[](20);
+        for (uint256 i = 0; i < 10; i++) {
+            (records[i], payloads[i]) = makeSignedRecord(
+                agentHonest, RECORD_SELLER_KEY, buyerX, keccak256(abi.encode(commitment, "honest", i))
+            );
+            counts[i] = 1;
+        }
+        for (uint256 i = 10; i < 20; i++) {
+            (records[i], payloads[i]) = makeSignedRecord(
+                agentAlly, RECORD_SELLER_KEY, buyerY, keccak256(abi.encode(commitment, "ally", i))
+            );
+            counts[i] = 1;
+        }
+        vm.prank(verifierA);
+        bytes32 batchRoot = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+
+        // Only the honest target's attestation is credited.
+        vm.prank(verifierA);
+        verifierRegistry.submitAttestation(
+            agentHonest, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, batchRoot, PROBE_COUNT, 3
+        );
+
+        // The ally front-running the claim gets nothing: no accrual on the
+        // credited target, no budget on its own.
+        vm.prank(operatorY);
+        vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerY, agentHonest, SERVICE_HASH);
+        vm.prank(operatorY);
+        vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerY, agentAlly, SERVICE_HASH);
+
+        // The honest carrier's full accrual is intact.
+        vm.prank(operatorX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, agentHonest, SERVICE_HASH);
+        assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), PROBE_COUNT);
+        assertEq(verifierRegistry.epochDelegateCredits(5, operatorY), 0);
     }
 
     function test_budgetIsSharedAcrossBuyersFirstComeFirstServed() public {
@@ -526,13 +631,14 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         _attestOn(verifierA, commitment, batchRoot);
 
         vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX, targetAgentId, SERVICE_HASH);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 6);
 
         vm.prank(operatorY);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerY);
+        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerY, targetAgentId, SERVICE_HASH);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorY), 4);
-        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment), PROBE_COUNT);
+        bytes32 key = keccak256(abi.encodePacked(targetAgentId, SERVICE_HASH));
+        assertEq(verifierRegistry.commitmentDelegateCredits(verifierA, commitment, key), PROBE_COUNT);
     }
 
     function test_uncreditedAttestationGrowsNoBudget() public {
@@ -548,7 +654,8 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         bytes32 firstRoot = _anchorForAgentWithCarrier(verifierA, first, agentId, buyerX, PROBE_COUNT);
         vm.prank(verifierA);
         verifierRegistry.submitAttestation(agentId, SERVICE_HASH, 1, EVIDENCE_HASH, first, firstRoot, PROBE_COUNT, 3);
-        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, first), PROBE_COUNT);
+        bytes32 key = keccak256(abi.encodePacked(agentId, SERVICE_HASH));
+        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, first, key), PROBE_COUNT);
 
         bytes32 second = keccak256(abi.encode(verifierA, ++commitSalt));
         vm.prank(verifierA);
@@ -559,11 +666,11 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         verifierRegistry.submitAttestation(
             agentId, SERVICE_HASH, 1, EVIDENCE_HASH, second, secondRoot, PROBE_COUNT, 3
         );
-        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, second), 0);
+        assertEq(verifierRegistry.commitmentDelegateBudget(verifierA, second, key), 0);
 
         vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, second, buyerX);
+        verifierRegistry.claimDelegateCredits(verifierA, second, buyerX, agentId, SERVICE_HASH);
     }
 
     // ─── Registry: per-epoch verifier cap ────────────────────────────
@@ -578,16 +685,13 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         vm.warp(block.timestamp + 1);
         bytes32 batchRoot = _anchorWithCarrier(verifierA, commitment, buyerX, 8);
         _attestOn(verifierA, commitment, batchRoot);
-        _attestOn(verifierA, commitment, batchRoot);
 
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 5);
 
         // Cap exhausted for verifierA this epoch — no claim can proceed.
-        vm.prank(operatorX);
         vm.expectRevert(AntseedVerifierRegistry.NothingToClaim.selector);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
 
         // Another verifier still has its own allowance…
         _carryAndClaim(verifierB, buyerY, operatorY, 5);
@@ -595,10 +699,11 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
 
         // …and the cap resets next epoch: the clamped remainder (3) clears.
         _warpGateEpoch(6);
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
         assertEq(verifierRegistry.epochDelegateCredits(6, operatorX), 3);
-        assertEq(verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, buyerX), 8);
+        assertEq(
+            verifierRegistry.commitmentDelegateClaimed(verifierA, commitment, _key(verifierA, commitment), buyerX), 8
+        );
     }
 
     function test_delegateConfigSetters() public {
@@ -741,8 +846,7 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
         MockEpochClock laggingClock = new MockEpochClock();
         laggingClock.setCurrentEpoch(5);
         registry.setEmissions(address(laggingClock));
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
         assertEq(verifierRegistry.epochDelegateCredits(5, operatorX), 2);
         assertEq(verifierRewards.delegateEpochTotalCredits(5), 0, "frozen total must not move");
 
@@ -760,8 +864,7 @@ contract AntseedVerifierDelegatesTest is Test, ResponseAuthFixture {
     function _claimTwoCreditsInEpoch6() internal {
         bytes32 commitment = _accrueAndAttest(verifierA, buyerX, 2);
         _warpGateEpoch(6);
-        vm.prank(operatorX);
-        verifierRegistry.claimDelegateCredits(verifierA, commitment, buyerX);
+        _claimAs(operatorX, verifierA, commitment, buyerX);
     }
 
     function test_remainderSettlesOnlyVerifierPool() public {

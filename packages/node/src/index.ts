@@ -86,6 +86,7 @@ export {
   VerifierRegistryClient,
   VerifierRewardsClient,
   serviceHash,
+  delegateTargetKey,
   VERIFIER_VERDICT_UNKNOWN,
   VERIFIER_VERDICT_SAME,
   VERIFIER_VERDICT_DIFF,

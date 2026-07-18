@@ -2,6 +2,7 @@ import {
   Contract,
   hexlify,
   keccak256,
+  solidityPackedKeccak256,
   toUtf8Bytes,
   type AbstractSigner,
   type BytesLike,
@@ -85,7 +86,7 @@ const VERIFIER_REGISTRY_ABI = [
   'function anchorExchangeBatch(bytes32 probeCommitment, (uint256,bytes32,bytes32,bytes)[] records, bytes[] signingPayloads, uint32[] recordProbeCounts) external returns (bytes32)',
   'function submitAttestation(uint256 agentId, bytes32 serviceHash, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot, uint32 probeCount, uint32 cohortSize) external',
   'function revealProbeSet(bytes32 probeCommitment, bytes probeSetJson, string packUri) external',
-  'function claimDelegateCredits(address verifier, bytes32 probeCommitment, address buyer) external',
+  'function claimDelegateCredits(address verifier, bytes32 probeCommitment, address buyer, uint256 agentId, bytes32 serviceHash) external',
   // Reads
   'function approvedVerifiers(address verifier) external view returns (bool)',
   'function probeCommittedAt(address verifier, bytes32 commitment) external view returns (uint64)',
@@ -108,16 +109,17 @@ const VERIFIER_REGISTRY_ABI = [
   'function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256)',
   'function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256)',
   'function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256)',
-  'function commitmentDelegateAccrued(address verifier, bytes32 commitment, address buyer) external view returns (uint32)',
-  'function commitmentDelegateClaimed(address verifier, bytes32 commitment, address buyer) external view returns (uint32)',
-  'function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256)',
-  'function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256)',
+  'function commitmentDelegateAccrued(address verifier, bytes32 commitment, bytes32 targetKey, address buyer) external view returns (uint32)',
+  'function commitmentDelegateClaimed(address verifier, bytes32 commitment, bytes32 targetKey, address buyer) external view returns (uint32)',
+  'function commitmentDelegateBudget(address verifier, bytes32 commitment, bytes32 targetKey) external view returns (uint256)',
+  'function commitmentDelegateCredits(address verifier, bytes32 commitment, bytes32 targetKey) external view returns (uint256)',
+  'function anchoredExchangeBy(bytes32 requestHash) external view returns (address)',
   'function responseAuthDigest(bytes signingPayload) external pure returns (bytes32)',
   'function parseResponseAuthPayload(bytes payload) external pure returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash, uint64 responseStartedAt, uint64 responseCompletedAt)',
   // Events
   'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
   'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
-  'event DelegateCreditsAccrued(address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint32 credits)',
+  'event DelegateCreditsAccrued(address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint256 agentId, bytes32 serviceHash, uint32 credits)',
 ] as const;
 
 const VERIFIER_REWARDS_ABI = [
@@ -210,11 +212,20 @@ export function serviceHash(service: string): string {
 }
 
 /**
+ * Storage key binding delegate accrual/budget to the audited target —
+ * keccak256(uint256(agentId) || serviceHash). Mirrors the contract's
+ * `delegateTargetKey`.
+ */
+export function delegateTargetKey(agentId: number | bigint, targetServiceHash: string): string {
+  return solidityPackedKeccak256(['uint256', 'bytes32'], [BigInt(agentId), targetServiceHash]);
+}
+
+/**
  * One anchor-time delegate-credit accrual, discovered from a
  * `DelegateCreditsAccrued` log. The buyer's deposits operator claims it with
  * {@link VerifierRegistryClient.claimDelegateCredits} — the (verifier,
- * probeCommitment, buyer) triple is the claim's entire input, so this replaces
- * the former off-chain DelegateVoucher.
+ * probeCommitment, buyer, agentId, serviceHash) tuple is the claim's entire
+ * input, so this replaces the former off-chain DelegateVoucher.
  */
 export interface DelegateCreditsAccrual {
   /** Verifier that anchored the batch crediting this buyer. */
@@ -223,6 +234,10 @@ export interface DelegateCreditsAccrual {
   probeCommitment: string;
   /** Buyer (carrier) the credits accrued to. */
   buyer: string;
+  /** Audited target's ERC-8004 agent id the carried probes were for. */
+  agentId: number;
+  /** Audited target's normalized service hash (`serviceHash(service)`). */
+  serviceHash: string;
   /** Credits accrued in this one anchor call (a batch may accrue more later). */
   credits: number;
   /** Block the accrual log was emitted in — a cursor for incremental scans. */
@@ -453,16 +468,18 @@ export class VerifierRegistryClient extends BaseEvmClient {
 
   /**
    * Claim `buyer`'s anchor-time delegate-credit accrual on
-   * `(verifier, probeCommitment)`. Must be sent by the operator registered
-   * for `buyer` in AntseedDeposits — the contract credits that operator and
-   * rejects any other caller. The claimable amount is the buyer's unclaimed
-   * accrual, clamped to the commitment's remaining delegate budget and the
+   * `(verifier, probeCommitment, target)` — the target (agentId,
+   * serviceHash) comes from the accrual's `DelegateCreditsAccrued` log.
+   * Must be sent by the operator registered for `buyer` in AntseedDeposits —
+   * the contract credits that operator and rejects any other caller. The
+   * claimable amount is the buyer's unclaimed accrual on the target, clamped
+   * to that target's remaining credited-attestation budget and the
    * verifier's remaining per-epoch allowance; a clamped remainder stays
    * claimable later. Reverts with NothingToClaim when nothing is claimable.
    */
   async claimDelegateCredits(
     signer: AbstractSigner,
-    input: { verifier: string; probeCommitment: string; buyer: string },
+    input: { verifier: string; probeCommitment: string; buyer: string; agentId: number | bigint; serviceHash: string },
   ): Promise<string> {
     return this._execWrite(
       signer,
@@ -471,6 +488,8 @@ export class VerifierRegistryClient extends BaseEvmClient {
       input.verifier,
       input.probeCommitment,
       input.buyer,
+      BigInt(input.agentId),
+      input.serviceHash,
     );
   }
 
@@ -480,27 +499,38 @@ export class VerifierRegistryClient extends BaseEvmClient {
    * its operator. The claimable remainder is `accrued - claimed` (further
    * clamped on-chain to budget + per-epoch cap at claim time).
    */
-  async commitmentDelegateAccrued(verifier: string, commitment: string, buyer: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateAccrued')(verifier, commitment, buyer);
+  async commitmentDelegateAccrued(
+    verifier: string,
+    commitment: string,
+    targetKey: string,
+    buyer: string,
+  ): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateAccrued')(verifier, commitment, targetKey, buyer);
     return Number(v);
   }
 
-  async commitmentDelegateClaimed(verifier: string, commitment: string, buyer: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateClaimed')(verifier, commitment, buyer);
+  async commitmentDelegateClaimed(
+    verifier: string,
+    commitment: string,
+    targetKey: string,
+    buyer: string,
+  ): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateClaimed')(verifier, commitment, targetKey, buyer);
     return Number(v);
   }
 
   /**
-   * Delegate-credit budget earned by `verifier`'s credited attestations on
-   * `commitment`, and how much of it claims have already drawn.
+   * Delegate-credit budget earned by `verifier`'s credited attestation of
+   * the target (`delegateTargetKey(agentId, serviceHash)`) on `commitment`,
+   * and how much of it claims have already drawn.
    */
-  async commitmentDelegateBudget(verifier: string, commitment: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateBudget')(verifier, commitment);
+  async commitmentDelegateBudget(verifier: string, commitment: string, targetKey: string): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateBudget')(verifier, commitment, targetKey);
     return Number(v);
   }
 
-  async commitmentDelegateCredits(verifier: string, commitment: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateCredits')(verifier, commitment);
+  async commitmentDelegateCredits(verifier: string, commitment: string, targetKey: string): Promise<number> {
+    const v = await this._contract().getFunction('commitmentDelegateCredits')(verifier, commitment, targetKey);
     return Number(v);
   }
 
@@ -565,7 +595,9 @@ export class VerifierRegistryClient extends BaseEvmClient {
         verifier: String(log.args?.verifier ?? log.args?.[0]),
         probeCommitment: String(log.args?.probeCommitment ?? log.args?.[1]),
         buyer: String(log.args?.buyer ?? log.args?.[2]),
-        credits: Number(log.args?.credits ?? log.args?.[3]),
+        agentId: Number(log.args?.agentId ?? log.args?.[3]),
+        serviceHash: String(log.args?.serviceHash ?? log.args?.[4]),
+        credits: Number(log.args?.credits ?? log.args?.[5]),
         blockNumber: log.blockNumber,
       });
     }

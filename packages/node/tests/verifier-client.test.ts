@@ -126,17 +126,26 @@ describe('VerifierRegistryClient transparent-audit writes', () => {
     expect(client.writes).toHaveLength(1);
   });
 
-  it('claimDelegateCredits encodes the (verifier, probeCommitment, buyer) triple', async () => {
+  it('claimDelegateCredits encodes the (verifier, probeCommitment, buyer, agentId, serviceHash) tuple', async () => {
     const client = makeClient();
     const verifier = '0x' + '22'.repeat(20);
     const buyer = '0x' + '33'.repeat(20);
     const probeCommitment = keccak256(toUtf8Bytes('commitment'));
-    const txHash = await client.claimDelegateCredits(signer, { verifier, probeCommitment, buyer });
+    const targetServiceHash = keccak256(toUtf8Bytes('kimi-k2'));
+    const txHash = await client.claimDelegateCredits(signer, {
+      verifier,
+      probeCommitment,
+      buyer,
+      agentId: 44325,
+      serviceHash: targetServiceHash,
+    });
     expect(txHash).toBe(FAKE_TX_HASH);
     expect(client.writes[0].method).toBe('claimDelegateCredits');
     expect(client.writes[0].calldata).toContain(probeCommitment.slice(2));
     expect(client.writes[0].calldata.toLowerCase()).toContain('22'.repeat(20));
     expect(client.writes[0].calldata.toLowerCase()).toContain('33'.repeat(20));
+    expect(client.writes[0].calldata.toLowerCase()).toContain(targetServiceHash.slice(2).toLowerCase());
+    expect(client.writes[0].calldata.toLowerCase()).toContain((44325).toString(16));
   });
 
   it('submitAttestation encodes the batchRoot-bearing 8-arg signature', async () => {
@@ -248,6 +257,7 @@ describe('VerifierRegistryClient delegate-credit discovery', () => {
   const verifier = '0x' + '22'.repeat(20);
   const buyer = '0x' + '33'.repeat(20);
   const commitment = keccak256(toUtf8Bytes('commitment'));
+  const svcHash = keccak256(toUtf8Bytes('kimi-k2'));
 
   it('queryDelegateCreditsAccrued decodes DelegateCreditsAccrued logs filtered by buyer', async () => {
     const client = new VerifierRegistryClient({
@@ -263,8 +273,11 @@ describe('VerifierRegistryClient delegate-credit discovery', () => {
         },
       },
       queryFilter: async () => [
-        { args: { verifier, probeCommitment: commitment, buyer, credits: 5n }, blockNumber: 100 },
-        { args: [verifier, commitment, buyer, 3n], blockNumber: 101 },
+        {
+          args: { verifier, probeCommitment: commitment, buyer, agentId: 7n, serviceHash: svcHash, credits: 5n },
+          blockNumber: 100,
+        },
+        { args: [verifier, commitment, buyer, 8n, svcHash, 3n], blockNumber: 101 },
       ],
     };
     (client as unknown as { _contract: () => unknown })._contract = () => stubContract;
@@ -273,8 +286,8 @@ describe('VerifierRegistryClient delegate-credit discovery', () => {
     // Buyer is the third indexed topic (verifier=null, commitment=null, buyer).
     expect(filterArgs).toEqual([null, null, buyer]);
     expect(accruals).toEqual([
-      { verifier, probeCommitment: commitment, buyer, credits: 5, blockNumber: 100 },
-      { verifier, probeCommitment: commitment, buyer, credits: 3, blockNumber: 101 },
+      { verifier, probeCommitment: commitment, buyer, agentId: 7, serviceHash: svcHash, credits: 5, blockNumber: 100 },
+      { verifier, probeCommitment: commitment, buyer, agentId: 8, serviceHash: svcHash, credits: 3, blockNumber: 101 },
     ]);
   });
 
@@ -287,8 +300,8 @@ describe('VerifierRegistryClient delegate-credit discovery', () => {
       getFunction: (name: string) => async () => (name === 'commitmentDelegateAccrued' ? 9n : 4n),
     };
     (client as unknown as { _contract: () => unknown })._contract = () => stubContract;
-    expect(await client.commitmentDelegateAccrued(verifier, commitment, buyer)).toBe(9);
-    expect(await client.commitmentDelegateClaimed(verifier, commitment, buyer)).toBe(4);
+    expect(await client.commitmentDelegateAccrued(verifier, commitment, svcHash, buyer)).toBe(9);
+    expect(await client.commitmentDelegateClaimed(verifier, commitment, svcHash, buyer)).toBe(4);
   });
 });
 

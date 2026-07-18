@@ -82,6 +82,7 @@ async function main() {
     buildResponseAuthSigningBytes,
     createResponseAuthPayload,
     serviceHash,
+    delegateTargetKey,
   }, fingerprints, auditVerify, auditCommand, packWriter] = await Promise.all([
     import('@antseed/node'),
     import('@antseed/fingerprints'),
@@ -299,14 +300,21 @@ async function main() {
       probeSetJson: fingerprints.canonicalProbeSetJson(probeSet),
       packUri: 'https://packs.example.com/audit-e2e.json',
     })
-    await client.claimDelegateCredits(operator, {
-      verifier: verifierAddress,
-      probeCommitment,
-      buyer: buyer.address,
-    })
-
-    const accrued = await client.commitmentDelegateAccrued(verifierAddress, probeCommitment, buyer.address)
-    const claimed = await client.commitmentDelegateClaimed(verifierAddress, probeCommitment, buyer.address)
+    // Claims are target-keyed: one claim per audited (agentId, service).
+    let accrued = 0
+    let claimed = 0
+    for (const agentId of agentIds) {
+      await client.claimDelegateCredits(operator, {
+        verifier: verifierAddress,
+        probeCommitment,
+        buyer: buyer.address,
+        agentId,
+        serviceHash: serviceHash(service),
+      })
+      const targetKey = delegateTargetKey(agentId, serviceHash(service))
+      accrued += await client.commitmentDelegateAccrued(verifierAddress, probeCommitment, targetKey, buyer.address)
+      claimed += await client.commitmentDelegateClaimed(verifierAddress, probeCommitment, targetKey, buyer.address)
+    }
     const delegateCredits = await client.epochDelegateCredits(1, operator.address)
     if (accrued !== 9 || claimed !== 9 || delegateCredits !== 9) {
       throw new Error(`Unexpected delegate credits: accrued=${accrued}, claimed=${claimed}, epoch=${delegateCredits}`)
@@ -324,7 +332,17 @@ async function main() {
     if (reveal.packUri !== 'https://packs.example.com/audit-e2e.json') {
       throw new Error('Decoded pack URI mismatch')
     }
-    const attestations = await auditCommand.fetchLatestAttestations(client, pack.sellers, service)
+    const attestations = await auditCommand.fetchMatchingAttestations(
+      provider,
+      await verifierRegistry.getAddress(),
+      verifierAddress,
+      pack.sellers,
+      service,
+      probeCommitment,
+      anchor.batchRoot,
+      evidenceHash,
+      0,
+    )
     const report = auditVerify.verifyAudit({
       probeCommitment,
       records: fetchedAnchor.records,

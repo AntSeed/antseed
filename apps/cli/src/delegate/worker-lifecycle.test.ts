@@ -301,6 +301,8 @@ test('discovers on-chain credit accruals for its own buyer and records them from
     verifier: 'v'.repeat(40),
     probeCommitment: '0x' + 'ab'.repeat(32),
     buyer: SELF_PEER,
+    agentId: 7,
+    serviceHash: '0x' + 'cc'.repeat(32),
     credits: 4,
     blockNumber: 500,
   }

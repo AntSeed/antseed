@@ -1,4 +1,5 @@
 import type { AbstractSigner } from 'ethers'
+import { delegateTargetKey } from '@antseed/node'
 import type { StoredCreditAccrual } from './credit-store.js'
 
 /**
@@ -7,13 +8,23 @@ import type { StoredCreditAccrual } from './credit-store.js'
  * `antseed delegate credits` / `antseed delegate claim`. Accruals are proven
  * by the seller-signed ResponseAuth payloads the verifier anchored, not by any
  * off-chain voucher — the claim's entire input is the
- * (verifier, probeCommitment, buyer) triple.
+ * (verifier, probeCommitment, buyer, agentId, serviceHash) tuple.
  */
 
-/** Read side of the on-chain accrual accumulators. */
+/** Read side of the on-chain accrual accumulators (target-keyed). */
 export interface CreditAccrualReader {
-  commitmentDelegateAccrued(verifier: string, probeCommitment: string, buyer: string): Promise<number>
-  commitmentDelegateClaimed(verifier: string, probeCommitment: string, buyer: string): Promise<number>
+  commitmentDelegateAccrued(
+    verifier: string,
+    probeCommitment: string,
+    targetKey: string,
+    buyer: string,
+  ): Promise<number>
+  commitmentDelegateClaimed(
+    verifier: string,
+    probeCommitment: string,
+    targetKey: string,
+    buyer: string,
+  ): Promise<number>
 }
 
 export type CreditState = 'claimable' | 'claimed' | 'empty'
@@ -47,9 +58,10 @@ export async function resolveCreditStatuses(
     let claimed = 0
     if (reader) {
       try {
+        const targetKey = delegateTargetKey(accrual.agentId, accrual.serviceHash)
         ;[accrued, claimed] = await Promise.all([
-          reader.commitmentDelegateAccrued(accrual.verifier, accrual.probeCommitment, accrual.buyer),
-          reader.commitmentDelegateClaimed(accrual.verifier, accrual.probeCommitment, accrual.buyer),
+          reader.commitmentDelegateAccrued(accrual.verifier, accrual.probeCommitment, targetKey, accrual.buyer),
+          reader.commitmentDelegateClaimed(accrual.verifier, accrual.probeCommitment, targetKey, accrual.buyer),
         ])
       } catch (err) {
         options.warn?.(
@@ -68,7 +80,13 @@ export async function resolveCreditStatuses(
 export interface DelegateCreditsClaimer {
   claimDelegateCredits(
     signer: AbstractSigner,
-    input: { verifier: string; probeCommitment: string; buyer: string },
+    input: {
+      verifier: string
+      probeCommitment: string
+      buyer: string
+      agentId: number | bigint
+      serviceHash: string
+    },
   ): Promise<string>
 }
 
@@ -113,6 +131,8 @@ export async function claimDelegateCredits(options: {
         verifier: status.accrual.verifier,
         probeCommitment: status.accrual.probeCommitment,
         buyer: status.accrual.buyer,
+        agentId: status.accrual.agentId,
+        serviceHash: status.accrual.serviceHash,
       })
       result.claimedCount += 1
       result.claimedCredits += status.claimable

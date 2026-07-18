@@ -17,6 +17,8 @@ function accrual(overrides?: Partial<StoredCreditAccrual>): StoredCreditAccrual 
     verifier: VERIFIER,
     probeCommitment: COMMITMENT,
     buyer: BUYER,
+    agentId: 7,
+    serviceHash: '0x' + 'cc'.repeat(32),
     credits: 5,
     blockNumber: 100,
     firstSeenAt: '2026-07-14T00:00:00.000Z',

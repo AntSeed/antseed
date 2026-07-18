@@ -161,28 +161,50 @@ interface IAntseedVerifierRegistry {
     // ─── Delegate crediting (organic probe carriers) ─────────────────
     // Delegate credits accrue at anchor time from the buyer named inside
     // each seller-signed ResponseAuth payload (verified on-chain in
-    // `anchorExchangeBatch`); the buyer's deposits operator claims them via
-    // `claimDelegateCredits(verifier, probeCommitment, buyer)`. This
-    // replaces the former off-chain EIP-712 DelegateVoucher flow.
+    // `anchorExchangeBatch`), keyed by the audited target; the buyer's
+    // deposits operator claims them via `claimDelegateCredits(verifier,
+    // probeCommitment, buyer, agentId, serviceHash)`. This replaces the
+    // former off-chain EIP-712 DelegateVoucher flow.
 
     function delegateShareBps() external view returns (uint16);
     function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32);
     /// @notice Claim `buyer`'s unclaimed anchor-time accrual on
-    ///         (verifier, probeCommitment), clamped to the commitment's
-    ///         remaining delegate budget and the verifier's remaining
-    ///         per-epoch allowance. Callable only by the buyer's deposits
-    ///         operator; credits are keyed to that operator.
-    function claimDelegateCredits(address verifier, bytes32 probeCommitment, address buyer) external;
-    function commitmentDelegateAccrued(address verifier, bytes32 commitment, address buyer)
+    ///         (verifier, probeCommitment, target) — the target being the
+    ///         audited (agentId, serviceHash) from the accrual event —
+    ///         clamped to that target's remaining credited-attestation
+    ///         budget and the verifier's remaining per-epoch allowance.
+    ///         Callable only by the buyer's deposits operator; credits are
+    ///         keyed to that operator.
+    function claimDelegateCredits(
+        address verifier,
+        bytes32 probeCommitment,
+        address buyer,
+        uint256 agentId,
+        bytes32 serviceHash
+    ) external;
+    /// @notice keccak256(agentId || serviceHash) — the target key the
+    ///         delegate mappings below are indexed by.
+    function delegateTargetKey(uint256 agentId, bytes32 serviceHash) external pure returns (bytes32);
+    function commitmentDelegateAccrued(address verifier, bytes32 commitment, bytes32 targetKey, address buyer)
         external
         view
         returns (uint32);
-    function commitmentDelegateClaimed(address verifier, bytes32 commitment, address buyer)
+    function commitmentDelegateClaimed(address verifier, bytes32 commitment, bytes32 targetKey, address buyer)
         external
         view
         returns (uint32);
-    function commitmentDelegateBudget(address verifier, bytes32 commitment) external view returns (uint256);
-    function commitmentDelegateCredits(address verifier, bytes32 commitment) external view returns (uint256);
+    function commitmentDelegateBudget(address verifier, bytes32 commitment, bytes32 targetKey)
+        external
+        view
+        returns (uint256);
+    function commitmentDelegateCredits(address verifier, bytes32 commitment, bytes32 targetKey)
+        external
+        view
+        returns (uint256);
+    /// @notice Which verifier anchored `requestHash` (address(0) = never).
+    ///         Global anti-replay: a seller-signed exchange is anchorable
+    ///         exactly once network-wide.
+    function anchoredExchangeBy(bytes32 requestHash) external view returns (address);
     function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256);
     function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256);
     function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256);

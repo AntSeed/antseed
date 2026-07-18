@@ -4,17 +4,22 @@ import type { DelegateCreditsAccrual } from '@antseed/node'
 
 /**
  * A discovered delegate-credit accrual as persisted on disk. The
- * (verifier, probeCommitment, buyer) triple is the claim's entire input; the
- * authoritative accrued/claimed amounts are read from the contract at claim
- * time, so `credits`/`blockNumber` here are only for display and cursor math.
+ * (verifier, probeCommitment, buyer, agentId, serviceHash) tuple is the
+ * claim's entire input; the authoritative accrued/claimed amounts are read
+ * from the contract at claim time, so `credits`/`blockNumber` here are only
+ * for display and cursor math.
  */
 export interface StoredCreditAccrual {
   verifier: string
   probeCommitment: string
   buyer: string
-  /** Credits from the last `DelegateCreditsAccrued` event seen for this triple. */
+  /** Audited target's ERC-8004 agent id the carried probes were for. */
+  agentId: number
+  /** Audited target's normalized service hash. */
+  serviceHash: string
+  /** Credits from the last `DelegateCreditsAccrued` event seen for this key. */
   credits: number
-  /** Block of the last event seen for this triple. */
+  /** Block of the last event seen for this key. */
   blockNumber: number
   /** ISO timestamp the accrual was first discovered. */
   firstSeenAt: string
@@ -34,8 +39,8 @@ export interface CreditStoreFs {
   mkdir: typeof mkdir
 }
 
-function accrualKey(verifier: string, probeCommitment: string, buyer: string): string {
-  return `${verifier.toLowerCase()}|${probeCommitment.toLowerCase()}|${buyer.toLowerCase()}`
+function accrualKey(a: Pick<StoredCreditAccrual, 'verifier' | 'probeCommitment' | 'buyer' | 'agentId' | 'serviceHash'>): string {
+  return `${a.verifier.toLowerCase()}|${a.probeCommitment.toLowerCase()}|${a.buyer.toLowerCase()}|${a.agentId}|${a.serviceHash.toLowerCase()}`
 }
 
 /**
@@ -95,11 +100,11 @@ export class CreditStore {
     toBlock: number,
   ): Promise<number> {
     const file = await this._load()
-    const byKey = new Map(file.accruals.map((a) => [accrualKey(a.verifier, a.probeCommitment, a.buyer), a]))
+    const byKey = new Map(file.accruals.map((a) => [accrualKey(a), a]))
     const now = new Date().toISOString()
     let added = 0
     for (const accrual of accruals) {
-      const key = accrualKey(accrual.verifier, accrual.probeCommitment, accrual.buyer)
+      const key = accrualKey(accrual)
       const existing = byKey.get(key)
       if (existing) {
         existing.credits = accrual.credits
@@ -109,6 +114,8 @@ export class CreditStore {
           verifier: accrual.verifier,
           probeCommitment: accrual.probeCommitment,
           buyer: accrual.buyer,
+          agentId: accrual.agentId,
+          serviceHash: accrual.serviceHash,
           credits: accrual.credits,
           blockNumber: accrual.blockNumber,
           firstSeenAt: now,
@@ -145,11 +152,16 @@ export class CreditStore {
       this._cache = {
         version: 1,
         cursorBlock: typeof parsed.cursorBlock === 'number' ? parsed.cursorBlock : 0,
+        // Entries persisted before target-keyed claims (no agentId /
+        // serviceHash) are unclaimable under the current contract — drop
+        // them rather than carry unusable rows.
         accruals: Array.isArray(parsed.accruals)
           ? parsed.accruals.filter((a): a is StoredCreditAccrual =>
               typeof a?.verifier === 'string'
               && typeof a?.probeCommitment === 'string'
-              && typeof a?.buyer === 'string')
+              && typeof a?.buyer === 'string'
+              && typeof a?.agentId === 'number'
+              && typeof a?.serviceHash === 'string')
           : [],
       }
     } catch {

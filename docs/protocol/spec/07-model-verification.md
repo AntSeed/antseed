@@ -145,8 +145,9 @@ Also implemented — the whitelisted verifier network:
     is their contract-enforced sum, fixed at anchor time and recomputable by
     third parties from the revealed probe set plus the anchored records.
     The buyer peer named inside each verified payload accrues that record's
-    probe count as delegate credits (`commitmentDelegateAccrued`) when it is
-    neither the anchoring verifier nor the record's seller. The contract
+    probe count as delegate credits (`commitmentDelegateAccrued`, keyed by
+    the audited target's `delegateTargetKey(agentId, serviceHash)`) when it
+    is neither the anchoring verifier nor the record's seller. The contract
     recomputes the Merkle root FROM the calldata records (leaf =
     `keccak256(abi.encode(agentId, requestHash, responseHash,
     keccak256(sig)))`, pairwise keccak, odd node promoted), so the root ↔
@@ -155,8 +156,12 @@ Also implemented — the whitelisted verifier network:
     by `(verifier, batchRoot)` (readable via `batchAnchors(verifier,
     batchRoot)`); the referenced probe commitment must have landed strictly
     earlier. Each commitment has exactly one batch, bounded to `[1, 256]`
-    records; duplicate request hashes are rejected, and each record declares
-    `1..3` probes.
+    records; each record declares `1..3` probes. Every anchored request hash
+    is recorded in a GLOBAL registry (`anchoredExchangeBy`) — a seller-signed
+    exchange is anchorable exactly once, network-wide, so the same witnessed
+    exchange cannot be re-anchored under other commitments or by other
+    verifiers to multiply delegate accrual or attestation evidence
+    (duplicates inside one batch die on the same check).
     anchor transaction is the practical ceiling (see the cost table below).
   - `submitAttestation(..., batchRoot)` — every attestation must reference an
     anchored batch whose stored commitment matches the attestation's probe
@@ -275,27 +280,32 @@ Also implemented — the whitelisted verifier network:
     job placement, never job content.
 - Delegate credit discovery: a carrier learns its accruals trustlessly from the
   chain. `anchorExchangeBatch` emits `DelegateCreditsAccrued(verifier,
-  probeCommitment, buyer, credits)` per credited buyer, with `buyer` an INDEXED
-  topic — so a carrier `queryFilter`s the log filtered by its own address from a
-  persisted block cursor (its worker advances the cursor each scan), or polls
-  `commitmentDelegateAccrued(verifier, commitment, buyer)` for commitments it
-  learned from those events. No off-chain message carries this; the verifier
-  signs and sends nothing.
+  probeCommitment, buyer, agentId, serviceHash, credits)` per credited
+  (buyer, target) pair, with `buyer` an INDEXED topic — so a carrier
+  `queryFilter`s the log filtered by its own address from a persisted block
+  cursor (its worker advances the cursor each scan), or polls
+  `commitmentDelegateAccrued(verifier, commitment, targetKey, buyer)` for
+  keys it learned from those events. No off-chain message carries this; the
+  verifier signs and sends nothing.
 - Delegate credit claiming: the buyer's deposits OPERATOR — never the buyer
   hot wallet — claims on-chain via
   `AntseedVerifierRegistry.claimDelegateCredits(verifier, probeCommitment,
-  buyer)`. WHO carried WHAT is not claimed by anyone: it accrued at anchor
-  time from the buyer named inside each seller-signed (and on-chain
-  signature-verified) ResponseAuth payload. The claim pays out the buyer's
-  unclaimed accrual, clamped to the commitment's remaining delegate budget —
-  the summed `probeCount` of the verifier's CREDITED attestations
-  referencing the commitment, so nothing is claimable before real,
-  cooldown-limited, commit-reveal audit work exists — and to the verifier's
-  remaining per-epoch delegate-credit allowance; a clamped remainder stays
-  claimable later. The contract resolves the buyer's operator from
-  `AntseedDeposits` at claim time. Claimed credits earn from the delegate
-  pool in `AntseedVerifierRewards` (see above). This anchor-time accrual
-  REPLACED the earlier off-chain EIP-712 `DelegateVoucher` claim flow.
+  buyer, agentId, serviceHash)` — the target (agentId, serviceHash) comes
+  from the accrual event. WHO carried WHAT is not claimed by anyone: it
+  accrued at anchor time from the buyer named inside each seller-signed
+  (and on-chain signature-verified) ResponseAuth payload, keyed by the
+  audited target. The claim pays out the buyer's unclaimed accrual on that
+  target, clamped to the TARGET's remaining delegate budget — the
+  `probeCount` of the verifier's CREDITED attestation of that exact target
+  under the commitment, so nothing is claimable before real,
+  cooldown-limited, commit-reveal audit work on the target exists, and the
+  carriers of one target can never drain the budget another target's
+  attestation minted — and to the verifier's remaining per-epoch
+  delegate-credit allowance; a clamped remainder stays claimable later. The
+  contract resolves the buyer's operator from `AntseedDeposits` at claim
+  time. Claimed credits earn from the delegate pool in
+  `AntseedVerifierRewards` (see above). This anchor-time accrual REPLACED
+  the earlier off-chain EIP-712 `DelegateVoucher` claim flow.
 
 Cohort consensus is the key mechanism enabling verification without a trusted
 upstream reference: when N sellers claim the same model, the majority behavior

@@ -76,8 +76,18 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     );
     event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri);
     event DelegateCreditsAccrued(
-        address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint32 credits
+        address indexed verifier,
+        bytes32 indexed probeCommitment,
+        address indexed buyer,
+        uint256 agentId,
+        bytes32 serviceHash,
+        uint32 credits
     );
+
+    /// @dev Delegate target key of `agentId` under the fixture service.
+    function _keyOf(uint256 agentId) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(agentId, SERVICE_HASH));
+    }
 
     /// @dev Optional on-chain pointer to the off-chain response pack.
     string constant PACK_URI = "ipfs://bafyPackPointerForTransparentAudit";
@@ -244,7 +254,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         }
         bytes32 expectedRoot = _referenceRootOf(records);
         vm.expectEmit(true, true, true, true);
-        emit DelegateCreditsAccrued(verifier, commitment, carrierX, 14);
+        emit DelegateCreditsAccrued(verifier, commitment, carrierX, agentA, SERVICE_HASH, 14);
         vm.expectEmit(true, true, true, true);
         emit ExchangeBatchAnchored(verifier, commitment, expectedRoot, 10, 24);
         vm.prank(verifier);
@@ -256,8 +266,16 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         assertEq(anchorCommitment, commitment, "batch commitment");
         assertEq(recordCount, 10, "record count");
         assertEq(probeCount, 24, "summed probe count");
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, carrierX), 14, "carrier accrual");
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, verifier), 0, "self accrual");
+        assertEq(
+            verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(agentA), carrierX),
+            14,
+            "carrier accrual"
+        );
+        assertEq(
+            verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(agentA), verifier),
+            0,
+            "self accrual"
+        );
 
         // 3. Attest referencing the anchored batch (same second is allowed).
         _attest(verifier, commitment, root);
@@ -434,17 +452,21 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         vm.expectRevert(AntseedVerifierRegistry.CommitmentBatchAlreadyAnchored.selector);
         verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
 
-        // ...and under a different commitment as well: the root is anchored
-        // once per verifier, ever.
+        // ...and under a different commitment as well: every exchange is
+        // anchorable once, globally, so the replay dies on its first record.
         bytes32 secondCommitment = keccak256("second-commitment");
         _commit(verifier, secondCommitment);
         vm.warp(block.timestamp + 1);
         vm.prank(verifier);
-        vm.expectRevert(AntseedVerifierRegistry.BatchAlreadyAnchored.selector);
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangeAlreadyAnchored.selector, 0));
         verifierRegistry.anchorExchangeBatch(secondCommitment, records, payloads, counts);
     }
 
-    function test_anchorSameRecordsByOtherVerifierAllowed() public {
+    function test_anchorSameRecordsByOtherVerifierReverts() public {
+        // A seller-signed exchange is anchorable exactly ONCE network-wide:
+        // a second verifier that merely witnessed the same exchanges (the
+        // organic-traffic laundering vector) cannot re-anchor them to mint
+        // its own accrual/attestation evidence.
         bytes32 commitment = sha256(PROBE_SET_JSON);
         _commit(verifier, commitment);
         _commit(otherVerifier, commitment);
@@ -457,13 +479,14 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         ) = _signedBatch(4, "shared");
         vm.prank(verifier);
         bytes32 rootA = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+        assertEq(verifierRegistry.anchoredExchangeBy(records[0].requestHash), verifier);
+
         vm.prank(otherVerifier);
-        bytes32 rootB = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
-        assertEq(rootA, rootB);
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangeAlreadyAnchored.selector, 0));
+        verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
+
         (uint64 anchoredAtA,,,) = _anchorOf(verifier, rootA);
-        (uint64 anchoredAtB,,,) = _anchorOf(otherVerifier, rootB);
         assertGt(anchoredAtA, 0);
-        assertGt(anchoredAtB, 0);
     }
 
     function test_anchorReusedExchangeUnderFreshCommitmentReverts() public {
@@ -497,7 +520,9 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         (records[0], records[1]) = (records[1], records[0]);
         (payloads[0], payloads[1]) = (payloads[1], payloads[0]);
         vm.prank(verifier);
-        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangePredatesCommitment.selector, 0));
+        // The global anchored-exchange registry rejects the reuse before the
+        // commit-timing check even runs.
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangeAlreadyAnchored.selector, 0));
         verifierRegistry.anchorExchangeBatch(secondCommitment, records, payloads, counts);
     }
 
@@ -735,20 +760,22 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
             counts[i] = uint32((i % 3) + 1);
         }
 
-        // Aggregated per distinct buyer: exactly one event per buyer.
+        // Aggregated per distinct (buyer, target): exactly one event per
+        // buyer here — all records probe the same target agentA.
         vm.expectEmit(true, true, true, true);
-        emit DelegateCreditsAccrued(verifier, commitment, carrierX, 7);
+        emit DelegateCreditsAccrued(verifier, commitment, carrierX, agentA, SERVICE_HASH, 7);
         vm.expectEmit(true, true, true, true);
-        emit DelegateCreditsAccrued(verifier, commitment, carrierY, 2);
+        emit DelegateCreditsAccrued(verifier, commitment, carrierY, agentA, SERVICE_HASH, 2);
         vm.prank(verifier);
         bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
 
         (,, uint32 probeCount,) = _anchorOf(verifier, root);
+        bytes32 key = _keyOf(agentA);
         assertEq(probeCount, 12, "summed declared probes");
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, carrierX), 7);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, carrierY), 2);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, verifier), 0, "self-carry");
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, sellerA), 0, "seller-carry");
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, key, carrierX), 7);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, key, carrierY), 2);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, key, verifier), 0, "self-carry");
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, key, sellerA), 0, "seller-carry");
     }
 
     function test_anchorSecondBatchForCommitmentReverts() public {
@@ -758,13 +785,13 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         = makeSignedBatch(3, agentA, SELLER_A_KEY, carrierX, "acc-1");
         vm.prank(verifier);
         verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, carrierX), 3);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(agentA), carrierX), 3);
 
         (records, payloads, counts) = makeSignedBatch(2, agentA, SELLER_A_KEY, carrierX, "acc-2");
         vm.prank(verifier);
         vm.expectRevert(AntseedVerifierRegistry.CommitmentBatchAlreadyAnchored.selector);
         verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, carrierX), 3);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(agentA), carrierX), 3);
     }
 
     function test_anchorDuplicateRequestHashReverts() public {
@@ -775,7 +802,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         payloads[1] = payloads[0];
 
         vm.prank(verifier);
-        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.DuplicateExchangeRecord.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangeAlreadyAnchored.selector, 1));
         verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
     }
 
@@ -975,7 +1002,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
         (,, uint32 probeCount,) = _anchorOf(verifier, root);
         assertEq(probeCount, 3);
-        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, PINNED_BUYER), 3);
+        assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(pinnedAgent), PINNED_BUYER), 3);
     }
 
     // ─── submitAttestation batch binding ─────────────────────────────
@@ -1363,21 +1390,26 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         emit log_named_uint("anchor 48 signed records: total execution gas", gas48);
         emit log_named_uint("marginal execution gas per record", marginalPerRecord);
 
-        assertLt(marginalPerRecord, 45_000, "per-record marginal execution gas regressed (was ~42k)");
-        assertLt(gas24, 1_200_000, "24-record anchor execution gas regressed (was ~1.14M)");
+        // ~42k crypto/parse work + ~22k for the global anchored-exchange
+        // registry write (one cold zero→nonzero SSTORE per record — the
+        // price of network-wide exchange replay protection).
+        assertLt(marginalPerRecord, 70_000, "per-record marginal execution gas regressed (was ~64k)");
+        assertLt(gas24, 1_800_000, "24-record anchor execution gas regressed (was ~1.7M)");
     }
 
     /// @dev Practical batch-size ceiling. Memory growth is quadratic in
     ///      batch size (every record's digest/recover path allocates), so
-    ///      per-record cost rises with the batch: ~42k marginal at 24-48
-    ///      records, ~57k averaged over 1000. 256 records is a sane
-    ///      per-transaction ceiling on Base (execution ~12.5M plus ~2-3M
-    ///      tx-intrinsic calldata). The protocol caps one commitment's sole
-    ///      batch at 256 records so a signed exchange cannot be replayed across
-    ///      several roots to multiply delegate accrual.
-    function test_anchor256RecordsGasUnder13M() public {
+    ///      per-record cost rises with the batch: ~64k marginal at 24-48
+    ///      records (incl. the ~22k global anti-replay SSTORE each). 256
+    ///      records is a sane per-transaction ceiling on Base (execution
+    ///      ~18M plus ~2-3M tx-intrinsic calldata). The protocol caps one
+    ///      commitment's sole batch at 256 records, and the global
+    ///      anchored-exchange registry means a signed exchange can never be
+    ///      replayed across roots, commitments, or verifiers to multiply
+    ///      delegate accrual.
+    function test_anchor256RecordsGasUnder20M() public {
         uint256 gasUsed = _anchorGas(256, "g256");
         emit log_named_uint("anchor 256 signed records: total execution gas", gasUsed);
-        assertLt(gasUsed, 13_000_000, "anchor of 256 records must stay under 13M execution gas");
+        assertLt(gasUsed, 20_000_000, "anchor of 256 records must stay under 20M execution gas");
     }
 }
