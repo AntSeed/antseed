@@ -15,6 +15,7 @@ import { CreditStore } from '../../../delegate/credit-store.js'
 import { discoverDelegateAccruals } from '../../../delegate/credit-discovery.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
+import { paymentsConfigFromChain } from '../network/chain-config-helper.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
@@ -308,25 +309,13 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       if (settlementEnabled) {
         paymentsConfig = {
-          enabled: true,
-          rpcUrl: chainConfig.rpcUrl,
-          ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-          depositsAddress: chainConfig.depositsContractAddress,
-          channelsAddress: chainConfig.channelsContractAddress,
-          ...(chainConfig.freeUsageContractAddress ? { freeUsageAddress: chainConfig.freeUsageContractAddress } : {}),
-          usdcAddress: chainConfig.usdcContractAddress,
-          // Staking + identity registry addresses let the buyer-side node wire
-          // a StakingClient and IdentityClient. Without stakingAddress, the
-          // on-chain verification loop in AntseedNode.discoverPeers() is
-          // skipped entirely, so `onChainTotalVolumeUsdcMicros` and
-          // `onChainLastSettledAtSec` never populate on PeerInfo (and end up
-          // as `null` in buyer.state.json).
-          ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
-          ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
+          // Shared chain projection (incl. the staking + identity registry
+          // wiring that gates the on-chain verification loop in
+          // AntseedNode.discoverPeers()) — see paymentsConfigFromChain.
+          ...paymentsConfigFromChain(chainConfig),
           // Enables per-(peer, model) verification reputation on discovered
           // peers so routers can avoid substitution-flagged sellers.
           ...(chainConfig.verifierRegistryAddress ? { verifierRegistryAddress: chainConfig.verifierRegistryAddress } : {}),
-          chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',

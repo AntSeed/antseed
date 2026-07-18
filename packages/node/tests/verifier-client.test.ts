@@ -1,7 +1,13 @@
-import { Interface, Wallet, keccak256, toUtf8Bytes, type AbstractSigner, type InterfaceAbi } from 'ethers';
+import { Interface, Wallet, keccak256, toUtf8Bytes, zeroPadValue, type AbstractSigner, type InterfaceAbi } from 'ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { VerifierRegistryClient } from '../src/payments/evm/verifier-client.js';
-import { buildFixtureRecords, computeBatchRoot } from '../src/verification/exchange-batch.js';
+import {
+  VerifierRegistryClient,
+  decodeAnchorCalldata,
+  decodeRevealCalldata,
+  serviceHash,
+} from '../src/payments/evm/verifier-client.js';
+import { computeBatchRoot } from '../src/verification/exchange-batch.js';
+import { buildFixtureRecords } from './helpers/exchange-fixtures.js';
 
 const FAKE_TX_HASH = '0x' + 'ab'.repeat(32);
 
@@ -195,7 +201,6 @@ describe('VerifierRegistryClient transparent-audit writes', () => {
 
 describe('VerifierRegistryClient.getBatchAnchor', () => {
   const verifier = '0x' + '22'.repeat(20);
-  const commitment = keccak256(toUtf8Bytes('commitment'));
   const batchRoot = computeBatchRoot(buildFixtureRecords(2));
 
   function makeClientWithAnchor(raw: unknown): VerifierRegistryClient {
@@ -209,25 +214,22 @@ describe('VerifierRegistryClient.getBatchAnchor', () => {
   }
 
   it('decodes the packed anchor struct (named fields)', async () => {
-    const client = makeClientWithAnchor({ anchoredAt: 1_700_000_001n, recordCount: 8n, probeCount: 24n, commitment });
+    const client = makeClientWithAnchor({ anchoredAt: 1_700_000_001n, recordCount: 8n, probeCount: 24n });
     expect(await client.getBatchAnchor(verifier, batchRoot)).toEqual({
       anchoredAt: 1_700_000_001,
       recordCount: 8,
       probeCount: 24,
-      commitment,
     });
     // batchAnchoredAt stays available as the anchoredAt convenience read.
     expect(await client.batchAnchoredAt(verifier, batchRoot)).toBe(1_700_000_001);
   });
 
   it('decodes a positional tuple result and reports 0 for a never-anchored root', async () => {
-    const zero = '0x' + '00'.repeat(32);
-    const client = makeClientWithAnchor([0n, 0n, 0n, zero]);
+    const client = makeClientWithAnchor([0n, 0n, 0n]);
     expect(await client.getBatchAnchor(verifier, batchRoot)).toEqual({
       anchoredAt: 0,
       recordCount: 0,
       probeCount: 0,
-      commitment: zero,
     });
   });
 });
@@ -362,6 +364,257 @@ describe('VerifierRegistryClient.getMinDistinctDiffVerifiers', () => {
     vi.setSystemTime(1_700_000_000_000 + 10 * 60_000 + 1);
     expect(await client.getMinDistinctDiffVerifiers()).toBe(4);
     expect(walks()).toBe(2);
+  });
+});
+
+// =========================================================================
+// Transparent-audit chain fetchers (moved from the CLI's audit verify)
+// =========================================================================
+
+const FETCH_IFACE = new Interface([
+  'function anchorExchangeBatch(bytes32 probeCommitment, (uint256 agentId, bytes32 requestHash, bytes32 responseHash, bytes responseAuthSig)[] records, bytes[] signingPayloads, uint32[] recordProbeCounts) returns (bytes32)',
+  'function revealProbeSet(bytes32 probeCommitment, bytes probeSetJson, string packUri)',
+  'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
+]);
+const ANCHOR_TOPIC = FETCH_IFACE.getEvent('ExchangeBatchAnchored')!.topicHash;
+
+const COMMITMENT = '0x' + 'ab'.repeat(32);
+const BATCH_ROOT = '0x' + 'cd'.repeat(32);
+const VERIFIER_ADDR = '0x' + '11'.repeat(20);
+const REGISTRY_ADDR = '0x' + '22'.repeat(20);
+const ANCHOR_TX = '0x' + '33'.repeat(32);
+const REVEAL_TX = '0x' + '44'.repeat(32);
+const PROBE_SET_JSON = '{"nonce":"ff","probes":[]}';
+const PACK_URI = 'https://packs.example.com/audits/0xabc.json';
+
+describe('decodeAnchorCalldata / decodeRevealCalldata', () => {
+  it('decodeAnchorCalldata round-trips the commitment and every record field', () => {
+    const records = [0, 1, 2].map((i) => [
+      BigInt(i + 7),
+      keccak256(toUtf8Bytes(`req-${i}`)),
+      keccak256(toUtf8Bytes(`res-${i}`)),
+      '0x' + `${i}1`.repeat(65),
+    ]);
+    const signingPayloads = records.map((_r, i) => toUtf8Bytes(`payload-${i}`));
+    const recordProbeCounts = records.map(() => 1);
+    const data = FETCH_IFACE.encodeFunctionData('anchorExchangeBatch', [COMMITMENT, records, signingPayloads, recordProbeCounts]);
+
+    const decoded = decodeAnchorCalldata(data);
+    expect(decoded.probeCommitment).toBe(COMMITMENT);
+    expect(decoded.records).toHaveLength(3);
+    decoded.records.forEach((record, i) => {
+      expect(record.agentId).toBe(BigInt(i + 7));
+      expect(record.requestHash).toBe(records[i]![1]);
+      expect(record.responseHash).toBe(records[i]![2]);
+      expect(record.responseAuthSig).toBe(records[i]![3]);
+    });
+  });
+
+  it('decodeAnchorCalldata rejects foreign calldata', () => {
+    const data = FETCH_IFACE.encodeFunctionData('revealProbeSet', [COMMITMENT, toUtf8Bytes('{}'), '']);
+    expect(() => decodeAnchorCalldata(data)).toThrow(/not an anchorExchangeBatch/);
+  });
+
+  it('decodeRevealCalldata recovers the probe-set JSON and pack URI', () => {
+    const probeSetJson = '{"nonce":"ff","probes":[],"service":"kimi-k2"}';
+    const data = FETCH_IFACE.encodeFunctionData('revealProbeSet', [COMMITMENT, toUtf8Bytes(probeSetJson), PACK_URI]);
+    const decoded = decodeRevealCalldata(data);
+    expect(decoded.probeCommitment).toBe(COMMITMENT);
+    expect(decoded.probeSetJson).toBe(probeSetJson);
+    expect(decoded.packUri).toBe(PACK_URI);
+  });
+
+  it('decodeRevealCalldata rejects foreign calldata', () => {
+    const data = FETCH_IFACE.encodeFunctionData('anchorExchangeBatch', [COMMITMENT, [], [], []]);
+    expect(() => decodeRevealCalldata(data)).toThrow(/not a revealProbeSet/);
+  });
+});
+
+describe('VerifierRegistryClient.fetchAnchorAndReveal', () => {
+  interface QueryCall { event: string; fromBlock: number | string }
+
+  /**
+   * Client whose provider (txs/receipt) and contract (event scans) are canned.
+   * Mirrors the RPC shapes the fetchers consume: getTransaction/-Receipt for
+   * the --tx path, filters + queryFilter for the event-scan paths.
+   */
+  function makeFetchClient(opts: {
+    anchorBlock: number
+    anchorTo?: string
+    anchorLogAddress?: string
+    onQuery: (call: QueryCall) => Array<{ transactionHash: string; blockNumber: number; topics: string[] }>
+  }): { client: VerifierRegistryClient; queryCalls: QueryCall[] } {
+    const anchorData = FETCH_IFACE.encodeFunctionData('anchorExchangeBatch', [COMMITMENT, [], [], []]);
+    const revealData = FETCH_IFACE.encodeFunctionData('revealProbeSet', [COMMITMENT, toUtf8Bytes(PROBE_SET_JSON), PACK_URI]);
+    const txs: Record<string, { data: string; from: string; to: string }> = {
+      [ANCHOR_TX]: { data: anchorData, from: VERIFIER_ADDR, to: opts.anchorTo ?? REGISTRY_ADDR },
+      [REVEAL_TX]: { data: revealData, from: VERIFIER_ADDR, to: REGISTRY_ADDR },
+    };
+    const queryCalls: QueryCall[] = [];
+    const stubProvider = {
+      async getTransaction(hash: string) {
+        return txs[hash] ?? null;
+      },
+      async getTransactionReceipt(hash: string) {
+        if (hash !== ANCHOR_TX) return null;
+        return {
+          blockNumber: opts.anchorBlock,
+          logs: [{
+            address: opts.anchorLogAddress ?? REGISTRY_ADDR,
+            topics: [ANCHOR_TOPIC, zeroPadValue(VERIFIER_ADDR, 32), COMMITMENT, BATCH_ROOT],
+          }],
+        };
+      },
+    };
+    const stubContract = {
+      filters: {
+        ExchangeBatchAnchored: () => ({ event: 'ExchangeBatchAnchored' }),
+        ProbeSetRevealed: () => ({ event: 'ProbeSetRevealed' }),
+      },
+      queryFilter: async (filter: { event: string }, fromBlock: number | string) => {
+        const call = { event: filter.event, fromBlock };
+        queryCalls.push(call);
+        return opts.onQuery(call);
+      },
+    };
+    const client = new VerifierRegistryClient({
+      rpcUrl: 'http://127.0.0.1:1',
+      contractAddress: REGISTRY_ADDR,
+    });
+    (client as unknown as { _provider: unknown })._provider = stubProvider;
+    (client as unknown as { _contract: () => unknown })._contract = () => stubContract;
+    return { client, queryCalls };
+  }
+
+  it('tx-hash path bounds the reveal scan to the anchor block (never fromBlock 0)', async () => {
+    const { client, queryCalls } = makeFetchClient({
+      anchorBlock: 1234,
+      onQuery: () => [{ transactionHash: REVEAL_TX, blockNumber: 1240, topics: [] }],
+    });
+
+    const { anchor, reveal } = await client.fetchAnchorAndReveal({ txHash: ANCHOR_TX, fromBlock: 0 });
+
+    expect(anchor.blockNumber).toBe(1234);
+    expect(anchor.batchRoot).toBe(BATCH_ROOT);
+    // The verifier comes from the indexed event topic, not tx.from.
+    expect(anchor.verifier.toLowerCase()).toBe(VERIFIER_ADDR.toLowerCase());
+    expect(reveal.probeSetJson).toBe(PROBE_SET_JSON);
+    expect(reveal.packUri).toBe(PACK_URI);
+    // Exactly one event scan (the reveal) — the anchor comes from the receipt
+    // — and it starts at the anchor block, not genesis.
+    expect(queryCalls).toEqual([{ event: 'ProbeSetRevealed', fromBlock: 1234 }]);
+  });
+
+  it('tx-hash path rejects an anchor call sent to a different contract', async () => {
+    const { client } = makeFetchClient({
+      anchorBlock: 1234,
+      anchorTo: '0x' + '99'.repeat(20),
+      onQuery: () => [],
+    });
+
+    await expect(client.fetchAnchorAndReveal({ txHash: ANCHOR_TX, fromBlock: 0 }))
+      .rejects.toThrow(/was not sent to registry/);
+  });
+
+  it('tx-hash path rejects a matching event emitted by a different contract', async () => {
+    const { client } = makeFetchClient({
+      anchorBlock: 1234,
+      anchorLogAddress: '0x' + '99'.repeat(20),
+      onQuery: () => [],
+    });
+
+    await expect(client.fetchAnchorAndReveal({ txHash: ANCHOR_TX, fromBlock: 0 }))
+      .rejects.toThrow(/emitted no ExchangeBatchAnchored event/);
+  });
+
+  it('commitment path scans the anchor from fromBlock and the reveal from the anchor block', async () => {
+    const { client, queryCalls } = makeFetchClient({
+      anchorBlock: 777,
+      onQuery: (call) =>
+        call.event === 'ExchangeBatchAnchored'
+          ? [{
+              transactionHash: ANCHOR_TX,
+              blockNumber: 777,
+              topics: [ANCHOR_TOPIC, zeroPadValue(VERIFIER_ADDR, 32), COMMITMENT, BATCH_ROOT],
+            }]
+          : [{ transactionHash: REVEAL_TX, blockNumber: 800, topics: [] }],
+    });
+
+    const { anchor, reveal } = await client.fetchAnchorAndReveal({
+      verifier: VERIFIER_ADDR,
+      commitment: COMMITMENT,
+      fromBlock: 500,
+    });
+
+    expect(anchor.blockNumber).toBe(777);
+    expect(reveal.probeSetJson).toBe(PROBE_SET_JSON);
+    expect(queryCalls).toEqual([
+      { event: 'ExchangeBatchAnchored', fromBlock: 500 },
+      { event: 'ProbeSetRevealed', fromBlock: 777 },
+    ]);
+  });
+
+  it('commitment path reports a missing anchor with the scan bounds', async () => {
+    const { client } = makeFetchClient({ anchorBlock: 0, onQuery: () => [] });
+    await expect(client.fetchAnchorAndReveal({ verifier: VERIFIER_ADDR, commitment: COMMITMENT, fromBlock: 500 }))
+      .rejects.toThrow(/no ExchangeBatchAnchored event .*\(scanned from block 500\)/);
+  });
+});
+
+describe('VerifierRegistryClient.fetchMatchingAttestations', () => {
+  it('finds the historical audit, scans sellers in parallel, and tolerates one seller failing', async () => {
+    const client = new VerifierRegistryClient({
+      rpcUrl: 'http://127.0.0.1:1',
+      contractAddress: REGISTRY_ADDR,
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const filterCalls: Array<[number, string, string]> = [];
+    const stubContract = {
+      filters: {
+        AttestationSubmitted: (agentId: number, svcHash: string, verifier: string) => {
+          filterCalls.push([agentId, svcHash, verifier]);
+          return { agentId };
+        },
+      },
+      queryFilter: async (filter: { agentId: number }) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        if (filter.agentId === 8) throw new Error('rpc boom');
+        if (filter.agentId === 9) return [];
+        return [
+          // Historical (matching) attestation first, superseded one after.
+          { args: { verdict: 2n, probeCommitment: COMMITMENT, evidenceHash: BATCH_ROOT, batchRoot: BATCH_ROOT } },
+          { args: { verdict: 1n, probeCommitment: '0x' + 'ee'.repeat(32), evidenceHash: BATCH_ROOT, batchRoot: BATCH_ROOT } },
+        ];
+      },
+    };
+    (client as unknown as { _contract: () => unknown })._contract = () => stubContract;
+
+    const errors: Array<[number, string]> = [];
+    const attestations = await client.fetchMatchingAttestations({
+      verifier: VERIFIER_ADDR,
+      sellers: [{ agentId: 7 }, { agentId: 8 }, { agentId: 9 }],
+      service: 'kimi-k2',
+      probeCommitment: COMMITMENT,
+      batchRoot: BATCH_ROOT,
+      evidenceHash: BATCH_ROOT,
+      fromBlock: 500,
+    }, (agentId, err) => errors.push([agentId, err.message]));
+
+    expect(maxInFlight).toBe(3);
+    expect(errors).toEqual([[8, 'rpc boom']]);
+    expect(attestations.size).toBe(1);
+    expect(attestations.get(7)).toEqual({
+      verdict: 2,
+      probeCommitment: COMMITMENT,
+      evidenceHash: BATCH_ROOT,
+      batchRoot: BATCH_ROOT,
+    });
+    // The scan is topic-filtered per (agentId, normalized service hash, verifier).
+    expect(filterCalls).toContainEqual([7, serviceHash('kimi-k2'), VERIFIER_ADDR]);
   });
 });
 

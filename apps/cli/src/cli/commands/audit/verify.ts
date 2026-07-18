@@ -4,10 +4,8 @@ import { lookup } from 'node:dns/promises'
 import { readFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
-import { getAddress, Interface, JsonRpcProvider, toBeHex, toUtf8String, zeroPadValue } from 'ethers'
-import type { ExchangeRecord } from '@antseed/node'
-import { serviceHash } from '@antseed/node'
-import type { EvidenceBundle, EvidenceSeller } from '@antseed/fingerprints'
+import { VerifierRegistryClient } from '@antseed/node'
+import type { EvidenceBundle } from '@antseed/fingerprints'
 import { computeEvidenceHash } from '@antseed/fingerprints'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
@@ -22,19 +20,12 @@ import type { OnChainAttestation } from '../../../verifier/audit-verify.js'
  * recomputes the batch root, the commitment opening, every seller signature,
  * the answer extraction, and the verdicts — and compares them against the
  * on-chain attestations. Exits non-zero on any mismatch.
+ *
+ * The chain fetchers (anchor by tx/commitment, reveal, matching
+ * attestations) live on VerifierRegistryClient in @antseed/node — this file
+ * keeps flag handling, pack fetching, and presentation.
  */
 
-const REGISTRY_IFACE = new Interface([
-  'function anchorExchangeBatch(bytes32 probeCommitment, (uint256 agentId, bytes32 requestHash, bytes32 responseHash, bytes responseAuthSig)[] records, bytes[] signingPayloads, uint32[] recordProbeCounts) returns (bytes32)',
-  'function revealProbeSet(bytes32 probeCommitment, bytes probeSetJson, string packUri)',
-  'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
-  'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
-  'event AttestationSubmitted(uint256 indexed agentId, bytes32 indexed serviceHash, address indexed verifier, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot, uint32 probeCount, uint32 cohortSize, bool credited, uint256 epoch)',
-])
-
-const ANCHOR_EVENT_TOPIC = REGISTRY_IFACE.getEvent('ExchangeBatchAnchored')!.topicHash
-const REVEAL_EVENT_TOPIC = REGISTRY_IFACE.getEvent('ProbeSetRevealed')!.topicHash
-const ATTESTATION_EVENT_TOPIC = REGISTRY_IFACE.getEvent('AttestationSubmitted')!.topicHash
 const MAX_REMOTE_PACK_BYTES = 64 * 1024 * 1024
 const REMOTE_PACK_TIMEOUT_MS = 30_000
 
@@ -63,42 +54,6 @@ BLOCKED_PACK_IPV6_ADDRESSES.addSubnet('2001:db8::', 32, 'ipv6')
 BLOCKED_PACK_IPV6_ADDRESSES.addSubnet('fc00::', 7, 'ipv6')
 BLOCKED_PACK_IPV6_ADDRESSES.addSubnet('fe80::', 10, 'ipv6')
 BLOCKED_PACK_IPV6_ADDRESSES.addSubnet('ff00::', 8, 'ipv6')
-
-export interface DecodedAnchor {
-  probeCommitment: string
-  records: ExchangeRecord[]
-}
-
-/** Decode anchorExchangeBatch calldata into the commitment + records. */
-export function decodeAnchorCalldata(data: string): DecodedAnchor {
-  const parsed = REGISTRY_IFACE.parseTransaction({ data })
-  if (!parsed || parsed.name !== 'anchorExchangeBatch') {
-    throw new Error('transaction is not an anchorExchangeBatch call')
-  }
-  const rawRecords = parsed.args[1] as Array<[bigint, string, string, string]>
-  return {
-    probeCommitment: parsed.args[0] as string,
-    records: rawRecords.map((r) => ({
-      agentId: r[0],
-      requestHash: r[1],
-      responseHash: r[2],
-      responseAuthSig: r[3],
-    })),
-  }
-}
-
-/** Decode revealProbeSet calldata into the commitment, probe-set JSON, and pack URI. */
-export function decodeRevealCalldata(data: string): { probeCommitment: string; probeSetJson: string; packUri: string } {
-  const parsed = REGISTRY_IFACE.parseTransaction({ data })
-  if (!parsed || parsed.name !== 'revealProbeSet') {
-    throw new Error('transaction is not a revealProbeSet call')
-  }
-  return {
-    probeCommitment: parsed.args[0] as string,
-    probeSetJson: toUtf8String(parsed.args[1] as string),
-    packUri: (parsed.args[2] as string) ?? '',
-  }
-}
 
 function isBlockedPackAddress(address: string): boolean {
   const version = isIP(address)
@@ -220,167 +175,6 @@ export async function fetchRemoteAuditPack(value: string): Promise<EvidenceBundl
   })
 }
 
-export interface FetchedAnchor extends DecodedAnchor {
-  verifier: string
-  batchRoot: string
-  txHash: string
-  /** Block the anchor tx was mined in — the lower bound for the reveal scan. */
-  blockNumber: number
-}
-
-async function fetchAnchorByTx(
-  provider: JsonRpcProvider,
-  registry: string,
-  txHash: string,
-): Promise<FetchedAnchor> {
-  const tx = await provider.getTransaction(txHash)
-  if (!tx) throw new Error(`anchor transaction ${txHash} not found`)
-  const expectedRegistry = getAddress(registry)
-  if (!tx.to || getAddress(tx.to) !== expectedRegistry) {
-    throw new Error(`anchor transaction ${txHash} was not sent to registry ${expectedRegistry}`)
-  }
-  const decoded = decodeAnchorCalldata(tx.data)
-  const receipt = await provider.getTransactionReceipt(txHash)
-  if (!receipt) throw new Error(`anchor transaction ${txHash} has no receipt (still pending?)`)
-  const log = receipt.logs.find((l) =>
-    getAddress(l.address) === expectedRegistry && l.topics[0] === ANCHOR_EVENT_TOPIC)
-  if (!log || !log.topics[3]) {
-    throw new Error('anchor transaction emitted no ExchangeBatchAnchored event (reverted or wrong contract?)')
-  }
-  if (!log.topics[1]) throw new Error('malformed ExchangeBatchAnchored event')
-  return {
-    ...decoded,
-    // The indexed event topic, NOT tx.from — under a relayed/AA submission the
-    // tx sender is not the verifier the contract recorded as msg.sender.
-    verifier: getAddress(`0x${log.topics[1].slice(26)}`),
-    batchRoot: log.topics[3],
-    txHash,
-    blockNumber: receipt.blockNumber,
-  }
-}
-
-async function fetchAnchorByCommitment(
-  provider: JsonRpcProvider,
-  registry: string,
-  verifier: string,
-  commitment: string,
-  fromBlock: number,
-): Promise<FetchedAnchor> {
-  const logs = await provider.getLogs({
-    address: registry,
-    fromBlock,
-    toBlock: 'latest',
-    topics: [ANCHOR_EVENT_TOPIC, zeroPadValue(verifier, 32), commitment],
-  })
-  const log = logs.at(-1)
-  if (!log) {
-    throw new Error(`no ExchangeBatchAnchored event for commitment ${commitment} by verifier ${verifier} (scanned from block ${fromBlock})`)
-  }
-  const tx = await provider.getTransaction(log.transactionHash)
-  if (!tx) throw new Error(`anchor transaction ${log.transactionHash} not found`)
-  const decoded = decodeAnchorCalldata(tx.data)
-  if (!log.topics[3]) throw new Error('malformed ExchangeBatchAnchored event')
-  return {
-    ...decoded,
-    verifier,
-    batchRoot: log.topics[3],
-    txHash: log.transactionHash,
-    blockNumber: log.blockNumber,
-  }
-}
-
-/** Fetch the revealed probe-set JSON (and pack URI) for an anchor. */
-async function fetchReveal(
-  provider: JsonRpcProvider,
-  registry: string,
-  verifier: string,
-  commitment: string,
-  fromBlock: number,
-): Promise<{ probeSetJson: string; packUri: string }> {
-  const logs = await provider.getLogs({
-    address: registry,
-    fromBlock,
-    toBlock: 'latest',
-    topics: [REVEAL_EVENT_TOPIC, zeroPadValue(verifier, 32), commitment],
-  })
-  const log = logs.at(-1)
-  if (!log) {
-    throw new Error(
-      `no ProbeSetRevealed event for commitment ${commitment} — the verifier has not revealed this probe set yet (scanned from block ${fromBlock})`,
-    )
-  }
-  const tx = await provider.getTransaction(log.transactionHash)
-  if (!tx) throw new Error(`reveal transaction ${log.transactionHash} not found`)
-  const decoded = decodeRevealCalldata(tx.data)
-  return { probeSetJson: decoded.probeSetJson, packUri: decoded.packUri }
-}
-
-/**
- * Resolve the anchor (by tx hash, or by a commitment event scan bounded by
- * `fromBlock`) and its matching reveal. The reveal scan is always bounded by
- * the anchor's block — the reveal is mined at or after the anchor — so the
- * --tx path never degenerates into an unbounded genesis-to-head scan.
- */
-export async function fetchAnchorAndReveal(
-  provider: JsonRpcProvider,
-  registry: string,
-  opts: { txHash?: string; verifier?: string; commitment?: string; fromBlock: number },
-): Promise<{ anchor: FetchedAnchor; reveal: { probeSetJson: string; packUri: string } }> {
-  const anchor = opts.txHash
-    ? await fetchAnchorByTx(provider, registry, opts.txHash)
-    : await fetchAnchorByCommitment(provider, registry, opts.verifier!, opts.commitment!, opts.fromBlock)
-  const reveal = await fetchReveal(provider, registry, anchor.verifier, anchor.probeCommitment, anchor.blockNumber)
-  return { anchor, reveal }
-}
-
-/** Read the historical attestation event tied to this exact published audit. */
-export async function fetchMatchingAttestations(
-  provider: JsonRpcProvider,
-  registry: string,
-  verifier: string,
-  sellers: ReadonlyArray<Pick<EvidenceSeller, 'agentId'>>,
-  service: string,
-  probeCommitment: string,
-  batchRoot: string,
-  evidenceHash: string,
-  fromBlock: number,
-): Promise<Map<number, OnChainAttestation>> {
-  const attestations = new Map<number, OnChainAttestation>()
-  const expectedServiceHash = serviceHash(service)
-  await Promise.all(sellers.map(async (seller) => {
-    if (!seller.agentId) return
-    try {
-      const logs = await provider.getLogs({
-        address: registry,
-        fromBlock,
-        toBlock: 'latest',
-        topics: [
-          ATTESTATION_EVENT_TOPIC,
-          zeroPadValue(toBeHex(seller.agentId), 32),
-          expectedServiceHash,
-          zeroPadValue(verifier, 32),
-        ],
-      })
-      const matching = logs.map((log) => REGISTRY_IFACE.parseLog(log)).find((parsed) =>
-        parsed
-        && parsed.args.probeCommitment.toLowerCase() === probeCommitment.toLowerCase()
-        && parsed.args.batchRoot.toLowerCase() === batchRoot.toLowerCase()
-        && parsed.args.evidenceHash.toLowerCase() === evidenceHash.toLowerCase())
-      if (matching) {
-        attestations.set(seller.agentId, {
-          verdict: Number(matching.args.verdict),
-          probeCommitment: matching.args.probeCommitment,
-          evidenceHash: matching.args.evidenceHash,
-          batchRoot: matching.args.batchRoot,
-        })
-      }
-    } catch (err) {
-      console.warn(chalk.yellow(`attestation read failed for agent ${seller.agentId}: ${(err as Error).message}`))
-    }
-  }))
-  return attestations
-}
-
 function mark(ok: boolean): string {
   return ok ? chalk.green('OK ') : chalk.red('FAIL')
 }
@@ -445,9 +239,9 @@ export function registerAuditVerifyCommand(auditCmd: Command): void {
         console.warn(chalk.yellow('Scanning events from genesis (block 0) — most public RPCs reject this. Pass --from-block <deployBlock> or use --tx <anchorTxHash>, and point --rpc-url at an archive node.'))
       }
 
-      const provider = new JsonRpcProvider(rpcUrl)
+      const client = new VerifierRegistryClient({ rpcUrl, contractAddress: registry })
       try {
-        const { anchor, reveal } = await fetchAnchorAndReveal(provider, registry, {
+        const { anchor, reveal } = await client.fetchAnchorAndReveal({
           ...(txHash ? { txHash } : {}),
           ...(verifierFlag ? { verifier: verifierFlag } : {}),
           ...(commitmentFlag ? { commitment: commitmentFlag } : {}),
@@ -478,20 +272,22 @@ export function registerAuditVerifyCommand(auditCmd: Command): void {
         }
 
         // Historical attestations for this exact audit (pack mode only —
-        // agent ids and the evidence hash come from the pack).
+        // agent ids and the evidence hash come from the pack). The hash is
+        // computed once and shared with verifyAudit below.
+        const packEvidenceHash = pack ? computeEvidenceHash(pack) : undefined
         let attestations: Map<number, OnChainAttestation> | undefined
-        if (pack) {
-          attestations = await fetchMatchingAttestations(
-            provider,
-            registry,
-            anchor.verifier,
-            pack.sellers,
-            pack.service,
-            anchor.probeCommitment,
-            anchor.batchRoot,
-            computeEvidenceHash(pack),
-            anchor.blockNumber,
-          )
+        if (pack && packEvidenceHash) {
+          attestations = await client.fetchMatchingAttestations({
+            verifier: anchor.verifier,
+            sellers: pack.sellers,
+            service: pack.service,
+            probeCommitment: anchor.probeCommitment,
+            batchRoot: anchor.batchRoot,
+            evidenceHash: packEvidenceHash,
+            fromBlock: anchor.blockNumber,
+          }, (agentId, err) => {
+            console.warn(chalk.yellow(`attestation read failed for agent ${agentId}: ${err.message}`))
+          })
         }
 
         const report = verifyAudit({
@@ -500,6 +296,7 @@ export function registerAuditVerifyCommand(auditCmd: Command): void {
           onChainBatchRoot: anchor.batchRoot,
           revealedProbeSetJson,
           ...(pack ? { pack } : {}),
+          ...(packEvidenceHash ? { packEvidenceHash } : {}),
           ...(attestations ? { attestations } : {}),
         })
 
@@ -545,7 +342,7 @@ export function registerAuditVerifyCommand(auditCmd: Command): void {
         console.error(chalk.red((err as Error).message))
         process.exitCode = 1
       } finally {
-        provider.destroy()
+        client.provider.destroy()
       }
     })
 }

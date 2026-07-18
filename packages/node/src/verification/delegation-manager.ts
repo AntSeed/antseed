@@ -142,13 +142,7 @@ export class DelegationManager {
     job: Omit<ProbeJobRequestPayload, 'version'>,
     timeoutMs?: number,
   ): Promise<ProbeJobResultPayload> {
-    if (!this._delegates.has(delegatePeerId)) {
-      throw new Error(`Delegate ${delegatePeerId} is not registered`);
-    }
-    const mux = this._muxes.get(delegatePeerId);
-    if (!mux) {
-      throw new Error(`No delegation channel to ${delegatePeerId}`);
-    }
+    const mux = this._requireRegisteredMux(delegatePeerId);
     return mux.runJob({ version: 1, ...job }, timeoutMs ?? job.timeoutMs + 5_000);
   }
 
@@ -163,6 +157,12 @@ export class DelegationManager {
     query: Omit<TargetQueryPayload, 'version'>,
     timeoutMs = DEFAULT_TARGET_QUERY_TIMEOUT_MS,
   ): Promise<TargetSuggestionPayload> {
+    const mux = this._requireRegisteredMux(delegatePeerId);
+    return mux.runTargetQuery({ version: 1, ...query }, timeoutMs);
+  }
+
+  /** The mux for a REGISTERED delegate — throws when unregistered or channel-less. */
+  private _requireRegisteredMux(delegatePeerId: PeerId): DelegationMux {
     if (!this._delegates.has(delegatePeerId)) {
       throw new Error(`Delegate ${delegatePeerId} is not registered`);
     }
@@ -170,7 +170,7 @@ export class DelegationManager {
     if (!mux) {
       throw new Error(`No delegation channel to ${delegatePeerId}`);
     }
-    return mux.runTargetQuery({ version: 1, ...query }, timeoutMs);
+    return mux;
   }
 
   // ─── Delegate (buyer) side ────────────────────────────────────────

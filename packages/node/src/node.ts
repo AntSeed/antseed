@@ -968,7 +968,21 @@ export class AntseedNode extends EventEmitter {
     if (!client || peers.length === 0) return;
 
     const VERIFICATION_RPC_CONCURRENCY = 8;
-    const queue = peers.filter((p) => typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0);
+    // Throttle verifier-registry reads across rapid discovery cycles — the
+    // sibling of ON_CHAIN_STATS_TTL_MS in _enrichPeersWithOnChainStats (two
+    // eth_calls per peer would otherwise repeat on every enrichment pass).
+    // A fresh read is only reusable when it already covers the service this
+    // discovery filtered on; otherwise re-read to pick up per-service stats.
+    const MODEL_VERIFICATION_TTL_MS = 60_000;
+    const nowMs = Date.now();
+    const serviceKey = service?.trim().toLowerCase();
+    const queue = peers.filter((p) =>
+      typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0
+      && !(
+        typeof p.modelVerificationFetchedAt === 'number'
+        && nowMs - p.modelVerificationFetchedAt < MODEL_VERIFICATION_TTL_MS
+        && (serviceKey === undefined || p.modelVerification?.[serviceKey] !== undefined)
+      ));
     if (queue.length === 0) return;
     // Effective points-policy exclusion threshold (minDistinctDiffVerifiers),
     // stamped onto every enrichment result so routing exclusion fires at the

@@ -21,7 +21,7 @@ import { debugLog, debugWarn } from './utils/debug.js';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
 import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
-import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
+import { extractServiceFromBody, hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 
 export interface SellerRequestHandlerDeps {
   identity: Identity;
@@ -612,9 +612,8 @@ export class SellerRequestHandler {
     if (!this._isJsonRequest(request)) {
       return null;
     }
-    const body = tryParseJsonObject(request.body);
-    const service = body?.["service"] ?? body?.["model"];
-    if (typeof service !== "string" || service.trim().length === 0) {
+    const service = extractServiceFromBody(request.body);
+    if (service === undefined || service.trim().length === 0) {
       return null;
     }
     return service.trim();

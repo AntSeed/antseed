@@ -46,12 +46,17 @@ export {
   VERIFIER_VERDICT_SAME,
   VERIFIER_VERDICT_DIFF,
   VERIFIER_VERDICT_UNDETERMINED,
+  decodeAnchorCalldata,
+  decodeRevealCalldata,
 } from './evm/verifier-client.js';
 export type {
   VerifierRegistryClientConfig,
   VerifierRewardsClientConfig,
-  VerifierAttestation,
   BatchAnchor,
+  DecodedAnchor,
+  FetchedAnchor,
+  ProbeSetReveal,
+  OnChainAttestation,
 } from './evm/verifier-client.js';
 
 export {

@@ -1,11 +1,9 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
-import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { buildKbfReference, resolveUpstream } from '../../../verifier/reference-builder.js'
-import { safeServiceSlug } from '../../../verifier/slug.js'
+import { enrollAndPersistReference, resolveUpstream } from '../../../verifier/reference-builder.js'
 import { parsePositiveIntFlag, resolveReferenceUpstreamInput } from './flags.js'
 
 /**
@@ -56,18 +54,17 @@ export function registerVerifierReferenceCommand(verifierCmd: Command): void {
         ?? join(globalOpts.dataDir, 'fingerprints', 'references')
 
       try {
-        const reference = await buildKbfReference(upstream, {
-          model: options.model as string,
-          ...(options.service ? { service: options.service as string } : {}),
-          ...(options.alias ? { aliases: options.alias as string[] } : {}),
-          ...(Number.isInteger(options.probes) ? { candidateCount: options.probes as number } : {}),
-          log: (m) => console.log(chalk.dim(`[reference] ${m}`)),
-        })
-
-        await mkdir(outDir, { recursive: true })
-        const slug = safeServiceSlug(reference.referenceModel || (options.model as string))
-        const outPath = join(outDir, `${slug}.json`)
-        await writeFile(outPath, JSON.stringify(reference, null, 2))
+        const { reference, outPath } = await enrollAndPersistReference(
+          upstream,
+          {
+            model: options.model as string,
+            ...(options.service ? { service: options.service as string } : {}),
+            ...(options.alias ? { aliases: options.alias as string[] } : {}),
+            ...(Number.isInteger(options.probes) ? { candidateCount: options.probes as number } : {}),
+            log: (m) => console.log(chalk.dim(`[reference] ${m}`)),
+          },
+          outDir,
+        )
 
         console.log(chalk.green(`Reference ${reference.referenceId.slice(0, 18)}… written to ${outPath}`))
         console.log(chalk.dim(`  model: ${reference.referenceModel} (aliases: ${reference.serviceAliases.join(', ')})`))

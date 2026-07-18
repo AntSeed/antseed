@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import chalk from 'chalk'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
+import { claimRewardEpochs, verifierRewardSource } from '../../../verifier/epoch-rewards.js'
 import {
   createVerifierRegistryClient,
   createVerifierRewardsClient,
@@ -29,12 +29,7 @@ export function registerVerifierClaimCommand(verifierCmd: Command): void {
       const window = await rewardsClient.getEpochWindow()
       const result = await claimRewardEpochs(
         window,
-        {
-          credits: (epoch) => registryClient.epochCredits(epoch, address),
-          claimed: (epoch) => rewardsClient.epochRewardClaimed(epoch, address),
-          pending: (epoch) => rewardsClient.pendingVerifierReward(epoch, address),
-          claim: (epoch) => rewardsClient.claimVerifierReward(identity.wallet, epoch),
-        },
+        verifierRewardSource(registryClient, rewardsClient, address, identity.wallet),
         {
           onClaim: (epoch, pending, tx) =>
             console.log(chalk.green(`Epoch ${epoch}: claimed ${formatAnts(pending)} ANTS (tx ${tx.slice(0, 10)}…)`)),

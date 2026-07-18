@@ -1,11 +1,11 @@
 import { AbiCoder, concat, keccak256, toUtf8Bytes } from 'ethers';
 import { describe, expect, it } from 'vitest';
 import {
-  buildFixtureRecords,
   computeBatchRoot,
   computeExchangeLeaf,
   type ExchangeRecord,
 } from '../src/verification/exchange-batch.js';
+import { buildFixtureRecords } from './helpers/exchange-fixtures.js';
 
 /**
  * Pinned roots for the shared deterministic fixture (buildFixtureRecords).

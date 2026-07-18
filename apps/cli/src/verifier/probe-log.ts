@@ -16,31 +16,48 @@ import { safeServiceSlug } from './slug.js'
  * missing file simply means less rotation, never a crash.
  */
 
-interface ProbeLogFile {
-  version: 1
-  service: string
-  /** Most-recently-used ids last; capped to a ring buffer. */
-  usedIds: string[]
-  updatedAt: string
+/**
+ * Generic per-service id-set store: one JSON file per service
+ * (`<slug><suffix>`) holding `{version, service, [field]: string[], updatedAt}`.
+ * Backs both the probe rotation log here and the burned-references marker in
+ * audit-runner.ts. `load` preserves file order (the Set iterates oldest-first
+ * for ring-buffer semantics) and is empty on any read/parse error; `save`
+ * creates the directory on demand.
+ */
+export interface ServiceIdSetStore {
+  load(dir: string, service: string): Promise<Set<string>>
+  save(dir: string, service: string, ids: readonly string[], now: string): Promise<void>
 }
 
 // safeServiceSlug throws on dot-only names (`..` would write one directory
-// up); loadUsedProbeIds treats that like any other read error (empty set),
-// recordUsedProbeIds surfaces it to the caller's warn handler.
-function logPath(dir: string, service: string): string {
-  return join(dir, `${safeServiceSlug(service)}.json`)
+// up); load treats that like any other read error (empty set), save surfaces
+// it to the caller.
+export function createServiceIdSetStore(suffix: string, field: string): ServiceIdSetStore {
+  const path = (dir: string, service: string): string => join(dir, `${safeServiceSlug(service)}${suffix}`)
+  return {
+    async load(dir, service) {
+      try {
+        const raw = await readFile(path(dir, service), 'utf8')
+        const ids = (JSON.parse(raw) as Record<string, unknown>)[field]
+        if (!Array.isArray(ids)) return new Set()
+        return new Set(ids.filter((id): id is string => typeof id === 'string'))
+      } catch {
+        return new Set()
+      }
+    },
+    async save(dir, service, ids, now) {
+      const file = { version: 1, service, [field]: ids, updatedAt: now }
+      await mkdir(dir, { recursive: true })
+      await writeFile(path(dir, service), JSON.stringify(file, null, 2))
+    },
+  }
 }
+
+const probeLogStore = createServiceIdSetStore('.json', 'usedIds')
 
 /** Load the set of recently-used probe ids for a service (empty on any error). */
 export async function loadUsedProbeIds(dir: string, service: string): Promise<Set<string>> {
-  try {
-    const raw = await readFile(logPath(dir, service), 'utf8')
-    const parsed = JSON.parse(raw) as Partial<ProbeLogFile>
-    if (!Array.isArray(parsed.usedIds)) return new Set()
-    return new Set(parsed.usedIds.filter((id): id is string => typeof id === 'string'))
-  } catch {
-    return new Set()
-  }
+  return probeLogStore.load(dir, service)
 }
 
 /**
@@ -61,13 +78,5 @@ export async function recordUsedProbeIds(
   const merged = [...existing].filter((id) => !ids.includes(id))
   merged.push(...ids)
   const trimmed = cap > 0 && merged.length > cap ? merged.slice(merged.length - cap) : merged
-
-  const file: ProbeLogFile = {
-    version: 1,
-    service,
-    usedIds: trimmed,
-    updatedAt: now,
-  }
-  await mkdir(dir, { recursive: true })
-  await writeFile(logPath(dir, service), JSON.stringify(file, null, 2))
+  await probeLogStore.save(dir, service, trimmed, now)
 }

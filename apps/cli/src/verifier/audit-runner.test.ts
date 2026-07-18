@@ -242,7 +242,6 @@ function baseOptions(dirs: TempDirs, overrides?: Partial<AuditRunnerOptions>): A
   return {
     probesPerAudit: 4,
     minProbeCount: 1,
-    cohortMinSize: 1,
     cohortMaxSize: 10,
     stalenessWindowSecs: 0,
     maxProbesPerRequest: 3,

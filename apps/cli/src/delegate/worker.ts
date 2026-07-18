@@ -6,7 +6,6 @@ import type {
   ProbeJobRequestPayload,
   ProbeJobResultPayload,
   SerializedHttpRequest,
-  StoredResponseAuth,
 } from '@antseed/node'
 import {
   CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
@@ -14,15 +13,18 @@ import {
   peerIdToAddress,
 } from '@antseed/node'
 import type { CreditStore } from './credit-store.js'
-import { toResponseAuthPayload } from '../verifier/probing.js'
+import {
+  RESPONSE_AUTH_POLL_TIMEOUT_MS,
+  toResponseAuthPayload,
+  waitForResponseAuth,
+} from '../verifier/probing.js'
+import { advertisedServices } from '../verifier/service-discovery.js'
 
 const DEFAULT_MAX_CONCURRENT_JOBS = 2
 const DEFAULT_MAX_JOBS_PER_HOUR = 60
 const DEFAULT_DISCOVERY_INTERVAL_MS = 300_000
 const MAX_JOB_BODY_BYTES = 256 * 1024
 const MAX_JOB_TIMEOUT_MS = 120_000
-const RESPONSE_AUTH_POLL_INTERVAL_MS = 500
-const RESPONSE_AUTH_POLL_TIMEOUT_MS = 35_000
 /** Largest completion budget a probe job may request on this buyer's dime. */
 const MAX_JOB_MAX_TOKENS = 4_096
 /** Largest seller response relayed back to the verifier. */
@@ -195,14 +197,17 @@ export class DelegateWorker {
       }
 
       // Re-validate approval of verifiers we are already serving: approval is
-      // revocable, and a revoked verifier must stop getting paid jobs.
-      for (const peerId of [...this._serving]) {
-        if (this._stopped) return
+      // revocable, and a revoked verifier must stop getting paid jobs. The
+      // checks are independent per verifier, so they run in parallel;
+      // allSettled keeps one failing check from touching the others.
+      await Promise.allSettled([...this._serving].map(async (peerId) => {
         const approved = await this._checkApproval(peerIdToAddress(peerId))
+        if (this._stopped) return
         if (approved === false) {
           this._dropRevokedVerifier(peerId)
         }
-      }
+      }))
+      if (this._stopped) return
 
       const peers = await this._options.node.discoverPeers()
       const verifiers = peers.filter((peer) =>
@@ -439,11 +444,14 @@ export class DelegateWorker {
       return { status: 'error', error: 'response_too_large' }
     }
 
-    const auth = await this._waitForResponseAuth(
-      job.request.requestId,
-      Math.min(RESPONSE_AUTH_POLL_TIMEOUT_MS, MAX_JOB_TIMEOUT_MS),
+    const auth = await waitForResponseAuth(node, job.request.requestId, {
+      timeoutMs: Math.min(RESPONSE_AUTH_POLL_TIMEOUT_MS, MAX_JOB_TIMEOUT_MS),
       signal,
-    )
+      // The verifier re-verifies the seller signature itself and trusts
+      // nothing this node claims — relay the record even when local
+      // verification did not pass.
+      requireVerified: false,
+    })
 
     return {
       status: 'ok',
@@ -455,20 +463,6 @@ export class DelegateWorker {
       // Full payload, not just the verified flag: the verifier re-verifies
       // the seller signature itself and trusts nothing this node claims.
       ...(auth ? { responseAuth: toResponseAuthPayload(auth) } : {}),
-    }
-  }
-
-  private async _waitForResponseAuth(
-    requestId: string,
-    timeoutMs: number,
-    signal: AbortSignal,
-  ): Promise<StoredResponseAuth | null> {
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const record = this._options.node.getResponseAuth(requestId)
-      if (record) return record
-      if (signal.aborted || Date.now() >= deadline) return null
-      await new Promise((resolve) => setTimeout(resolve, RESPONSE_AUTH_POLL_INTERVAL_MS))
     }
   }
 }
@@ -510,19 +504,7 @@ export async function buildTargetSuggestions(
 }
 
 function peerAdvertisesService(peer: PeerInfo, service: string): boolean {
-  const wanted = service.trim().toLowerCase()
-  if (wanted.length === 0) return false
-  for (const announcement of peer.metadata?.providers ?? []) {
-    for (const advertised of announcement.services ?? []) {
-      if (advertised.trim().toLowerCase() === wanted) return true
-    }
-  }
-  for (const entry of Object.values(peer.providerPricing ?? {})) {
-    for (const advertised of Object.keys(entry.services ?? {})) {
-      if (advertised.trim().toLowerCase() === wanted) return true
-    }
-  }
-  return false
+  return advertisedServices(peer).has(service.trim().toLowerCase())
 }
 
 /**

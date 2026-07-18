@@ -214,9 +214,9 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
     function _anchorOf(address verifier_, bytes32 root)
         internal
         view
-        returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount, bytes32 commitment)
+        returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount)
     {
-        (anchoredAt, recordCount, probeCount, commitment) = verifierRegistry.batchAnchors(verifier_, root);
+        (anchoredAt, recordCount, probeCount) = verifierRegistry.batchAnchors(verifier_, root);
     }
 
     function _attest(address verifier_, bytes32 commitment, bytes32 batchRoot) internal {
@@ -260,10 +260,9 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         vm.prank(verifier);
         bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
         assertEq(root, expectedRoot, "returned root");
-        (uint64 anchoredAt, uint32 recordCount, uint32 probeCount, bytes32 anchorCommitment) =
-            _anchorOf(verifier, root);
+        (uint64 anchoredAt, uint32 recordCount, uint32 probeCount) = _anchorOf(verifier, root);
         assertEq(anchoredAt, uint64(block.timestamp), "anchoredAt");
-        assertEq(anchorCommitment, commitment, "batch commitment");
+        assertEq(verifierRegistry.commitmentBatchRoot(verifier, commitment), root, "batch commitment");
         assertEq(recordCount, 10, "record count");
         assertEq(probeCount, 24, "summed probe count");
         assertEq(
@@ -279,7 +278,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
 
         // 3. Attest referencing the anchored batch (same second is allowed).
         _attest(verifier, commitment, root);
-        assertEq(verifierRegistry.attestationCountByCommitment(verifier, commitment), 1);
+        assertTrue(verifierRegistry.commitmentAttested(verifier, commitment));
 
         // 4. Reveal the exact canonical probe-set bytes; on-chain opening.
         //    The event carries the on-chain pointer to the off-chain pack.
@@ -312,7 +311,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         verifierRegistry.submitAttestation(agentA, SERVICE_HASH, 1, EVIDENCE_HASH, commitment, root, 10, 3);
         vm.prank(verifier);
         verifierRegistry.submitAttestation(agentB, SERVICE_HASH, 2, EVIDENCE_HASH, commitment, root, 10, 3);
-        assertEq(verifierRegistry.attestationCountByCommitment(verifier, commitment), 2);
+        assertTrue(verifierRegistry.commitmentAttested(verifier, commitment));
     }
 
     function test_attestationTargetMustAppearInSignedBatch() public {
@@ -485,7 +484,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         vm.expectRevert(abi.encodeWithSelector(AntseedVerifierRegistry.ExchangeAlreadyAnchored.selector, 0));
         verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
 
-        (uint64 anchoredAtA,,,) = _anchorOf(verifier, rootA);
+        (uint64 anchoredAtA,,) = _anchorOf(verifier, rootA);
         assertGt(anchoredAtA, 0);
     }
 
@@ -769,7 +768,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
         vm.prank(verifier);
         bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
 
-        (,, uint32 probeCount,) = _anchorOf(verifier, root);
+        (,, uint32 probeCount) = _anchorOf(verifier, root);
         bytes32 key = _keyOf(agentA);
         assertEq(probeCount, 12, "summed declared probes");
         assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, key, carrierX), 7);
@@ -1000,7 +999,7 @@ contract AntseedVerifierAnchoringTest is Test, ResponseAuthFixture {
 
         vm.prank(verifier);
         bytes32 root = verifierRegistry.anchorExchangeBatch(commitment, records, payloads, counts);
-        (,, uint32 probeCount,) = _anchorOf(verifier, root);
+        (,, uint32 probeCount) = _anchorOf(verifier, root);
         assertEq(probeCount, 3);
         assertEq(verifierRegistry.commitmentDelegateAccrued(verifier, commitment, _keyOf(pinnedAgent), PINNED_BUYER), 3);
     }

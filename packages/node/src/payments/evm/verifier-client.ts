@@ -1,11 +1,16 @@
 import {
   Contract,
+  getAddress,
   hexlify,
+  Interface,
   keccak256,
   solidityPackedKeccak256,
   toUtf8Bytes,
+  toUtf8String,
   type AbstractSigner,
   type BytesLike,
+  type EventLog,
+  type Log,
 } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 import { computeBatchRoot, type ExchangeRecord } from '../../verification/exchange-batch.js';
@@ -17,12 +22,7 @@ export interface VerifierRegistryClientConfig {
   evmChainId?: number;
 }
 
-export interface VerifierRewardsClientConfig {
-  rpcUrl: string;
-  fallbackRpcUrls?: string[];
-  contractAddress: string;
-  evmChainId?: number;
-}
+export type VerifierRewardsClientConfig = VerifierRegistryClientConfig;
 
 /**
  * On-chain verdict codes. FROZEN mapping shared with
@@ -32,18 +32,6 @@ export const VERIFIER_VERDICT_UNKNOWN = 0;
 export const VERIFIER_VERDICT_SAME = 1;
 export const VERIFIER_VERDICT_DIFF = 2;
 export const VERIFIER_VERDICT_UNDETERMINED = 3;
-
-export interface VerifierAttestation {
-  verifier: string;
-  attestedAt: number;
-  verdict: number;
-  probeCount: number;
-  cohortSize: number;
-  evidenceHash: string;
-  probeCommitment: string;
-  /** Root of the on-chain-anchored exchange batch the verdict references. */
-  batchRoot: string;
-}
 
 /**
  * Anchor state per (verifier, batchRoot), mirroring the contract's
@@ -60,8 +48,6 @@ export interface BatchAnchor {
    * the batch may claim.
    */
   probeCount: number;
-  /** Probe-set commitment the batch was anchored under. */
-  commitment: string;
 }
 
 /** Per-(agentId, service) or per-agent verification accumulators. */
@@ -89,12 +75,8 @@ const VERIFIER_REGISTRY_ABI = [
   'function claimDelegateCredits(address verifier, bytes32 probeCommitment, address buyer, uint256 agentId, bytes32 serviceHash) external',
   // Reads
   'function approvedVerifiers(address verifier) external view returns (bool)',
-  'function probeCommittedAt(address verifier, bytes32 commitment) external view returns (uint64)',
-  'function batchAnchors(address verifier, bytes32 batchRoot) external view returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount, bytes32 commitment)',
-  'function probeRevealedAt(address verifier, bytes32 commitment) external view returns (uint64)',
-  'function lastAuditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64)',
+  'function batchAnchors(address verifier, bytes32 batchRoot) external view returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount)',
   'function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64)',
-  'function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (tuple(address verifier, uint64 attestedAt, uint8 verdict, uint32 probeCount, uint32 cohortSize, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot))',
   'function verificationStats(uint256 agentId, bytes32 serviceHash) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier, uint32 activeDiffVerifierCount))',
   'function agentVerificationStats(uint256 agentId) external view returns (tuple(uint32 sameCount, uint32 diffCount, uint32 undeterminedCount, uint32 distinctVerifierCount, uint8 lastVerdict, address lastVerifier, uint32 activeDiffVerifierCount))',
   'function epochCredits(uint256 epoch, address verifier) external view returns (uint256)',
@@ -103,35 +85,89 @@ const VERIFIER_REGISTRY_ABI = [
   'function auditCooldown() external view returns (uint64)',
   'function maxCreditsPerVerifierPerEpoch() external view returns (uint32)',
   'function minProbeCount() external view returns (uint32)',
-  'function delegateShareBps() external view returns (uint16)',
-  'function maxDelegateCreditsPerVerifierPerEpoch() external view returns (uint32)',
   'function registry() external view returns (address)',
   'function epochDelegateCredits(uint256 epoch, address delegate) external view returns (uint256)',
-  'function epochTotalDelegateCredits(uint256 epoch) external view returns (uint256)',
-  'function epochDelegateCreditsGrantedBy(uint256 epoch, address verifier) external view returns (uint256)',
   'function commitmentDelegateAccrued(address verifier, bytes32 commitment, bytes32 targetKey, address buyer) external view returns (uint32)',
   'function commitmentDelegateClaimed(address verifier, bytes32 commitment, bytes32 targetKey, address buyer) external view returns (uint32)',
-  'function commitmentDelegateBudget(address verifier, bytes32 commitment, bytes32 targetKey) external view returns (uint256)',
-  'function commitmentDelegateCredits(address verifier, bytes32 commitment, bytes32 targetKey) external view returns (uint256)',
   'function anchoredExchangeBy(bytes32 requestHash) external view returns (address)',
-  'function responseAuthDigest(bytes signingPayload) external pure returns (bytes32)',
   'function parseResponseAuthPayload(bytes payload) external pure returns (address buyer, bytes32 advertisedServiceHash, bytes32 requestHash, bytes32 responseHash, uint64 responseStartedAt, uint64 responseCompletedAt)',
   // Events
   'event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri)',
   'event ExchangeBatchAnchored(address indexed verifier, bytes32 indexed probeCommitment, bytes32 indexed batchRoot, uint32 recordCount, uint32 probeCount)',
   'event DelegateCreditsAccrued(address indexed verifier, bytes32 indexed probeCommitment, address indexed buyer, uint256 agentId, bytes32 serviceHash, uint32 credits)',
+  'event AttestationSubmitted(uint256 indexed agentId, bytes32 indexed serviceHash, address indexed verifier, uint8 verdict, bytes32 evidenceHash, bytes32 probeCommitment, bytes32 batchRoot, uint32 probeCount, uint32 cohortSize, bool credited, uint256 epoch)',
 ] as const;
+
+const REGISTRY_INTERFACE = new Interface(VERIFIER_REGISTRY_ABI);
+const ANCHOR_EVENT_TOPIC = REGISTRY_INTERFACE.getEvent('ExchangeBatchAnchored')!.topicHash;
+
+/** Calldata decode of one anchorExchangeBatch call: the commitment + records. */
+export interface DecodedAnchor {
+  probeCommitment: string;
+  records: ExchangeRecord[];
+}
+
+/** Decode anchorExchangeBatch calldata into the commitment + records. */
+export function decodeAnchorCalldata(data: string): DecodedAnchor {
+  const parsed = REGISTRY_INTERFACE.parseTransaction({ data });
+  if (!parsed || parsed.name !== 'anchorExchangeBatch') {
+    throw new Error('transaction is not an anchorExchangeBatch call');
+  }
+  const rawRecords = parsed.args[1] as Array<[bigint, string, string, string]>;
+  return {
+    probeCommitment: parsed.args[0] as string,
+    records: rawRecords.map((r) => ({
+      agentId: r[0],
+      requestHash: r[1],
+      responseHash: r[2],
+      responseAuthSig: r[3],
+    })),
+  };
+}
+
+/** Decode revealProbeSet calldata into the commitment, probe-set JSON, and pack URI. */
+export function decodeRevealCalldata(data: string): { probeCommitment: string; probeSetJson: string; packUri: string } {
+  const parsed = REGISTRY_INTERFACE.parseTransaction({ data });
+  if (!parsed || parsed.name !== 'revealProbeSet') {
+    throw new Error('transaction is not a revealProbeSet call');
+  }
+  return {
+    probeCommitment: parsed.args[0] as string,
+    probeSetJson: toUtf8String(parsed.args[1] as string),
+    packUri: (parsed.args[2] as string) ?? '',
+  };
+}
+
+/** An anchor resolved from chain history (tx hash or event scan). */
+export interface FetchedAnchor extends DecodedAnchor {
+  verifier: string;
+  batchRoot: string;
+  txHash: string;
+  /** Block the anchor tx was mined in — the lower bound for the reveal scan. */
+  blockNumber: number;
+}
+
+/** The revealed probe-set opening of a commitment. */
+export interface ProbeSetReveal {
+  probeSetJson: string;
+  packUri: string;
+}
+
+/** One historical AttestationSubmitted event tied to a specific audit. */
+export interface OnChainAttestation {
+  verdict: number;
+  probeCommitment: string;
+  evidenceHash: string;
+  batchRoot: string;
+}
 
 const VERIFIER_REWARDS_ABI = [
   // Writes
   'function claimVerifierReward(uint256 epoch) external',
   'function claimDelegateReward(uint256 epoch) external',
-  'function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount, uint256 reserveAmount)',
   // Reads
   'function pendingVerifierReward(uint256 epoch, address verifier) external view returns (uint256)',
   'function pendingDelegateReward(uint256 epoch, address delegate) external view returns (uint256)',
-  'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
-  'function delegateEpochPool(uint256 epoch) external view returns (uint256)',
   'function epochRewardClaimed(uint256 epoch, address verifier) external view returns (bool)',
   'function epochDelegateRewardClaimed(uint256 epoch, address delegate) external view returns (bool)',
   'function gate() external view returns (address)',
@@ -264,13 +300,21 @@ function decodeStats(raw: Record<string | number, unknown> & unknown[]): Service
 /** Client for AntseedVerifierRegistry (whitelist, commitments, attestations). */
 export class VerifierRegistryClient extends BaseEvmClient {
   private _minDistinctDiffVerifiersCache: { value: number; fetchedAt: number } | null = null;
+  private _contractInstance: Contract | null = null;
 
   constructor(config: VerifierRegistryClientConfig) {
     super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
+  /** Read-side contract handle, constructed once (the provider never changes). */
   private _contract(): Contract {
-    return new Contract(this._contractAddress, VERIFIER_REGISTRY_ABI, this._provider);
+    this._contractInstance ??= new Contract(this._contractAddress, VERIFIER_REGISTRY_ABI, this._provider);
+    return this._contractInstance;
+  }
+
+  /** Call a view function returning a single numeric value. */
+  private async _readNumber(fn: string, ...args: unknown[]): Promise<number> {
+    return Number(await this._contract().getFunction(fn)(...args));
   }
 
   /**
@@ -505,8 +549,7 @@ export class VerifierRegistryClient extends BaseEvmClient {
     targetKey: string,
     buyer: string,
   ): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateAccrued')(verifier, commitment, targetKey, buyer);
-    return Number(v);
+    return this._readNumber('commitmentDelegateAccrued', verifier, commitment, targetKey, buyer);
   }
 
   async commitmentDelegateClaimed(
@@ -515,34 +558,7 @@ export class VerifierRegistryClient extends BaseEvmClient {
     targetKey: string,
     buyer: string,
   ): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateClaimed')(verifier, commitment, targetKey, buyer);
-    return Number(v);
-  }
-
-  /**
-   * Delegate-credit budget earned by `verifier`'s credited attestation of
-   * the target (`delegateTargetKey(agentId, serviceHash)`) on `commitment`,
-   * and how much of it claims have already drawn.
-   */
-  async commitmentDelegateBudget(verifier: string, commitment: string, targetKey: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateBudget')(verifier, commitment, targetKey);
-    return Number(v);
-  }
-
-  async commitmentDelegateCredits(verifier: string, commitment: string, targetKey: string): Promise<number> {
-    const v = await this._contract().getFunction('commitmentDelegateCredits')(verifier, commitment, targetKey);
-    return Number(v);
-  }
-
-  /**
-   * EIP-191 digest the contract signs a ResponseAuth payload under
-   * (`keccak256("\x19Ethereum Signed Message:\n" || len || "antseed-data-v1:"
-   * || payload)`), read from the contract's pure `responseAuthDigest`. Lets an
-   * off-chain caller cross-check `buildResponseAuthSigningBytes` against the
-   * on-chain mirror before anchoring.
-   */
-  async responseAuthDigest(signingPayload: BytesLike): Promise<string> {
-    return this._contract().getFunction('responseAuthDigest')(hexlify(signingPayload));
+    return this._readNumber('commitmentDelegateClaimed', verifier, commitment, targetKey, buyer);
   }
 
   /**
@@ -609,35 +625,7 @@ export class VerifierRegistryClient extends BaseEvmClient {
   }
 
   async epochDelegateCredits(epoch: number, delegate: string): Promise<number> {
-    const v = await this._contract().getFunction('epochDelegateCredits')(epoch, delegate);
-    return Number(v);
-  }
-
-  async epochTotalDelegateCredits(epoch: number): Promise<number> {
-    const v = await this._contract().getFunction('epochTotalDelegateCredits')(epoch);
-    return Number(v);
-  }
-
-  async epochDelegateCreditsGrantedBy(epoch: number, verifier: string): Promise<number> {
-    const v = await this._contract().getFunction('epochDelegateCreditsGrantedBy')(epoch, verifier);
-    return Number(v);
-  }
-
-  async getDelegatePolicy(): Promise<{ delegateShareBps: number; maxDelegateCreditsPerVerifierPerEpoch: number }> {
-    const contract = this._contract();
-    const [shareBps, maxCredits] = await Promise.all([
-      contract.getFunction('delegateShareBps')(),
-      contract.getFunction('maxDelegateCreditsPerVerifierPerEpoch')(),
-    ]);
-    return {
-      delegateShareBps: Number(shareBps),
-      maxDelegateCreditsPerVerifierPerEpoch: Number(maxCredits),
-    };
-  }
-
-  async probeCommittedAt(verifier: string, commitment: string): Promise<number> {
-    const v = await this._contract().getFunction('probeCommittedAt')(verifier, commitment);
-    return Number(v);
+    return this._readNumber('epochDelegateCredits', epoch, delegate);
   }
 
   /**
@@ -651,7 +639,6 @@ export class VerifierRegistryClient extends BaseEvmClient {
       anchoredAt: Number(raw.anchoredAt ?? raw[0]),
       recordCount: Number(raw.recordCount ?? raw[1]),
       probeCount: Number(raw.probeCount ?? raw[2]),
-      commitment: String(raw.commitment ?? raw[3]),
     };
   }
 
@@ -659,12 +646,6 @@ export class VerifierRegistryClient extends BaseEvmClient {
   async batchAnchoredAt(verifier: string, batchRoot: string): Promise<number> {
     const anchor = await this.getBatchAnchor(verifier, batchRoot);
     return anchor.anchoredAt;
-  }
-
-  /** Unix seconds when `verifier` revealed `commitment`'s probe set (0 = unrevealed). */
-  async probeRevealedAt(verifier: string, commitment: string): Promise<number> {
-    const v = await this._contract().getFunction('probeRevealedAt')(verifier, commitment);
-    return Number(v);
   }
 
   /**
@@ -685,39 +666,166 @@ export class VerifierRegistryClient extends BaseEvmClient {
     commitment: string,
     fromBlock: number | 'earliest' = 'earliest',
   ): Promise<string | null> {
-    const contract = this._contract();
-    const filter = contract.filters.ProbeSetRevealed!(verifier, commitment);
-    const logs = await contract.queryFilter(filter, fromBlock, 'latest');
-    const latest = logs[logs.length - 1];
+    const latest = await this._lastEventLog('ProbeSetRevealed', verifier, commitment, fromBlock);
     if (!latest || !('args' in latest)) return null;
     const packUri: unknown = latest.args?.packUri ?? latest.args?.[2];
     return typeof packUri === 'string' ? packUri : null;
   }
 
-  async lastAuditedAt(agentId: number | bigint, service: string): Promise<number> {
-    const v = await this._contract().getFunction('lastAuditedAt')(agentId, serviceHash(service));
-    return Number(v);
+  /**
+   * Fetch the LAST (verifier, commitment)-indexed registry event of a kind
+   * from `fromBlock` — the shared shape of the anchor, reveal, and pack-URI
+   * lookups. Both topics are indexed, so the node filters server-side.
+   */
+  private async _lastEventLog(
+    eventName: 'ExchangeBatchAnchored' | 'ProbeSetRevealed',
+    verifier: string,
+    commitment: string,
+    fromBlock: number | 'earliest',
+  ): Promise<EventLog | Log | null> {
+    const contract = this._contract();
+    const filter = contract.filters[eventName]!(verifier, commitment);
+    const logs = await contract.queryFilter(filter, fromBlock, 'latest');
+    return logs[logs.length - 1] ?? null;
+  }
+
+  /**
+   * Resolve an anchor from its transaction hash — the DIRECT lookup path
+   * (no log scan). Decodes the anchorExchangeBatch calldata and reads the
+   * verifier + batch root from the tx's own ExchangeBatchAnchored event.
+   * The verifier comes from the indexed event topic, NOT `tx.from` — under a
+   * relayed/AA submission the tx sender is not the verifier the contract
+   * recorded as msg.sender. Throws when the tx is missing, was not sent to
+   * this registry, or emitted no anchor event.
+   */
+  async fetchAnchorByTx(txHash: string): Promise<FetchedAnchor> {
+    const tx = await this._provider.getTransaction(txHash);
+    if (!tx) throw new Error(`anchor transaction ${txHash} not found`);
+    const expectedRegistry = getAddress(this._contractAddress);
+    if (!tx.to || getAddress(tx.to) !== expectedRegistry) {
+      throw new Error(`anchor transaction ${txHash} was not sent to registry ${expectedRegistry}`);
+    }
+    const decoded = decodeAnchorCalldata(tx.data);
+    const receipt = await this._provider.getTransactionReceipt(txHash);
+    if (!receipt) throw new Error(`anchor transaction ${txHash} has no receipt (still pending?)`);
+    const log = receipt.logs.find((l) =>
+      getAddress(l.address) === expectedRegistry && l.topics[0] === ANCHOR_EVENT_TOPIC);
+    if (!log || !log.topics[3]) {
+      throw new Error('anchor transaction emitted no ExchangeBatchAnchored event (reverted or wrong contract?)');
+    }
+    if (!log.topics[1]) throw new Error('malformed ExchangeBatchAnchored event');
+    return {
+      ...decoded,
+      verifier: getAddress(`0x${log.topics[1].slice(26)}`),
+      batchRoot: log.topics[3],
+      txHash,
+      blockNumber: receipt.blockNumber,
+    };
+  }
+
+  /**
+   * Resolve an anchor from the LAST ExchangeBatchAnchored event a `verifier`
+   * emitted for `commitment`, scanning from `fromBlock` (pass the registry
+   * deployment block — public RPCs reject unbounded genesis scans).
+   */
+  async fetchAnchorByCommitment(verifier: string, commitment: string, fromBlock: number): Promise<FetchedAnchor> {
+    const log = await this._lastEventLog('ExchangeBatchAnchored', verifier, commitment, fromBlock);
+    if (!log) {
+      throw new Error(
+        `no ExchangeBatchAnchored event for commitment ${commitment} by verifier ${verifier} (scanned from block ${fromBlock})`,
+      );
+    }
+    const tx = await this._provider.getTransaction(log.transactionHash);
+    if (!tx) throw new Error(`anchor transaction ${log.transactionHash} not found`);
+    const decoded = decodeAnchorCalldata(tx.data);
+    if (!log.topics[3]) throw new Error('malformed ExchangeBatchAnchored event');
+    return {
+      ...decoded,
+      verifier,
+      batchRoot: log.topics[3],
+      txHash: log.transactionHash,
+      blockNumber: log.blockNumber,
+    };
+  }
+
+  /** Fetch the revealed probe-set JSON (and pack URI) for an anchor. */
+  async fetchReveal(verifier: string, commitment: string, fromBlock: number): Promise<ProbeSetReveal> {
+    const log = await this._lastEventLog('ProbeSetRevealed', verifier, commitment, fromBlock);
+    if (!log) {
+      throw new Error(
+        `no ProbeSetRevealed event for commitment ${commitment} — the verifier has not revealed this probe set yet (scanned from block ${fromBlock})`,
+      );
+    }
+    const tx = await this._provider.getTransaction(log.transactionHash);
+    if (!tx) throw new Error(`reveal transaction ${log.transactionHash} not found`);
+    const decoded = decodeRevealCalldata(tx.data);
+    return { probeSetJson: decoded.probeSetJson, packUri: decoded.packUri };
+  }
+
+  /**
+   * Resolve the anchor (by tx hash, or by a commitment event scan bounded by
+   * `fromBlock`) and its matching reveal. The reveal scan is always bounded by
+   * the anchor's block — the reveal is mined at or after the anchor — so the
+   * tx-hash path never degenerates into an unbounded genesis-to-head scan.
+   */
+  async fetchAnchorAndReveal(
+    opts: { txHash?: string; verifier?: string; commitment?: string; fromBlock: number },
+  ): Promise<{ anchor: FetchedAnchor; reveal: ProbeSetReveal }> {
+    const anchor = opts.txHash
+      ? await this.fetchAnchorByTx(opts.txHash)
+      : await this.fetchAnchorByCommitment(opts.verifier!, opts.commitment!, opts.fromBlock);
+    const reveal = await this.fetchReveal(anchor.verifier, anchor.probeCommitment, anchor.blockNumber);
+    return { anchor, reveal };
+  }
+
+  /**
+   * Read the historical attestation events tied to one exact published audit
+   * — the (verifier, probeCommitment, batchRoot, evidenceHash) tuple — for
+   * each seller, keyed by agentId. Sellers whose scan fails are skipped
+   * (reported via `onSellerError`); sellers without an agentId are ignored.
+   */
+  async fetchMatchingAttestations(
+    input: {
+      verifier: string;
+      sellers: ReadonlyArray<{ agentId?: number }>;
+      service: string;
+      probeCommitment: string;
+      batchRoot: string;
+      evidenceHash: string;
+      fromBlock: number;
+    },
+    onSellerError?: (agentId: number, err: Error) => void,
+  ): Promise<Map<number, OnChainAttestation>> {
+    const contract = this._contract();
+    const attestations = new Map<number, OnChainAttestation>();
+    const expectedServiceHash = serviceHash(input.service);
+    await Promise.all(input.sellers.map(async (seller) => {
+      if (!seller.agentId) return;
+      try {
+        const filter = contract.filters.AttestationSubmitted!(seller.agentId, expectedServiceHash, input.verifier);
+        const logs = await contract.queryFilter(filter, input.fromBlock, 'latest');
+        const matching = logs.find((log) =>
+          'args' in log
+          && String(log.args.probeCommitment).toLowerCase() === input.probeCommitment.toLowerCase()
+          && String(log.args.batchRoot).toLowerCase() === input.batchRoot.toLowerCase()
+          && String(log.args.evidenceHash).toLowerCase() === input.evidenceHash.toLowerCase());
+        if (matching && 'args' in matching) {
+          attestations.set(seller.agentId, {
+            verdict: Number(matching.args.verdict),
+            probeCommitment: String(matching.args.probeCommitment),
+            evidenceHash: String(matching.args.evidenceHash),
+            batchRoot: String(matching.args.batchRoot),
+          });
+        }
+      } catch (err) {
+        onSellerError?.(seller.agentId, err as Error);
+      }
+    }));
+    return attestations;
   }
 
   async lastCreditedAt(agentId: number | bigint, service: string): Promise<number> {
-    const v = await this._contract().getFunction('lastCreditedAt')(agentId, serviceHash(service));
-    return Number(v);
-  }
-
-  async latestAttestation(agentId: number | bigint, service: string): Promise<VerifierAttestation | null> {
-    const raw = await this._contract().getFunction('latestAttestation')(agentId, serviceHash(service));
-    const attestation: VerifierAttestation = {
-      verifier: raw.verifier ?? raw[0],
-      attestedAt: Number(raw.attestedAt ?? raw[1]),
-      verdict: Number(raw.verdict ?? raw[2]),
-      probeCount: Number(raw.probeCount ?? raw[3]),
-      cohortSize: Number(raw.cohortSize ?? raw[4]),
-      evidenceHash: raw.evidenceHash ?? raw[5],
-      probeCommitment: raw.probeCommitment ?? raw[6],
-      batchRoot: raw.batchRoot ?? raw[7],
-    };
-    if (attestation.attestedAt === 0) return null;
-    return attestation;
+    return this._readNumber('lastCreditedAt', agentId, serviceHash(service));
   }
 
   async verificationStats(agentId: number | bigint, service: string): Promise<ServiceVerificationStats> {
@@ -732,18 +840,15 @@ export class VerifierRegistryClient extends BaseEvmClient {
   }
 
   async epochCredits(epoch: number, verifier: string): Promise<number> {
-    const v = await this._contract().getFunction('epochCredits')(epoch, verifier);
-    return Number(v);
+    return this._readNumber('epochCredits', epoch, verifier);
   }
 
   async epochTotalCredits(epoch: number): Promise<number> {
-    const v = await this._contract().getFunction('epochTotalCredits')(epoch);
-    return Number(v);
+    return this._readNumber('epochTotalCredits', epoch);
   }
 
   async currentEpoch(): Promise<number> {
-    const v = await this._contract().getFunction('currentEpoch')();
-    return Number(v);
+    return this._readNumber('currentEpoch');
   }
 
   async getAuditPolicy(): Promise<{ auditCooldown: number; maxCreditsPerVerifierPerEpoch: number; minProbeCount: number }> {
@@ -763,12 +868,16 @@ export class VerifierRegistryClient extends BaseEvmClient {
 
 /** Client for AntseedVerifierRewards (emissions bucket claims). */
 export class VerifierRewardsClient extends BaseEvmClient {
+  private _contractInstance: Contract | null = null;
+
   constructor(config: VerifierRewardsClientConfig) {
     super(config.rpcUrl, config.contractAddress, config.fallbackRpcUrls, config.evmChainId);
   }
 
+  /** Read-side contract handle, constructed once (the provider never changes). */
   private _contract(): Contract {
-    return new Contract(this._contractAddress, VERIFIER_REWARDS_ABI, this._provider);
+    this._contractInstance ??= new Contract(this._contractAddress, VERIFIER_REWARDS_ABI, this._provider);
+    return this._contractInstance;
   }
 
   async claimVerifierReward(signer: AbstractSigner, epoch: number): Promise<string> {
@@ -783,24 +892,12 @@ export class VerifierRewardsClient extends BaseEvmClient {
     return this._contract().getFunction('pendingDelegateReward')(epoch, delegate);
   }
 
-  async delegateEpochPool(epoch: number): Promise<bigint> {
-    return this._contract().getFunction('delegateEpochPool')(epoch);
-  }
-
   async epochDelegateRewardClaimed(epoch: number, delegate: string): Promise<boolean> {
     return this._contract().getFunction('epochDelegateRewardClaimed')(epoch, delegate);
   }
 
-  async settleEpochRemainder(signer: AbstractSigner, epoch: number): Promise<string> {
-    return this._execWrite(signer, VERIFIER_REWARDS_ABI, 'settleEpochRemainder', epoch);
-  }
-
   async pendingVerifierReward(epoch: number, verifier: string): Promise<bigint> {
     return this._contract().getFunction('pendingVerifierReward')(epoch, verifier);
-  }
-
-  async verifierEpochBudget(epoch: number): Promise<bigint> {
-    return this._contract().getFunction('verifierEpochBudget')(epoch);
   }
 
   async epochRewardClaimed(epoch: number, verifier: string): Promise<boolean> {

@@ -2,7 +2,7 @@ import {
   DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
   type ServiceVerificationStats,
 } from '../payments/evm/verifier-client.js';
-import type { PeerModelVerification } from '../types/peer.js';
+import type { PeerInfo, PeerModelVerification } from '../types/peer.js';
 
 /**
  * Minimum distinct verifiers before a clean history earns a positive score.
@@ -190,4 +190,48 @@ export function hasModelSubstitutionFlag(
       ? stamped
       : MIN_DISTINCT_DIFF_VERIFIERS_FOR_EXCLUSION);
   return mv.activeDiffVerifierCount >= threshold;
+}
+
+/**
+ * Whole-peer substitution-flag exclusion gate, shared by every routing
+ * consumer (DefaultRouter, the CLI buyer-proxy): true when `peer` carries a
+ * standing model-substitution flag relevant to `requestedService`. A cheaper
+ * price is meaningless when the product itself is in doubt: an active DIFF
+ * means at least one approved verifier currently stands by evidence that the
+ * seller served a different model than advertised. The exclusion is temporary
+ * by construction — the flag lifts as soon as every accusing verifier retracts
+ * (attests SAME again). Peers with no verification data are unaffected
+ * (unknown ≠ known bad).
+ *
+ * Per-service stats for `requestedService` are consulted first; absent those,
+ * the agent-wide '*' aggregate applies so a flagged seller cannot dodge the
+ * gate by being probed under a differently-keyed service name.
+ *
+ * A flag older than the freshness bound is treated as absent: enrichment
+ * stopped refreshing this peer (registry unconfigured, RPC down), so the
+ * flag could never lift and would block the seller forever. A stamp-less
+ * entry carries no age information and is honored as-is.
+ *
+ * The corroboration bar (how many distinct standing-DIFF verifiers exclude)
+ * is NOT hardcoded here: enrichment stamps the chain-read points-policy
+ * `minDistinctDiffVerifiers` onto each entry as `exclusionThreshold`, and
+ * `hasModelSubstitutionFlag` consumes the stamp (offline fallback: 2).
+ */
+export function peerHasActiveSubstitutionFlag(
+  peer: PeerInfo,
+  requestedService: string | null,
+  nowMs: number = Date.now(),
+): boolean {
+  const mv = peer.modelVerification;
+  if (!mv) return false;
+  const fetchedAt = peer.modelVerificationFetchedAt;
+  if (typeof fetchedAt === 'number' && Number.isFinite(fetchedAt)
+    && nowMs - fetchedAt >= MODEL_VERIFICATION_MAX_AGE_MS) {
+    return false;
+  }
+  if (requestedService) {
+    const perService = mv[requestedService];
+    if (perService) return hasModelSubstitutionFlag(perService);
+  }
+  return hasModelSubstitutionFlag(mv['*']);
 }

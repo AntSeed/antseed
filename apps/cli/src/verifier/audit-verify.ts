@@ -15,13 +15,12 @@ import {
   computeEvidenceHash,
   computeKbfVerdict,
   computeMatchVector,
-  extractAnswersFreeText,
   sha256Hex,
   verdictFromCode,
 } from '@antseed/fingerprints'
 import { canonicalProbeSetJson } from './pack-writer.js'
 import { combineVerdicts } from './audit-runner.js'
-import { extractCompletionText } from './probing.js'
+import { scatterPlanAnswers } from './probing.js'
 
 /**
  * Audit recomputation (`antseed audit verify` core) — the "re-run it
@@ -108,6 +107,12 @@ export interface AuditVerifyInput {
   revealedProbeSetJson: string
   /** Published audit pack; without it only the chain-side checks run. */
   pack?: EvidenceBundle
+  /**
+   * `computeEvidenceHash(pack)`, when the caller already computed it (the CLI
+   * does, to look up matching attestations). Purely an optimization — absent,
+   * it is computed here; a caller must never pass anything else.
+   */
+  packEvidenceHash?: string
   /** agentId → historical on-chain attestation matching this audit. */
   attestations?: ReadonlyMap<number, OnChainAttestation>
 }
@@ -180,12 +185,7 @@ export function reextractAnswers(
   plans.forEach((plan, i) => {
     const exchange = exchanges[i]
     if (!exchange?.response || exchange.response.statusCode !== 200) return
-    const text = extractCompletionText(new Uint8Array(Buffer.from(exchange.response.bodyBase64, 'base64')))
-    if (text === null) return
-    const planAnswers = extractAnswersFreeText(text, plan.probes)
-    plan.probeIndices.forEach((probeIndex, k) => {
-      answers[probeIndex] = planAnswers[k] ?? null
-    })
+    scatterPlanAnswers(new Uint8Array(Buffer.from(exchange.response.bodyBase64, 'base64')), plan, answers)
   })
   return answers
 }
@@ -283,7 +283,7 @@ export function verifyAudit(input: AuditVerifyInput): AuditVerifyReport {
     detail: 'canonical JSON of pack.probeSet vs revealed bytes',
   })
 
-  const packEvidenceHash = computeEvidenceHash(pack)
+  const packEvidenceHash = input.packEvidenceHash ?? computeEvidenceHash(pack)
 
   // Anchored record lookup: agentId:requestHash:responseHash:sig.
   const anchoredKeys = new Set(

@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
+import { ZeroAddress } from 'ethers'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
 import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
@@ -50,7 +51,9 @@ export function registerDelegateClaimCommand(delegateCmd: Command): void {
         const buyers = [...new Set(accruals.map((a) => a.buyer.toLowerCase()))]
         const deposits = createDepositsClient(config, rpcOverrides)
         const claimableBuyers = new Set<string>()
-        for (const buyer of buyers) {
+        // One independent lookup per buyer — run them in parallel; errors are
+        // handled inside each mapped promise.
+        await Promise.all(buyers.map(async (buyer) => {
           try {
             const operator = await deposits.getOperator(buyer)
             if (operator && operator.toLowerCase() === address.toLowerCase()) {
@@ -58,7 +61,7 @@ export function registerDelegateClaimCommand(delegateCmd: Command): void {
             } else {
               hadFailures = true
               console.error(chalk.red(
-                `Buyer ${buyer.slice(0, 10)}…: registered operator is ${operator && operator !== '0x' + '0'.repeat(40) ? operator : 'not set'}, `
+                `Buyer ${buyer.slice(0, 10)}…: registered operator is ${operator && operator !== ZeroAddress ? operator : 'not set'}, `
                 + 'not this wallet — skipping its accruals. Run with the operator\'s --data-dir, or register the operator on AntseedDeposits first.',
               ))
             }
@@ -68,7 +71,7 @@ export function registerDelegateClaimCommand(delegateCmd: Command): void {
             claimableBuyers.add(buyer)
             console.warn(chalk.yellow(`Buyer ${buyer.slice(0, 10)}…: operator lookup failed (${(err as Error).message}); attempting claims anyway.`))
           }
-        }
+        }))
 
         const statuses = await resolveCreditStatuses(
           accruals.filter((a) => claimableBuyers.has(a.buyer.toLowerCase())),

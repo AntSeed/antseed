@@ -13,6 +13,8 @@
  *    reported and skipped instead of blocking every later epoch forever.
  */
 
+import type { AbstractSigner } from 'ethers'
+
 export interface EpochWindow {
   currentEpoch: number
   effectiveEpoch: number
@@ -34,6 +36,30 @@ export interface EpochRewardSource {
   pending(epoch: number): Promise<bigint>
   /** Submit the claim tx; resolves to the tx hash. */
   claim(epoch: number): Promise<string>
+}
+
+/**
+ * Bind the VERIFIER ANTS reward stream (registry epoch credits + rewards
+ * contract claimed/pending/claim) to one verifier address and signer. Shared
+ * by `antseed verifier claim` and the daemon's per-round claim pass so the
+ * two adapters cannot drift.
+ */
+export function verifierRewardSource(
+  registry: { epochCredits(epoch: number, verifier: string): Promise<number> },
+  rewards: {
+    epochRewardClaimed(epoch: number, verifier: string): Promise<boolean>
+    pendingVerifierReward(epoch: number, verifier: string): Promise<bigint>
+    claimVerifierReward(signer: AbstractSigner, epoch: number): Promise<string>
+  },
+  address: string,
+  signer: AbstractSigner,
+): EpochRewardSource {
+  return {
+    credits: (epoch) => registry.epochCredits(epoch, address),
+    claimed: (epoch) => rewards.epochRewardClaimed(epoch, address),
+    pending: (epoch) => rewards.pendingVerifierReward(epoch, address),
+    claim: (epoch) => rewards.claimVerifierReward(signer, epoch),
+  }
 }
 
 export interface ClaimEpochsOptions {

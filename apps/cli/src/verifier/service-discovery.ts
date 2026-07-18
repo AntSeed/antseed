@@ -32,7 +32,7 @@ export interface DiscoveredService {
 }
 
 /** Advertised services of one peer: normalized id → original spelling (first seen). */
-function advertisedServices(peer: PeerInfo): Map<string, string> {
+export function advertisedServices(peer: PeerInfo): Map<string, string> {
   const services = new Map<string, string>()
   const add = (service: string): void => {
     const original = service.trim()

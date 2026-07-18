@@ -17,7 +17,7 @@ import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
-import { tryParseJsonObject } from "./utils/json-codec.js";
+import { extractServiceFromBody } from "./utils/json-codec.js";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "./types/protocol.js";
 
 export interface RequestStreamResponseMetadata {
@@ -405,14 +405,6 @@ export class BuyerRequestHandler {
         debugWarn(`[BuyerRequest] Missing ResponseAuth for ${request.requestId.slice(0, 8)} from ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
       });
   }
-}
-
-/** Extract the service/model name from a JSON request body, or undefined if not found. */
-function extractServiceFromBody(body: Uint8Array): string | undefined {
-  const parsed = tryParseJsonObject(body);
-  const service = parsed?.service ?? parsed?.model;
-  if (typeof service === 'string' && service.length > 0) return service;
-  return undefined;
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {

@@ -5,6 +5,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/htt
 import { ANTSEED_STREAMING_RESPONSE_HEADER } from '../types/http.js';
 import { bytesToHex, hexToBytes, signData, verifySignature } from '../p2p/identity.js';
 import { encodeHttpRequest, encodeHttpResponse } from '../proxy/request-codec.js';
+import type { StoredResponseAuth } from './storage.js';
 
 const RESPONSE_AUTH_DOMAIN = 'antseed-response-auth-v1';
 
@@ -51,6 +52,30 @@ export function createResponseAuthPayload(input: ResponseAuthInput, signer: Wall
   };
   const signature = bytesToHex(signData(signer, buildResponseAuthSigningBytes(payload)));
   return { ...payload, signature };
+}
+
+/**
+ * Strip local bookkeeping (receivedAt/verified/verificationError) from a
+ * stored record so only the seller-signed payload remains. Kept next to the
+ * payload type: a new ResponseAuth field added here cannot be silently
+ * dropped by an app-layer copy.
+ */
+export function toResponseAuthPayload(stored: StoredResponseAuth): ResponseAuthPayload {
+  return {
+    version: stored.version,
+    requestId: stored.requestId,
+    ...(stored.channelId ? { channelId: stored.channelId } : {}),
+    buyerPeerId: stored.buyerPeerId,
+    sellerPeerId: stored.sellerPeerId,
+    advertisedService: stored.advertisedService,
+    provider: stored.provider,
+    statusCode: stored.statusCode,
+    requestHash: stored.requestHash,
+    responseHash: stored.responseHash,
+    responseStartedAt: stored.responseStartedAt,
+    responseCompletedAt: stored.responseCompletedAt,
+    signature: stored.signature,
+  };
 }
 
 export function verifyResponseAuth(

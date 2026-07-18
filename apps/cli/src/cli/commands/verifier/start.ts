@@ -11,6 +11,7 @@ import {
 import type { NodePaymentsConfig, PeerInfo } from '@antseed/node'
 import { mergeBootstrapNodes, OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
+import { paymentsConfigFromChain } from '../network/chain-config-helper.js'
 import {
   createVerifierRegistryClient,
   createVerifierRewardsClient,
@@ -32,13 +33,11 @@ import {
   solicitDelegateTargets,
 } from '../../../verifier/delegated-probing.js'
 import { discoverServices } from '../../../verifier/service-discovery.js'
-import { buildKbfReference, resolveUpstream, resolveUpstreamModel } from '../../../verifier/reference-builder.js'
-import { claimRewardEpochs } from '../../../verifier/epoch-rewards.js'
+import { enrollAndPersistReference, resolveUpstream, resolveUpstreamModel } from '../../../verifier/reference-builder.js'
+import { claimRewardEpochs, verifierRewardSource } from '../../../verifier/epoch-rewards.js'
 import { SellerBackoff, EpochAttemptBudget } from '../../../verifier/backoff.js'
-import { safeServiceSlug } from '../../../verifier/slug.js'
 import { parsePositiveIntFlag } from './flags.js'
 import type { VerifierCLIConfig } from '../../../config/types.js'
-import { mkdir, writeFile } from 'node:fs/promises'
 
 const DEFAULT_MAX_AUDITS_PER_EPOCH = 50
 const DEFAULT_PROBES_PER_AUDIT = 24
@@ -189,16 +188,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
       // Probe traffic must be paid, organic-looking buyer traffic — payments
       // are mandatory for a verifier, unlike an ordinary buyer.
       const paymentsConfig: NodePaymentsConfig = {
-        enabled: true,
-        rpcUrl: chainConfig.rpcUrl,
-        ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-        depositsAddress: chainConfig.depositsContractAddress,
-        channelsAddress: chainConfig.channelsContractAddress,
-        ...(chainConfig.freeUsageContractAddress ? { freeUsageAddress: chainConfig.freeUsageContractAddress } : {}),
-        usdcAddress: chainConfig.usdcContractAddress,
-        ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
-        ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
-        chainId: chainConfig.evmChainId,
+        ...paymentsConfigFromChain(chainConfig),
         platformFeeRate: config.payments?.platformFeeRate,
         maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '300000',
         maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
@@ -333,12 +323,7 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           const window = await rewardsClient.getEpochWindow()
           const result = await claimRewardEpochs(
             window,
-            {
-              credits: (epoch) => registryClient.epochCredits(epoch, address),
-              claimed: (epoch) => rewardsClient.epochRewardClaimed(epoch, address),
-              pending: (epoch) => rewardsClient.pendingVerifierReward(epoch, address),
-              claim: (epoch) => rewardsClient.claimVerifierReward(identity.wallet, epoch),
-            },
+            verifierRewardSource(registryClient, rewardsClient, address, identity.wallet),
             {
               ...(rewardScanFloor !== undefined ? { fromEpoch: rewardScanFloor } : {}),
               onClaim: (epoch, pending, tx) =>
@@ -466,8 +451,9 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
           // daemon run), falling back to cohort-only grading until one exists.
           let enrollKey = service
           let burnedReferenceIndex = -1
+          let burnedIds: Set<string> | undefined
           if (reference?.selfTest) {
-            const burnedIds = await loadBurnedReferenceIds(verifierOptions.probeLogDir, service)
+            burnedIds = await loadBurnedReferenceIds(verifierOptions.probeLogDir, service)
             if (burnedIds.has(reference.referenceId)) {
               log(`${service}: reference ${reference.referenceId.slice(0, 18)}… is burned (revealed in a past audit); a fresh one is needed`)
               enrollKey = `${service}:${reference.referenceId}`
@@ -504,10 +490,11 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
             const upstreamModel = resolveUpstreamModel(config.verifier?.upstream?.modelMap, service, advertised)
             log(`${service}: no usable reference — enrolling via ${upstream.baseUrl} as "${upstreamModel}"`)
             try {
-              const built = await buildKbfReference(upstream, { model: upstreamModel, service, log })
-              await mkdir(verifierOptions.referencesDir, { recursive: true })
-              const outPath = join(verifierOptions.referencesDir, `${safeServiceSlug(service)}.json`)
-              await writeFile(outPath, JSON.stringify(built, null, 2))
+              const { reference: built, outPath } = await enrollAndPersistReference(
+                upstream,
+                { model: upstreamModel, service, log },
+                verifierOptions.referencesDir,
+              )
               // A fresh reference REPLACES a burned one in the in-memory list
               // (findReferenceForService returns the first match, which would
               // otherwise keep resolving to the burned entry every round).
@@ -608,7 +595,6 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
               {
                 probesPerAudit: verifierOptions.probesPerAudit,
                 minProbeCount: policy.minProbeCount,
-                cohortMinSize: verifierOptions.cohortMinSize,
                 cohortMaxSize: verifierOptions.cohortMaxSize,
                 stalenessWindowSecs,
                 maxProbesPerRequest: verifierOptions.maxProbesPerRequest,
@@ -625,6 +611,9 @@ export function registerVerifierStartCommand(verifierCmd: Command): void {
                 // grouping/config/hash keys only.
                 advertisedService: advertised,
                 advertisedByPeer,
+                // Already loaded above while resolving the burn state — pass
+                // it through so the runner does not re-read the same file.
+                ...(burnedIds ? { burnedReferenceIds: burnedIds } : {}),
                 ...(probeExecutor ? { probeExecutor } : {}),
                 log,
                 warn,

@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import type { AntseedNode, PeerInfo, ResponseAuthPayload, StoredResponseAuth } from '@antseed/node'
-import type { ProbeSet } from '@antseed/fingerprints'
+import { toResponseAuthPayload } from '@antseed/node'
+import type { ProbeSet, StealthRequestPlan } from '@antseed/fingerprints'
 import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/fingerprints'
 
-const RESPONSE_AUTH_POLL_INTERVAL_MS = 500
-const RESPONSE_AUTH_POLL_TIMEOUT_MS = 35_000
+// Lives next to the ResponseAuth types in @antseed/node so a new payload
+// field cannot be silently dropped by an app-layer copy; re-exported for
+// this module's existing consumers.
+export { toResponseAuthPayload }
+
+export const RESPONSE_AUTH_POLL_INTERVAL_MS = 500
+export const RESPONSE_AUTH_POLL_TIMEOUT_MS = 35_000
 
 /**
  * One complete probe exchange as persisted in evidence bundles: the exact
@@ -74,37 +80,50 @@ export function extractCompletionText(body: Uint8Array): string | null {
   }
 }
 
-/** Strip local bookkeeping so only the seller-signed payload is persisted. */
-export function toResponseAuthPayload(stored: StoredResponseAuth): ResponseAuthPayload {
-  return {
-    version: stored.version,
-    requestId: stored.requestId,
-    ...(stored.channelId ? { channelId: stored.channelId } : {}),
-    buyerPeerId: stored.buyerPeerId,
-    sellerPeerId: stored.sellerPeerId,
-    advertisedService: stored.advertisedService,
-    provider: stored.provider,
-    statusCode: stored.statusCode,
-    requestHash: stored.requestHash,
-    responseHash: stored.responseHash,
-    responseStartedAt: stored.responseStartedAt,
-    responseCompletedAt: stored.responseCompletedAt,
-    signature: stored.signature,
-  }
+/**
+ * Extract one stealth plan's answers from a completion body and scatter them
+ * into the full-probe-set `answers` array by the plan's probe indices (plans
+ * cover disjoint probe subsets). Returns false — scattering nothing — when the
+ * body is not a parseable completion. Shared by direct probing, delegated
+ * probing, and audit recomputation so the extraction semantics cannot drift.
+ */
+export function scatterPlanAnswers(
+  responseBody: Uint8Array,
+  plan: Pick<StealthRequestPlan, 'probes' | 'probeIndices'>,
+  answers: Array<number | null>,
+): boolean {
+  const text = extractCompletionText(responseBody)
+  if (text === null) return false
+  const planAnswers = extractAnswersFreeText(text, plan.probes)
+  plan.probeIndices.forEach((probeIndex, i) => {
+    answers[probeIndex] = planAnswers[i] ?? null
+  })
+  return true
 }
 
-async function waitForResponseAuth(
+/**
+ * Poll the node for the seller-signed ResponseAuth of `requestId` until it
+ * lands, the timeout elapses, or `signal` aborts.
+ *
+ * `requireVerified` (default true) treats a record whose local signature
+ * verification failed as absent. The delegate worker passes false: it relays
+ * the full payload verbatim and the verifier re-verifies the seller signature
+ * itself, trusting nothing the carrier claims.
+ */
+export async function waitForResponseAuth(
   node: AntseedNode,
   requestId: string,
+  options: { timeoutMs?: number; signal?: AbortSignal; requireVerified?: boolean } = {},
 ): Promise<StoredResponseAuth | null> {
-  const deadline = Date.now() + RESPONSE_AUTH_POLL_TIMEOUT_MS
+  const { timeoutMs = RESPONSE_AUTH_POLL_TIMEOUT_MS, signal, requireVerified = true } = options
+  const deadline = Date.now() + timeoutMs
   for (;;) {
     const record = node.getResponseAuth(requestId)
     if (record) {
-      if (!record.verified) return null
+      if (requireVerified && !record.verified) return null
       return record
     }
-    if (Date.now() >= deadline) return null
+    if (signal?.aborted || Date.now() >= deadline) return null
     await new Promise((resolve) => setTimeout(resolve, RESPONSE_AUTH_POLL_INTERVAL_MS))
   }
 }
@@ -131,13 +150,17 @@ export async function probeSeller(
   const answers: Array<number | null> = new Array(probeSet.probes.length).fill(null)
   const requestIds: string[] = []
   const probesPerRequest: number[] = []
-  const responseAuths: SellerProbeRun['responseAuths'] = []
   const exchanges: ProbeExchangeEvidence[] = []
   const errors: string[] = []
 
   const plans = buildStealthChatRequests(service, probeSet, { maxProbesPerRequest })
+  // Filled by plan index — the sends below stay strictly sequential (stealth),
+  // but the ResponseAuth polls overlap, so completion order is not plan order.
+  const responseAuths: SellerProbeRun['responseAuths'] = new Array(plans.length).fill(null)
+  const authWaits: Array<Promise<void>> = []
 
-  for (const plan of plans) {
+  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
+    const plan = plans[planIdx]!
     const requestId = randomUUID()
     const bodyBytes = new TextEncoder().encode(JSON.stringify(plan.body))
     const req = {
@@ -171,34 +194,32 @@ export async function probeSeller(
       }
       if (response.statusCode !== 200) {
         errors.push(`request ${requestId.slice(0, 8)}: HTTP ${response.statusCode}`)
-        responseAuths.push(null)
         continue
       }
-      const text = extractCompletionText(response.body)
-      if (text === null) {
+      if (!scatterPlanAnswers(response.body, plan, answers)) {
         errors.push(`request ${requestId.slice(0, 8)}: unparseable completion body`)
-      } else {
-        const planAnswers = extractAnswersFreeText(text, plan.probes)
-        plan.probeIndices.forEach((probeIndex, i) => {
-          answers[probeIndex] = planAnswers[i] ?? null
-        })
       }
-      const stored = await waitForResponseAuth(node, requestId)
-      if (stored) {
+      // START the ResponseAuth poll and move on to the next plan — the auth
+      // record lands asynchronously in the node's store, so waiting for it
+      // before the next SEND only adds latency without any stealth benefit.
+      // A plan whose auth never lands keeps its null slot (same per-plan
+      // outcome as the previous strictly-sequential wait).
+      authWaits.push(waitForResponseAuth(node, requestId).then((stored) => {
+        if (!stored) return
         exchange.responseAuth = toResponseAuthPayload(stored)
-        responseAuths.push({
+        responseAuths[planIdx] = {
           requestHash: stored.requestHash,
           responseHash: stored.responseHash,
           signature: stored.signature,
-        })
-      } else {
-        responseAuths.push(null)
-      }
+        }
+      }).catch((err: unknown) => {
+        errors.push(`request ${requestId.slice(0, 8)}: ${(err as Error).message}`)
+      }))
     } catch (err) {
       errors.push(`request ${requestId.slice(0, 8)}: ${(err as Error).message}`)
-      responseAuths.push(null)
     }
   }
+  await Promise.all(authWaits)
 
   return {
     peerId: peer.peerId,

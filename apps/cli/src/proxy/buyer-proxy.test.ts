@@ -1116,10 +1116,11 @@ test('a fresh substitution flag within max-age still blocks routing', async () =
   assert.equal(dispatched(), 0)
 })
 
-// A flag with no freshness stamp at all (pre-upgrade on-disk row, or any
-// unstamped source) is treated as absent — fail-open on the liveness side,
-// self-healing on the next enrichment pass which re-stamps it.
-test('a substitution flag with no freshness stamp does NOT block routing', async () => {
+// A flag with no freshness stamp carries no age information and is honored
+// as-is (SDK semantics — the gate is `peerHasActiveSubstitutionFlag` from
+// @antseed/node). Stamp-less on-disk rows never reach the gate: they are
+// dropped at rehydration by parsePersistedPeers.
+test('a substitution flag with no freshness stamp still blocks routing', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { '*': FLAGGED_STATS }
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
@@ -1129,8 +1130,9 @@ test('a substitution flag with no freshness stamp does NOT block routing', async
     body: { model: 'gpt-4o', messages: [] },
   }))
 
-  assert.equal(res.statusCode, 200)
-  assert.equal(dispatched(), 1)
+  assert.equal(res.statusCode, 502)
+  assert.match(res.body, /model-substitution flag/)
+  assert.equal(dispatched(), 0)
 })
 
 test('parsePersistedPeers round-trips a fresh modelVerification so the gate works from the warm cache', () => {

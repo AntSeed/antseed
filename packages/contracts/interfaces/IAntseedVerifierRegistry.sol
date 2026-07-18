@@ -28,8 +28,8 @@ interface IAntseedVerifierRegistry {
     }
 
     /// @notice Per-(agentId, serviceHash) reputation accumulators. The stats
-    ///         timestamp is `lastAuditedAt(agentId, serviceHash)` — it is not
-    ///         duplicated here.
+    ///         timestamp is `latestAttestation(agentId, serviceHash)
+    ///         .attestedAt` — it is not duplicated here.
     struct ServiceVerificationStats {
         uint32 sameCount;
         uint32 diffCount;
@@ -62,8 +62,10 @@ interface IAntseedVerifierRegistry {
         bytes responseAuthSig;
     }
 
-    /// @notice Anchor state per (verifier, batchRoot). The small fields pack
-    ///         into one storage slot; `commitment` takes the second.
+    /// @notice Anchor state per (verifier, batchRoot). All fields pack into
+    ///         one storage slot. The probe-set commitment the batch was
+    ///         anchored under is not duplicated here — it is the inverse of
+    ///         `commitmentBatchRoot` (one batch per commitment).
     struct BatchAnchor {
         /// @dev When the batch was anchored (0 = never anchored).
         uint64 anchoredAt;
@@ -79,8 +81,6 @@ interface IAntseedVerifierRegistry {
         ///      it backs) is bounded by a claim sealed before the verdict,
         ///      not by the verifier's later word.
         uint32 probeCount;
-        /// @dev Probe-set commitment the batch was anchored under.
-        bytes32 commitment;
     }
 
     function registry() external view returns (IAntseedRegistry);
@@ -134,7 +134,7 @@ interface IAntseedVerifierRegistry {
     function batchAnchors(address verifier, bytes32 batchRoot)
         external
         view
-        returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount, bytes32 commitment);
+        returns (uint64 anchoredAt, uint32 recordCount, uint32 probeCount);
     function commitmentBatchRoot(address verifier, bytes32 commitment) external view returns (bytes32);
     function batchTargetProbeCount(address verifier, bytes32 batchRoot, uint256 agentId, bytes32 serviceHash)
         external
@@ -145,9 +145,8 @@ interface IAntseedVerifierRegistry {
         view
         returns (bool);
     function probeRevealedAt(address verifier, bytes32 commitment) external view returns (uint64);
-    function attestationCountByCommitment(address verifier, bytes32 commitment) external view returns (uint32);
+    function commitmentAttested(address verifier, bytes32 commitment) external view returns (bool);
 
-    function lastAuditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
     function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
     function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (Attestation memory);
     function verificationStats(uint256 agentId, bytes32 serviceHash)

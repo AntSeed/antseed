@@ -7,7 +7,7 @@ import type {
   TargetSuggestionPayload,
 } from '../types/protocol.js';
 import { parseJsonObject, requireFiniteNumberField, requireStringField } from '../utils/json-codec.js';
-import { decodeResponseAuth } from './codec.js';
+import { responseAuthFromObject } from './codec.js';
 
 const encoder = new TextEncoder();
 
@@ -198,8 +198,8 @@ export function decodeProbeJobResult(data: Uint8Array): ProbeJobResultPayload {
     };
   }
   if (obj.responseAuth !== undefined) {
-    // Re-encode through the ResponseAuth codec so field validation is shared.
-    result.responseAuth = decodeResponseAuth(encoder.encode(JSON.stringify(obj.responseAuth)));
+    // Validate through the shared ResponseAuth core so field validation is shared.
+    result.responseAuth = responseAuthFromObject(obj.responseAuth);
   }
   return result;
 }

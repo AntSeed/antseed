@@ -55,6 +55,10 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable gate;
     IAntseedVerifierRegistry public immutable verifierRegistry;
+    /// @notice First epoch the gate will ever mint (its immutable
+    ///         `effectiveEpoch`), cached at construction — same pattern as
+    ///         AntseedUsageAccounting's `firstRewardedEpoch`.
+    uint256 public immutable firstRewardedEpoch;
 
     // ─── Claim State ─────────────────────────────────────────────────
     /// @dev Budget frozen at first epoch touch (stored as budget + 1 so a
@@ -94,6 +98,7 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         if (_gate == address(0) || _verifierRegistry == address(0)) revert InvalidAddress();
         gate = IAntseedEmissionsGate(_gate);
         verifierRegistry = IAntseedVerifierRegistry(_verifierRegistry);
+        firstRewardedEpoch = IAntseedEmissionsGate(_gate).effectiveEpoch();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -104,23 +109,7 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     ///         verification bucket. A zero-budget epoch still marks the claim
     ///         as spent without minting.
     function claimVerifierReward(uint256 epoch) external nonReentrant {
-        if (epoch < gate.effectiveEpoch()) revert PreEffectiveEpoch();
-        if (epoch >= gate.currentEpoch()) revert EpochNotFinalized();
-        if (epochRewardClaimed[epoch][msg.sender]) revert AlreadyClaimed();
-
-        uint256 credits = verifierRegistry.epochCredits(epoch, msg.sender);
-        if (credits == 0) revert NothingToClaim();
-
-        (uint256 verifierPool,, uint256 totalCredits,) = _freezeEpochPools(epoch);
-        // The epoch froze with a ZERO total, so the caller's credits landed
-        // after the freeze (a lagging registry epoch clock): unclaimable.
-        // A NONZERO frozen total does not filter late credits — they claim
-        // against it first-come-first-served (see the contract natspec).
-        if (totalCredits == 0) revert NothingToClaim();
-        uint256 amount = Math.mulDiv(verifierPool, credits, totalCredits);
-
-        epochRewardClaimed[epoch][msg.sender] = true;
-        if (amount != 0) gate.claim(epoch, msg.sender, amount);
+        uint256 amount = _claimPoolReward(epoch, epochRewardClaimed, false);
         emit VerifierRewardClaimed(epoch, msg.sender, amount);
     }
 
@@ -129,24 +118,42 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     ///         verifiers credit the operator address each delegate reported,
     ///         never the delegate's buyer hot wallet.
     function claimDelegateReward(uint256 epoch) external nonReentrant {
-        if (epoch < gate.effectiveEpoch()) revert PreEffectiveEpoch();
-        if (epoch >= gate.currentEpoch()) revert EpochNotFinalized();
-        if (epochDelegateRewardClaimed[epoch][msg.sender]) revert AlreadyClaimed();
+        uint256 amount = _claimPoolReward(epoch, epochDelegateRewardClaimed, true);
+        emit DelegateRewardClaimed(epoch, msg.sender, amount);
+    }
 
-        uint256 credits = verifierRegistry.epochDelegateCredits(epoch, msg.sender);
+    /// @dev Shared claim spine for the verifier and delegate pools:
+    ///      epoch-window checks, freeze-at-first-touch, zero-total handling,
+    ///      pro-rata amount, claim mark and gate mint. `delegateSide` picks
+    ///      which credits, pool and frozen total apply; the caller emits its
+    ///      own event.
+    function _claimPoolReward(
+        uint256 epoch,
+        mapping(uint256 epoch_ => mapping(address account => bool spent)) storage claimed,
+        bool delegateSide
+    ) private returns (uint256 amount) {
+        if (epoch < firstRewardedEpoch) revert PreEffectiveEpoch();
+        if (epoch >= gate.currentEpoch()) revert EpochNotFinalized();
+        if (claimed[epoch][msg.sender]) revert AlreadyClaimed();
+
+        uint256 credits = delegateSide
+            ? verifierRegistry.epochDelegateCredits(epoch, msg.sender)
+            : verifierRegistry.epochCredits(epoch, msg.sender);
         if (credits == 0) revert NothingToClaim();
 
-        (, uint256 delegatePool,, uint256 totalCredits) = _freezeEpochPools(epoch);
-        // The epoch froze with a ZERO delegate total, so the caller's credits
-        // landed after the freeze (a lagging registry epoch clock):
-        // unclaimable. A NONZERO frozen total does not filter late credits —
-        // they claim against it first-come-first-served (contract natspec).
-        if (totalCredits == 0) revert NothingToClaim();
-        uint256 amount = Math.mulDiv(delegatePool, credits, totalCredits);
+        (uint256 verifierPool, uint256 delegatePool, uint256 totalCredits, uint256 totalDelegateCredits) =
+            _freezeEpochPools(epoch);
+        uint256 pool = delegateSide ? delegatePool : verifierPool;
+        uint256 total = delegateSide ? totalDelegateCredits : totalCredits;
+        // The epoch froze with a ZERO total, so the caller's credits landed
+        // after the freeze (a lagging registry epoch clock): unclaimable.
+        // A NONZERO frozen total does not filter late credits — they claim
+        // against it first-come-first-served (see the contract natspec).
+        if (total == 0) revert NothingToClaim();
+        amount = Math.mulDiv(pool, credits, total);
 
-        epochDelegateRewardClaimed[epoch][msg.sender] = true;
+        claimed[epoch][msg.sender] = true;
         if (amount != 0) gate.claim(epoch, msg.sender, amount);
-        emit DelegateRewardClaimed(epoch, msg.sender, amount);
     }
 
     /// @notice Route a finalized epoch's unclaimable verifier pool through
@@ -178,32 +185,37 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function pendingVerifierReward(uint256 epoch, address verifier) external view returns (uint256) {
-        if (epoch < gate.effectiveEpoch() || epoch >= gate.currentEpoch()) return 0;
-        if (epochRewardClaimed[epoch][verifier]) return 0;
-
-        uint256 credits = verifierRegistry.epochCredits(epoch, verifier);
-        if (credits == 0) return 0;
-
-        // Credits that landed after a ZERO-total freeze are unclaimable.
-        uint256 totalCredits = verifierEpochTotalCredits(epoch);
-        if (totalCredits == 0) return 0;
-
-        uint256 verifierPool = verifierEpochBudget(epoch) - delegateEpochPool(epoch);
-        return Math.mulDiv(verifierPool, credits, totalCredits);
+        return _pendingPoolReward(epoch, verifier, epochRewardClaimed, false);
     }
 
     function pendingDelegateReward(uint256 epoch, address delegate) external view returns (uint256) {
-        if (epoch < gate.effectiveEpoch() || epoch >= gate.currentEpoch()) return 0;
-        if (epochDelegateRewardClaimed[epoch][delegate]) return 0;
+        return _pendingPoolReward(epoch, delegate, epochDelegateRewardClaimed, true);
+    }
 
-        uint256 credits = verifierRegistry.epochDelegateCredits(epoch, delegate);
+    /// @dev View twin of `_claimPoolReward`: same window/claimed/zero-total
+    ///      filters, returning 0 instead of reverting.
+    function _pendingPoolReward(
+        uint256 epoch,
+        address account,
+        mapping(uint256 epoch_ => mapping(address account_ => bool spent)) storage claimed,
+        bool delegateSide
+    ) private view returns (uint256) {
+        if (epoch < firstRewardedEpoch || epoch >= gate.currentEpoch()) return 0;
+        if (claimed[epoch][account]) return 0;
+
+        uint256 credits = delegateSide
+            ? verifierRegistry.epochDelegateCredits(epoch, account)
+            : verifierRegistry.epochCredits(epoch, account);
         if (credits == 0) return 0;
 
         // Credits that landed after a ZERO-total freeze are unclaimable.
-        uint256 totalCredits = delegateEpochTotalCredits(epoch);
+        uint256 totalCredits = delegateSide ? delegateEpochTotalCredits(epoch) : verifierEpochTotalCredits(epoch);
         if (totalCredits == 0) return 0;
 
-        return Math.mulDiv(delegateEpochPool(epoch), credits, totalCredits);
+        uint256 pool = delegateSide
+            ? delegateEpochPool(epoch)
+            : verifierEpochBudget(epoch) - delegateEpochPool(epoch);
+        return Math.mulDiv(pool, credits, totalCredits);
     }
 
     function verifierEpochBudget(uint256 epoch) public view returns (uint256) {

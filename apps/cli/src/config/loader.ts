@@ -412,71 +412,17 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   throw new Error(`${path} must be a boolean`);
 }
 
-// Shape-only merge, like the delegate/delegation sections: raw values pass
-// through so assertValidConfig rejects mistyped entries loudly. Filtering here
-// would silently widen the config — e.g. `services: [123]` collapsing to `[]`
-// means "audit EVERYTHING", and a typo'd upstream would silently disable
-// reference enrollment.
+// Raw pass-through, like the delegate/delegation sections: every value
+// (including nested upstream/delegation and unknown keys) reaches
+// assertValidConfig unchanged, which rejects mistyped or unknown entries
+// loudly. Filtering here would silently widen the config — e.g.
+// `services: [123]` collapsing to `[]` means "audit EVERYTHING", and a typo'd
+// upstream would silently disable reference enrollment.
 function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
   if (!isRecord(value)) {
     return value !== undefined ? (value as AntseedConfig['verifier']) : undefined;
   }
-  return {
-    ...(value['services'] !== undefined ? { services: value['services'] as string[] } : { services: [] }),
-    ...(value['maxAuditsPerEpoch'] !== undefined ? { maxAuditsPerEpoch: value['maxAuditsPerEpoch'] as number } : {}),
-    ...(value['probesPerAudit'] !== undefined ? { probesPerAudit: value['probesPerAudit'] as number } : {}),
-    ...(value['maxProbesPerRequest'] !== undefined ? { maxProbesPerRequest: value['maxProbesPerRequest'] as number } : {}),
-    ...(value['cohortMinSize'] !== undefined ? { cohortMinSize: value['cohortMinSize'] as number } : {}),
-    ...(value['cohortMaxSize'] !== undefined ? { cohortMaxSize: value['cohortMaxSize'] as number } : {}),
-    ...(value['auditIntervalMs'] !== undefined ? { auditIntervalMs: value['auditIntervalMs'] as number } : {}),
-    ...(value['stalenessWindowSecs'] !== undefined ? { stalenessWindowSecs: value['stalenessWindowSecs'] as number } : {}),
-    ...(value['probeSource'] !== undefined
-      ? { probeSource: value['probeSource'] as 'llm' | 'compositional' | 'bank' }
-      : {}),
-    ...(value['probeAuthorModel'] !== undefined ? { probeAuthorModel: value['probeAuthorModel'] as string } : {}),
-    ...(value['probeRotationHistory'] !== undefined ? { probeRotationHistory: value['probeRotationHistory'] as number } : {}),
-    ...(value['referencesDir'] !== undefined ? { referencesDir: value['referencesDir'] as string } : {}),
-    ...(value['publishDir'] !== undefined ? { publishDir: value['publishDir'] as string } : {}),
-    ...(value['publishBaseUrl'] !== undefined ? { publishBaseUrl: value['publishBaseUrl'] as string } : {}),
-    ...(value['revealDelayMs'] !== undefined ? { revealDelayMs: value['revealDelayMs'] as number } : {}),
-    ...(value['probeLogDir'] !== undefined ? { probeLogDir: value['probeLogDir'] as string } : {}),
-    ...mergeVerifierUpstream(value['upstream']),
-    ...mergeVerifierDelegation(value['delegation']),
-  };
-}
-
-function mergeVerifierDelegation(
-  value: unknown,
-): { delegation?: NonNullable<AntseedConfig['verifier']>['delegation'] } {
-  if (!isRecord(value)) {
-    return value !== undefined ? { delegation: value as NonNullable<AntseedConfig['verifier']>['delegation'] } : {};
-  }
-  return {
-    delegation: {
-      enabled: value['enabled'] as boolean,
-      ...(value['signalingPort'] !== undefined ? { signalingPort: value['signalingPort'] as number } : {}),
-      ...(value['jobTimeoutMs'] !== undefined ? { jobTimeoutMs: value['jobTimeoutMs'] as number } : {}),
-      ...(value['minDelegates'] !== undefined ? { minDelegates: value['minDelegates'] as number } : {}),
-      ...(value['requireDelegates'] !== undefined ? { requireDelegates: value['requireDelegates'] as boolean } : {}),
-    },
-  };
-}
-
-// Same raw pass-through contract as mergeVerifierConfig: a malformed upstream
-// must reach validation instead of silently disabling reference enrollment.
-function mergeVerifierUpstream(value: unknown): { upstream?: NonNullable<AntseedConfig['verifier']>['upstream'] } {
-  if (value === undefined) return {};
-  if (!isRecord(value)) {
-    return { upstream: value as NonNullable<AntseedConfig['verifier']>['upstream'] };
-  }
-  return {
-    upstream: {
-      baseUrl: value['baseUrl'] as string,
-      ...(value['apiKey'] !== undefined ? { apiKey: value['apiKey'] as string } : {}),
-      ...(value['apiKeyEnv'] !== undefined ? { apiKeyEnv: value['apiKeyEnv'] as string } : {}),
-      ...(value['modelMap'] !== undefined ? { modelMap: value['modelMap'] as Record<string, string> } : {}),
-    },
-  };
+  return { services: [], ...(value as NonNullable<AntseedConfig['verifier']>) };
 }
 
 /**

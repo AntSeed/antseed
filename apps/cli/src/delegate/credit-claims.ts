@@ -52,8 +52,10 @@ export async function resolveCreditStatuses(
   reader: CreditAccrualReader | null,
   options: { warn?: (message: string) => void } = {},
 ): Promise<CreditStatus[]> {
-  const statuses: CreditStatus[] = []
-  for (const accrual of accruals) {
+  // The per-accrual reads are independent — run them in parallel. Errors stay
+  // per-accrual (handled inside each mapped promise), so the array order and
+  // the degrade-with-warning behavior are unchanged.
+  return Promise.all(accruals.map(async (accrual) => {
     let accrued = accrual.credits
     let claimed = 0
     if (reader) {
@@ -71,9 +73,8 @@ export async function resolveCreditStatuses(
     }
     const claimable = Math.max(0, accrued - claimed)
     const state: CreditState = claimable > 0 ? 'claimable' : accrued > 0 ? 'claimed' : 'empty'
-    statuses.push({ accrual, accrued, claimed, claimable, state })
-  }
-  return statuses
+    return { accrual, accrued, claimed, claimable, state }
+  }))
 }
 
 /** Write side of the claim (matches VerifierRegistryClient.claimDelegateCredits). */
@@ -109,7 +110,6 @@ export async function claimDelegateCredits(options: {
   registry: DelegateCreditsClaimer
   signer: AbstractSigner
   onClaim?: (status: CreditStatus, tx: string) => void
-  onSkip?: (status: CreditStatus) => void
   onError?: (status: CreditStatus, err: Error) => void
 }): Promise<ClaimCreditsResult> {
   const result: ClaimCreditsResult = {
@@ -123,7 +123,6 @@ export async function claimDelegateCredits(options: {
     if (status.state !== 'claimable') {
       if (status.state === 'claimed') result.skippedClaimed += 1
       else result.skippedEmpty += 1
-      options.onSkip?.(status)
       continue
     }
     try {

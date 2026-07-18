@@ -10,9 +10,10 @@ import type {
 } from '@antseed/node'
 import { toPeerId, verifyResponseAuth } from '@antseed/node'
 import type { ProbeSet } from '@antseed/fingerprints'
-import { buildStealthChatRequests, extractAnswersFreeText } from '@antseed/fingerprints'
+import { buildStealthChatRequests } from '@antseed/fingerprints'
 import type { ProbeExchangeEvidence, SellerProbeRun } from './probing.js'
-import { extractCompletionText } from './probing.js'
+import { scatterPlanAnswers } from './probing.js'
+import { extractRequestedService } from '../proxy/request-utils.js'
 
 /**
  * Per-probe completion budget for delegated stealth probes. Answers are short
@@ -47,7 +48,7 @@ export interface DelegatedProbeOptions {
 }
 
 /** How long the verifier waits for each delegate's TargetSuggestion. */
-export const TARGET_QUERY_TIMEOUT_MS = 10_000
+const TARGET_QUERY_TIMEOUT_MS = 10_000
 
 export interface SuggestedSeller {
   peerId: string
@@ -243,57 +244,89 @@ export async function probeSellerViaDelegates(
   const otherPool = delegates.filter((d) => !preferred.has(d.peerId.toLowerCase()))
   const primaryCarriers = assignPrimaryCarriers(plans.length, preferredPool, otherPool, delegates)
 
-  let fallbackCursor = 0
-  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
-    const plan = plans[planIdx]!
-    // A delegate carries this probe on ITS deposit and refuses any relay
-    // without a bounded completion budget (see delegate/worker.ts
-    // validateProbeJob). The stealth builder deliberately omits `max_tokens` to
-    // stay organic, so the verifier stamps a budget here: generous enough not
-    // to truncate the short factual answers the fingerprint reads, small enough
-    // to cap the delegate's spend. Sizing it to the probe count (rather than a
-    // fixed round number) keeps it from being a single constant tell.
+  // A delegate carries each probe on ITS deposit and refuses any relay
+  // without a bounded completion budget (see delegate/worker.ts
+  // validateProbeJob). The stealth builder deliberately omits `max_tokens` to
+  // stay organic, so the verifier stamps a budget here: generous enough not
+  // to truncate the short factual answers the fingerprint reads, small enough
+  // to cap the delegate's spend. Sizing it to the probe count (rather than a
+  // fixed round number) keeps it from being a single constant tell.
+  const states = plans.map((plan) => {
     if (plan.body.max_tokens === undefined) {
       plan.body.max_tokens = boundedProbeMaxTokens(plan.probes.length)
     }
     const bodyBytes = new TextEncoder().encode(JSON.stringify(plan.body))
-    const bodyBase64 = Buffer.from(bodyBytes).toString('base64')
-    // One retry on a different delegate: probe secrecy for this plan is
-    // already spent after the first dispatch, so a second carrier costs
-    // nothing extra in leak exposure. The primary carrier is the anti-collusion
-    // assignment above; the retry may be any other connected delegate.
+    return {
+      bodyBytes,
+      bodyBase64: Buffer.from(bodyBytes).toString('base64'),
+      requestId: '',
+      verified: null as VerifiedJob | null,
+      lastError: 'no attempt made',
+    }
+  })
+
+  const attemptPlan = async (planIdx: number, delegate: ConnectedDelegate): Promise<void> => {
+    const state = states[planIdx]!
+    // Fresh requestId per attempt — the request hash covers it, so a retry
+    // is a distinct signed exchange rather than a replay.
+    state.requestId = randomUUID()
+    const request: SerializedHttpRequest = {
+      requestId: state.requestId,
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: state.bodyBytes,
+    }
+    const outcome = await runVerifiedJob(node, delegate, peer, service, request, options.jobTimeoutMs)
+    if ('error' in outcome) {
+      state.lastError = `via ${delegate.peerId.slice(0, 10)}…: ${outcome.error}`
+      return
+    }
+    state.verified = outcome
+    jobsByDelegate.set(delegate.peerId, (jobsByDelegate.get(delegate.peerId) ?? 0) + 1)
+  }
+
+  // Primary phase: each plan's primary carrier is fixed up front and delegates
+  // accept concurrent jobs, so DIFFERENT carriers run in parallel. One
+  // carrier's own plans stay strictly sequential — a burst of simultaneous
+  // probe-shaped requests from a single buyer would itself be a tell.
+  const byCarrier = new Map<string, number[]>()
+  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
+    const peerId = primaryCarriers[planIdx]!.peerId
+    const group = byCarrier.get(peerId) ?? []
+    group.push(planIdx)
+    byCarrier.set(peerId, group)
+  }
+  await Promise.all([...byCarrier.values()].map(async (planIdxs) => {
+    for (const planIdx of planIdxs) {
+      await attemptPlan(planIdx, primaryCarriers[planIdx]!)
+    }
+  }))
+
+  // Retry phase, sequential in plan order: one retry on a different delegate.
+  // Probe secrecy for a failed plan is already spent after the first dispatch,
+  // so a second carrier costs nothing extra in leak exposure. The primary
+  // carrier is the anti-collusion assignment above; the retry may be any other
+  // connected delegate. The cursor advances for EVERY plan (not just failed
+  // ones), matching the historical strictly-sequential dispatch's rotation.
+  let fallbackCursor = 0
+  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
     const primary = primaryCarriers[planIdx]!
-    const carriers: ConnectedDelegate[] = [primary]
-    for (let k = 0; k < delegates.length && carriers.length < 2; k += 1) {
+    let fallback: ConnectedDelegate | null = null
+    for (let k = 0; k < delegates.length && fallback === null; k += 1) {
       const candidate = delegates[fallbackCursor % delegates.length]!
       fallbackCursor += 1
-      if (candidate.peerId !== primary.peerId) carriers.push(candidate)
+      if (candidate.peerId !== primary.peerId) fallback = candidate
     }
-    let verified: VerifiedJob | null = null
-    let requestId = ''
-    let lastError = 'no attempt made'
-
-    for (const delegate of carriers) {
-      if (verified) break
-      // Fresh requestId per attempt — the request hash covers it, so a retry
-      // is a distinct signed exchange rather than a replay.
-      requestId = randomUUID()
-      const request: SerializedHttpRequest = {
-        requestId,
-        method: 'POST',
-        path: '/v1/chat/completions',
-        headers: { 'content-type': 'application/json' },
-        body: bodyBytes,
-      }
-      const outcome = await runVerifiedJob(node, delegate, peer, service, request, options.jobTimeoutMs)
-      if ('error' in outcome) {
-        lastError = `via ${delegate.peerId.slice(0, 10)}…: ${outcome.error}`
-        continue
-      }
-      verified = outcome
-      jobsByDelegate.set(delegate.peerId, (jobsByDelegate.get(delegate.peerId) ?? 0) + 1)
+    if (fallback && states[planIdx]!.verified === null) {
+      await attemptPlan(planIdx, fallback)
     }
+  }
 
+  // Assemble results ordered by plan index.
+  for (let planIdx = 0; planIdx < plans.length; planIdx += 1) {
+    const plan = plans[planIdx]!
+    const { requestId, verified, lastError, bodyBase64 } = states[planIdx]!
     requestIds.push(requestId)
     probesPerRequest.push(plan.probes.length)
     exchanges.push({
@@ -313,14 +346,8 @@ export async function probeSellerViaDelegates(
       continue
     }
 
-    const text = extractCompletionText(verified.responseBody)
-    if (text === null) {
+    if (!scatterPlanAnswers(verified.responseBody, plan, answers)) {
       errors.push(`request ${requestId.slice(0, 8)}: unparseable completion body`)
-    } else {
-      const planAnswers = extractAnswersFreeText(text, plan.probes)
-      plan.probeIndices.forEach((probeIndex, i) => {
-        answers[probeIndex] = planAnswers[i] ?? null
-      })
     }
     responseAuths.push({
       requestHash: verified.auth.requestHash,
@@ -399,7 +426,9 @@ async function runVerifiedJob(
     response,
     buyerPeerId: delegate.peerId,
     sellerPeerId: peer.peerId,
-    advertisedService: extractModelFromBody(request.body) ?? service,
+    // Same extraction as the buyer proxy — the two paths must derive the same
+    // service key or ResponseAuth verification diverges on delegates.
+    advertisedService: extractRequestedService(request) ?? service,
   })
   if (!verification.valid) {
     return { error: `invalid ResponseAuth from delegate (${verification.reason ?? 'unknown'})` }
@@ -413,18 +442,5 @@ async function runVerifiedJob(
       bodyBase64: result.response.bodyBase64,
     },
     auth: result.responseAuth,
-  }
-}
-
-/** Mirror of the seller/buyer service extraction: the request body's model field. */
-function extractModelFromBody(body: Uint8Array): string | undefined {
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as { model?: unknown; service?: unknown }
-    const service = parsed.service ?? parsed.model
-    // Trim like the proxy's extractRequestedService — the two paths must derive
-    // the same service key or ResponseAuth verification diverges on delegates.
-    return typeof service === 'string' && service.trim().length > 0 ? service.trim() : undefined
-  } catch {
-    return undefined
   }
 }

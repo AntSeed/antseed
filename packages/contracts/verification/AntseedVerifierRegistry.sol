@@ -74,7 +74,6 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
     // ─── Attestation State ───────────────────────────────────────────
     mapping(address verifier => mapping(bytes32 commitment => uint64 committedAt)) public probeCommittedAt;
-    mapping(uint256 agentId => mapping(bytes32 serviceHash => uint64 auditedAt)) public lastAuditedAt;
     mapping(uint256 agentId => mapping(bytes32 serviceHash => uint64 creditedAt)) public lastCreditedAt;
     mapping(uint256 agentId => mapping(bytes32 serviceHash => Attestation attestation)) private _latestAttestations;
     mapping(uint256 agentId => mapping(bytes32 serviceHash => ServiceVerificationStats stats)) private
@@ -107,9 +106,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
     /// @notice Anchor state per (verifier, batchRoot): when it was anchored
     ///         (anchoredAt == 0 means never), how many exchange records it
-    ///         holds, the verifier-declared total probe count bundled across
-    ///         those records, and the probe-set commitment it was anchored
-    ///         under. One `ExchangeRecord` covers one signed stealth request,
+    ///         holds, and the verifier-declared total probe count bundled
+    ///         across those records. The probe-set commitment the batch was
+    ///         anchored under is `commitmentBatchRoot`'s inverse (one batch
+    ///         per commitment). One `ExchangeRecord` covers one signed stealth request,
     ///         which bundles 1..3 probes — so the batch's
     ///         probe count is declared explicitly at anchor time rather than
     ///         inferred from the record count. The declared `probeCount`
@@ -133,9 +133,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     mapping(address verifier => mapping(bytes32 commitment => bytes32 batchRoot)) public commitmentBatchRoot;
     /// @notice When `verifier` opened `commitment` on-chain (0 = never).
     mapping(address verifier => mapping(bytes32 commitment => uint64 revealedAt)) public probeRevealedAt;
-    /// @notice Attestations by `verifier` that referenced `commitment` —
-    ///         gates `revealProbeSet` (no reveal-then-probe).
-    mapping(address verifier => mapping(bytes32 commitment => uint32 count)) public attestationCountByCommitment;
+    /// @notice Whether any attestation by `verifier` referenced `commitment` —
+    ///         gates `revealProbeSet` (no reveal-then-probe). Per-commitment
+    ///         attestation counts are reconstructible from
+    ///         `AttestationSubmitted` events.
+    mapping(address verifier => mapping(bytes32 commitment => bool attested)) public commitmentAttested;
 
     // ─── Delegate Crediting ──────────────────────────────────────────
     // Probe execution is delegated to organic buyer peers so probe traffic
@@ -476,13 +478,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         );
 
         // Single struct assignment: anchoredAt/recordCount/probeCount pack
-        // into one slot, commitment takes the second — two SSTOREs total.
-        batchAnchors[msg.sender][batchRoot] = BatchAnchor({
-            anchoredAt: uint64(block.timestamp),
-            recordCount: uint32(records.length),
-            probeCount: probeCount,
-            commitment: probeCommitment
-        });
+        // into one slot — one SSTORE total. The commitment the batch was
+        // anchored under is not stored here: `commitmentBatchRoot` already
+        // holds the (bijective) inverse.
+        batchAnchors[msg.sender][batchRoot] =
+            BatchAnchor({ anchoredAt: uint64(block.timestamp), recordCount: uint32(records.length), probeCount: probeCount });
         commitmentBatchRoot[msg.sender][probeCommitment] = batchRoot;
         emit ExchangeBatchAnchored(msg.sender, probeCommitment, batchRoot, uint32(records.length), probeCount);
     }
@@ -653,9 +653,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
     /// @dev agentId → seller address, resolved the way the protocol
     ///      canonically binds peers to agents: the ERC-8004 IdentityRegistry
-    ///      owner IS the peer's signing address (see `_checkAuditedAgent`
-    ///      and AntseedStaking, which requires `ownerOf(agentId) == seller`
-    ///      at stake time).
+    ///      owner IS the peer's signing address (shared with
+    ///      `_checkAuditedAgent`; AntseedStaking requires
+    ///      `ownerOf(agentId) == seller` at stake time). The caller has
+    ///      already checked the registry address and its code size.
     function _resolveAgentOwner(address identityRegistry, uint256 agentId) private view returns (address) {
         try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
             if (agentOwner == address(0)) revert UnknownAgent();
@@ -928,7 +929,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     function revealProbeSet(bytes32 probeCommitment, bytes calldata probeSetJson, string calldata packUri) external {
         if (probeCommittedAt[msg.sender][probeCommitment] == 0) revert ProbeSetNotCommitted();
         if (probeRevealedAt[msg.sender][probeCommitment] != 0) revert AlreadyRevealed();
-        if (attestationCountByCommitment[msg.sender][probeCommitment] == 0) revert RevealBeforeAttest();
+        if (!commitmentAttested[msg.sender][probeCommitment]) revert RevealBeforeAttest();
         if (sha256(probeSetJson) != probeCommitment) revert RevealMismatch();
         probeRevealedAt[msg.sender][probeCommitment] = uint64(block.timestamp);
         emit ProbeSetRevealed(msg.sender, probeCommitment, packUri);
@@ -973,9 +974,11 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
         // The verdict must reference an exchange batch this verifier anchored
         // under the SAME probe-set commitment (anchor before / with attest).
+        // `commitmentBatchRoot` is the sole batch per commitment, so the
+        // root↔commitment binding is checked from that side.
         BatchAnchor storage anchor = batchAnchors[msg.sender][batchRoot];
         if (anchor.anchoredAt == 0) revert BatchNotAnchored();
-        if (anchor.commitment != probeCommitment) revert BatchCommitmentMismatch();
+        if (commitmentBatchRoot[msg.sender][probeCommitment] != batchRoot) revert BatchCommitmentMismatch();
         // The claimed probe count can never exceed the probe count declared
         // when the batch was anchored (records bundle multiple probes, so
         // this is a per-PROBE cap, not the record count), so credited work —
@@ -1007,32 +1010,19 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             probeCommitment: probeCommitment,
             batchRoot: batchRoot
         });
-        lastAuditedAt[agentId][serviceHash] = nowTs;
         // Gate for revealProbeSet: the probe set may be opened only once at
         // least one verdict has referenced it.
-        attestationCountByCommitment[msg.sender][probeCommitment]++;
+        commitmentAttested[msg.sender][probeCommitment] = true;
 
         ServiceVerificationStats storage stats = _verificationStats[agentId][serviceHash];
-        if (verdict == uint8(Verdict.SAME)) stats.sameCount++;
-        else if (verdict == uint8(Verdict.DIFF)) stats.diffCount++;
-        else stats.undeterminedCount++;
-        stats.lastVerdict = verdict;
-        stats.lastVerifier = msg.sender;
-        if (!_hasAttested[agentId][serviceHash][msg.sender]) {
-            _hasAttested[agentId][serviceHash][msg.sender] = true;
-            stats.distinctVerifierCount++;
-        }
+        bool firstForService = !_hasAttested[agentId][serviceHash][msg.sender];
+        if (firstForService) _hasAttested[agentId][serviceHash][msg.sender] = true;
+        _bumpStats(stats, verdict, firstForService);
 
         ServiceVerificationStats storage agentStats = _agentStats[agentId];
-        if (verdict == uint8(Verdict.SAME)) agentStats.sameCount++;
-        else if (verdict == uint8(Verdict.DIFF)) agentStats.diffCount++;
-        else agentStats.undeterminedCount++;
-        agentStats.lastVerdict = verdict;
-        agentStats.lastVerifier = msg.sender;
-        if (!_hasAttestedAgent[agentId][msg.sender]) {
-            _hasAttestedAgent[agentId][msg.sender] = true;
-            agentStats.distinctVerifierCount++;
-        }
+        bool firstForAgent = !_hasAttestedAgent[agentId][msg.sender];
+        if (firstForAgent) _hasAttestedAgent[agentId][msg.sender] = true;
+        _bumpStats(agentStats, verdict, firstForAgent);
 
         _updateActiveDiff(agentId, serviceHash, msg.sender, verdict, stats, agentStats);
 
@@ -1154,7 +1144,8 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     }
 
     /// @notice Reputation accumulators for `(agentId, serviceHash)`. The
-    ///         stats timestamp is `lastAuditedAt[agentId][serviceHash]`.
+    ///         stats timestamp is `latestAttestation(agentId, serviceHash)
+    ///         .attestedAt`.
     function verificationStats(uint256 agentId, bytes32 serviceHash)
         external
         view
@@ -1189,12 +1180,20 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     function _checkAuditedAgent(uint256 agentId) internal view {
         address identityRegistry = registry.identityRegistry();
         if (identityRegistry == address(0) || identityRegistry.code.length == 0) revert UnknownAgent();
-        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
-            if (agentOwner == address(0)) revert UnknownAgent();
-            if (agentOwner == msg.sender) revert SelfAudit();
-        } catch {
-            revert UnknownAgent();
-        }
+        if (_resolveAgentOwner(identityRegistry, agentId) == msg.sender) revert SelfAudit();
+    }
+
+    /// @dev Apply one attestation to a stats accumulator (per-service or
+    ///      per-agent): verdict tally, last verdict/verifier, and the
+    ///      distinct-verifier bump when this is the verifier's first
+    ///      attestation against the key.
+    function _bumpStats(ServiceVerificationStats storage stats, uint8 verdict, bool firstAttestation) private {
+        if (verdict == uint8(Verdict.SAME)) stats.sameCount++;
+        else if (verdict == uint8(Verdict.DIFF)) stats.diffCount++;
+        else stats.undeterminedCount++;
+        stats.lastVerdict = verdict;
+        stats.lastVerifier = msg.sender;
+        if (firstAttestation) stats.distinctVerifierCount++;
     }
 
     /// @dev Maintain both `activeDiffVerifierCount` accumulators from

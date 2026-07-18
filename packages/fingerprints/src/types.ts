@@ -290,22 +290,6 @@ export interface AuditResult {
 }
 
 /**
- * Content-addressed audit id: canonical hash over the audit result excluding
- * `auditId` itself and any local-only fields (e.g. filesystem paths).
- */
-export function computeAuditId(
-  result: Omit<AuditResult, 'auditId'> & { auditId?: string },
-  localOnlyFields: string[] = [],
-): string {
-  const copy: Record<string, unknown> = { ...(result as Record<string, unknown>) };
-  delete copy['auditId'];
-  for (const field of localOnlyFields) {
-    delete copy[field];
-  }
-  return canonicalHash(copy);
-}
-
-/**
  * The portion of an AuditResult a pure verifier can produce without runtime
  * context (seller selection, timestamps, transport samples).
  */

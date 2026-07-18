@@ -295,6 +295,21 @@ function validateBuyerVerification(
   }
 }
 
+// Known keys per verifier section. The loader passes the raw section through
+// unfiltered (see mergeVerifierConfig), so a typo'd key must fail here loudly
+// instead of being silently ignored.
+const VERIFIER_KEYS = new Set([
+  'services', 'maxAuditsPerEpoch', 'probesPerAudit', 'maxProbesPerRequest',
+  'cohortMinSize', 'cohortMaxSize', 'auditIntervalMs', 'stalenessWindowSecs',
+  'probeSource', 'probeAuthorModel', 'probeRotationHistory', 'referencesDir',
+  'publishDir', 'publishBaseUrl', 'revealDelayMs', 'probeLogDir',
+  'upstream', 'delegation',
+]);
+const VERIFIER_UPSTREAM_KEYS = new Set(['baseUrl', 'apiKey', 'apiKeyEnv', 'modelMap']);
+const VERIFIER_DELEGATION_KEYS = new Set([
+  'enabled', 'signalingPort', 'jobTimeoutMs', 'minDelegates', 'requireDelegates',
+]);
+
 function validateVerifierConfig(
   path: string,
   verifier: AntseedConfig['verifier'],
@@ -304,6 +319,9 @@ function validateVerifierConfig(
   if (!verifier || typeof verifier !== 'object' || Array.isArray(verifier)) {
     errors.push(`${path} must be an object when provided`);
     return;
+  }
+  for (const key of Object.keys(verifier).filter((k) => !VERIFIER_KEYS.has(k))) {
+    errors.push(`${path}.${key} is not a supported verifier option`);
   }
   // Empty/omitted services = auto-discover mode; entries just have to be strings.
   if (verifier.services !== undefined) {
@@ -387,6 +405,9 @@ function validateVerifierConfig(
     if (!upstream || typeof upstream !== 'object' || Array.isArray(upstream)) {
       errors.push(`${path}.upstream must be an object when provided`);
     } else {
+      for (const key of Object.keys(upstream).filter((k) => !VERIFIER_UPSTREAM_KEYS.has(k))) {
+        errors.push(`${path}.upstream.${key} is not a supported upstream option`);
+      }
       if (typeof upstream.baseUrl !== 'string' || upstream.baseUrl.trim().length === 0) {
         errors.push(`${path}.upstream.baseUrl must be a non-empty string`);
       }
@@ -414,6 +435,9 @@ function validateVerifierConfig(
     if (!delegation || typeof delegation !== 'object' || Array.isArray(delegation)) {
       errors.push(`${path}.delegation must be an object when provided`);
     } else {
+      for (const key of Object.keys(delegation).filter((k) => !VERIFIER_DELEGATION_KEYS.has(k))) {
+        errors.push(`${path}.delegation.${key} is not a supported delegation option`);
+      }
       if (typeof delegation.enabled !== 'boolean') {
         errors.push(`${path}.delegation.enabled must be a boolean`);
       }

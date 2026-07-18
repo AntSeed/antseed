@@ -391,6 +391,27 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
   );
 });
 
+test('loadConfig rejects unknown verifier keys so typos fail loudly instead of being silently dropped', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { probesPerAudti: 24 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.probesPerAudti is not a supported verifier option/);
+    }
+  );
+  await withTempConfig(
+    JSON.stringify({ verifier: { upstream: { baseUrl: 'https://u/v1', apiKye: 'k' } } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream\.apiKye is not a supported upstream option/);
+    }
+  );
+  await withTempConfig(
+    JSON.stringify({ verifier: { delegation: { enabled: true, minDelegate: 2 } } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation\.minDelegate is not a supported delegation option/);
+    }
+  );
+});
+
 test('loadConfig rejects invalid verifier delegation settings', async () => {
   await withTempConfig(
     JSON.stringify({

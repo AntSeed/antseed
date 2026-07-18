@@ -5,7 +5,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
-  hasModelSubstitutionFlag,
+  peerHasActiveSubstitutionFlag,
   type AntseedNode,
   type PeerInfo,
   type PeerMetadata,
@@ -142,15 +142,6 @@ import { MODEL_VERIFICATION_MAX_AGE_MS } from '@antseed/node'
  * in memory immediately — only the disk write is coalesced (flushed on stop).
  */
 const PEER_PERSIST_DEBOUNCE_MS = 5_000
-
-/**
- * `PeerInfo` augmented with the buyer-local freshness stamp for
- * `modelVerification`. packages/node stamps it on a live enrichment read; the
- * proxy also writes it in `_replacePeers`, carries it forward otherwise,
- * persists it, and rehydrates it so the substitution gate can age a stale
- * flag out.
- */
-type CachedPeerInfo = PeerInfo & { modelVerificationFetchedAt?: number }
 
 type PeerFailureEntry = {
   count: number
@@ -411,53 +402,12 @@ export function parsePersistedPeers(
         : 0
       if (fetchedAt > 0 && nowMs - fetchedAt < MODEL_VERIFICATION_MAX_AGE_MS) {
         peer.modelVerification = entry.modelVerification as PeerInfo['modelVerification']
-        ;(peer as CachedPeerInfo).modelVerificationFetchedAt = fetchedAt
+        peer.modelVerificationFetchedAt = fetchedAt
       }
     }
     peers.push(peer)
   }
   return peers
-}
-
-/**
- * True when the peer carries a STANDING model-substitution flag for the
- * requested service — at least one approved verifier whose latest on-chain
- * verdict is DIFF. Falls back to the agent-wide `'*'` aggregate when there
- * are no per-service stats for this request, so a flagged seller cannot
- * dodge the gate by being probed under a differently-keyed service name.
- * Mirrors `DefaultRouter`'s exclusion so the CLI's pinned-peer dispatch path
- * enforces the same policy. Peers with no verification data pass (unknown
- * ≠ known bad). Exported for unit testing.
- *
- * The corroboration bar (distinct standing-DIFF verifiers needed to exclude)
- * comes from the chain-read points-policy `minDistinctDiffVerifiers` that
- * enrichment stamps onto each entry as `exclusionThreshold` —
- * `hasModelSubstitutionFlag` consumes the stamp (offline fallback: 2). The
- * stamp rides through persistence, so warm-cache decisions use the same bar
- * the entry was fetched under.
- */
-export function peerHasActiveSubstitutionFlag(
-  peer: PeerInfo,
-  requestedService: string | null,
-  nowMs: number = Date.now(),
-): boolean {
-  const mv = peer.modelVerification
-  if (!mv) return false
-  // Freshness guard: a flag with no stamp, or one older than the max age, is
-  // treated as absent so a stale accusation from a since-unconfigured or
-  // permanently-RPC-failing verifier registry cannot block the peer forever
-  // (both the disk-rehydrated and long-lived in-memory cases). Live peers are
-  // always stamped when a flag lands (see `_replacePeers`); only a pre-upgrade
-  // on-disk row lacks a stamp, and it self-heals on the next enrichment pass.
-  const fetchedAt = (peer as CachedPeerInfo).modelVerificationFetchedAt
-  if (typeof fetchedAt !== 'number' || !Number.isFinite(fetchedAt) || nowMs - fetchedAt >= MODEL_VERIFICATION_MAX_AGE_MS) {
-    return false
-  }
-  if (requestedService) {
-    const perService = mv[requestedService.trim().toLowerCase()]
-    if (perService) return hasModelSubstitutionFlag(perService)
-  }
-  return hasModelSubstitutionFlag(mv['*'])
 }
 
 /**
@@ -695,13 +645,13 @@ export class BuyerProxy {
       const prev = prevById.get(peer.peerId)
       if (!prev) {
         const stamp = this._verificationFreshnessStamp(peer, undefined, now)
-        if (stamp !== undefined) (peer as CachedPeerInfo).modelVerificationFetchedAt = stamp
+        if (stamp !== undefined) peer.modelVerificationFetchedAt = stamp
         return peer
       }
       const metadata = peer.metadata || prev.metadata
         ? { ...(prev.metadata ?? {}), ...(peer.metadata ?? {}) } as PeerMetadata
         : undefined
-      const mergedPeer: CachedPeerInfo = {
+      const mergedPeer: PeerInfo = {
         ...prev,
         ...peer,
         ...(metadata ? { metadata } : {}),
@@ -747,11 +697,10 @@ export class BuyerProxy {
     prev: PeerInfo | undefined,
     now: number,
   ): number | undefined {
-    const incomingCached = incoming as CachedPeerInfo
-    if (incomingCached.modelVerification && incomingCached.modelVerificationFetchedAt === undefined) {
+    if (incoming.modelVerification && incoming.modelVerificationFetchedAt === undefined) {
       return now
     }
-    return incomingCached.modelVerificationFetchedAt ?? (prev as CachedPeerInfo | undefined)?.modelVerificationFetchedAt
+    return incoming.modelVerificationFetchedAt ?? prev?.modelVerificationFetchedAt
   }
 
   private _persistPeersToState(): void {
@@ -812,7 +761,7 @@ export class BuyerProxy {
         // freshness stamp so a stale flag can age out (see parsePersistedPeers
         // and MODEL_VERIFICATION_MAX_AGE_MS) instead of blocking a peer forever.
         modelVerification: p.modelVerification ?? null,
-        modelVerificationFetchedAt: (p as CachedPeerInfo).modelVerificationFetchedAt ?? null,
+        modelVerificationFetchedAt: p.modelVerificationFetchedAt ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
@@ -1368,7 +1317,7 @@ export class BuyerProxy {
     // peer", not "I accept a substituted model". /v1/models service listing
     // is exempt so a flagged peer stays inspectable without being paid for
     // inference.
-    if (!isControlPlaneServicesPath(method, normalizedPath) && peerHasActiveSubstitutionFlag(selectedPeer, requestedService)) {
+    if (!isControlPlaneServicesPath(method, normalizedPath) && peerHasActiveSubstitutionFlag(selectedPeer, requestedService?.toLowerCase() ?? null)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... blocked: active model-substitution flag (service=${requestedService ?? '*'})`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(

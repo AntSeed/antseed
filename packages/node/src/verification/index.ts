@@ -26,6 +26,7 @@ export {
   createResponseAuthPayload,
   hashRequest,
   hashResponse,
+  toResponseAuthPayload,
   verifyResponseAuth,
   type ResponseAuthInput,
   type ResponseAuthVerificationExpected,

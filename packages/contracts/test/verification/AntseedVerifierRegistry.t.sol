@@ -428,7 +428,6 @@ contract AntseedVerifierRegistryTest is Test, ResponseAuthFixture {
         assertEq(attestation.evidenceHash, EVIDENCE_HASH);
         assertEq(attestation.probeCommitment, commitment);
 
-        assertEq(verifierRegistry.lastAuditedAt(agentId, SERVICE_HASH), uint64(block.timestamp));
         assertEq(verifierRegistry.lastCreditedAt(agentId, SERVICE_HASH), uint64(block.timestamp));
         assertEq(verifierRegistry.epochCredits(5, verifier), 1);
         assertEq(verifierRegistry.epochTotalCredits(5), 1);

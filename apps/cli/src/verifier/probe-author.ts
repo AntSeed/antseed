@@ -24,7 +24,7 @@ import type { UpstreamApiConfig } from './reference-builder.js'
 export const LLM_AUTHORED_SOURCE_ID = 'llm-author/v1'
 
 /** Candidates requested per needed probe (validation + certification attrition). */
-export const CANDIDATE_OVERSAMPLE = 2
+const CANDIDATE_OVERSAMPLE = 2
 
 /**
  * High-but-not-maximal temperature: diverse candidates without degrading JSON

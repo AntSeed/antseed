@@ -20,15 +20,13 @@
 
 import type { KbfProbe, ProbeSet } from '../../types.js';
 import { createRng, type DeterministicRng } from '../../prng.js';
+import { renderKbfProbeLine, type KbfChatMessage } from './prompts.js';
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export interface StealthChatMessage {
-  role: 'system' | 'user';
-  content: string;
-}
+export type StealthChatMessage = KbfChatMessage;
 
 export interface StealthRequestBody {
   model: string;
@@ -218,12 +216,6 @@ const STRUCTURED_RE = /^The (.+?) of (.+?) is (?:approximately )?___(.*?)\.?\s*$
 /** Any `<subject> is [approximately] ___<unit>.` cloze. */
 const FALLBACK_RE = /^(.*?) is (?:approximately )?___(.*?)\.?\s*$/;
 
-function renderTemplate(probe: KbfProbe): string {
-  return probe.template.includes('{name}')
-    ? probe.template.split('{name}').join(probe.name)
-    : probe.template;
-}
-
 function lowerFirst(text: string): string {
   return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text;
 }
@@ -234,7 +226,7 @@ function lowerFirst(text: string): string {
  * template. Deterministic given `rng`.
  */
 function pickQuestion(probe: KbfProbe, rng: DeterministicRng): string {
-  const rendered = renderTemplate(probe);
+  const rendered = renderKbfProbeLine(probe);
 
   const structured = STRUCTURED_RE.exec(rendered);
   if (structured) {
@@ -362,7 +354,7 @@ function tokenize(text: string): string[] {
  * that also appears in a neighbouring probe's sentence).
  */
 function keywordsFor(probe: KbfProbe): string[] {
-  const rendered = renderTemplate(probe);
+  const rendered = renderKbfProbeLine(probe);
   const tokens = new Set(tokenize(probe.name));
   const structured = STRUCTURED_RE.exec(rendered);
   if (structured) {
@@ -483,7 +475,7 @@ function terminatorBetween(text: string, a: number, b: number): boolean {
  * a number in the question (deprioritize, never exclude).
  */
 function questionEchoValues(probe: KbfProbe): ReadonlySet<number> {
-  return new Set(scanNumbers(renderTemplate(probe)).map((c) => c.value));
+  return new Set(scanNumbers(renderKbfProbeLine(probe)).map((c) => c.value));
 }
 
 /**

@@ -8,6 +8,9 @@ import {
   parseKbfAnswers,
 } from '@antseed/fingerprints'
 import { randomBytes } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { safeServiceSlug } from './slug.js'
 
 /**
  * Build a certified KBF reference by enrolling a model through a trusted
@@ -35,8 +38,6 @@ export interface UpstreamApiConfig {
   /** OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1 */
   baseUrl: string
   apiKey?: string
-  /** Extra headers merged into every request. */
-  headers?: Record<string, string>
 }
 
 /**
@@ -111,7 +112,7 @@ const DEFAULT_TEMPERATURES = [0, 0.4, 0.8]
 const DEFAULT_SELF_TEST_TEMPERATURE = 0.7
 
 /** Minimum stable probes for a usable reference; below this, enrollment fails. */
-export const MIN_REFERENCE_PROBES = 24
+const MIN_REFERENCE_PROBES = 24
 
 /**
  * Hold-out quality gate. A reference whose independent hold-out pass barely
@@ -122,8 +123,8 @@ export const MIN_REFERENCE_PROBES = 24
  * self-test (coverage 0, error rate 1) makes every verdict vacuous. Reject at
  * enrollment instead.
  */
-export const MIN_SELF_TEST_COVERAGE = 0.8
-export const MAX_SELF_TEST_ERROR_RATE = 0.35
+const MIN_SELF_TEST_COVERAGE = 0.8
+const MAX_SELF_TEST_ERROR_RATE = 0.35
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: unknown } }>
@@ -147,7 +148,6 @@ export async function postChatCompletion(
     headers: {
       'content-type': 'application/json',
       ...(upstream.apiKey ? { authorization: `Bearer ${upstream.apiKey}` } : {}),
-      ...(upstream.headers ?? {}),
     },
     body: JSON.stringify(body),
   })
@@ -322,4 +322,22 @@ export async function buildKbfReference(
   }
   reference.referenceId = computeReferenceId(reference)
   return reference
+}
+
+/**
+ * Enroll a reference via the upstream and persist it to
+ * `<outDir>/<slug(certified service)>.json` — the layout `loadReferences`
+ * scans. Shared by `antseed verifier reference build` and the daemon's
+ * automatic enrollment so the two write identical files.
+ */
+export async function enrollAndPersistReference(
+  upstream: UpstreamApiConfig,
+  options: BuildReferenceOptions,
+  outDir: string,
+): Promise<{ reference: FingerprintReference; outPath: string }> {
+  const reference = await buildKbfReference(upstream, options)
+  await mkdir(outDir, { recursive: true })
+  const outPath = join(outDir, `${safeServiceSlug(reference.referenceModel || options.model)}.json`)
+  await writeFile(outPath, JSON.stringify(reference, null, 2))
+  return { reference, outPath }
 }

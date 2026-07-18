@@ -19,16 +19,17 @@ import {
   compositionalProbeSource,
   probeBankSource,
   staticProbeSource,
+  canonicalJsonStringify,
   computeProbeCommitment,
   computeCohortVerdicts,
   computeMatchVector,
   computeKbfVerdict,
-  computeEvidenceHash,
+  sha256Hex,
   verdictToCode,
 } from '@antseed/fingerprints'
 import { probeSeller } from './probing.js'
 import type { SellerProbeRun } from './probing.js'
-import { loadUsedProbeIds, recordUsedProbeIds } from './probe-log.js'
+import { createServiceIdSetStore, loadUsedProbeIds, recordUsedProbeIds } from './probe-log.js'
 import { canonicalProbeSetJson, writeAuditPack } from './pack-writer.js'
 import { LLM_AUTHORED_SOURCE_ID } from './probe-author.js'
 import { safeServiceSlug } from './slug.js'
@@ -75,7 +76,6 @@ export interface AuditRunnerOptions {
    * attestation with ProbeCountTooLow after all probes were already paid for.
    */
   minProbeCount: number
-  cohortMinSize: number
   cohortMaxSize: number
   stalenessWindowSecs: number
   /** Max probes woven into a single stealth chat request (stealth vs. cost dial). */
@@ -141,6 +141,12 @@ export interface AuditRunnerOptions {
   /** Per-peer advertised spelling override (peerId → exact spelling). */
   advertisedByPeer?: ReadonlyMap<string, string>
   /**
+   * Burned referenceIds for this service, when the caller already loaded them
+   * (start.ts consults the burn state while resolving the reference). Absent:
+   * loaded from `probeLogDir` here.
+   */
+  burnedReferenceIds?: ReadonlySet<string>
+  /**
    * Overrides how probes reach the seller. Absent: direct probing from this
    * node's own (verifier-linked, thus classifiable) buyer identity.
    */
@@ -164,7 +170,6 @@ export interface SellerAuditOutcome {
    * not count against the audit budget.
    */
   credited: boolean
-  attestationTx?: string
 }
 
 export interface CohortAuditResult {
@@ -175,8 +180,6 @@ export interface CohortAuditResult {
   packPath: string
   cohortSize: number
   outcomes: SellerAuditOutcome[]
-  /** Verified probe jobs per delegate peerId (empty in direct mode). */
-  delegateJobs: Map<string, number>
   /** On-chain exchange-batch root (undefined when nothing could be anchored). */
   batchRoot?: string
   anchorTx?: string
@@ -276,7 +279,7 @@ const DEFAULT_COHORT_OPTIONS: PersistedCohortOptions = {
 }
 
 /** Resolve the effective (defaults-applied) numeric cohort-grading options. */
-export function resolveCohortOptions(options?: CohortVerdictOptions): PersistedCohortOptions {
+function resolveCohortOptions(options?: CohortVerdictOptions): PersistedCohortOptions {
   return {
     alpha: options?.alpha ?? DEFAULT_COHORT_OPTIONS.alpha,
     minConsensusProbes: options?.minConsensusProbes ?? DEFAULT_COHORT_OPTIONS.minConsensusProbes,
@@ -291,7 +294,7 @@ export function resolveCohortOptions(options?: CohortVerdictOptions): PersistedC
  * the exchange-batch leaf derivation and the contract's `bytes` calldata need
  * 0x-prefixed BytesLike.
  */
-export function toBytesLikeSignature(signature: string): string {
+function toBytesLikeSignature(signature: string): string {
   return signature.startsWith('0x') ? signature : `0x${signature}`
 }
 
@@ -300,7 +303,7 @@ export function toBytesLikeSignature(signature: string): string {
  * the seller signed — what `buildResponseAuthSigningBytes` serializes and the
  * contract recomputes its EIP-191 digest over at anchor time.
  */
-export function stripResponseAuthSignature(
+function stripResponseAuthSignature(
   auth: ResponseAuthPayload,
 ): Omit<ResponseAuthPayload, 'signature'> {
   const { signature: _signature, ...unsigned } = auth
@@ -322,28 +325,13 @@ export function stripResponseAuthSignature(
 // falls back to cohort-only (no reference verdict at all).
 // ---------------------------------------------------------------------------
 
-interface BurnedReferencesFile {
-  version: 1
-  service: string
-  /** referenceIds whose probes have appeared in an on-chain reveal. */
-  burnedReferenceIds: string[]
-  updatedAt: string
-}
-
-function burnedReferencesPath(dir: string, service: string): string {
-  return join(dir, `${safeServiceSlug(service)}.burned.json`)
-}
+/** One `<slug>.burned.json` per service, listing referenceIds whose probes
+ * have appeared in an on-chain reveal. */
+const burnedReferencesStore = createServiceIdSetStore('.burned.json', 'burnedReferenceIds')
 
 /** Load the burned referenceIds for a service (empty on any read error). */
 export async function loadBurnedReferenceIds(dir: string, service: string): Promise<Set<string>> {
-  try {
-    const raw = await readFile(burnedReferencesPath(dir, service), 'utf8')
-    const parsed = JSON.parse(raw) as Partial<BurnedReferencesFile>
-    if (!Array.isArray(parsed.burnedReferenceIds)) return new Set()
-    return new Set(parsed.burnedReferenceIds.filter((id): id is string => typeof id === 'string'))
-  } catch {
-    return new Set()
-  }
+  return burnedReferencesStore.load(dir, service)
 }
 
 /** Persist a reference as burned for a service (idempotent). */
@@ -355,14 +343,7 @@ export async function recordBurnedReference(
 ): Promise<void> {
   const existing = await loadBurnedReferenceIds(dir, service)
   existing.add(referenceId)
-  const file: BurnedReferencesFile = {
-    version: 1,
-    service,
-    burnedReferenceIds: [...existing],
-    updatedAt: now,
-  }
-  await mkdir(dir, { recursive: true })
-  await writeFile(burnedReferencesPath(dir, service), JSON.stringify(file, null, 2))
+  await burnedReferencesStore.save(dir, service, [...existing], now)
 }
 
 // ---------------------------------------------------------------------------
@@ -626,7 +607,7 @@ export async function runCohortAudit(
   let exclude: Set<string>
   if (
     reference?.selfTest
-    && !(await loadBurnedReferenceIds(options.probeLogDir, service)).has(reference.referenceId)
+    && !(options.burnedReferenceIds ?? await loadBurnedReferenceIds(options.probeLogDir, service)).has(reference.referenceId)
   ) {
     referenceMode = true
     source = staticProbeSource(reference.referenceId, reference.probes, { consensusCertified: true })
@@ -728,7 +709,6 @@ export async function runCohortAudit(
     }))
 
   const runs: SellerProbeRun[] = []
-  const delegateJobs = new Map<string, number>()
   for (const peer of cohort) {
     // Wire model id: the exact spelling this peer advertises (sellers match
     // it case-sensitively); normalized `service` is only a grouping key.
@@ -743,9 +723,6 @@ export async function runCohortAudit(
     try {
       const outcome = await execute(peer, wireService, probeSet, options.maxProbesPerRequest)
       run = outcome.run
-      for (const [delegatePeerId, jobs] of outcome.jobsByDelegate ?? []) {
-        delegateJobs.set(delegatePeerId, (delegateJobs.get(delegatePeerId) ?? 0) + jobs)
-      }
     } catch (err) {
       warn(`  ${peer.peerId.slice(0, 10)}…: probe execution failed: ${(err as Error).message}`)
       run = failedRun(peer, probeSet.probes.length, `probe execution failed: ${(err as Error).message}`)
@@ -912,8 +889,12 @@ export async function runCohortAudit(
       : {}),
     createdAt: new Date().toISOString(),
   }
-  const evidenceHash = computeEvidenceHash(evidenceBundle)
-  const packPath = await writeAuditPack(options.publishDir, probeCommitment, evidenceBundle)
+  // The pack file IS the canonical serialization of the bundle and the
+  // on-chain evidenceHash is sha256 over those exact bytes (see
+  // computeEvidenceHash) — serialize once, hash and write the same string.
+  const packJson = canonicalJsonStringify(evidenceBundle)
+  const evidenceHash = `0x${sha256Hex(packJson)}`
+  const packPath = await writeAuditPack(options.publishDir, probeCommitment, packJson)
   log(`Audit pack ${evidenceHash.slice(0, 10)}… written to ${packPath}`)
 
   // Corroboration note: a SAME verdict carried by a single delegate is weaker
@@ -960,7 +941,6 @@ export async function runCohortAudit(
         cohortSize: cohort.length,
       })
       outcome.attested = true
-      outcome.attestationTx = tx
       try {
         const creditedAfter = await registryClient.lastCreditedAt(outcome.agentId, service)
         outcome.credited = creditedBeforeKnown ? creditedAfter > creditedBefore : creditedAfter > 0
@@ -1028,7 +1008,6 @@ export async function runCohortAudit(
     packPath,
     cohortSize: cohort.length,
     outcomes,
-    delegateJobs,
     ...(batchRoot ? { batchRoot } : {}),
     ...(anchorTx ? { anchorTx } : {}),
     ...(revealTx ? { revealTx } : {}),

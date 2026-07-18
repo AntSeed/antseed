@@ -47,6 +47,10 @@ export function auditPackPath(publishDir: string, probeCommitment: string): stri
  * always produces byte-identical output, and the file's SHA-256 equals the
  * bundle's evidenceHash. Returns the written path.
  *
+ * Accepts either the bundle or its already-canonical JSON string — the audit
+ * runner serializes once, hashes those bytes for the on-chain evidenceHash,
+ * and hands the same string here so the file and the hash can never diverge.
+ *
  * The write is atomic (temp file in the same directory, then rename): the
  * pack is served over HTTP at the on-chain-referenced URI and its exact bytes
  * must sha256-match the attested evidenceHash, so a concurrent reader or a
@@ -55,13 +59,13 @@ export function auditPackPath(publishDir: string, probeCommitment: string): stri
 export async function writeAuditPack(
   publishDir: string,
   probeCommitment: string,
-  pack: EvidenceBundle,
+  pack: EvidenceBundle | string,
 ): Promise<string> {
   const path = auditPackPath(publishDir, probeCommitment)
   await mkdir(publishDir, { recursive: true })
   const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   try {
-    await writeFile(tmp, canonicalJsonStringify(pack))
+    await writeFile(tmp, typeof pack === 'string' ? pack : canonicalJsonStringify(pack))
     await rename(tmp, path)
   } catch (error) {
     await rm(tmp, { force: true }).catch(() => {})

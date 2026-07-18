@@ -37,6 +37,9 @@ const MESSAGE_TYPE_NAME: Record<number, string> = {
 
 const DEFAULT_WELCOME_TIMEOUT_MS = 15_000;
 
+/** Single-slot key for the welcome waiter (only one welcome is ever pending). */
+const WELCOME_KEY = 'welcome';
+
 export type DelegationMessageHandler<T> = (payload: T) => void | Promise<void>;
 
 /**
@@ -53,9 +56,9 @@ export class DelegationMux {
   private _onJob?: DelegationMessageHandler<ProbeJobRequestPayload>;
   private _onTargetQuery?: DelegationMessageHandler<TargetQueryPayload>;
   private _onWelcome?: (payload: DelegateWelcomePayload) => void;
-  private readonly _pendingResults = new Map<string, PendingResult>();
-  private readonly _pendingSuggestions = new Map<string, PendingSuggestion>();
-  private _pendingWelcome: PendingWelcome | null = null;
+  private readonly _pendingResults = new Map<string, Pending<ProbeJobResultPayload>>();
+  private readonly _pendingSuggestions = new Map<string, Pending<TargetSuggestionPayload>>();
+  private readonly _pendingWelcome = new Map<string, Pending<DelegateWelcomePayload>>();
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -110,92 +113,101 @@ export class DelegationMux {
   }
 
   waitForWelcome(timeoutMs = DEFAULT_WELCOME_TIMEOUT_MS): Promise<DelegateWelcomePayload> {
-    if (this._pendingWelcome) return this._pendingWelcome.promise;
-
-    let resolve!: (payload: DelegateWelcomePayload) => void;
-    let reject!: (error: Error) => void;
-    const promise = new Promise<DelegateWelcomePayload>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    const timer = setTimeout(() => {
-      this._pendingWelcome = null;
-      reject(new Error('DelegateWelcome timed out'));
-    }, Math.max(1, timeoutMs));
-    this._pendingWelcome = { promise, resolve, reject, timer };
-    return promise;
+    return this._registerPending(
+      this._pendingWelcome,
+      WELCOME_KEY,
+      timeoutMs,
+      'DelegateWelcome timed out',
+    );
   }
 
   /** Dispatch a job and await its correlated result. */
   runJob(payload: ProbeJobRequestPayload, timeoutMs: number): Promise<ProbeJobResultPayload> {
-    const existing = this._pendingResults.get(payload.jobId);
-    if (existing) return existing.promise;
-
-    let resolve!: (result: ProbeJobResultPayload) => void;
-    let reject!: (error: Error) => void;
-    const promise = new Promise<ProbeJobResultPayload>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    const timer = setTimeout(() => {
-      this._pendingResults.delete(payload.jobId);
-      reject(new Error(`Probe job ${payload.jobId} timed out after ${timeoutMs}ms`));
-    }, Math.max(1, timeoutMs));
-    this._pendingResults.set(payload.jobId, { promise, resolve, reject, timer });
-
-    try {
-      this.sendJob(payload);
-    } catch (err) {
-      clearTimeout(timer);
-      this._pendingResults.delete(payload.jobId);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    }
-    return promise;
+    return this._runCorrelated(
+      this._pendingResults,
+      payload.jobId,
+      timeoutMs,
+      `Probe job ${payload.jobId} timed out after ${timeoutMs}ms`,
+      () => this.sendJob(payload),
+    );
   }
 
   /** Dispatch a target query and await its correlated suggestion. */
   runTargetQuery(payload: TargetQueryPayload, timeoutMs: number): Promise<TargetSuggestionPayload> {
-    const existing = this._pendingSuggestions.get(payload.queryId);
+    return this._runCorrelated(
+      this._pendingSuggestions,
+      payload.queryId,
+      timeoutMs,
+      `Target query ${payload.queryId} timed out after ${timeoutMs}ms`,
+      () => this.sendTargetQuery(payload),
+    );
+  }
+
+  close(): void {
+    for (const map of [this._pendingResults, this._pendingSuggestions, this._pendingWelcome] as const) {
+      for (const pending of map.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('DelegationMux closed'));
+      }
+      map.clear();
+    }
+  }
+
+  /**
+   * Register a correlated waiter: an existing entry's promise is returned
+   * as-is (idempotent per key), otherwise a new pending entry is created that
+   * rejects with `timeoutMessage` and removes itself after `timeoutMs`.
+   */
+  private _registerPending<T>(
+    map: Map<string, Pending<T>>,
+    key: string,
+    timeoutMs: number,
+    timeoutMessage: string,
+  ): Promise<T> {
+    const existing = map.get(key);
     if (existing) return existing.promise;
 
-    let resolve!: (suggestion: TargetSuggestionPayload) => void;
+    let resolve!: (value: T) => void;
     let reject!: (error: Error) => void;
-    const promise = new Promise<TargetSuggestionPayload>((res, rej) => {
+    const promise = new Promise<T>((res, rej) => {
       resolve = res;
       reject = rej;
     });
     const timer = setTimeout(() => {
-      this._pendingSuggestions.delete(payload.queryId);
-      reject(new Error(`Target query ${payload.queryId} timed out after ${timeoutMs}ms`));
+      map.delete(key);
+      reject(new Error(timeoutMessage));
     }, Math.max(1, timeoutMs));
-    this._pendingSuggestions.set(payload.queryId, { promise, resolve, reject, timer });
-
-    try {
-      this.sendTargetQuery(payload);
-    } catch (err) {
-      clearTimeout(timer);
-      this._pendingSuggestions.delete(payload.queryId);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    }
+    map.set(key, { promise, resolve, reject, timer });
     return promise;
   }
 
-  close(): void {
-    for (const pending of this._pendingResults.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('DelegationMux closed'));
+  /** Remove and return a pending entry, clearing its timeout (no-op when absent). */
+  private _takePending<T>(map: Map<string, Pending<T>>, key: string): Pending<T> | undefined {
+    const pending = map.get(key);
+    if (!pending) return undefined;
+    clearTimeout(pending.timer);
+    map.delete(key);
+    return pending;
+  }
+
+  /** Register a waiter for `key`, then send — a synchronous send failure rejects it. */
+  private _runCorrelated<T>(
+    map: Map<string, Pending<T>>,
+    key: string,
+    timeoutMs: number,
+    timeoutMessage: string,
+    send: () => void,
+  ): Promise<T> {
+    const existing = map.get(key);
+    if (existing) return existing.promise;
+
+    const promise = this._registerPending(map, key, timeoutMs, timeoutMessage);
+    try {
+      send();
+    } catch (err) {
+      this._takePending(map, key)?.reject(err instanceof Error ? err : new Error(String(err)));
     }
-    this._pendingResults.clear();
-    for (const pending of this._pendingSuggestions.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('DelegationMux closed'));
-    }
-    this._pendingSuggestions.clear();
-    if (this._pendingWelcome) {
-      clearTimeout(this._pendingWelcome.timer);
-      this._pendingWelcome.reject(new Error('DelegationMux closed'));
-      this._pendingWelcome = null;
-    }
+    return promise;
   }
 
   async handleFrame(frame: FramedMessage): Promise<boolean> {
@@ -214,12 +226,7 @@ export class DelegationMux {
         // Observer first, synchronously: frames behind this welcome in the
         // same batch dispatch before any `waitForWelcome` microtask resumes.
         this._onWelcome?.(payload);
-        if (this._pendingWelcome) {
-          clearTimeout(this._pendingWelcome.timer);
-          const pending = this._pendingWelcome;
-          this._pendingWelcome = null;
-          pending.resolve(payload);
-        }
+        this._takePending(this._pendingWelcome, WELCOME_KEY)?.resolve(payload);
         return true;
       }
       case MessageType.ProbeJobRequest: {
@@ -234,10 +241,8 @@ export class DelegationMux {
       }
       case MessageType.ProbeJobResult: {
         const payload = decodeProbeJobResult(frame.payload);
-        const pending = this._pendingResults.get(payload.jobId);
+        const pending = this._takePending(this._pendingResults, payload.jobId);
         if (pending) {
-          clearTimeout(pending.timer);
-          this._pendingResults.delete(payload.jobId);
           pending.resolve(payload);
         } else {
           debugWarn(`[DelegationMux] Unmatched ProbeJobResult for job ${payload.jobId}`);
@@ -256,10 +261,8 @@ export class DelegationMux {
       }
       case MessageType.TargetSuggestion: {
         const payload = decodeTargetSuggestion(frame.payload);
-        const pending = this._pendingSuggestions.get(payload.queryId);
+        const pending = this._takePending(this._pendingSuggestions, payload.queryId);
         if (pending) {
-          clearTimeout(pending.timer);
-          this._pendingSuggestions.delete(payload.queryId);
           pending.resolve(payload);
         } else {
           debugWarn(`[DelegationMux] Unmatched TargetSuggestion for query ${payload.queryId}`);
@@ -286,23 +289,10 @@ export class DelegationMux {
   }
 }
 
-interface PendingResult {
-  promise: Promise<ProbeJobResultPayload>;
-  resolve: (result: ProbeJobResultPayload) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-interface PendingSuggestion {
-  promise: Promise<TargetSuggestionPayload>;
-  resolve: (suggestion: TargetSuggestionPayload) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-interface PendingWelcome {
-  promise: Promise<DelegateWelcomePayload>;
-  resolve: (payload: DelegateWelcomePayload) => void;
+/** One correlated in-flight wait: resolved by its frame, rejected on timeout/close. */
+interface Pending<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
