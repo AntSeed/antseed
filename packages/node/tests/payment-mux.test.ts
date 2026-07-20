@@ -204,5 +204,20 @@ describe('PaymentMux', () => {
       const sentFrame = (conn.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(sentFrame).toBeInstanceOf(Uint8Array);
     });
+
+    it('drops PaymentRequired when the transport is already closed', () => {
+      const conn = mockConnection();
+      (conn.send as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('Cannot send to peer: no writable transport');
+      });
+      const mux = new PaymentMux(conn);
+
+      expect(() => mux.sendPaymentRequired({
+        minBudgetPerRequest: '10000',
+        suggestedAmount: '100000',
+        requestId: 'req-closed',
+      })).not.toThrow();
+      expect(conn.send).toHaveBeenCalledOnce();
+    });
   });
 });
