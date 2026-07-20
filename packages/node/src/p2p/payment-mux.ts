@@ -13,7 +13,7 @@ import type {
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
 import * as codec from './payment-codec.js';
-import { debugLog, debugWarn } from '../utils/debug.js';
+import { debugLog } from '../utils/debug.js';
 
 const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.SpendingAuth]: 'SpendingAuth',
@@ -154,12 +154,6 @@ export class PaymentMux {
       messageId: this._messageIdCounter++ & 0xffffffff,
       payload,
     });
-    try {
-      this._connection.send(frame);
-    } catch (err) {
-      debugWarn(
-        `[PaymentMux] drop ${name} because connection closed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+    this._connection.send(frame);
   }
 }

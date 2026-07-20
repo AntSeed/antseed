@@ -205,7 +205,7 @@ describe('PaymentMux', () => {
       expect(sentFrame).toBeInstanceOf(Uint8Array);
     });
 
-    it('drops PaymentRequired when the transport is already closed', () => {
+    it('propagates PaymentRequired send errors to callers', () => {
       const conn = mockConnection();
       (conn.send as ReturnType<typeof vi.fn>).mockImplementation(() => {
         throw new Error('Cannot send to peer: no writable transport');
@@ -216,7 +216,7 @@ describe('PaymentMux', () => {
         minBudgetPerRequest: '10000',
         suggestedAmount: '100000',
         requestId: 'req-closed',
-      })).not.toThrow();
+      })).toThrow('no writable transport');
       expect(conn.send).toHaveBeenCalledOnce();
     });
   });
