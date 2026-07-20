@@ -141,7 +141,7 @@ export class SellerRequestHandler {
               headers: { "content-type": "application/json" },
               body: new TextEncoder().encode(paymentBody),
             });
-            paymentMux.sendPaymentRequired(requirements);
+            this._sendPaymentRequiredBestEffort(paymentMux, requirements, buyerPeerId, 'missing-session');
           } else {
             debugWarn(`[SellerHandler] No payment session — returning 402`);
             mux.sendProxyResponse({
@@ -291,7 +291,7 @@ export class SellerRequestHandler {
                 ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
               })),
             });
-            paymentMux.sendPaymentRequired(requirements);
+            this._sendPaymentRequiredBestEffort(paymentMux, requirements, buyerPeerId, 'budget-exhausted');
             // Auto-sign catch-up via NeedAuth so a transient underfund recovers
             // without the 402 round-tripping to the user.
             if (!isFullyExhausted) {
@@ -703,6 +703,21 @@ export class SellerRequestHandler {
     } catch (err) {
       debugWarn(
         `[SellerHandler] NeedAuth send skipped (${phase}) for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private _sendPaymentRequiredBestEffort(
+    paymentMux: PaymentMux,
+    payload: Parameters<PaymentMux['sendPaymentRequired']>[0],
+    buyerPeerId: string,
+    phase: 'missing-session' | 'budget-exhausted',
+  ): void {
+    try {
+      paymentMux.sendPaymentRequired(payload);
+    } catch (err) {
+      debugWarn(
+        `[SellerHandler] PaymentRequired send skipped (${phase}) for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
       );
     }
   }
