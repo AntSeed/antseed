@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { assertPinnedPluginVersion, selectPluginExport } from './loader.js'
 
-const TEE_PACKAGE = '@refoundhq/antseed-verifier'
+const TEE_PACKAGE = '@antseed/antseed-verifier'
 
 function withPluginVersion(pkgName: string, version: string, fn: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), 'antseed-loader-test-'))

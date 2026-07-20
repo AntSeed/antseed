@@ -18,5 +18,5 @@ test('trusted plugin registry keeps typed lists and verifier invariants', () => 
   }
   assert.ok(TRUSTED_PLUGINS.filter((p) => p.type === 'provider').every((p) => !p.version))
   assert.equal(TRUSTED_PLUGINS.some((p) => p.name === 'antseed/noop' || p.package === '@antseed/verifier-noop'), false)
-  assert.equal(resolvePluginPackage('refoundhq-antseed-verifier'), '@refoundhq/antseed-verifier')
+  assert.equal(resolvePluginPackage('antseed-verifier'), '@antseed/antseed-verifier')
 })

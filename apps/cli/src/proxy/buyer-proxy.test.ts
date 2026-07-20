@@ -1105,7 +1105,7 @@ test('makeVerifierReach: rejects non-attest paths, sends the attest route as a p
 
   const rejectNode = { sendRequest: async () => ({ statusCode: 200, headers: {}, body: new Uint8Array() }) }
   await assert.rejects(
-    makeVerifierReach(rejectNode as never, peer, 'refoundhq-antseed-verifier', signal)({ method: 'POST', path: '/v1/chat/completions' }),
+    makeVerifierReach(rejectNode as never, peer, 'antseed-verifier', signal)({ method: 'POST', path: '/v1/chat/completions' }),
     /may only call its attestation route/,
   )
 
@@ -1116,8 +1116,8 @@ test('makeVerifierReach: rejects non-attest paths, sends the attest route as a p
       return { statusCode: 200, headers: {}, body: new Uint8Array() }
     },
   }
-  const resp = await makeVerifierReach(captureNode as never, peer, 'refoundhq-antseed-verifier', signal)(
-    { method: 'POST', path: '/_antseed/attest/refoundhq-antseed-verifier', body: new Uint8Array([1]) },
+  const resp = await makeVerifierReach(captureNode as never, peer, 'antseed-verifier', signal)(
+    { method: 'POST', path: '/_antseed/attest/antseed-verifier', body: new Uint8Array([1]) },
   )
   assert.equal(resp.statusCode, 200)
   assert.equal(opts!.controlPlane, true)

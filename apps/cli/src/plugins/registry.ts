@@ -57,10 +57,10 @@ export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
 
 export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
   {
-    name: 'refoundhq-antseed-verifier',
+    name: 'antseed-verifier',
     type: 'verifier',
     description: 'TEE attestation verifier + prover (Intel TDX, DCAP)',
-    package: '@refoundhq/antseed-verifier',
+    package: '@antseed/antseed-verifier',
     version: '0.1.0',
   },
 ]
