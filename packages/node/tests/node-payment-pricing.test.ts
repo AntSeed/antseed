@@ -7,7 +7,7 @@ import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
 import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
 
-const ATTEST_ID = 'refoundhq-antseed-verifier';
+const ATTEST_ID = 'antseed-verifier';
 const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {

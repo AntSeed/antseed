@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildVerifierCapabilities, getCachedVerdict, normalizeVerifierIds, parseVerifierCapabilities, resolveVerifierPolicy, selectVerifier, verifierSupportFingerprint, withVerifyTimeout, type CachedVerdict, type VerifyOutcome } from './verifier.js'
 
-const TEE = 'refoundhq-antseed-verifier'
+const TEE = 'antseed-verifier'
 const OK: VerifyOutcome = { ok: true, verified: true }
 
 function countedRun(outcome: VerifyOutcome = OK): { run: () => Promise<VerifyOutcome>; runs: () => number } {
@@ -15,8 +15,8 @@ function countedRun(outcome: VerifyOutcome = OK): { run: () => Promise<VerifyOut
 
 test('buildVerifierCapabilities: first id is the default; dot-separated (PEER_CAPABILITY_PATTERN-safe)', () => {
   assert.deepEqual(buildVerifierCapabilities([TEE, 'acme-x']), [
-    'verifier.refoundhq-antseed-verifier',
-    'verifier-default.refoundhq-antseed-verifier',
+    'verifier.antseed-verifier',
+    'verifier-default.antseed-verifier',
     'verifier.acme-x',
   ])
 })
@@ -53,8 +53,8 @@ test('selectVerifier: prefers requested trusted SDKs, otherwise trusted seller d
 
 test('normalizeVerifierIds: lowercases/dedupes/drops-blanks and rejects invalid chars', () => {
   assert.deepEqual(
-    normalizeVerifierIds(' Refoundhq-Antseed-Verifier , acme-x , refoundhq-antseed-verifier , '),
-    ['refoundhq-antseed-verifier', 'acme-x'],
+    normalizeVerifierIds(' Antseed-Verifier , acme-x , antseed-verifier , '),
+    ['antseed-verifier', 'acme-x'],
   )
   for (const bad of ['@scope/pkg', 'has space', 'up/slash']) {
     assert.throws(() => normalizeVerifierIds(bad), /invalid verifier id/)
@@ -81,10 +81,10 @@ test('withVerifyTimeout: resolves in time, times out, and surfaces an outer abor
 })
 
 test('verifierSupportFingerprint: changes when advertised verifiers change (cache invalidation)', () => {
-  const a = verifierSupportFingerprint(['verifier.refoundhq-antseed-verifier', 'verifier-default.refoundhq-antseed-verifier'])
+  const a = verifierSupportFingerprint(['verifier.antseed-verifier', 'verifier-default.antseed-verifier'])
   const b = verifierSupportFingerprint(['verifier.acme-x'])
   assert.notEqual(a, b)
-  assert.equal(a, verifierSupportFingerprint(['verifier-default.refoundhq-antseed-verifier', 'verifier.refoundhq-antseed-verifier']))
+  assert.equal(a, verifierSupportFingerprint(['verifier-default.antseed-verifier', 'verifier.antseed-verifier']))
 })
 
 test('getCachedVerdict: caches unexpired verdicts, re-runs otherwise, skips transient, and hard-bounds size', async () => {

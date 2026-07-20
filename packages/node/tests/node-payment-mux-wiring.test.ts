@@ -86,7 +86,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
     const request: SerializedHttpRequest = {
       requestId: 'req-control-plane',
       method: 'POST',
-      path: '/_antseed/attest/refoundhq-antseed-verifier',
+      path: '/_antseed/attest/antseed-verifier',
       headers: { 'content-type': 'application/json' },
       body: new Uint8Array(0),
     };
