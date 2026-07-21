@@ -87,6 +87,13 @@
   display: grid;
 }
 
+.appNameRow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .appName {
   min-width: 0;
   overflow: hidden;
@@ -97,16 +104,40 @@
   line-height: 20px;
 }
 
-/* Sub-line under connected apps (Figma "1,204 requests · $4.20 this week"). */
+/* Hover target for the per-app help tooltip. */
+.helpIcon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  cursor: help;
+  transition: color 0.12s ease;
+}
+
+.helpIcon:hover,
+.helpIcon:focus-visible {
+  color: var(--text-secondary);
+  outline: none;
+}
+
+/* Green "Connected" line under the app name. */
 .appMeta {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-green, #4ade80);
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 500;
   line-height: 20px;
+}
+
+.connectedDot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green, #4ade80);
 }
 
 .appOpen {
@@ -159,18 +190,18 @@
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-/* Small × for removing a custom app; confirmation guards the click. */
+/* Quiet grey Remove for disconnected custom apps — sits where Disconnect
+   does on connected rows; confirmation guards the click. */
 .removeAction {
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0;
+  padding: 4px 8px;
   border: none;
-  border-radius: 50%;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
   cursor: pointer;
   transition: color 0.12s ease, background 0.12s ease;
 }
@@ -185,21 +216,23 @@
   cursor: default;
 }
 
-/* Quiet red Disconnect (Figma). */
+/* Quiet Disconnect — muted until hovered so the connected state stays the focal point. */
 .disconnectAction {
   flex: 0 0 auto;
   padding: 4px 8px;
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--danger);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
   line-height: 20px;
   cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .disconnectAction:hover:not(:disabled) {
+  color: var(--danger);
   background: rgba(var(--danger-rgb), 0.08);
 }
 

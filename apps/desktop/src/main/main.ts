@@ -346,6 +346,9 @@ type SystemProxyGuiTestResult = {
   proxyConfigured: boolean;
   proxyReachable: boolean;
   guiTrustOk: boolean;
+  /** True only when the probe failed with a certificate/TLS trust error —
+   *  a timeout or generic network failure is NOT a missing-CA signal. */
+  certTrustError: boolean;
   appRunning: boolean;
   needsAppRestart: boolean;
   appPid?: number;
@@ -3266,6 +3269,7 @@ ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number })
       proxyConfigured,
       proxyReachable,
       guiTrustOk: false,
+      certTrustError: false,
       appRunning: targetApp.running,
       needsAppRestart: needsAppRestartByStartTime,
       appPid: targetApp.pid,
@@ -3279,6 +3283,7 @@ ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number })
       proxyConfigured,
       proxyReachable,
       guiTrustOk: false,
+      certTrustError: false,
       appRunning: targetApp.running,
       needsAppRestart: needsAppRestartByStartTime,
       appPid: targetApp.pid,
@@ -3296,6 +3301,7 @@ ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number })
     proxyConfigured,
     proxyReachable,
     guiTrustOk: probe.ok,
+    certTrustError: !probe.ok && isCertificateTrustError(probe.error ?? ''),
     appRunning: targetApp.running,
     needsAppRestart,
     appPid: targetApp.pid,

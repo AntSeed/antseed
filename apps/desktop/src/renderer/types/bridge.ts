@@ -369,6 +369,7 @@ export type DesktopBridge = {
     proxyConfigured: boolean;
     proxyReachable: boolean;
     guiTrustOk: boolean;
+    certTrustError: boolean;
     appRunning: boolean;
     needsAppRestart: boolean;
     appPid?: number;

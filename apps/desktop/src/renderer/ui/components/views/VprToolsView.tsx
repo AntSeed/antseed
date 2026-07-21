@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowUpRight01Icon, Cancel01Icon, Copy01Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, HelpCircleIcon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
@@ -11,6 +11,7 @@ import {
 } from '../../../modules/vpr-tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { BrandIcon } from '../brand/BrandIcon';
+import { InfoTooltip } from '../InfoTooltip';
 import { VprBadge, VprCard, VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprToolsView.module.scss';
 
@@ -18,11 +19,23 @@ type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const DEFAULT_PORT = 8378;
 
+/** Per-app "how to use" line for the help tooltip next to each app name. */
+function appHelpHowTo(profile: SystemProxyProfileSummary): string {
+  if (profile.canRestart || profile.appAction === 'restart-app') {
+    return `Press Connect, then restart ${profile.displayName} so it picks up the new routing.`;
+  }
+  if (profile.appAction === 'open-url' || profile.appAction === 'open-tool') {
+    return `Press Connect, then open ${profile.displayName} with the arrow button and use it normally.`;
+  }
+  return `Press Connect and use ${profile.displayName} as usual. Disconnect anytime to route directly again.`;
+}
+
 type GuiTestResult = {
   ok: boolean;
   proxyConfigured: boolean;
   proxyReachable: boolean;
   guiTrustOk: boolean;
+  certTrustError: boolean;
   appRunning: boolean;
   needsAppRestart: boolean;
   appPid?: number;
@@ -98,6 +111,7 @@ export function VprToolsView({ onSelectView }: Props) {
         proxyConfigured: false,
         proxyReachable: false,
         guiTrustOk: false,
+        certTrustError: false,
         appRunning: false,
         needsAppRestart: false,
         error: err instanceof Error ? err.message : String(err),
@@ -307,8 +321,7 @@ export function VprToolsView({ onSelectView }: Props) {
               const canOpenTool = connected && profile.appAction === 'open-tool';
               const canOpen = canOpenUrl || canOpenTool;
               const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
-              const canTrust = connected && profile.kind === 'proxy' && !!guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable;
-              const hasActions = canRestart || canTrust;
+              const hasActions = canRestart;
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
@@ -319,8 +332,33 @@ export function VprToolsView({ onSelectView }: Props) {
                         <BrandIcon name={profile.name} hints={[profile.displayName]} size={24} />
                       )}
                       <span className={styles.appText}>
-                        <span className={styles.appName}>{profile.displayName}</span>
-                        {connected && <span className={styles.appMeta}>Connected · routing through AntSeed</span>}
+                        <span className={styles.appNameRow}>
+                          <span className={styles.appName}>{profile.displayName}</span>
+                          <InfoTooltip
+                            align="left"
+                            content={
+                              <>
+                                <strong>{profile.displayName} through AntSeed</strong>
+                                <span>
+                                  Connecting routes {profile.displayName}&apos;s AI requests through AntSeed —
+                                  the app works as usual while its model calls are served by peers and paid
+                                  from your balance.
+                                </span>
+                                <span>{appHelpHowTo(profile)}</span>
+                              </>
+                            }
+                          >
+                            <span className={styles.helpIcon} tabIndex={0} role="img" aria-label={`How ${profile.displayName} works with AntSeed`}>
+                              <HugeiconsIcon icon={HelpCircleIcon} size={14} strokeWidth={1.8} />
+                            </span>
+                          </InfoTooltip>
+                        </span>
+                        {connected && (
+                          <span className={styles.appMeta}>
+                            <span className={styles.connectedDot} aria-hidden="true" />
+                            Connected
+                          </span>
+                        )}
                       </span>
                     </span>
                     {canOpen ? (
@@ -334,7 +372,7 @@ export function VprToolsView({ onSelectView }: Props) {
                         <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
                       </button>
                     ) : null}
-                    {profile.custom ? (
+                    {profile.custom && !connected ? (
                       <button
                         type="button"
                         className={styles.removeAction}
@@ -344,10 +382,9 @@ export function VprToolsView({ onSelectView }: Props) {
                             void removeCustomApp(profile.name, connected);
                           }
                         }}
-                        aria-label={`Remove ${profile.displayName}`}
                         title={`Remove ${profile.displayName}`}
                       >
-                        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+                        Remove
                       </button>
                     ) : null}
                     <button
@@ -370,11 +407,6 @@ export function VprToolsView({ onSelectView }: Props) {
                             disabled={actionBusy === profile.name}
                           >
                             {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
-                          </button>
-                        ) : null}
-                        {canTrust ? (
-                          <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                            {trustBusy ? 'Trusting...' : 'Trust CA'}
                           </button>
                         ) : null}
                       </div>
@@ -436,8 +468,8 @@ export function VprToolsView({ onSelectView }: Props) {
             <div className={styles.caHead}>
               <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
               <span className={styles.caTitle}>HTTPS certificate</span>
-              <VprBadge tone={caInfo.exists ? 'green' : 'neutral'}>
-                {caInfo.exists ? 'Installed' : 'Not created yet'}
+              <VprBadge tone={guiTest?.certTrustError ? 'neutral' : caInfo.exists ? 'green' : 'neutral'}>
+                {guiTest?.certTrustError ? 'Not trusted' : caInfo.exists ? 'Installed' : 'Not created yet'}
               </VprBadge>
             </div>
             <p className={styles.caHint}>
@@ -449,9 +481,16 @@ export function VprToolsView({ onSelectView }: Props) {
               <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
               <span>{caCopied ? 'Copied' : 'Copy'}</span>
             </button>
-            {caInfo.exists ? (
+            {caInfo.exists || guiTest?.certTrustError ? (
               <div className={styles.actions}>
-                <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                {caInfo.exists ? (
+                  <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                ) : null}
+                {guiTest?.certTrustError ? (
+                  <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                    {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
