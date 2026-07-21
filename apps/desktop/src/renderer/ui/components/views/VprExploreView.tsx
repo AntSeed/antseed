@@ -1,6 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { StarIcon } from '@hugeicons/core-free-icons';
 import { filterVprCatalog, sortVprCatalog, type VprCatalogSort } from '../../../modules/vpr-view-models';
 import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
+import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+import {
+  catalogEntryKey,
+  selectFavoriteVprCatalog,
+  selectRecommendedVprCatalog,
+} from '../../../modules/vpr-recommended-models';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -35,18 +43,33 @@ export function VprExploreView({ onSelectView }: Props) {
   const [search, setSearch] = useRetainedState(exploreViewCache, 'search');
   const [category, setCategory] = useRetainedState(exploreViewCache, 'category');
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
+  // Starred on the model pages; fresh on every visit (the view remounts).
+  const [favorites] = useState(loadFavoriteModels);
 
   const categories = useMemo(
     () => Array.from(new Set(snap.catalog.flatMap((entry) => entry.categories))).sort((a, b) => a.localeCompare(b)),
     [snap.catalog],
   );
+  const favoriteEntries = useMemo(
+    () => (tab === 'Recommended'
+      ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search })
+      : []),
+    [favorites, search, snap.catalog, tab],
+  );
   const entries = useMemo(() => {
-    const source = tab === 'Recommended' ? snap.catalog.slice(0, RECOMMENDED_LIMIT) : snap.catalog;
+    if (tab === 'Recommended') {
+      // Curated lineup order (frontier + free) — the sort control only
+      // exists on the All tab. Favorites get their own section above.
+      const curated = selectRecommendedVprCatalog(snap.catalog)
+        .filter((entry) => !favorites.has(catalogEntryKey(entry)))
+        .slice(0, RECOMMENDED_LIMIT);
+      return filterVprCatalog(curated, { search });
+    }
     return sortVprCatalog(
-      filterVprCatalog(source, { search, category: tab === 'All' && category ? category : null }),
+      filterVprCatalog(snap.catalog, { search, category: category || null }),
       sort,
     );
-  }, [category, search, snap.catalog, sort, tab]);
+  }, [category, favorites, search, snap.catalog, sort, tab]);
 
   const selectedModel = snap.selection.model;
   const selectedEntry = selectedModel
@@ -132,18 +155,43 @@ export function VprExploreView({ onSelectView }: Props) {
           </div>
         )}
 
+        {favoriteEntries.length > 0 && (
+          <>
+            <div className={styles.sectionTitle}>
+              <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.sectionStar} />
+              Favorites
+            </div>
+            <VprModelRowList
+              entries={favoriteEntries}
+              selectedProvider={selectedModel?.provider}
+              selectedServiceId={selectedModel?.serviceId}
+              favoriteKeys={favorites}
+              onSelect={(provider, serviceId) => {
+                actions.selectVprModel(provider, serviceId);
+                onSelectView?.('model');
+              }}
+              emptyLabel="No matching models"
+            />
+          </>
+        )}
+
         {entries.length > 0 ? (
-          <VprModelRowList
-            entries={entries}
-            selectedProvider={selectedModel?.provider}
-            selectedServiceId={selectedModel?.serviceId}
-            onSelect={(provider, serviceId) => {
-              actions.selectVprModel(provider, serviceId);
-              onSelectView?.('model');
-            }}
-            emptyLabel="No matching models"
-          />
-        ) : (
+          <>
+            {favoriteEntries.length > 0 && (
+              <div className={styles.sectionTitle}>Recommended</div>
+            )}
+            <VprModelRowList
+              entries={entries}
+              selectedProvider={selectedModel?.provider}
+              selectedServiceId={selectedModel?.serviceId}
+              onSelect={(provider, serviceId) => {
+                actions.selectVprModel(provider, serviceId);
+                onSelectView?.('model');
+              }}
+              emptyLabel="No matching models"
+            />
+          </>
+        ) : favoriteEntries.length === 0 && (
           <div className={styles.empty} role="status">
             <div>
               {snap.discoverRowsLoaded ? 'No models match the current filters.' : `Model discovery is ${snap.connectBadge.label.toLowerCase()}.`}

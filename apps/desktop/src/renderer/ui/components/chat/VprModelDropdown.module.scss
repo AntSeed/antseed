@@ -50,6 +50,32 @@
   padding: 4px;
 }
 
+.model-dropdown-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+
+  &:not(:first-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+}
+
+.section-star {
+  color: var(--accent-yellow);
+
+  svg path {
+    fill: currentColor;
+  }
+}
+
 .model-dropdown-item {
   display: flex;
   flex-direction: column;

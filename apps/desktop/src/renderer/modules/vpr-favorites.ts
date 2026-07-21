@@ -1,9 +1,14 @@
 /** Starred models on the model page, persisted per install (localStorage). */
 
+import { canonicalModelKey } from './model-identity';
+
 export const VPR_FAVORITES_STORAGE_KEY = 'antseed.desktop.vpr.favoriteModels';
 
+/** Canonical so a star sticks to the model, not to one seller's serviceId
+ *  variant (catalog entries aggregate variants). Provider is a tiebreaker
+ *  only for ids that don't canonicalize. */
 export function favoriteModelKey(provider: string, serviceId: string): string {
-  return `${provider}:${serviceId}`;
+  return canonicalModelKey(serviceId) || `${provider}:${serviceId}`;
 }
 
 export function loadFavoriteModels(): Set<string> {

@@ -97,16 +97,19 @@ test('Price sort places lower priced model first', () => {
   assert.deepEqual(sortVprCatalog([expensive, cheap], 'Price'), [cheap, expensive]);
 });
 
-test('Model route filtering excludes other service IDs', () => {
+test('Model route filtering excludes other service IDs but keeps canonical variants', () => {
   const selected = discoverRow({ provider: 'openai', serviceId: 'gpt-test', peerId: 'selected-peer' });
   const otherService = discoverRow({ provider: 'openai', serviceId: 'other-service', peerId: 'other-peer' });
+  // Same model advertised under a different provider string and a cosmetic
+  // serviceId variant — both are valid routes for the selection.
   const otherProvider = discoverRow({ provider: 'anthropic', serviceId: 'gpt-test', peerId: 'anthropic-peer' });
+  const variantKey = discoverRow({ provider: 'openai', serviceId: 'GPT Test', peerId: 'variant-peer' });
 
   assert.deepEqual(
-    routesForSelectedModel([selected, otherService, otherProvider], {
+    routesForSelectedModel([selected, otherService, otherProvider, variantKey], {
       provider: 'openai',
       serviceId: 'gpt-test',
     }),
-    [selected],
+    [selected, otherProvider, variantKey],
   );
 });

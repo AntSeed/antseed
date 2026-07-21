@@ -19,6 +19,12 @@ export type BrandKey =
   | 'pi'
   | 'deepseek'
   | 'qwen'
+  | 'kimi'
+  | 'glm'
+  | 'gemini'
+  | 'grok'
+  | 'mistral'
+  | 'llama'
   | 'generic';
 
 type BrandGlyph = (props: { size: number }) => JSX.Element;
@@ -26,6 +32,10 @@ type BrandGlyph = (props: { size: number }) => JSX.Element;
 const ANTHROPIC_ORANGE = '#D97757';
 const CODEX_BLUE = '#4d6bfe';
 const DEEPSEEK_BLUE = '#4D6BFE';
+const GLM_BLUE = '#3859FF';
+const GEMINI_BLUE = '#4285F4';
+const MISTRAL_ORANGE = '#FA500F';
+const META_BLUE = '#0668E1';
 
 const glyphs: Record<BrandKey, BrandGlyph> = {
   // Anthropic / Claude — radiating sunburst mark.
@@ -102,6 +112,68 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       />
     </svg>
   ),
+  // Kimi / Moonshot — dark tile with the angular K mark.
+  kimi: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" fill="#141416" />
+      <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" stroke="currentColor" strokeOpacity={0.25} strokeWidth={0.75} />
+      <g stroke="#fff" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8.2 6.8v10.4" />
+        <path d="M8.2 13.4l7-6.6" />
+        <path d="M10.6 11.4l5 5.8" />
+      </g>
+    </svg>
+  ),
+  // GLM / Z.ai — blue tile with a Z stroke.
+  glm: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="19" height="19" rx="6" fill={GLM_BLUE} />
+      <path
+        d="M8.5 8.2h7l-7 7.6h7"
+        stroke="#fff"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  // Gemini — four-point sparkle.
+  gemini: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 2.5c.6 5.3 4.2 8.9 9.5 9.5-5.3.6-8.9 4.2-9.5 9.5-.6-5.3-4.2-8.9-9.5-9.5 5.3-.6 8.9-4.2 9.5-9.5z"
+        fill={GEMINI_BLUE}
+      />
+    </svg>
+  ),
+  // Grok / xAI — slanted cut mark.
+  grok: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+        <path d="M5 5l14 14" />
+        <path d="M19 5l-5.6 5.6" />
+      </g>
+    </svg>
+  ),
+  // Mistral — chunky orange M.
+  mistral: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 19V5h3l5 6 5-6h3v14h-3v-8.6l-5 6-5-6V19H4z"
+        fill={MISTRAL_ORANGE}
+      />
+    </svg>
+  ),
+  // Llama / Meta — infinity loop.
+  llama: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M7 8.5c-4.5 0-4.5 7 0 7 4.5 0 5.5-7 10-7 4.5 0 4.5 7 0 7-4.5 0-5.5-7-10-7z"
+        stroke={META_BLUE}
+        strokeWidth={1.8}
+      />
+    </svg>
+  ),
   // Fallback — generic chip.
   generic: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -111,13 +183,25 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
   ),
 };
 
+/* Model-family marks are matched BEFORE the generic provider/protocol marks:
+   the haystack mixes provider slug and model label (e.g. "openai Kimi K3"
+   for a Kimi model served over the OpenAI protocol), and the model family
+   must win over the transport. */
 const MATCHERS: Array<[BrandKey, RegExp]> = [
+  // Pure model families first — these never appear as provider slugs.
+  ['kimi', /(kimi|moonshot)/i],
+  ['glm', /(glm|zhipu)/i],
+  ['deepseek', /deep-?seek/i],
+  ['qwen', /(qwen|tongyi)/i],
+  ['gemini', /(gemini|gemma|google)/i],
+  ['grok', /(grok|(^|[^a-z0-9])x-?ai([^a-z0-9]|$))/i],
+  ['mistral', /(mistral|mixtral|magistral|devstral|codestral)/i],
+  ['llama', /llama/i],
+  // Vendors that double as provider/protocol slugs.
   ['anthropic', /(anthropic|claude)/i],
   ['codex', /codex/i],
   ['openai', /(openai|chatgpt|gpt|gpt-)/i],
   ['opencode', /(opencode|open-code)/i],
-  ['deepseek', /deep-?seek/i],
-  ['qwen', /(qwen|tongyi)/i],
   // Standalone word only — "pi" appears inside too many other identifiers.
   ['pi', /(^|[^a-z0-9])pi([^a-z0-9]|$)/i],
 ];

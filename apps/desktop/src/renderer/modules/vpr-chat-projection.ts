@@ -4,6 +4,7 @@ import type {
   VprRouteSelection,
   VprRoutingPreferences,
 } from '../core/state';
+import { sameCanonicalModel } from './model-identity.js';
 import { chooseBestVprRoute } from './vpr-routing.js';
 import { routesForSelectedModel } from './vpr-view-models.js';
 
@@ -11,15 +12,21 @@ export function findChatOptionForVprSelection(
   options: ChatServiceOptionEntry[],
   selection: VprRouteSelection,
 ): ChatServiceOptionEntry | null {
-  if (!selection.model) return null;
+  const model = selection.model;
+  if (!model) return null;
+  const peerMatches = (option: ChatServiceOptionEntry): boolean => (
+    selection.mode !== 'pinned-peer' ||
+    !selection.peerId ||
+    option.peerId === selection.peerId
+  );
+  // Exact provider+serviceId first; then any canonical variant of the model
+  // (entries aggregate near-identical serviceIds across providers). The
+  // matched option carries its own advertised serviceId, which is what
+  // dispatch must send to its peer.
   return options.find((option) => (
-    option.provider === selection.model?.provider &&
-    option.id === selection.model.serviceId &&
-    (
-      selection.mode !== 'pinned-peer' ||
-      !selection.peerId ||
-      option.peerId === selection.peerId
-    )
+    option.provider === model.provider && option.id === model.serviceId && peerMatches(option)
+  )) ?? options.find((option) => (
+    sameCanonicalModel(option.id, model.serviceId) && peerMatches(option)
   )) ?? null;
 }
 
@@ -41,11 +48,17 @@ export function resolveVprChatOption(
     return findChatOptionForVprSelection(options, selection);
   }
 
+  // The option is looked up by the chosen ROW's provider/serviceId (not the
+  // selection's): the entry may aggregate serviceId variants, and the request
+  // must carry the id the routed peer actually advertises.
   const bestRoute = chooseBestVprRoute(routesForSelectedModel(rows, selection.model), preferences);
   if (bestRoute) {
     const bestOption = options.find((option) => (
-      option.provider === selection.model?.provider &&
-      option.id === selection.model.serviceId &&
+      option.provider === bestRoute.provider &&
+      option.id === bestRoute.serviceId &&
+      option.peerId === bestRoute.peerId
+    )) ?? options.find((option) => (
+      option.id === bestRoute.serviceId &&
       option.peerId === bestRoute.peerId
     ));
     if (bestOption) return bestOption;

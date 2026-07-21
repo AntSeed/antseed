@@ -1,8 +1,10 @@
 import type { JSX } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowRight01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
+import { favoriteModelKey } from '../../../modules/vpr-favorites';
+import { sameCanonicalModel } from '../../../modules/model-identity';
 import { BrandIcon } from '../brand/BrandIcon';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
@@ -14,6 +16,9 @@ export type VprModelRowListProps = {
   onSelect: (provider: string, serviceId: string) => void;
   emptyLabel: string;
   limit?: number;
+  /** `provider:serviceId` keys of user-starred models — matching rows get a
+   * star so favorites read apart from the recommended lineup. */
+  favoriteKeys?: ReadonlySet<string>;
   /** Drop the card chrome (bg/radius/shadow) — for hosts that provide their
    * own panel, e.g. the Home model dropdown. */
   frameless?: boolean;
@@ -39,10 +44,11 @@ function priceRangeLabel(entry: VprModelCatalogEntry): string | null {
   return formatUsdShort(min);
 }
 
-function ModelRow({ entry, checked, badge, onClick }: {
+function ModelRow({ entry, checked, favorite, badge, onClick }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
+  favorite?: boolean;
   badge?: JSX.Element | null;
   onClick: () => void;
 }): JSX.Element {
@@ -64,6 +70,9 @@ function ModelRow({ entry, checked, badge, onClick }: {
         <span className={styles.titleLine}>
           <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />
           <span className={styles.label}>{entry.label}</span>
+          {favorite && (
+            <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
+          )}
           {badge}
         </span>
         <span className={styles.metaLine}>
@@ -123,6 +132,7 @@ export function VprModelRowList({
   onSelect,
   emptyLabel,
   limit,
+  favoriteKeys,
   frameless,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
@@ -152,7 +162,10 @@ export function VprModelRowList({
     <div className={frameless ? styles.listBare : styles.list}>
       {visibleEntries.map((entry) => {
         const key = `${entry.provider}:${entry.serviceId}`;
-        const selected = entry.provider === selectedProvider && entry.serviceId === selectedServiceId;
+        const selected = Boolean(selectedServiceId) && (
+          (entry.provider === selectedProvider && entry.serviceId === selectedServiceId)
+          || sameCanonicalModel(entry.serviceId, selectedServiceId ?? '')
+        );
         const free = isFreeEntry(entry);
 
         return (
@@ -160,6 +173,7 @@ export function VprModelRowList({
             key={key}
             entry={entry}
             checked={selected}
+            favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
             badge={free ? (
               <VprBadge tone="green">Free</VprBadge>
             ) : key === cheapestKey ? (

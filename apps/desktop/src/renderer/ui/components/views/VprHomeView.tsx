@@ -14,6 +14,14 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
+import { displayModelLabel } from '../../../modules/model-identity';
+import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+import {
+  catalogEntryKey,
+  selectFavoriteVprCatalog,
+  selectRecommendedVprCatalog,
+} from '../../../modules/vpr-recommended-models';
 import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -64,8 +72,10 @@ export function VprHomeView({ onSelectView }: Props) {
 
   const selectedModel = snap.selection.model;
   const selectedEntry = useMemo(
-    () => snap.catalog.find((e) => e.provider === selectedModel?.provider && e.serviceId === selectedModel?.serviceId),
-    [snap.catalog, selectedModel?.provider, selectedModel?.serviceId],
+    () => (selectedModel
+      ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId) ?? undefined
+      : undefined),
+    [snap.catalog, selectedModel],
   );
   const modelIsFree = isFreeEntry(selectedEntry);
   // Lifetime buyer usage of the selected model ("1.7m tokens" in the Figma
@@ -128,7 +138,14 @@ export function VprHomeView({ onSelectView }: Props) {
 
   const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [favorites, setFavorites] = useState(loadFavoriteModels);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  // Favorites are starred on the model pages (localStorage); re-read on each
+  // open so stars toggled elsewhere show up without a remount.
+  useEffect(() => {
+    if (modelMenuOpen) setFavorites(loadFavoriteModels());
+  }, [modelMenuOpen]);
 
   // Close the model dropdown on any outside click.
   useEffect(() => {
@@ -142,15 +159,19 @@ export function VprHomeView({ onSelectView }: Props) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [modelMenuOpen]);
 
-  // The dropdown lists the most popular models (the catalog is sorted by
-  // seller count), with the current selection always present.
+  // The dropdown lists starred favorites first (marked with a star), then the
+  // curated recommended lineup, with the current selection always present.
   const dropdownEntries = useMemo(() => {
-    const top = snap.catalog.slice(0, DROPDOWN_MODEL_COUNT);
+    const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
+    const recommended = selectRecommendedVprCatalog(snap.catalog)
+      .filter((entry) => !favorites.has(catalogEntryKey(entry)))
+      .slice(0, DROPDOWN_MODEL_COUNT);
+    const top = [...favoriteEntries, ...recommended];
     if (selectedEntry && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+      return [selectedEntry, ...top];
     }
     return top;
-  }, [selectedEntry, snap.catalog]);
+  }, [favorites, selectedEntry, snap.catalog]);
 
   // One-click connect from the app buttons; falls back to the Apps page when
   // the profile can't be connected automatically (e.g. no route yet).
@@ -243,7 +264,10 @@ export function VprHomeView({ onSelectView }: Props) {
                   {selectedModel && (
                     <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={20} />
                   )}
-                  <span className={styles.modelName}>{selectedModel?.label ?? 'None selected'}</span>
+                  <span className={styles.modelName}>
+                    {selectedEntry?.label
+                      ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
+                  </span>
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
                 </span>
                 <span className={styles.modelCardCaption}>
@@ -259,6 +283,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   entries={dropdownEntries}
                   selectedProvider={selectedModel?.provider}
                   selectedServiceId={selectedModel?.serviceId}
+                  favoriteKeys={favorites}
                   onSelect={(provider, serviceId) => {
                     setModelMenuOpen(false);
                     actions.selectVprModel(provider, serviceId);

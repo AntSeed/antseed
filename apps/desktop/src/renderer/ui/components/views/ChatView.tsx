@@ -16,6 +16,7 @@ import {
   SecurityWarningIcon,
   Shield01Icon
 } from '@hugeicons/core-free-icons';
+import { displayModelLabel } from '../../../modules/model-identity';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
@@ -542,9 +543,10 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     && !snap.discoverRows.some((row) => row.peerId === currentPeerId)
     && !snap.chatServiceOptions.some((option) => option.peerId === currentPeerId),
   );
-  const currentServiceLabel = openingActiveConversation
+  // displayModelLabel keeps human text as-is and prettifies raw service keys.
+  const currentServiceLabel = displayModelLabel(openingActiveConversation
     ? activeConversationServiceId || currentServiceOption?.label || 'Loading chat...'
-    : currentServiceOption?.label || activeConversationServiceId || 'Select a model';
+    : currentServiceOption?.label || activeConversationServiceId || 'Select a model');
 
   // The model shown in the header dropdown: an open conversation is bound to
   // its own model; otherwise the VPR route selection (or the chat option the

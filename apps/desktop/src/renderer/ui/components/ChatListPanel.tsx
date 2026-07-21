@@ -9,6 +9,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react';
 import { MoreVerticalIcon, Add01Icon, Search01Icon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
+import { displayModelLabel } from '../../modules/model-identity';
 import { formatUsdcAmount } from '../../core/format';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { useActions } from '../hooks/useActions';
@@ -34,7 +35,7 @@ function formatChatTime(timestamp: unknown): string {
 function shortServiceName(service: unknown): string {
   const raw = String(service || '').trim();
   if (!raw) return '';
-  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
+  return displayModelLabel(raw.replace(/-20\d{6,}/, ''));
 }
 
 function getConversationId(conv: ConvRecord): string {

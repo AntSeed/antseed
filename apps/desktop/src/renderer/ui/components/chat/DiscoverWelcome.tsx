@@ -15,6 +15,7 @@ import {
   formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
+import { displayModelLabel } from '../../../modules/model-identity';
 import {
   getPeerGradient,
   getPeerDisplayName,
@@ -137,7 +138,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
     const tags = baseTags.some((t) => t.toLowerCase() === 'anon')
       ? baseTags
       : ['anon', ...baseTags];
-    const rawName = opt.label || opt.id;
+    const rawName = displayModelLabel(opt.id, opt.label);
     return {
       name: rawName,
       canonicalName: opt.id,
@@ -201,7 +202,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
     const tags = baseTags.some((t) => t.toLowerCase() === 'anon')
       ? baseTags
       : ['anon', ...baseTags];
-    const rawName = row.serviceLabel || row.serviceId;
+    const rawName = displayModelLabel(row.serviceId, row.serviceLabel);
     const peerLabel = row.peerLabel || '';
     out.push({
       name: rawName,

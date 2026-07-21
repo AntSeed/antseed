@@ -1,10 +1,10 @@
 import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../core/state';
+import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
+import { selectRecommendedVprCatalog } from './vpr-recommended-models';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
 
 type ModelCatalogGroup = {
-  provider: string;
-  serviceId: string;
   rows: DiscoverRow[];
 };
 
@@ -33,7 +33,6 @@ function maxPrice(values: Array<number | null>): number | null {
 
 function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   const firstRow = group.rows[0];
-  const label = group.rows.find((row) => row.serviceLabel.trim().length > 0)?.serviceLabel ?? group.serviceId;
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
   const peerIds = new Set(group.rows.map((row) => row.peerId));
   const pricedRows = group.rows
@@ -49,9 +48,18 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     ? Math.round((1 - minTotal / maxTotal) * 100)
     : null;
 
+  // The entry's provider/serviceId must stay consistent with bestPeerId —
+  // selecting the entry dispatches this exact advertised pair, and the buyer
+  // proxy strictly gates on what the pinned peer actually serves.
+  const representative = bestPricedRoute?.row ?? firstRow;
+  const label = displayModelLabel(
+    representative.serviceId,
+    group.rows.find((row) => row.serviceLabel.trim().length > 0)?.serviceLabel,
+  );
+
   return {
-    provider: group.provider,
-    serviceId: group.serviceId,
+    provider: representative.provider,
+    serviceId: representative.serviceId,
     label,
     peerCount: peerIds.size,
     categories,
@@ -67,16 +75,15 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
 export function projectRowsToVprModelCatalog(rows: DiscoverRow[]): VprModelCatalogEntry[] {
   const groups = new Map<string, ModelCatalogGroup>();
   for (const row of rows) {
-    const key = `${row.provider}${VPR_MODEL_CATALOG_SEPARATOR}${row.serviceId}`;
+    // Aggregate by canonical model identity so cosmetic serviceId/provider
+    // variations of the same model collapse into one entry.
+    const key = canonicalModelKey(row.serviceId)
+      || `${row.provider}${VPR_MODEL_CATALOG_SEPARATOR}${row.serviceId}`;
     const group = groups.get(key);
     if (group) {
       group.rows.push(row);
     } else {
-      groups.set(key, {
-        provider: row.provider,
-        serviceId: row.serviceId,
-        rows: [row],
-      });
+      groups.set(key, { rows: [row] });
     }
   }
 
@@ -90,7 +97,9 @@ export function selectDefaultVprModel(
   current: VprSelectedModel | null,
 ): VprSelectedModel | null {
   if (current && findCatalogEntry(catalog, current.provider, current.serviceId)) return current;
-  const first = catalog[0];
+  // Prefer the curated recommended lineup; fall back to raw popularity when
+  // none of the recommended models are on the network.
+  const first = selectRecommendedVprCatalog(catalog)[0] ?? catalog[0];
   if (!first) return null;
   return {
     provider: first.provider,
@@ -105,5 +114,9 @@ export function findCatalogEntry(
   provider: string,
   serviceId: string,
 ): VprModelCatalogEntry | null {
-  return catalog.find((entry) => entry.provider === provider && entry.serviceId === serviceId) ?? null;
+  return catalog.find((entry) => entry.provider === provider && entry.serviceId === serviceId)
+    // Entries aggregate serviceId variants — match any variant canonically so
+    // selections that reference a sibling key still resolve to the entry.
+    ?? catalog.find((entry) => sameCanonicalModel(entry.serviceId, serviceId))
+    ?? null;
 }

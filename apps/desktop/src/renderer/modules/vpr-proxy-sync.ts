@@ -17,12 +17,15 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   const selection = uiState.vprRouteSelection;
   if (!selection.model) return null;
   const routes = routesForSelectedModel(uiState.discoverRows, selection.model);
-  const peerId = selection.mode === 'pinned-peer' && selection.peerId
-    ? selection.peerId
-    : chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
+  const route = selection.mode === 'pinned-peer' && selection.peerId
+    ? routes.find((candidate) => candidate.peerId === selection.peerId) ?? null
+    : chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
+  const peerId = (selection.mode === 'pinned-peer' && selection.peerId) || route?.peerId || null;
   if (!peerId) return null;
 
-  const model = selection.model.serviceId;
+  // Routes aggregate serviceId variants of the model — send the id the
+  // chosen peer actually advertises, not the selection's representative.
+  const model = route?.serviceId ?? selection.model.serviceId;
   const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.discoverRows);
   const servedModels = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [model];
   return { peerId, model, servedModels };

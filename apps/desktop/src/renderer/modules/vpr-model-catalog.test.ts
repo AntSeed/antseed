@@ -140,10 +140,36 @@ test('selectDefaultVprModel falls back to the first sorted catalog entry', () =>
   });
 });
 
-test('findCatalogEntry returns null when provider/service is absent', () => {
+test('findCatalogEntry returns null when the service is absent', () => {
   const catalog = projectRowsToVprModelCatalog([
     discoverRow({ provider: 'openai', serviceId: 's1' }),
   ]);
 
-  assert.equal(findCatalogEntry(catalog, 'missing', 's1'), null);
+  assert.equal(findCatalogEntry(catalog, 'openai', 'other-model'), null);
+});
+
+test('findCatalogEntry matches canonical serviceId variants across providers', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna' }),
+  ]);
+
+  assert.equal(findCatalogEntry(catalog, 'other-provider', 'GPT 5.6 Luna')?.serviceId, 'gpt-5.6-luna');
+});
+
+test('catalog aggregates serviceId variants of the same model', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna', peerId: 'p1', inputUsdPerMillion: 4, outputUsdPerMillion: 6 }),
+    discoverRow({ provider: 'openai-responses', serviceId: 'GPT 5.6 Luna', peerId: 'p2', inputUsdPerMillion: 1, outputUsdPerMillion: 2 }),
+    discoverRow({ provider: 'openai', serviceId: 'openai/gpt-5.6-luna', peerId: 'p3', inputUsdPerMillion: 8, outputUsdPerMillion: 12 }),
+  ]);
+
+  assert.equal(catalog.length, 1);
+  const [entry] = catalog;
+  assert.equal(entry.peerCount, 3);
+  // Representative provider/serviceId come from the best priced route so
+  // dispatching (bestPeerId, serviceId) matches what that peer advertises.
+  assert.equal(entry.bestPeerId, 'p2');
+  assert.equal(entry.serviceId, 'GPT 5.6 Luna');
+  assert.equal(entry.provider, 'openai-responses');
+  assert.equal(entry.label, 'GPT 5.6 Luna');
 });

@@ -80,8 +80,8 @@ export function VprModelView({ onSelectView }: Props) {
         <div className={styles.headRow}>
           <div className={styles.headText}>
             <div className={styles.titleLine}>
-              <BrandIcon name={model.provider} hints={[model.label]} size={20} />
-              <h2 className={styles.title}>{model.label}</h2>
+              <BrandIcon name={model.provider} hints={[entry.label]} size={20} />
+              <h2 className={styles.title}>{entry.label}</h2>
             </div>
             {entry.categories.length > 0 && (
               <div className={styles.badgeRow}>

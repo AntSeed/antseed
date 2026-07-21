@@ -105,6 +105,15 @@
   line-height: 20px;
 }
 
+.favStar {
+  flex: 0 0 auto;
+  color: var(--accent-yellow);
+
+  svg path {
+    fill: currentColor;
+  }
+}
+
 .metaLine {
   min-width: 0;
   overflow: hidden;

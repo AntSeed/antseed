@@ -1,4 +1,5 @@
 import type { DiscoverRow, VprModelCatalogEntry } from '../core/state';
+import { sameCanonicalModel } from './model-identity';
 
 export type VprCatalogSort = 'Popular' | 'Price' | 'Savings' | 'Name';
 
@@ -91,9 +92,11 @@ export function routesForSelectedModel(
   rows: DiscoverRow[],
   selectedModel: VprSelectedRouteModel,
 ): DiscoverRow[] {
-  const provider = selectedModel?.provider;
   const serviceId = selectedModel?.serviceId;
-  if (!provider || !serviceId) return [];
+  if (!serviceId) return [];
 
-  return rows.filter((row) => row.provider === provider && row.serviceId === serviceId);
+  // Canonical match: sellers advertise the same model under near-identical
+  // serviceIds and different provider strings — all of them are routes for
+  // the selected model. Dispatch must carry the chosen row's own serviceId.
+  return rows.filter((row) => sameCanonicalModel(row.serviceId, serviceId));
 }

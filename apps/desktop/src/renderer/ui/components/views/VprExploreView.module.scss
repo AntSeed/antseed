@@ -57,6 +57,29 @@
   color: var(--accent-green);
 }
 
+/* ---------- Section headings (Favorites / Recommended) ---------- */
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Pull the list below closer than the 16px stack gap. */
+  margin: 0 4px -8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sectionStar {
+  color: var(--accent-yellow);
+
+  svg path {
+    fill: currentColor;
+  }
+}
+
 /* ---------- Filter chips (Type / Category / Sort) ---------- */
 
 .filterRow {
