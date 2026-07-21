@@ -490,7 +490,10 @@ export class SellerPaymentManager {
           settledAmount: null,
           status: CHANNEL_STATUS.ACTIVE,
           latestBuyerSig: payload.spendingAuthSig,
-          latestSpendingAuthSig: payload.spendingAuthSig,
+          // The initial signature is a ReserveAuth, not a SpendingAuth. Keep it
+          // out of the persisted SpendingAuth column so restart hydration cannot
+          // restore it under the wrong EIP-712 type and repeatedly fail close().
+          latestSpendingAuthSig: null,
           latestMetadata: payload.metadata,
           createdAt: now,
           updatedAt: now,
@@ -1041,6 +1044,7 @@ export class SellerPaymentManager {
       const retries = this._closeRetryCount.get(channelId) ?? 0;
       if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
         debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
+        this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
       } else {
         debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${amount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
         this._closingChannels.add(channelId);
@@ -1059,9 +1063,20 @@ export class SellerPaymentManager {
             }
             return;
           }
-          debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
-          this._closeRetryCount.set(channelId, retries + 1);
-          if (!cleanupOnFailure) return;
+
+          const failedAttempts = retries + 1;
+          debugWarn(`[SellerPayment] Failed to close channel (attempt ${failedAttempts}): ${err instanceof Error ? err.message : err}`);
+          this._closeRetryCount.set(channelId, failedAttempts);
+
+          if (failedAttempts < SellerPaymentManager.MAX_CLOSE_RETRIES) {
+            if (cleanupOnFailure) {
+              this._activeBuyers.delete(buyerPeerId);
+            }
+            return;
+          }
+
+          debugWarn(`[SellerPayment] close() failed ${failedAttempts} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
+          this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
         } finally {
           this._closingChannels.delete(channelId);
         }

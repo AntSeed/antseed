@@ -184,6 +184,8 @@ describe('SellerPaymentManager', () => {
     expect(session).not.toBeNull();
     expect(session!.role).toBe('seller');
     expect(session!.status).toBe(CHANNEL_STATUS.ACTIVE);
+    expect(session!.latestBuyerSig).toBe(payload.spendingAuthSig);
+    expect(session!.latestSpendingAuthSig).toBeNull();
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
@@ -1006,7 +1008,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
   });
 
-  it('checkTimeouts restores persisted SpendingAuth before zombie close fallback', async () => {
+  it('checkTimeouts retries the latest SpendingAuth after a disconnect close failure', async () => {
     const channelId = makeChannelId(69);
     const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
       isReserve: true,
@@ -1035,7 +1037,7 @@ describe('SellerPaymentManager', () => {
 
     expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
-    expect(manager.getAcceptedCumulative(channelId)).toBe(0n);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(300_000n);
 
     vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
       makeOnChainChannel(buyerIdentity, sellerIdentity, {
@@ -1055,6 +1057,47 @@ describe('SellerPaymentManager', () => {
     expect(retryArgs[4]).toBe(auth.spendingAuthSig);
     expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
     expect(store.getChannel(channelId)!.settledAmount).toBe('300000');
+  });
+
+  it('stops retrying and persists timeout after signed close retries are exhausted', async () => {
+    const channelId = makeChannelId(76);
+    const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+
+    const auth = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 300_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth, mux);
+    manager.recordSpend(channelId, 300_000n);
+
+    const closeSpy = manager.channelsClient.close as ReturnType<typeof vi.fn>;
+    closeSpy.mockRejectedValue(new Error('execution reverted: InvalidSignature'));
+
+    await manager.settleSession(buyerIdentity.peerId);
+    await manager.settleSession(buyerIdentity.peerId);
+    await manager.settleSession(buyerIdentity.peerId);
+    await manager.settleSession(buyerIdentity.peerId);
+
+    expect(closeSpy).toHaveBeenCalledTimes(3);
+    expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.TIMEOUT);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+
+    const restarted = new SellerPaymentManager(sellerIdentity, {
+      rpcUrl: 'http://127.0.0.1:8545',
+      channelsContractAddress: CONTRACT_ADDR,
+      chainId: CHAIN_ID,
+      dataDir: tempDir,
+    }, store);
+    const restartedCloseSpy = vi.spyOn(restarted.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+    await restarted.checkTimeouts();
+
+    expect(restarted.hasSession(buyerIdentity.peerId)).toBe(false);
+    expect(restartedCloseSpy).not.toHaveBeenCalled();
   });
 
   it('checkTimeouts closes zombie channels on-chain without a SpendingAuth', async () => {
