@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, HelpCircleIcon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
-import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
+import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, Delete02Icon, HelpCircleIcon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import {
@@ -9,6 +9,7 @@ import {
   buildVprPeerOptions,
   resolveVprToolRouteForPeerOptions,
 } from '../../../modules/vpr-tools';
+import { displayToolName } from '../../../modules/tool-names';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { BrandIcon } from '../brand/BrandIcon';
 import { InfoTooltip } from '../InfoTooltip';
@@ -18,6 +19,15 @@ import styles from './VprToolsView.module.scss';
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const DEFAULT_PORT = 8378;
+
+/** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */
+function relativeChatTime(timestamp: number): string {
+  const delta = Date.now() - timestamp;
+  if (delta < 60_000) return 'now';
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  return `${Math.floor(delta / 86_400_000)}d ago`;
+}
 
 /** Per-app "how to use" line for the help tooltip next to each app name. */
 function appHelpHowTo(profile: SystemProxyProfileSummary): string {
@@ -49,6 +59,7 @@ export function VprToolsView({ onSelectView }: Props) {
     discoverRows: state.discoverRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
+    catalog: state.vprModelCatalog,
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
@@ -63,6 +74,9 @@ export function VprToolsView({ onSelectView }: Props) {
   const [addBusy, setAddBusy] = useState(false);
   const [caInfo, setCaInfo] = useState<{ path: string; exists: boolean } | null>(null);
   const [caCopied, setCaCopied] = useState(false);
+  const [conversations, setConversations] = useState<BuyerConversationSummary[]>([]);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingChatLabel, setEditingChatLabel] = useState('');
 
   const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
@@ -80,14 +94,16 @@ export function VprToolsView({ onSelectView }: Props) {
   const refresh = useCallback(async () => {
     const bridge = window.antseedDesktop;
     try {
-      const [nextProfiles, nextState, nextCa] = await Promise.all([
+      const [nextProfiles, nextState, nextCa, nextConversations] = await Promise.all([
         bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
         bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
         bridge?.systemProxyCaInfo?.() ?? Promise.resolve(null),
+        bridge?.buyerConversationsList?.() ?? Promise.resolve([]),
       ]);
       setProfiles(nextProfiles);
       setProxyState(nextState);
       setCaInfo(nextCa);
+      setConversations(nextConversations);
     } catch {
       setProfiles([]);
       setProxyState(null);
@@ -242,6 +258,46 @@ export function VprToolsView({ onSelectView }: Props) {
       setCaCopied(false);
     }
   }, [caInfo?.path]);
+
+  // ---------- Recent chats (per-chat routing, buyer-backed) ----------
+
+  const refreshConversations = useCallback(async () => {
+    try {
+      setConversations((await window.antseedDesktop?.buyerConversationsList?.()) ?? []);
+    } catch { /* buyer offline — keep the last list */ }
+  }, []);
+
+  const renameChat = useCallback(async (id: string, label: string) => {
+    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, label: label.trim() || null });
+    setEditingChatId(null);
+    await refreshConversations();
+  }, [refreshConversations]);
+
+  const deleteChat = useCallback(async (id: string, title: string) => {
+    if (!window.confirm(`Delete "${title}" from recent chats? An active chat reappears on its next request.`)) return;
+    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, delete: true });
+    await refreshConversations();
+  }, [refreshConversations]);
+
+  const pinChat = useCallback(async (id: string, value: string) => {
+    if (!value) {
+      await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: '' });
+      await refreshConversations();
+      return;
+    }
+    const [provider, ...rest] = value.split(':');
+    const serviceId = rest.join(':');
+    if (!provider || !serviceId) return;
+    // Resolve the best peer for the model the same way the global route does.
+    const routes = routesForSelectedModel(snap.discoverRows, { provider, serviceId });
+    const peerId = chooseBestVprRoute(routes, snap.preferences)?.peerId;
+    if (!peerId) {
+      setMessage(`No available route for ${serviceId} right now`);
+      return;
+    }
+    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: `${peerId}@${serviceId}` });
+    await refreshConversations();
+  }, [refreshConversations, snap.discoverRows, snap.preferences]);
 
   const addCustomApp = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -462,6 +518,84 @@ export function VprToolsView({ onSelectView }: Props) {
             Add custom app
           </button>
         )}
+
+        {conversations.length > 0 ? (
+          <div className={styles.chatsCard}>
+            <div className={styles.chatsHead}>
+              <span className={styles.chatsTitle}>Recent chats</span>
+              <span className={styles.chatsHint}>Pin a model to one chat — everything else follows the default route</span>
+            </div>
+            {conversations.map((chat) => {
+              const title = chat.label || chat.snippet || chat.sessionKey.slice(0, 12);
+              const pinnedServiceId = chat.pinnedModel?.split('@').slice(1).join('@') || '';
+              const pinnedCatalogEntry = pinnedServiceId
+                ? snap.catalog.find((entry) => entry.serviceId === pinnedServiceId)
+                : undefined;
+              const pinValue = pinnedCatalogEntry
+                ? `${pinnedCatalogEntry.provider}:${pinnedCatalogEntry.serviceId}`
+                : (pinnedServiceId ? `?:${pinnedServiceId}` : '');
+              return (
+                <div key={chat.id} className={styles.chatRow}>
+                  <BrandIcon name={chat.tool} hints={[chat.tool]} size={20} />
+                  <span className={styles.chatText}>
+                    {editingChatId === chat.id ? (
+                      <input
+                        className={styles.chatEditInput}
+                        value={editingChatLabel}
+                        autoFocus
+                        onChange={(event) => setEditingChatLabel(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void renameChat(chat.id, editingChatLabel);
+                          if (event.key === 'Escape') setEditingChatId(null);
+                        }}
+                        onBlur={() => void renameChat(chat.id, editingChatLabel)}
+                        aria-label="Chat name"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.chatTitleButton}
+                        onClick={() => { setEditingChatId(chat.id); setEditingChatLabel(chat.label ?? ''); }}
+                        title="Rename chat"
+                      >
+                        {title}
+                      </button>
+                    )}
+                    <span className={styles.chatMeta}>
+                      {displayToolName(chat.tool)} · {relativeChatTime(chat.lastActiveAt)}
+                      {chat.lastModel ? ` · ${chat.lastModel.split('@').slice(1).join('@')}` : ''}
+                    </span>
+                  </span>
+                  <select
+                    className={styles.chatPinSelect}
+                    value={pinValue}
+                    onChange={(event) => void pinChat(chat.id, event.currentTarget.value)}
+                    aria-label={`Model for ${title}`}
+                  >
+                    <option value="">Auto (default route)</option>
+                    {pinnedServiceId && !pinnedCatalogEntry ? (
+                      <option value={`?:${pinnedServiceId}`}>{pinnedServiceId}</option>
+                    ) : null}
+                    {snap.catalog.map((entry) => (
+                      <option key={`${entry.provider}:${entry.serviceId}`} value={`${entry.provider}:${entry.serviceId}`}>
+                        {entry.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className={styles.chatDelete}
+                    onClick={() => void deleteChat(chat.id, title)}
+                    aria-label={`Delete ${title}`}
+                    title="Delete chat"
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={2} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
 
         {caInfo && (hasProxyProfile || caInfo.exists) ? (
           <div className={styles.caCard}>

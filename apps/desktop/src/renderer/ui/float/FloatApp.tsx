@@ -1,31 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowExpand02Icon, ArrowShrink02Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { ArrowDown01Icon, ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, Cancel01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatData } from '../../types/bridge';
+import { displayToolName } from '../../modules/tool-names';
+import { AntStationMark } from '../components/AntStationLogo';
 import { BrandIcon } from '../components/brand/BrandIcon';
+import { OverlayScrollArea } from '../components/OverlayScrollArea';
+import { VprBackTitle } from '../components/vpr/VprKit';
+import { VprModelRowList } from '../components/vpr/VprModelRows';
 import styles from './FloatApp.module.scss';
 
-/* Native selects size themselves to their longest option, which would blow
-   out the 256px pill. Measure the selected label instead and size the select
-   to it, leaving room for the chevron. */
-let measureContext: CanvasRenderingContext2D | null = null;
-
-function measureLabel(label: string, font: string): number {
-  if (!measureContext) {
-    measureContext = document.createElement('canvas').getContext('2d');
-  }
-  if (!measureContext) return 120;
-  measureContext.font = font;
-  return Math.ceil(measureContext.measureText(label).width);
+/** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */
+function relativeTime(timestamp: number): string {
+  const delta = Date.now() - timestamp;
+  if (delta < 60_000) return 'now';
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return `${Math.floor(delta / 86_400_000)}d`;
 }
-
-const SELECT_CHEVRON_SPACE = 16;
-const MODEL_FONT = '600 14px Geist, sans-serif';
-const APP_FONT = '400 12px Geist, sans-serif';
-
-/* Keep the pulse alive slightly past one payload interval (3s) so steady
-   traffic reads as a continuous heartbeat. */
-const PULSE_HOLD_MS = 4_500;
 
 /* Viewport width below this means the window is at compact-chip size (88px)
    rather than the full pill (272px). */
@@ -34,18 +26,23 @@ const COMPACT_MAX_WIDTH = 160;
 /**
  * Content of the detachable always-on-top pill window (Figma "flowing
  * window", 4075:1842). The main window pushes VprFloatData over IPC; the
- * model dropdown routes a 'select-model' action back, and the app dropdown
- * switches which connected app the pill is adjusting (display-local).
+ * model dropdown routes 'select-model' / pin actions back. Chats currently
+ * receiving traffic show a green pulse on their row.
  */
 export function FloatApp() {
   const bridge = window.antseedDesktop;
   const [data, setData] = useState<VprFloatData | null>(null);
-  const [appChoice, setAppChoice] = useState<string | null>(null);
-  const [pulsing, setPulsing] = useState(false);
+  // Whether the conversations panel is open; the window grows while it is.
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Drill-down inside the conversations panel: null = the list, 'default' =
+  // picking the default model, otherwise the conversation id being pinned.
+  const [chatTarget, setChatTarget] = useState<string | null>(null);
+  // Which way the next level change animates: drilling in slides from the
+  // right, going back slides from the left.
+  const [navDir, setNavDir] = useState<'forward' | 'back'>('forward');
   const [compact, setCompact] = useState(() => window.innerWidth <= COMPACT_MAX_WIDTH);
   // Compact chip flipped over, showing the expand button on its back face.
   const [flipped, setFlipped] = useState(false);
-  const pulseTimer = useRef<number | null>(null);
 
   // The chip's center buttons must be clickable AND draggable, which
   // -webkit-app-region can't express (drag regions swallow clicks). So the
@@ -111,36 +108,45 @@ export function FloatApp() {
     return bridge?.onVprFloatCompact?.(setCompact);
   }, [bridge]);
 
-  const apps = data?.apps ?? [];
-  // The user's local dropdown choice wins while that app is still connected;
-  // otherwise fall back to what the main window suggests.
-  const selectedApp = useMemo(() => {
-    if (appChoice && apps.some((app) => app.name === appChoice)) {
-      return apps.find((app) => app.name === appChoice)!;
-    }
-    return apps.find((app) => app.name === data?.selectedApp) ?? apps[0] ?? null;
-  }, [appChoice, apps, data?.selectedApp]);
-
-  // Turn the status ring green while traffic is moving through the proxies.
-  // Active payloads extend a safety hold; an explicit inactive payload drops
-  // back to the orange "ready" ring right away so it stays in sync with the
-  // actual traffic.
-  const trafficActive = data?.trafficActive ?? false;
+  const conversations = data?.conversations ?? [];
+  // Level-2 target chat; a chat that ages out of the list mid-visit falls
+  // back to the conversations list.
+  const targetChat = chatTarget && chatTarget !== 'default'
+    ? conversations.find((chat) => chat.id === chatTarget) ?? null
+    : null;
   useEffect(() => {
-    if (pulseTimer.current !== null) window.clearTimeout(pulseTimer.current);
-    if (!trafficActive) {
-      pulseTimer.current = null;
-      setPulsing(false);
-      return;
+    if (chatTarget && chatTarget !== 'default' && !targetChat) {
+      setNavDir('back');
+      setChatTarget(null);
     }
-    setPulsing(true);
-    pulseTimer.current = window.setTimeout(() => setPulsing(false), PULSE_HOLD_MS);
-  }, [trafficActive, data]);
-  useEffect(() => () => {
-    if (pulseTimer.current !== null) window.clearTimeout(pulseTimer.current);
-  }, []);
+  }, [chatTarget, targetChat]);
+
+  /** Enter a drill-down level (slides in from the right). */
+  const drillIn = (target: string) => {
+    setNavDir('forward');
+    setChatTarget(target);
+  };
+  /** Return to the conversations list (slides in from the left). */
+  const drillBack = () => {
+    setNavDir('back');
+    setChatTarget(null);
+  };
+  const slideClass = navDir === 'back' ? styles.menuSlideBack : styles.menuSlide;
+
+  // The main process resizes the window around the open dropdown panel.
+  useEffect(() => {
+    bridge?.vprFloatSetExpanded?.(menuOpen);
+    if (!menuOpen) {
+      setChatTarget(null);
+      setNavDir('forward');
+    }
+  }, [bridge, menuOpen]);
+  useEffect(() => {
+    if (compact) setMenuOpen(false);
+  }, [compact]);
 
   const models = data?.models ?? [];
+  const favoriteKeys = useMemo(() => new Set(data?.favoriteKeys ?? []), [data?.favoriteKeys]);
   const selectedModelValue = data?.selectedModel
     ? `${data.selectedModel.provider}:${data.selectedModel.serviceId}`
     : '';
@@ -149,26 +155,16 @@ export function FloatApp() {
   ) ?? null;
 
   const modelLabel = selectedModel?.label ?? 'Select model';
-  const modelSelectWidth = measureLabel(modelLabel, MODEL_FONT) + SELECT_CHEVRON_SPACE;
-  const appLabel = selectedApp?.displayName ?? 'No app connected';
-  const appSelectWidth = measureLabel(appLabel, APP_FONT) + SELECT_CHEVRON_SPACE;
-
-  const badgeClassName = [
-    styles.appBadge,
-    // Ready ring whenever an app is connected; green while traffic moves.
-    selectedApp ? styles.appBadgeReady : '',
-    pulsing ? styles.appBadgeActive : '',
-  ].filter(Boolean).join(' ');
 
   if (compact) {
     return (
       <div className={styles.compactRoot}>
       <div className={styles.compactChip}>
         <div className={`${styles.chipFlip}${flipped ? ` ${styles.chipFlipped}` : ''}`}>
-          {/* Front: the status badge. Only the icon itself is clickable —
+          {/* Front: the AntSeed badge. Only the icon itself is clickable —
               the rest of the chip stays a drag handle. */}
           <div className={styles.chipFace}>
-            <div className={badgeClassName}>
+            <div className={styles.appBadge}>
               <button
                 type="button"
                 className={styles.chipIconButton}
@@ -177,9 +173,7 @@ export function FloatApp() {
                 title="Options"
                 aria-label="Show expand button"
               >
-                {selectedApp ? (
-                  <BrandIcon name={selectedApp.name} hints={[selectedApp.displayName]} size={26} />
-                ) : null}
+                <AntStationMark size={26} />
               </button>
             </div>
           </div>
@@ -206,56 +200,130 @@ export function FloatApp() {
     <div className={styles.pill}>
       <button
         type="button"
-        className={badgeClassName}
+        className={styles.appBadge}
         onClick={() => bridge?.vprFloatAction?.('open-main')}
         title="Open AntSeed"
         aria-label="Open AntSeed"
       >
-        {selectedApp ? (
-          <BrandIcon name={selectedApp.name} hints={[selectedApp.displayName]} size={26} />
-        ) : null}
+        <AntStationMark size={26} />
       </button>
 
       <div className={styles.body}>
-        <select
-          className={styles.modelSelect}
-          style={{ width: modelSelectWidth }}
-          value={selectedModel ? selectedModelValue : ''}
-          onChange={(event) => {
-            const [provider, ...rest] = event.currentTarget.value.split(':');
-            const serviceId = rest.join(':');
-            if (provider && serviceId) {
-              bridge?.vprFloatAction?.({ type: 'select-model', provider, serviceId });
-            }
-          }}
-          aria-label="Model"
+        {/* The model label doubles as the single dropdown trigger: it opens
+            the conversations panel, whose "Default model" row drills into the
+            model list. */}
+        <button
+          type="button"
+          className={styles.modelTrigger}
+          onClick={() => setMenuOpen(!menuOpen)}
+          aria-expanded={menuOpen}
+          aria-label="Model and conversations"
+          title={modelLabel}
         >
-          {!selectedModel && <option value="">Select model</option>}
-          {models.map((model) => (
-            <option key={`${model.provider}:${model.serviceId}`} value={`${model.provider}:${model.serviceId}`}>
-              {model.label}
-            </option>
-          ))}
-        </select>
-
-        {apps.length > 1 ? (
-          <select
-            className={styles.appSelect}
-            style={{ width: appSelectWidth }}
-            value={selectedApp?.name ?? ''}
-            onChange={(event) => setAppChoice(event.currentTarget.value)}
-            aria-label="App"
-          >
-            {apps.map((app) => (
-              <option key={app.name} value={app.name}>{app.displayName}</option>
-            ))}
-          </select>
-        ) : (
-          <span className={styles.app}>{appLabel}</span>
-        )}
+          <span className={styles.triggerLabel}>{modelLabel}</span>
+          <HugeiconsIcon icon={ArrowDown01Icon} size={12} strokeWidth={2} />
+        </button>
 
         {data?.usageLabel ? <span className={styles.usage}>{data.usageLabel}</span> : null}
       </div>
+
+      {/* Manage conversations: level 1 lists the default-model row plus one
+          row per chat; clicking a row slides to the shared rich model list
+          (same rows as the Home dropdown) with a back header. */}
+      {menuOpen ? (
+        <div className={styles.menuPanel} aria-label="Manage conversations">
+          <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
+          {chatTarget === null ? (
+            <div key="list" className={slideClass}>
+              <button
+                type="button"
+                className={styles.menuRow}
+                onClick={() => drillIn('default')}
+              >
+                <span className={styles.menuRowText}>
+                  <span className={styles.menuRowTitle}>Default model</span>
+                  <span className={styles.menuRowMeta}>applies to every chat without a pin</span>
+                </span>
+                <span className={styles.menuRowValue}>{modelLabel}</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
+              </button>
+              {conversations.length === 0 ? (
+                <div className={styles.menuEmpty}>No tool chats seen yet</div>
+              ) : conversations.map((chat) => {
+                const pinLabel = chat.pinnedServiceId
+                  ? (models.find((model) => model.serviceId === chat.pinnedServiceId)?.label ?? chat.pinnedServiceId)
+                  : 'Auto';
+                return (
+                  <button
+                    type="button"
+                    key={chat.id}
+                    className={styles.menuRow}
+                    onClick={() => drillIn(chat.id)}
+                    title={chat.title}
+                  >
+                    <BrandIcon name={chat.tool} hints={[chat.tool]} size={16} />
+                    <span className={styles.menuRowText}>
+                      <span className={styles.menuRowTitleLine}>
+                        <span className={styles.menuRowTitle}>{chat.title}</span>
+                        {/* Green pulse while the chat is receiving traffic —
+                            same signal as the chat list's running dot. */}
+                        {chat.active ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" /> : null}
+                      </span>
+                      <span className={styles.menuRowMeta}>{displayToolName(chat.tool)} · {relativeTime(chat.lastActiveAt)}</span>
+                    </span>
+                    <span className={styles.menuRowValue}>{pinLabel}</span>
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
+                  </button>
+                );
+              })}
+            </div>
+          ) : (chatTarget === 'default' || targetChat) ? (
+            <div key={chatTarget} className={slideClass}>
+              {/* Same back-title chrome as the inner VPR pages. */}
+              <div className={styles.menuBack}>
+                <VprBackTitle
+                  title={targetChat ? targetChat.title : 'Default model'}
+                  onBack={drillBack}
+                />
+              </div>
+              {targetChat ? (
+                <button
+                  type="button"
+                  className={`${styles.menuRow}${!targetChat.pinnedServiceId ? ` ${styles.menuRowActive}` : ''}`}
+                  onClick={() => {
+                    bridge?.vprFloatAction?.({ type: 'clear-chat-pin', conversationId: targetChat.id });
+                    drillBack();
+                  }}
+                >
+                  <span className={styles.menuRowText}>
+                    <span className={styles.menuRowTitle}>Auto</span>
+                    <span className={styles.menuRowMeta}>follow the default model · {modelLabel}</span>
+                  </span>
+                  {!targetChat.pinnedServiceId ? <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2} /> : null}
+                </button>
+              ) : null}
+              <VprModelRowList
+                entries={models}
+                selectedProvider={targetChat ? undefined : data?.selectedModel?.provider}
+                selectedServiceId={targetChat ? (targetChat.pinnedServiceId ?? undefined) : data?.selectedModel?.serviceId}
+                favoriteKeys={favoriteKeys}
+                compact
+                onSelect={(provider, serviceId) => {
+                  if (targetChat) {
+                    bridge?.vprFloatAction?.({ type: 'pin-chat-model', conversationId: targetChat.id, provider, serviceId });
+                  } else {
+                    bridge?.vprFloatAction?.({ type: 'select-model', provider, serviceId });
+                  }
+                  drillBack();
+                }}
+                emptyLabel="No models available"
+                frameless
+              />
+            </div>
+          ) : null}
+          </OverlayScrollArea>
+        </div>
+      ) : null}
 
       <button
         type="button"

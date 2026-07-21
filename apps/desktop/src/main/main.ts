@@ -68,6 +68,7 @@ import {
   closeFloatWindow,
   getFloatWindow,
   setFloatWindowCompact,
+  setFloatWindowExpanded,
   getFloatWindowCompact,
 } from './window.js';
 import { createDesktopTray, updateDesktopTray } from './tray.js';
@@ -3383,6 +3384,50 @@ ipcMain.on('vpr-float:move-by', (_event, dx: unknown, dy: unknown) => {
 ipcMain.on('vpr-float:update', (_event, data: unknown) => {
   lastVprFloatData = data;
   getFloatWindow()?.webContents.send('vpr-float:data', data);
+});
+
+// Grow/shrink the pill while one of its custom dropdowns is open.
+ipcMain.on('vpr-float:set-expanded', (_event, expanded: unknown) => {
+  setFloatWindowExpanded(expanded === true);
+});
+
+// Conversations seen by the buyer (per-chat routing). The renderer cannot
+// call the buyer's loopback control endpoints directly (CORS), so the main
+// process proxies list/update.
+ipcMain.handle('buyer:conversations-list', async () => {
+  try {
+    const buyerPort = await resolveBuyerProxyPort();
+    const response = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/conversations`, {
+      signal: AbortSignal.timeout(3_000),
+    });
+    const parsed = await response.json() as { conversations?: unknown[] };
+    return Array.isArray(parsed.conversations) ? parsed.conversations : [];
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle('buyer:conversations-update', async (_event, opts: unknown) => {
+  // Validate renderer-supplied parameters at the trust boundary.
+  const record = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts as Record<string, unknown> : {};
+  const id = typeof record.id === 'string' ? record.id : '';
+  if (!id) return { ok: false, error: 'id is required' };
+  const payload: Record<string, unknown> = { id };
+  if (record.delete === true) payload.delete = true;
+  if ('label' in record) payload.label = typeof record.label === 'string' ? record.label : null;
+  if ('pinnedModel' in record) payload.pinnedModel = typeof record.pinnedModel === 'string' ? record.pinnedModel : '';
+  try {
+    const buyerPort = await resolveBuyerProxyPort();
+    const response = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/conversations/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3_000),
+    });
+    return await response.json() as { ok: boolean };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 ipcMain.on('vpr-float:action', (_event, action: unknown) => {

@@ -557,6 +557,15 @@ const api = {
   vprFloatAction(action: unknown): void {
     ipcRenderer.send('vpr-float:action', action);
   },
+  vprFloatSetExpanded(expanded: boolean): void {
+    ipcRenderer.send('vpr-float:set-expanded', expanded);
+  },
+  buyerConversationsList(): Promise<unknown[]> {
+    return ipcRenderer.invoke('buyer:conversations-list') as Promise<unknown[]>;
+  },
+  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
+    return ipcRenderer.invoke('buyer:conversations-update', opts) as Promise<{ ok: boolean; conversation?: unknown; error?: string }>;
+  },
   onVprFloatData(handler: (data: unknown) => void): () => void {
     const listener = (_: unknown, data: unknown) => handler(data);
     ipcRenderer.on('vpr-float:data', listener);

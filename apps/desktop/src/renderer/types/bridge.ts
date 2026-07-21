@@ -379,6 +379,9 @@ export type DesktopBridge = {
   systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
 
   /* Floating always-on-top pill window */
+  vprFloatSetExpanded?: (expanded: boolean) => void;
+  buyerConversationsList?: () => Promise<BuyerConversationSummary[]>;
+  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
@@ -392,15 +395,43 @@ export type DesktopBridge = {
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
 };
 
+/** One tool chat session seen by the buyer proxy (per-chat routing). */
+export type BuyerConversationSummary = {
+  id: string;
+  tool: string;
+  sessionKey: string;
+  snippet: string;
+  label: string | null;
+  /** Per-chat route pin as `<peerId>@<service>`; null follows the default route. */
+  pinnedModel: string | null;
+  /** Model that served the most recent request (`<peerId>@<service>`). */
+  lastModel: string | null;
+  createdAt: number;
+  lastActiveAt: number;
+};
+
 export type VprFloatApp = {
   name: string;
   displayName: string;
 };
 
-export type VprFloatModel = {
-  provider: string;
-  serviceId: string;
-  label: string;
+/** Full catalog entries flow to the pill so its model list renders exactly
+    like the Home dropdown (brand icon, discounted price, badges). Type-only
+    import — no runtime cycle with core/state. */
+export type VprFloatModel = import('../core/state').VprModelCatalogEntry;
+
+/** One chat row in the pill's chat dropdown. */
+export type VprFloatConversation = {
+  id: string;
+  tool: string;
+  /** Display name: user label, else prompt snippet, else the session key. */
+  title: string;
+  /** Service id of the pinned model, or null when following the default route. */
+  pinnedServiceId: string | null;
+  lastActiveAt: number;
+  /** True while the chat is receiving traffic (recent request activity) —
+      drives the green pulse on its row. */
+  active: boolean;
 };
 
 /** Display payload the main window pushes to the floating pill. */
@@ -409,9 +440,15 @@ export type VprFloatData = {
   apps: VprFloatApp[];
   /** Which app the pill should track (profile name). */
   selectedApp: string;
-  /** Models available in the pill's model dropdown. */
+  /** Models available in the pill's model dropdown: the same curated list as
+      the Home dropdown (favorites, then the recommended lineup). */
   models: VprFloatModel[];
+  /** `provider:serviceId` keys of user-starred models — matching rows get a
+      star, same as the Home dropdown. */
+  favoriteKeys?: string[];
   selectedModel: { provider: string; serviceId: string } | null;
+  /** Recent tool chats, newest first (per-chat routing scope picker). */
+  conversations: VprFloatConversation[];
   /**
    * Usage line: the selected model's current route channel when one exists
    * ("1.2M tok · $0.42"), falling back to buyer-wide totals.
@@ -427,4 +464,6 @@ export type VprFloatData = {
 export type VprFloatAction =
   | 'open-main'
   | { type: 'select-model'; provider: string; serviceId: string }
+  | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
+  | { type: 'clear-chat-pin'; conversationId: string }
   | { type: 'set-compact'; compact: boolean };

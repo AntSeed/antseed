@@ -124,6 +124,25 @@
   line-height: 16px;
 }
 
+/* Compact rows (narrow hosts like the floating pill): tighter box, and the
+   price rides the meta line since there is no room for a right column. */
+.rowCompact {
+  min-height: 46px;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.rowCompact.rowChecked {
+  padding-left: 6px;
+}
+
+.metaPrice {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-left: 8px;
+}
+
 .priceBlock {
   flex: 0 0 auto;
   display: grid;

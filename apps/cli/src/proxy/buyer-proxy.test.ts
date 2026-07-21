@@ -1193,3 +1193,185 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
   assert.equal(result.body, body)
   assert.equal(result.pinnedPeerId, null)
 })
+
+// ---------- Per-chat conversations (tracking, pins, control endpoints) ----------
+
+async function makeConversationProxy(): Promise<{ proxy: BuyerProxy; dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-conv-'))
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: { router: null } as any,
+  })
+  ;(proxy as any)._getPeers = async () => []
+  ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
+  return { proxy, dir }
+}
+
+test('per-chat pin overrides the default routed model for the antseed alias', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const defaultRoute = `${'aa'.repeat(20)}@default-model`
+    const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
+    ;(proxy as any)._defaultRoutedModel = defaultRoute
+    const store = (proxy as any)._conversations
+    store.touch({ tool: 'codex-exec', sessionKey: 'sess-1' })
+    store.setPinnedModel('codex-exec:sess-1', pinnedRoute)
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex_exec', 'session-id': 'sess-1' },
+      body: {
+        model: 'antseed',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello there' }] }],
+      },
+    }))
+
+    // Routing itself fails (no peers), but the pin was applied during alias
+    // substitution and recorded as the conversation's resolved model.
+    const record = store.get('codex-exec:sess-1')
+    assert.equal(record?.lastModel, pinnedRoute)
+
+    // A different chat without a pin resolves to the default route.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex_exec', 'session-id': 'sess-2' },
+      body: {
+        model: 'antseed',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'second chat' }] }],
+      },
+    }))
+    const second = store.get('codex-exec:sess-2')
+    assert.equal(second?.lastModel, defaultRoute)
+    assert.equal(second?.snippet, 'second chat')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('conversation control endpoints list, rename, pin, reject bad pins, delete', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const store = (proxy as any)._conversations
+    store.touch({ tool: 'opencode', sessionKey: 'ses_x', snippet: 'refactor the login flow' })
+
+    const list = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/conversations' }))
+    assert.equal(list.statusCode, 200)
+    const listed = JSON.parse(list.body) as { ok: boolean; conversations: Array<{ id: string; snippet: string }> }
+    assert.equal(listed.ok, true)
+    assert.equal(listed.conversations.length, 1)
+    assert.equal(listed.conversations[0]?.id, 'opencode:ses_x')
+
+    const rename = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', label: 'Login refactor' },
+    }))
+    assert.equal(rename.statusCode, 200)
+    assert.equal(store.get('opencode:ses_x')?.label, 'Login refactor')
+
+    const badPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: 'not-a-route' },
+    }))
+    assert.equal(badPin.statusCode, 400)
+
+    const goodPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: `${'cc'.repeat(20)}@glm-5` },
+    }))
+    assert.equal(goodPin.statusCode, 200)
+    assert.equal(store.getPinnedModel('opencode', 'ses_x'), `${'cc'.repeat(20)}@glm-5`)
+
+    const clearPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: '' },
+    }))
+    assert.equal(clearPin.statusCode, 200)
+    assert.equal(store.getPinnedModel('opencode', 'ses_x'), null)
+
+    const missing = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'nope:missing', label: 'x' },
+    }))
+    assert.equal(missing.statusCode, 404)
+
+    const removed = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', delete: true },
+    }))
+    assert.equal(removed.statusCode, 200)
+    assert.equal(store.get('opencode:ses_x'), null)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('subagent requests roll up into the parent conversation', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    const store = (proxy as any)._conversations
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'ses_child', 'x-parent-session-id': 'ses_parent' },
+      body: { model: 'antseed', messages: [{ role: 'user', content: 'subtask prompt' }] },
+    }))
+
+    assert.equal(store.get('opencode:ses_child'), null)
+    assert.notEqual(store.get('opencode:ses_parent'), null)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('title request racing ahead of the first turn does not name the chat', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    const store = (proxy as any)._conversations
+
+    // OpenCode's ensureTitle request lands first, on the same session.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'ses_race' },
+      body: {
+        model: 'antseed',
+        messages: [
+          { role: 'user', content: 'Generate a title for this conversation:\n' },
+          { role: 'user', content: 'hi' },
+        ],
+      },
+    }))
+    // The embedded real prompt is used, not the title instruction.
+    assert.equal(store.get('opencode:ses_race')?.snippet, 'hi')
+
+    // A Claude Code-style pure title request creates the row unlabeled...
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },
+      body: {
+        model: 'antseed',
+        messages: [{ role: 'user', content: 'Please write a 5-10 word title for the following conversation:\n...' }],
+      },
+    }))
+    assert.equal(store.get('claude-code:cc_race')?.snippet, '')
+
+    // ...and the real first turn upgrades the empty snippet afterwards.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },
+      body: {
+        model: 'antseed',
+        messages: [{ role: 'user', content: 'fix the login bug' }],
+      },
+    }))
+    assert.equal(store.get('claude-code:cc_race')?.snippet, 'fix the login bug')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

@@ -350,6 +350,126 @@
   line-height: 15px;
 }
 
+/* ---------- Recent chats (per-chat routing) ---------- */
+
+.chatsCard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.chatsHead {
+  display: grid;
+  gap: 2px;
+}
+
+.chatsTitle {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.chatsHint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.chatRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.chatText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+}
+
+/* Clicking the title starts an inline rename. */
+.chatTitleButton {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: text;
+}
+
+.chatEditInput {
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid rgba(var(--brand-rgb), 0.5);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  outline: none;
+}
+
+.chatMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.chatPinSelect {
+  flex: 0 0 auto;
+  max-width: 148px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+
+.chatPinSelect:focus-visible {
+  border-color: rgba(var(--brand-rgb), 0.5);
+}
+
+.chatDelete {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.chatDelete:hover {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.08);
+}
+
 /* ---------- Certificate transparency ---------- */
 
 .caCard {

@@ -24,6 +24,8 @@ let mainWindow: BrowserWindow | null = null;
 let floatWindow: BrowserWindow | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 88;
+/** Pill height while a custom dropdown (chat / model) is open. */
+const FLOAT_WINDOW_EXPANDED_HEIGHT = 440;
 /* Compact mode: just the 40px app badge in a 56px round chip, centered with a
    16px shadow margin on each side. Kept at 88px (not a tighter 72) because
    macOS drops a transparent frameless window's transparency below ~80px,
@@ -118,6 +120,29 @@ export function setFloatWindowCompact(compact: boolean): void {
     x: clamp(bounds.x + bounds.width - width, workArea.x, workArea.x + workArea.width - width),
     y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - height),
     width,
+    height,
+  });
+  win.setResizable(false);
+}
+
+/**
+ * Grow the pill window downward while one of its custom dropdowns is open
+ * (DOM popovers can't escape the window bounds the way native selects can),
+ * and shrink back when it closes. No-op in compact mode.
+ */
+export function setFloatWindowExpanded(expanded: boolean): void {
+  const win = getFloatWindow();
+  if (!win || floatCompact) return;
+  const bounds = win.getBounds();
+  const height = expanded ? FLOAT_WINDOW_EXPANDED_HEIGHT : FLOAT_WINDOW_HEIGHT;
+  if (bounds.height === height) return;
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  win.setResizable(true);
+  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_COMPACT_SIZE);
+  win.setBounds({
+    x: bounds.x,
+    y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - height),
+    width: FLOAT_WINDOW_WIDTH,
     height,
   });
   win.setResizable(false);

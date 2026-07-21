@@ -89,15 +89,15 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         key: 'float',
         label: 'The floating window',
-        intro: 'The floating pill stays on top of other windows and follows you across desktops. It shows the app it is tracking, the routed model, and live token and cost totals for the current payment channel.',
+        intro: 'The floating pill stays on top of other windows and follows you across desktops. It shows the routed model and live token and cost totals for the current payment channel.',
         sections: [
           {
-            heading: 'Switch model or app',
-            body: 'Use its dropdowns to switch the model or the app without opening the main window. The ring around the app icon pulses while traffic is actually flowing through the router.',
+            heading: 'Switch model or pin a chat',
+            body: 'Click the model name to open the list: the Default model row changes the global route, and each recent chat can pin its own model. A chat that is receiving traffic shows a green pulse next to its name.',
           },
           {
             heading: 'Back to the main window',
-            body: 'Click the app icon to bring the main AntSeed window back, or the X to close the pill.',
+            body: 'Click the AntSeed icon to bring the main window back, or the X to close the pill.',
           },
         ],
         docsPath: '/faq',

@@ -1,13 +1,28 @@
 import type { RendererUiState } from '../core/state';
 import { formatCompactTokens } from '../core/format';
 import { notifyUiStateChanged } from '../core/store';
-import type { DesktopBridge, DesktopPaymentChannelSummary, SystemProxyProfileSummary, VprFloatData, VprFloatModel } from '../types/bridge';
+import type {
+  BuyerConversationSummary,
+  DesktopBridge,
+  DesktopPaymentChannelSummary,
+  SystemProxyProfileSummary,
+  VprFloatConversation,
+  VprFloatData,
+  VprFloatModel,
+} from '../types/bridge';
+import { loadFavoriteModels } from './vpr-favorites';
+import {
+  catalogEntryKey,
+  selectFavoriteVprCatalog,
+  selectRecommendedVprCatalog,
+} from './vpr-recommended-models';
 import { chooseBestVprRoute } from './vpr-routing';
 import { routesForSelectedModel } from './vpr-view-models';
 import { activeProfilesFromRuntimeState } from './vpr-tools';
 
 const FLOAT_UPDATE_INTERVAL_MS = 3_000;
-const FLOAT_MODEL_LIMIT = 50;
+/** Chat rows the pill's dropdown shows (buyer stores more). */
+const FLOAT_CONVERSATION_LIMIT = 8;
 /** How long after the last traffic log line the pulse stays considered live. */
 const TRAFFIC_HOLD_MS = 1_500;
 /** How long after the buyer's last-activity timestamp traffic reads as live.
@@ -16,6 +31,11 @@ const TRAFFIC_HOLD_MS = 1_500;
 const BUYER_ACTIVITY_HOLD_MS = 4_000;
 /** Coalesce burst of completion lines into one forced usage refresh. */
 const COMPLETION_REFRESH_DEBOUNCE_MS = 400;
+/** How long after a chat's last request its row keeps the green pulse. The
+    buyer stamps lastActiveAt per dispatched request, so this must outlast
+    the gap between an agent tool's consecutive calls (and the 3s payload
+    cadence) or the pulse would flicker mid-conversation. */
+const CONVERSATION_ACTIVE_HOLD_MS = 10_000;
 
 export type VprFloatModule = {
   openFloat: (profileName?: string) => Promise<void>;
@@ -49,24 +69,27 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   }
 
-  function floatModels(): VprFloatModel[] {
+  /** The same curated list as the Home model dropdown: starred favorites
+      first, then the recommended lineup (frontier + free models), with the
+      current selection always present so the active model never disappears
+      from its own switcher. */
+  function floatModels(): { models: VprFloatModel[]; favoriteKeys: string[] } {
     const selection = uiState.vprRouteSelection.model;
-    const byPopularity = [...uiState.vprModelCatalog].sort((a, b) => b.peerCount - a.peerCount);
-    const models = byPopularity.slice(0, FLOAT_MODEL_LIMIT);
+    const favorites = loadFavoriteModels();
+    const favoriteEntries = selectFavoriteVprCatalog(uiState.vprModelCatalog, favorites);
+    const recommended = selectRecommendedVprCatalog(uiState.vprModelCatalog)
+      .filter((entry) => !favorites.has(catalogEntryKey(entry)));
+    const models = [...favoriteEntries, ...recommended];
     if (
       selection &&
       !models.some((entry) => entry.provider === selection.provider && entry.serviceId === selection.serviceId)
     ) {
-      const selected = byPopularity.find(
+      const selected = uiState.vprModelCatalog.find(
         (entry) => entry.provider === selection.provider && entry.serviceId === selection.serviceId,
       );
       if (selected) models.unshift(selected);
     }
-    return models.map((entry) => ({
-      provider: entry.provider,
-      serviceId: entry.serviceId,
-      label: entry.label,
-    }));
+    return { models, favoriteKeys: [...favorites] };
   }
 
   function formatMicroUsdc(spentMicroUsdc: bigint): string {
@@ -213,6 +236,34 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   // event-driven log signal's holds (detached daemons without log streaming).
   let buyerDeltaActive = false;
 
+  function floatConversation(record: BuyerConversationSummary): VprFloatConversation {
+    const pinnedServiceId = record.pinnedModel?.split('@').slice(1).join('@') || null;
+    return {
+      id: record.id,
+      tool: record.tool,
+      title: record.label || record.snippet || record.sessionKey.slice(0, 12),
+      pinnedServiceId,
+      lastActiveAt: record.lastActiveAt,
+      active: Date.now() - record.lastActiveAt < CONVERSATION_ACTIVE_HOLD_MS,
+    };
+  }
+
+  async function loadConversations(): Promise<VprFloatConversation[]> {
+    try {
+      const records = (await bridge?.buyerConversationsList?.()) ?? [];
+      return records.slice(0, FLOAT_CONVERSATION_LIMIT).map(floatConversation);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Best route peer for a model, mirroring how the global selection routes. */
+  function resolvePinRoute(provider: string, serviceId: string): string | null {
+    const routes = routesForSelectedModel(uiState.discoverRows, { provider, serviceId });
+    const peerId = chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
+    return peerId ? `${peerId}@${serviceId}` : null;
+  }
+
   async function buildData(): Promise<VprFloatData> {
     await ensureProfiles();
     let connected: SystemProxyProfileSummary[] = [];
@@ -227,12 +278,15 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       selectedApp = connected[0]?.name ?? '';
     }
     const selection = uiState.vprRouteSelection.model;
+    const { models, favoriteKeys } = floatModels();
 
     return {
       apps: connected.map((profile) => ({ name: profile.name, displayName: profile.displayName })),
       selectedApp,
-      models: floatModels(),
+      models,
+      favoriteKeys,
       selectedModel: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
+      conversations: await loadConversations(),
       usageLabel: usageLabel(),
       trafficActive: logTrafficActive() || buyerDeltaActive,
     };
@@ -276,16 +330,35 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   });
 
   bridge?.onVprFloatAction?.((action) => {
-    if (
-      typeof action === 'object' && action !== null &&
-      (action as { type?: unknown }).type === 'select-model'
-    ) {
+    if (typeof action !== 'object' || action === null) return;
+    const type = (action as { type?: unknown }).type;
+    if (type === 'select-model') {
       const { provider, serviceId } = action as { provider?: unknown; serviceId?: unknown };
       if (typeof provider === 'string' && typeof serviceId === 'string') {
         onSelectModel(provider, serviceId);
         // Push the new selection immediately instead of waiting for the tick.
         void buildData().then((data) => bridge?.vprFloatUpdate?.(data));
       }
+      return;
+    }
+    // Pin one chat to a model: resolve the best peer for that model the same
+    // way the global selection does, then hand the pin to the buyer.
+    if (type === 'pin-chat-model') {
+      const { conversationId, provider, serviceId } = action as { conversationId?: unknown; provider?: unknown; serviceId?: unknown };
+      if (typeof conversationId !== 'string' || typeof provider !== 'string' || typeof serviceId !== 'string') return;
+      const pin = resolvePinRoute(provider, serviceId);
+      if (!pin) return;
+      void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin })
+        .then(() => buildData())
+        .then((data) => bridge?.vprFloatUpdate?.(data));
+      return;
+    }
+    if (type === 'clear-chat-pin') {
+      const { conversationId } = action as { conversationId?: unknown };
+      if (typeof conversationId !== 'string') return;
+      void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: '' })
+        .then(() => buildData())
+        .then((data) => bridge?.vprFloatUpdate?.(data));
     }
   });
 

@@ -22,6 +22,10 @@ export type VprModelRowListProps = {
   /** Drop the card chrome (bg/radius/shadow) — for hosts that provide their
    * own panel, e.g. the Home model dropdown. */
   frameless?: boolean;
+  /** Narrow-host layout (the floating pill): the price joins the meta line
+   * under the name and the trailing chevron is dropped, so the model name
+   * keeps the full row width instead of truncating after a few characters. */
+  compact?: boolean;
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
@@ -44,22 +48,41 @@ function priceRangeLabel(entry: VprModelCatalogEntry): string | null {
   return formatUsdShort(min);
 }
 
-function ModelRow({ entry, checked, favorite, badge, onClick }: {
+function ModelRow({ entry, checked, favorite, badge, compact, onClick }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
   favorite?: boolean;
   badge?: JSX.Element | null;
+  compact?: boolean;
   onClick: () => void;
 }): JSX.Element {
   const free = isFreeEntry(entry);
   const price = priceRangeLabel(entry);
   const baseline = entry.baselineInputUsdPerMillion ?? null;
 
+  const priceParts = free ? (
+    <span className={styles.perTok}>Free</span>
+  ) : price !== null ? (
+    <>
+      <span className={styles.priceLine}>
+        {baseline !== null && <s className={styles.baseline}>{formatUsdShort(baseline)}</s>}
+        <span className={styles.price}>{price}</span>
+      </span>
+      <span className={styles.perTok}>/m tok</span>
+    </>
+  ) : (
+    <span className={styles.perTok}>Price unknown</span>
+  );
+
   return (
     <button
       type="button"
-      className={`${styles.row}${checked ? ` ${styles.rowChecked}` : ''}`}
+      className={[
+        styles.row,
+        checked ? styles.rowChecked : '',
+        compact ? styles.rowCompact : '',
+      ].filter(Boolean).join(' ')}
       aria-pressed={checked}
       onClick={onClick}
     >
@@ -77,7 +100,11 @@ function ModelRow({ entry, checked, favorite, badge, onClick }: {
         </span>
         <span className={styles.metaLine}>
           {entry.peerCount} {entry.peerCount === 1 ? 'peer' : 'peers'}
-          {entry.categories.length > 0 && (
+          {/* Compact rows trade the category tags for the price, which no
+              longer has a column of its own. */}
+          {compact ? (
+            <span className={styles.metaPrice}>{priceParts}</span>
+          ) : entry.categories.length > 0 && (
             <>
               {' | '}
               {entry.categories.map((category) => formatCategoryLabel(category)).join(', ')}
@@ -85,22 +112,12 @@ function ModelRow({ entry, checked, favorite, badge, onClick }: {
           )}
         </span>
       </span>
-      <span className={styles.priceBlock}>
-        {free ? (
-          <span className={styles.perTok}>Free</span>
-        ) : price !== null ? (
-          <>
-            <span className={styles.priceLine}>
-              {baseline !== null && <s className={styles.baseline}>{formatUsdShort(baseline)}</s>}
-              <span className={styles.price}>{price}</span>
-            </span>
-            <span className={styles.perTok}>/m tok</span>
-          </>
-        ) : (
-          <span className={styles.perTok}>Price unknown</span>
-        )}
-      </span>
-      <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
+      {!compact && (
+        <>
+          <span className={styles.priceBlock}>{priceParts}</span>
+          <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
+        </>
+      )}
     </button>
   );
 }
@@ -134,6 +151,7 @@ export function VprModelRowList({
   limit,
   favoriteKeys,
   frameless,
+  compact,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
     return (
@@ -173,6 +191,7 @@ export function VprModelRowList({
             key={key}
             entry={entry}
             checked={selected}
+            compact={compact}
             favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
             badge={free ? (
               <VprBadge tone="green">Free</VprBadge>
