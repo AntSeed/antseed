@@ -4,6 +4,7 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
   type AntseedNode,
@@ -47,6 +48,7 @@ import {
   attachStreamingAntseedHeaders,
 } from './telemetry.js'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -72,6 +74,8 @@ export interface BuyerProxyConfig {
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
+  /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
+  verifier?: VerifierPolicy
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
@@ -93,6 +97,8 @@ function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes:
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
+/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
+const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 type PeerFailureEntry = {
   count: number
@@ -351,6 +357,29 @@ export function parsePersistedPeers(
  * and the proxy transparently routes their API calls through the
  * Antseed P2P network.
  */
+
+export function makeVerifierReach(
+  node: Pick<AntseedNode, 'sendRequest'>,
+  peer: PeerInfo,
+  chosenId: string,
+  signal: AbortSignal,
+): SellerReach {
+  const attestRoute = `${ANTSEED_ATTEST_PATH}/${encodeURIComponent(chosenId)}`
+  return async (r) => {
+    if (r.path !== attestRoute) {
+      throw new Error(`verifier may only call its attestation route (${attestRoute}), not ${r.path}`)
+    }
+    const resp = await node.sendRequest(peer, {
+      requestId: randomUUID(),
+      method: r.method,
+      path: r.path,
+      headers: r.headers ?? {},
+      body: r.body ?? new Uint8Array(),
+    }, { signal, controlPlane: true })
+    return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
+  }
+}
+
 export class BuyerProxy {
   private readonly _server: Server
   private readonly _node: AntseedNode
@@ -361,6 +390,8 @@ export class BuyerProxy {
   private readonly _stateFile: string
   private _stateFileWatching = false
   private _pinnedPeer: string | null
+  private readonly _verifier?: VerifierPolicy
+  private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -377,6 +408,7 @@ export class BuyerProxy {
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
+    this._verifier = config.verifier
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
@@ -1255,6 +1287,26 @@ export class BuyerProxy {
       return
     }
 
+    if (this._verifier) {
+      const makeReach = (chosenId: string): SellerReach =>
+        makeVerifierReach(this._node, selectedPeer, chosenId, clientAbortController.signal)
+      const outcome = await this._verifyPeer(selectedPeer, makeReach, clientAbortController.signal)
+      const short = selectedPeer.peerId.slice(0, 12)
+      if (outcome.verified) {
+        log(`Verified ${short}... via ${outcome.sdk}`)
+      } else if (outcome.sdk || outcome.reason) {
+        log(`Verification ${outcome.sdk ? `(${outcome.sdk}) ` : ''}did not pass for ${short}...: ${outcome.reason ?? 'failed'}${outcome.ok ? ' (optional — routing anyway)' : ''}`)
+      }
+      if (!outcome.ok) {
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(
+          `Pinned peer ${short}... failed required verification (${outcome.reason ?? 'failed'}). `
+          + 'Pick a different peer, or run without --require-verifier.',
+        )
+        return
+      }
+    }
+
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,
@@ -1274,6 +1326,24 @@ export class BuyerProxy {
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
     }
+  }
+
+  private async _verifyPeer(
+    peer: PeerInfo,
+    makeReach: (chosenId: string) => SellerReach,
+    signal: AbortSignal,
+  ): Promise<VerifyOutcome> {
+    const policy = this._verifier
+    if (!policy) return { ok: true, verified: false }
+    const key = `${peer.peerId}|${verifierSupportFingerprint(peer.capabilities)}`
+    return getCachedVerdict(
+      this._verifyCache,
+      key,
+      Date.now(),
+      this._peerCacheTtlMs,
+      VERIFY_CACHE_MAX_ENTRIES,
+      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal),
+    )
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {

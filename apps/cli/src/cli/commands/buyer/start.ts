@@ -11,10 +11,11 @@ import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@a
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
-import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
+import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
 
@@ -198,6 +199,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
     .option('--disable-metadata-v2-services', 'runtime-only opt-out from per-service buyer metadata v2 attribution')
     .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address), bypassing the router')
     .option('--log-filter <sourceOrText>', 'show only debug logs matching a source or text, e.g. ProxyMux')
+    .option('--verifiers <ids>', "ordered, comma-separated verifier SDK ids to verify sellers with (default: the seller's advertised default if trusted)")
+    .option('--require-verifier', 'refuse to route unless a verifier SDK verifies the seller (default: verify but route anyway)')
+    .option('--no-verifier', 'disable seller verification entirely')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(buyerCmd)
       const config = await loadConfig(globalOpts.config)
@@ -409,12 +413,42 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
+      let verifierPolicy: VerifierPolicy | undefined
+      try {
+        verifierPolicy = resolveVerifierPolicy({
+          verifier: options.verifier,
+          verifiers: options.verifiers,
+          requireVerifier: options.requireVerifier,
+        })
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exit(1)
+      }
+
+      // Keep the request path import-only; the seller-specific default is known per peer.
+      if (verifierPolicy) {
+        const toPreload = verifierPolicy.prefer?.length ? verifierPolicy.prefer : [...curatedVerifierIds()]
+        for (const id of toPreload) {
+          try {
+            await loadVerifierPlugin(id)
+          } catch (err) {
+            const msg = `Verifier "${id}" could not be prepared: ${(err as Error).message}`
+            if (verifierPolicy.require) {
+              proxySpinner.fail(chalk.red(msg))
+              process.exit(1)
+            }
+            console.warn(chalk.yellow(`${msg} — optional verification for this SDK will be skipped.`))
+          }
+        }
+      }
+
       const proxy = new BuyerProxy({
         port: proxyPort,
         node,
         pinnedPeerId,
         dataDir: globalOpts.dataDir,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
+        ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })
       let ownsProxyListener = false
 
@@ -422,6 +456,12 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         await proxy.start()
         ownsProxyListener = true
         proxySpinner.succeed(chalk.green(`Proxy listening on http://localhost:${proxyPort}`))
+        if (verifierPolicy) {
+          const sel = verifierPolicy.prefer?.length ? verifierPolicy.prefer.join(', ') : 'seller default (trusted set)'
+          console.log(chalk.dim(`  Verifier: ${sel} (${verifierPolicy.require ? 'required' : 'optional'})`))
+        } else {
+          console.log(chalk.dim('  Verifier: disabled'))
+        }
       } catch (err) {
         if (isAddrInUseError(err) && await isCompatibleBuyerProxy(proxyPort)) {
           proxySpinner.succeed(chalk.yellow(`Proxy port ${proxyPort} already in use; reusing existing local proxy.`))
