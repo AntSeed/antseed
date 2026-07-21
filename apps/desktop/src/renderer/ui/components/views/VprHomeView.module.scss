@@ -1,3 +1,5 @@
+@use '../vpr/chip';
+
 /* Doubled class beats the global `.view` rule (display: block, overflow-y:
    auto) regardless of stylesheet injection order. */
 .view.view {
@@ -165,11 +167,59 @@
   color: var(--accent-green);
 }
 
-/* ---------- Default model card ---------- */
+/* ---------- Default model card + dropdown ---------- */
+
+.modelDropdown {
+  position: relative;
+  width: 100%;
+  margin-top: 2px;
+}
+
+/* Floating panel below the card (Figma "dropdown": white, 16px radius,
+   shadow/2, rows + "All models" footer). */
+.modelMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.modelMenuFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-card);
+  color: var(--accent-green);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.modelMenuFooter:hover {
+  background: var(--bg-hover);
+}
+
+.modelMenuFooter:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
 
 .modelCard {
   width: 100%;
-  margin-top: 2px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -201,9 +251,16 @@
 }
 
 .modelCardCaption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
+}
+
+.modelCardTokens {
+  color: var(--text-muted);
 }
 
 .modelCardTitle {
@@ -302,28 +359,23 @@
 }
 
 /* Top-level pop-out control over the banner (top-left), for detaching the
-   floating window. White chip so it reads over the brand gradient. */
+   floating window. Same chip treatment as the credits pill so the two
+   controls over the banner always match in height and style. */
 .heroPop {
+  @include chip.chip-icon;
   position: absolute;
-  top: 12px;
-  left: 4px;
+  /* The shell's credits pill sits at top: 12px of the main pane; .hero
+     starts below .heroPane's 8px top padding, so 4px here puts both chips
+     on the same line. */
+  top: 8px;
+  left: 0px;
   z-index: 1;
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: none;
-  border-radius: 10px;
-  background: var(--bg-card);
-  box-shadow: var(--shadow-sm);
-  color: var(--text-primary);
-  cursor: pointer;
   -webkit-app-region: no-drag;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
 .heroPop:hover:not(:disabled) {
+  @include chip.chip-hover;
   color: var(--accent-green);
 }
 
@@ -417,7 +469,7 @@
 .connectHeading {
   text-align: center;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 20px;
   color: var(--text-primary);
 }
@@ -478,6 +530,7 @@
 }
 
 .appsGroup {
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -492,44 +545,66 @@
   color: var(--text-secondary);
 }
 
-.toolGrid {
+/* Full-width connect rows (Figma "Use it on your favorite app"). */
+.toolList {
+  width: 100%;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-
-.toolButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   gap: 4px;
-  padding: 8px 16px;
+}
+
+.toolRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px 8px 12px;
+  border: none;
   border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
+  background: transparent;
+  font: inherit;
   cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition: background 0.12s ease;
 }
 
-.toolButton:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
+.toolRow:hover:not(:disabled) {
+  background: var(--bg-hover);
 }
 
-.toolButton:disabled {
+.toolRow:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.toolRow:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.toolIdentity {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .toolLabel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.toolConnect {
+  flex: 0 0 auto;
+  color: var(--accent-green);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .moreApps {

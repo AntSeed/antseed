@@ -1,3 +1,5 @@
+@use './vpr/chip';
+
 .shell {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
@@ -123,8 +125,8 @@
   /* Above the sliding view panes (z-index 2) so it stays fixed in place
      while screens transition underneath it. */
   z-index: 3;
-  top: 12px;
-  right: 14px;
+  top: 16px;
+  right: 16px;
   max-width: calc(100% - 28px);
   /* Sits inside the hidden-inset title-bar drag strip — keep it clickable.
      The carve-out must live on this static wrapper, not the animated pill:
@@ -133,27 +135,14 @@
 }
 
 .creditsPill {
+  @include chip.chip-text;
   display: block;
   max-width: 180px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
 }
 
 .creditsPill:hover,
 .creditsPill:focus-visible {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-  outline: none;
+  @include chip.chip-hover;
 }
 
 /* Scroll-away: the pill tracks the view's first 56px of scroll (its top

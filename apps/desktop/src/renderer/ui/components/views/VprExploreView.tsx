@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { filterVprCatalog, sortVprCatalog, type VprCatalogSort } from '../../../modules/vpr-view-models';
+import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import type { ViewName } from '../../types';
-import { VprModelRowList } from '../vpr/VprModelRows';
+import { VprModelRowList, VprSelectedModelCard } from '../vpr/VprModelRows';
 import { VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprExploreView.module.scss';
 
@@ -47,19 +48,28 @@ export function VprExploreView({ onSelectView }: Props) {
     );
   }, [category, search, snap.catalog, sort, tab]);
 
-  const maxSavings = useMemo(
-    () => entries.reduce((best, entry) => Math.max(best, entry.expectedSavingsPct ?? 0), 0),
-    [entries],
-  );
+  const selectedModel = snap.selection.model;
+  const selectedEntry = selectedModel
+    ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId)
+    : null;
 
   return (
     <section className={`view view-vpr-explore view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage
         title="Models"
-        onBack={() => onSelectView?.('home')}
+        backFallback="home"
         header={(
           <>
-            <VprSearch value={search} onChange={setSearch} placeholder="Search models" />
+            <VprSearch
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                // Recommended is a short curated slice — searching implies
+                // the user wants the full catalog, so hop to All Models.
+                if (value.trim().length > 0 && tab === 'Recommended') setTab('All');
+              }}
+              placeholder="Search models"
+            />
 
             <div className={styles.tabs} role="tablist" aria-label="Model list scope">
               <button
@@ -85,7 +95,15 @@ export function VprExploreView({ onSelectView }: Props) {
         )}
       >
       <div className={styles.stack}>
-        {tab === 'All' ? (
+        {selectedEntry && (
+          <VprSelectedModelCard
+            entry={selectedEntry}
+            auto={snap.selection.mode === 'auto'}
+            onClick={() => onSelectView?.('model')}
+          />
+        )}
+
+        {tab === 'All' && (
           <div className={styles.filterRow}>
             <label className={styles.filterPill}>
               <select
@@ -112,22 +130,13 @@ export function VprExploreView({ onSelectView }: Props) {
               </select>
             </label>
           </div>
-        ) : (
-          <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle}>Top models</span>
-            {maxSavings > 0 && (
-              <span className={styles.sectionAside}>
-                Expected Saving up to <strong>{maxSavings}%</strong>
-              </span>
-            )}
-          </div>
         )}
 
         {entries.length > 0 ? (
           <VprModelRowList
             entries={entries}
-            selectedProvider={snap.selection.model?.provider}
-            selectedServiceId={snap.selection.model?.serviceId}
+            selectedProvider={selectedModel?.provider}
+            selectedServiceId={selectedModel?.serviceId}
             onSelect={(provider, serviceId) => {
               actions.selectVprModel(provider, serviceId);
               onSelectView?.('model');

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Moon02Icon, Sun02Icon } from '@hugeicons/core-free-icons';
+import { Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/vpr-seller-format';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
@@ -9,11 +10,6 @@ import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle }
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
-
-/** Trust scores are 0-100 internally; the UI shows them on the 5-point reputation scale. */
-function reputationLabel(score: number): string {
-  return (score / 20).toFixed(1);
-}
 
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
@@ -37,11 +33,11 @@ export function VprPreferencesView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-preferences view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Preferences" onBack={() => onSelectView?.('home')}>
+      <VprPage title="Preferences" backFallback="home">
       <div className={styles.stack}>
         <p className={styles.lede}>These preferences apply to every model with Auto select turned on</p>
 
-        <VprCard className={styles.card}>
+        <div className={styles.settings}>
           <VprSettingRow
             title="Auto select seller"
             caption="(Price + Trust preference)"
@@ -72,7 +68,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
               <span className={styles.sliderTitle}>Minimum trust score</span>
               <span className={styles.sliderReading}>
                 <span className={styles.sliderReadingLabel}>Reputation</span>
-                <span className={styles.sliderReadingValue}>{reputationLabel(snap.preferences.minTrustScore)}</span>
+                <span className={styles.sliderReadingValue}>{reputationScaleLabel(snap.preferences.minTrustScore)}</span>
               </span>
             </div>
             <VprSlider
@@ -89,11 +85,8 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <div className={styles.sliderGroup}>
             <div className={styles.sliderHead}>
               <span className={styles.sliderTitle}>Price preference</span>
-              <span className={styles.sliderReading}>
-                <span className={styles.sliderReadingValue}>
-                  {formatUsdShort(snap.preferences.maxInputUsdPerMillion)}
-                </span>
-                <span className={styles.sliderReadingLabel}>/m tok</span>
+              <span className={styles.sliderReadingSmall}>
+                {formatUsdShort(snap.preferences.maxInputUsdPerMillion)}/m tok
               </span>
             </div>
             <VprSlider
@@ -106,7 +99,33 @@ export function VprPreferencesView({ onSelectView }: Props) {
             />
             <div className={styles.sliderHint}>Sellers charging more than this per million input tokens are never used</div>
           </div>
-        </VprCard>
+        </div>
+
+        {pinnedRoute ? (
+          <div className={styles.pinnedSection}>
+            <span className={styles.pinnedLabel}>Automatically select this seller</span>
+            <VprCard>
+              <button
+                type="button"
+                className={styles.pinnedRow}
+                onClick={() => actions.clearVprPinnedPeer()}
+                title="Unpin this seller"
+              >
+                <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.pinnedCheck} />
+                <span className={styles.pinnedText}>
+                  <span className={styles.pinnedName}>
+                    {pinnedRoute.peerDisplayName || pinnedRoute.peerLabel || pinnedRoute.peerId}
+                  </span>
+                  <span className={styles.pinnedMeta}>
+                    {sellerMetaLabel(pinnedRoute)}
+                    {snap.selection.model?.label ? ` · ${snap.selection.model.label}` : ''}
+                  </span>
+                </span>
+                <span className={styles.pinnedScore}>{sellerReputationLabel(pinnedRoute)}</span>
+              </button>
+            </VprCard>
+          </div>
+        ) : null}
 
         <div className={styles.appearanceSection}>
           <span className={styles.sectionLabel}>Appearance</span>
@@ -137,32 +156,6 @@ export function VprPreferencesView({ onSelectView }: Props) {
             />
           </VprCard>
         </div>
-
-        {pinnedRoute ? (
-          <div className={styles.pinnedSection}>
-            <span className={styles.pinnedLabel}>Automatically select this seller</span>
-            <VprCard className={styles.pinnedRow}>
-              <div className={styles.pinnedText}>
-                <span className={styles.pinnedName}>
-                  {pinnedRoute.peerDisplayName || pinnedRoute.peerLabel || pinnedRoute.peerId}
-                </span>
-                <span className={styles.pinnedMeta}>
-                  {pinnedRoute.inputUsdPerMillion !== null
-                    ? `${formatUsdShort(pinnedRoute.inputUsdPerMillion)}/m tok`
-                    : 'Price unknown'}
-                  {snap.selection.model?.label ? ` · ${snap.selection.model.label}` : ''}
-                </span>
-              </div>
-              <button
-                type="button"
-                className={styles.unpin}
-                onClick={() => actions.clearVprPinnedPeer()}
-              >
-                Unpin
-              </button>
-            </VprCard>
-          </div>
-        ) : null}
       </div>
       </VprPage>
     </section>

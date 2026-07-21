@@ -1,0 +1,41 @@
+/* Shared white "chip" treatment for the small controls that float over the
+   brand surfaces — the credits pills (shell + inner-page header) and the
+   hero pop-out button. One definition so height and style never drift. */
+
+$chip-height: 26px;
+
+@mixin chip {
+  height: $chip-height;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* Text variant: vertical centering via line-height inside the fixed height. */
+@mixin chip-text {
+  @include chip;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: $chip-height - 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Square icon variant. */
+@mixin chip-icon {
+  @include chip;
+  width: $chip-height;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+@mixin chip-hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}

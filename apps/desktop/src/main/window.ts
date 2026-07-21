@@ -299,6 +299,42 @@ export function applyWindowView(viewName: string): { ok: true; skipped?: 'fullsc
   return applySizePreset(windowPresetForView(viewName));
 }
 
+/* Explicit preset override for views that support both sizes — the chat view
+   opens compact but can be expanded to reveal the conversation-list panel.
+   Expanding only grows the window horizontally: it takes the standard
+   preset's width but keeps the current height and vertical position, so the
+   panel slides in without the window jumping to the tall standard size. */
+export function applyWindowPreset(presetName: string): { ok: true; skipped?: 'fullscreen' | 'maximized' | 'missing-window' } {
+  if (presetName !== 'standard') {
+    return applySizePreset('compact');
+  }
+
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) {
+    return { ok: true, skipped: 'missing-window' };
+  }
+  const currentBounds = normalWindowBounds(win);
+  if (!currentBounds) {
+    return { ok: true, skipped: win.isFullScreen() ? 'fullscreen' : 'maximized' };
+  }
+
+  const standard = WINDOW_SIZE_PRESETS.standard;
+  const display = screen.getDisplayMatching(currentBounds).workArea;
+  const width = Math.min(standard.width, display.width);
+  const x = clamp(
+    Math.round(currentBounds.x + (currentBounds.width - width) / 2),
+    display.x,
+    display.x + display.width - width,
+  );
+
+  win.setResizable(true);
+  // Width grows to the standard minimum; height keeps the compact floor
+  // since the expanded chat window stays at its current (compact) height.
+  win.setMinimumSize(standard.minWidth, WINDOW_SIZE_PRESETS.compact.minHeight);
+  win.setBounds({ x, y: currentBounds.y, width, height: currentBounds.height }, true);
+  return { ok: true };
+}
+
 export function createWindow(config: WindowConfig): void {
   // The default view is 'home', which maps to the compact preset (see
   // applyWindowView). Open at that size so the window doesn't briefly render

@@ -283,7 +283,7 @@ const api = {
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },
-  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null }): Promise<{ ok: boolean; error?: string }> {
+  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
@@ -333,6 +333,9 @@ const api = {
   },
   applyWindowView(viewName: string): Promise<{ ok: true; skipped?: string }> {
     return ipcRenderer.invoke('window:apply-view', viewName) as Promise<{ ok: true; skipped?: string }>;
+  },
+  applyWindowPreset(presetName: string): Promise<{ ok: true; skipped?: string }> {
+    return ipcRenderer.invoke('window:apply-preset', presetName) as Promise<{ ok: true; skipped?: string }>;
   },
   onNavigateView(handler: (viewName: string) => void): () => void {
     const listener = (_: unknown, viewName: string) => handler(viewName);

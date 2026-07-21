@@ -3,11 +3,17 @@ export const ANTSEED_PEER_CUSTOM_TYPE = 'antseed:peer';
 export type ChatPeerSelectionRequest = {
   conversationId?: string | null;
   peerId?: string | null;
+  /** When the selection also switches the model, the new binding is persisted
+      on the conversation so list refreshes don't revert it. */
+  service?: string | null;
+  provider?: string | null;
 };
 
 export type NormalizedChatPeerSelectionRequest = {
   conversationId: string | null;
   peerId: string | null;
+  service: string | null;
+  provider: string | null;
 };
 
 export type PersistedPeerBinding = {
@@ -32,12 +38,16 @@ export function normalizeChatPeerSelectionRequest(
     return {
       conversationId: null,
       peerId: normalizeOptionalString(input),
+      service: null,
+      provider: null,
     };
   }
 
   return {
     conversationId: normalizeOptionalString(input.conversationId),
     peerId: normalizeOptionalString(input.peerId),
+    service: normalizeOptionalString(input.service),
+    provider: normalizeOptionalString(input.provider),
   };
 }
 

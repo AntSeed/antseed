@@ -63,6 +63,7 @@ import {
   createApplicationMenu,
   getMainWindow,
   applyWindowView,
+  applyWindowPreset,
   openFloatWindow,
   closeFloatWindow,
   getFloatWindow,
@@ -1936,6 +1937,10 @@ ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
 
 ipcMain.handle('window:apply-view', (_event, viewName: string) => {
   return applyWindowView(typeof viewName === 'string' ? viewName : '');
+});
+
+ipcMain.handle('window:apply-preset', (_event, presetName: string) => {
+  return applyWindowPreset(typeof presetName === 'string' ? presetName : '');
 });
 
 ipcMain.handle('runtime:clear-logs', async () => {

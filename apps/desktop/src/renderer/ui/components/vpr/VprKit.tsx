@@ -4,7 +4,8 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowLeft01Icon, Search01Icon } from '@hugeicons/core-free-icons';
 import { formatCredits } from '../../../core/format';
 import { useUiSelector } from '../../hooks/useUiSelector';
-import { VprNavContext } from './VprNavContext';
+import { VprNavContext, useVprNavBack } from './VprNavContext';
+import type { ViewName } from '../../types';
 import styles from './VprKit.module.scss';
 
 /**
@@ -12,23 +13,20 @@ import styles from './VprKit.module.scss';
  * Switch, Badge, Slider - Center-biased, Default model tiles, search).
  */
 
-export { formatCompactTokens } from '../../../core/format';
+export { formatCompactTokens, formatUsdShort } from '../../../core/format';
 
-/** Bare dollar amount for the brand price displays ("$5", "$2.50") — the
- * "/m tok" unit is rendered separately, unlike formatPerMillionPrice. */
-export function formatUsdShort(value: number): string {
-  if (value <= 0) return 'Free';
-  const digits = value < 0.01 ? 3 : Number.isInteger(value) ? 0 : 2;
-  return `$${value.toFixed(digits)}`;
-}
-
-/** Inner-screen page header: back chevron + screen title, navigating home. */
-export function VprBackTitle({ title, onBack }: {
+/** Inner-screen page header: back chevron + screen title. Without an explicit
+ * onBack it pops the shell's nav history — returning to whichever screen the
+ * user actually came from — and lands on `fallback` when there is none.
+ * Passing onBack keeps full control (in-view stages, wizards). */
+export function VprBackTitle({ title, onBack, fallback = 'home' }: {
   title: string;
-  onBack: () => void;
+  onBack?: () => void;
+  fallback?: ViewName;
 }): JSX.Element {
+  const historyBack = useVprNavBack(fallback);
   return (
-    <button type="button" className={styles.backTitle} onClick={onBack} title="Back">
+    <button type="button" className={styles.backTitle} onClick={onBack ?? historyBack} title="Back">
       <HugeiconsIcon icon={ArrowLeft01Icon} size={16} strokeWidth={2} />
       <span>{title}</span>
     </button>
@@ -43,25 +41,28 @@ export function VprBackTitle({ title, onBack }: {
  * section must add the global `view-pinned-header` class, which turns it
  * into a non-scrolling flex column.
  */
-export function VprPage({ title, onBack, header, children }: {
+export function VprPage({ title, onBack, backFallback, header, children }: {
   title: string;
-  onBack: () => void;
+  /** Explicit back handler (in-view stages); omit to pop the nav history. */
+  onBack?: () => void;
+  /** History-empty fallback when onBack is omitted; defaults to 'home'. */
+  backFallback?: ViewName;
   /** Extra rows pinned with the header (e.g. search, tabs). */
   header?: ReactNode;
   children: ReactNode;
 }): JSX.Element {
-  const navigate = useContext(VprNavContext);
+  const nav = useContext(VprNavContext);
   const credits = useUiSelector((state) => state.creditsAvailableUsdc);
   return (
     <>
       <div className={styles.pageTop}>
         <div className={styles.pageTopInner}>
           <div className={styles.pageHeaderRow}>
-            <VprBackTitle title={title} onBack={onBack} />
+            <VprBackTitle title={title} onBack={onBack} fallback={backFallback} />
             <button
               type="button"
               className={styles.headerCredits}
-              onClick={() => navigate?.('deposit')}
+              onClick={() => nav?.navigate('deposit')}
               title="Add credits"
             >
               ${formatCredits(credits)}
@@ -143,17 +144,29 @@ export function VprStatRow({ children }: { children: ReactNode }): JSX.Element {
   return <div className={styles.statRow}>{children}</div>;
 }
 
-export function VprStatTile({ label, value, suffix }: {
+export function VprStatTile({ label, value, suffix, tone, strong, outlined }: {
   label: string;
   value: ReactNode;
   suffix?: string;
+  /** 'success' renders the value in the accent green (Figma price/saving tiles). */
+  tone?: 'success';
+  /** Bold value (Figma "Saving" tile). */
+  strong?: boolean;
+  /** Bordered 12px-radius tile variant (Figma "Default model" tiles). */
+  outlined?: boolean;
 }): JSX.Element {
+  const valueClass = [
+    styles.statValue,
+    tone === 'success' ? styles.statValueSuccess : '',
+    strong ? styles.statValueStrong : '',
+  ].filter(Boolean).join(' ');
   return (
-    <div className={styles.statTile}>
+    <div className={`${styles.statTile}${outlined ? ` ${styles.statTileOutlined}` : ''}`}>
       <span className={styles.statLabel}>{label}</span>
-      <span className={styles.statValue}>
-        {value}
-        {suffix ? <span className={styles.statSuffix}>{suffix}</span> : null}
+      <span className={valueClass}>
+        <span className={styles.statValueText}>{value}</span>
+        {/* Real space: gives the browser a wrap point before the unit. */}
+        {suffix ? <> <span className={styles.statSuffix}>{suffix}</span></> : null}
       </span>
     </div>
   );

@@ -293,6 +293,9 @@ export type RendererUiState = {
   chatConversations: unknown[];
   chatConversationsLoaded: boolean;
   chatProxyPort: number;
+  /** Chat opens thin (compact window, no conversation list). The header
+      toggle expands the window to the standard preset and shows the panel. */
+  chatPanelExpanded: boolean;
   chatMessages: unknown[];
   chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
@@ -432,6 +435,7 @@ export function createInitialUiState(): RendererUiState {
     chatConversations: [],
     chatConversationsLoaded: false,
     chatProxyPort: 0,
+    chatPanelExpanded: false,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,

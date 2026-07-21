@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowUpRight01Icon, Cancel01Icon, Copy01Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
@@ -290,7 +290,7 @@ export function VprToolsView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Connected apps" onBack={() => onSelectView?.('home')}>
+      <VprPage title="Connected apps" backFallback="home">
       <div className={styles.stack}>
 
         <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
@@ -308,7 +308,7 @@ export function VprToolsView({ onSelectView }: Props) {
               const canOpen = canOpenUrl || canOpenTool;
               const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
               const canTrust = connected && profile.kind === 'proxy' && !!guiTest && !guiTest.guiTrustOk && guiTest.proxyReachable;
-              const hasActions = canRestart || canTrust || profile.custom;
+              const hasActions = canRestart || canTrust;
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
@@ -316,10 +316,12 @@ export function VprToolsView({ onSelectView }: Props) {
                       {profile.iconDataUri ? (
                         <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       ) : (
-                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={18} />
+                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={24} />
                       )}
-                      <span className={styles.appName}>{profile.displayName}</span>
-                      {connected && <VprBadge tone="green">Connected</VprBadge>}
+                      <span className={styles.appText}>
+                        <span className={styles.appName}>{profile.displayName}</span>
+                        {connected && <span className={styles.appMeta}>Connected · routing through AntSeed</span>}
+                      </span>
                     </span>
                     {canOpen ? (
                       <button
@@ -332,9 +334,25 @@ export function VprToolsView({ onSelectView }: Props) {
                         <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
                       </button>
                     ) : null}
+                    {profile.custom ? (
+                      <button
+                        type="button"
+                        className={styles.removeAction}
+                        disabled={actionBusy === profile.name || busy !== null}
+                        onClick={() => {
+                          if (window.confirm(`Remove ${profile.displayName}? Its requests will no longer route through AntSeed.`)) {
+                            void removeCustomApp(profile.name, connected);
+                          }
+                        }}
+                        aria-label={`Remove ${profile.displayName}`}
+                        title={`Remove ${profile.displayName}`}
+                      >
+                        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className={`${styles.appAction}${connected ? ` ${styles.appActionQuiet}` : ''}`}
+                      className={connected ? styles.disconnectAction : styles.connectAction}
                       disabled={busy !== null || (!connected && !defaultPeerId)}
                       onClick={() => { connected ? disconnectProfile(profile.name) : connectProfile(profile.name); }}
                     >
@@ -357,16 +375,6 @@ export function VprToolsView({ onSelectView }: Props) {
                         {canTrust ? (
                           <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
                             {trustBusy ? 'Trusting...' : 'Trust CA'}
-                          </button>
-                        ) : null}
-                        {profile.custom ? (
-                          <button
-                            type="button"
-                            className={styles.dangerAction}
-                            onClick={() => { void removeCustomApp(profile.name, connected); }}
-                            disabled={actionBusy === profile.name || busy !== null}
-                          >
-                            {actionBusy === profile.name ? 'Removing...' : 'Remove app'}
                           </button>
                         ) : null}
                       </div>

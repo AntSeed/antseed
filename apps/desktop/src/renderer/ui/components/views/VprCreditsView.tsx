@@ -53,7 +53,7 @@ export function VprCreditsView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-credits view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Balance" onBack={() => onSelectView?.('home')}>
+      <VprPage title="Balance" backFallback="home">
       <div className={styles.stack}>
 
         <div className={styles.balanceGroup}>

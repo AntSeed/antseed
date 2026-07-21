@@ -148,6 +148,14 @@ export function formatLatency(value: unknown): string {
   return `${Math.round(numeric)}ms`;
 }
 
+/** Bare dollar amount for the brand price displays ("$5", "$2.50") — the
+ * "/m tok" unit is rendered separately, unlike formatPerMillionPrice. */
+export function formatUsdShort(value: number): string {
+  if (value <= 0) return 'Free';
+  const digits = value < 0.01 ? 3 : Number.isInteger(value) ? 0 : 2;
+  return `$${value.toFixed(digits)}`;
+}
+
 export function formatUsd(value: unknown, fractionDigits = 2): string {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return (0).toFixed(fractionDigits);
@@ -162,13 +170,13 @@ export function formatUsdcAmount(value: unknown): string {
   return numeric.toFixed(2);
 }
 
-/* Credits balance for the shell pill: whole numbers render without decimals
-   (e.g. "0 Credits"), otherwise 2dp; tiny balances as "<0.01". */
+/* Credits balance for the shell pill: always 2dp (e.g. "0.00");
+   tiny non-zero balances as "<0.01". */
 export function formatCredits(value: string): string {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value || '0';
+  if (!Number.isFinite(numeric)) return value || '0.00';
   if (numeric > 0 && numeric < 0.01) return '<0.01';
-  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
+  return numeric.toFixed(2);
 }
 
 /* Compact token totals for the brand stat tiles ("656.9M"). Accepts

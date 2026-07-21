@@ -128,7 +128,7 @@ export function PeersView({ onSelectView }: PeersViewProps) {
   return (
     <section className={`view view-peers ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
-        <VprBackTitle title="Available peers" onBack={() => onSelectView?.('help')} />
+        <VprBackTitle title="Available peers" fallback="help" />
 
         <div className={styles.toolbar}>
           <input

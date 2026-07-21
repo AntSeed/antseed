@@ -313,12 +313,6 @@ export function formatChatTime(timestamp: unknown): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-export function shortServiceName(service: unknown): string {
-  const raw = String(service || '').trim();
-  if (!raw) return 'unknown-service';
-  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
-}
-
 export function formatCompactNumber(value: unknown): string {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return '0';
@@ -381,17 +375,6 @@ export function normalizeAssistantMeta(msg: ChatMessage): AssistantMeta | null {
   };
 }
 
-export function countBlocks(blocks: ContentBlock[]) {
-  const summary = { text: 0, toolUse: 0, toolResult: 0, thinking: 0 };
-  for (const block of blocks) {
-    if (block.type === 'text') summary.text += 1;
-    if (block.type === 'tool_use') summary.toolUse += 1;
-    if (block.type === 'tool_result') summary.toolResult += 1;
-    if (block.type === 'thinking') summary.thinking += 1;
-  }
-  return summary;
-}
-
 export function toToolDisplayName(name: unknown): string {
   const raw = String(name || 'tool').trim();
   if (!raw) return 'Tool';
@@ -445,23 +428,10 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
   const parts: string[] = [];
   if (msg.createdAt && Number(msg.createdAt) > 0) parts.push(formatChatTime(msg.createdAt));
 
-  const blocks = Array.isArray(msg.content) ? (msg.content as ContentBlock[]) : null;
-  const stats = blocks ? countBlocks(blocks) : null;
   const assistantMeta = normalizeAssistantMeta(msg);
-
-  if (stats && msg.role === 'assistant') {
-    if (stats.toolUse > 0) parts.push(`${stats.toolUse} tool${stats.toolUse === 1 ? '' : 's'}`);
-    if (stats.thinking > 0) parts.push(`${stats.thinking} reasoning`);
-    if (stats.text > 0) parts.push(`${stats.text} text block${stats.text === 1 ? '' : 's'}`);
-  }
 
   if (assistantMeta) {
     if (assistantMeta.peerId) parts.push(`peer ${assistantMeta.peerId.slice(0, 8)}`);
-    if (assistantMeta.provider) parts.push(assistantMeta.provider);
-    if (assistantMeta.service) parts.push(shortServiceName(assistantMeta.service));
-    if (assistantMeta.peerProviders.length > 0 && !assistantMeta.provider) {
-      parts.push(assistantMeta.peerProviders.join(','));
-    }
     if (assistantMeta.totalTokens > 0) {
       const tokenParts = [`${formatCompactNumber(assistantMeta.totalTokens)} tok`];
       if (assistantMeta.inputTokens > 0 || assistantMeta.outputTokens > 0) {

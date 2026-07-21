@@ -17,9 +17,10 @@ export const VIEW_WINDOW_PRESETS = {
   activity: 'compact',
   rewards: 'compact',
   help: 'compact',
-  // Chat opens at the standard (wide) preset so the conversation-list panel
-  // fits next to the nav rail.
-  chat: 'standard',
+  // Chat opens thin like the other VPR panels; an in-view expand toggle
+  // switches the window to the standard (wide) preset, which also reveals
+  // the conversation-list panel (see AppShell / VprShell chatPanelExpanded).
+  chat: 'compact',
   // Diagnostic screens stay in the same compact panel as the VPR views
   // (they're reachable from Help & Support) — their tables and panels scroll
   // within the window instead of blowing it up to the wide preset.

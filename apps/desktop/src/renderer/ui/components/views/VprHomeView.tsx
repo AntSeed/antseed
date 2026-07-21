@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
@@ -13,12 +13,14 @@ import type { RuntimeProcessState, SystemProxyProfileSummary } from '../../../ty
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
+import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BrandIcon } from '../brand/BrandIcon';
+import { VprModelRowList } from '../vpr/VprModelRows';
 import { formatCompactTokens, VprBadge, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
 
@@ -26,6 +28,8 @@ type Props = { onSelectView?: (view: ViewName) => void };
 
 const PROXY_STATE_POLL_MS = 3_000;
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+/* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
+const DROPDOWN_MODEL_COUNT = 3;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry) return false;
@@ -38,6 +42,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
+    discoverRows: state.discoverRows,
     processes: state.processes,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
@@ -62,6 +67,19 @@ export function VprHomeView({ onSelectView }: Props) {
     [snap.catalog, selectedModel?.provider, selectedModel?.serviceId],
   );
   const modelIsFree = isFreeEntry(selectedEntry);
+  // Lifetime buyer usage of the selected model ("1.7m tokens" in the Figma
+  // model card) — summed across every seller serving it.
+  const modelTokensLabel = useMemo(() => {
+    const routes = routesForSelectedModel(snap.discoverRows, selectedModel);
+    let input = 0;
+    let output = 0;
+    for (const route of routes) {
+      input += route.lifetimeInputTokens;
+      output += route.lifetimeOutputTokens;
+    }
+    if (input + output <= 0) return null;
+    return `${formatCompactTokens(String(input), String(output))} tokens`;
+  }, [selectedModel, snap.discoverRows]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +126,30 @@ export function VprHomeView({ onSelectView }: Props) {
   }, [actions, hasConnectedApps]);
 
   const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close the model dropdown on any outside click.
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    function handleClick(event: MouseEvent): void {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+        setModelMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [modelMenuOpen]);
+
+  // The dropdown lists the most popular models (the catalog is sorted by
+  // seller count), with the current selection always present.
+  const dropdownEntries = useMemo(() => {
+    const top = snap.catalog.slice(0, DROPDOWN_MODEL_COUNT);
+    if (selectedEntry && !top.includes(selectedEntry)) {
+      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    }
+    return top;
+  }, [selectedEntry, snap.catalog]);
 
   // One-click connect from the app buttons; falls back to the Apps page when
   // the profile can't be connected automatically (e.g. no route yet).
@@ -180,21 +222,57 @@ export function VprHomeView({ onSelectView }: Props) {
             {snap.connectBadge.label}
           </div>
 
-          <button
-            type="button"
-            className={styles.modelCard}
-            onClick={() => onSelectView?.('model')}
-            title="Change default model"
-          >
-            <span className={styles.modelCardBody}>
-              <span className={styles.modelCardCaption}>Default model</span>
-              <span className={styles.modelCardTitle}>
-                <span className={styles.modelName}>{selectedModel?.label ?? 'None selected'}</span>
-                {modelIsFree && <span className={styles.freeTag}>Free</span>}
+          <div className={styles.modelDropdown} ref={modelMenuRef}>
+            <button
+              type="button"
+              className={styles.modelCard}
+              onClick={() => setModelMenuOpen((open) => !open)}
+              aria-haspopup="listbox"
+              aria-expanded={modelMenuOpen}
+              title="Change default model"
+            >
+              <span className={styles.modelCardBody}>
+                <span className={styles.modelCardTitle}>
+                  {selectedModel && (
+                    <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={20} />
+                  )}
+                  <span className={styles.modelName}>{selectedModel?.label ?? 'None selected'}</span>
+                  {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                </span>
+                <span className={styles.modelCardCaption}>
+                  <span>Default model</span>
+                  {modelTokensLabel && <span className={styles.modelCardTokens}>{modelTokensLabel}</span>}
+                </span>
               </span>
-            </span>
-            <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
-          </button>
+              <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
+            </button>
+            {modelMenuOpen && (
+              <div className={styles.modelMenu} role="listbox">
+                <VprModelRowList
+                  entries={dropdownEntries}
+                  selectedProvider={selectedModel?.provider}
+                  selectedServiceId={selectedModel?.serviceId}
+                  onSelect={(provider, serviceId) => {
+                    setModelMenuOpen(false);
+                    actions.selectVprModel(provider, serviceId);
+                  }}
+                  emptyLabel="No models discovered yet"
+                  frameless
+                />
+                <button
+                  type="button"
+                  className={styles.modelMenuFooter}
+                  onClick={() => {
+                    setModelMenuOpen(false);
+                    onSelectView?.('explore');
+                  }}
+                >
+                  <span>All models</span>
+                  <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       </div>
@@ -301,19 +379,22 @@ export function VprHomeView({ onSelectView }: Props) {
             <p className={styles.appsLabel}>Use it on your favorite app</p>
 
             {profiles.length > 0 && (
-              <div className={styles.toolGrid}>
+              <div className={styles.toolList}>
                 {profiles.map((profile) => (
                   <button
                     key={profile.name}
                     type="button"
-                    className={styles.toolButton}
+                    className={styles.toolRow}
                     disabled={connectingProfile !== null}
                     onClick={() => { void connectApp(profile.name); }}
                     title={`Connect ${profile.displayName}`}
                   >
-                    <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
-                    <span className={styles.toolLabel}>
-                      {connectingProfile === profile.name ? 'Connecting...' : profile.displayName}
+                    <span className={styles.toolIdentity}>
+                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
+                      <span className={styles.toolLabel}>{profile.displayName}</span>
+                    </span>
+                    <span className={styles.toolConnect}>
+                      {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
                     </span>
                   </button>
                 ))}

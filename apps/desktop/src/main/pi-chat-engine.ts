@@ -1422,6 +1422,15 @@ class PiConversationStore {
     manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
   }
 
+  /** Persist an in-conversation model switch. Without this the rebinding only
+      lives in renderer memory and the next conversation-list refresh reverts
+      the thread to the model it was created with. */
+  async setModel(id: string, provider: string | undefined, service: string | undefined): Promise<void> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) return;
+    manager.appendModelChange(sanitizeProviderHint(provider) ?? '', normalizeServiceId(service));
+  }
+
   async clearPeer(id: string): Promise<void> {
     const manager = await this.openSessionManager(id);
     if (!manager) return;
@@ -2960,7 +2969,7 @@ export function registerPiChatHandlers({
   });
 
   ipcMain.handle('chat:ai-select-peer', async (_event, payload: ChatPeerSelectionRequest | string | null) => {
-    const { conversationId, peerId } = normalizeChatPeerSelectionRequest(payload);
+    const { conversationId, peerId, service, provider } = normalizeChatPeerSelectionRequest(payload);
 
     if (conversationId) {
       if (peerId) {
@@ -2970,6 +2979,9 @@ export function registerPiChatHandlers({
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);
+      }
+      if (service) {
+        await store.setModel(conversationId, provider ?? undefined, service);
       }
     }
 

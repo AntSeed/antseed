@@ -5,10 +5,19 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding: 4px 0;
   border-radius: 16px;
   background: var(--bg-card);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+}
+
+/* Chrome-free variant — the host supplies the panel (Home model dropdown). */
+.listBare {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 0;
 }
 
 .empty {
@@ -27,11 +36,10 @@
 .row {
   width: 100%;
   min-height: 54px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
+  display: flex;
+  gap: 8px;
   align-items: center;
-  padding: 8px 12px 8px 16px;
+  padding: 8px 16px;
   border: none;
   /* The legacy global button rule adds a border-radius, which makes the
      hairline dividers curve at their ends — menu rows must stay square and
@@ -45,8 +53,13 @@
   transition: background 0.12s ease;
 }
 
+/* Checked rows lead with the checkmark, tucked closer to the edge (Figma pl-8). */
+.rowChecked {
+  padding-left: 8px;
+}
+
 .row + .row {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-light);
 }
 
 .row:hover {
@@ -59,12 +72,13 @@
   box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-.rowSelected,
-.rowSelected:hover {
-  background: rgba(var(--accent-rgb), 0.08);
+.check {
+  flex: 0 0 auto;
+  color: var(--accent-green);
 }
 
 .rowMain {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -74,7 +88,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .logo {
@@ -87,7 +101,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 20px;
 }
 
@@ -102,6 +116,7 @@
 }
 
 .priceBlock {
+  flex: 0 0 auto;
   display: grid;
   gap: 0;
   justify-items: end;
@@ -111,28 +126,30 @@
 .priceLine {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 4px;
 }
 
 .baseline {
-  color: var(--text-faint);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
 }
 
 .price {
   color: var(--accent-green);
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .perTok {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 16px;
 }
 
 .chevron {
+  flex: 0 0 auto;
   color: var(--text-secondary);
 }

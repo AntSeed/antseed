@@ -48,33 +48,29 @@
   text-align: center;
 }
 
-/* ---------- App pills ---------- */
+/* ---------- App rows (Figma "apps connect") ---------- */
 
 .appList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
+  padding: 0 8px;
 }
 
-/* Each connected tool is a self-contained rounded pill. */
+/* Rows sit directly on the page background — no pill chrome. */
 .appPill {
-  border-radius: 14px;
-  background: var(--bg-card);
-  box-shadow: var(--shadow-sm);
-  border: 1px solid transparent;
-  transition: border-color 0.12s ease;
+  background: transparent;
 }
 
 .appPillConnected {
-  border-color: rgba(var(--accent-green-rgb), 0.45);
+  background: transparent;
 }
 
 .appHead {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 48px;
-  padding: 8px 14px;
+  min-height: 32px;
 }
 
 .appIdentity {
@@ -82,8 +78,13 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--text-primary);
+}
+
+.appText {
+  min-width: 0;
+  display: grid;
 }
 
 .appName {
@@ -92,7 +93,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+/* Sub-line under connected apps (Figma "1,204 requests · $4.20 this week"). */
+.appMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
   line-height: 20px;
 }
 
@@ -116,34 +129,83 @@
   background: var(--bg-surface);
 }
 
-.appAction {
+/* Brand-filled Connect button (Figma "Default model" chip). */
+.connectAction {
   flex: 0 0 auto;
-  padding: 4px 0;
+  padding: 4px 8px;
   border: none;
-  background: transparent;
-  color: var(--accent-green);
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 20px;
   cursor: pointer;
+  transition: filter 0.12s ease;
 }
 
-.appAction:hover:not(:disabled) {
-  color: var(--brand);
+.connectAction:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
-.appAction:disabled {
+.connectAction:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.appActionQuiet {
-  color: var(--text-muted);
-  font-weight: 500;
+.connectAction:focus-visible,
+.disconnectAction:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-.appActionQuiet:hover:not(:disabled) {
-  color: var(--text-primary);
+/* Small × for removing a custom app; confirmation guards the click. */
+.removeAction {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.removeAction:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.08);
+}
+
+.removeAction:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Quiet red Disconnect (Figma). */
+.disconnectAction {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.disconnectAction:hover:not(:disabled) {
+  background: rgba(var(--danger-rgb), 0.08);
+}
+
+.disconnectAction:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---------- Expanded body ---------- */
@@ -151,7 +213,7 @@
 .appBody {
   display: grid;
   gap: 10px;
-  padding: 0 14px 12px;
+  padding: 4px 0 0;
 }
 
 .actions {
@@ -187,9 +249,9 @@
 
 .appIcon {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
   object-fit: contain;
 }
 

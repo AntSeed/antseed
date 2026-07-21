@@ -1,20 +1,20 @@
-import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
-import type { KeyboardEvent, MouseEvent } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useId } from 'react';
+import type { KeyboardEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
+  ArrowLeft03Icon,
+  ArrowRight03Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
   ArrowDown02Icon,
   BrowserIcon,
   Cancel01Icon,
-  Copy01Icon,
   Folder01Icon,
   Mic01Icon,
   Search01Icon,
   SecurityWarningIcon,
-  Shield01Icon,
-  Tick02Icon
+  Shield01Icon
 } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -25,23 +25,23 @@ import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { ToolApprovalCard } from '../chat/ToolApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
-import { ServiceDropdown } from '../chat/ServiceDropdown';
+import { VprModelDropdown } from '../chat/VprModelDropdown';
 import { SwitchServiceDialog } from '../chat/SwitchServiceDialog';
 import { LowReputationDialog } from '../chat/LowReputationDialog';
-import { ServiceSwitchTooltip } from '../chat/ServiceSwitchTooltip';
 import { AttachmentViewer, type ViewerAttachment } from '../chat/AttachmentViewer';
 import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 import type { ChatPermissionMode, RawChatAttachment } from '../../../types/bridge';
+import type { VprModelCatalogEntry } from '../../../core/state';
 import { getPeerDisplayName } from '../../../core/peer-utils';
+import { getUiStateRef, notifyUiStateChangedSync } from '../../../core/store';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
 import styles from './ChatView.module.scss';
 import bubbleStyles from '../chat/ChatBubble.module.scss';
 
 const SWITCH_DIALOG_DISMISSED_KEY = 'antseed:switchServiceConfirmDismissed';
-const SWITCH_TOOLTIP_DISMISSED_KEY = 'antseed:serviceSwitchTooltipDismissed';
 const LOW_REPUTATION_SCORE_THRESHOLD = 50;
 
 const MAX_INPUT_HEIGHT = 220;
@@ -183,7 +183,7 @@ type ChatViewCache = {
   previewFraction: number;
   previewTargetUrl: string | null;
   switchDialogOpen: boolean;
-  pendingSwitchValue: string | null;
+  pendingSwitchModel: VprModelCatalogEntry | null;
   messageSearchOpen: boolean;
   messageSearchQuery: string;
   selectedSearchIndex: number;
@@ -212,7 +212,7 @@ const chatViewCache: ChatViewCache = {
   previewFraction: DEFAULT_PREVIEW_FRACTION,
   previewTargetUrl: null,
   switchDialogOpen: false,
-  pendingSwitchValue: null,
+  pendingSwitchModel: null,
   messageSearchOpen: false,
   messageSearchQuery: '',
   selectedSearchIndex: 0,
@@ -232,13 +232,12 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     browserPreviewUrl: state.browserPreviewUrl,
     chatAbortVisible: state.chatAbortVisible,
     chatActiveConversation: state.chatActiveConversation,
+    chatPanelExpanded: state.chatPanelExpanded,
     chatConversations: state.chatConversations,
     chatConversationsLoaded: state.chatConversationsLoaded,
     chatDiscoverRowsLoaded: state.chatDiscoverRowsLoaded,
     chatError: state.chatError,
     chatInputDisabled: state.chatInputDisabled,
-    chatLifetimeSpentUsdc: state.chatLifetimeSpentUsdc,
-    chatLifetimeTotalTokens: state.chatLifetimeTotalTokens,
     chatLowBalanceWarning: state.chatLowBalanceWarning,
     chatMessages: state.chatMessages,
     chatOpeningConversationId: state.chatOpeningConversationId,
@@ -258,10 +257,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     chatSendingConversationIds: state.chatSendingConversationIds,
     chatServiceOptions: state.chatServiceOptions,
     chatServiceSelectDisabled: state.chatServiceSelectDisabled,
-    chatSessionAccumulatedCostUsd: state.chatSessionAccumulatedCostUsd,
-    chatSessionReservedUsdc: state.chatSessionReservedUsdc,
-    chatSessionStarted: state.chatSessionStarted,
-    chatSessionTotalTokens: state.chatSessionTotalTokens,
     chatStreamingMessage: state.chatStreamingMessage,
     chatThinkingElapsedMs: state.chatThinkingElapsedMs,
     chatThinkingPhase: state.chatThinkingPhase,
@@ -270,6 +265,8 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     chatWorkspacePath: state.chatWorkspacePath,
     creditsAvailableUsdc: state.creditsAvailableUsdc,
     discoverRows: state.discoverRows,
+    vprModelCatalog: state.vprModelCatalog,
+    vprRouteSelection: state.vprRouteSelection,
   }), shallowEqual);
   const actions = useActions();
   const [inputValue, setInputValue] = useRetainedState(chatViewCache, 'inputValue');
@@ -284,7 +281,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   const [previewFraction, setPreviewFraction] = useRetainedState(chatViewCache, 'previewFraction');
   const [previewTargetUrl, setPreviewTargetUrl] = useRetainedState(chatViewCache, 'previewTargetUrl');
   const [switchDialogOpen, setSwitchDialogOpen] = useRetainedState(chatViewCache, 'switchDialogOpen');
-  const [pendingSwitchValue, setPendingSwitchValue] = useRetainedState(chatViewCache, 'pendingSwitchValue');
+  const [pendingSwitchModel, setPendingSwitchModel] = useRetainedState(chatViewCache, 'pendingSwitchModel');
   const [messageSearchOpen, setMessageSearchOpen] = useRetainedState(chatViewCache, 'messageSearchOpen');
   const [messageSearchQuery, setMessageSearchQuery] = useRetainedState(chatViewCache, 'messageSearchQuery');
   const [selectedSearchIndex, setSelectedSearchIndex] = useRetainedState(chatViewCache, 'selectedSearchIndex');
@@ -299,17 +296,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   const [permissionMenuOpen, setPermissionMenuOpen] = useRetainedState(chatViewCache, 'permissionMenuOpen');
   const [isNearBottom, setIsNearBottom] = useRetainedState(chatViewCache, 'isNearBottom');
   const [hasNewActivityWhileScrolledUp, setHasNewActivityWhileScrolledUp] = useRetainedState(chatViewCache, 'hasNewActivityWhileScrolledUp');
-  const [tooltipDismissed, setTooltipDismissed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    return window.localStorage.getItem(SWITCH_TOOLTIP_DISMISSED_KEY) === 'true';
-  });
-
-  const handleDismissTooltip = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(SWITCH_TOOLTIP_DISMISSED_KEY, 'true');
-    }
-    setTooltipDismissed(true);
-  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
@@ -467,7 +453,10 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   // Opening/reopening a conversation should land on the latest message, not the
   // last scroll offset from a previous visit. Keep manual scrollback behavior
   // during the current visit by only forcing bottom on conversation/view entry.
-  useEffect(() => {
+  // Layout effect so the scroll lands before the first paint: with a plain
+  // effect the view-slide transition paints its first frames at the top of
+  // the conversation and then visibly snaps to the latest message.
+  useLayoutEffect(() => {
     // Runs on view entry (mount) and on conversation switch — both should
     // land on the latest message rather than a stale scroll offset.
     isUserScrolledUp.current = false;
@@ -522,6 +511,10 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     typeof activeConversationSummary?.service === 'string'
       ? activeConversationSummary.service.trim()
       : '';
+  const activeConversationProvider =
+    typeof activeConversationSummary?.provider === 'string'
+      ? activeConversationSummary.provider.trim()
+      : '';
   const activeConversationPeerLabel =
     typeof activeConversationSummary?.peerLabel === 'string'
       ? activeConversationSummary.peerLabel.trim()
@@ -535,17 +528,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     && snap.chatOpeningConversationId === snap.chatActiveConversation,
   );
 
-  // Services filtered to the currently-routed peer — lets the user switch
-  // between services offered by the same peer without going back to Discover.
   const currentPeerId = snap.chatRoutedPeerId || snap.chatSelectedPeerId || activeConversationPeerId || '';
-  const [headerCopied, setHeaderCopied] = useState(false);
-  const peerServiceOptions = useMemo(
-    () =>
-      currentPeerId
-        ? snap.chatServiceOptions.filter((o) => o.peerId === currentPeerId)
-        : [],
-    [snap.chatServiceOptions, currentPeerId],
-  );
   const currentServiceOption = useMemo(
     () => snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue),
     [snap.chatServiceOptions, snap.chatSelectedServiceValue],
@@ -559,10 +542,19 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     && !snap.discoverRows.some((row) => row.peerId === currentPeerId)
     && !snap.chatServiceOptions.some((option) => option.peerId === currentPeerId),
   );
-  const currentServiceKey = currentServiceOption?.id || '';
   const currentServiceLabel = openingActiveConversation
     ? activeConversationServiceId || currentServiceOption?.label || 'Loading chat...'
-    : currentServiceOption?.label || activeConversationServiceId || 'No peer selected';
+    : currentServiceOption?.label || activeConversationServiceId || 'Select a model';
+
+  // The model shown in the header dropdown: an open conversation is bound to
+  // its own model; otherwise the VPR route selection (or the chat option the
+  // selector currently points at) decides.
+  const selectedModelProvider = snap.chatActiveConversation
+    ? (activeConversationProvider || currentServiceOption?.provider || '')
+    : (snap.vprRouteSelection.model?.provider || currentServiceOption?.provider || '');
+  const selectedModelServiceId = snap.chatActiveConversation
+    ? (activeConversationServiceId || currentServiceOption?.id || '')
+    : (snap.vprRouteSelection.model?.serviceId || currentServiceOption?.id || '');
   const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
   const hasAttachedImages = useMemo(
     () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
@@ -574,8 +566,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
       : openingActiveConversation
         ? activeConversationPeerName
         : snap.chatRoutedPeer || currentServiceOption?.peerDisplayName || currentServiceOption?.peerLabel || '';
-
-  const headerCopyValue = currentPeerNotFound ? '' : `${currentPeerId} ${currentServiceKey}`.trim();
 
   const activePendingQueue = useMemo(
     () => pendingQueue.filter((item) => item.conversationId === snap.chatActiveConversation),
@@ -589,7 +579,11 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   // newly-opened chat.
   useEffect(() => {
     if (snap.chatInputDisabled || currentPeerNotFound) return;
-    if (inputRef.current) inputRef.current.focus();
+    // preventScroll: this runs on mount, while the view-slide transition still
+    // has the pane translated off-screen. A plain focus() makes Chromium
+    // scroll the overflow-hidden ancestors to reveal the input, visibly
+    // jerking the pane mid-slide.
+    if (inputRef.current) inputRef.current.focus({ preventScroll: true });
     if (activePendingQueue.length === 0) return;
     const head = activePendingQueue[0];
     if (!head) return;
@@ -650,22 +644,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     };
   }, [permissionMenuOpen]);
 
-  useEffect(() => {
-    if (!headerCopied) return undefined;
-    const timer = window.setTimeout(() => setHeaderCopied(false), 1600);
-    return () => window.clearTimeout(timer);
-  }, [headerCopied]);
-
-  const copyHeaderIdentifiers = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!headerCopyValue) return;
-    navigator.clipboard.writeText(headerCopyValue).then(() => {
-      setHeaderCopied(true);
-    }).catch(() => {
-      // Clipboard permission can be denied; keep the header interaction unchanged.
-    });
-  }, [headerCopyValue]);
   const currentDiscoverRow = useMemo(() => {
     const peerId = currentServiceOption?.peerId || snap.chatSelectedPeerId || snap.chatRoutedPeerId || '';
     const serviceId = currentServiceOption?.id || '';
@@ -689,12 +667,13 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     };
   }, [currentDiscoverRow, currentServiceOption?.peerId, snap.chatSelectedPeerId, snap.chatRoutedPeerId, peerDisplayName]);
 
-  const applyServiceChange = useCallback(
-    (value: string) => {
-      const option = snap.chatServiceOptions.find((o) => o.value === value);
-      actions.handleServiceChange(value, option?.peerId);
+  // Switching models routes through the VPR selection (auto seller pick);
+  // with an open conversation this also rebinds the thread to the new model.
+  const applyModelChange = useCallback(
+    (entry: VprModelCatalogEntry) => {
+      actions.selectVprModel(entry.provider, entry.serviceId);
     },
-    [actions, snap.chatServiceOptions],
+    [actions],
   );
 
   // Start a fresh conversation with the peer currently shown in this view,
@@ -711,22 +690,30 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     inputRef.current?.focus();
   }, [actions, currentPeerId, snap.chatSelectedServiceValue]);
 
-  const handleServiceSwitch = useCallback(
-    (nextValue: string) => {
-      if (!nextValue || nextValue === snap.chatSelectedServiceValue) return;
+  // Toggle between the thin chat panel and the expanded layout. The store
+  // flag drives both the conversation-list panel (VprShell) and the window
+  // size preset (AppShell).
+  const handleTogglePanelExpanded = useCallback(() => {
+    const state = getUiStateRef();
+    state.chatPanelExpanded = !state.chatPanelExpanded;
+    notifyUiStateChangedSync();
+  }, []);
+
+  const handleModelSwitch = useCallback(
+    (entry: VprModelCatalogEntry) => {
       const hasMessages =
         Boolean(snap.chatActiveConversation) && visibleMessages.length > 0;
       const dismissed =
         typeof window !== 'undefined' &&
         window.localStorage.getItem(SWITCH_DIALOG_DISMISSED_KEY) === 'true';
       if (!hasMessages || dismissed) {
-        applyServiceChange(nextValue);
+        applyModelChange(entry);
         return;
       }
-      setPendingSwitchValue(nextValue);
+      setPendingSwitchModel(entry);
       setSwitchDialogOpen(true);
     },
-    [snap.chatSelectedServiceValue, snap.chatActiveConversation, visibleMessages.length, applyServiceChange],
+    [snap.chatActiveConversation, visibleMessages.length, applyModelChange],
   );
 
   const persistDismissed = useCallback((dontShowAgain: boolean) => {
@@ -738,36 +725,30 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   const handleSwitchContinue = useCallback(
     (dontShowAgain: boolean) => {
       persistDismissed(dontShowAgain);
-      if (pendingSwitchValue) applyServiceChange(pendingSwitchValue);
+      if (pendingSwitchModel) applyModelChange(pendingSwitchModel);
       setSwitchDialogOpen(false);
-      setPendingSwitchValue(null);
+      setPendingSwitchModel(null);
     },
-    [pendingSwitchValue, applyServiceChange, persistDismissed],
+    [pendingSwitchModel, applyModelChange, persistDismissed],
   );
 
   const handleSwitchStartNew = useCallback(
     (dontShowAgain: boolean) => {
       persistDismissed(dontShowAgain);
-      if (pendingSwitchValue) applyServiceChange(pendingSwitchValue);
+      // New chat first so the current thread keeps its model; the fresh
+      // draft then targets the newly selected one.
       actions.startNewChat();
+      if (pendingSwitchModel) applyModelChange(pendingSwitchModel);
       setSwitchDialogOpen(false);
-      setPendingSwitchValue(null);
+      setPendingSwitchModel(null);
     },
-    [pendingSwitchValue, applyServiceChange, actions, persistDismissed],
+    [pendingSwitchModel, applyModelChange, actions, persistDismissed],
   );
 
   const handleSwitchCancel = useCallback(() => {
     setSwitchDialogOpen(false);
-    setPendingSwitchValue(null);
+    setPendingSwitchModel(null);
   }, []);
-
-  const pendingSwitchOption = useMemo(
-    () =>
-      pendingSwitchValue
-        ? snap.chatServiceOptions.find((o) => o.value === pendingSwitchValue)
-        : null,
-    [pendingSwitchValue, snap.chatServiceOptions],
-  );
 
   const resetComposer = useCallback(() => {
     setInputValue('');
@@ -1107,86 +1088,58 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     ? { flex: `0 0 ${previewFraction * 100}%`, minWidth: PREVIEW_MIN_WIDTH }
     : undefined;
 
+  // In the thin layout there is no room for the rest of the header chrome
+  // while searching — the search bar takes the top bar over entirely. Only
+  // with an active conversation: that is what gates the search bar itself.
+  const searchOnlyHeader =
+    messageSearchOpen && !snap.chatPanelExpanded && Boolean(snap.chatActiveConversation);
+
   return (
     <section className={`view view-chat`} role="tabpanel">
       <div className={styles.pageHeader}>
+        {!searchOnlyHeader && (
         <div className={styles.pageHeaderLeft}>
-          {peerDisplayName && (
-            <span className={styles.headerLabelGroup}>
-              <span className={styles.peerName}>{peerDisplayName}</span>
-            </span>
-          )}
-          {currentPeerNotFound ? (
+          <button
+            type="button"
+            className={styles.panelToggle}
+            onClick={handleTogglePanelExpanded}
+            title={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
+            aria-label={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
+            aria-pressed={snap.chatPanelExpanded}
+          >
+            <HugeiconsIcon
+              icon={snap.chatPanelExpanded ? ArrowLeft03Icon : ArrowRight03Icon}
+              size={16}
+              strokeWidth={1.8}
+            />
+          </button>
+          <div className={styles.serviceSwitcherAnchor}>
+            <VprModelDropdown
+              catalog={snap.vprModelCatalog}
+              selectedProvider={selectedModelProvider}
+              selectedServiceId={selectedModelServiceId}
+              fallbackLabel={currentServiceLabel}
+              disabled={snap.chatInputDisabled || snap.chatSending}
+              onSelect={handleModelSwitch}
+              onBrowseAll={() => onSelectView?.('explore')}
+            />
+          </div>
+          {currentPeerNotFound && (
             <span className={styles.headerLabelGroup}>
               <span className={styles.serviceLabel}>Peer was not found</span>
             </span>
-          ) : peerServiceOptions.length > 0 ? (
-            <div className={styles.serviceSwitcherAnchor}>
-              <ServiceDropdown
-                options={peerServiceOptions}
-                value={snap.chatSelectedServiceValue}
-                disabled={snap.chatInputDisabled || snap.chatSending}
-                onChange={handleServiceSwitch}
-              />
-              {headerCopyValue && (
-                <button
-                  type="button"
-                  className={`${styles.headerActionButton} ${styles.headerActionButtonCopy}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
-                  onClick={copyHeaderIdentifiers}
-                  aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
-                  title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
-                >
-                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={12} strokeWidth={1.8} />
-                </button>
-              )}
-              {!tooltipDismissed && peerServiceOptions.length >= 2 && (
-                <ServiceSwitchTooltip
-                  modelCount={peerServiceOptions.length}
-                  onDismiss={handleDismissTooltip}
-                />
-              )}
-            </div>
-          ) : (
-            <span className={styles.headerLabelGroup}>
-              <span className={styles.serviceLabel}>
-                {currentServiceLabel}
-              </span>
-              {headerCopyValue && (
-                <button
-                  type="button"
-                  className={`${styles.headerActionButton}${headerCopied ? ` ${styles.headerActionButtonCopied}` : ''}`}
-                  onClick={copyHeaderIdentifiers}
-                  aria-label={headerCopied ? `Copied ${headerCopyValue}` : `Copy peer ID and service key ${headerCopyValue}`}
-                  title={headerCopied ? 'Copied peer ID and service key' : `Copy peer ID and service key: ${headerCopyValue}`}
-                >
-                  <HugeiconsIcon icon={headerCopied ? Tick02Icon : Copy01Icon} size={12} strokeWidth={1.8} />
-                  <span>{headerCopied ? 'Copied' : 'Copy IDs'}</span>
-                </button>
-              )}
-              {snap.chatActiveConversation && currentPeerId && (
-                <button
-                  type="button"
-                  className={`${styles.headerActionButton} ${styles.headerActionButtonAccent}`}
-                  onClick={handleNewChatWithCurrentPeer}
-                  title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
-                  aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
-                  <span>New chat</span>
-                </button>
-              )}
-            </span>
           )}
         </div>
+        )}
         {snap.chatActiveConversation && (
-          <div className={styles.pageHeaderRight}>
-            {snap.chatActiveConversation && currentPeerId && (
+          <div className={`${styles.pageHeaderRight}${searchOnlyHeader ? ` ${styles.pageHeaderRightSearchOnly}` : ''}`}>
+            {!searchOnlyHeader && snap.chatActiveConversation && currentPeerId && (
               <button
                 type="button"
                 className={styles.headerActionButton}
                 onClick={handleNewChatWithCurrentPeer}
-                title={`Start a new chat with ${peerDisplayName || 'this peer'}`}
-                aria-label={`Start a new chat with ${peerDisplayName || 'this peer'}`}
+                title="Start a new chat with the same model"
+                aria-label="Start a new chat with the same model"
               >
                 <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
                 <span>New chat</span>
@@ -1261,14 +1214,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 <HugeiconsIcon icon={BrowserIcon} size={15} strokeWidth={1.8} />
               </button>
             )}
-            <ChatSessionStats
-              sessionCost={snap.chatSessionAccumulatedCostUsd}
-              sessionTokens={snap.chatSessionTotalTokens}
-              lifetimeCost={snap.chatLifetimeSpentUsdc}
-              lifetimeTokens={snap.chatLifetimeTotalTokens}
-              reserved={snap.chatSessionReservedUsdc}
-              started={snap.chatSessionStarted}
-            />
           </div>
         )}
       </div>
@@ -1631,8 +1576,8 @@ export function ChatView({ onSelectView }: ChatViewProps) {
       </div>
       <SwitchServiceDialog
         visible={switchDialogOpen}
-        currentLabel={currentServiceOption?.label || 'current service'}
-        nextLabel={pendingSwitchOption?.label || 'new service'}
+        currentLabel={currentServiceLabel}
+        nextLabel={pendingSwitchModel?.label || 'new model'}
         onContinue={handleSwitchContinue}
         onStartNew={handleSwitchStartNew}
         onCancel={handleSwitchCancel}
@@ -1654,30 +1599,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   );
 }
 
-function compactTokensFromFormatted(formatted: string): string {
-  const raw = String(formatted || '').trim();
-  const base = Number(raw.replace(/[^0-9.]/g, ''));
-  if (!Number.isFinite(base) || base <= 0) return '0';
-  const lower = raw.toLowerCase();
-  const n = lower.includes('b')
-    ? base * 1_000_000_000
-    : lower.includes('m')
-      ? base * 1_000_000
-      : lower.includes('k')
-        ? base * 1_000
-        : base;
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(Math.floor(n));
-}
-
-function compactUsd(raw: string): string {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '$0.00';
-  return `$${n.toFixed(2)}`;
-}
-
 function formatAttachmentSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;
@@ -1694,90 +1615,4 @@ function isImageAttachmentLike(name: string, mimeType: string): boolean {
 function getAttachmentExtension(name: string): string {
   const ext = name.split('.').pop()?.trim();
   return ext && ext !== name ? ext.slice(0, 4).toUpperCase() : 'FILE';
-}
-
-function ChatSessionStats({
-  sessionCost,
-  sessionTokens,
-  lifetimeCost,
-  lifetimeTokens,
-  reserved,
-  started,
-}: {
-  sessionCost: string;
-  sessionTokens: string;
-  lifetimeCost: string;
-  lifetimeTokens: string;
-  reserved: string;
-  started: string;
-}) {
-  const hasSession = Boolean(sessionCost || sessionTokens);
-  const sessionCostLabel = sessionCost ? compactUsd(sessionCost) : '$0.00';
-  const sessionTokenLabel = sessionTokens ? compactTokensFromFormatted(sessionTokens) : '0';
-  const reservedMaxNum = Number(reserved);
-  const sessionCostNum = Number(sessionCost);
-  const hasReserveCeiling = Number.isFinite(reservedMaxNum) && reservedMaxNum > 0;
-  const reserveRemainingNum = hasReserveCeiling
-    ? Math.max(0, reservedMaxNum - (Number.isFinite(sessionCostNum) ? sessionCostNum : 0))
-    : 0;
-  return (
-    <div className={styles.sessionStats} tabIndex={0} aria-label="Usage stats">
-      <svg
-        className={styles.sessionStatsIcon}
-        width="12" height="12" viewBox="0 0 16 16" fill="none"
-        aria-hidden="true"
-      >
-        <path d="M2.5 13.5V10M6.5 13.5V6M10.5 13.5V8M14 13.5V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-      </svg>
-      <span className={styles.sessionStatsSummary}>
-        {hasSession ? (
-          <>
-            {sessionCostLabel}
-            <span className={styles.sessionStatsDot} />
-            {sessionTokenLabel} tok
-          </>
-        ) : (
-          'Usage'
-        )}
-      </span>
-      <div className={styles.sessionStatsPopover} role="tooltip">
-        <div className={styles.sessionStatsGroup}>
-          <div className={styles.sessionStatsGroupLabel}>Current payment channel</div>
-          <div className={styles.sessionStatsRow}>
-            <span>Cost</span>
-            <span>{sessionCost ? compactUsd(sessionCost) : '—'}</span>
-          </div>
-          <div className={styles.sessionStatsRow}>
-            <span>Tokens</span>
-            <span>{sessionTokens || '—'}</span>
-          </div>
-        </div>
-        <div className={styles.sessionStatsGroup}>
-          <div className={styles.sessionStatsGroupLabel}>All-time with peer</div>
-          <div className={styles.sessionStatsRow}>
-            <span>Cost</span>
-            <span>{lifetimeCost ? compactUsd(lifetimeCost) : '—'}</span>
-          </div>
-          <div className={styles.sessionStatsRow}>
-            <span>Tokens</span>
-            <span>{lifetimeTokens || '—'}</span>
-          </div>
-        </div>
-        <div className={styles.sessionStatsFooter}>
-          {hasReserveCeiling && (
-            <div className={styles.sessionStatsRow}>
-              <span>Reserve remaining</span>
-              <span>{compactUsd(String(reserveRemainingNum))} / {compactUsd(reserved)}</span>
-            </div>
-          )}
-          {started && (
-            <div className={styles.sessionStatsRow}>
-              <span>Started</span>
-              <span>{started}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }

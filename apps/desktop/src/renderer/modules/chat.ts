@@ -2314,6 +2314,9 @@ export function initChatModule({
       void bridge.chatAiSelectPeer({
         conversationId: uiState.chatActiveConversation,
         peerId: peerId || null,
+        // Persist the model rebinding too — the in-memory summary update
+        // above is otherwise reverted by the next conversation-list refresh.
+        ...(nextServiceId ? { service: nextServiceId, provider: nextProvider ?? '' } : {}),
       }).catch(() => undefined);
     }
     void refreshChatPermissionModeForPeer(peerId);

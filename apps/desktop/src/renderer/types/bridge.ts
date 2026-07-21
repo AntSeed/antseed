@@ -270,7 +270,7 @@ export type DesktopBridge = {
   chatPeerPermissionModeSet?: (peerId: string, mode: ChatPermissionMode) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
   chatToolApprovalDecision?: (id: string, decision: ToolApprovalDecision) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   apiTryProxyRequest?: (params: {
     port: number;
@@ -286,6 +286,7 @@ export type DesktopBridge = {
   openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
   openTool?: (toolName: string) => Promise<{ ok: boolean; error?: string; fallback?: string }>;
   applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
+  applyWindowPreset?: (presetName: string) => Promise<{ ok: true; skipped?: string }>;
   onNavigateView?: (handler: (viewName: string) => void) => () => void;
   voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
   voiceGetStatus?: () => Promise<unknown>;

@@ -1,5 +1,7 @@
 /* Shared brand-guideline primitives for the VPR screens. */
 
+@use './chip';
+
 /* ---------- Back title ---------- */
 
 /* ---------- Pinned page chrome (VprPage) ---------- */
@@ -9,7 +11,7 @@
    `view-pinned-header` class on the view's root section. */
 .pageTop {
   flex: 0 0 auto;
-  padding: 8px 16px 4px;
+  padding: 16px 16px 8px;
   background: var(--bg-primary);
 }
 
@@ -34,27 +36,14 @@
 /* Credits pill inside the pinned header — same look as the shell's floating
    pill (VprShell hides that one on views that render this). */
 .headerCredits {
+  @include chip.chip-text;
   flex: 0 0 auto;
   max-width: 180px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
 }
 
 .headerCredits:hover,
 .headerCredits:focus-visible {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-  outline: none;
+  @include chip.chip-hover;
 }
 
 .pageBody {
@@ -131,7 +120,7 @@
 }
 
 .toggleOn {
-  background: var(--accent-green);
+  background: var(--brand);
 }
 
 .toggleOn .toggleKnob {
@@ -183,6 +172,9 @@
   width: 100%;
   height: 24px;
   margin: 0;
+  /* The global input rule adds border + padding — a bare track needs neither. */
+  padding: 0;
+  border: none;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
@@ -246,21 +238,43 @@
   line-height: 16px;
 }
 
+/* Bordered variant per the Figma "Default model" tiles on the model page. */
+.statTileOutlined {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: none;
+}
+
 .statValue {
   color: var(--text-primary);
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
+  /* Long live values ("$0.05-$2.75") overflow the fixed tile width — wrap the
+     unit suffix to its own line instead of ellipsizing the number. */
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Keep the number itself unbreakable (hyphenated ranges would split). */
+.statValueText {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.statValueSuccess {
+  color: var(--accent-green);
+}
+
+.statValueStrong {
+  font-weight: 700;
 }
 
 .statSuffix {
-  margin-left: 3px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 400;
+  /* Wraps below the number as one piece when the tile is too narrow. */
+  white-space: nowrap;
 }
 
 /* ---------- Search ---------- */
@@ -272,7 +286,7 @@
   width: 100%;
   min-height: 38px;
   padding: 9px 13px;
-  border-radius: 999px;
+  border-radius: 28px;
   border: 1px solid var(--border);
   background: var(--bg-card);
 }
@@ -289,10 +303,12 @@
 .search input {
   flex: 1 1 auto;
   min-width: 0;
+  /* The global input rule adds 8px padding + border — the pill provides both. */
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 20px;
   outline: none;
 }
@@ -335,7 +351,7 @@
   gap: 4px;
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 20px;
 }
 

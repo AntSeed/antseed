@@ -9,31 +9,17 @@
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   width: 100%;
   max-width: 392px;
   margin: 0 auto;
   min-width: 0;
+  /* The page itself never scrolls — the sellers card absorbs the overflow. */
+  height: 100%;
 }
 
-.back {
-  align-self: flex-start;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-  cursor: pointer;
-}
-
-.back:hover {
-  color: var(--text-primary);
+.stack > * {
+  flex: 0 0 auto;
 }
 
 /* ---------- Header ---------- */
@@ -54,7 +40,7 @@
 .titleLine {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .title {
@@ -71,16 +57,90 @@
 .badgeRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
+}
+
+/* "+N" overflow chip: hover/focus reveals the collapsed categories. */
+.badgeMore {
+  position: relative;
+  display: inline-flex;
+  cursor: default;
+  outline: none;
+}
+
+.badgeMoreTip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.badgeMore:hover .badgeMoreTip,
+.badgeMore:focus-visible .badgeMoreTip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.headActions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Favorite star (Figma hugeicons:star, 20px). */
+.star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.star:hover {
+  color: var(--text-primary);
+}
+
+.star:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+  border-radius: 6px;
+}
+
+.starActive {
+  color: var(--accent-yellow);
+}
+
+/* Fill the star glyph when favorited — the icon paths ship fill="none",
+   which only a targeted rule (specificity > 0) can override. */
+.starActive svg path {
+  fill: currentColor;
 }
 
 .apply {
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border: none;
-  border-radius: 999px;
-  background: var(--accent-green);
+  border-radius: 8px;
+  background: var(--brand);
   color: #ffffff;
   font-size: 14px;
   font-weight: 600;
@@ -104,6 +164,35 @@
   padding: 2px 2px 0;
 }
 
+.autoControls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Shortcut to the routing preferences screen (Figma icons panel next to the toggle). */
+.prefsLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.prefsLink:hover {
+  color: var(--accent-green);
+}
+
+.prefsLink:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+  border-radius: 6px;
+}
+
 .divider {
   height: 1px;
   background: var(--border);
@@ -111,8 +200,14 @@
 
 /* ---------- Sellers ---------- */
 
+.stack > .sellerSection {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .sellerSection {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -137,14 +232,21 @@
   line-height: 16px;
 }
 
+/* Scoped selector so it outranks VprCard's base `overflow: hidden`. */
+.sellerSection > .sellerCard {
+  padding: 4px 0;
+  /* Shrinks to content when short; scrolls internally when the list is long. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .sellerRow {
   width: 100%;
   min-height: 54px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 16px;
+  gap: 8px;
+  padding: 8px 16px 8px 12px;
   border: none;
   /* The legacy global button rule adds a border-radius, which makes the
      hairline dividers curve at their ends — menu rows must stay square and
@@ -158,8 +260,13 @@
   transition: background 0.12s ease;
 }
 
+/* The active row leads with the checkmark, tucked closer to the edge (Figma pl-8). */
+.sellerRowActive {
+  padding-left: 8px;
+}
+
 .sellerRow + .sellerRow {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-light);
 }
 
 .sellerRow:hover {
@@ -172,12 +279,13 @@
   box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-.sellerRowSelected,
-.sellerRowSelected:hover {
-  background: rgba(var(--accent-rgb), 0.08);
+.sellerCheck {
+  flex: 0 0 auto;
+  color: var(--accent-green);
 }
 
 .sellerText {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -186,11 +294,11 @@
 .sellerName {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   overflow: hidden;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 20px;
   white-space: nowrap;
 }
@@ -208,7 +316,7 @@
   flex: 0 0 auto;
   color: var(--text-primary);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 24px;
 }
 

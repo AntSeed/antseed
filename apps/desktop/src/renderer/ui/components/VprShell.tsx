@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
@@ -28,13 +28,14 @@ declare const __APP_VERSION__: string;
 type VprShellProps = {
   activeView: ViewName;
   onSelectView: (view: ViewName) => void;
+  onNavigateBack: (fallback: ViewName) => void;
   children: React.ReactNode;
 };
 
 const mainNavEntries = navViews('main');
 const bottomNavEntries = navViews('bottom');
 
-export function VprShell({ activeView, onSelectView, children }: VprShellProps) {
+export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
     creditsAvailableUsdc: state.creditsAvailableUsdc,
     connectBadgeLabel: state.connectBadge.label,
@@ -43,6 +44,7 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
     peers: state.ovPeers,
     serviceCount: state.ovServiceCount,
     chatNeedsAttention: state.chatPaymentApprovalVisible || state.chatSendingConversationIds.length > 0,
+    chatPanelExpanded: state.chatPanelExpanded,
   }), shallowEqual);
 
   const [appVersion, setAppVersion] = useState<string>(
@@ -52,10 +54,17 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
     window.antseedDesktop?.getAppVersion?.().then(setAppVersion).catch(() => {});
   }, []);
 
-  const chatMode = activeView === 'chat';
+  // Chat opens thin — the conversation-list panel (and the wide window
+  // preset, see AppShell) only appear once the user expands the chat view.
+  const chatPanelVisible = activeView === 'chat' && snap.chatPanelExpanded;
+
+  const navValue = useMemo(
+    () => ({ navigate: onSelectView, back: onNavigateBack }),
+    [onSelectView, onNavigateBack],
+  );
 
   return (
-    <div className={`${styles.shell}${chatMode ? ` ${styles.shellWithPanel}` : ''}`}>
+    <div className={`${styles.shell}${chatPanelVisible ? ` ${styles.shellWithPanel}` : ''}`}>
       {/* Window-drag handle: the hidden-inset title bar has no native drag
           region, so this strip provides one. pointer-events: none keeps web
           clicks working; interactive elements overlapping it opt out with
@@ -97,10 +106,10 @@ export function VprShell({ activeView, onSelectView, children }: VprShellProps) 
           ))}
         </div>
       </nav>
-      {chatMode && <ChatListPanel onSelectView={onSelectView} />}
+      {chatPanelVisible && <ChatListPanel onSelectView={onSelectView} />}
       <main className={styles.mainPane}>
         <div className={styles.content}>
-          <VprNavContext.Provider value={onSelectView}>{children}</VprNavContext.Provider>
+          <VprNavContext.Provider value={navValue}>{children}</VprNavContext.Provider>
         </div>
         {/* The no-drag carve-out lives on this static wrapper: the pill
             itself runs a compositor scroll-timeline animation, and animated
