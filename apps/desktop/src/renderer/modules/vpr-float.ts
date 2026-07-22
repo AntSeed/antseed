@@ -10,6 +10,11 @@ import type {
   VprFloatData,
   VprFloatModel,
 } from '../types/bridge';
+import {
+  conversationPinnedServiceId,
+  conversationTitle,
+  isConversationActive,
+} from './conversations';
 import { loadFavoriteModels } from './vpr-favorites';
 import {
   catalogEntryKey,
@@ -31,14 +36,9 @@ const TRAFFIC_HOLD_MS = 1_500;
 const BUYER_ACTIVITY_HOLD_MS = 4_000;
 /** Coalesce burst of completion lines into one forced usage refresh. */
 const COMPLETION_REFRESH_DEBOUNCE_MS = 400;
-/** How long after a chat's last request its row keeps the green pulse. The
-    buyer stamps lastActiveAt per dispatched request, so this must outlast
-    the gap between an agent tool's consecutive calls (and the 3s payload
-    cadence) or the pulse would flicker mid-conversation. */
-const CONVERSATION_ACTIVE_HOLD_MS = 10_000;
 
 export type VprFloatModule = {
-  openFloat: (profileName?: string) => Promise<void>;
+  openFloat: (profileName?: string, opts?: { openMenu?: boolean }) => Promise<void>;
   closeFloat: () => Promise<void>;
 };
 
@@ -237,14 +237,13 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   let buyerDeltaActive = false;
 
   function floatConversation(record: BuyerConversationSummary): VprFloatConversation {
-    const pinnedServiceId = record.pinnedModel?.split('@').slice(1).join('@') || null;
     return {
       id: record.id,
       tool: record.tool,
-      title: record.label || record.snippet || record.sessionKey.slice(0, 12),
-      pinnedServiceId,
+      title: conversationTitle(record),
+      pinnedServiceId: conversationPinnedServiceId(record),
       lastActiveAt: record.lastActiveAt,
-      active: Date.now() - record.lastActiveAt < CONVERSATION_ACTIVE_HOLD_MS,
+      active: isConversationActive(record.lastActiveAt),
     };
   }
 
@@ -371,12 +370,12 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   });
 
   return {
-    async openFloat(profileName?: string) {
+    async openFloat(profileName?: string, opts?: { openMenu?: boolean }) {
       if (profileName) selectedApp = profileName;
       // Fresh numbers on open — don't show a minute-old summary.
       await refreshUsage(true);
       const data = await buildData();
-      await bridge?.vprFloatOpen?.(data);
+      await bridge?.vprFloatOpen?.(opts?.openMenu ? { ...data, openMenu: true } : data);
       uiState.vprFloatOpen = true;
       notifyUiStateChanged();
       startUpdater();

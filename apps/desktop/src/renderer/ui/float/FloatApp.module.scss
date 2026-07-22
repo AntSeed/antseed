@@ -1,6 +1,7 @@
-/* Floating pill (Figma "flowing window"): 256x72 content, radius 16. The
-   window adds an 8px transparent margin so the drop shadow isn't clipped.
-   The whole pill is a drag region; interactive children opt out. */
+/* Floating pill (Figma "flowing window"): 256x64 content (model + usage
+   lines), radius 16. The window adds an 8px transparent margin so the drop
+   shadow isn't clipped. The whole pill is a drag region; interactive
+   children opt out. */
 
 .pill {
   position: fixed;
@@ -9,7 +10,7 @@
   right: 8px;
   /* Fixed height (not inset) so the pill keeps its shape when the window
      grows downward to make room for an open dropdown panel. */
-  height: 72px;
+  height: 64px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -200,7 +201,7 @@
    the panel's right edge. */
 .menuPanel {
   position: fixed;
-  top: 88px;
+  top: 80px;
   left: 8px;
   right: 8px;
   bottom: 8px;
@@ -312,15 +313,32 @@
   line-height: 14px;
 }
 
-/* Right-aligned current value on a drill-down row ("Auto" / pinned model). */
+/* Right-aligned current model on a drill-down row: the pinned model, or the
+   default-route model with a tiny "default" tag under it. */
 .menuRowValue {
   flex: 0 0 auto;
   max-width: 88px;
+  display: grid;
+  justify-items: end;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.menuRowValueModel {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.menuRowValueTag {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.8;
 }
 
 .menuRowChevron {
@@ -393,6 +411,38 @@
   color: var(--text-muted);
   font-size: 12px;
   text-align: center;
+}
+
+/* Non-interactive guidance row for a connected app with no chats yet
+   ("OpenCode connected — start a new session and send your first prompt"). */
+.menuHint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+
+.menuHintText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.menuHintTitle {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.menuHintMeta {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 14px;
 }
 
 .usage {

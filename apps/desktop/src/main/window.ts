@@ -18,20 +18,22 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 
-/* Floating always-on-top pill: 256x72 content (model / app / usage lines)
-   plus an 8px margin so the drop shadow isn't clipped by the transparent
-   window edge. */
+/* Floating always-on-top pill: 256x64 content (model + usage lines) plus an
+   8px margin so the drop shadow isn't clipped by the transparent window
+   edge. 80 sits right at the macOS transparency floor — frameless
+   transparent windows paint an opaque backing below ~80px. */
 let floatWindow: BrowserWindow | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
-const FLOAT_WINDOW_HEIGHT = 88;
+const FLOAT_WINDOW_HEIGHT = 80;
 /** Pill height while a custom dropdown (chat / model) is open. */
 const FLOAT_WINDOW_EXPANDED_HEIGHT = 440;
 /* Compact mode: just the 40px app badge in a 56px round chip, centered with a
    16px shadow margin on each side. Kept at 88px (not a tighter 72) because
    macOS drops a transparent frameless window's transparency below ~80px,
-   painting the backing opaque — an opaque box around the chip. 88 also matches
-   FLOAT_WINDOW_HEIGHT, so shrinking only changes the window width. */
+   painting the backing opaque — an opaque box around the chip. */
 const FLOAT_WINDOW_COMPACT_SIZE = 88;
+/* Minimum must not exceed the pill height, or setBounds gets clamped. */
+const FLOAT_WINDOW_MIN_HEIGHT = Math.min(FLOAT_WINDOW_HEIGHT, FLOAT_WINDOW_COMPACT_SIZE);
 /* The main process owns the pill's compact state (it does the resize), and
    pushes it to the float renderer on change and on load. The renderer can't
    reliably infer it from its own size, so this is the source of truth. */
@@ -115,7 +117,7 @@ export function setFloatWindowCompact(compact: boolean): void {
   // the programmatic resize. setMinimumSize guards against a default minimum
   // clamping the compact size above FLOAT_WINDOW_COMPACT_SIZE.
   win.setResizable(true);
-  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_COMPACT_SIZE);
+  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_MIN_HEIGHT);
   win.setBounds({
     x: clamp(bounds.x + bounds.width - width, workArea.x, workArea.x + workArea.width - width),
     y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - height),
@@ -138,7 +140,7 @@ export function setFloatWindowExpanded(expanded: boolean): void {
   if (bounds.height === height) return;
   const workArea = screen.getDisplayMatching(bounds).workArea;
   win.setResizable(true);
-  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_COMPACT_SIZE);
+  win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_MIN_HEIGHT);
   win.setBounds({
     x: bounds.x,
     y: clamp(bounds.y, workArea.y, workArea.y + workArea.height - height),
@@ -178,7 +180,7 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
     width: FLOAT_WINDOW_WIDTH,
     height: FLOAT_WINDOW_HEIGHT,
     minWidth: FLOAT_WINDOW_COMPACT_SIZE,
-    minHeight: FLOAT_WINDOW_COMPACT_SIZE,
+    minHeight: FLOAT_WINDOW_MIN_HEIGHT,
     x: workArea.x + workArea.width - FLOAT_WINDOW_WIDTH - 24,
     y: workArea.y + 24,
     title: config.appName,

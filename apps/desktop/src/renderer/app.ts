@@ -530,7 +530,7 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
-  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
+  openVprFloat: (profileName?: string, opts?: { openMenu?: boolean }) => vprFloatApi.openFloat(profileName, opts),
   closeVprFloat: () => vprFloatApi.closeFloat(),
 });
 

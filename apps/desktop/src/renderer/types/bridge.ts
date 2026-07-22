@@ -459,6 +459,12 @@ export type VprFloatData = {
    * since the previous payload — drives the pulse on the app icon.
    */
   trafficActive: boolean;
+  /**
+   * One-shot: set only on the payload that opens the pill right after an app
+   * connects — the pill expands out of compact mode and opens its dropdown so
+   * the "start a new session" guidance is visible without a click.
+   */
+  openMenu?: boolean;
 };
 
 export type VprFloatAction =

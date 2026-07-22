@@ -35,7 +35,7 @@ export type AppActions = {
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openVprFloat?: (profileName?: string) => Promise<void>;
+  openVprFloat?: (profileName?: string, opts?: { openMenu?: boolean }) => Promise<void>;
   closeVprFloat?: () => Promise<void>;
 };
 

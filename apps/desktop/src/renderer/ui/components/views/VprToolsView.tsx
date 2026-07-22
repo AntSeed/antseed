@@ -11,6 +11,7 @@ import {
 } from '../../../modules/vpr-tools';
 import { displayToolName } from '../../../modules/tool-names';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
 import { InfoTooltip } from '../InfoTooltip';
 import { VprBadge, VprCard, VprPage, VprSearch } from '../vpr/VprKit';
@@ -54,6 +55,7 @@ type GuiTestResult = {
 };
 
 export function VprToolsView({ onSelectView }: Props) {
+  const actions = useActions();
   const snap = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
     discoverRows: state.discoverRows,
@@ -90,6 +92,14 @@ export function VprToolsView({ onSelectView }: Props) {
   ), [activeProfiles, profiles]);
 
   const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
+
+  // Name the default route's model in chat pin selects, so "Auto" still says
+  // which model the chat actually runs on.
+  const defaultModelLabel = useMemo(() => {
+    const model = snap.selection.model;
+    if (!model) return null;
+    return snap.catalog.find((entry) => entry.serviceId === model.serviceId)?.label ?? model.serviceId;
+  }, [snap.catalog, snap.selection.model]);
 
   const refresh = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -146,9 +156,9 @@ export function VprToolsView({ onSelectView }: Props) {
   // Every connected app follows the default VPR route; the model itself is
   // resolved live by the buyer (the `antseed` alias), so there are no per-app
   // model overrides here anymore.
-  const startProfiles = useCallback(async (names: string[]) => {
+  const startProfiles = useCallback(async (names: string[]): Promise<boolean> => {
     const bridge = window.antseedDesktop;
-    if (!bridge?.systemProxyStart || !defaultPeerId) return;
+    if (!bridge?.systemProxyStart || !defaultPeerId) return false;
     setBusy(names.join(','));
     setMessage(null);
     const defaultRoute = { peerId: defaultPeerId, model: defaultModel };
@@ -167,9 +177,10 @@ export function VprToolsView({ onSelectView }: Props) {
     setBusy(null);
     if (!result.ok) {
       setMessage(result.error ?? 'Unable to connect tool profile');
-      return;
+      return false;
     }
     setProxyState(result.state ?? null);
+    return true;
   }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, proxyState?.running]);
 
   const disconnect = useCallback(async () => {
@@ -186,8 +197,12 @@ export function VprToolsView({ onSelectView }: Props) {
 
   const connectProfile = useCallback((profileName: string) => {
     const names = Array.from(new Set([...activeProfileNames, profileName]));
-    void startProfiles(names);
-  }, [activeProfileNames, startProfiles]);
+    void startProfiles(names).then((ok) => {
+      // Surface the pill right away, dropdown open, so the "start a new
+      // session" guidance is in view while the user switches to the tool.
+      if (ok) void actions.openVprFloat?.(profileName, { openMenu: true });
+    });
+  }, [actions, activeProfileNames, startProfiles]);
 
   const disconnectProfile = useCallback((profileName: string) => {
     const remaining = activeProfileNames.filter((name) => name !== profileName);
@@ -572,7 +587,9 @@ export function VprToolsView({ onSelectView }: Props) {
                     onChange={(event) => void pinChat(chat.id, event.currentTarget.value)}
                     aria-label={`Model for ${title}`}
                   >
-                    <option value="">Auto (default route)</option>
+                    <option value="">
+                      {defaultModelLabel ? `Default · ${defaultModelLabel}` : 'Auto (default route)'}
+                    </option>
                     {pinnedServiceId && !pinnedCatalogEntry ? (
                       <option value={`?:${pinnedServiceId}`}>{pinnedServiceId}</option>
                     ) : null}

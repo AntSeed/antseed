@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon, ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, Cancel01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatData } from '../../types/bridge';
+import { conversationAge, conversationMatchesApp } from '../../modules/conversations';
 import { displayToolName } from '../../modules/tool-names';
 import { AntStationMark } from '../components/AntStationLogo';
 import { BrandIcon } from '../components/brand/BrandIcon';
@@ -9,15 +10,6 @@ import { OverlayScrollArea } from '../components/OverlayScrollArea';
 import { VprBackTitle } from '../components/vpr/VprKit';
 import { VprModelRowList } from '../components/vpr/VprModelRows';
 import styles from './FloatApp.module.scss';
-
-/** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */
-function relativeTime(timestamp: number): string {
-  const delta = Date.now() - timestamp;
-  if (delta < 60_000) return 'now';
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
-  return `${Math.floor(delta / 86_400_000)}d`;
-}
 
 /* Viewport width below this means the window is at compact-chip size (88px)
    rather than the full pill (272px). */
@@ -97,7 +89,24 @@ export function FloatApp() {
     bridge?.vprFloatAction?.({ type: 'set-compact', compact: next });
   };
 
-  useEffect(() => bridge?.onVprFloatData?.(setData) ?? undefined, [bridge]);
+  // Current compact state for the data handler below — the subscription is
+  // installed once, so it can't read the `compact` state directly.
+  const compactRef = useRef(compact);
+  useEffect(() => { compactRef.current = compact; }, [compact]);
+
+  useEffect(() => bridge?.onVprFloatData?.((next) => {
+    setData(next);
+    // A connect-triggered open lands with the dropdown already expanded, so
+    // the "start a new session" guidance is visible without a click. Leave
+    // compact mode first — the dropdown can't render in the chip.
+    if (next.openMenu) {
+      if (compactRef.current) {
+        setCompact(false);
+        bridge.vprFloatAction?.({ type: 'set-compact', compact: false });
+      }
+      setMenuOpen(true);
+    }
+  }) ?? undefined, [bridge]);
 
   // The main process owns the compact state (it does the resize). Query it on
   // mount (covers reloads and the push-before-listener race) and subscribe to
@@ -109,6 +118,14 @@ export function FloatApp() {
   }, [bridge]);
 
   const conversations = data?.conversations ?? [];
+  // Connected apps that have no chat yet — each gets a guidance row in the
+  // dropdown ("start a new session") until its first prompt arrives.
+  const idleApps = useMemo(
+    () => (data?.apps ?? []).filter(
+      (app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app.name)),
+    ),
+    [data?.apps, conversations],
+  );
   // Level-2 target chat; a chat that ages out of the list mid-visit falls
   // back to the conversations list.
   const targetChat = chatTarget && chatTarget !== 'default'
@@ -156,13 +173,21 @@ export function FloatApp() {
 
   const modelLabel = selectedModel?.label ?? 'Select model';
 
+  // The badge mirrors the selected default model's brand mark — the pill is
+  // a minimized preview of the VPR page, so it leads with the same identity.
+  const badgeIcon = selectedModel ? (
+    <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={26} />
+  ) : (
+    <AntStationMark size={26} />
+  );
+
   if (compact) {
     return (
       <div className={styles.compactRoot}>
       <div className={styles.compactChip}>
         <div className={`${styles.chipFlip}${flipped ? ` ${styles.chipFlipped}` : ''}`}>
-          {/* Front: the AntSeed badge. Only the icon itself is clickable —
-              the rest of the chip stays a drag handle. */}
+          {/* Front: the selected model's badge. Only the icon itself is
+              clickable — the rest of the chip stays a drag handle. */}
           <div className={styles.chipFace}>
             <div className={styles.appBadge}>
               <button
@@ -173,7 +198,7 @@ export function FloatApp() {
                 title="Options"
                 aria-label="Show expand button"
               >
-                <AntStationMark size={26} />
+                {badgeIcon}
               </button>
             </div>
           </div>
@@ -205,7 +230,7 @@ export function FloatApp() {
         title="Open AntSeed"
         aria-label="Open AntSeed"
       >
-        <AntStationMark size={26} />
+        {badgeIcon}
       </button>
 
       <div className={styles.body}>
@@ -235,6 +260,15 @@ export function FloatApp() {
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
+              {idleApps.map((app) => (
+                <div key={app.name} className={styles.menuHint}>
+                  <BrandIcon name={app.name} hints={[app.displayName]} size={16} />
+                  <span className={styles.menuHintText}>
+                    <span className={styles.menuHintTitle}>{app.displayName} connected</span>
+                    <span className={styles.menuHintMeta}>Start a new session and send your first prompt</span>
+                  </span>
+                </div>
+              ))}
               <button
                 type="button"
                 className={styles.menuRow}
@@ -248,11 +282,13 @@ export function FloatApp() {
                 <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
               </button>
               {conversations.length === 0 ? (
-                <div className={styles.menuEmpty}>No tool chats seen yet</div>
+                idleApps.length === 0 ? <div className={styles.menuEmpty}>No tool chats seen yet</div> : null
               ) : conversations.map((chat) => {
-                const pinLabel = chat.pinnedServiceId
+                // Always name the model the chat runs on: its pin, or the
+                // default route (tagged "default") when unpinned.
+                const pinnedLabel = chat.pinnedServiceId
                   ? (models.find((model) => model.serviceId === chat.pinnedServiceId)?.label ?? chat.pinnedServiceId)
-                  : 'Auto';
+                  : null;
                 return (
                   <button
                     type="button"
@@ -269,9 +305,12 @@ export function FloatApp() {
                             same signal as the chat list's running dot. */}
                         {chat.active ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" /> : null}
                       </span>
-                      <span className={styles.menuRowMeta}>{displayToolName(chat.tool)} · {relativeTime(chat.lastActiveAt)}</span>
+                      <span className={styles.menuRowMeta}>{displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}</span>
                     </span>
-                    <span className={styles.menuRowValue}>{pinLabel}</span>
+                    <span className={styles.menuRowValue}>
+                      <span className={styles.menuRowValueModel}>{pinnedLabel ?? modelLabel}</span>
+                      {!pinnedLabel && <span className={styles.menuRowValueTag}>default</span>}
+                    </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
                   </button>
                 );
