@@ -383,7 +383,7 @@ export function VprHelpView({ onSelectView }: Props) {
       .map((event) => `[${event.mode}] ${event.line}`)
       .join('\n');
     const report = [
-      `AntSeed Desktop v${appVersion}`,
+      `AntSeed VPR v${appVersion}`,
       `Status: ${snap.networkHealth} | ${snap.connectBadgeLabel} | Port ${snap.proxyPort}`,
       `Network: ${snap.peers} peers, ${snap.serviceCount} services`,
       `Model: ${snap.modelLabel ?? 'none selected'}`,

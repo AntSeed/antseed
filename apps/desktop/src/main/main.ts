@@ -809,7 +809,13 @@ async function stopManagedRuntimes(): Promise<void> {
 
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
-const APP_NAME = 'AntStation Desktop';
+// Internal runtime name — NEVER change this value. On macOS the safeStorage
+// encryption key lives in the "<app.setName value> Safe Storage" keychain
+// entry, and the default userData path derives from it too. Renaming it
+// rotates the key and orphans every existing identity.enc. User-visible
+// surfaces use APP_NAME below instead.
+const INTERNAL_APP_NAME = 'AntStation Desktop';
+const APP_NAME = 'AntSeed VPR';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
@@ -916,9 +922,10 @@ function resolveTrayIconPath(): string | undefined {
 const APP_ICON_PATH = resolveAppIconPath();
 const TRAY_ICON_PATH = resolveTrayIconPath();
 
-// Set app name as early as possible; on macOS dev runs may still show "Electron"
-// in some surfaces because the underlying bundle is Electron.app.
-app.setName(APP_NAME);
+// Set the internal app name as early as possible — before any safeStorage use,
+// since it determines the macOS keychain entry. On macOS dev runs some surfaces
+// may still show "Electron" because the underlying bundle is Electron.app.
+app.setName(INTERNAL_APP_NAME);
 
 import { DEFAULT_CONFIG_PATH, LOCALHOST, LOCALHOST_URL } from './constants.js';
 import { asRecord, asString } from './utils.js';
@@ -3673,7 +3680,7 @@ ipcMain.on('vpr-float:action', (_event, action: unknown) => {
 
 app.whenReady().then(async () => {
   installAttachmentProtocol();
-  app.setName(APP_NAME);
+  app.setName(INTERNAL_APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
