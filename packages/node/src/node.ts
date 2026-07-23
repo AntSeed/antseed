@@ -78,6 +78,7 @@ import {
   SellerFreeUsageManager,
   StakingClient,
   ChannelStore,
+  CHANNEL_KIND,
   CHANNEL_ROLE,
   CHANNEL_STATUS,
 } from "./payments/index.js";
@@ -1144,7 +1145,12 @@ export class AntseedNode extends EventEmitter {
   getBuyerUsageTotals(): BuyerUsageTotals {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
-    const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
+    // Paid channels plus free-usage sessions — both carry real traffic and
+    // the desktop usage tiles/float must reflect the sum.
+    const stored = [
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress),
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress, CHANNEL_KIND.FREE),
+    ];
     let totalRequests = 0;
     let totalInput = 0n;
     let totalOutput = 0n;
@@ -1156,8 +1162,12 @@ export class AntseedNode extends EventEmitter {
       totalRequests += c.requestCount;
       try { totalInput += BigInt(c.tokensDelivered || '0'); } catch { /* skip */ }
       try { totalOutput += BigInt(c.previousConsumption || '0'); } catch { /* skip */ }
-      if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
-      if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      // Settlement/active-channel counters describe paid channels only —
+      // free sessions never settle and can't be closed from the UI.
+      if (c.channelKind !== CHANNEL_KIND.FREE) {
+        if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
+        if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      }
       if (c.peerId) sellers.add(c.peerId);
       channels.push({
         reservedAt: c.reservedAt,
