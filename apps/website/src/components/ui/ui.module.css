@@ -1,0 +1,256 @@
+/* ============================================================
+   SHARED UI — the design-system components, extracted from the
+   homepage (the reference implementation of the Figma design).
+   Faq · Button · SectionHeader
+   ============================================================ */
+
+/* ---------- Reveal ---------- */
+/* Hidden state only under html[data-anim] (set on hydration) so SSR/no-JS
+   users always see content. */
+:global(html[data-anim]) .reveal {
+  opacity: 0;
+  transform: translateY(26px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+:global(html[data-anim]) .revealShown {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(html[data-anim]) .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------- Button — Figma pill: r32, pad 10/16 (md) · 12/16 (lg) ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-family: var(--as-font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  padding: 10px 16px;
+  border-radius: 32px;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+}
+
+.btnLg {
+  gap: 8px;
+  font-size: 16px;
+  line-height: 24px;
+  padding: 12px 16px;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn svg {
+  flex-shrink: 0;
+}
+
+.btnDark {
+  background: var(--as-ink);
+  border: 1px solid var(--as-ink);
+  color: #FFFFFF;
+  gap: 8px;
+}
+
+.btnDark:hover {
+  background: var(--as-primary-85);
+  border-color: var(--as-primary-85);
+  color: #FFFFFF;
+}
+
+:global(html[data-theme='dark']) .btnDark {
+  background: var(--as-primary-5);
+  border-color: var(--as-primary-5);
+  color: #001E12;
+}
+
+:global(html[data-theme='dark']) .btnDark:hover {
+  background: var(--as-primary-4);
+  border-color: var(--as-primary-4);
+  color: #001E12;
+}
+
+.btnGhost {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  color: var(--as-text);
+  padding-left: 20px;
+}
+
+.btnGhost:hover {
+  border-color: var(--as-line-strong);
+  color: var(--as-text);
+}
+
+:global(html[data-theme='dark']) .btnGhost:hover {
+  border-color: var(--as-primary-3);
+}
+
+/* light — outline pill for dark ink sections; stays light in both themes */
+.btnLight {
+  background: transparent;
+  border: 1px solid #FFFFFF;
+  color: #FFFFFF;
+  padding-left: 20px;
+}
+
+.btnLight:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #FFFFFF;
+}
+
+/* white — filled white pill on dark surfaces (final CTA) */
+.btnWhite {
+  background: #FFFFFF;
+  border: 1px solid #FFFFFF;
+  color: #001E12;
+}
+
+.btnWhite:hover {
+  opacity: 0.9;
+  color: #001E12;
+}
+
+.osIcons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------- SectionHeader — 48/54 · −1px tracking, lead 18/26 ---------- */
+.kicker {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-2);
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.title {
+  font-family: var(--as-font-display);
+  font-weight: 600;
+  font-size: clamp(32px, 3.4vw, 48px);
+  line-height: 1.125;
+  letter-spacing: -1px;
+  color: var(--as-heading);
+  text-align: center;
+  margin: 0 0 24px;
+}
+
+.lead {
+  max-width: 664px;
+  margin: 0 auto 24px;
+  text-align: center;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--as-text);
+}
+
+/* ---------- Faq — white pill rows, r24, pad 16/24 ---------- */
+.faqList {
+  max-width: 840px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.faqItem {
+  background: var(--as-soil-2);
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+.faqSummary {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 16px 24px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--as-font-ui);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--as-heading);
+}
+
+.faqToggle {
+  display: inline-flex;
+  color: var(--as-heading);
+  flex-shrink: 0;
+  transition: transform 0.25s var(--as-ease, ease);
+}
+
+.faqToggleOpen {
+  transform: rotate(45deg);
+}
+
+.faqCollapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+
+.faqCollapseOpen {
+  grid-template-rows: 1fr;
+}
+
+.faqCollapse > * {
+  overflow: hidden;
+}
+
+.faqAnswer {
+  padding: 0 24px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.faqCollapseOpen .faqAnswer {
+  padding-bottom: 18px;
+}
+
+.faqAnswer a {
+  color: var(--as-green-deep);
+  font-weight: 500;
+}
+
+:global(html[data-theme='dark']) .faqAnswer a {
+  color: var(--as-primary-4);
+}
+
+.faqAnswer code {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  background: var(--as-soil-0);
+  border: none;
+  color: var(--as-green-deep);
+}

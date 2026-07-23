@@ -2,6 +2,7 @@ import {useState} from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './providers.module.css';
+import {Button, Faq, SectionHeader} from '../components/ui';
 
 /* ── FAQ ─────────────────────────────────────────────────────── */
 const FAQ_DATA = [
@@ -36,25 +37,10 @@ const FAQ_DATA = [
 ];
 
 function FAQSection() {
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
   return (
     <section className={styles.faq}>
-      <h2 className={styles.faqTitle}>Common questions</h2>
-      <div className={styles.faqList}>
-        {FAQ_DATA.map((item, i) => (
-          <div key={i} className={`${styles.faqItem} ${i === 0 ? styles.faqItemFirst : ''}`}>
-            <div className={styles.faqSummary} onClick={() => setOpenIdx(openIdx === i ? null : i)}>
-              <span>{item.q}</span>
-              <span className={`${styles.faqChevron} ${openIdx === i ? styles.faqChevronOpen : ''}`}>+</span>
-            </div>
-            <div className={`${styles.faqCollapse} ${openIdx === i ? styles.faqCollapseOpen : ''}`}>
-              <div className={styles.faqCollapseInner}>
-                <p className={styles.faqAnswer}>{item.a}</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <SectionHeader title="Common questions" />
+      <Faq items={FAQ_DATA} />
     </section>
   );
 }
@@ -77,8 +63,8 @@ export default function Providers(): JSX.Element {
           Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration — whether you run a model, a routing service, or a specialized agent.
         </p>
         <div className={styles.heroCtas}>
-          <Link to="/docs/guides/become-a-provider" className={styles.ctaPrimary}>Become a provider →</Link>
-          <Link to="/docs/install" className={styles.ctaSecondary}>Install AntSeed</Link>
+          <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
+          <Button to="/docs/install" variant="ghost">Install AntSeed</Button>
         </div>
       </section>
 
@@ -410,8 +396,8 @@ antseed seller unstake        # withdraw your stake`}</pre>
         <h2>Ready to provide?</h2>
         <p>Install AntSeed, configure your provider, and offer AI capacity as an independent operator.</p>
         <div className={styles.bottomCtaBtns}>
-          <Link to="/docs/install" className={styles.ctaPrimary}>Get started →</Link>
-          <Link to="/docs/guides/become-a-provider" className={styles.ctaSecondary}>Become a provider</Link>
+          <Button to="/docs/install" arrow>Get started</Button>
+          <Button to="/docs/guides/become-a-provider" variant="ghost">Become a provider</Button>
         </div>
         <div className={styles.bottomLinks}>
           <Link to="/docs/lightpaper">Read the lightpaper</Link>

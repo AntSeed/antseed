@@ -19,15 +19,19 @@
   left: 0;
   right: 0;
   height: 420px;
-  background: radial-gradient(circle at 50% 0%, rgba(31, 216, 122, .11), transparent 58%);
+  background-image: var(--as-dotgrid);
+  background-size: var(--as-dotgrid-size);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
   pointer-events: none;
   z-index: -1;
 }
 .eyebrow {
   font-family: var(--as-font-data);
-  font-size: 11px;
-  color: var(--as-green);
-  letter-spacing: 3.2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   margin: 0 0 18px;
 }
@@ -57,16 +61,16 @@
   justify-content: center;
   min-height: 46px;
   padding: 0 24px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none !important;
   transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
-.ctaPrimary { background: var(--as-green); border: 1px solid var(--as-green); color: #052012 !important; }
-.ctaPrimary:hover { background: var(--as-green-bright); border-color: var(--as-green-bright); color: #052012 !important; transform: translateY(-1px); box-shadow: 0 10px 36px rgba(31,216,122,.25); }
+.ctaPrimary { background: var(--as-green); border: 1px solid var(--as-green); color: #001E12 !important; }
+.ctaPrimary:hover { background: var(--as-green-bright); border-color: var(--as-green-bright); color: #001E12 !important; transform: translateY(-1px); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 .ctaSecondary { background: transparent; border: 1px solid var(--as-line-strong); color: var(--as-text) !important; }
-.ctaSecondary:hover { border-color: rgba(31,216,122,.46); color: var(--as-green) !important; transform: translateY(-1px); }
+.ctaSecondary:hover { border-color: rgba(16,185,129,.46); color: var(--as-green) !important; transform: translateY(-1px); }
 .table {
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
@@ -75,7 +79,7 @@
   max-width: 100%;
   min-width: 0;
   margin: 46px 0 58px;
-  box-shadow: 0 24px 72px rgba(0,0,0,.22);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .tableHead,
 .tableRow {
@@ -118,9 +122,9 @@
 }
 .list { font-size: 15px; line-height: 1.85; color: var(--as-text-2); padding-left: 20px; max-width: 820px; }
 .list li { margin-bottom: 8px; }
-.list a { color: var(--as-green) !important; text-decoration: none; border-bottom: 1px solid rgba(31,216,122,.28); }
+.list a { color: var(--as-green) !important; text-decoration: none; border-bottom: 1px solid rgba(16,185,129,.28); }
 .footerCta {
-  background: #070b09;
+  background: #02130D;
   border: 1px solid var(--as-line-strong);
   color: var(--as-text);
   padding: 48px 32px;
@@ -131,11 +135,11 @@
   min-width: 0;
   box-sizing: border-box;
   overflow: hidden;
-  box-shadow: 0 24px 72px rgba(0,0,0,.24);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .footerCta h2 { color: var(--as-text); font-family: var(--as-font-display); font-size: 30px; font-weight: 550; letter-spacing: -0.012em; margin: 0 0 20px; }
 .code {
-  background: #0e141c !important;
+  background: #03251A !important;
   border: 1px solid var(--as-line);
   border-radius: 10px;
   padding: 14px 18px;
@@ -160,18 +164,18 @@
 :global(html[data-theme='light']) .sectionTitle,
 :global(html[data-theme='light']) .footerCta h2,
 :global(html[data-theme='light']) .colDim,
-:global(html[data-theme='light']) .colAnt { color: #0a0e14; }
+:global(html[data-theme='light']) .colAnt { color: #001E12; }
 :global(html[data-theme='light']) .subtitle,
 :global(html[data-theme='light']) .list,
 :global(html[data-theme='light']) .colOr,
-:global(html[data-theme='light']) .footerNote { color: #53635a; }
-:global(html[data-theme='light']) .table { background: rgba(255,255,255,.74); border-color: rgba(19,146,86,.16); box-shadow: 0 22px 70px rgba(10,14,20,.1); }
-:global(html[data-theme='light']) .tableHead { background: rgba(19,146,86,.045); border-color: rgba(10,14,20,.08); color: #7d8b82; }
+:global(html[data-theme='light']) .footerNote { color: #4A5A51; }
+:global(html[data-theme='light']) .table { background: rgba(255,255,255,.74); border-color: rgba(19,146,86,.16); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
+:global(html[data-theme='light']) .tableHead { background: rgba(19,146,86,.045); border-color: rgba(10,14,20,.08); color: #8F8E8B; }
 :global(html[data-theme='light']) .tableRow { border-color: rgba(10,14,20,.08); }
-:global(html[data-theme='light']) .ctaPrimary { background: var(--as-green-deep); border-color: var(--as-green-deep); color: #f7fff9 !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
-:global(html[data-theme='light']) .footerCta { background: #fff; border-color: rgba(19,146,86,.16); box-shadow: 0 22px 70px rgba(10,14,20,.1); }
-:global(html[data-theme='light']) .code { background: #0a0e14 !important; border-color: rgba(10,14,20,.12); }
+:global(html[data-theme='light']) .ctaPrimary { background: var(--as-ink); border-color: var(--as-ink); color: var(--as-white) !important; }
+:global(html[data-theme='light']) .ctaSecondary { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
+:global(html[data-theme='light']) .footerCta { background: #fff; border-color: rgba(19,146,86,.16); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
+:global(html[data-theme='light']) .code { background: #001E12 !important; border-color: rgba(10,14,20,.12); }
 @media (max-width: 768px) {
   .page { padding: 58px 18px 76px; }
   .header { padding-bottom: 36px; }
@@ -186,4 +190,17 @@
   .colAnt::before { content: 'AntSeed: '; color: var(--as-green); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; font-family: var(--as-font-data); }
   .footerCta { padding: 34px 20px; }
   .code { width: 100%; }
+}
+
+
+/* Dark mode — ink buttons flip to emerald so they stay visible */
+:global(html[data-theme='dark']) .ctaPrimary {
+  background: var(--as-primary-5);
+  border-color: var(--as-primary-5);
+  color: #001E12 !important;
+}
+:global(html[data-theme='dark']) .ctaPrimary:hover {
+  background: var(--as-primary-4);
+  border-color: var(--as-primary-4);
+  color: #001E12 !important;
 }

@@ -12,6 +12,7 @@ import {
   type Integration,
 } from '../integrations/integrations';
 import styles from '../integrations/integrations.module.css';
+import {Button} from '../components/ui';
 
 /* --------------------------- Category icons --------------------------- *
  * Inline SVG, ~20x20, stroke-based. Centralized so we don't sprinkle
@@ -211,12 +212,8 @@ export default function ConnectHub(): JSX.Element {
           matching your tool's wire format to that list is the smoothest path.
         </p>
         <div className={styles.heroCtaRow}>
-          <Link to="/docs/install" className={styles.heroCta}>
-            Install AntSeed →
-          </Link>
-          <a href="/skill.md" className={styles.heroCtaGhost}>
-            For agents: skill.md →
-          </a>
+          <Button to="/docs/install" arrow>Install AntSeed</Button>
+          <Button href="/skill.md" variant="ghost" arrow>For agents: skill.md</Button>
         </div>
       </section>
 

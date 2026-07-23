@@ -36,9 +36,10 @@
   left: 0;
   right: 0;
   height: 430px;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(232, 163, 61, 0.14), transparent 58%),
-    radial-gradient(circle at 72% 22%, rgba(31, 216, 122, 0.055), transparent 46%);
+  background-image: radial-gradient(rgba(161, 98, 7, 0.12) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
   pointer-events: none;
   z-index: -1;
 }
@@ -64,7 +65,7 @@
   text-wrap: balance;
 }
 .heroTitle em {
-  font-style: italic;
+  font-style: normal;
   font-weight: 480;
   color: var(--as-clay);
 }
@@ -156,7 +157,7 @@
   border-color: #f2b85b;
   color: #211305 !important;
   transform: translateY(-1px);
-  box-shadow: 0 10px 36px rgba(232, 163, 61, .26);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .ctaSecondary {
   background: transparent;
@@ -253,7 +254,7 @@
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
   border-radius: var(--as-radius);
-  box-shadow: 0 24px 72px rgba(0,0,0,.22);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .statCard {
   padding: 24px;
@@ -297,7 +298,7 @@
 .emissionsCurrentValue { color: var(--as-clay); font-size: clamp(28px, 3vw, 42px); }
 .emissionsCurrentSub { font-size: 13px; color: var(--as-text-3); }
 .splitCard { padding: 26px; }
-.splitCardAccent { border-color: rgba(232, 163, 61, .55); box-shadow: 0 22px 70px rgba(232, 163, 61, .08); }
+.splitCardAccent { border-color: rgba(232, 163, 61, .55); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 .splitCardAccent .splitPct { color: var(--as-clay); }
 .splitDesc,
 .earnCard p,
@@ -313,14 +314,14 @@
   text-decoration: none !important;
   transition: background .15s, transform .15s, border-color .15s;
 }
-.duneBanner:hover { background: var(--as-soil-3); border-color: rgba(31,216,122,.25); transform: translateY(-2px); }
+.duneBanner:hover { background: var(--as-soil-3); border-color: rgba(16,185,129,.25); transform: translateY(-2px); }
 .duneBannerContent { display: flex; align-items: center; gap: 24px; }
-.duneBannerIcon { width: 56px; height: 56px; border-radius: 16px; background: rgba(31,216,122,.09); border: 1px solid rgba(31,216,122,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--as-green); }
+.duneBannerIcon { width: 56px; height: 56px; border-radius: 16px; background: rgba(16,185,129,.09); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--as-green); }
 .duneBannerTitle { font-family: var(--as-font-display); font-size: 20px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin-bottom: 6px; }
 
 .flowCard { padding: 30px 28px 22px; margin-bottom: 28px; overflow: hidden; }
 .flowSvg { width: 100%; height: auto; display: block; }
-.flowBox { fill: #0e141c; stroke: rgba(151,255,199,.12); stroke-width: 1; }
+.flowBox { fill: #03251A; stroke: rgba(151,255,199,.12); stroke-width: 1; }
 .flowBoxDark { fill: #120d07; stroke: rgba(232,163,61,.34); }
 .flowBoxMint { fill: #120d07; stroke: var(--as-clay); stroke-width: 1.5; }
 .flowBoxTitleMint { fill: var(--as-clay); font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
@@ -371,7 +372,7 @@
 :global(html[data-theme='light']) .flowBoxTitle,
 :global(html[data-theme='light']) .duneBannerTitle,
 :global(html[data-theme='light']) .earnCard h3,
-:global(html[data-theme='light']) .contractsValue { color: #0a0e14; }
+:global(html[data-theme='light']) .contractsValue { color: #001E12; }
 :global(html[data-theme='light']) .heroSub,
 :global(html[data-theme='light']) .overviewHeader p,
 :global(html[data-theme='light']) .emissionsHeader p,
@@ -380,7 +381,7 @@
 :global(html[data-theme='light']) .bottomCta > p,
 :global(html[data-theme='light']) .splitDesc,
 :global(html[data-theme='light']) .earnCard p,
-:global(html[data-theme='light']) .duneBannerSub { color: #53635a; }
+:global(html[data-theme='light']) .duneBannerSub { color: #4A5A51; }
 :global(html[data-theme='light']) .statCard,
 :global(html[data-theme='light']) .splitCard,
 :global(html[data-theme='light']) .halvingChart,
@@ -388,9 +389,9 @@
 :global(html[data-theme='light']) .earnCard,
 :global(html[data-theme='light']) .contractsTable,
 :global(html[data-theme='light']) .emissionsCurrentCard,
-:global(html[data-theme='light']) .duneBanner { background: rgba(255,255,255,.74); border-color: rgba(232,163,61,.18); box-shadow: 0 22px 70px rgba(10,14,20,.1); }
+:global(html[data-theme='light']) .duneBanner { background: rgba(255,255,255,.74); border-color: rgba(232,163,61,.18); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 :global(html[data-theme='light']) .ctaPrimary { color: #211305 !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
+:global(html[data-theme='light']) .ctaSecondary { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
 :global(html[data-theme='light']) .flowBox { fill: #fffaf0; stroke: rgba(232,163,61,.2); }
 :global(html[data-theme='light']) .flowBoxDark,
 :global(html[data-theme='light']) .flowBoxMint { fill: #120d07; }
@@ -402,7 +403,7 @@
 :global(html[data-theme='light']) .supplyBarLabels,
 :global(html[data-theme='light']) .emissionsCurrentTitle,
 :global(html[data-theme='light']) .emissionsCurrentSub,
-:global(html[data-theme='light']) .halvingXLabel { color: #7d8b82; fill: #7d8b82; }
+:global(html[data-theme='light']) .halvingXLabel { color: #8F8E8B; fill: #8F8E8B; }
 
 @media (max-width: 960px) {
   .overview,

@@ -2,43 +2,56 @@
 
 /* ====== HUB: Hero ====== */
 .hero {
+  position: relative;
   text-align: center;
   padding: 80px 20px 32px;
   max-width: 880px;
   margin: 0 auto;
 }
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: -32px -50vw 0;
+  background-image: var(--as-dotgrid);
+  background-size: var(--as-dotgrid-size);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
+  pointer-events: none;
+  z-index: -1;
+}
 .kicker {
   display: inline-block;
   font-size: 12px;
-  letter-spacing: 3px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--as-green);
-  font-weight: 600;
-  font-family: 'Share Tech Mono', monospace;
+  color: var(--as-text-2);
+  font-weight: 500;
+  font-family: var(--as-font-data);
   margin-bottom: 18px;
 }
 .heroTitle {
+  font-family: var(--as-font-display);
   font-size: clamp(36px, 5vw, 60px);
-  font-weight: 700;
-  letter-spacing: -2px;
-  line-height: 1.1;
+  font-weight: 500;
+  letter-spacing: -0.028em;
+  line-height: 1.06;
   margin: 0 0 16px;
-  color: #1a1a1a;
+  color: var(--as-heading);
 }
 .heroSub {
   font-size: 17px;
   line-height: 1.6;
-  color: #555;
+  color: #4A5A51;
   margin: 0 auto 28px;
   max-width: 680px;
 }
 .heroSub code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 2px 6px;
   border-radius: 6px;
   font-size: 14px;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .heroCtaRow {
   display: flex;
@@ -47,10 +60,10 @@
   flex-wrap: wrap;
 }
 .heroCta {
-  background: var(--as-green);
-  color: #ffffff;
+  background: var(--as-ink);
+  color: var(--as-white);
   padding: 12px 24px;
-  border-radius: 100px;
+  border-radius: 10px;
   font-weight: 600;
   font-size: 14px;
   text-decoration: none;
@@ -58,21 +71,21 @@
 }
 .heroCta:hover {
   text-decoration: none;
-  color: #ffffff;
-  background: var(--as-green-bright);
+  color: var(--as-white);
+  background: var(--as-primary-85);
   transform: translateY(-1px);
 }
 .heroCtaGhost {
-  background: transparent;
-  color: #555;
+  background: var(--as-soil-2);
+  color: #4A5A51;
   padding: 12px 24px;
-  border-radius: 100px;
+  border-radius: 10px;
   font-weight: 500;
   font-size: 14px;
   text-decoration: none;
-  border: 1px solid #e8e8e3;
+  border: 1px solid #DFDEDB;
 }
-.heroCtaGhost:hover { color: #1a1a1a; text-decoration: none; }
+.heroCtaGhost:hover { color: #001E12; text-decoration: none; }
 
 /* ====== HUB: Jump nav ====== */
 .jumpNav {
@@ -93,15 +106,15 @@
   padding: 7px 14px 7px 11px;
   border-radius: 100px;
   background: #fff;
-  border: 1px solid #e8e8e3;
-  color: #1a1a1a;
+  border: 1px solid #DFDEDB;
+  color: #001E12;
   text-decoration: none;
   transition: border-color 0.15s, transform 0.15s, background 0.15s;
 }
 .jumpLink:hover {
   border-color: var(--as-green);
   text-decoration: none;
-  color: #1a1a1a;
+  color: #001E12;
   transform: translateY(-1px);
 }
 .jumpIcon {
@@ -116,17 +129,17 @@
 .jumpIcon svg { width: 16px; height: 16px; }
 .jumpLabel { white-space: nowrap; }
 .jumpCount {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 1px 8px;
   border-radius: 100px;
-  color: #888;
+  color: #8F8E8B;
 }
 .jumpLink:hover .jumpCount {
-  background: rgba(31, 216, 122, 0.1);
-  border-color: rgba(31, 216, 122, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
   color: var(--as-green);
 }
 
@@ -145,26 +158,26 @@
   font-family: inherit;
   font-size: 14px;
   padding: 12px 18px;
-  border: 1px solid #e8e8e3;
+  border: 1px solid #DFDEDB;
   border-radius: 100px;
   background: #fff;
-  color: #1a1a1a;
+  color: #001E12;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .search:focus {
   border-color: var(--as-green);
-  box-shadow: 0 0 0 3px rgba(31, 216, 122, 0.12);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
 }
 .resultCount {
   font-size: 12px;
-  color: #888;
-  font-family: 'Share Tech Mono', monospace;
+  color: #8F8E8B;
+  font-family: var(--as-font-data);
 }
 .noResults {
   text-align: center;
   font-size: 15px;
-  color: #555;
+  color: #4A5A51;
   padding: 60px 20px;
 }
 .noResults a { color: var(--as-green); font-weight: 500; }
@@ -185,14 +198,14 @@
   gap: 14px;
   margin-bottom: 18px;
   padding-bottom: 14px;
-  border-bottom: 1px solid #e8e8e3;
+  border-bottom: 1px solid #DFDEDB;
 }
 .catGlyph {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: linear-gradient(180deg, #f0fbf5 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
+  background: var(--as-primary-0);
+  border: 1px solid rgba(16, 185, 129, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -209,28 +222,30 @@
   margin: 0 0 4px;
 }
 .catTitle {
+  font-family: var(--as-font-display);
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   letter-spacing: -0.6px;
   margin: 0;
-  color: #1a1a1a;
+  color: #001E12;
   line-height: 1.2;
 }
 .catTagline {
   font-size: 14px;
   line-height: 1.5;
-  color: #555;
+  color: #4A5A51;
   margin: 0;
   max-width: 720px;
 }
 .catCount {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 10px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: #888;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  color: #8F8E8B;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 3px 10px;
   border-radius: 100px;
   flex-shrink: 0;
@@ -245,7 +260,7 @@
 /* ====== HUB: Card ====== */
 .card {
   background: #fff;
-  border: 1px solid #e8e8e3;
+  border: 1px solid #DFDEDB;
   border-radius: 16px;
   padding: 18px 18px 14px;
   display: flex;
@@ -262,7 +277,7 @@
   color: inherit;
   border-color: var(--as-green);
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(31, 216, 122, 0.08);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.08);
 }
 .card:hover .cardArrow {
   transform: translateX(3px);
@@ -277,7 +292,7 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: #f4f4ef;
+  background: #F3F2EF;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -286,17 +301,17 @@
 }
 .logoImg { max-width: 28px; max-height: 28px; }
 .logoGlyph {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-weight: 700;
   font-size: 16px;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .cardMeta { flex: 1; min-width: 0; }
 .cardTitle {
   font-size: 16px;
   font-weight: 600;
   margin: 0;
-  color: #1a1a1a;
+  color: #001E12;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -304,16 +319,16 @@
 }
 .cardCategory {
   font-size: 10px;
-  color: #888;
+  color: #8F8E8B;
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   white-space: nowrap;
 }
 .cardLine {
   font-size: 13.5px;
   line-height: 1.5;
-  color: #555;
+  color: #4A5A51;
   margin: 0;
   flex: 1;
   display: -webkit-box;
@@ -328,12 +343,12 @@
   margin-top: 2px;
 }
 .cardSetup {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   font-weight: 500;
-  color: #888;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  color: #8F8E8B;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 3px 9px;
   border-radius: 100px;
 }
@@ -350,7 +365,7 @@
   max-width: 1200px;
   margin: 40px auto 80px;
   padding: 40px 20px;
-  border-top: 1px solid #e8e8e3;
+  border-top: 1px solid #DFDEDB;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 40px;
@@ -359,12 +374,12 @@
   font-size: 18px;
   font-weight: 600;
   margin: 0 0 8px;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .bottomBlock p {
   font-size: 14px;
   line-height: 1.6;
-  color: #555;
+  color: #4A5A51;
   margin: 0;
 }
 .bottomBlock a { color: var(--as-green); font-weight: 500; }
@@ -381,7 +396,7 @@
   font-size: 13px;
   color: var(--as-text-3);
   margin-bottom: 24px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -402,7 +417,7 @@
   width: 64px;
   height: 64px;
   border-radius: 16px;
-  background: #f4f4ef;
+  background: #F3F2EF;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -410,22 +425,23 @@
 }
 .detailLogo img { max-width: 44px; max-height: 44px; }
 .detailLogo span {
-  font-family: 'Share Tech Mono', monospace;
-  font-weight: 700;
+  font-family: var(--as-font-data);
+  font-weight: 500;
   font-size: 28px;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .detailHeaderText { flex: 1; min-width: 240px; }
 .detailHeaderText h1 {
+  font-family: var(--as-font-display);
   font-size: 36px;
-  font-weight: 700;
+  font-weight: 500;
   margin: 0 0 4px;
-  letter-spacing: -1px;
-  color: #1a1a1a;
+  letter-spacing: -0.025em;
+  color: var(--as-heading);
 }
 .detailOneLiner {
   font-size: 15px;
-  color: #555;
+  color: #4A5A51;
   margin: 0 0 10px;
 }
 .detailBadgeRow {
@@ -436,24 +452,24 @@
 .detailBadge {
   display: inline-block;
   font-size: 11px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-weight: 500;
   padding: 3px 10px;
   border-radius: 100px;
-  background: #f4f4ef;
-  color: #555;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  color: #4A5A51;
+  border: 1px solid #DFDEDB;
 }
 .detailBadgeGreen {
-  background: rgba(31, 216, 122, 0.1);
+  background: rgba(16, 185, 129, 0.1);
   color: var(--as-green);
-  border-color: rgba(31, 216, 122, 0.3);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .description {
   font-size: 15px;
   line-height: 1.65;
-  color: #333;
+  color: #001E12;
   margin: 0 0 32px;
   /* Long inline tokens (ANTHROPIC_BASE_URL, ~/.antseed/buyer.state.json) must
    * be allowed to break mid-word so prose wraps inside narrow columns. */
@@ -463,12 +479,12 @@
 .description p { margin: 0 0 12px; }
 .description p:last-child { margin-bottom: 0; }
 .description code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 1px 6px;
   border-radius: 5px;
   font-size: 13px;
-  color: #1a1a1a;
+  color: #001E12;
   /* Allow long monospace tokens to break inside the inline code pill. */
   overflow-wrap: anywhere;
   word-break: break-all;
@@ -481,8 +497,8 @@
  * users without paid providers know they can stop at 3.
  */
 .runFirst {
-  background: linear-gradient(180deg, #f5fcf8 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
+  background: var(--as-primary-0);
+  border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 14px;
   padding: 18px 22px 22px;
   margin-bottom: 36px;
@@ -506,7 +522,7 @@
   margin: 0 0 4px;
   text-transform: uppercase;
   letter-spacing: 1.6px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -518,7 +534,7 @@
   height: 7px;
   background: var(--as-green);
   border-radius: 50%;
-  box-shadow: 0 0 0 0 rgba(31, 216, 122, 0.6);
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
   animation: runFirstDotPulse 1.4s ease-in-out infinite;
 }
 
@@ -527,11 +543,11 @@
 @keyframes runFirstDotPulse {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 rgba(31, 216, 122, 0.55);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
   }
   50% {
     opacity: 0.55;
-    box-shadow: 0 0 0 4px rgba(31, 216, 122, 0);
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0);
   }
 }
 
@@ -541,12 +557,12 @@
 .runFirstSub {
   font-size: 13px;
   line-height: 1.55;
-  color: #555;
+  color: #4A5A51;
   margin: 0;
 }
 .runFirstSub code {
   background: #fff;
-  border: 1px solid rgba(31, 216, 122, 0.25);
+  border: 1px solid rgba(16, 185, 129, 0.25);
   border-radius: 5px;
   padding: 1px 6px;
   font-size: 12px;
@@ -555,20 +571,20 @@
 }
 .runFirstToggle {
   flex-shrink: 0;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   font-weight: 500;
   color: var(--as-green);
   background: #fff;
-  border: 1px solid rgba(31, 216, 122, 0.3);
+  border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 100px;
   padding: 5px 12px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .runFirstToggle:hover {
-  background: rgba(31, 216, 122, 0.08);
-  border-color: rgba(31, 216, 122, 0.5);
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.5);
 }
 
 /* Wire-format panel — explains exactly what protocol the tool sends, which
@@ -584,7 +600,7 @@
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
 }
 .wireFormatTitle {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
@@ -621,7 +637,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(31, 216, 122, 0.45);
+  background: rgba(16, 185, 129, 0.45);
 }
 .wireFormatFacts strong { color: var(--as-text); font-weight: 600; }
 .wireFormatFacts code,
@@ -677,7 +693,7 @@
   border-radius: 6px;
 }
 .wireFormatCode {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
   color: var(--as-inline-code-text);
 }
@@ -698,14 +714,14 @@
 /* Glossary block above the rail — sets up the mental model.
  * Visually distinct from steps (no numbered rail), green-tinted background. */
 .glossary {
-  background: linear-gradient(180deg, rgba(31, 216, 122, 0.04), rgba(31, 216, 122, 0.02));
-  border: 1px solid rgba(31, 216, 122, 0.18);
+  background: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.18);
   border-radius: 10px;
   padding: 16px 20px;
   margin-bottom: 24px;
 }
 .glossaryTitle {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
@@ -747,7 +763,7 @@
   gap: 5px;
   font-size: 12.5px;
   line-height: 1.55;
-  color: #555;
+  color: #4A5A51;
 }
 .runFirstFieldList code {
   background: #fff;
@@ -759,7 +775,7 @@
 }
 .runFirstFieldList strong {
   font-weight: 600;
-  color: #1a1a1a;
+  color: #001E12;
 }
 
 /* The rail itself: numbered circles connected by a vertical line. */
@@ -779,9 +795,9 @@
   width: 1.5px;
   background: linear-gradient(
     180deg,
-    rgba(31, 216, 122, 0.45) 0%,
-    rgba(31, 216, 122, 0.45) 70%,
-    rgba(31, 216, 122, 0.15) 100%
+    rgba(16, 185, 129, 0.45) 0%,
+    rgba(16, 185, 129, 0.45) 70%,
+    rgba(16, 185, 129, 0.15) 100%
   );
   border-radius: 1px;
 }
@@ -803,7 +819,7 @@
   background: #fff;
   border: 1.5px solid var(--as-green);
   color: var(--as-green);
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   font-weight: 700;
   display: flex;
@@ -817,14 +833,14 @@
 .runFirstStepTitle {
   font-size: 14px;
   line-height: 1.55;
-  color: #1a1a1a;
+  color: #001E12;
   margin: 2px 0 0;
   font-weight: 500;
 }
 .runFirstHint {
   font-size: 12.5px;
   line-height: 1.55;
-  color: #666;
+  color: #676663;
   margin: 2px 0 0;
 }
 .runFirstHint code {
@@ -837,27 +853,27 @@
 }
 .runFirstHint strong {
   font-weight: 600;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .runFirstHint + .runFirstHint { margin-top: 6px; }
 
 /* The optional last step is visually softened. */
 .runFirstItemOptional .runFirstNum {
-  border-color: rgba(31, 216, 122, 0.5);
+  border-color: rgba(16, 185, 129, 0.5);
   border-style: dashed;
   color: var(--as-green);
 }
 .runFirstItemOptional .runFirstStepTitle { color: #444; }
 .runFirstOptionalTag {
   display: inline-block;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #888;
+  color: #8F8E8B;
   background: #fff;
-  border: 1px solid #e8e8e3;
+  border: 1px solid #DFDEDB;
   border-radius: 100px;
   padding: 2px 8px;
   margin-right: 8px;
@@ -871,7 +887,7 @@
 .section {
   margin: 36px 0;
   padding-top: 28px;
-  border-top: 1px solid #e8e8e3;
+  border-top: 1px solid #DFDEDB;
 }
 .section:first-of-type { padding-top: 0; border-top: none; margin-top: 0; }
 .sectionEyebrow {
@@ -880,14 +896,14 @@
   text-transform: uppercase;
   color: var(--as-green);
   font-weight: 600;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   margin: 0 0 6px;
 }
 .sectionTitle {
   font-size: 22px;
   font-weight: 600;
   margin: 0 0 18px;
-  color: #1a1a1a;
+  color: #001E12;
   letter-spacing: -0.4px;
 }
 
@@ -908,11 +924,11 @@
 .stepLabel {
   font-size: 14px;
   font-weight: 500;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .stepNote {
   font-size: 13px;
-  color: #666;
+  color: #676663;
   line-height: 1.55;
   margin: 4px 0 0;
 }
@@ -920,7 +936,7 @@
   list-style: disc;
   padding-left: 20px;
   margin: 0;
-  color: #333;
+  color: #001E12;
   font-size: 14px;
   line-height: 1.6;
 }
@@ -942,17 +958,17 @@
 .codeBlockPath {
   font-size: 11px;
   color: var(--as-green);
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   margin-bottom: 6px;
   display: block;
 }
 .codeBlock {
   position: relative;
   background: #0e1116 !important;
-  color: #e6e6e3 !important;
+  color: #DFDEDB !important;
   border-radius: 10px;
   padding: 14px 56px 14px 16px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 13px;
   line-height: 1.55;
   /* Critical: clip + scroll long shell lines INSIDE this element.
@@ -972,8 +988,8 @@
   border: 1px solid rgba(255, 255, 255, 0.04);
 }
 .codeBlockText {
-  color: #e6e6e3;
-  font-family: 'Share Tech Mono', monospace;
+  color: #DFDEDB;
+  font-family: var(--as-font-data);
   font-size: 13px;
   line-height: 1.55;
   white-space: pre;
@@ -988,11 +1004,11 @@
  * so the docs feel grounded in real artifacts. */
 .exampleOutputWrap { display: block; margin-top: 8px; }
 .exampleOutputLabel {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 10px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: #888;
+  color: #8F8E8B;
   margin-bottom: 6px;
   display: flex;
   align-items: center;
@@ -1012,7 +1028,7 @@
   color: #cbd5e1;
   border-radius: 10px;
   padding: 14px 16px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
   line-height: 1.55;
   /* Same width guard as .codeBlock — keep horizontal scroll inside
@@ -1036,7 +1052,7 @@
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 11px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -1044,7 +1060,7 @@
 .copyBtn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
 .copyBtn.copied {
   color: var(--as-green);
-  border-color: rgba(31, 216, 122, 0.4);
+  border-color: rgba(16, 185, 129, 0.4);
 }
 
 /* ====== Env table (for env-var config blocks) ====== */
@@ -1053,10 +1069,10 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 13px;
   background: #0e1116;
-  color: #e6e6e3;
+  color: #DFDEDB;
   border-radius: 10px;
   overflow: hidden;
 }
@@ -1082,9 +1098,9 @@
   font-family: inherit !important;
 }
 .envDetails {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
-  color: #888;
+  color: #8F8E8B;
 }
 .envDetails summary {
   cursor: pointer;
@@ -1103,13 +1119,13 @@
 
 /* ====== GUI block (for GUI-only configurations) ====== */
 .guiBlock {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   border-radius: 10px;
   padding: 14px 16px;
   font-size: 14px;
   line-height: 1.6;
-  color: #333;
+  color: #001E12;
   white-space: pre-wrap;
 }
 
@@ -1123,27 +1139,27 @@
   margin-top: 4px;
 }
 .modelChip {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  color: #1a1a1a;
-  font-family: 'Share Tech Mono', monospace;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
+  color: #001E12;
+  font-family: var(--as-font-data);
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 100px;
 }
 .modelNote {
   font-size: 13px;
-  color: #666;
+  color: #676663;
   line-height: 1.55;
   margin: 12px 0 0;
 }
 .modelNote code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   padding: 1px 6px;
   border-radius: 5px;
   font-size: 12px;
-  color: #1a1a1a;
+  color: #001E12;
 }
 .modelNote a { color: var(--as-green); font-weight: 500; }
 
@@ -1163,7 +1179,7 @@
   padding: 12px 14px;
   font-size: 14px;
   line-height: 1.55;
-  color: #333;
+  color: #001E12;
 }
 .troubleshootList strong {
   display: block;
@@ -1191,9 +1207,9 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #1a1a1a;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
+  color: #001E12;
+  background: #F3F2EF;
+  border: 1px solid #DFDEDB;
   border-radius: 100px;
   padding: 6px 14px;
   text-decoration: none;
@@ -1208,8 +1224,8 @@
 
 /* ====== Agent box ====== */
 .agentBox {
-  background: linear-gradient(180deg, #f0fbf5 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
+  background: var(--as-primary-0);
+  border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 14px;
   padding: 18px 20px;
   margin: 32px 0 0;
@@ -1224,7 +1240,7 @@
   gap: 8px;
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
 }
 .agentBox h3::before {
   content: '⚙';
@@ -1248,7 +1264,7 @@
 .agentBox a {
   color: var(--as-green);
   font-weight: 500;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
 }
 
 /* ====== Related row ====== */
@@ -1259,10 +1275,10 @@
 }
 .relatedRow a {
   font-size: 12px;
-  font-family: 'Share Tech Mono', monospace;
-  color: #1a1a1a;
+  font-family: var(--as-font-data);
+  color: #001E12;
   background: #fff;
-  border: 1px solid #e8e8e3;
+  border: 1px solid #DFDEDB;
   border-radius: 100px;
   padding: 5px 12px;
   text-decoration: none;
@@ -1378,7 +1394,10 @@
   left: 0;
   right: 0;
   height: 430px;
-  background: radial-gradient(circle at 50% 0%, rgba(31, 216, 122, .12), transparent 58%);
+  background-image: var(--as-dotgrid);
+  background-size: var(--as-dotgrid-size);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
   pointer-events: none;
   z-index: -1;
 }
@@ -1458,8 +1477,8 @@
 .wireFormatCode,
 .description code {
   color: #8fffc4;
-  background: rgba(31, 216, 122, .08);
-  border: 1px solid rgba(31, 216, 122, .18);
+  background: rgba(16, 185, 129, .08);
+  border: 1px solid rgba(16, 185, 129, .18);
   border-radius: 6px;
   padding: 2px 6px;
 }
@@ -1473,19 +1492,19 @@
   align-items: center;
   justify-content: center;
   min-height: 42px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none !important;
   transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 .heroCta {
-  background: var(--as-green);
-  border: 1px solid var(--as-green);
-  color: #052012 !important;
+  background: var(--as-ink);
+  border: 1px solid var(--as-ink);
+  color: #001E12 !important;
   padding: 0 22px;
 }
-.heroCta:hover { background: var(--as-green-bright); border-color: var(--as-green-bright); color: #052012 !important; transform: translateY(-1px); box-shadow: 0 10px 36px rgba(31,216,122,.25); }
+.heroCta:hover { background: var(--as-primary-85); border-color: var(--as-primary-85); color: var(--as-white) !important; transform: translateY(-1px); }
 .heroCtaGhost,
 .runFirstToggle,
 .linkRow a,
@@ -1498,7 +1517,7 @@
 .heroCtaGhost:hover,
 .runFirstToggle:hover,
 .linkRow a:hover,
-.relatedRow a:hover { border-color: rgba(31,216,122,.46); color: var(--as-green) !important; transform: translateY(-1px); }
+.relatedRow a:hover { border-color: rgba(16,185,129,.46); color: var(--as-green) !important; transform: translateY(-1px); }
 .heroCtaRow,
 .linkRow,
 .relatedRow { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
@@ -1526,7 +1545,7 @@
 .logoWrap {
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
-  box-shadow: 0 18px 55px rgba(0,0,0,.18);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .jumpLink {
   display: inline-flex;
@@ -1540,7 +1559,7 @@
   text-decoration: none !important;
   box-shadow: none;
 }
-.jumpLink:hover { border-color: rgba(31,216,122,.34); color: var(--as-green) !important; transform: translateY(-1px); }
+.jumpLink:hover { border-color: rgba(16,185,129,.34); color: var(--as-green) !important; transform: translateY(-1px); }
 .jumpIcon,
 .catGlyph,
 .cardArrow { color: var(--as-green); }
@@ -1562,17 +1581,17 @@
   padding: 13px 18px;
   border: 1px solid var(--as-line-strong);
   border-radius: 999px;
-  background: #070b09;
+  background: #02130D;
   color: var(--as-text);
   outline: none;
 }
-.search:focus { border-color: var(--as-green); box-shadow: 0 0 0 3px rgba(31,216,122,.12); }
+.search:focus { border-color: var(--as-green); box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
 .search::placeholder { color: var(--as-text-3); }
 .resultCount { color: var(--as-text-3); font-family: var(--as-font-data); }
 .sections { margin: 30px auto 0; padding: 0 20px; }
 .catSection { margin: 0 0 58px; scroll-margin-top: 90px; }
 .catHeader { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--as-line); }
-.catGlyph { width: 42px; height: 42px; border-radius: 12px; background: rgba(31,216,122,.08); border: 1px solid rgba(31,216,122,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+.catGlyph { width: 42px; height: 42px; border-radius: 12px; background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
 .catTitleRow { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; flex-wrap: wrap; }
 .catTitle { font-size: 25px; margin: 0; line-height: 1.2; }
 .catCount { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 10px; flex-shrink: 0; }
@@ -1588,7 +1607,7 @@
   transition: transform .15s, border-color .15s, box-shadow .15s, background .15s;
   min-height: 168px;
 }
-.card:hover { transform: translateY(-2px); border-color: rgba(31,216,122,.32); background: var(--as-soil-3); }
+.card:hover { transform: translateY(-2px); border-color: rgba(16,185,129,.32); background: var(--as-soil-3); }
 .cardHead { display: flex; align-items: center; gap: 12px; }
 .logoWrap { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: rgba(151,170,159,.08); box-shadow: none; flex-shrink: 0; }
 .logoImg { max-width: 28px; max-height: 28px; object-fit: contain; }
@@ -1606,11 +1625,11 @@
 .breadcrumb a { color: var(--as-text-2); text-decoration: none; }
 .breadcrumb a:hover { color: var(--as-green); }
 .detailHeader { display: flex; text-align: left; gap: 22px; align-items: center; padding-top: 52px; }
-.detailLogo { width: 72px; height: 72px; border-radius: 18px; display: flex; align-items: center; justify-content: center; background: #070b09; flex-shrink: 0; }
+.detailLogo { width: 72px; height: 72px; border-radius: 18px; display: flex; align-items: center; justify-content: center; background: #02130D; flex-shrink: 0; }
 .detailOneLiner { font-size: 17px; }
 .detailBadgeRow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .detailBadge { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; padding: 5px 10px; }
-.detailBadgeGreen { color: var(--as-green); border-color: rgba(31,216,122,.25); }
+.detailBadgeGreen { color: var(--as-green); border-color: rgba(16,185,129,.25); }
 .description { max-width: 780px; margin: 0 auto 28px; font-size: 15px; }
 .runFirst,
 .wireFormat,
@@ -1620,7 +1639,7 @@
 .runFirst { margin: 26px 0; padding: 22px; }
 .runFirstHeader { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
 .runFirstKicker { color: var(--as-green); font-size: 11px; text-transform: uppercase; letter-spacing: 1.8px; margin: 0 0 4px; }
-.runFirstDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--as-green); margin-right: 8px; box-shadow: 0 0 12px rgba(31,216,122,.65); }
+.runFirstDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--as-green); margin-right: 8px; box-shadow: 0 0 12px rgba(16,185,129,.65); }
 .runFirstRail,
 .stepList { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 14px; }
 .runFirstItem,
@@ -1648,8 +1667,8 @@
 .wireFormatNative code,
 .agentBox code {
   color: #b7ffd5;
-  background: rgba(31, 216, 122, 0.075);
-  border: 1px solid rgba(31, 216, 122, 0.18);
+  background: rgba(16, 185, 129, 0.075);
+  border: 1px solid rgba(16, 185, 129, 0.18);
   text-shadow: none;
 }
 .wireFormatNative code {
@@ -1668,15 +1687,15 @@
 .codeBlock,
 .exampleOutput {
   position: relative;
-  background: #070b09;
+  background: #02130D;
   border: 1px solid var(--as-line-strong);
   border-radius: 12px;
   padding: 16px;
   overflow-x: auto;
 }
-.codeBlockText { white-space: pre; color: #dff6e9; font-family: var(--as-font-data); font-size: 12px; line-height: 1.7; display: block; padding-right: 72px; }
-.copyBtn { position: absolute; top: 10px; right: 10px; min-height: 30px; padding: 0 12px; border: 1px solid rgba(31,216,122,.25); color: var(--as-green); background: rgba(31,216,122,.08); cursor: pointer; }
-.copied { color: #052012; background: var(--as-green); }
+.codeBlockText { white-space: pre; color: #DCF7EE; font-family: var(--as-font-data); font-size: 12px; line-height: 1.7; display: block; padding-right: 72px; }
+.copyBtn { position: absolute; top: 10px; right: 10px; min-height: 30px; padding: 0 12px; border: 1px solid rgba(16,185,129,.25); color: var(--as-green); background: rgba(16,185,129,.08); cursor: pointer; }
+.copied { color: #001E12; background: var(--as-green); }
 .envBlock { border-radius: 14px; padding: 16px; }
 .envTable { width: 100%; font-size: 12px; }
 .envTable td { border-bottom: 1px solid var(--as-line); padding: 8px; color: var(--as-text-2); }
@@ -1691,7 +1710,7 @@
 :global(html[data-theme='light']) .catTitle,
 :global(html[data-theme='light']) .cardTitle,
 :global(html[data-theme='light']) .sectionTitle,
-:global(html[data-theme='light']) .runFirstStepTitle { color: #0a0e14; }
+:global(html[data-theme='light']) .runFirstStepTitle { color: #001E12; }
 :global(html[data-theme='light']) .heroSub,
 :global(html[data-theme='light']) .catTagline,
 :global(html[data-theme='light']) .cardLine,
@@ -1707,7 +1726,7 @@
 :global(html[data-theme='light']) .modelNote,
 :global(html[data-theme='light']) .guiBlock,
 :global(html[data-theme='light']) .troubleshootList,
-:global(html[data-theme='light']) .agentBox { color: #53635a; }
+:global(html[data-theme='light']) .agentBox { color: #4A5A51; }
 :global(html[data-theme='light']) .jumpLink,
 :global(html[data-theme='light']) .card,
 :global(html[data-theme='light']) .runFirst,
@@ -1720,18 +1739,18 @@
 :global(html[data-theme='light']) .agentBox,
 :global(html[data-theme='light']) .bottomBlock,
 :global(html[data-theme='light']) .detailLogo,
-:global(html[data-theme='light']) .logoWrap { background: rgba(255,255,255,.74); border-color: rgba(19,146,86,.16); box-shadow: 0 18px 55px rgba(10,14,20,.08); }
+:global(html[data-theme='light']) .logoWrap { background: rgba(255,255,255,.74); border-color: rgba(19,146,86,.16); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 :global(html[data-theme='light']) .mutedLogoImg { filter: grayscale(1) brightness(.56) contrast(.9); opacity: .74; }
 :global(html[data-theme='light']) .card:hover { background: #fff; }
-:global(html[data-theme='light']) .search { background: #fff; color: #0a0e14; border-color: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .heroCta { background: var(--as-green-deep); border-color: var(--as-green-deep); color: #f7fff9 !important; }
+:global(html[data-theme='light']) .search { background: #fff; color: #001E12; border-color: rgba(10,14,20,.12); }
+:global(html[data-theme='light']) .heroCta { background: var(--as-ink); border-color: var(--as-ink); color: var(--as-white) !important; }
 :global(html[data-theme='light']) .heroCtaGhost,
 :global(html[data-theme='light']) .runFirstToggle,
 :global(html[data-theme='light']) .linkRow a,
-:global(html[data-theme='light']) .relatedRow a { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
+:global(html[data-theme='light']) .relatedRow a { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
 :global(html[data-theme='light']) .codeBlock,
-:global(html[data-theme='light']) .exampleOutput { background: #0a0e14; border-color: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .codeBlockText { color: #dff6e9; }
+:global(html[data-theme='light']) .exampleOutput { background: #001E12; border-color: rgba(10,14,20,.12); }
+:global(html[data-theme='light']) .codeBlockText { color: #DCF7EE; }
 :global(html[data-theme='light']) .catHeader,
 :global(html[data-theme='light']) .envTable td { border-color: rgba(10,14,20,.08); }
 
@@ -1802,19 +1821,19 @@
 :global(html[data-theme='light']) .agentBox code,
 :global(html[data-theme='light']) .description code {
   color: #0b5c38;
-  background: rgba(19, 146, 86, 0.08);
-  border-color: rgba(19, 146, 86, 0.2);
+  background: rgba(10, 111, 77, 0.08);
+  border-color: rgba(10, 111, 77, 0.2);
   text-shadow: none;
 }
 :global(html[data-theme='light']) .jumpLink {
-  color: #0a0e14 !important;
+  color: #001E12 !important;
   background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(19, 146, 86, 0.22);
-  box-shadow: 0 14px 38px rgba(10, 14, 20, 0.08);
+  border-color: rgba(10, 111, 77, 0.22);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 :global(html[data-theme='light']) .jumpLink:hover {
   color: #0b5c38 !important;
-  border-color: rgba(19, 146, 86, 0.42);
+  border-color: rgba(10, 111, 77, 0.42);
   background: #ffffff;
 }
 :global(html[data-theme='light']) .jumpIcon,
@@ -1823,7 +1842,7 @@
   color: var(--as-green);
 }
 :global(html[data-theme='light']) .jumpLabel {
-  color: #0a0e14;
+  color: #001E12;
   opacity: 1;
 }
 :global(html[data-theme='light']) .jumpCount,
@@ -1831,7 +1850,7 @@
 :global(html[data-theme='light']) .cardSetup,
 :global(html[data-theme='light']) .detailBadge,
 :global(html[data-theme='light']) .modelChip {
-  color: #53635a;
+  color: #4A5A51;
   background: #ffffff;
   border-color: rgba(10, 14, 20, 0.1);
 }
@@ -1845,20 +1864,20 @@
   color: var(--as-green);
 }
 :global(html[data-theme='light']) .search {
-  color: #0a0e14;
+  color: #001E12;
   background: #ffffff;
   border-color: rgba(10, 14, 20, 0.14);
-  box-shadow: 0 12px 32px rgba(10, 14, 20, 0.07);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 :global(html[data-theme='light']) .search::placeholder {
-  color: #53635a;
+  color: #4A5A51;
   opacity: 1;
 }
 :global(html[data-theme='light']) .heroCtaGhost,
 :global(html[data-theme='light']) .runFirstToggle,
 :global(html[data-theme='light']) .linkRow a,
 :global(html[data-theme='light']) .relatedRow a {
-  color: #0a0e14 !important;
+  color: #001E12 !important;
   border-color: rgba(10, 14, 20, 0.16);
   background: #ffffff;
 }
@@ -1867,5 +1886,23 @@
 :global(html[data-theme='light']) .linkRow a:hover,
 :global(html[data-theme='light']) .relatedRow a:hover {
   color: #0b5c38 !important;
-  border-color: rgba(19, 146, 86, 0.42);
+  border-color: rgba(10, 111, 77, 0.42);
 }
+
+
+/* Dark mode — ink hero button flips to emerald */
+:global(html[data-theme='dark']) .heroCta {
+  background: var(--as-primary-5);
+  border-color: var(--as-primary-5);
+  color: #001E12 !important;
+}
+:global(html[data-theme='dark']) .heroCta:hover {
+  background: var(--as-primary-4);
+  border-color: var(--as-primary-4);
+  color: #001E12 !important;
+}
+:global(html[data-theme='dark']) .heroCtaGhost {
+  color: var(--as-text-2);
+  border-color: var(--as-line-strong);
+}
+:global(html[data-theme='dark']) .heroCtaGhost:hover { color: var(--as-text); }

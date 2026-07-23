@@ -2,6 +2,7 @@ import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './openrouter.module.css';
+import {Button} from '../../components/ui';
 
 const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
   {
@@ -119,8 +120,8 @@ export default function VsOpenRouter(): JSX.Element {
             No central account, independent providers, open peer-to-peer routing.
           </p>
           <div className={styles.ctaRow}>
-            <Link to="/docs/install" className={styles.ctaPrimary}>Install AntSeed</Link>
-            <a href="https://antseedstats.com/network" target="_blank" rel="noopener noreferrer" className={styles.ctaSecondary}>Live pricing →</a>
+            <Button to="/docs/install">Install AntSeed</Button>
+            <Button href="https://antseedstats.com/network" variant="ghost" arrow>Live pricing</Button>
           </div>
         </div>
 

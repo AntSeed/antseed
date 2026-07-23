@@ -15,7 +15,7 @@ export default function BrandPage(): JSX.Element {
           width: '100%',
           minHeight: '100vh',
           border: 0,
-          background: '#070b09',
+          background: '#FFFEFB',
         }}
       />
     </Layout>

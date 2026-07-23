@@ -29,19 +29,21 @@
   left: 0;
   right: 0;
   height: 420px;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(31, 216, 122, 0.12), transparent 58%),
-    radial-gradient(circle at 72% 18%, rgba(232, 163, 61, 0.045), transparent 46%);
+  background-image: var(--as-dotgrid);
+  background-size: var(--as-dotgrid-size);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
+  mask-image: linear-gradient(180deg, #000 55%, transparent);
   pointer-events: none;
   z-index: -1;
 }
 .kicker,
 .heroKicker {
   display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--as-green);
-  letter-spacing: 3px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   margin-bottom: 18px;
 }
@@ -56,8 +58,8 @@
   text-wrap: balance;
 }
 .heroTitle em {
-  font-style: italic;
-  font-weight: 480;
+  font-style: normal;
+  font-weight: 500;
   color: var(--as-green);
 }
 .heroSub {
@@ -82,32 +84,31 @@
   justify-content: center;
   min-height: 46px;
   padding: 0 24px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none !important;
   transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 .ctaPrimary {
-  background: var(--as-green);
-  border: 1px solid var(--as-green);
-  color: #052012 !important;
+  background: var(--as-ink);
+  border: 1px solid var(--as-ink);
+  color: var(--as-white) !important;
 }
 .ctaPrimary:hover {
-  background: var(--as-green-bright);
-  border-color: var(--as-green-bright);
-  color: #052012 !important;
+  background: var(--as-primary-85);
+  border-color: var(--as-primary-85);
+  color: var(--as-white) !important;
   transform: translateY(-1px);
-  box-shadow: 0 10px 36px rgba(31, 216, 122, .25);
 }
 .ctaSecondary {
-  background: transparent;
+  background: var(--as-soil-2);
   border: 1px solid var(--as-line-strong);
   color: var(--as-text) !important;
 }
 .ctaSecondary:hover {
-  border-color: rgba(31, 216, 122, .46);
-  color: var(--as-green) !important;
+  border-color: var(--as-ink);
+  color: var(--as-text) !important;
   transform: translateY(-1px);
 }
 
@@ -168,7 +169,7 @@
 .reputationCard {
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, .22);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .pathCard {
   border-radius: var(--as-radius);
@@ -177,15 +178,15 @@
 }
 .pathCard:hover {
   transform: translateY(-2px);
-  border-color: rgba(31, 216, 122, .3);
+  border-color: rgba(16, 185, 129, .3);
   background: var(--as-soil-3);
 }
 .pathIcon {
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background: rgba(31, 216, 122, .08);
-  border: 1px solid rgba(31, 216, 122, .18);
+  background: rgba(16, 185, 129, .08);
+  border: 1px solid rgba(16, 185, 129, .18);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -232,7 +233,7 @@
 .bottomLinks a {
   color: var(--as-green) !important;
   text-decoration: none !important;
-  border-bottom: 1px solid rgba(31, 216, 122, .28);
+  border-bottom: 1px solid rgba(16, 185, 129, .28);
 }
 .pathLink:hover,
 .codeHeader a:hover,
@@ -349,7 +350,7 @@
   font-family: var(--as-font-data);
   min-width: 0;
   max-width: 100%;
-  background: #070b09;
+  background: #02130D;
   border: 1px solid var(--as-line-strong);
 }
 .codeTermBar {
@@ -357,7 +358,7 @@
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
-  background: #0e141c;
+  background: #03251A;
   border-bottom: 1px solid var(--as-line);
 }
 .codeTermDot { width: 10px; height: 10px; border-radius: 50%; display: block; }
@@ -367,7 +368,7 @@
   padding: 17px !important;
   font-size: 12px !important;
   line-height: 1.75 !important;
-  color: #dff6e9 !important;
+  color: #DCF7EE !important;
   background: transparent !important;
   overflow-x: auto;
   white-space: pre;
@@ -501,7 +502,7 @@
 :global(html[data-theme='light']) .payStepContent h4,
 :global(html[data-theme='light']) .econValue,
 :global(html[data-theme='light']) .faqSummary {
-  color: #0a0e14;
+  color: #001E12;
 }
 :global(html[data-theme='light']) .heroSub,
 :global(html[data-theme='light']) .pathsHeader p,
@@ -519,7 +520,7 @@
 :global(html[data-theme='light']) .codeNote,
 :global(html[data-theme='light']) .walletNote,
 :global(html[data-theme='light']) .faqAnswer {
-  color: #53635a;
+  color: #4A5A51;
 }
 :global(html[data-theme='light']) .pathCard,
 :global(html[data-theme='light']) .privacyGrid,
@@ -527,22 +528,22 @@
 :global(html[data-theme='light']) .paymentsEcon,
 :global(html[data-theme='light']) .reputationCard {
   background: rgba(255,255,255,.74);
-  border-color: rgba(19, 146, 86, .16);
-  box-shadow: 0 22px 70px rgba(10, 14, 20, .1);
+  border-color: rgba(10, 111, 77, .16);
+  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 :global(html[data-theme='light']) .pathCard:hover { background: #fff; }
-:global(html[data-theme='light']) .complianceCard { background: #fff1f1; border-color: rgba(199, 58, 58, .18); border-left-color: var(--as-risk); box-shadow: 0 18px 55px rgba(10, 14, 20, .08); }
+:global(html[data-theme='light']) .complianceCard { background: #fff1f1; border-color: rgba(199, 58, 58, .18); border-left-color: var(--as-risk); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 :global(html[data-theme='light']) .complianceBody p { color: #6f3333; }
 :global(html[data-theme='light']) .complianceBody strong { color: #4d1717; }
-:global(html[data-theme='light']) .ctaPrimary { background: var(--as-green-deep); border-color: var(--as-green-deep); color: #f7fff9 !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
+:global(html[data-theme='light']) .ctaPrimary { background: var(--as-ink); border-color: var(--as-ink); color: var(--as-white) !important; }
+:global(html[data-theme='light']) .ctaSecondary { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
 :global(html[data-theme='light']) .privacyRow,
 :global(html[data-theme='light']) .privacyColLabel,
 :global(html[data-theme='light']) .payStep,
 :global(html[data-theme='light']) .econRow,
 :global(html[data-theme='light']) .faqItem { border-color: rgba(10,14,20,.08); }
 :global(html[data-theme='light']) .codeTerm,
-:global(html[data-theme='light']) .walletTerm { background: #0a0e14; border-color: rgba(10,14,20,.12); }
+:global(html[data-theme='light']) .walletTerm { background: #001E12; border-color: rgba(10,14,20,.12); }
 
 @media (max-width: 980px) {
   .paths,
@@ -574,4 +575,17 @@
   .codePre { font-size: 11px !important; }
   .bottomLinks { flex-direction: column; gap: 8px; }
   .bottomLinks span { display: none; }
+}
+
+
+/* Dark mode — ink buttons flip to emerald so they stay visible */
+:global(html[data-theme='dark']) .ctaPrimary {
+  background: var(--as-primary-5);
+  border-color: var(--as-primary-5);
+  color: #001E12 !important;
+}
+:global(html[data-theme='dark']) .ctaPrimary:hover {
+  background: var(--as-primary-4);
+  border-color: var(--as-primary-4);
+  color: #001E12 !important;
 }

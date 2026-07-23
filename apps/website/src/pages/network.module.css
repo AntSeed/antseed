@@ -9,7 +9,7 @@
 }
 
 .back {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
   color: #8b949e;
   text-decoration: none;
@@ -29,7 +29,7 @@
   color: var(--as-green);
   letter-spacing: 3px;
   text-transform: uppercase;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-style: italic;
   margin-bottom: 12px;
   margin-top: 0;
@@ -73,7 +73,7 @@
 }
 
 .statNum {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 32px;
   font-weight: 700;
   color: #0d1117;
@@ -124,7 +124,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   font-size: 14px;
-  font-family: 'Oxanium', sans-serif;
+  font-family: var(--as-font-display);
   background: white;
   color: #0d1117;
   outline: none;
@@ -170,7 +170,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 20px;
   font-size: 12px;
-  font-family: 'Oxanium', sans-serif;
+  font-family: var(--as-font-display);
   font-weight: 500;
   background: white;
   color: #666e7a;
@@ -199,7 +199,7 @@
 /* ── Results count ────────────────────────────────────────────────── */
 
 .resultsCount {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   color: #8b949e;
   letter-spacing: 0.05em;
@@ -228,7 +228,7 @@
 
 .table th {
   padding: 14px 20px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 10px;
   font-weight: 600;
   color: #8b949e;
@@ -326,7 +326,7 @@
 
 .tagBadge {
   font-size: 10px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-weight: 500;
   border-radius: 10px;
   padding: 2px 8px;
@@ -354,7 +354,7 @@
 }
 
 .contextBadge {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
   font-weight: 500;
   color: #666e7a;
@@ -366,7 +366,7 @@
 .tdPrice {
   padding: 16px 20px;
   text-align: right;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 14px;
   font-weight: 600;
 }
@@ -398,7 +398,7 @@
   border-radius: 50%;
   background: #f0faf4;
   color: var(--as-green);
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
   font-weight: 700;
 }
@@ -409,7 +409,7 @@
 }
 
 .statValue {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 13px;
   font-weight: 600;
   color: #0d1117;
@@ -442,7 +442,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   font-size: 13px;
-  font-family: 'Oxanium', sans-serif;
+  font-family: var(--as-font-display);
   font-weight: 500;
   background: white;
   color: #666e7a;
@@ -492,7 +492,7 @@
 }
 
 .filterLabel {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 10px;
   font-weight: 600;
   color: #8b949e;
@@ -501,7 +501,7 @@
 }
 
 .filterValue {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 11px;
   font-weight: 600;
   color: #0d1117;
@@ -567,7 +567,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   font-size: 12px;
-  font-family: 'Oxanium', sans-serif;
+  font-family: var(--as-font-display);
   background: white;
   color: #8b949e;
   cursor: pointer;
@@ -586,7 +586,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 18px;
   font-weight: 700;
   color: var(--as-green);
@@ -613,7 +613,7 @@
   font-size: 10px;
   color: #8b949e;
   margin-top: 2px;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
 }
 
 /* ── Footer ───────────────────────────────────────────────────────── */
@@ -738,7 +738,7 @@
   }
 
   .tdPrice::before {
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--as-font-data);
     font-size: 9px;
     color: #8b949e;
     text-transform: uppercase;
@@ -763,7 +763,7 @@
   }
 
   .tdStat::before {
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--as-font-data);
     font-size: 9px;
     color: #8b949e;
     text-transform: uppercase;
