@@ -484,11 +484,15 @@ export type VprFloatData = {
   selectedModel: { provider: string; serviceId: string } | null;
   /** Recent tool chats, newest first (per-chat routing scope picker). */
   conversations: VprFloatConversation[];
-  /**
-   * Usage line: the selected model's current route channel when one exists
-   * ("1.2M tok · $0.42"), falling back to buyer-wide totals.
-   */
+  /** Usage line: buyer-wide total tokens ("1.2M tok"). */
   usageLabel: string;
+  /** Current available balance ("$12.34") — remaining, not spent. */
+  balanceLabel?: string;
+  /** True when the balance is effectively empty but the selected default
+      model is paid — the pill shows an "Add balance" shortcut. */
+  needsFunds?: boolean;
+  /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
+  identityLabel?: string;
   /**
    * True when traffic moved through the system proxy or the buyer proxy
    * since the previous payload — drives the pulse on the app icon.
@@ -504,6 +508,7 @@ export type VprFloatData = {
 
 export type VprFloatAction =
   | 'open-main'
+  | { type: 'open-deposit' }
   | { type: 'select-model'; provider: string; serviceId: string }
   | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
   | { type: 'open-chat-app'; conversationId: string }

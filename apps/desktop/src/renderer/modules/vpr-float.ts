@@ -1,10 +1,9 @@
 import type { RendererUiState } from '../core/state';
-import { formatCompactTokens } from '../core/format';
+import { formatCompactTokens, formatCredits, shortAddress } from '../core/format';
 import { notifyUiStateChanged } from '../core/store';
 import type {
   BuyerConversationSummary,
   DesktopBridge,
-  DesktopPaymentChannelSummary,
   SystemProxyProfileSummary,
   VprFloatConversation,
   VprFloatData,
@@ -20,6 +19,7 @@ import {
 import { loadFavoriteModels } from './vpr-favorites';
 import {
   catalogEntryKey,
+  isFreeCatalogEntry,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from './vpr-recommended-models';
@@ -97,57 +97,33 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     return { models, favoriteKeys: [...favorites] };
   }
 
-  function formatMicroUsdc(spentMicroUsdc: bigint): string {
-    const dollars = Number(spentMicroUsdc) / 1e6;
-    return dollars > 0 && dollars < 0.01 ? '<$0.01' : `$${dollars.toFixed(2)}`;
-  }
-
-  /** The payment channel currently carrying the selected model's route. */
-  function routeChannel(): DesktopPaymentChannelSummary | null {
-    const selection = uiState.vprRouteSelection;
-    if (!selection.model) return null;
-    const routes = routesForSelectedModel(uiState.discoverRows, selection.model);
-    const peerId = selection.mode === 'pinned-peer' && selection.peerId
-      ? selection.peerId
-      : chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
-    if (!peerId) return null;
-    const candidates = uiState.creditsChannels.filter((channel) => channel.peerId === peerId);
-    if (candidates.length === 0) return null;
-    const active = candidates.filter((channel) => channel.status === 'active');
-    const pool = active.length > 0 ? active : candidates;
-    return pool.reduce((latest, channel) => (channel.reservedAt > latest.reservedAt ? channel : latest));
-  }
-
-  /**
-   * Usage line: the selected model's current route channel when one exists,
-   * otherwise buyer-wide totals.
-   */
+  /** Usage line: buyer-wide total tokens ("1.2M tok"). */
   function usageLabel(): string {
-    const channel = routeChannel();
-    if (channel) {
-      const parts = [`${formatCompactTokens(channel.inputTokens, channel.outputTokens)} tok`];
-      try {
-        const spent = BigInt(channel.cumulativeSigned);
-        if (spent > 0n) parts.push(formatMicroUsdc(spent));
-      } catch { /* malformed row — token count only */ }
-      return parts.join(' · ');
-    }
-
     const usage = uiState.creditsBuyerUsage;
-    const parts: string[] = [];
-    if (usage) {
-      parts.push(`${formatCompactTokens(usage.totalInputTokens, usage.totalOutputTokens)} tok`);
-    }
-    let spentMicroUsdc = 0n;
-    for (const row of uiState.creditsChannels) {
-      try {
-        spentMicroUsdc += BigInt(row.cumulativeSigned);
-      } catch { /* malformed row — skip */ }
-    }
-    if (spentMicroUsdc > 0n) {
-      parts.push(formatMicroUsdc(spentMicroUsdc));
-    }
-    return parts.join(' · ');
+    return `${formatCompactTokens(usage?.totalInputTokens, usage?.totalOutputTokens)} tok`;
+  }
+
+  /** Current available balance. */
+  function balanceLabel(): string {
+    return `$${formatCredits(uiState.creditsAvailableUsdc)}`;
+  }
+
+  /** The buyer identity (signer address), shortened. */
+  function identityLabel(): string | null {
+    return uiState.creditsEvmAddress ? shortAddress(uiState.creditsEvmAddress) : null;
+  }
+
+  /** True when the balance is effectively empty but the selected default
+      model is paid — the pill then offers an "Add balance" shortcut. */
+  function needsFunds(): boolean {
+    const balance = Number(uiState.creditsAvailableUsdc);
+    if (!(balance < 0.01)) return false;
+    const selection = uiState.vprRouteSelection.model;
+    if (!selection) return false;
+    const entry = uiState.vprModelCatalog.find(
+      (item) => item.provider === selection.provider && item.serviceId === selection.serviceId,
+    );
+    return entry ? !isFreeCatalogEntry(entry) : false;
   }
 
   /** Log markers for a model request actually being transferred.
@@ -284,6 +260,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
     const selection = uiState.vprRouteSelection.model;
     const { models, favoriteKeys } = floatModels();
+    const identity = identityLabel();
 
     return {
       apps: connected.map((profile) => ({
@@ -297,6 +274,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       selectedModel: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
       conversations: await loadConversations(),
       usageLabel: usageLabel(),
+      balanceLabel: balanceLabel(),
+      needsFunds: needsFunds(),
+      ...(identity ? { identityLabel: identity } : {}),
       trafficActive: logTrafficActive() || buyerDeltaActive,
     };
   }

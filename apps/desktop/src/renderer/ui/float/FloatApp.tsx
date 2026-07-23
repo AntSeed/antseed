@@ -217,13 +217,19 @@ export function FloatApp() {
 
   const modelLabel = selectedModel?.label ?? 'Select model';
 
-  // The badge mirrors the selected default model's brand mark — the pill is
-  // a minimized preview of the VPR page, so it leads with the same identity.
-  const badgeIcon = selectedModel ? (
-    <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={26} />
-  ) : (
-    <AntStationMark size={26} />
-  );
+  // The model that served the most recent chat (its pin, set by the buyer on
+  // the chat's first request) — shown on the pill face instead of the
+  // default selection.
+  const recentModelLabel = useMemo(() => {
+    // Newest chat with a resolved pin — brand-new chats have none yet.
+    const recent = conversations.find((chat) => chat.pinnedServiceId)?.pinnedServiceId;
+    if (!recent) return null;
+    return models.find((model) => model.serviceId === recent)?.label ?? recent;
+  }, [conversations, models]);
+
+  // The pill leads with the AntSeed identity — the badge is always the
+  // AntSeed mark; model branding stays inside the dropdown rows.
+  const badgeIcon = <AntStationMark size={26} />;
 
   if (compact) {
     return (
@@ -277,13 +283,46 @@ export function FloatApp() {
         {...pillDragHandlers}
         onClick={() => setMenuOpen(!menuOpen)}
         aria-expanded={menuOpen}
-        aria-label="Model and conversations"
-        title={modelLabel}
+        aria-label="Usage and conversations"
+        title="AntSeed"
       >
         <span className={styles.appBadge}>{badgeIcon}</span>
         <span className={styles.body}>
-          <span className={styles.triggerLabel}>{modelLabel}</span>
-          {data?.usageLabel ? <span className={styles.usage}>{data.usageLabel}</span> : null}
+          <span className={styles.triggerLabel}>
+            {data?.balanceLabel ?? '$0.00'}
+            {/* Empty balance + paid default model: jump straight to Add
+                balance. A span (not a button) — it lives inside the trigger
+                button, so a real nested button would be invalid markup. */}
+            {data?.needsFunds ? (
+              <span
+                role="button"
+                tabIndex={0}
+                className={styles.addBalance}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  bridge?.vprFloatAction?.({ type: 'open-deposit' });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.stopPropagation();
+                  event.preventDefault();
+                  bridge?.vprFloatAction?.({ type: 'open-deposit' });
+                }}
+              >
+                Add balance
+              </span>
+            ) : null}
+          </span>
+          <span className={styles.usage}>
+            {/* Status: orange pulse while ready, green while traffic moves —
+                then naming the model currently being routed (the newest
+                chat's resolved pin). */}
+            <span
+              className={`${styles.statusDot}${data?.trafficActive ? '' : ` ${styles.statusDotReady}`}`}
+              aria-hidden="true"
+            />
+            {data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
+          </span>
         </span>
       </button>
 
@@ -295,21 +334,6 @@ export function FloatApp() {
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
-              <button
-                type="button"
-                className={styles.menuRow}
-                onClick={() => drillIn('default')}
-              >
-                {selectedModel ? (
-                  <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={16} />
-                ) : null}
-                <span className={styles.menuRowText}>
-                  <span className={styles.menuRowTitle}>Default model</span>
-                  <span className={styles.menuRowMeta}>applies to new chats only</span>
-                </span>
-                <span className={styles.menuRowValue}>{modelLabel}</span>
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
-              </button>
               {/* First-run guidance only — once any chat exists the list
                   speaks for itself. */}
               {conversations.length === 0 && idleApps.map((app) => (
@@ -362,7 +386,7 @@ export function FloatApp() {
                   right-side shortcut launching the chat's app. */}
               <div className={styles.menuBack}>
                 <VprBackTitle
-                  title={targetChat ? targetChat.title : 'Default model'}
+                  title={targetChat ? targetChat.title : 'New session model'}
                   onBack={drillBack}
                 />
                 {targetChat ? (
@@ -398,6 +422,19 @@ export function FloatApp() {
             </div>
           ) : null}
           </OverlayScrollArea>
+          {/* Setting, not a chat: a quiet one-liner naming the model the next
+              app session starts on — pinned above the footer, list level only. */}
+          {chatTarget === null ? (
+            <button
+              type="button"
+              className={`${styles.menuRow} ${styles.menuRowDefault}`}
+              onClick={() => drillIn('default')}
+            >
+              <span className={styles.menuRowDefaultTitle}>New session model</span>
+              <span className={styles.menuRowValue}>{modelLabel}</span>
+              <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
+            </button>
+          ) : null}
           {/* Pinned footer: opens the main AntSeed window (VPR). */}
           <button
             type="button"
@@ -405,7 +442,10 @@ export function FloatApp() {
             onClick={() => bridge?.vprFloatAction?.('open-main')}
             title="Open VPR"
           >
-            <span>Open VPR</span>
+            <span className={styles.menuFooterLabel}>
+              <AntStationMark size={14} />
+              <span>Open VPR</span>
+            </span>
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={13} strokeWidth={2} />
           </button>
         </div>

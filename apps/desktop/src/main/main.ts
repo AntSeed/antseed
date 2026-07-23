@@ -3714,6 +3714,21 @@ ipcMain.on('vpr-float:action', (_event, action: unknown) => {
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
+      // Always land on the home screen, wherever the window was left.
+      win.webContents.send('desktop:navigate-view', 'home');
+    }
+    return;
+  }
+  if (
+    typeof action === 'object' && action !== null
+    && (action as { type?: unknown }).type === 'open-deposit'
+  ) {
+    const win = getMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      win.webContents.send('desktop:navigate-view', 'deposit');
     }
     return;
   }

@@ -205,7 +205,10 @@
   bottom: 8px;
   overflow: hidden;
   border-radius: 16px;
-  background: var(--bg-card);
+  /* Transparent shell: the scroll area and pinned rows paint their own
+     backgrounds. A shell background here bleeds through as a light fringe
+     where the inverted footer's corners meet the panel's rounded clip. */
+  background: transparent;
   box-shadow: var(--shadow-float);
   -webkit-app-region: no-drag;
   display: flex;
@@ -215,6 +218,7 @@
 .menuScroll {
   flex: 1 1 auto;
   min-height: 0;
+  background: var(--bg-card);
 }
 
 .menuScrollContent {
@@ -241,6 +245,32 @@
 
 .menuRow:hover {
   background: var(--bg-surface);
+}
+
+/* The new-session-model row is a setting, not another chat: a quiet
+   one-liner above the chat rows. */
+/* Pinned above the footer: full-bleed like it, text aligned with its 12px
+   inset. */
+.menuRowDefault {
+  min-height: 26px;
+  padding: 3px 12px;
+  border: none;
+  border-top: 1px solid var(--border-light);
+  border-radius: 0;
+  /* Sits outside the scroll area on the transparent panel shell — carries
+     the card background itself. */
+  background: var(--bg-card);
+}
+
+.menuRowDefaultTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .menuRowActive {
@@ -284,7 +314,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .runningDot {
+  .runningDot,
+  .statusDot {
     animation: none;
   }
 }
@@ -469,6 +500,9 @@
 }
 
 .usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -476,6 +510,44 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 16px;
+}
+
+/* Pill-face status dot: steady orange while ready, pulsing green while
+   traffic moves. */
+.statusDot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-green, #4ade80);
+  animation: running-pulse 1.4s ease-in-out infinite;
+}
+
+.statusDotReady {
+  background: var(--accent-yellow, #fbbf24);
+  animation: none;
+}
+
+/* Empty balance + paid model: warning-toned label jumping to the deposit
+   screen. */
+.addBalance {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid rgba(var(--warning-rgb), 0.45);
+  border-radius: 999px;
+  background: rgba(var(--warning-rgb), 0.16);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  vertical-align: 2px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.addBalance:hover {
+  border-color: rgba(var(--warning-rgb), 0.7);
+  background: rgba(var(--warning-rgb), 0.28);
 }
 
 .close,
@@ -517,19 +589,37 @@
   gap: 8px;
   min-height: 34px;
   padding: 8px 12px;
+  /* Bottom corners match the panel's 16px radius exactly — relying on the
+     panel's overflow clipping instead leaves a white antialiasing fringe of
+     the panel background at the corners. */
   border: none;
-  border-top: 1px solid var(--border-light);
-  /* Square: the global button radius would round the hover fill's top
-     corners; the panel's overflow clipping shapes the bottom ones. */
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-muted);
+  border-radius: 0 0 16px 16px;
+  /* Inverted footer: the dark theme's card color in light mode, flipped to
+     near-white with dark text in dark mode. */
+  background: #2a2a2c;
+  color: rgba(251, 249, 244, 0.88);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
 
 .menuFooter:hover {
-  background: var(--bg-surface);
-  color: var(--text-primary);
+  background: #363638;
+  color: #fbf9f4;
+}
+
+:global(body.dark-theme) .menuFooter {
+  background: #e6edf3;
+  color: rgba(17, 23, 20, 0.88);
+}
+
+:global(body.dark-theme) .menuFooter:hover {
+  background: #ffffff;
+  color: #111714;
+}
+
+.menuFooterLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
