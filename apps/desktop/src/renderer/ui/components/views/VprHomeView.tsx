@@ -28,7 +28,7 @@ import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
-import { VprRecentChatsCard } from '../vpr/VprRecentChats';
+import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
 import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
 
@@ -60,8 +60,10 @@ export function VprHomeView({ onSelectView }: Props) {
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
   // null = the buyer hasn't answered the first conversations query yet (it
-  // boots alongside the app) — the Recent chats card shows a skeleton then.
+  // boots alongside the app) — the Recent chats card shows a skeleton then,
+  // but only when a previous session actually saw chats (expectChats).
   const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
+  const [expectChats] = useState(hasSeenChats);
   const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
@@ -109,7 +111,10 @@ export function VprHomeView({ onSelectView }: Props) {
         setProfiles(nextProfiles);
         setProxyState(nextState);
         // null = buyer unreachable; keep whatever list we last had.
-        if (nextConversations) setConversations(nextConversations);
+        if (nextConversations) {
+          setConversations(nextConversations);
+          rememberSeenChats(nextConversations.length);
+        }
       } catch {
         if (!cancelled) setProxyState(null);
       }
@@ -237,7 +242,7 @@ export function VprHomeView({ onSelectView }: Props) {
       conversations={conversations ?? []}
       catalog={snap.catalog}
       defaultModelLabel={defaultModelLabel}
-      loading={conversations === null}
+      loading={conversations === null && expectChats}
       onOpen={() => onSelectView?.('chats')}
     />
   );
@@ -427,7 +432,7 @@ export function VprHomeView({ onSelectView }: Props) {
           {/* The connect pitch is for first-timers — once chats exist the
               user knows the flow, so only the "More apps" link (below the
               chats) remains. */}
-          {(conversations?.length ?? 0) === 0 && (
+          {(conversations === null ? !expectChats : conversations.length === 0) && (
           <div className={styles.appsGroup}>
             <p className={styles.appsLabel}>Use it on your favorite app</p>
 

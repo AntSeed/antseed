@@ -19,7 +19,7 @@ import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { VprPage } from '../vpr/VprKit';
 import { VprModelRowList } from '../vpr/VprModelRows';
-import { chatModelLabel, VprChatRow, VprChatRowsSkeleton } from '../vpr/VprRecentChats';
+import { chatModelLabel, hasSeenChats, rememberSeenChats, VprChatRow, VprChatRowsSkeleton } from '../vpr/VprRecentChats';
 import styles from './VprChatsView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -41,6 +41,9 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   }), shallowEqual);
   // null = the buyer hasn't answered the first conversations query yet.
   const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
+  // Skeleton only when a previous session actually saw chats — first-run
+  // users go straight to the empty state instead of a placeholder flash.
+  const [expectChats] = useState(hasSeenChats);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -61,7 +64,10 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     try {
       // null = buyer unreachable; keep whatever list we last had.
       const next = await window.antseedDesktop?.buyerConversationsList?.();
-      if (next) setConversations(next);
+      if (next) {
+        setConversations(next);
+        rememberSeenChats(next.length);
+      }
     } catch { /* buyer offline — keep the last list */ }
   }, []);
 
@@ -191,15 +197,15 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                 Delete chat
               </button>
             </>
-          ) : conversations === null ? (
+          ) : conversations === null && expectChats ? (
             <div className={styles.listCard}>
               <VprChatRowsSkeleton rows={3} />
             </div>
-          ) : conversations.length === 0 ? (
+          ) : (conversations?.length ?? 0) === 0 ? (
             <div className={styles.empty}>No tool chats yet — connect an app and send a prompt</div>
           ) : (
             <div className={styles.listCard}>
-              {conversations.map((chat) => (
+              {(conversations ?? []).map((chat) => (
                 <VprChatRow
                   key={chat.id}
                   chat={chat}

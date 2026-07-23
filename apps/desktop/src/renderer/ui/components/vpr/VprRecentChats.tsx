@@ -58,6 +58,26 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
   );
 }
 
+const HAS_CHATS_KEY = 'antseed.desktop.vpr.hasChats';
+
+/** Whether a previous fetch saw at least one tool chat. Gates the loading
+    skeletons: first-run users (no chats yet) would otherwise get a flash of
+    placeholder rows that resolves to nothing. */
+export function hasSeenChats(): boolean {
+  try {
+    return localStorage.getItem(HAS_CHATS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function rememberSeenChats(count: number): void {
+  try {
+    if (count > 0) localStorage.setItem(HAS_CHATS_KEY, '1');
+    else localStorage.removeItem(HAS_CHATS_KEY);
+  } catch { /* localStorage unavailable */ }
+}
+
 /** Placeholder rows while the buyer hasn't answered the first conversations
     query yet (it boots alongside the app) — same silhouette as VprChatRow. */
 export function VprChatRowsSkeleton({ rows = 2 }: { rows?: number }): JSX.Element {
