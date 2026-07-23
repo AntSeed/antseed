@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed VPR",
-  "version": "0.1.115-alpha-0.1",
+  "version": "0.1.115-alpha-0.2",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
