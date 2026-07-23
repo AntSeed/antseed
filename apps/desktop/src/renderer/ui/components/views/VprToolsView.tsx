@@ -272,9 +272,13 @@ export function VprToolsView() {
         setMessage(result.error ?? 'CA install failed');
         return;
       }
-      if (result.warning) setMessage(result.warning);
-      await refreshCaTrust();
+      const trust = await refreshCaTrust();
       await testGui();
+      // The CLI's login-keychain fallback reports "system-wide trust was
+      // skipped" even when the cert ends up trusted for this user — which is
+      // all intercepted GUI apps need. Only surface the warning when the
+      // keychain still doesn't verify the cert as trusted.
+      if (result.warning && trust !== 'trusted') setMessage(result.warning);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
