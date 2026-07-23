@@ -382,6 +382,86 @@
   padding-top: 4px;
 }
 
+/* ---------- Add-app wizard (Add → Trust → Connect) ---------- */
+
+/* Wizard footers right-align: secondary action sits left of the primary. */
+.wizardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.wizardSteps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.wizardStep {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* Connector dash between steps. */
+.wizardStep + .wizardStep::before {
+  content: '';
+  width: 14px;
+  height: 1px;
+  margin-right: 5px;
+  background: var(--border-strong);
+}
+
+.wizardStepNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.wizardStepActive {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.wizardStepActive .wizardStepNum {
+  border-color: var(--accent-green);
+  background: var(--accent-green);
+  color: #ffffff;
+}
+
+.wizardStepDone {
+  color: var(--text-secondary);
+}
+
+.wizardStepDone .wizardStepNum {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
+/* Non-interactive summary of the newly added app on the connect step. */
+.wizardApp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
 /* ---------- Modal pane slide (main settings <-> application list) ----------
    Same motion language as the app's screen changes: forward slides in from
    the right, back drifts in from the left. Only the entering pane is

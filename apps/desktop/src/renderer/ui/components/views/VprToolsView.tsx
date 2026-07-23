@@ -60,6 +60,11 @@ export function VprToolsView() {
   const [addApp, setAddApp] = useState<InstalledAppEntry | null>(null);
   const [addPane, setAddPane] = useState<ModalPane>({ pane: 'main', dir: 'none' });
   const [addSearch, setAddSearch] = useState('');
+  // Add-app wizard: 1 = URL + application, 2 = trust the CA, 3 = connect.
+  // Step 2 is skipped when the certificate is already trusted.
+  const [addStep, setAddStep] = useState<1 | 2 | 3>(1);
+  const [addedName, setAddedName] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const [caInfo, setCaInfo] = useState<{ path: string; exists: boolean } | null>(null);
   const [caTrust, setCaTrust] = useState<'trusted' | 'stale' | 'absent' | 'unknown'>('unknown');
   const [caCopied, setCaCopied] = useState(false);
@@ -202,24 +207,6 @@ export function VprToolsView() {
     }
   }, []);
 
-  const connectProfile = useCallback((profileName: string) => {
-    const names = Array.from(new Set([...activeProfileNames, profileName]));
-    void startProfiles(names).then((ok) => {
-      // Surface the pill right away, dropdown open, so the "start a new
-      // session" guidance is in view while the user switches to the tool.
-      if (ok) void actions.openVprFloat?.(profileName, { openMenu: true });
-    });
-  }, [actions, activeProfileNames, startProfiles]);
-
-  const disconnectProfile = useCallback((profileName: string) => {
-    const remaining = activeProfileNames.filter((name) => name !== profileName);
-    if (remaining.length === 0) {
-      void disconnect();
-      return;
-    }
-    void startProfiles(remaining);
-  }, [activeProfileNames, disconnect, startProfiles]);
-
   const openUrl = useCallback(async (url: string) => {
     const result = await window.antseedDesktop?.openExternalUrl?.(url);
     if (result && !result.ok) setMessage(result.error ?? 'Could not open tool');
@@ -229,6 +216,35 @@ export function VprToolsView() {
     const result = await window.antseedDesktop?.openTool?.(toolName);
     if (result && !result.ok) setMessage(result.error ?? 'Could not open tool');
   }, []);
+
+  const connectProfile = useCallback((profileName: string) => {
+    const names = Array.from(new Set([...activeProfileNames, profileName]));
+    void startProfiles(names).then((ok) => {
+      if (!ok) return;
+      // Surface the pill right away, dropdown open, so the "start a new
+      // session" guidance is in view while the user switches to the tool.
+      void actions.openVprFloat?.(profileName, { openMenu: true });
+      // Bring the app itself forward too — same launch rules as the row's
+      // open arrow: a user-picked application wins over the packaged
+      // open-url action.
+      const profile = profiles.find((entry) => entry.name === profileName);
+      if (!profile) return;
+      if (profile.appAction === 'open-url' && profile.openUrl && !profile.launchAppName) {
+        void openUrl(profile.openUrl);
+      } else if (profile.launchAppName || profile.appAction === 'open-tool') {
+        void openTool(profile.toolName ?? profile.name);
+      }
+    });
+  }, [actions, activeProfileNames, openTool, openUrl, profiles, startProfiles]);
+
+  const disconnectProfile = useCallback((profileName: string) => {
+    const remaining = activeProfileNames.filter((name) => name !== profileName);
+    if (remaining.length === 0) {
+      void disconnect();
+      return;
+    }
+    void startProfiles(remaining);
+  }, [activeProfileNames, disconnect, startProfiles]);
 
   const restartApp = useCallback(async (profileName: string, label: string) => {
     const bridge = window.antseedDesktop;
@@ -347,37 +363,45 @@ export function VprToolsView() {
     }
   }, [identityDraft, settingsFor]);
 
+  const advanceAddStep = useCallback((step: 2 | 3) => {
+    setAddStep(step);
+    setAddPane({ pane: 'main', dir: 'forward' });
+  }, []);
+
   const addCustomApp = useCallback(async () => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyAddCustomApp) return;
     setAddBusy(true);
-    setMessage(null);
+    setAddError(null);
     try {
       const result = await bridge.systemProxyAddCustomApp({
         apiUrl: addUrl,
         app: addApp ? { name: addApp.name, path: addApp.path } : null,
       });
       if (!result.ok) {
-        setMessage(result.error ?? 'Unable to add custom app');
+        setAddError(result.error ?? 'Unable to add custom app');
         return;
       }
-      setAddOpen(false);
-      setAddUrl('');
-      setAddApp(null);
+      setAddedName(result.name ?? null);
       await refresh();
-      // Intercepting a custom app's HTTPS needs the local CA trusted. Prompt
-      // to trust it now (unless already trusted) so the first request doesn't
-      // fail with an SSL/CERT error.
+      // Intercepting a custom app's HTTPS needs the local CA trusted, so the
+      // trust step comes next — skipped when the CA is already trusted.
       const trust = await refreshCaTrust();
-      if (trust === 'stale' || trust === 'absent') {
-        setMessage('One more step: trust the AntSeed certificate below so this app can connect over HTTPS.');
-      }
+      advanceAddStep(trust === 'trusted' ? 3 : 2);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
+      setAddError(err instanceof Error ? err.message : String(err));
     } finally {
       setAddBusy(false);
     }
-  }, [addApp, addUrl, refresh, refreshCaTrust]);
+  }, [addApp, addUrl, advanceAddStep, refresh, refreshCaTrust]);
+
+  // Wizard variant of Trust: advance to the connect step once the keychain
+  // confirms the CA is trusted (trustCa surfaces its own errors via message).
+  const trustCaFromWizard = useCallback(async () => {
+    await trustCa();
+    const trust = await refreshCaTrust();
+    if (trust === 'trusted') advanceAddStep(3);
+  }, [advanceAddStep, refreshCaTrust, trustCa]);
 
   const removeCustomApp = useCallback(async (profileName: string, connected: boolean) => {
     const bridge = window.antseedDesktop;
@@ -560,6 +584,9 @@ export function VprToolsView() {
             setAddApp(null);
             setAddPane({ pane: 'main', dir: 'none' });
             setAddSearch('');
+            setAddStep(1);
+            setAddedName(null);
+            setAddError(null);
             setMessage(null);
             ensureInstalledApps();
           }}
@@ -860,8 +887,9 @@ export function VprToolsView() {
         })() : null}
       </Modal>
 
-      {/* Add custom app: the API URL to intercept plus an optional installed
-          application whose name and icon identify the new entry. */}
+      {/* Add custom app: a 3-step wizard — the API URL to intercept plus an
+          optional installed application, then trusting the local CA (skipped
+          when already trusted), then connecting the new app. */}
       <Modal
         isOpen={addOpen}
         onClose={() => { if (!addBusy) setAddOpen(false); }}
@@ -879,11 +907,30 @@ export function VprToolsView() {
             Choose application
           </span>
         ) : 'Add custom app'}
-        subtitle={addPane.pane === 'apps' ? undefined : 'Route another app through VPR'}
+        subtitle={addPane.pane === 'apps' ? undefined
+          : addStep === 1 ? 'Route another app through VPR'
+          : addStep === 2 ? 'Trust the HTTPS certificate'
+          : 'Connect the app'}
         className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
-        <div key={addPane.pane} className={`${styles.pane}${addPane.dir === 'forward' ? ` ${styles.paneForward}` : addPane.dir === 'back' ? ` ${styles.paneBack}` : ''}`}>
+        {addPane.pane !== 'apps' ? (
+          <div className={styles.wizardSteps} aria-hidden="true">
+            {(['Add', 'Trust', 'Connect'] as const).map((label, index) => {
+              const step = index + 1;
+              const state = addStep === step ? styles.wizardStepActive : addStep > step ? styles.wizardStepDone : '';
+              return (
+                <span key={label} className={`${styles.wizardStep}${state ? ` ${state}` : ''}`}>
+                  <span className={styles.wizardStepNum}>
+                    {addStep > step ? <HugeiconsIcon icon={Tick02Icon} size={11} strokeWidth={2.4} /> : step}
+                  </span>
+                  {label}
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
+        <div key={`${addPane.pane}-${addStep}`} className={`${styles.pane}${addPane.dir === 'forward' ? ` ${styles.paneForward}` : addPane.dir === 'back' ? ` ${styles.paneBack}` : ''}`}>
           {addPane.pane === 'apps' ? (
             <AppPickerPane
               apps={installedApps}
@@ -898,7 +945,7 @@ export function VprToolsView() {
               noneLabel="No application"
               noneMeta="Use the API host's name and icon"
             />
-          ) : (
+          ) : addStep === 1 ? (
             <form
               className={styles.settingsBody}
               onSubmit={(event) => {
@@ -949,10 +996,9 @@ export function VprToolsView() {
                 </button>
               </section>
 
-              <div className={styles.settingFooter}>
-                <button type="submit" className={styles.settingPrimary} disabled={addBusy || addUrl.trim().length === 0}>
-                  {addBusy ? 'Adding...' : 'Add app'}
-                </button>
+              {addError ? <p className={styles.note} role="alert">{addError}</p> : null}
+
+              <div className={styles.wizardFooter}>
                 <button
                   type="button"
                   className={styles.settingQuiet}
@@ -961,9 +1007,94 @@ export function VprToolsView() {
                 >
                   Cancel
                 </button>
+                <button type="submit" className={styles.settingPrimary} disabled={addBusy || addUrl.trim().length === 0}>
+                  {addBusy ? 'Adding...' : 'Continue'}
+                </button>
               </div>
             </form>
-          )}
+          ) : addStep === 2 ? (
+            <>
+              <section className={styles.settingSection}>
+                <div className={styles.settingHead}>
+                  <span className={styles.settingTitle}>HTTPS certificate</span>
+                  <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
+                </div>
+                <p className={styles.settingHint}>
+                  {caTrust === 'stale'
+                    ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise the app fails with an SSL certificate error.'
+                    : 'Custom apps connect over HTTPS intercepted on this device, which needs the certificate generated locally by AntSeed to be trusted. It never leaves your machine.'}
+                </p>
+                {caInfo?.path ? (
+                  <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+                    <code>{caInfo.path}</code>
+                    <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+                    <span>{caCopied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                ) : null}
+              </section>
+
+              {message ? <p className={styles.note} role="status">{message}</p> : null}
+
+              <div className={styles.wizardFooter}>
+                <button
+                  type="button"
+                  className={styles.settingQuiet}
+                  onClick={() => advanceAddStep(3)}
+                  disabled={trustBusy}
+                >
+                  Skip for now
+                </button>
+                <button type="button" className={styles.settingPrimary} onClick={() => { void trustCaFromWizard(); }} disabled={trustBusy}>
+                  {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                </button>
+              </div>
+            </>
+          ) : (() => {
+            const addedProfile = addedName ? profiles.find((entry) => entry.name === addedName) ?? null : null;
+            const addedLabel = addedProfile?.displayName ?? addApp?.name ?? 'the app';
+            return (
+              <>
+                <section className={styles.settingSection}>
+                  <div className={styles.settingHead}>
+                    <span className={styles.settingTitle}>Ready to connect</span>
+                  </div>
+                  <p className={styles.settingHint}>
+                    Connecting routes {addedLabel}&apos;s AI requests through VPR — served by
+                    the AntSeed network and paid from your balance. The app opens after
+                    connecting; start a new session there so it picks up the routing.
+                  </p>
+                  {addedProfile ? (
+                    <div className={styles.wizardApp}>
+                      {addedProfile.iconDataUri
+                        ? <img src={addedProfile.iconDataUri} alt="" className={styles.pickerIcon} />
+                        : <BrandIcon name={addedProfile.name} hints={[addedProfile.displayName]} size={20} />}
+                      <span className={styles.settingValueName}>{addedProfile.displayName}</span>
+                    </div>
+                  ) : null}
+                </section>
+
+                {addError ? <p className={styles.note} role="alert">{addError}</p> : null}
+
+                <div className={styles.wizardFooter}>
+                  <button type="button" className={styles.settingQuiet} onClick={() => setAddOpen(false)}>
+                    Later
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.settingPrimary}
+                    disabled={busy !== null || !defaultPeerId || !addedName}
+                    onClick={() => {
+                      if (!addedName) return;
+                      setAddOpen(false);
+                      connectProfile(addedName);
+                    }}
+                  >
+                    Connect
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </Modal>
     </section>
