@@ -14,6 +14,7 @@ import {
   conversationPinnedServiceId,
   conversationTitle,
   isConversationActive,
+  shortSessionId,
 } from './conversations';
 import { loadFavoriteModels } from './vpr-favorites';
 import {
@@ -241,6 +242,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       id: record.id,
       tool: record.tool,
       title: conversationTitle(record),
+      sessionShort: shortSessionId(record.sessionKey),
       pinnedServiceId: conversationPinnedServiceId(record),
       lastActiveAt: record.lastActiveAt,
       active: isConversationActive(record.lastActiveAt),
@@ -280,7 +282,11 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     const { models, favoriteKeys } = floatModels();
 
     return {
-      apps: connected.map((profile) => ({ name: profile.name, displayName: profile.displayName })),
+      apps: connected.map((profile) => ({
+        name: profile.name,
+        displayName: profile.displayName,
+        ...(profile.toolSlugs ? { toolSlugs: profile.toolSlugs } : {}),
+      })),
       selectedApp,
       models,
       favoriteKeys,
@@ -348,14 +354,6 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       const pin = resolvePinRoute(provider, serviceId);
       if (!pin) return;
       void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin })
-        .then(() => buildData())
-        .then((data) => bridge?.vprFloatUpdate?.(data));
-      return;
-    }
-    if (type === 'clear-chat-pin') {
-      const { conversationId } = action as { conversationId?: unknown };
-      if (typeof conversationId !== 'string') return;
-      void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: '' })
         .then(() => buildData())
         .then((data) => bridge?.vprFloatUpdate?.(data));
     }

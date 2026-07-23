@@ -1,5 +1,6 @@
 .model-dropdown {
   position: relative;
+  min-width: 0;
 }
 
 .model-dropdown-trigger {
@@ -9,6 +10,8 @@
   /* Fixed height: the trigger is the tallest header child, and the chat
      header pins its min-height to it (see ChatView .page-header). */
   height: 36px;
+  max-width: 100%;
+  min-width: 0;
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -33,6 +36,11 @@
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
+  /* Thin chat header: a long model name must ellipsize instead of pushing
+     into the header's right-side controls. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .model-dropdown-menu {

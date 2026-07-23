@@ -331,6 +331,15 @@ const api = {
   openTool(toolName: string): Promise<{ ok: boolean; error?: string; fallback?: string }> {
     return ipcRenderer.invoke('desktop:open-tool', toolName) as Promise<{ ok: boolean; error?: string; fallback?: string }>;
   },
+  openToolSession(tool: string, sessionKey: string, target?: 'terminal' | 'app'): Promise<{ ok: boolean; command?: string; error?: string }> {
+    return ipcRenderer.invoke('desktop:open-tool-session', tool, sessionKey, target ?? 'terminal') as Promise<{ ok: boolean; command?: string; error?: string }>;
+  },
+  listInstalledApps(): Promise<{ ok: boolean; apps: Array<{ name: string; path: string; iconDataUri?: string }>; error?: string }> {
+    return ipcRenderer.invoke('desktop:list-installed-apps') as Promise<{ ok: boolean; apps: Array<{ name: string; path: string; iconDataUri?: string }>; error?: string }>;
+  },
+  systemProxySetAppLaunch(opts: { name: string; app: { name: string; path: string } | null }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:set-app-launch', opts) as Promise<{ ok: boolean; error?: string }>;
+  },
   applyWindowView(viewName: string): Promise<{ ok: true; skipped?: string }> {
     return ipcRenderer.invoke('window:apply-view', viewName) as Promise<{ ok: true; skipped?: string }>;
   },
@@ -504,8 +513,11 @@ const api = {
   systemProxyListProfiles() {
     return ipcRenderer.invoke('system-proxy:list-profiles');
   },
-  systemProxyAddCustomApp(opts: { apiUrl: string }): Promise<{ ok: boolean; name?: string; error?: string }> {
+  systemProxyAddCustomApp(opts: { apiUrl: string; app?: { name: string; path: string } | null }): Promise<{ ok: boolean; name?: string; error?: string }> {
     return ipcRenderer.invoke('system-proxy:add-custom-app', opts) as Promise<{ ok: boolean; name?: string; error?: string }>;
+  },
+  systemProxySetAppIdentity(opts: { name: string; toolSlugs: string[] | null }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:set-app-identity', opts) as Promise<{ ok: boolean; error?: string }>;
   },
   systemProxyRemoveCustomApp(name: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:remove-custom-app', { name }) as Promise<{ ok: boolean; error?: string }>;
@@ -527,6 +539,9 @@ const api = {
   },
   systemProxyRevealCa(): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:reveal-ca') as Promise<{ ok: boolean; error?: string }>;
+  },
+  systemProxyCaTrustState(): Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:ca-trust-state') as Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }>;
   },
   systemProxyTestGui(opts?: { port?: number }) {
     return ipcRenderer.invoke('system-proxy:test-gui', opts);

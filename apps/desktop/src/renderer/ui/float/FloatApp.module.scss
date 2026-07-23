@@ -313,8 +313,18 @@
   line-height: 14px;
 }
 
-/* Right-aligned current model on a drill-down row: the pinned model, or the
-   default-route model with a tiny "default" tag under it. */
+/* Short session id at the end of the title line — quieter than the title. */
+.sessionId {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 14px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Right-aligned current model on a drill-down row. */
 .menuRowValue {
   flex: 0 0 auto;
   max-width: 88px;
@@ -329,16 +339,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.menuRowValueTag {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  opacity: 0.8;
 }
 
 .menuRowChevron {

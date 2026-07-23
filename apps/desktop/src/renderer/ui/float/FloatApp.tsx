@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowDown01Icon, ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, Cancel01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { ArrowDown01Icon, ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/conversations';
 import { displayToolName } from '../../modules/tool-names';
@@ -122,7 +122,7 @@ export function FloatApp() {
   // dropdown ("start a new session") until its first prompt arrives.
   const idleApps = useMemo(
     () => (data?.apps ?? []).filter(
-      (app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app.name)),
+      (app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app)),
     ),
     [data?.apps, conversations],
   );
@@ -260,7 +260,24 @@ export function FloatApp() {
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
-              {idleApps.map((app) => (
+              <button
+                type="button"
+                className={styles.menuRow}
+                onClick={() => drillIn('default')}
+              >
+                {selectedModel ? (
+                  <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={16} />
+                ) : null}
+                <span className={styles.menuRowText}>
+                  <span className={styles.menuRowTitle}>Default model</span>
+                  <span className={styles.menuRowMeta}>applies to new chats only</span>
+                </span>
+                <span className={styles.menuRowValue}>{modelLabel}</span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
+              </button>
+              {/* First-run guidance only — once any chat exists the list
+                  speaks for itself. */}
+              {conversations.length === 0 && idleApps.map((app) => (
                 <div key={app.name} className={styles.menuHint}>
                   <BrandIcon name={app.name} hints={[app.displayName]} size={16} />
                   <span className={styles.menuHintText}>
@@ -269,23 +286,12 @@ export function FloatApp() {
                   </span>
                 </div>
               ))}
-              <button
-                type="button"
-                className={styles.menuRow}
-                onClick={() => drillIn('default')}
-              >
-                <span className={styles.menuRowText}>
-                  <span className={styles.menuRowTitle}>Default model</span>
-                  <span className={styles.menuRowMeta}>applies to every chat without a pin</span>
-                </span>
-                <span className={styles.menuRowValue}>{modelLabel}</span>
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
-              </button>
               {conversations.length === 0 ? (
                 idleApps.length === 0 ? <div className={styles.menuEmpty}>No tool chats seen yet</div> : null
               ) : conversations.map((chat) => {
-                // Always name the model the chat runs on: its pin, or the
-                // default route (tagged "default") when unpinned.
+                // Name the model the chat runs on: its pin (set by the buyer
+                // on the chat's first request), falling back to the default
+                // route for chats that haven't resolved a request yet.
                 const pinnedLabel = chat.pinnedServiceId
                   ? (models.find((model) => model.serviceId === chat.pinnedServiceId)?.label ?? chat.pinnedServiceId)
                   : null;
@@ -304,12 +310,11 @@ export function FloatApp() {
                         {/* Green pulse while the chat is receiving traffic —
                             same signal as the chat list's running dot. */}
                         {chat.active ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" /> : null}
+                        <span className={styles.sessionId}>{chat.sessionShort}</span>
                       </span>
-                      <span className={styles.menuRowMeta}>{displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}</span>
-                    </span>
-                    <span className={styles.menuRowValue}>
-                      <span className={styles.menuRowValueModel}>{pinnedLabel ?? modelLabel}</span>
-                      {!pinnedLabel && <span className={styles.menuRowValueTag}>default</span>}
+                      <span className={styles.menuRowMeta}>
+                        {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)} · {pinnedLabel ?? modelLabel}
+                      </span>
                     </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
                   </button>
@@ -325,22 +330,6 @@ export function FloatApp() {
                   onBack={drillBack}
                 />
               </div>
-              {targetChat ? (
-                <button
-                  type="button"
-                  className={`${styles.menuRow}${!targetChat.pinnedServiceId ? ` ${styles.menuRowActive}` : ''}`}
-                  onClick={() => {
-                    bridge?.vprFloatAction?.({ type: 'clear-chat-pin', conversationId: targetChat.id });
-                    drillBack();
-                  }}
-                >
-                  <span className={styles.menuRowText}>
-                    <span className={styles.menuRowTitle}>Auto</span>
-                    <span className={styles.menuRowMeta}>follow the default model · {modelLabel}</span>
-                  </span>
-                  {!targetChat.pinnedServiceId ? <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2} /> : null}
-                </button>
-              ) : null}
               <VprModelRowList
                 entries={models}
                 selectedProvider={targetChat ? undefined : data?.selectedModel?.provider}

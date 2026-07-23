@@ -1,6 +1,6 @@
 import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../core/state';
 import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
-import { selectRecommendedVprCatalog } from './vpr-recommended-models';
+import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './vpr-recommended-models';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
 
@@ -97,9 +97,15 @@ export function selectDefaultVprModel(
   current: VprSelectedModel | null,
 ): VprSelectedModel | null {
   if (current && findCatalogEntry(catalog, current.provider, current.serviceId)) return current;
-  // Prefer the curated recommended lineup; fall back to raw popularity when
-  // none of the recommended models are on the network.
-  const first = selectRecommendedVprCatalog(catalog)[0] ?? catalog[0];
+  // First launch defaults to a free model — trying the VPR must cost nothing
+  // before any balance exists. Prefer a free model from the recommended
+  // lineup, then any free model on the network, then the recommended/popular
+  // fallback for networks without a free seller.
+  const recommended = selectRecommendedVprCatalog(catalog);
+  const first = recommended.find(isFreeCatalogEntry)
+    ?? catalog.find(isFreeCatalogEntry)
+    ?? recommended[0]
+    ?? catalog[0];
   if (!first) return null;
   return {
     provider: first.provider,

@@ -140,6 +140,25 @@ test('selectDefaultVprModel falls back to the first sorted catalog entry', () =>
   });
 });
 
+test('selectDefaultVprModel prefers a free model for the first selection', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    // Popular paid frontier model (more peers = sorted first).
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p2' }),
+    // Free model with a single seller.
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'free-mini',
+      serviceLabel: 'Free Mini',
+      peerId: 'p3',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+
+  assert.equal(selectDefaultVprModel(catalog, null)?.serviceId, 'free-mini');
+});
+
 test('findCatalogEntry returns null when the service is absent', () => {
   const catalog = projectRowsToVprModelCatalog([
     discoverRow({ provider: 'openai', serviceId: 's1' }),

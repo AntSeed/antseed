@@ -10,6 +10,11 @@ export type RuntimeProcessState = {
   [key: string]: unknown;
 };
 
+/** One installed application ("Open with" picker): display name plus the
+    launchable path (.app bundle on macOS, Start Menu .lnk on Windows) and
+    the OS-provided icon when one could be extracted. */
+export type InstalledAppEntry = { name: string; path: string; iconDataUri?: string };
+
 export type SystemProxyProfileSummary = {
   name: string;
   displayName: string;
@@ -23,6 +28,13 @@ export type SystemProxyProfileSummary = {
   /** True for user-added custom apps (removable, favicon-based icon). */
   custom?: boolean;
   iconDataUri?: string;
+  /** Installed application the user picked as this profile's "Open with"
+      target — wins over the packaged open action when launching. */
+  launchAppName?: string;
+  /** Client names identifying this app's requests on the wire (User-Agent
+      product / session-header slugs, e.g. 'opencode', 'tool-cli') — used
+      to attribute conversations to the app. User-editable per app. */
+  toolSlugs?: string[];
 };
 
 export type DesktopBuyerUsageTotals = {
@@ -285,6 +297,9 @@ export type DesktopBridge = {
   pickDirectory?: () => Promise<{ ok: boolean; path: string | null }>;
   openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
   openTool?: (toolName: string) => Promise<{ ok: boolean; error?: string; fallback?: string }>;
+  /** Reopen a tool chat session: 'terminal' runs the tool's resume command
+      (`codex resume <id>`, ...); 'app' launches the tool's desktop app. */
+  openToolSession?: (tool: string, sessionKey: string, target?: 'terminal' | 'app') => Promise<{ ok: boolean; command?: string; error?: string }>;
   applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
   applyWindowPreset?: (presetName: string) => Promise<{ ok: true; skipped?: string }>;
   onNavigateView?: (handler: (viewName: string) => void) => () => void;
@@ -356,7 +371,14 @@ export type DesktopBridge = {
 
   systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;
-  systemProxyAddCustomApp?: (opts: { apiUrl: string }) => Promise<{ ok: boolean; name?: string; error?: string }>;
+  /** Installed applications for the "Open with" picker (macOS .app bundles,
+      Windows Start Menu shortcuts). */
+  listInstalledApps?: () => Promise<{ ok: boolean; apps: InstalledAppEntry[]; error?: string }>;
+  systemProxySetAppLaunch?: (opts: { name: string; app: InstalledAppEntry | null }) => Promise<{ ok: boolean; error?: string }>;
+  /** Override the client names that attribute requests to an app profile;
+      null resets to the profile's defaults. */
+  systemProxySetAppIdentity?: (opts: { name: string; toolSlugs: string[] | null }) => Promise<{ ok: boolean; error?: string }>;
+  systemProxyAddCustomApp?: (opts: { apiUrl: string; app?: { name: string; path: string } | null }) => Promise<{ ok: boolean; name?: string; error?: string }>;
   systemProxyRemoveCustomApp?: (name: string) => Promise<{ ok: boolean; error?: string }>;
   systemProxyStop?: () => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
@@ -364,6 +386,7 @@ export type DesktopBridge = {
   systemProxyCaExists?: () => Promise<boolean>;
   systemProxyCaInfo?: () => Promise<{ path: string; exists: boolean }>;
   systemProxyRevealCa?: () => Promise<{ ok: boolean; error?: string }>;
+  systemProxyCaTrustState?: () => Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }>;
   systemProxyTestGui?: (opts?: { port?: number }) => Promise<{
     ok: boolean;
     proxyConfigured: boolean;
@@ -402,7 +425,9 @@ export type BuyerConversationSummary = {
   sessionKey: string;
   snippet: string;
   label: string | null;
-  /** Per-chat route pin as `<peerId>@<service>`; null follows the default route. */
+  /** Per-chat route pin as `<peerId>@<service>`. The buyer pins a chat to
+      the first model that serves it, so this is null only until the chat's
+      first resolved request; the default route applies to new chats only. */
   pinnedModel: string | null;
   /** Model that served the most recent request (`<peerId>@<service>`). */
   lastModel: string | null;
@@ -413,6 +438,9 @@ export type BuyerConversationSummary = {
 export type VprFloatApp = {
   name: string;
   displayName: string;
+  /** Client names that attribute conversations to this app (see
+      SystemProxyProfileSummary.toolSlugs). */
+  toolSlugs?: string[];
 };
 
 /** Full catalog entries flow to the pill so its model list renders exactly
@@ -426,6 +454,8 @@ export type VprFloatConversation = {
   tool: string;
   /** Display name: user label, else prompt snippet, else the session key. */
   title: string;
+  /** Compact session identifier for the meta line ("019f83b7"). */
+  sessionShort: string;
   /** Service id of the pinned model, or null when following the default route. */
   pinnedServiceId: string | null;
   lastActiveAt: number;
@@ -471,5 +501,4 @@ export type VprFloatAction =
   | 'open-main'
   | { type: 'select-model'; provider: string; serviceId: string }
   | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
-  | { type: 'clear-chat-pin'; conversationId: string }
   | { type: 'set-compact'; compact: boolean };

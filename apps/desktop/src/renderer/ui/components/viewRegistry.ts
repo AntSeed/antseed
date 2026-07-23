@@ -105,6 +105,13 @@ export const VIEW_REGISTRY = {
       nav: { slot: 'main', label: 'Apps', icon: ConnectIcon },
     },
   ),
+  chats: createViewEntry(
+    async () => (await import('./views/VprChatsView')).VprChatsView as ComponentType<RoutedViewProps>,
+    // Drill-in page (no nav item) reached from the Recent chats cards on
+    // Home and Apps — the fractional index keeps it sliding in from the
+    // right of both without renumbering the rail tabs.
+    { receivesOnSelectView: true, slideIndex: 3.5, preloadPriority: 'none' },
+  ),
   preferences: createViewEntry(
     async () => (await import('./views/VprPreferencesView')).VprPreferencesView as ComponentType<RoutedViewProps>,
     {

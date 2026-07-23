@@ -359,3 +359,174 @@ test('removeConfigPatch (pi) keeps a default selection it does not own', async (
     assert.equal(settings['defaultModel'], 'claude');
   });
 });
+
+// --- Crush ---
+
+function makeCrushPatch(configPath: string): ConfigPatchDef {
+  return {
+    format: 'crush',
+    configPath,
+    providerKey: 'antseed',
+    providerName: 'AntSeed',
+    baseURL: 'http://127.0.0.1:{buyerPort}/v1',
+  };
+}
+
+test('applyConfigPatch (crush) writes an openai-compat provider and the large/small selections', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'crush.json');
+    await writeFile(configPath, JSON.stringify({ options: { debug: true } }), 'utf8');
+
+    applyConfigPatch(makeCrushPatch(configPath), PEER_ID, 'model-a', 8377, ['model-a', 'model-b']);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.deepEqual(config['options'], { debug: true });
+    const provider = config['providers']['antseed'];
+    assert.equal(provider['type'], 'openai-compat');
+    assert.equal(provider['base_url'], 'http://127.0.0.1:8377/v1');
+    assert.deepEqual(
+      provider['models'].map((model: Record<string, unknown>) => model['id']),
+      ['antseed', `${PEER_ID}@model-a`, `${PEER_ID}@model-b`],
+    );
+    assert.deepEqual(config['models']['large'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
+    assert.deepEqual(config['models']['small'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+  });
+});
+
+test('removeConfigPatch (crush) removes only the managed provider and its selections', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'crush.json');
+    await writeFile(configPath, JSON.stringify({
+      providers: {
+        antseed: { type: 'openai-compat' },
+        deepseek: { type: 'openai-compat' },
+      },
+      models: {
+        large: { provider: 'antseed', model: 'antseed' },
+        small: { provider: 'deepseek', model: 'deepseek-chat' },
+      },
+    }), 'utf8');
+
+    assert.equal(removeConfigPatch(makeCrushPatch(configPath)), true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.deepEqual(Object.keys(config['providers']), ['deepseek']);
+    assert.equal(config['models']['large'], undefined);
+    assert.deepEqual(config['models']['small'], { provider: 'deepseek', model: 'deepseek-chat' });
+  });
+});
+
+// --- goose ---
+
+function makeGoosePatch(configPath: string): ConfigPatchDef {
+  return {
+    format: 'goose',
+    configPath,
+    providerKey: 'openai',
+    baseURL: 'http://localhost:{buyerPort}',
+  };
+}
+
+test('applyConfigPatch (goose) sets env-style keys while keeping user lines', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.yaml');
+    await writeFile(configPath, '# my goose setup\nGOOSE_MODE: smart_approve\nGOOSE_MODEL: gpt-4o\n', 'utf8');
+
+    applyConfigPatch(makeGoosePatch(configPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+
+    const raw = await readFile(configPath, 'utf8');
+    const lines = raw.split('\n');
+    assert.equal(lines[0], '# my goose setup');
+    assert.equal(lines[1], 'GOOSE_MODE: smart_approve');
+    assert.ok(lines.includes('GOOSE_PROVIDER: "openai"'));
+    assert.ok(lines.includes('GOOSE_MODEL: "antseed"'));
+    assert.ok(lines.includes('OPENAI_HOST: "http://localhost:8377"'));
+    assert.ok(lines.includes('OPENAI_API_KEY: "antseed"'));
+    assert.equal(lines.filter((line) => line.startsWith('GOOSE_MODEL')).length, 1);
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+  });
+});
+
+test('removeConfigPatch (goose) removes only keys the patch owns', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.yaml');
+    await writeFile(configPath, [
+      'GOOSE_MODE: smart_approve',
+      'GOOSE_PROVIDER: "openai"',
+      'GOOSE_MODEL: "antseed"',
+      'OPENAI_HOST: "http://localhost:8377"',
+      'OPENAI_API_KEY: "antseed"',
+    ].join('\n') + '\n', 'utf8');
+
+    assert.equal(removeConfigPatch(makeGoosePatch(configPath)), true);
+    const raw = await readFile(configPath, 'utf8');
+    assert.equal(raw, 'GOOSE_MODE: smart_approve\n');
+  });
+});
+
+test('removeConfigPatch (goose) keeps a provider selection it does not own', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.yaml');
+    await writeFile(configPath, 'GOOSE_PROVIDER: "openai"\nGOOSE_MODEL: "gpt-4o"\nOPENAI_HOST: "https://api.openai.com"\n', 'utf8');
+
+    assert.equal(removeConfigPatch(makeGoosePatch(configPath)), false);
+    const raw = await readFile(configPath, 'utf8');
+    assert.ok(raw.includes('GOOSE_MODEL: "gpt-4o"'));
+    assert.ok(raw.includes('OPENAI_HOST: "https://api.openai.com"'));
+  });
+});
+
+// --- Zed ---
+
+function makeZedPatch(configPath: string): ConfigPatchDef {
+  return {
+    format: 'zed',
+    configPath,
+    providerKey: 'antseed',
+    providerName: 'AntSeed',
+    baseURL: 'http://127.0.0.1:{buyerPort}/v1',
+  };
+}
+
+test('applyConfigPatch (zed) writes the openai_compatible provider and agent default model', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    await writeFile(configPath, '{\n  // zed user settings\n  "theme": "One Dark",\n}\n', 'utf8');
+
+    applyConfigPatch(makeZedPatch(configPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['theme'], 'One Dark');
+    const provider = config['language_models']['openai_compatible']['AntSeed'];
+    assert.equal(provider['api_url'], 'http://127.0.0.1:8377/v1');
+    assert.equal(provider['available_models'][0]['name'], 'antseed');
+    assert.ok(provider['available_models'].every((model: Record<string, unknown>) => typeof model['max_tokens'] === 'number'));
+    assert.deepEqual(config['agent']['default_model'], { provider: 'AntSeed', model: 'antseed' });
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+  });
+});
+
+test('removeConfigPatch (zed) removes the managed provider and matching default model only', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    await writeFile(configPath, JSON.stringify({
+      theme: 'One Dark',
+      language_models: {
+        openai_compatible: {
+          AntSeed: { api_url: 'http://127.0.0.1:8377/v1', available_models: [] },
+          Groq: { api_url: 'https://api.groq.com/openai/v1', available_models: [] },
+        },
+      },
+      agent: { default_model: { provider: 'AntSeed', model: 'antseed' }, always_allow_tool_actions: true },
+    }), 'utf8');
+
+    assert.equal(removeConfigPatch(makeZedPatch(configPath)), true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['theme'], 'One Dark');
+    assert.deepEqual(Object.keys(config['language_models']['openai_compatible']), ['Groq']);
+    assert.equal(config['agent']['default_model'], undefined);
+    assert.equal(config['agent']['always_allow_tool_actions'], true);
+  });
+});

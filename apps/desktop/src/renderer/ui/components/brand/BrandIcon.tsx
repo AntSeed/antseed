@@ -17,6 +17,9 @@ export type BrandKey =
   | 'codex'
   | 'opencode'
   | 'pi'
+  | 'crush'
+  | 'goose'
+  | 'zed'
   | 'deepseek'
   | 'qwen'
   | 'kimi'
@@ -30,7 +33,8 @@ export type BrandKey =
 type BrandGlyph = (props: { size: number }) => JSX.Element;
 
 const ANTHROPIC_ORANGE = '#D97757';
-const CODEX_BLUE = '#4d6bfe';
+const CRUSH_PINK = '#FF60B8';
+const ZED_BLUE = '#084CCF';
 const DEEPSEEK_BLUE = '#4D6BFE';
 const GLM_BLUE = '#3859FF';
 const GEMINI_BLUE = '#4285F4';
@@ -61,17 +65,14 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       <circle cx="12" cy="12" r="3.1" stroke="currentColor" strokeWidth={1.7} />
     </svg>
   ),
-  // Codex — rounded blue tile with a code caret.
+  // Codex — OpenAI's monochrome look: terminal window with a prompt.
   codex: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="2.5" y="2.5" width="19" height="19" rx="6" fill={CODEX_BLUE} />
-      <path
-        d="M10 8.5L6.5 12L10 15.5M14 8.5L17.5 12L14 15.5"
-        stroke="#fff"
-        strokeWidth={1.7}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <rect x="3" y="3" width="18" height="18" rx="4.5" stroke="currentColor" strokeWidth={1.7} />
+      <g stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7.2 9.2l3.2 2.8-3.2 2.8" />
+        <path d="M12.8 15.2h4" />
+      </g>
     </svg>
   ),
   // Opencode — outlined nested square.
@@ -81,14 +82,45 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       <rect x="8.5" y="8.5" width="7" height="7" rx="1.5" fill="currentColor" />
     </svg>
   ),
-  // pi — π mark.
+  // pi — the tool's blocky geometric "P" monogram.
   pi: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <g stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
-        <path d="M4.5 7.2C5.5 6.2 7 6 9 6h10.5" />
-        <path d="M8.5 6.4V18" />
-        <path d="M15.5 6.4v9.1c0 1.5.9 2.5 2.3 2.5.6 0 1.1-.2 1.5-.5" />
-      </g>
+      <path
+        d="M6 4.5h10.5v10.5h-5.25V19.5H6V4.5zm3.5 3.5v3.5H13V8H9.5z"
+        fill="currentColor"
+        fillRule="evenodd"
+      />
+    </svg>
+  ),
+  // Crush (Charm) — glamour heart in charm pink.
+  crush: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 20.2S4 15.2 4 9.6C4 6.9 6 5 8.4 5c1.5 0 2.8.7 3.6 1.9C12.8 5.7 14.1 5 15.6 5 18 5 20 6.9 20 9.6c0 5.6-8 10.6-8 10.6z"
+        fill={CRUSH_PINK}
+      />
+    </svg>
+  ),
+  // goose (Block) — walking goose silhouette.
+  goose: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M15.2 3.5c1.5 0 2.6 1.1 2.6 2.5 0 .4-.1.8-.3 1.2l2.5 1-2.3 1c-.1 2.6-1.2 4-2.7 5.2-1.1.9-1.8 1.6-2 2.9h3.3v2.2H6.2c-1.9 0-3.2-1.3-3.2-3 0-1.8 1.4-3 3.3-3h2.9c.9 0 1.6-.4 2.2-1 .9-.9 1.5-1.9 1.6-3.4-.9-.4-1.5-1.3-1.5-2.4 0-1.8 1.5-3.2 3.7-3.2z"
+        fill="currentColor"
+      />
+    </svg>
+  ),
+  // Zed — brand-blue tile with the angular Z stroke.
+  zed: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="19" height="19" rx="5" fill={ZED_BLUE} />
+      <path
+        d="M7.5 7.5H16.5L7.5 16.5H16.5"
+        stroke="#fff"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   // Deepseek — stylized whale.
@@ -202,7 +234,10 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['codex', /codex/i],
   ['openai', /(openai|chatgpt|gpt|gpt-)/i],
   ['opencode', /(opencode|open-code)/i],
-  // Standalone word only — "pi" appears inside too many other identifiers.
+  ['crush', /crush/i],
+  ['goose', /goose/i],
+  // Standalone words only — these appear inside too many other identifiers.
+  ['zed', /(^|[^a-z0-9])zed([^a-z0-9]|$)/i],
   ['pi', /(^|[^a-z0-9])pi([^a-z0-9]|$)/i],
 ];
 

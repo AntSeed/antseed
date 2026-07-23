@@ -21,20 +21,38 @@ export function conversationPinnedServiceId(record: BuyerConversationSummary): s
   return record.pinnedModel?.split('@').slice(1).join('@') || null;
 }
 
+/** Slugs are single tokens ('codex', 'opencode') while the wire-derived
+    tool slug may carry a variant suffix ('codex-exec', 'codex-cli-rs'), so
+    either side may extend the other by a `-` segment. */
+function toolMatchesSlug(tool: string, slug: string): boolean {
+  if (!slug) return false;
+  if (tool === slug) return true;
+  return tool.startsWith(`${slug}-`) || slug.startsWith(`${tool}-`);
+}
+
 /**
  * True when a conversation's tool slug belongs to the given app profile.
- * Profile names are single slugs ('codex', 'opencode') while the wire-derived
- * tool slug may carry a variant suffix ('codex-exec', 'codex-cli-rs'), so
- * either side may extend the other by a `-` segment.
+ * The profile's configurable client names (`toolSlugs` — the User-Agent
+ * product / session-header identity each request carries) are the source of
+ * truth; the profile name itself remains a fallback match.
  */
-export function conversationMatchesApp(tool: string, profileName: string): boolean {
-  if (tool === profileName) return true;
-  return tool.startsWith(`${profileName}-`) || profileName.startsWith(`${tool}-`);
+export function conversationMatchesApp(
+  tool: string,
+  profile: { name: string; toolSlugs?: string[] },
+): boolean {
+  if (profile.toolSlugs?.some((slug) => toolMatchesSlug(tool, slug))) return true;
+  return toolMatchesSlug(tool, profile.name);
 }
 
 /** True while the chat reads as receiving traffic (drives the green pulse). */
 export function isConversationActive(lastActiveAt: number): boolean {
   return Date.now() - lastActiveAt < CONVERSATION_ACTIVE_HOLD_MS;
+}
+
+/** Compact session identifier for meta lines ("019f83b7"): common tool
+    prefixes like `ses_` are stripped so the distinctive part shows. */
+export function shortSessionId(sessionKey: string): string {
+  return sessionKey.replace(/^[a-z]+_/i, '').slice(0, 8);
 }
 
 /** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */

@@ -58,6 +58,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .preview-toggle {
@@ -286,6 +287,14 @@
     outline: none;
     box-shadow: 0 0 0 2px rgba(var(--accent-green-rgb), 0.35);
   }
+}
+
+/* Thin layout: no room for the label next to the model dropdown — the
+   New chat button collapses to just the plus glyph. */
+.header-action-button-icon-only {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
 }
 
 .header-action-button-copy {

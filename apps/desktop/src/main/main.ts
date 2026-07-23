@@ -5,18 +5,19 @@ import {
   dialog,
   shell,
   net as electronNet,
+  nativeImage,
   type OpenDialogOptions,
   type MenuItemConstructorOptions,
 } from 'electron';
 import { copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, isIP } from 'node:net';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -25,6 +26,8 @@ import {
   resolveConnectDataDir,
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
+import { toolDesktopAppName, toolResumeCommand } from '../shared/tool-resume.js';
+import { loadAppIdentitySettings, loadAppLaunchSettings, normalizeToolSlugs, setAppIdentitySetting, setAppLaunchSetting, type AppLaunchTarget } from './app-launch-settings.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
 import { ANTSTokenClient, ChannelsClient, DepositsClient, DepositRelayClient, EmissionsClient, signSpendingAuth, makeChannelsDomain, makeUsdcDomain, buildReceiveAuthorization, peerRelaysSweeps, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import type { SweepRequestPayload, SweepReceiptPayload } from '@antseed/node';
@@ -107,7 +110,6 @@ const DEFAULT_BUYER_PROXY_PORT = 8377;
 const SYSTEM_PROXY_PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON';
 const SYSTEM_PROXY_PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE';
 const PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE = 'system-proxy-profiles.json';
-const SYSTEM_PROXY_ENV_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS'] as const;
 
 type DesktopSystemProxyProfile = {
   readonly name: string;
@@ -120,6 +122,9 @@ type DesktopSystemProxyProfile = {
   readonly toolName?: string;
   readonly restartAppName?: string;
   readonly configPatch?: ConfigPatchDef;
+  /** Default client names (User-Agent product / session-header slugs) that
+      attribute wire requests to this app — user overrides win at display. */
+  readonly toolSlugs?: readonly string[];
 };
 
 type DesktopSystemProxyProfileMetadata = {
@@ -234,12 +239,14 @@ function normalizeDesktopSystemProxyProfile(value: unknown, index: number): Desk
   const openUrl = readString(raw, 'openUrl') ?? metadata?.openUrl;
   const toolName = readString(raw, 'toolName') ?? metadata?.toolName;
   const restartAppName = readString(raw, 'restartAppName') ?? metadata?.restartAppName;
+  const toolSlugs = normalizeToolSlugs(readStringArray(raw['toolSlugs']));
   return {
     name,
     label,
     kind,
     method: readString(raw, 'method') ?? metadata?.methodLabel ?? (kind === 'config-patch' ? 'Config' : 'Proxy'),
     domains: readStringArray(raw['domains']),
+    ...(toolSlugs.length > 0 ? { toolSlugs } : {}),
     ...(appAction ? { appAction } : {}),
     ...(openUrl ? { openUrl } : {}),
     ...(toolName ? { toolName } : {}),
@@ -291,6 +298,27 @@ function readConfigPatch(value: unknown, profileName: string): ConfigPatchDef | 
       providerKey,
       baseURL,
       api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
+    };
+  }
+  if (format === 'crush') {
+    return {
+      format: 'crush',
+      configPath,
+      providerKey,
+      providerName: readRequiredString(raw, 'providerName', profileName),
+      baseURL,
+    };
+  }
+  if (format === 'goose') {
+    return { format: 'goose', configPath, providerKey, baseURL };
+  }
+  if (format === 'zed') {
+    return {
+      format: 'zed',
+      configPath,
+      providerKey,
+      providerName: readRequiredString(raw, 'providerName', profileName),
+      baseURL,
     };
   }
   return {
@@ -359,10 +387,6 @@ type SystemProxyGuiTestResult = {
 
 function systemProxyDataDir(): string {
   return path.join(resolveConnectDataDir(), 'system-proxy');
-}
-
-function systemProxyHookPath(): string {
-  return path.join(systemProxyDataDir(), 'node-proxy-hook.cjs');
 }
 
 function systemProxyCaPath(): string {
@@ -622,32 +646,6 @@ async function waitForSystemProxyReady(port: number, timeoutMs = 5_000): Promise
   throw new Error(`System Proxy did not become ready on 127.0.0.1:${port}.${detail}`);
 }
 
-function setSystemProxyNodeEnv(port: number): void {
-  const caPath = systemProxyCaPath();
-  const hookFile = systemProxyHookPath();
-  process.env['HTTPS_PROXY'] = `http://localhost:${port}`;
-  process.env['NODE_EXTRA_CA_CERTS'] = caPath;
-  process.env['NODE_OPTIONS'] = `--require ${hookFile}`;
-  const cmds: [string, string[]][] = [];
-  if (process.platform === 'darwin') {
-    cmds.push(['launchctl', ['setenv', 'HTTPS_PROXY', `http://localhost:${port}`]]);
-    cmds.push(['launchctl', ['setenv', 'NODE_EXTRA_CA_CERTS', caPath]]);
-    cmds.push(['launchctl', ['setenv', 'NODE_OPTIONS', `--require ${hookFile}`]]);
-  } else if (process.platform === 'win32') {
-    cmds.push(['setx', ['HTTPS_PROXY', `http://localhost:${port}`]]);
-    cmds.push(['setx', ['NODE_EXTRA_CA_CERTS', caPath]]);
-    cmds.push(['setx', ['NODE_OPTIONS', `--require ${hookFile}`]]);
-  }
-  for (const [cmd, args] of cmds) {
-    try {
-      execFileSync(cmd, args, { stdio: 'pipe' });
-    } catch (err) {
-      // Log so the Logs tab shows the failure
-      console.error(`[system-proxy] env setup failed: ${cmd} ${args.join(' ')}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-}
-
 function firstProbeUrl(): string | null {
   const profile = SYSTEM_PROXY_PROFILES.find((item) => item.kind === 'proxy' && item.domains.length > 0);
   const domain = profile?.domains[0];
@@ -791,16 +789,12 @@ async function clearSystemProxyRuntimeFiles(): Promise<void> {
 }
 
 async function clearSystemProxySettings(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
-  clearSystemProxyNodeEnv(port);
   await restoreOsSystemProxy(port);
   await clearSystemProxyRuntimeFiles();
-  await removeSystemProxyFromShellProfiles();
 }
 
 async function clearSystemProxyTransportSettings(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<void> {
-  clearSystemProxyNodeEnv(port);
   await restoreOsSystemProxy(port);
-  await removeSystemProxyFromShellProfiles();
 }
 
 async function stopManagedRuntimes(): Promise<void> {
@@ -810,95 +804,6 @@ async function stopManagedRuntimes(): Promise<void> {
     await clearSystemProxySettings();
     removeAllConfigPatches();
     traySystemProxyProfiles = new Set();
-  }
-}
-
-function removeSystemProxyShellBlock(content: string): string {
-  // Remove the block between the start/end markers (inclusive), plus surrounding blank lines
-  return content
-    .replace(/\n*# AntSeed System Proxy\n[\s\S]*?# End AntSeed System Proxy\n*/gi, '\n')
-    .replace(/\n*# AntSeed intercept proxy\n(?:export (?:HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)=.*\n)+/gi, '\n')
-    .replace(/\n*# AntSeed CLI shell params\n(?:export (?:HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)=.*\n)+/gi, '\n');
-}
-
-async function removeSystemProxyFromShellProfiles(): Promise<void> {
-  const { readFile, writeFile } = await import('node:fs/promises');
-  const home = homedir();
-  const candidates = [
-    path.join(home, '.zshrc'),
-    path.join(home, '.bash_profile'),
-    path.join(home, '.bashrc'),
-  ];
-  for (const profilePath of candidates) {
-    try {
-      const existing = await readFile(profilePath, 'utf8');
-      const cleaned = removeSystemProxyShellBlock(existing);
-      if (cleaned !== existing) {
-        await writeFile(profilePath, cleaned, 'utf8');
-      }
-    } catch { /* file doesn't exist or can't be read — skip */ }
-  }
-}
-
-function readWindowsUserEnvValue(varName: string): string {
-  try {
-    const out = execFileSync('reg', ['query', 'HKCU\\Environment', '/v', varName], { encoding: 'utf8' });
-    const match = out.match(new RegExp(`${varName}\\s+REG_(?:EXPAND_)?SZ\\s+(.*)`, 'i'));
-    return match?.[1]?.trim() ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function readDarwinUserEnvValue(varName: string): string {
-  try {
-    return execFileSync('launchctl', ['getenv', varName], { encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-function isSystemProxyEnvValue(varName: string, value: string, port: number): boolean {
-  const dataDir = systemProxyDataDir();
-  const caPath = systemProxyCaPath();
-  const hookFile = systemProxyHookPath();
-  const proxyPattern = new RegExp(`^(?:https?://)?(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::${port})/?$`, 'i');
-  if (varName === 'HTTPS_PROXY' || varName === 'HTTP_PROXY' || varName === 'ALL_PROXY') {
-    return proxyPattern.test(value.trim());
-  }
-  if (varName === 'NODE_EXTRA_CA_CERTS') {
-    return value === caPath || value.startsWith(`${dataDir}${path.sep}`);
-  }
-  if (varName === 'NODE_OPTIONS') {
-    return value.includes(hookFile) || value.includes(`${dataDir}${path.sep}node-proxy-hook.cjs`);
-  }
-  return false;
-}
-
-function clearSystemProxyProcessEnv(port = DEFAULT_SYSTEM_PROXY_PORT): void {
-  for (const varName of SYSTEM_PROXY_ENV_VARS) {
-    const current = process.env[varName];
-    if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
-    delete process.env[varName];
-  }
-}
-
-function clearSystemProxyNodeEnv(port = DEFAULT_SYSTEM_PROXY_PORT): void {
-  clearSystemProxyProcessEnv(port);
-  if (process.platform === 'darwin') {
-    for (const varName of SYSTEM_PROXY_ENV_VARS) {
-      const current = readDarwinUserEnvValue(varName);
-      if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
-      try { execFileSync('launchctl', ['unsetenv', varName], { stdio: 'pipe' }); } catch { /* best-effort */ }
-    }
-  } else if (process.platform === 'win32') {
-    // Ownership guard: only clear vars whose current value references the
-    // AntSeed proxy or its data dir — leave unrelated user values alone.
-    for (const varName of SYSTEM_PROXY_ENV_VARS) {
-      const current = readWindowsUserEnvValue(varName);
-      if (!current || !isSystemProxyEnvValue(varName, current, port)) continue;
-      try { execFileSync('setx', [varName, ''], { stdio: 'pipe' }); } catch { /* best-effort */ }
-    }
   }
 }
 
@@ -1210,7 +1115,14 @@ function routeForTool(opts: SystemProxyStartRequest, profileName: string): { pee
   const route = opts.toolRoutes?.[profileName];
   const peerId = route?.peerId?.trim() || opts.peerId;
   const peer = lookupPeer(peerId);
-  const services = peer?.services ?? (peerId === opts.peerId ? opts.servedModels ?? [] : []);
+  // For the request's own peer, merge the caller-provided served-models list
+  // into the cached announcement — the renderer resolves its default model
+  // from live discover rows, and a stale or differently-named cache entry
+  // must not knock that model off the route (the services[0] fallback below
+  // would silently re-point the buyer default at another model).
+  const services = peerId === opts.peerId
+    ? Array.from(new Set([...(peer?.services ?? []), ...(opts.servedModels ?? [])]))
+    : peer?.services ?? [];
   const requestedModel = route?.model?.trim();
   const defaultModel = opts.defaultModel?.trim() ?? '';
   const model = route
@@ -1288,7 +1200,6 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
       await stopSystemProxyRuntime(true).catch(() => undefined);
       throw err;
     }
-    setSystemProxyNodeEnv(port);
     if (!opts.profileSwitch) {
       lastSystemProxySetupAt = Date.now();
     }
@@ -1917,9 +1828,15 @@ ipcMain.handle('desktop:open-external-url', async (_event, rawUrl: string) => {
 ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
   try {
     const key = typeof toolName === 'string' ? toolName : '';
-    const profile = SYSTEM_PROXY_PROFILES.find((item) => item.name === key || item.toolName === key);
+    const profile = allSystemProxyProfiles().find((item) => item.name === key || item.toolName === key);
     if (!profile) {
       return { ok: false, error: 'Unknown tool.' };
+    }
+    // The profile's launch target (user-picked, or the default desktop app
+    // for known tools) wins over the packaged open action.
+    const launchTarget = effectiveLaunchTarget(profile.name);
+    if (launchTarget) {
+      return launchAppTarget(launchTarget);
     }
     if (profile.openUrl) {
       await shell.openExternal(profile.openUrl);
@@ -1934,6 +1851,57 @@ ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
       }
     }
     return { ok: false, error: 'No open target configured for this tool.' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// Reopen a tool chat session — target 'terminal' runs the tool's resume
+// command (e.g. `codex resume <id>`), target 'app' launches the tool's
+// desktop app (app-level; none expose a per-session deep link). The command
+// string comes from the shared toolResumeCommand mapping only — session
+// keys are validated to shell-inert characters there.
+ipcMain.handle('desktop:open-tool-session', (_event, tool: unknown, sessionKey: unknown, target: unknown) => {
+  const toolSlug = typeof tool === 'string' ? tool : '';
+  if (target === 'app') {
+    const appName = toolDesktopAppName(toolSlug);
+    if (!appName) {
+      return { ok: false, error: 'This tool has no known desktop app.' };
+    }
+    if (process.platform !== 'darwin') {
+      return { ok: false, error: `Open the ${appName} app manually on this platform.` };
+    }
+    try {
+      execFileSync('open', ['-a', appName], { stdio: 'pipe' });
+      return { ok: true };
+    } catch {
+      return { ok: false, error: `The ${appName} app doesn't seem to be installed.` };
+    }
+  }
+  const command = toolResumeCommand(
+    toolSlug,
+    typeof sessionKey === 'string' ? sessionKey : '',
+  );
+  if (!command) {
+    return { ok: false, error: 'This tool has no session-resume command.' };
+  }
+  try {
+    if (process.platform === 'darwin') {
+      execFileSync('osascript', [
+        '-e', `tell application "Terminal" to do script ${JSON.stringify(command)}`,
+        '-e', 'tell application "Terminal" to activate',
+      ], { stdio: 'pipe' });
+      return { ok: true, command };
+    }
+    if (process.platform === 'win32') {
+      const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/k', command], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return { ok: true, command };
+    }
+    return { ok: false, error: `Run it yourself: ${command}` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -3147,32 +3115,249 @@ ipcMain.handle('runtime:scan-network', async () => {
   }
 });
 
-ipcMain.handle('system-proxy:list-profiles', () => {
-  const base = SYSTEM_PROXY_PROFILES.map((profile) => ({
-    name: profile.name,
-    displayName: profile.label,
-    kind: profile.kind,
-    method: profile.method,
-    domains: profile.domains,
-    appAction: profile.appAction,
-    openUrl: profile.openUrl,
-    toolName: profile.toolName,
-    canRestart: Boolean(profile.restartAppName),
+/** Known tools with a desktop app (OpenCode, Codex) get a launch target by
+    default when the app is installed — no manual "Open with" pick needed.
+    Resolved once per run; a user override always wins. */
+const defaultLaunchTargetCache = new Map<string, AppLaunchTarget | null>();
+
+function defaultLaunchTargetForProfile(profileName: string): AppLaunchTarget | null {
+  const appName = toolDesktopAppName(profileName);
+  if (!appName) return null;
+  if (process.platform === 'darwin') {
+    for (const dir of ['/Applications', path.join(homedir(), 'Applications')]) {
+      const bundle = path.join(dir, `${appName}.app`);
+      if (existsSync(bundle)) return { name: appName, path: bundle };
+    }
+    return null;
+  }
+  if (process.platform === 'win32') {
+    const listed = listInstalledApplications();
+    if (!listed.ok) return null;
+    return listed.apps.find((entry) => entry.name.toLowerCase() === appName.toLowerCase()) ?? null;
+  }
+  return null;
+}
+
+function effectiveLaunchTarget(profileName: string): AppLaunchTarget | null {
+  const override = loadAppLaunchSettings(resolveConnectDataDir())[profileName];
+  if (override) return override;
+  if (!defaultLaunchTargetCache.has(profileName)) {
+    defaultLaunchTargetCache.set(profileName, defaultLaunchTargetForProfile(profileName));
+  }
+  return defaultLaunchTargetCache.get(profileName) ?? null;
+}
+
+/** Client names attributing wire requests to a profile: the user's override
+    when set, else the profile's packaged defaults, else slugs derived from
+    the profile name AND display name — a profile named 'vendor' displayed as
+    'Tool' yields ['vendor', 'tool'], so tool-cli chats attribute to the app
+    even when its internal name differs from its brand name. */
+function effectiveToolSlugs(profileName: string, defaults: readonly string[] | undefined, displayName?: string): string[] {
+  const override = loadAppIdentitySettings(resolveConnectDataDir())[profileName];
+  if (override && override.length > 0) return override;
+  if (defaults && defaults.length > 0) return [...defaults];
+  return normalizeToolSlugs([profileName, ...(displayName ? [displayName] : [])]);
+}
+
+/** Icon of an installed application by launcher path, cached per run — the
+    profile list is polled, so extraction must not repeat. */
+const launchIconCache = new Map<string, Promise<string | null>>();
+
+function launchTargetIcon(targetPath: string): Promise<string | null> {
+  let cached = launchIconCache.get(targetPath);
+  if (!cached) {
+    cached = installedAppIcon(targetPath);
+    launchIconCache.set(targetPath, cached);
+  }
+  return cached;
+}
+
+ipcMain.handle('system-proxy:list-profiles', async () => {
+  const base = await Promise.all(SYSTEM_PROXY_PROFILES.map(async (profile) => {
+    const launchTarget = effectiveLaunchTarget(profile.name);
+    // The associated application's real icon represents the row; the
+    // renderer falls back to a drawn brand mark without one.
+    const iconDataUri = launchTarget ? await launchTargetIcon(launchTarget.path) : null;
+    return {
+      name: profile.name,
+      displayName: profile.label,
+      kind: profile.kind,
+      method: profile.method,
+      domains: profile.domains,
+      appAction: profile.appAction,
+      openUrl: profile.openUrl,
+      toolName: profile.toolName,
+      canRestart: Boolean(profile.restartAppName),
+      toolSlugs: effectiveToolSlugs(profile.name, profile.toolSlugs, profile.label),
+      ...(iconDataUri ? { iconDataUri } : {}),
+      ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
+    };
   }));
-  const custom = loadCustomAppRecords().map((record) => ({
-    name: record.name,
-    displayName: record.displayName,
-    kind: 'proxy' as const,
-    method: 'HTTPS proxy',
-    domains: [record.host],
-    canRestart: false,
-    custom: true,
-    ...(record.iconDataUri ? { iconDataUri: record.iconDataUri } : {}),
+  const custom = await Promise.all(loadCustomAppRecords().map(async (record) => {
+    const launchTarget = effectiveLaunchTarget(record.name);
+    const iconDataUri = record.iconDataUri
+      ?? (launchTarget ? await launchTargetIcon(launchTarget.path) : null);
+    return {
+      name: record.name,
+      displayName: record.displayName,
+      kind: 'proxy' as const,
+      method: 'HTTPS proxy',
+      domains: [record.host],
+      canRestart: false,
+      custom: true,
+      toolSlugs: effectiveToolSlugs(record.name, undefined, record.displayName),
+      ...(iconDataUri ? { iconDataUri } : {}),
+      ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
+    };
   }));
   return [...base, ...custom];
 });
 
-ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: string }) => {
+// Installed applications the user can associate with an app profile ("Open
+// with"). macOS: .app bundles in the standard application folders. Windows:
+// Start Menu shortcuts (per-machine and per-user).
+function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; error?: string } {
+  const apps = new Map<string, AppLaunchTarget>();
+  if (process.platform === 'darwin') {
+    for (const dir of ['/Applications', path.join(homedir(), 'Applications'), '/System/Applications']) {
+      try {
+        for (const entry of readdirSync(dir)) {
+          if (!entry.endsWith('.app') || entry.startsWith('.')) continue;
+          const name = entry.slice(0, -'.app'.length);
+          if (!apps.has(name)) apps.set(name, { name, path: path.join(dir, entry) });
+        }
+      } catch { /* folder missing — skip */ }
+    }
+  } else if (process.platform === 'win32') {
+    const programData = process.env['ProgramData'];
+    const appData = process.env['APPDATA'];
+    const roots = [
+      programData ? path.join(programData, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : null,
+      appData ? path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : null,
+    ].filter((root): root is string => root !== null);
+    const walk = (dir: string, depth: number): void => {
+      if (depth > 3) return;
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full, depth + 1);
+        } else if (entry.name.toLowerCase().endsWith('.lnk')) {
+          const name = entry.name.slice(0, -'.lnk'.length);
+          if (!apps.has(name)) apps.set(name, { name, path: full });
+        }
+      }
+    };
+    for (const root of roots) walk(root, 0);
+  } else {
+    return { ok: false, apps: [], error: 'Listing installed apps is not supported on this platform.' };
+  }
+  return { ok: true, apps: [...apps.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+// Icons are extracted per entry — on macOS via the QuickLook thumbnail
+// (app.getFileIcon returns the same generic icon for every .app bundle),
+// on Windows via getFileIcon which resolves .lnk targets properly. A few
+// hundred lookups, so the enriched list is computed once per run and cached.
+async function installedAppIcon(entryPath: string): Promise<string | null> {
+  try {
+    const icon = process.platform === 'darwin'
+      ? await nativeImage.createThumbnailFromPath(entryPath, { width: 48, height: 48 })
+      : await app.getFileIcon(entryPath, { size: 'normal' });
+    return icon.isEmpty() ? null : icon.toDataURL();
+  } catch {
+    return null; // no icon — the renderer falls back to a brand mark
+  }
+}
+
+let installedAppsPromise: Promise<{ ok: boolean; apps: Array<AppLaunchTarget & { iconDataUri?: string }>; error?: string }> | null = null;
+
+ipcMain.handle('desktop:list-installed-apps', () => {
+  installedAppsPromise ??= (async () => {
+    const listed = listInstalledApplications();
+    if (!listed.ok) return listed;
+    const apps = await Promise.all(listed.apps.map(async (entry) => {
+      const iconDataUri = await installedAppIcon(entry.path);
+      return iconDataUri ? { ...entry, iconDataUri } : entry;
+    }));
+    return { ok: true, apps };
+  })();
+  return installedAppsPromise;
+});
+
+/** Launch a user-picked application target (.app bundle / .lnk shortcut). */
+function launchAppTarget(target: AppLaunchTarget): { ok: boolean; error?: string } {
+  try {
+    if (process.platform === 'darwin') {
+      execFileSync('open', [target.path], { stdio: 'pipe' });
+      return { ok: true };
+    }
+    if (process.platform === 'win32') {
+      const child = spawn('cmd.exe', ['/c', 'start', '', target.path], { detached: true, stdio: 'ignore' });
+      child.unref();
+      return { ok: true };
+    }
+    return { ok: false, error: 'Launching apps is not supported on this platform.' };
+  } catch {
+    return { ok: false, error: `Could not open ${target.name} — is it still installed?` };
+  }
+}
+
+ipcMain.handle('system-proxy:set-app-launch', (_event, opts: { name?: string; app?: { name?: string; path?: string } | null }) => {
+  const name = typeof opts?.name === 'string' ? opts.name : '';
+  if (!allSystemProxyProfiles().some((profile) => profile.name === name)) {
+    return { ok: false, error: 'Unknown app.' };
+  }
+  const app = opts?.app;
+  if (app === null || app === undefined) {
+    setAppLaunchSetting(resolveConnectDataDir(), name, null);
+    return { ok: true };
+  }
+  const appName = typeof app.name === 'string' ? app.name.trim() : '';
+  const appPath = typeof app.path === 'string' ? app.path.trim() : '';
+  // The path reaches a launcher — accept only real application entries.
+  const extension = path.extname(appPath).toLowerCase();
+  if (!appName || !appPath || !['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) {
+    return { ok: false, error: 'That application could not be found.' };
+  }
+  setAppLaunchSetting(resolveConnectDataDir(), name, { name: appName, path: appPath });
+  return { ok: true };
+});
+
+/** Validate a renderer-passed installed-app reference (name + launcher path). */
+function readInstalledAppTarget(value: unknown): AppLaunchTarget | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const appName = typeof raw['name'] === 'string' ? raw['name'].trim() : '';
+  const appPath = typeof raw['path'] === 'string' ? raw['path'].trim() : '';
+  const extension = path.extname(appPath).toLowerCase();
+  if (!appName || !appPath || !['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) return null;
+  return { name: appName, path: appPath };
+}
+
+ipcMain.handle('system-proxy:set-app-identity', (_event, opts: { name?: string; toolSlugs?: unknown }) => {
+  const name = typeof opts?.name === 'string' ? opts.name : '';
+  if (!allSystemProxyProfiles().some((profile) => profile.name === name)) {
+    return { ok: false, error: 'Unknown app.' };
+  }
+  const raw = opts?.toolSlugs;
+  if (raw !== null && raw !== undefined && !Array.isArray(raw)) {
+    return { ok: false, error: 'Client names must be a list.' };
+  }
+  const slugs = Array.isArray(raw)
+    ? normalizeToolSlugs(raw.filter((entry): entry is string => typeof entry === 'string'))
+    : null;
+  // An empty list clears the override — the profile's defaults apply again.
+  setAppIdentitySetting(resolveConnectDataDir(), name, slugs && slugs.length > 0 ? slugs : null);
+  return { ok: true };
+});
+
+ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: string; app?: unknown }) => {
   try {
     const apiUrl = typeof opts?.apiUrl === 'string' ? opts.apiUrl.trim() : '';
     const target = deriveCustomAppTarget(apiUrl);
@@ -3181,17 +3366,25 @@ ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: st
     if (conflict) {
       return { ok: false, error: `${target.host} is already handled by ${conflict.label}.` };
     }
-    const metadata = await fetchCustomAppSiteMetadata(target.host);
+    // When the user picked the application that talks to this API, its name
+    // and icon identify the entry — no favicon fetch needed. Without a pick,
+    // fall back to the domain's site metadata.
+    const launchTarget = readInstalledAppTarget(opts?.app);
+    const appIcon = launchTarget ? await installedAppIcon(launchTarget.path) : null;
+    const metadata = launchTarget ? null : await fetchCustomAppSiteMetadata(target.host);
+    const iconDataUri = appIcon ?? metadata?.iconDataUri;
     const dataDir = resolveConnectDataDir();
     const record: CustomAppRecord = {
       name: customAppName(target.host, existingProfiles.map((profile) => profile.name)),
-      displayName: metadata.title ?? target.host,
+      displayName: launchTarget?.name ?? metadata?.title ?? target.host,
       apiUrl,
       ...target,
-      ...(metadata.iconDataUri ? { iconDataUri: metadata.iconDataUri } : {}),
+      ...(iconDataUri ? { iconDataUri } : {}),
       createdAt: Date.now(),
     };
     saveCustomApps(dataDir, [...loadCustomApps(dataDir), record]);
+    // The picked application also becomes the profile's "Open with" target.
+    if (launchTarget) setAppLaunchSetting(dataDir, record.name, launchTarget);
     refreshTrayMenu();
     return { ok: true, name: record.name };
   } catch (err) {
@@ -3208,6 +3401,10 @@ ipcMain.handle('system-proxy:remove-custom-app', (_event, opts: { name?: string 
       return { ok: false, error: 'Unknown custom app.' };
     }
     saveCustomApps(dataDir, existing.filter((record) => record.name !== name));
+    // Drop the app's per-profile settings so a future same-name profile
+    // doesn't inherit them.
+    setAppLaunchSetting(dataDir, name, null);
+    setAppIdentitySetting(dataDir, name, null);
     refreshTrayMenu();
     return { ok: true };
   } catch (err) {
@@ -3342,6 +3539,28 @@ ipcMain.handle('system-proxy:reveal-ca', (): { ok: boolean; error?: string } => 
   }
   shell.showItemInFolder(caPath);
   return { ok: true };
+});
+
+// Whether the OS already trusts this device's CA. Drives the "trust the
+// certificate" prompt shown after adding an intercepted app: `stale` means an
+// older AntSeed CA is trusted under the same name (the CERT_SIGNATURE_FAILURE
+// cause), `absent` means nothing is trusted yet, `trusted` means we're set.
+ipcMain.handle('system-proxy:ca-trust-state', async (): Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }> => {
+  try {
+    const dataDir = resolveConnectDataDir();
+    const result = await processManager.runCliCommand(['--data-dir', dataDir, 'system-proxy', 'ca-trust-state']);
+    const line = stripAnsi(result.stdout)
+      .split(/\r?\n/)
+      .reverse()
+      .find((entry) => entry.trim().startsWith('{'));
+    const parsed = line ? JSON.parse(line) as { exists?: unknown; trust?: unknown } : {};
+    const trust = parsed.trust === 'trusted' || parsed.trust === 'stale' || parsed.trust === 'absent'
+      ? parsed.trust
+      : 'unknown';
+    return { ok: true, exists: parsed.exists === true, trust };
+  } catch (err) {
+    return { ok: false, exists: false, trust: 'unknown', error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 /* ------------------------------------------------------------------ */

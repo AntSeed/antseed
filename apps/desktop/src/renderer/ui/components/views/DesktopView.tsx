@@ -150,7 +150,7 @@ export function DesktopView({ onSelectView }: DesktopViewProps) {
       <div className={styles.stack}>
         <div className={styles.headRow}>
           <VprBackTitle title="Logs" fallback="help" />
-          <div className={styles.headActions}>
+          <div className={`${styles.headActions} ${styles.headActionsLeft}`}>
             <button
               type="button"
               className={styles.button}

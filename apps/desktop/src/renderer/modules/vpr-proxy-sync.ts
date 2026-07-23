@@ -27,7 +27,10 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   // chosen peer actually advertises, not the selection's representative.
   const model = route?.serviceId ?? selection.model.serviceId;
   const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.discoverRows);
-  const servedModels = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [model];
+  const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
+  // The resolved model must always be in the served list — main's route
+  // computation drops the default model when the list doesn't contain it.
+  const servedModels = services.includes(model) ? services : [...services, model];
   return { peerId, model, servedModels };
 }
 

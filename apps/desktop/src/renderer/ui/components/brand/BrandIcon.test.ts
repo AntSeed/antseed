@@ -26,3 +26,14 @@ test('unknown identifiers fall back to the generic mark', () => {
   assert.equal(resolveBrandKey('acme', 'mystery-model'), 'generic');
   assert.equal(resolveBrandKey(), 'generic');
 });
+
+test('connected-app tool names resolve their marks', () => {
+  assert.equal(resolveBrandKey('crush', 'Crush'), 'crush');
+  assert.equal(resolveBrandKey('goose', 'Goose'), 'goose');
+  assert.equal(resolveBrandKey('zed', 'Zed'), 'zed');
+  assert.equal(resolveBrandKey('codex', 'Codex'), 'codex');
+  assert.equal(resolveBrandKey('pi', 'pi'), 'pi');
+  // Standalone-word guards: no false hits inside other identifiers.
+  assert.equal(resolveBrandKey('amazed-tool', 'thing'), 'generic');
+  assert.equal(resolveBrandKey('pixel-model', 'thing'), 'generic');
+});

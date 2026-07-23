@@ -31,6 +31,12 @@
   gap: 8px;
 }
 
+/* Keep header actions next to the title instead of the far right — the
+   shell's floating credits pill occupies the header's right edge. */
+.headActionsLeft {
+  margin-right: auto;
+}
+
 /* ---------- Status badge ---------- */
 
 .badge {
@@ -108,11 +114,46 @@
   word-break: break-word;
 }
 
+/* ---------- Fill layout: table-only scrolling ----------
+
+   The peers screen pins the title and filter and scrolls just the table:
+   the view stops scrolling as a page, the stack/card stretch to the
+   remaining height, and the table wrapper becomes the scroll region. */
+
+.viewFill {
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
+}
+
+.stackFill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cardFill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* ---------- Tables ---------- */
 
 .tableWrap {
   overflow-x: auto;
   min-width: 0;
+}
+
+.tableScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tableScroll th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 1;
 }
 
 .table {

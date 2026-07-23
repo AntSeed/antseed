@@ -16,6 +16,9 @@ const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
  *  - `opencode` (default): JSONC `provider` map (OpenCode's opencode.jsonc)
  *  - `codex`: TOML `[model_providers.*]` table (Codex CLI's config.toml)
  *  - `pi`: JSON providers map plus a settings file (pi's models.json/settings.json)
+ *  - `crush`: JSON `providers` map with an openai-compat entry (Crush's crush.json)
+ *  - `goose`: flat env-style YAML keys (goose's config.yaml)
+ *  - `zed`: JSONC settings with `language_models.openai_compatible` (Zed's settings.json)
  */
 export type OpencodeConfigPatchDef = {
   readonly format?: 'opencode';
@@ -46,7 +49,40 @@ export type PiConfigPatchDef = {
   readonly api: 'openai-completions' | 'openai-responses' | 'anthropic-messages';
 };
 
-export type ConfigPatchDef = OpencodeConfigPatchDef | CodexConfigPatchDef | PiConfigPatchDef;
+export type CrushConfigPatchDef = {
+  readonly format: 'crush';
+  readonly configPath: string;
+  readonly providerKey: string;
+  readonly providerName: string;
+  readonly baseURL: string;
+};
+
+export type GooseConfigPatchDef = {
+  readonly format: 'goose';
+  /** goose config.yaml (flat env-style keys). */
+  readonly configPath: string;
+  /** goose provider engine ('openai' for openai-compatible hosts). */
+  readonly providerKey: string;
+  /** Host root without /v1 — goose appends the chat-completions path itself. */
+  readonly baseURL: string;
+};
+
+export type ZedConfigPatchDef = {
+  readonly format: 'zed';
+  readonly configPath: string;
+  readonly providerKey: string;
+  /** Key under language_models.openai_compatible; also the agent provider id. */
+  readonly providerName: string;
+  readonly baseURL: string;
+};
+
+export type ConfigPatchDef =
+  | OpencodeConfigPatchDef
+  | CodexConfigPatchDef
+  | PiConfigPatchDef
+  | CrushConfigPatchDef
+  | GooseConfigPatchDef
+  | ZedConfigPatchDef;
 
 type JsonObject = Record<string, unknown>;
 
@@ -257,6 +293,18 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
     applyPiConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
     return;
   }
+  if (patch.format === 'crush') {
+    applyCrushConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    return;
+  }
+  if (patch.format === 'goose') {
+    applyGooseConfigPatch(patch, peerId, selectedService, buyerPort, useAlias);
+    return;
+  }
+  if (patch.format === 'zed') {
+    applyZedConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    return;
+  }
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const selectedModel = useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, selectedService);
@@ -290,6 +338,15 @@ export function removeConfigPatch(patch: ConfigPatchDef): boolean {
   }
   if (patch.format === 'pi') {
     return removePiConfigPatch(patch);
+  }
+  if (patch.format === 'crush') {
+    return removeCrushConfigPatch(patch);
+  }
+  if (patch.format === 'goose') {
+    return removeGooseConfigPatch(patch);
+  }
+  if (patch.format === 'zed') {
+    return removeZedConfigPatch(patch);
   }
   const filePath = expandTilde(patch.configPath);
   const config = tryReadConfigPatchFile(filePath);
@@ -491,4 +548,227 @@ function removePiConfigPatch(patch: PiConfigPatchDef): boolean {
     changed = true;
   }
   return changed;
+}
+
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
+}
+
+// --- Crush (`~/.config/crush/crush.json`) ---
+//
+// Crush takes custom endpoints as a `providers` map entry with
+// `type: "openai-compat"`; the default model selection lives under
+// `models.large` / `models.small` as `{ provider, model }`.
+
+/** Conservative defaults — Crush requires a context window per model. */
+const CRUSH_CONTEXT_WINDOW = 200_000;
+const CRUSH_DEFAULT_MAX_TOKENS = 8_192;
+
+function applyCrushConfigPatch(patch: CrushConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+  const filePath = expandTilde(patch.configPath);
+  backupConfigFile(filePath);
+  const config = readConfigPatchFile(filePath);
+  const providers = asObject(config['providers']);
+  providers[patch.providerKey] = {
+    type: 'openai-compat',
+    name: patch.providerName,
+    base_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+    api_key: 'antseed',
+    models: [
+      { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL, context_window: CRUSH_CONTEXT_WINDOW, default_max_tokens: CRUSH_DEFAULT_MAX_TOKENS },
+      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
+        { id, name, context_window: CRUSH_CONTEXT_WINDOW, default_max_tokens: CRUSH_DEFAULT_MAX_TOKENS }
+      )),
+    ],
+  };
+  config['providers'] = providers;
+  const models = asObject(config['models']);
+  const selection = { provider: patch.providerKey, model: useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service) };
+  models['large'] = { ...selection };
+  models['small'] = { ...selection };
+  config['models'] = models;
+  writeJsonFile(filePath, config);
+}
+
+function removeCrushConfigPatch(patch: CrushConfigPatchDef): boolean {
+  const filePath = expandTilde(patch.configPath);
+  const config = tryReadConfigPatchFile(filePath);
+  if (!config) return false;
+  let changed = false;
+  const providers = config['providers'];
+  if (providers && typeof providers === 'object' && !Array.isArray(providers) && (patch.providerKey in (providers as JsonObject))) {
+    delete (providers as JsonObject)[patch.providerKey];
+    changed = true;
+  }
+  const models = config['models'];
+  if (models && typeof models === 'object' && !Array.isArray(models)) {
+    for (const size of ['large', 'small']) {
+      const entry = (models as JsonObject)[size];
+      if (entry && typeof entry === 'object' && (entry as JsonObject)['provider'] === patch.providerKey) {
+        delete (models as JsonObject)[size];
+        changed = true;
+      }
+    }
+    if (Object.keys(models as JsonObject).length === 0) delete config['models'];
+  }
+  if (!changed) return false;
+  backupConfigFile(filePath);
+  writeJsonFile(filePath, config);
+  return true;
+}
+
+// --- goose (`~/.config/goose/config.yaml`) ---
+//
+// goose config is flat env-style YAML keys (GOOSE_PROVIDER, GOOSE_MODEL,
+// OPENAI_HOST, ...), edited line-based so user keys and comments survive.
+// OPENAI_HOST is the host root — goose appends the /v1 chat path itself.
+// The api key normally lives in the OS keyring; the config-file value covers
+// keyring-less setups, and the buyer proxy ignores the credential anyway.
+
+function yamlScalar(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function yamlTopLevelKeyIndex(lines: readonly string[], key: string): number {
+  const pattern = new RegExp(`^${key}\\s*:`);
+  return lines.findIndex((line) => pattern.test(line));
+}
+
+function setYamlTopLevelString(lines: readonly string[], key: string, value: string): string[] {
+  const assignment = `${key}: ${yamlScalar(value)}`;
+  const index = yamlTopLevelKeyIndex(lines, key);
+  if (index !== -1) {
+    const next = [...lines];
+    next[index] = assignment;
+    return next;
+  }
+  return [...lines, assignment];
+}
+
+function readYamlTopLevelString(lines: readonly string[], key: string): string | undefined {
+  const index = yamlTopLevelKeyIndex(lines, key);
+  if (index === -1) return undefined;
+  const raw = lines[index]!.slice(lines[index]!.indexOf(':') + 1).trim();
+  const quoted = raw.match(/^"((?:[^"\\]|\\.)*)"/) ?? raw.match(/^'([^']*)'/);
+  if (quoted) return quoted[1]!.replace(/\\(.)/g, '$1');
+  return raw.split('#')[0]!.trim();
+}
+
+function removeYamlTopLevelKey(lines: readonly string[], key: string): string[] {
+  const index = yamlTopLevelKeyIndex(lines, key);
+  if (index === -1) return [...lines];
+  return [...lines.slice(0, index), ...lines.slice(index + 1)];
+}
+
+/** True for host values only this patch would have written (loopback root). */
+function isLoopbackHost(value: string | undefined): boolean {
+  return !!value && /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(value);
+}
+
+function applyGooseConfigPatch(patch: GooseConfigPatchDef, peerId: string, service: string, buyerPort: number, useAlias: boolean): void {
+  const filePath = expandTilde(patch.configPath);
+  backupConfigFile(filePath);
+  const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
+  let lines = raw.length > 0 ? raw.split('\n') : [];
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
+  lines = setYamlTopLevelString(lines, 'GOOSE_PROVIDER', patch.providerKey);
+  lines = setYamlTopLevelString(lines, 'GOOSE_MODEL', useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service));
+  lines = setYamlTopLevelString(lines, 'OPENAI_HOST', patch.baseURL.replace('{buyerPort}', String(buyerPort)));
+  lines = setYamlTopLevelString(lines, 'OPENAI_API_KEY', 'antseed');
+  writeTextFile(filePath, `${lines.join('\n')}\n`);
+}
+
+function removeGooseConfigPatch(patch: GooseConfigPatchDef): boolean {
+  const filePath = expandTilde(patch.configPath);
+  if (!existsSync(filePath)) return false;
+  let lines = readFileSync(filePath, 'utf8').split('\n');
+  let changed = false;
+  if (isLoopbackHost(readYamlTopLevelString(lines, 'OPENAI_HOST'))) {
+    lines = removeYamlTopLevelKey(lines, 'OPENAI_HOST');
+    changed = true;
+  }
+  if (readYamlTopLevelString(lines, 'OPENAI_API_KEY') === 'antseed') {
+    lines = removeYamlTopLevelKey(lines, 'OPENAI_API_KEY');
+    changed = true;
+  }
+  const model = readYamlTopLevelString(lines, 'GOOSE_MODEL');
+  const ownsModel = model === ROUTED_MODEL_ALIAS || (model?.includes('@') ?? false);
+  if (readYamlTopLevelString(lines, 'GOOSE_PROVIDER') === patch.providerKey && ownsModel) {
+    lines = removeYamlTopLevelKey(lines, 'GOOSE_PROVIDER');
+    lines = removeYamlTopLevelKey(lines, 'GOOSE_MODEL');
+    changed = true;
+  }
+  if (!changed) return false;
+  backupConfigFile(filePath);
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
+  writeTextFile(filePath, lines.length > 0 ? `${lines.join('\n')}\n` : '');
+  return true;
+}
+
+// --- Zed (`~/.config/zed/settings.json`) ---
+//
+// Zed takes custom endpoints under `language_models.openai_compatible`,
+// keyed by provider name; the agent's default model references that name.
+// Zed asks for the provider's API key once in its UI — any value satisfies
+// the keyless buyer proxy.
+
+/** Zed requires max_tokens (context window) per available model. */
+const ZED_MAX_TOKENS = 200_000;
+
+function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+  const filePath = expandTilde(patch.configPath);
+  backupConfigFile(filePath);
+  const config = readConfigPatchFile(filePath);
+  const languageModels = asObject(config['language_models']);
+  const compatible = asObject(languageModels['openai_compatible']);
+  compatible[patch.providerName] = {
+    api_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+    available_models: [
+      { name: ROUTED_MODEL_ALIAS, display_name: ROUTED_MODEL_ALIAS_LABEL, max_tokens: ZED_MAX_TOKENS },
+      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
+        { name: id, display_name: name, max_tokens: ZED_MAX_TOKENS }
+      )),
+    ],
+  };
+  languageModels['openai_compatible'] = compatible;
+  config['language_models'] = languageModels;
+  const agent = asObject(config['agent']);
+  agent['default_model'] = {
+    provider: patch.providerName,
+    model: useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service),
+  };
+  config['agent'] = agent;
+  writeJsonFile(filePath, config);
+}
+
+function removeZedConfigPatch(patch: ZedConfigPatchDef): boolean {
+  const filePath = expandTilde(patch.configPath);
+  const config = tryReadConfigPatchFile(filePath);
+  if (!config) return false;
+  let changed = false;
+  const languageModels = config['language_models'];
+  const compatible = languageModels && typeof languageModels === 'object' && !Array.isArray(languageModels)
+    ? (languageModels as JsonObject)['openai_compatible']
+    : undefined;
+  if (compatible && typeof compatible === 'object' && !Array.isArray(compatible) && (patch.providerName in (compatible as JsonObject))) {
+    delete (compatible as JsonObject)[patch.providerName];
+    if (Object.keys(compatible as JsonObject).length === 0) {
+      delete (languageModels as JsonObject)['openai_compatible'];
+      if (Object.keys(languageModels as JsonObject).length === 0) delete config['language_models'];
+    }
+    changed = true;
+  }
+  const agent = config['agent'];
+  if (agent && typeof agent === 'object' && !Array.isArray(agent)) {
+    const defaultModel = (agent as JsonObject)['default_model'];
+    if (defaultModel && typeof defaultModel === 'object' && (defaultModel as JsonObject)['provider'] === patch.providerName) {
+      delete (agent as JsonObject)['default_model'];
+      if (Object.keys(agent as JsonObject).length === 0) delete config['agent'];
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  backupConfigFile(filePath);
+  writeJsonFile(filePath, config);
+  return true;
 }

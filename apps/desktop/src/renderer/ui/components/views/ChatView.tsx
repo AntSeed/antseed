@@ -1138,13 +1138,13 @@ export function ChatView({ onSelectView }: ChatViewProps) {
             {!searchOnlyHeader && snap.chatActiveConversation && currentPeerId && (
               <button
                 type="button"
-                className={styles.headerActionButton}
+                className={`${styles.headerActionButton}${snap.chatPanelExpanded ? '' : ` ${styles.headerActionButtonIconOnly}`}`}
                 onClick={handleNewChatWithCurrentPeer}
                 title="Start a new chat with the same model"
                 aria-label="Start a new chat with the same model"
               >
                 <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={2} />
-                <span>New chat</span>
+                {snap.chatPanelExpanded && <span>New chat</span>}
               </button>
             )}
             {messageSearchOpen ? (

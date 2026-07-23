@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowUpRight01Icon, Copy01Icon, Delete02Icon, HelpCircleIcon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
-import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
+import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Modal } from '@antseed/ui';
+import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import {
@@ -9,37 +10,18 @@ import {
   buildVprPeerOptions,
   resolveVprToolRouteForPeerOptions,
 } from '../../../modules/vpr-tools';
-import { displayToolName } from '../../../modules/tool-names';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
-import { InfoTooltip } from '../InfoTooltip';
-import { VprBadge, VprCard, VprPage, VprSearch } from '../vpr/VprKit';
+import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprToolsView.module.scss';
 
-type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const DEFAULT_PORT = 8378;
 
-/** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */
-function relativeChatTime(timestamp: number): string {
-  const delta = Date.now() - timestamp;
-  if (delta < 60_000) return 'now';
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-  return `${Math.floor(delta / 86_400_000)}d ago`;
-}
-
-/** Per-app "how to use" line for the help tooltip next to each app name. */
-function appHelpHowTo(profile: SystemProxyProfileSummary): string {
-  if (profile.canRestart || profile.appAction === 'restart-app') {
-    return `Press Connect, then restart ${profile.displayName} so it picks up the new routing.`;
-  }
-  if (profile.appAction === 'open-url' || profile.appAction === 'open-tool') {
-    return `Press Connect, then open ${profile.displayName} with the arrow button and use it normally.`;
-  }
-  return `Press Connect and use ${profile.displayName} as usual. Disconnect anytime to route directly again.`;
-}
+/** Two-pane modal navigation: the main pane slides to the application list
+    the same way the app's screens slide ('none' = no animation on open). */
+type ModalPane = { pane: 'main' | 'apps'; dir: 'none' | 'forward' | 'back' };
 
 type GuiTestResult = {
   ok: boolean;
@@ -54,14 +36,13 @@ type GuiTestResult = {
   error?: string;
 };
 
-export function VprToolsView({ onSelectView }: Props) {
+export function VprToolsView() {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
     discoverRows: state.discoverRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
-    catalog: state.vprModelCatalog,
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
@@ -74,11 +55,29 @@ export function VprToolsView({ onSelectView }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState('');
   const [addBusy, setAddBusy] = useState(false);
+  // Application picked for a new custom app — supplies its display name and
+  // icon, replacing the favicon fetch.
+  const [addApp, setAddApp] = useState<InstalledAppEntry | null>(null);
+  const [addPane, setAddPane] = useState<ModalPane>({ pane: 'main', dir: 'none' });
+  const [addSearch, setAddSearch] = useState('');
   const [caInfo, setCaInfo] = useState<{ path: string; exists: boolean } | null>(null);
+  const [caTrust, setCaTrust] = useState<'trusted' | 'stale' | 'absent' | 'unknown'>('unknown');
   const [caCopied, setCaCopied] = useState(false);
-  const [conversations, setConversations] = useState<BuyerConversationSummary[]>([]);
-  const [editingChatId, setEditingChatId] = useState<string | null>(null);
-  const [editingChatLabel, setEditingChatLabel] = useState('');
+  // Certificate card expansion: the user's explicit toggle wins; until they
+  // touch it, the card only opens itself when an action is actually needed.
+  const [caOpenOverride, setCaOpenOverride] = useState<boolean | null>(null);
+  // "What are connected apps?" explainer modal.
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Per-app settings modal: which profile it edits, which pane is showing
+  // (main settings vs. the application list it slides to), its search text,
+  // the client-identity draft, and the lazily fetched installed-apps list.
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const [settingsPane, setSettingsPane] = useState<ModalPane>({ pane: 'main', dir: 'none' });
+  const [pickerSearch, setPickerSearch] = useState('');
+  const [identityDraft, setIdentityDraft] = useState('');
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [installedApps, setInstalledApps] = useState<InstalledAppEntry[] | null>(null);
+  const [installedAppsError, setInstalledAppsError] = useState<string | null>(null);
 
   const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
@@ -93,38 +92,46 @@ export function VprToolsView({ onSelectView }: Props) {
 
   const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
 
-  // Name the default route's model in chat pin selects, so "Auto" still says
-  // which model the chat actually runs on.
-  const defaultModelLabel = useMemo(() => {
-    const model = snap.selection.model;
-    if (!model) return null;
-    return snap.catalog.find((entry) => entry.serviceId === model.serviceId)?.label ?? model.serviceId;
-  }, [snap.catalog, snap.selection.model]);
-
   const refresh = useCallback(async () => {
     const bridge = window.antseedDesktop;
     try {
-      const [nextProfiles, nextState, nextCa, nextConversations] = await Promise.all([
+      const [nextProfiles, nextState, nextCa] = await Promise.all([
         bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
         bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
         bridge?.systemProxyCaInfo?.() ?? Promise.resolve(null),
-        bridge?.buyerConversationsList?.() ?? Promise.resolve([]),
       ]);
       setProfiles(nextProfiles);
       setProxyState(nextState);
       setCaInfo(nextCa);
-      setConversations(nextConversations);
     } catch {
       setProfiles([]);
       setProxyState(null);
     }
   }, []);
 
+  // Trust state shells out to the CLI (which queries the OS keychain), so it is
+  // fetched on demand — mount, after adding an app, after trusting — never on
+  // the 3s poll above.
+  const refreshCaTrust = useCallback(async (): Promise<'trusted' | 'stale' | 'absent' | 'unknown'> => {
+    const bridge = window.antseedDesktop;
+    if (!bridge?.systemProxyCaTrustState) return 'unknown';
+    try {
+      const result = await bridge.systemProxyCaTrustState();
+      const trust = result.ok ? result.trust : 'unknown';
+      setCaTrust(trust);
+      return trust;
+    } catch {
+      setCaTrust('unknown');
+      return 'unknown';
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
+    void refreshCaTrust();
     const timer = setInterval(() => { void refresh(); }, 3000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, refreshCaTrust]);
 
   const testGui = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -250,13 +257,14 @@ export function VprToolsView({ onSelectView }: Props) {
         return;
       }
       if (result.warning) setMessage(result.warning);
+      await refreshCaTrust();
       await testGui();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setTrustBusy(false);
     }
-  }, [testGui]);
+  }, [refreshCaTrust, testGui]);
 
   const revealCa = useCallback(async () => {
     const result = await window.antseedDesktop?.systemProxyRevealCa?.();
@@ -274,45 +282,70 @@ export function VprToolsView({ onSelectView }: Props) {
     }
   }, [caInfo?.path]);
 
-  // ---------- Recent chats (per-chat routing, buyer-backed) ----------
+  // ---------- Per-app settings modal ----------
 
-  const refreshConversations = useCallback(async () => {
+  const ensureInstalledApps = useCallback(() => {
+    // The installed-apps list is fetched once, on first modal open.
+    if (installedApps !== null) return;
+    void window.antseedDesktop?.listInstalledApps?.()
+      .then((result) => {
+        setInstalledApps(result.apps ?? []);
+        setInstalledAppsError(result.ok ? null : result.error ?? 'Could not list applications');
+      })
+      .catch((err: unknown) => {
+        setInstalledApps([]);
+        setInstalledAppsError(err instanceof Error ? err.message : String(err));
+      });
+  }, [installedApps]);
+
+  const openSettings = useCallback((profile: SystemProxyProfileSummary) => {
+    setSettingsFor(profile.name);
+    setSettingsPane({ pane: 'main', dir: 'none' });
+    setPickerSearch('');
+    setIdentityDraft((profile.toolSlugs?.length ? profile.toolSlugs : [profile.name]).join(', '));
+    ensureInstalledApps();
+  }, [ensureInstalledApps]);
+
+  const chooseApp = useCallback(async (app: InstalledAppEntry | null) => {
+    if (!settingsFor) return;
+    const result = await window.antseedDesktop?.systemProxySetAppLaunch?.({ name: settingsFor, app });
+    setSettingsPane({ pane: 'main', dir: 'back' });
+    if (result && !result.ok) {
+      setMessage(result.error ?? 'Could not save the app setting');
+      return;
+    }
+    await refresh();
+  }, [settingsFor, refresh]);
+
+  const settingsProfile = settingsFor ? profiles.find((profile) => profile.name === settingsFor) ?? null : null;
+  const settingsIdentity = settingsProfile
+    ? (settingsProfile.toolSlugs?.length ? settingsProfile.toolSlugs : [settingsProfile.name]).join(', ')
+    : '';
+  const identityDirty = settingsProfile !== null && identityDraft.trim() !== settingsIdentity;
+
+  const saveIdentity = useCallback(async () => {
+    const bridge = window.antseedDesktop;
+    if (!settingsFor || !bridge?.systemProxySetAppIdentity) return;
+    setIdentityBusy(true);
+    setMessage(null);
     try {
-      setConversations((await window.antseedDesktop?.buyerConversationsList?.()) ?? []);
-    } catch { /* buyer offline — keep the last list */ }
-  }, []);
-
-  const renameChat = useCallback(async (id: string, label: string) => {
-    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, label: label.trim() || null });
-    setEditingChatId(null);
-    await refreshConversations();
-  }, [refreshConversations]);
-
-  const deleteChat = useCallback(async (id: string, title: string) => {
-    if (!window.confirm(`Delete "${title}" from recent chats? An active chat reappears on its next request.`)) return;
-    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, delete: true });
-    await refreshConversations();
-  }, [refreshConversations]);
-
-  const pinChat = useCallback(async (id: string, value: string) => {
-    if (!value) {
-      await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: '' });
-      await refreshConversations();
-      return;
+      const slugs = identityDraft.split(',').map((entry) => entry.trim()).filter(Boolean);
+      const result = await bridge.systemProxySetAppIdentity({ name: settingsFor, toolSlugs: slugs.length > 0 ? slugs : null });
+      if (!result.ok) {
+        setMessage(result.error ?? 'Could not save the client names');
+        return;
+      }
+      // Sync the draft to the normalized value the main process persisted.
+      const listed = (await bridge.systemProxyListProfiles?.()) ?? [];
+      setProfiles(listed);
+      const updated = listed.find((profile) => profile.name === settingsFor);
+      if (updated) setIdentityDraft((updated.toolSlugs?.length ? updated.toolSlugs : [updated.name]).join(', '));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIdentityBusy(false);
     }
-    const [provider, ...rest] = value.split(':');
-    const serviceId = rest.join(':');
-    if (!provider || !serviceId) return;
-    // Resolve the best peer for the model the same way the global route does.
-    const routes = routesForSelectedModel(snap.discoverRows, { provider, serviceId });
-    const peerId = chooseBestVprRoute(routes, snap.preferences)?.peerId;
-    if (!peerId) {
-      setMessage(`No available route for ${serviceId} right now`);
-      return;
-    }
-    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: `${peerId}@${serviceId}` });
-    await refreshConversations();
-  }, [refreshConversations, snap.discoverRows, snap.preferences]);
+  }, [identityDraft, settingsFor]);
 
   const addCustomApp = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -320,20 +353,31 @@ export function VprToolsView({ onSelectView }: Props) {
     setAddBusy(true);
     setMessage(null);
     try {
-      const result = await bridge.systemProxyAddCustomApp({ apiUrl: addUrl });
+      const result = await bridge.systemProxyAddCustomApp({
+        apiUrl: addUrl,
+        app: addApp ? { name: addApp.name, path: addApp.path } : null,
+      });
       if (!result.ok) {
         setMessage(result.error ?? 'Unable to add custom app');
         return;
       }
       setAddOpen(false);
       setAddUrl('');
+      setAddApp(null);
       await refresh();
+      // Intercepting a custom app's HTTPS needs the local CA trusted. Prompt
+      // to trust it now (unless already trusted) so the first request doesn't
+      // fail with an SSL/CERT error.
+      const trust = await refreshCaTrust();
+      if (trust === 'stale' || trust === 'absent') {
+        setMessage('One more step: trust the AntSeed certificate below so this app can connect over HTTPS.');
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setAddBusy(false);
     }
-  }, [addUrl, refresh]);
+  }, [addApp, addUrl, refresh, refreshCaTrust]);
 
   const removeCustomApp = useCallback(async (profileName: string, connected: boolean) => {
     const bridge = window.antseedDesktop;
@@ -373,6 +417,20 @@ export function VprToolsView({ onSelectView }: Props) {
     return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
   }, [profiles, search, activeProfiles]);
 
+  // Certificate trust presentation. A live probe failure (certTrustError) or a
+  // stale/absent keychain state all mean the same thing to the user: press
+  // Trust. `stale` is the CERT_SIGNATURE_FAILURE case — an older CA trusted
+  // under the same name that re-trusting will replace.
+  const certNeedsTrust = guiTest?.certTrustError === true || caTrust === 'stale' || caTrust === 'absent';
+  const certBadgeLabel = guiTest?.certTrustError ? 'Not trusted'
+    : caTrust === 'trusted' ? 'Trusted'
+    : caTrust === 'stale' ? 'Update needed'
+    : caTrust === 'absent' ? 'Not trusted'
+    : caInfo?.exists ? 'Installed' : 'Not created yet';
+  const certBadgeTone: 'green' | 'neutral' = certNeedsTrust
+    ? 'neutral'
+    : caTrust === 'trusted' || caInfo?.exists ? 'green' : 'neutral';
+
   return (
     <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage title="Connected apps" backFallback="home">
@@ -389,7 +447,7 @@ export function VprToolsView({ onSelectView }: Props) {
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const canOpenUrl = connected && profile.appAction === 'open-url' && !!profile.openUrl;
-              const canOpenTool = connected && profile.appAction === 'open-tool';
+              const canOpenTool = connected && (profile.appAction === 'open-tool' || !!profile.launchAppName);
               const canOpen = canOpenUrl || canOpenTool;
               const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
               const hasActions = canRestart;
@@ -404,25 +462,24 @@ export function VprToolsView({ onSelectView }: Props) {
                       )}
                       <span className={styles.appText}>
                         <span className={styles.appNameRow}>
-                          <span className={styles.appName}>{profile.displayName}</span>
-                          <InfoTooltip
-                            align="left"
-                            content={
-                              <>
-                                <strong>{profile.displayName} through AntSeed</strong>
-                                <span>
-                                  Connecting routes {profile.displayName}&apos;s AI requests through AntSeed —
-                                  the app works as usual while its model calls are served by peers and paid
-                                  from your balance.
-                                </span>
-                                <span>{appHelpHowTo(profile)}</span>
-                              </>
-                            }
-                          >
-                            <span className={styles.helpIcon} tabIndex={0} role="img" aria-label={`How ${profile.displayName} works with AntSeed`}>
-                              <HugeiconsIcon icon={HelpCircleIcon} size={14} strokeWidth={1.8} />
-                            </span>
-                          </InfoTooltip>
+                          {/* The name itself launches the associated app when
+                              one is available — no separate app link line. */}
+                          {profile.launchAppName || profile.appAction === 'open-url' || profile.appAction === 'open-tool' ? (
+                            <button
+                              type="button"
+                              className={styles.appNameLink}
+                              onClick={() => {
+                                void (profile.appAction === 'open-url' && profile.openUrl && !profile.launchAppName
+                                  ? openUrl(profile.openUrl)
+                                  : openTool(profile.toolName ?? profile.name));
+                              }}
+                              title={`Open ${profile.launchAppName ?? profile.displayName}`}
+                            >
+                              {profile.displayName}
+                            </button>
+                          ) : (
+                            <span className={styles.appName}>{profile.displayName}</span>
+                          )}
                         </span>
                         {connected && (
                           <span className={styles.appMeta}>
@@ -436,36 +493,41 @@ export function VprToolsView({ onSelectView }: Props) {
                       <button
                         type="button"
                         className={styles.appOpen}
-                        onClick={() => { void (canOpenUrl ? openUrl(profile.openUrl!) : openTool(profile.toolName ?? profile.name)); }}
+                        onClick={() => {
+                          // A user-picked "Open with" app wins over the
+                          // profile's packaged open-url action.
+                          void (canOpenUrl && !profile.launchAppName
+                            ? openUrl(profile.openUrl!)
+                            : openTool(profile.toolName ?? profile.name));
+                        }}
                         aria-label={`Open ${profile.displayName}`}
-                        title={`Open ${profile.displayName}`}
+                        title={`Open ${profile.launchAppName ?? profile.displayName}`}
                       >
                         <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
                       </button>
                     ) : null}
-                    {profile.custom && !connected ? (
-                      <button
-                        type="button"
-                        className={styles.removeAction}
-                        disabled={actionBusy === profile.name || busy !== null}
-                        onClick={() => {
-                          if (window.confirm(`Remove ${profile.displayName}? Its requests will no longer route through AntSeed.`)) {
-                            void removeCustomApp(profile.name, connected);
-                          }
-                        }}
-                        title={`Remove ${profile.displayName}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
                     <button
                       type="button"
-                      className={connected ? styles.disconnectAction : styles.connectAction}
-                      disabled={busy !== null || (!connected && !defaultPeerId)}
-                      onClick={() => { connected ? disconnectProfile(profile.name) : connectProfile(profile.name); }}
+                      className={`${styles.configAction}${settingsFor === profile.name ? ` ${styles.configActionActive}` : ''}`}
+                      onClick={() => openSettings(profile)}
+                      aria-haspopup="dialog"
+                      aria-label={`${profile.displayName} settings`}
+                      title={`${profile.displayName} settings`}
                     >
-                      {connected ? 'Disconnect' : 'Connect'}
+                      <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={2} />
                     </button>
+                    {/* Disconnect (and Remove for custom apps) live in the
+                        settings modal — the row only offers Connect. */}
+                    {!connected ? (
+                      <button
+                        type="button"
+                        className={styles.connectAction}
+                        disabled={busy !== null || !defaultPeerId}
+                        onClick={() => connectProfile(profile.name)}
+                      >
+                        Connect
+                      </button>
+                    ) : null}
                   </div>
 
                   {hasActions && (
@@ -489,19 +551,373 @@ export function VprToolsView({ onSelectView }: Props) {
           </div>
         )}
 
-        {addOpen ? (
-          <VprCard>
+        <button
+          type="button"
+          className={styles.addAppButton}
+          onClick={() => {
+            setAddOpen(true);
+            setAddUrl('');
+            setAddApp(null);
+            setAddPane({ pane: 'main', dir: 'none' });
+            setAddSearch('');
+            setMessage(null);
+            ensureInstalledApps();
+          }}
+        >
+          <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
+          Add custom app
+        </button>
+
+        {/* The certificate only matters for intercepted (mitm proxy) apps —
+            keep the card hidden until one is connected, or one exists and
+            the cert still needs trusting to let it connect. */}
+        {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
+          const caExpanded = caOpenOverride ?? certNeedsTrust;
+          return (
+            <div className={styles.caCard}>
+              <button
+                type="button"
+                className={styles.caHead}
+                aria-expanded={caExpanded}
+                onClick={() => setCaOpenOverride(!caExpanded)}
+              >
+                <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
+                <span className={styles.caTitle}>HTTPS certificate</span>
+                <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
+                <HugeiconsIcon
+                  icon={ArrowDown01Icon}
+                  size={14}
+                  strokeWidth={2}
+                  className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
+                />
+              </button>
+              {caExpanded ? (
+                <>
+                  <p className={styles.caHint}>
+                    {caTrust === 'stale'
+                      ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
+                      : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
+                  </p>
+                  <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+                    <code>{caInfo.path}</code>
+                    <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+                    <span>{caCopied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  {caInfo.exists || certNeedsTrust ? (
+                    <div className={styles.actions}>
+                      {caInfo.exists ? (
+                        <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                      ) : null}
+                      {certNeedsTrust ? (
+                        <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                          {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          );
+        })() : null}
+
+        <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
+          What are connected apps?
+        </button>
+      </div>
+      </VprPage>
+
+      {/* Connected-apps explainer. */}
+      <Modal
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        size="sm"
+        title="Connected apps"
+        subtitle="How VPR works with your tools"
+        className={styles.vprModal}
+        bodyClassName={styles.settingsBody}
+      >
+        <section className={styles.settingSection}>
+          <div className={styles.settingHead}>
+            <span className={styles.settingTitle}>What connecting does</span>
+          </div>
+          <p className={styles.settingHint}>
+            Connecting an app routes its AI requests through VPR. The app works exactly
+            as usual — its model calls are served by the AntSeed network and paid from
+            your balance instead of a subscription or API key. Click an app&apos;s name
+            any time to open it.
+          </p>
+        </section>
+        <section className={styles.settingSection}>
+          <div className={styles.settingHead}>
+            <span className={styles.settingTitle}>How apps connect</span>
+          </div>
+          <p className={styles.settingHint}>
+            Most tools are pointed at VPR through a small change to their own config
+            file — written locally on Connect and removed again on Disconnect (a backup
+            of the original is kept next to it). Apps marked HTTPS proxy are instead
+            intercepted on this device, which needs the locally generated certificate
+            below to be trusted. After connecting, start a new session in the tool so
+            it picks up the routing.
+          </p>
+        </section>
+        <section className={styles.settingSection}>
+          <div className={styles.settingHead}>
+            <span className={styles.settingTitle}>Models and chats</span>
+          </div>
+          <p className={styles.settingHint}>
+            Connected apps follow the model selected on the VPR home screen. Each chat
+            then sticks to the model that served its first request — pin a different
+            one per chat from Recent chats or the floating pill.
+          </p>
+        </section>
+        <section className={styles.settingSection}>
+          <div className={styles.settingHead}>
+            <span className={styles.settingTitle}>Custom apps and settings</span>
+          </div>
+          <p className={styles.settingHint}>
+            Add any other app by the API URL it calls — its requests are redirected to
+            VPR on this device (localhost). Each app&apos;s gear opens its settings:
+            the application to open, the client names that attribute its chats, and
+            Disconnect or Remove.
+          </p>
+        </section>
+      </Modal>
+
+      {/* Per-app settings: application to open, request-identity client
+          names, and the connection actions (Disconnect / Remove). */}
+      <Modal
+        isOpen={settingsProfile !== null}
+        onClose={() => setSettingsFor(null)}
+        size="sm"
+        title={settingsPane.pane === 'apps' ? (
+          <span className={styles.modalBackTitle}>
+            <button
+              type="button"
+              className={styles.paneBackButton}
+              onClick={() => setSettingsPane({ pane: 'main', dir: 'back' })}
+              aria-label="Back"
+            >
+              <HugeiconsIcon icon={ArrowLeft01Icon} size={15} strokeWidth={2} />
+            </button>
+            Choose application
+          </span>
+        ) : (settingsProfile?.displayName ?? 'App settings')}
+        subtitle={settingsPane.pane === 'apps'
+          ? undefined
+          : (settingsProfile?.custom ? settingsProfile.domains[0] : 'App settings')}
+        className={styles.vprModal}
+        bodyClassName={styles.settingsBody}
+      >
+        {settingsProfile ? (() => {
+          const connected = activeProfiles?.has(settingsProfile.name) ?? false;
+          return (
+            <div key={settingsPane.pane} className={`${styles.pane}${settingsPane.dir === 'forward' ? ` ${styles.paneForward}` : settingsPane.dir === 'back' ? ` ${styles.paneBack}` : ''}`}>
+              {settingsPane.pane === 'apps' ? (
+                <AppPickerPane
+                  apps={installedApps}
+                  error={installedAppsError}
+                  search={pickerSearch}
+                  onSearch={setPickerSearch}
+                  activeName={settingsProfile.launchAppName ?? null}
+                  onChoose={(app) => void chooseApp(app)}
+                  noneLabel={settingsProfile.custom ? 'No application' : 'Default action'}
+                  noneMeta={settingsProfile.custom
+                    ? 'No application associated with this app'
+                    : 'Use the app’s built-in open behavior'}
+                />
+              ) : (
+                <>
+                  <section className={styles.settingSection}>
+                    <div className={styles.settingHead}>
+                      <span className={styles.settingTitle}>Connection</span>
+                      {connected ? (
+                        <span className={styles.settingConnected}>
+                          <span className={styles.connectedDot} aria-hidden="true" />
+                          Connected
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className={styles.settingHint}>
+                      {connected
+                        ? `${settingsProfile.displayName}'s AI requests currently route through VPR. Disconnecting restores its direct connection.`
+                        : `Connect to route ${settingsProfile.displayName}'s AI requests through VPR — served by the AntSeed network and paid from your balance.`}
+                    </p>
+                  </section>
+
+                  <section className={styles.settingSection}>
+                    <div className={styles.settingHead}>
+                      <span className={styles.settingTitle}>Application</span>
+                    </div>
+                    <p className={styles.settingHint}>
+                      The installed application VPR launches for {settingsProfile.displayName} —
+                      used by the open arrow and when jumping back into a chat session.
+                    </p>
+                    <button
+                      type="button"
+                      className={styles.settingValueRow}
+                      onClick={() => setSettingsPane({ pane: 'apps', dir: 'forward' })}
+                    >
+                      {settingsProfile.iconDataUri
+                        ? <img src={settingsProfile.iconDataUri} alt="" className={styles.pickerIcon} />
+                        : <BrandIcon name={settingsProfile.name} hints={[settingsProfile.displayName]} size={20} />}
+                      <span className={styles.settingValueName}>
+                        {settingsProfile.launchAppName
+                          ?? (settingsProfile.custom ? 'No application' : 'Default action')}
+                      </span>
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.settingValueChevron} />
+                    </button>
+                  </section>
+
+                  <section className={styles.settingSection}>
+                    <div className={styles.settingHead}>
+                      <span className={styles.settingTitle}>Request identity</span>
+                    </div>
+                    <p className={styles.settingHint}>
+                      VPR matches requests to {settingsProfile.displayName} by the client name they
+                      carry on the wire — the User-Agent product or session header, like{' '}
+                      <code>opencode</code> or <code>codex</code>. Separate multiple names with commas.
+                    </p>
+                    <form
+                      className={styles.settingInputRow}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void saveIdentity();
+                      }}
+                    >
+                      <input
+                        type="text"
+                        className={styles.settingInput}
+                        value={identityDraft}
+                        placeholder={settingsProfile.name}
+                        spellCheck={false}
+                        onChange={(event) => setIdentityDraft(event.currentTarget.value)}
+                        disabled={identityBusy}
+                      />
+                      {identityDirty ? (
+                        <button type="submit" className={styles.settingPrimary} disabled={identityBusy}>
+                          {identityBusy ? 'Saving...' : 'Save'}
+                        </button>
+                      ) : null}
+                    </form>
+                  </section>
+
+                  {settingsProfile.custom ? (
+                    <section className={styles.settingSection}>
+                      <div className={styles.settingHead}>
+                        <span className={styles.settingTitle}>Remove</span>
+                      </div>
+                      <p className={styles.settingHint}>
+                        Removes {settingsProfile.displayName} from VPR — its requests go directly
+                        to {settingsProfile.domains[0] ?? 'the API'} again.
+                      </p>
+                      <div className={styles.settingActions}>
+                        <button
+                          type="button"
+                          className={styles.settingDanger}
+                          disabled={actionBusy === settingsProfile.name || busy !== null}
+                          onClick={() => {
+                            if (window.confirm(`Remove ${settingsProfile.displayName}? Its requests will no longer route through VPR.`)) {
+                              setSettingsFor(null);
+                              void removeCustomApp(settingsProfile.name, connected);
+                            }
+                          }}
+                        >
+                          Remove app
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <div className={styles.settingFooter}>
+                    {connected ? (
+                      <button
+                        type="button"
+                        className={styles.settingDanger}
+                        disabled={busy !== null}
+                        onClick={() => disconnectProfile(settingsProfile.name)}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.settingPrimary}
+                        disabled={busy !== null || !defaultPeerId}
+                        onClick={() => {
+                          setSettingsFor(null);
+                          connectProfile(settingsProfile.name);
+                        }}
+                      >
+                        Connect
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })() : null}
+      </Modal>
+
+      {/* Add custom app: the API URL to intercept plus an optional installed
+          application whose name and icon identify the new entry. */}
+      <Modal
+        isOpen={addOpen}
+        onClose={() => { if (!addBusy) setAddOpen(false); }}
+        size="sm"
+        title={addPane.pane === 'apps' ? (
+          <span className={styles.modalBackTitle}>
+            <button
+              type="button"
+              className={styles.paneBackButton}
+              onClick={() => setAddPane({ pane: 'main', dir: 'back' })}
+              aria-label="Back"
+            >
+              <HugeiconsIcon icon={ArrowLeft01Icon} size={15} strokeWidth={2} />
+            </button>
+            Choose application
+          </span>
+        ) : 'Add custom app'}
+        subtitle={addPane.pane === 'apps' ? undefined : 'Route another app through VPR'}
+        className={styles.vprModal}
+        bodyClassName={styles.settingsBody}
+      >
+        <div key={addPane.pane} className={`${styles.pane}${addPane.dir === 'forward' ? ` ${styles.paneForward}` : addPane.dir === 'back' ? ` ${styles.paneBack}` : ''}`}>
+          {addPane.pane === 'apps' ? (
+            <AppPickerPane
+              apps={installedApps}
+              error={installedAppsError}
+              search={addSearch}
+              onSearch={setAddSearch}
+              activeName={addApp?.name ?? null}
+              onChoose={(app) => {
+                setAddApp(app);
+                setAddPane({ pane: 'main', dir: 'back' });
+              }}
+              noneLabel="No application"
+              noneMeta="Use the API host's name and icon"
+            />
+          ) : (
             <form
-              className={styles.addAppForm}
+              className={styles.settingsBody}
               onSubmit={(event) => {
                 event.preventDefault();
                 void addCustomApp();
               }}
             >
-              <label>
-                <span>API URL</span>
+              <section className={styles.settingSection}>
+                <div className={styles.settingHead}>
+                  <span className={styles.settingTitle}>API URL</span>
+                  <span className={styles.settingTag}>Required</span>
+                </div>
+                <p className={styles.settingHint}>
+                  AI requests the app sends to this URL are redirected to VPR on this
+                  device (localhost) and served by the AntSeed network instead.
+                </p>
                 <input
                   type="text"
+                  className={styles.settingInput}
                   value={addUrl}
                   placeholder="https://api.example.com/v1"
                   autoFocus
@@ -509,145 +925,112 @@ export function VprToolsView({ onSelectView }: Props) {
                   onChange={(event) => setAddUrl(event.currentTarget.value)}
                   disabled={addBusy}
                 />
-              </label>
-              <p className={styles.addAppHint}>
-                Requests the app sends to this URL are routed through AntSeed.
-              </p>
-              <div className={styles.actions}>
-                <button type="submit" disabled={addBusy || addUrl.trim().length === 0}>
+              </section>
+
+              <section className={styles.settingSection}>
+                <div className={styles.settingHead}>
+                  <span className={styles.settingTitle}>Application</span>
+                  <span className={styles.settingTag}>Optional</span>
+                </div>
+                <p className={styles.settingHint}>
+                  Pick the installed application that talks to this API — its name and icon
+                  identify the new entry, and the open arrow launches it.
+                </p>
+                <button
+                  type="button"
+                  className={styles.settingValueRow}
+                  onClick={() => setAddPane({ pane: 'apps', dir: 'forward' })}
+                >
+                  {addApp?.iconDataUri
+                    ? <img src={addApp.iconDataUri} alt="" className={styles.pickerIcon} />
+                    : null}
+                  <span className={styles.settingValueName}>{addApp?.name ?? 'No application'}</span>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.settingValueChevron} />
+                </button>
+              </section>
+
+              <div className={styles.settingFooter}>
+                <button type="submit" className={styles.settingPrimary} disabled={addBusy || addUrl.trim().length === 0}>
                   {addBusy ? 'Adding...' : 'Add app'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setAddOpen(false); setAddUrl(''); }}
+                  className={styles.settingQuiet}
+                  onClick={() => setAddOpen(false)}
                   disabled={addBusy}
                 >
                   Cancel
                 </button>
               </div>
             </form>
-          </VprCard>
-        ) : (
-          <button type="button" className={styles.addAppButton} onClick={() => { setAddOpen(true); setMessage(null); }}>
-            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
-            Add custom app
-          </button>
-        )}
-
-        {conversations.length > 0 ? (
-          <div className={styles.chatsCard}>
-            <div className={styles.chatsHead}>
-              <span className={styles.chatsTitle}>Recent chats</span>
-              <span className={styles.chatsHint}>Pin a model to one chat — everything else follows the default route</span>
-            </div>
-            {conversations.map((chat) => {
-              const title = chat.label || chat.snippet || chat.sessionKey.slice(0, 12);
-              const pinnedServiceId = chat.pinnedModel?.split('@').slice(1).join('@') || '';
-              const pinnedCatalogEntry = pinnedServiceId
-                ? snap.catalog.find((entry) => entry.serviceId === pinnedServiceId)
-                : undefined;
-              const pinValue = pinnedCatalogEntry
-                ? `${pinnedCatalogEntry.provider}:${pinnedCatalogEntry.serviceId}`
-                : (pinnedServiceId ? `?:${pinnedServiceId}` : '');
-              return (
-                <div key={chat.id} className={styles.chatRow}>
-                  <BrandIcon name={chat.tool} hints={[chat.tool]} size={20} />
-                  <span className={styles.chatText}>
-                    {editingChatId === chat.id ? (
-                      <input
-                        className={styles.chatEditInput}
-                        value={editingChatLabel}
-                        autoFocus
-                        onChange={(event) => setEditingChatLabel(event.currentTarget.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') void renameChat(chat.id, editingChatLabel);
-                          if (event.key === 'Escape') setEditingChatId(null);
-                        }}
-                        onBlur={() => void renameChat(chat.id, editingChatLabel)}
-                        aria-label="Chat name"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.chatTitleButton}
-                        onClick={() => { setEditingChatId(chat.id); setEditingChatLabel(chat.label ?? ''); }}
-                        title="Rename chat"
-                      >
-                        {title}
-                      </button>
-                    )}
-                    <span className={styles.chatMeta}>
-                      {displayToolName(chat.tool)} · {relativeChatTime(chat.lastActiveAt)}
-                      {chat.lastModel ? ` · ${chat.lastModel.split('@').slice(1).join('@')}` : ''}
-                    </span>
-                  </span>
-                  <select
-                    className={styles.chatPinSelect}
-                    value={pinValue}
-                    onChange={(event) => void pinChat(chat.id, event.currentTarget.value)}
-                    aria-label={`Model for ${title}`}
-                  >
-                    <option value="">
-                      {defaultModelLabel ? `Default · ${defaultModelLabel}` : 'Auto (default route)'}
-                    </option>
-                    {pinnedServiceId && !pinnedCatalogEntry ? (
-                      <option value={`?:${pinnedServiceId}`}>{pinnedServiceId}</option>
-                    ) : null}
-                    {snap.catalog.map((entry) => (
-                      <option key={`${entry.provider}:${entry.serviceId}`} value={`${entry.provider}:${entry.serviceId}`}>
-                        {entry.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className={styles.chatDelete}
-                    onClick={() => void deleteChat(chat.id, title)}
-                    aria-label={`Delete ${title}`}
-                    title="Delete chat"
-                  >
-                    <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={2} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-
-        {caInfo && (hasProxyProfile || caInfo.exists) ? (
-          <div className={styles.caCard}>
-            <div className={styles.caHead}>
-              <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
-              <span className={styles.caTitle}>HTTPS certificate</span>
-              <VprBadge tone={guiTest?.certTrustError ? 'neutral' : caInfo.exists ? 'green' : 'neutral'}>
-                {guiTest?.certTrustError ? 'Not trusted' : caInfo.exists ? 'Installed' : 'Not created yet'}
-              </VprBadge>
-            </div>
-            <p className={styles.caHint}>
-              Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this
-              device. It never leaves your machine — inspect it any time.
-            </p>
-            <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
-              <code>{caInfo.path}</code>
-              <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
-              <span>{caCopied ? 'Copied' : 'Copy'}</span>
-            </button>
-            {caInfo.exists || guiTest?.certTrustError ? (
-              <div className={styles.actions}>
-                {caInfo.exists ? (
-                  <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
-                ) : null}
-                {guiTest?.certTrustError ? (
-                  <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                    {trustBusy ? 'Trusting...' : 'Trust certificate'}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      </VprPage>
+          )}
+        </div>
+      </Modal>
     </section>
+  );
+}
+
+/** Application-list pane the settings and add-app modals slide to: a
+    searchable list with a "none" row first. The back affordance lives in
+    the modal header (title swaps to back + "Choose application"). */
+function AppPickerPane({ apps, error, search, onSearch, activeName, onChoose, noneLabel, noneMeta }: {
+  apps: InstalledAppEntry[] | null;
+  error: string | null;
+  search: string;
+  onSearch: (value: string) => void;
+  /** Currently associated application name, or null when none is set. */
+  activeName: string | null;
+  onChoose: (app: InstalledAppEntry | null) => void;
+  noneLabel: string;
+  noneMeta: string;
+}) {
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const list = apps ?? [];
+    return query ? list.filter((app) => app.name.toLowerCase().includes(query)) : list;
+  }, [apps, search]);
+
+  return (
+    <div className={styles.pickerStack}>
+      <VprSearch value={search} onChange={onSearch} placeholder="Search applications" />
+      <div className={styles.pickerList}>
+        <button
+          type="button"
+          className={`${styles.pickerRow}${activeName === null ? ` ${styles.pickerRowActive}` : ''}`}
+          onClick={() => onChoose(null)}
+        >
+          <span className={styles.pickerRowText}>
+            <span className={styles.pickerRowName}>{noneLabel}</span>
+            <span className={styles.pickerRowMeta}>{noneMeta}</span>
+          </span>
+          {activeName === null ? <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} /> : null}
+        </button>
+        {apps === null ? (
+          <div className={styles.pickerEmpty}>Loading applications...</div>
+        ) : error ? (
+          <div className={styles.pickerEmpty}>{error}</div>
+        ) : filtered.length === 0 ? (
+          <div className={styles.pickerEmpty}>No applications match your search</div>
+        ) : (
+          filtered.map((app) => (
+            <button
+              type="button"
+              key={app.path}
+              className={`${styles.pickerRow}${activeName === app.name ? ` ${styles.pickerRowActive}` : ''}`}
+              onClick={() => onChoose(app)}
+              title={app.path}
+            >
+              {app.iconDataUri
+                ? <img src={app.iconDataUri} alt="" className={styles.pickerIcon} />
+                : <BrandIcon name={app.name} hints={[app.name]} size={20} />}
+              <span className={styles.pickerRowText}>
+                <span className={styles.pickerRowName}>{app.name}</span>
+              </span>
+              {activeName === app.name ? <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} /> : null}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
   );
 }

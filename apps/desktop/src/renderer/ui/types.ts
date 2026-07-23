@@ -1,4 +1,4 @@
-export const VPR_VIEW_NAMES = ['home', 'explore', 'model', 'tools', 'preferences', 'credits', 'deposit', 'activity', 'rewards', 'chat', 'help'] as const;
+export const VPR_VIEW_NAMES = ['home', 'explore', 'model', 'tools', 'chats', 'preferences', 'credits', 'deposit', 'activity', 'rewards', 'chat', 'help'] as const;
 export const DEV_VIEW_NAMES = ['peers', 'connection', 'desktop', 'config'] as const;
 
 export const VIEW_NAMES = [...VPR_VIEW_NAMES, ...DEV_VIEW_NAMES] as const;

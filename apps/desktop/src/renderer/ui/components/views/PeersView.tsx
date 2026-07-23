@@ -1,6 +1,5 @@
 import { useMemo, useCallback } from 'react';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
-import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import { formatShortId, formatInt, formatEndpoint } from '../../../core/format';
 import {
@@ -10,7 +9,7 @@ import {
 } from '../../../core/peer-utils';
 import { safeString } from '../../../core/safe';
 import type { PeerEntry, SortDirection } from '../../../core/state';
-import { VprBackTitle, VprCard } from '../vpr/VprKit';
+import { VprBackTitle, VprCard, VprSearch } from '../vpr/VprKit';
 import styles from './DiagnosticsView.module.scss';
 
 type PeersViewProps = {
@@ -97,7 +96,6 @@ export function PeersView({ onSelectView }: PeersViewProps) {
     peersMessage: state.peersMessage,
     discoverRows: state.discoverRows,
   }), shallowEqual);
-  const actions = useActions();
 
   const [sortKey, setSortKey] = useRetainedState(peersViewCache, 'sortKey');
   const [sortDir, setSortDir] = useRetainedState(peersViewCache, 'sortDir');
@@ -126,25 +124,19 @@ export function PeersView({ onSelectView }: PeersViewProps) {
   }, [lastPeers, filter, sortKey, sortDir, reputationScoresByPeerId]);
 
   return (
-    <section className={`view view-peers ${styles.view}`} role="tabpanel">
-      <div className={styles.stack}>
+    <section className={`view view-peers ${styles.view} ${styles.viewFill}`} role="tabpanel">
+      <div className={`${styles.stack} ${styles.stackFill}`}>
         <VprBackTitle title="Available peers" fallback="help" />
 
-        <div className={styles.toolbar}>
-          <input
-            type="text"
-            className={styles.input}
-            placeholder="Filter peers..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <button type="button" className={styles.button} onClick={() => void actions.scanDht()}>
-            Scan DHT
-          </button>
-        </div>
+        <VprSearch
+          value={filter}
+          onChange={setFilter}
+          placeholder="Filter peers..."
+          ariaLabel="Filter peers"
+        />
 
-        <VprCard className={styles.card}>
-          <div className={styles.tableWrap}>
+        <VprCard className={`${styles.card} ${styles.cardFill}`}>
+          <div className={`${styles.tableWrap} ${styles.tableScroll}`}>
             <table className={styles.table}>
               <thead>
                 <tr>

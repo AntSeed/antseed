@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
-  ArrowRight01Icon,
   ArrowRight02Icon,
   ArrowUp02Icon,
   ArrowUpRight01Icon,
@@ -12,14 +11,6 @@ import {
 import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
-import {
-  conversationAge,
-  conversationMatchesApp,
-  conversationPinnedServiceId,
-  conversationTitle,
-  isConversationActive,
-} from '../../../modules/conversations';
-import { displayToolName } from '../../../modules/tool-names';
 import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
@@ -37,7 +28,8 @@ import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
-import { formatCompactTokens, VprBadge, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { VprRecentChatsCard } from '../vpr/VprRecentChats';
+import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
@@ -46,8 +38,6 @@ const PROXY_STATE_POLL_MS = 3_000;
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 3;
-/* Chat rows sampled on Home — the full list lives on the Apps page. */
-const HOME_CHATS_SAMPLE = 3;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry) return false;
@@ -232,52 +222,16 @@ export function VprHomeView({ onSelectView }: Props) {
   const defaultModelLabel = selectedEntry?.label
     ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'No model');
 
-  /* Recent chats sample — the same per-chat routing list the floating pill
-     and the Apps page show, so the pill reads as a minimized preview of this
-     screen. Rows link to the Apps page, where the full list is managed. */
-  const recentChats = conversations.length > 0 ? (
-    <div className={styles.chatsCard}>
-      <div className={styles.chatsHead}>
-        <span className={styles.chatsTitle}>Recent chats</span>
-        <button type="button" className={styles.chatsAll} onClick={() => onSelectView?.('tools')}>
-          View all
-          <HugeiconsIcon icon={ArrowRight02Icon} size={13} strokeWidth={2} />
-        </button>
-      </div>
-      {conversations.slice(0, HOME_CHATS_SAMPLE).map((chat) => {
-        const pinnedServiceId = conversationPinnedServiceId(chat);
-        const pinnedLabel = pinnedServiceId
-          ? (snap.catalog.find((entry) => entry.serviceId === pinnedServiceId)?.label ?? pinnedServiceId)
-          : null;
-        const title = conversationTitle(chat);
-        return (
-          <button
-            type="button"
-            key={chat.id}
-            className={styles.chatRow}
-            onClick={() => onSelectView?.('tools')}
-            title={title}
-          >
-            <BrandIcon name={chat.tool} hints={[chat.tool]} size={18} />
-            <span className={styles.chatText}>
-              <span className={styles.chatTitleLine}>
-                <span className={styles.chatTitle}>{title}</span>
-                {isConversationActive(chat.lastActiveAt)
-                  ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" />
-                  : null}
-              </span>
-              <span className={styles.chatMeta}>{displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}</span>
-            </span>
-            <span className={styles.chatValue}>
-              <span className={styles.chatValueModel}>{pinnedLabel ?? defaultModelLabel}</span>
-              {!pinnedLabel && <span className={styles.chatValueTag}>default</span>}
-            </span>
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.chatChevron} />
-          </button>
-        );
-      })}
-    </div>
-  ) : null;
+  /* Recent chats sample — full width, same rows as the floating pill; every
+     interaction leads to the dedicated Chats page where chats are managed. */
+  const recentChats = (
+    <VprRecentChatsCard
+      conversations={conversations}
+      catalog={snap.catalog}
+      defaultModelLabel={defaultModelLabel}
+      onOpen={() => onSelectView?.('chats')}
+    />
+  );
 
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
@@ -382,33 +336,10 @@ export function VprHomeView({ onSelectView }: Props) {
       >
       <div className={styles.stack}>
         {hasConnectedApps ? (
-          /* Connected variant: per-app route cards instead of the ask input */
+          /* Connected variant: recent chats instead of the ask input */
           <div className={styles.connectedGroup}>
-            {/* Connected apps live on the Apps page — here only a freshly
-                connected app with no chats yet gets a "what now" card; once
-                its first chat arrives, Recent chats takes over. */}
-            {connectedProfiles
-              .filter((profile) => !conversations.some((chat) => conversationMatchesApp(chat.tool, profile.name)))
-              .map((profile) => (
-                <div key={profile.name} className={styles.routeCard}>
-                  <button
-                    type="button"
-                    className={styles.routeMain}
-                    onClick={() => onSelectView?.('tools')}
-                    title={`Manage ${profile.displayName}`}
-                  >
-                    <BrandIcon name={profile.name} hints={[profile.displayName]} size={22} />
-                    <span className={styles.routeText}>
-                      <span className={styles.routeTitleLine}>
-                        <span className={styles.routeApp}>{profile.displayName}</span>
-                        <VprBadge tone="green">Connected</VprBadge>
-                      </span>
-                      <span className={styles.routeHint}>Start a new session and send your first prompt</span>
-                    </span>
-                  </button>
-                </div>
-              ))}
-
+            {/* Connected apps live on the Apps page — home leads with the
+                chats themselves. */}
             {recentChats}
 
             <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
@@ -449,7 +380,7 @@ export function VprHomeView({ onSelectView }: Props) {
                 />
                 <VprStatTile
                   label="Saving"
-                  value={expectedSavingsPct !== null
+                  value={expectedSavingsPct !== null && (snap.usage?.totalRequests ?? 0) > 0
                     ? <span className={styles.savingValue}>{expectedSavingsPct}%</span>
                     : '-'}
                 />
@@ -484,12 +415,18 @@ export function VprHomeView({ onSelectView }: Props) {
             </button>
           </form>
 
+          {/* The connect pitch is for first-timers — once chats exist the
+              user knows the flow, so only the "More apps" link (below the
+              chats) remains. */}
+          {conversations.length === 0 && (
           <div className={styles.appsGroup}>
             <p className={styles.appsLabel}>Use it on your favorite app</p>
 
             {profiles.length > 0 && (
               <div className={styles.toolList}>
-                {profiles.map((profile) => (
+                {/* Top of the catalog only — the full list lives on the Apps
+                    page behind "More apps". */}
+                {profiles.slice(0, 3).map((profile) => (
                   <button
                     key={profile.name}
                     type="button"
@@ -499,7 +436,9 @@ export function VprHomeView({ onSelectView }: Props) {
                     title={`Connect ${profile.displayName}`}
                   >
                     <span className={styles.toolIdentity}>
-                      <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
+                      {profile.iconDataUri
+                        ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+                        : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
                       <span className={styles.toolLabel}>{profile.displayName}</span>
                     </span>
                     <span className={styles.toolConnect}>
@@ -509,14 +448,15 @@ export function VprHomeView({ onSelectView }: Props) {
                 ))}
               </div>
             )}
-
-            <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
-              <span>More apps</span>
-              <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-            </button>
           </div>
+          )}
 
           {recentChats}
+
+          <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
+            <span>More apps</span>
+            <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+          </button>
         </div>
         )}
       </div>

@@ -16,6 +16,9 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     displayName: 'OpenCode',
     kind: 'config-patch',
     method: 'Config patch',
+    // Client names this tool stamps on its requests (User-Agent product /
+    // session-header slug) — how conversations are attributed to the app.
+    toolSlugs: ['opencode'],
     domains: [],
     pathPrefixes: [],
     configPatch: {
@@ -30,9 +33,10 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
   },
   {
     name: 'codex',
-    displayName: 'Codex CLI',
+    displayName: 'Codex',
     kind: 'config-patch',
     method: 'Config patch',
+    toolSlugs: ['codex'],
     domains: [],
     pathPrefixes: [],
     configPatch: {
@@ -48,6 +52,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     displayName: 'pi',
     kind: 'config-patch',
     method: 'Config patch',
+    toolSlugs: ['pi'],
     domains: [],
     pathPrefixes: [],
     configPatch: {
@@ -57,6 +62,54 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       providerKey: 'antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
       api: 'openai-completions',
+    },
+  },
+  {
+    name: 'crush',
+    displayName: 'Crush',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['crush'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'crush',
+      configPath: '~/.config/crush/crush.json',
+      providerKey: 'antseed',
+      providerName: 'AntSeed',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+    },
+  },
+  {
+    name: 'goose',
+    displayName: 'Goose',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['goose'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'goose',
+      configPath: '~/.config/goose/config.yaml',
+      // goose provider engine; the host root is patched to the buyer proxy.
+      providerKey: 'openai',
+      baseURL: 'http://localhost:{buyerPort}',
+    },
+  },
+  {
+    name: 'zed',
+    displayName: 'Zed',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['zed'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'zed',
+      configPath: '~/.config/zed/settings.json',
+      providerKey: 'antseed',
+      providerName: 'AntSeed',
+      baseURL: 'http://localhost:{buyerPort}/v1',
     },
   },
 ];

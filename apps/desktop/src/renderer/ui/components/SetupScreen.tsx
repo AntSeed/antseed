@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AntStationStackedLogo } from './AntStationLogo';
-import { TitleBar } from './TitleBar';
+import { AntStationMark } from './AntStationLogo';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import styles from './SetupScreen.module.scss';
 
@@ -75,11 +74,16 @@ export function SetupScreen() {
 
   return (
     <>
-      <TitleBar />
+      {/* Frameless window: keep the top strip draggable but visually empty —
+          the setup screen carries its branding in the body. */}
+      <div className={styles.dragStrip} />
       <div className={styles.container}>
         <div className={styles.content}>
-          <AntStationStackedLogo height={60} className={styles.logo} />
-          <h1 className={styles.title}>Setting up AntStation</h1>
+          <div className={styles.brand}>
+            <AntStationMark size={64} />
+            <span className={styles.brandName}>VPR</span>
+          </div>
+          <h1 className={styles.title}>Setting up your VPR</h1>
           <p className={styles.subtitle}>This only takes a moment on first launch</p>
 
           <div className={styles.steps}>
