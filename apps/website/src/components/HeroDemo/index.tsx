@@ -985,6 +985,7 @@ export function HeroDemo({
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
           fontFamily: DEMO_FONT,
+          textAlign: 'left',
         }}>
         <FrameContext.Provider value={frame}>
           <Scene />

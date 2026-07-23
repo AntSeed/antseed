@@ -245,20 +245,33 @@
   background: var(--as-soil-1);
 }
 
-/* dotted trail dropping out of the hero */
+/* dotted trail dripping out of the hero — 6px dots on an 8px pitch,
+   fading in from the top (Figma), dots flow downward */
 .dropTrail {
   position: absolute;
   top: 0;
   left: 50%;
   width: 6px;
   height: 88px;
-  background-image: radial-gradient(var(--as-line) 2.4px, transparent 2.4px);
-  background-size: 6px 12px;
+  background-image: radial-gradient(circle at 3px 4px, var(--as-line) 3px, transparent 3.5px);
+  background-size: 6px 8px;
   background-repeat: repeat-y;
-  background-position: center top;
   transform: translateX(-50%);
-  -webkit-mask-image: linear-gradient(#000, transparent);
-  mask-image: linear-gradient(#000, transparent);
+  -webkit-mask-image: linear-gradient(transparent, #000 85%);
+  mask-image: linear-gradient(transparent, #000 85%);
+  animation: dropFlow 1.2s linear infinite;
+}
+
+@keyframes dropFlow {
+  to {
+    background-position-y: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropTrail {
+    animation: none;
+  }
 }
 
 .pricingSection :global(h2) {
