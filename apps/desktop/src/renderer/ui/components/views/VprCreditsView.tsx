@@ -148,7 +148,7 @@ export function VprCreditsView({ onSelectView }: Props) {
               </button>
             )}
           </div>
-          <div className={styles.detailActions}>
+          {/* <div className={styles.detailActions}>
             <button
               type="button"
               disabled={refreshing}
@@ -156,7 +156,7 @@ export function VprCreditsView({ onSelectView }: Props) {
             >
               {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
-          </div>
+          </div> */}
         </VprCard>
       </div>
       </VprPage>

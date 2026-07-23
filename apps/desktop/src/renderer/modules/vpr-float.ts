@@ -42,6 +42,9 @@ const COMPLETION_REFRESH_DEBOUNCE_MS = 400;
 export type VprFloatModule = {
   openFloat: (profileName?: string, opts?: { openMenu?: boolean }) => Promise<void>;
   closeFloat: () => Promise<void>;
+  /** Immediate data push for main-window changes the pill mirrors (route
+      selection); no-op while the pill is closed. */
+  refresh: () => Promise<void>;
 };
 
 /**
@@ -399,6 +402,13 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     },
     async closeFloat() {
       await bridge?.vprFloatClose?.();
+    },
+    /** Push fresh data to the pill right away — for main-window changes the
+        pill should mirror instantly (route selection) instead of waiting
+        out the poll tick. No-op while the pill is closed. */
+    async refresh() {
+      if (!uiState.vprFloatOpen) return;
+      bridge?.vprFloatUpdate?.(await buildData());
     },
   };
 }

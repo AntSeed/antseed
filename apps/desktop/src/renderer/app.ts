@@ -217,6 +217,9 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   uiState.vprRouteSelection = selection;
   saveVprRouteSelection(selection);
   notifyUiStateChanged();
+  // The floating pill mirrors the selection — push it now instead of
+  // letting it lag behind on its poll tick.
+  void vprFloatApi?.refresh();
   // Keep connected app profiles in step with the new route: the system
   // proxy captured its default model and served-models list at connect
   // time, and the buyer is now pinned to the new model's peer — stale
