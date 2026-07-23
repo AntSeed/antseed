@@ -11,6 +11,7 @@ import type {
   VprFloatModel,
 } from '../types/bridge';
 import {
+  conversationMatchesApp,
   conversationPinnedServiceId,
   conversationTitle,
   isConversationActive,
@@ -356,6 +357,24 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin })
         .then(() => buildData())
         .then((data) => bridge?.vprFloatUpdate?.(data));
+      return;
+    }
+    // Open the app a chat belongs to (chat header shortcut): the tool's
+    // desktop app when one is known, else the connected profile's open
+    // action — same chain as the Chats view's open buttons.
+    if (type === 'open-chat-app') {
+      const { conversationId } = action as { conversationId?: unknown };
+      if (typeof conversationId !== 'string') return;
+      void (async () => {
+        const records = (await bridge?.buyerConversationsList?.()) ?? [];
+        const record = records.find((row) => row.id === conversationId);
+        if (!record) return;
+        const opened = await bridge?.openToolSession?.(record.tool, record.sessionKey, 'app');
+        if (opened?.ok) return;
+        await ensureProfiles();
+        const profile = profiles.find((item) => conversationMatchesApp(record.tool, item));
+        if (profile) await bridge?.openTool?.(profile.toolName ?? profile.name);
+      })();
     }
   });
 

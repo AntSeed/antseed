@@ -501,4 +501,5 @@ export type VprFloatAction =
   | 'open-main'
   | { type: 'select-model'; provider: string; serviceId: string }
   | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
+  | { type: 'open-chat-app'; conversationId: string }
   | { type: 'set-compact'; compact: boolean };

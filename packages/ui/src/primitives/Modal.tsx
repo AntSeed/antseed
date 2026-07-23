@@ -1,6 +1,6 @@
 import FocusLock from 'react-focus-lock';
 import { RemoveScroll } from 'react-remove-scroll';
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useId, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useDialogBehavior } from './useDialogBehavior';
 
 export type ModalSize = 'sm' | 'md' | 'lg';
@@ -24,10 +24,6 @@ const modalWidths: Record<ModalSize, string> = {
   md: '28.75rem',
   lg: '35rem',
 };
-
-/** Must match the exit animation duration in styles/index.scss. */
-const MODAL_EXIT_MS = 160;
-
 function CloseIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -54,29 +50,9 @@ export function Modal({
   const subtitleId = useId();
   const { closeDialog: closeModal, isTopDialog } = useDialogBehavior(isOpen, panelRef, onClose);
 
-  // Keep the modal mounted briefly after close so the exit animation can play.
-  const [isExiting, setIsExiting] = useState(false);
-  const wasOpenRef = useRef(isOpen);
-  useEffect(() => {
-    const wasOpen = wasOpenRef.current;
-    wasOpenRef.current = isOpen;
-    if (isOpen) {
-      setIsExiting(false);
-      return;
-    }
-    if (!wasOpen) return;
-    setIsExiting(true);
-    const timer = window.setTimeout(() => setIsExiting(false), MODAL_EXIT_MS);
-    return () => window.clearTimeout(timer);
-  }, [isOpen]);
+  if (!isOpen) return null;
 
-  if (!isOpen && !isExiting) return null;
-
-  const overlayClasses = [
-    'as-modal-overlay',
-    !isOpen && 'as-modal-overlay--closing',
-    overlayClassName,
-  ].filter(Boolean).join(' ');
+  const overlayClasses = ['as-modal-overlay', overlayClassName].filter(Boolean).join(' ');
   const modalClasses = ['as-modal', `as-modal--${size}`, className].filter(Boolean).join(' ');
   const bodyClasses = ['as-modal__body', bodyClassName].filter(Boolean).join(' ');
   const scrollLockStyle = { '--as-modal-width': modalWidths[size] } as CSSProperties;

@@ -150,8 +150,15 @@
   gap: 6px;
 }
 
+/* The scroll container is the white card itself (the row list renders
+   frameless inside), so the scrollbar sits within the card like the app's
+   other scroll areas. */
 .modelScroll {
   min-height: 0;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
 /* Chat detail: the name card and Model label pin — only the model list

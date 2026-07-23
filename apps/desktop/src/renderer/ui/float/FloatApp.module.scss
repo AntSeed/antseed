@@ -158,39 +158,37 @@
   gap: 2px;
 }
 
-/* The model label doubles as the single dropdown trigger (inline text with a
-   small chevron). It opens a custom DOM panel (not a native select) so the
+/* The whole pill face is the dropdown trigger: badge + model label + usage
+   in one button. It opens a custom DOM panel (not a native select) so the
    rows can carry icons, pins and timestamps; the window grows while the
-   panel is open since DOM content can't escape the window bounds. */
-.modelTrigger {
+   panel is open since DOM content can't escape the window bounds. Dragging
+   is manual (pointer deltas), so the button surface stays grabbable. */
+.pillTrigger {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
-  /* The first line must clear the shrink + close buttons; the lines below
-     may run underneath them. */
-  max-width: calc(100% - 48px);
+  gap: 8px;
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-  height: 20px;
+  text-align: left;
   cursor: pointer;
   outline: none;
 }
 
-.modelTrigger > svg {
-  flex: 0 0 auto;
-}
-
 .triggerLabel {
+  /* The title line must clear the shrink + close buttons in the top-right
+     corner; the usage line below may run underneath them. */
+  max-width: calc(100% - 48px);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
 }
 
 /* ---------- Dropdown panels (chat scope / model) ---------- */
@@ -351,6 +349,10 @@
    chat name doesn't span the whole pill. */
 .menuBack {
   padding: 2px 4px 2px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 .menuBack span {
@@ -358,6 +360,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Right-side shortcut in the chat header: the chat's app icon plus an open
+   arrow, launching the app the session belongs to. */
+.menuOpenApp {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.menuOpenApp:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }
 
 /* Level transition inside the conversations panel: drilling in slides from
@@ -481,5 +504,32 @@
 
 .close:hover,
 .shrink:hover {
+  color: var(--text-primary);
+}
+
+/* Pinned footer of the dropdown panel: opens the main AntSeed window. Sits
+   below the scroll area so it stays visible however long the list gets. */
+.menuFooter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 12px;
+  border: none;
+  border-top: 1px solid var(--border-light);
+  /* Square: the global button radius would round the hover fill's top
+     corners; the panel's overflow clipping shapes the bottom ones. */
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.menuFooter:hover {
+  background: var(--bg-surface);
   color: var(--text-primary);
 }

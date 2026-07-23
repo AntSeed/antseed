@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowDown01Icon, ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/conversations';
 import { displayToolName } from '../../modules/tool-names';
@@ -72,6 +72,50 @@ export function FloatApp() {
     const dragged = chipDrag.current?.moved ?? false;
     chipDrag.current = null;
     return dragged;
+  };
+
+  // The expanded pill and the open dropdown drag the same way as the chip:
+  // manual pointer deltas, with a press that never crossed the threshold
+  // counting as the click. Capture starts only once movement crosses the
+  // threshold — capturing on pointerdown would retarget the eventual click
+  // away from dropdown rows and make them unclickable.
+  const pillDrag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const pillDragHandlers = {
+    onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      pillDrag.current = { x: event.screenX, y: event.screenY, moved: false };
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLElement>) => {
+      const state = pillDrag.current;
+      if (!state) return;
+      const dx = event.screenX - state.x;
+      const dy = event.screenY - state.y;
+      if (!state.moved && Math.hypot(dx, dy) < 3) return;
+      if (!state.moved) {
+        state.moved = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      state.x = event.screenX;
+      state.y = event.screenY;
+      bridge?.vprFloatMoveBy?.(dx, dy);
+    },
+    onPointerUp: () => {
+      // Leave `moved` for the click (fires right after) to consume.
+      if (pillDrag.current && !pillDrag.current.moved) pillDrag.current = null;
+    },
+    onPointerCancel: () => {
+      pillDrag.current = null;
+    },
+    // Swallow the click a drag would otherwise end with — runs in the
+    // capture phase so dropdown rows never see it.
+    onClickCapture: (event: React.MouseEvent<HTMLElement>) => {
+      const dragged = pillDrag.current?.moved ?? false;
+      pillDrag.current = null;
+      if (dragged) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
   };
 
   // Reset the flip whenever the chip leaves/enters compact mode, and flip
@@ -223,40 +267,31 @@ export function FloatApp() {
 
   return (
     <div className={styles.pill}>
+      {/* The whole pill face is the dropdown trigger — badge, label and
+          usage line together — and doubles as a drag handle: pointer deltas
+          move the window, and only a press that never moved counts as the
+          click that toggles the panel. */}
       <button
         type="button"
-        className={styles.appBadge}
-        onClick={() => bridge?.vprFloatAction?.('open-main')}
-        title="Open AntSeed"
-        aria-label="Open AntSeed"
+        className={styles.pillTrigger}
+        {...pillDragHandlers}
+        onClick={() => setMenuOpen(!menuOpen)}
+        aria-expanded={menuOpen}
+        aria-label="Model and conversations"
+        title={modelLabel}
       >
-        {badgeIcon}
-      </button>
-
-      <div className={styles.body}>
-        {/* The model label doubles as the single dropdown trigger: it opens
-            the conversations panel, whose "Default model" row drills into the
-            model list. */}
-        <button
-          type="button"
-          className={styles.modelTrigger}
-          onClick={() => setMenuOpen(!menuOpen)}
-          aria-expanded={menuOpen}
-          aria-label="Model and conversations"
-          title={modelLabel}
-        >
+        <span className={styles.appBadge}>{badgeIcon}</span>
+        <span className={styles.body}>
           <span className={styles.triggerLabel}>{modelLabel}</span>
-          <HugeiconsIcon icon={ArrowDown01Icon} size={12} strokeWidth={2} />
-        </button>
-
-        {data?.usageLabel ? <span className={styles.usage}>{data.usageLabel}</span> : null}
-      </div>
+          {data?.usageLabel ? <span className={styles.usage}>{data.usageLabel}</span> : null}
+        </span>
+      </button>
 
       {/* Manage conversations: level 1 lists the default-model row plus one
           row per chat; clicking a row slides to the shared rich model list
           (same rows as the Home dropdown) with a back header. */}
       {menuOpen ? (
-        <div className={styles.menuPanel} aria-label="Manage conversations">
+        <div className={styles.menuPanel} aria-label="Manage conversations" {...pillDragHandlers}>
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
@@ -323,12 +358,25 @@ export function FloatApp() {
             </div>
           ) : (chatTarget === 'default' || targetChat) ? (
             <div key={chatTarget} className={slideClass}>
-              {/* Same back-title chrome as the inner VPR pages. */}
+              {/* Same back-title chrome as the inner VPR pages, plus a
+                  right-side shortcut launching the chat's app. */}
               <div className={styles.menuBack}>
                 <VprBackTitle
                   title={targetChat ? targetChat.title : 'Default model'}
                   onBack={drillBack}
                 />
+                {targetChat ? (
+                  <button
+                    type="button"
+                    className={styles.menuOpenApp}
+                    onClick={() => bridge?.vprFloatAction?.({ type: 'open-chat-app', conversationId: targetChat.id })}
+                    title={`Open ${displayToolName(targetChat.tool)}`}
+                    aria-label={`Open ${displayToolName(targetChat.tool)}`}
+                  >
+                    <BrandIcon name={targetChat.tool} hints={[targetChat.tool]} size={14} />
+                    <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                  </button>
+                ) : null}
               </div>
               <VprModelRowList
                 entries={models}
@@ -350,6 +398,16 @@ export function FloatApp() {
             </div>
           ) : null}
           </OverlayScrollArea>
+          {/* Pinned footer: opens the main AntSeed window (VPR). */}
+          <button
+            type="button"
+            className={styles.menuFooter}
+            onClick={() => bridge?.vprFloatAction?.('open-main')}
+            title="Open VPR"
+          >
+            <span>Open VPR</span>
+            <HugeiconsIcon icon={ArrowUpRight01Icon} size={13} strokeWidth={2} />
+          </button>
         </div>
       ) : null}
 
