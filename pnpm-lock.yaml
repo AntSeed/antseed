@@ -7,6 +7,11 @@ settings:
 overrides:
   webpack: ^5.95.0
 
+patchedDependencies:
+  cli-highlight:
+    hash: mf4jwc77auv24gdfuu3pl4mn5q
+    path: patches/cli-highlight.patch
+
 importers:
 
   .: {}
@@ -91,10 +96,10 @@ importers:
         version: 11.2.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       '@mariozechner/pi-ai':
         specifier: ^0.64.0
-        version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+        version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       '@mariozechner/pi-coding-agent':
         specifier: ^0.64.0
-        version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+        version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       '@radix-ui/react-tooltip':
         specifier: ^1.2.8
         version: 1.2.8(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -3866,7 +3871,7 @@ packages:
 
   '@paulmillr/qr@0.2.1':
     resolution: {integrity: sha512-IHnV6A+zxU7XwmKFinmYjUcwlyK9+xkG3/s9KcQhI9BjQKycrJ1JRO+FbNYPwZiPKW3je/DR0k7w8/gLa5eaxQ==}
-    deprecated: 'The package is now available as "qr": npm install qr'
+    deprecated: 'Switch to "qr" (new package name) for security updates: npm install qr'
 
   '@peculiar/asn1-cms@2.6.1':
     resolution: {integrity: sha512-vdG4fBF6Lkirkcl53q6eOdn3XYKt+kJTG59edgRZORlg/3atWWEReRCx5rYE1ZzTTX6vLK5zDMjHh7vbrcXGtw==}
@@ -17504,9 +17509,9 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
+  '@mariozechner/pi-agent-core@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
     dependencies:
-      '@mariozechner/pi-ai': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      '@mariozechner/pi-ai': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -17516,7 +17521,7 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
+  '@mariozechner/pi-ai@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.73.0(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.996.0
@@ -17526,7 +17531,7 @@ snapshots:
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       chalk: 5.6.2
-      openai: 6.26.0(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      openai: 6.26.0(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       partial-json: 0.1.7
       proxy-agent: 6.5.0
       undici: 7.22.0
@@ -17540,16 +17545,16 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-coding-agent@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
+  '@mariozechner/pi-coding-agent@0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)':
     dependencies:
       '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
-      '@mariozechner/pi-ai': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      '@mariozechner/pi-agent-core': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      '@mariozechner/pi-ai': 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       '@mariozechner/pi-tui': 0.64.0
       '@silvia-odwyer/photon-node': 0.3.4
       ajv: 8.18.0
       chalk: 5.6.2
-      cli-highlight: 2.1.11
+      cli-highlight: 2.1.11(patch_hash=mf4jwc77auv24gdfuu3pl4mn5q)
       diff: 8.0.3
       extract-zip: 2.0.1
       file-type: 21.3.0
@@ -23046,7 +23051,7 @@ snapshots:
     dependencies:
       restore-cursor: 5.1.0
 
-  cli-highlight@2.1.11:
+  cli-highlight@2.1.11(patch_hash=mf4jwc77auv24gdfuu3pl4mn5q):
     dependencies:
       chalk: 4.1.2
       highlight.js: 10.7.3
@@ -27169,9 +27174,9 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
-  openai@6.26.0(ws@8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76):
+  openai@6.26.0(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76):
     optionalDependencies:
-      ws: 8.18.1(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      ws: 8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       zod: 3.25.76
 
   openai@6.27.0(ws@8.19.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.3.6):
