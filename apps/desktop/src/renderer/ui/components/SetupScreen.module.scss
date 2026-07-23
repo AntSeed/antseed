@@ -47,9 +47,6 @@
   color: var(--accent-green);
   font-size: 20px;
   font-weight: 700;
-  letter-spacing: 0.28em;
-  /* Optically re-center: letter-spacing trails the last glyph. */
-  margin-right: -0.28em;
 }
 
 .title {
@@ -57,7 +54,6 @@
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 8px;
-  letter-spacing: -0.01em;
 }
 
 .subtitle {
