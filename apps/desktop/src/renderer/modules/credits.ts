@@ -124,7 +124,14 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
       if (rewards?.ok && rewards.data) {
         uiState.creditsRewards = rewards.data;
       }
-      lastPaymentSummaryRefreshAt = Date.now();
+      // Arm the throttle only once the buyer answered the usage query.
+      // While it's still booting that fetch fails ("buyer proxy
+      // unreachable") — but rewards is chain-side and reports ok even with
+      // no data, so any-of-three would arm the throttle on a boot-time
+      // failure and pin the zero-value tiles for the whole window.
+      if (usage?.ok) {
+        lastPaymentSummaryRefreshAt = Date.now();
+      }
     } finally {
       paymentSummaryRefreshInFlight = false;
       uiState.creditsSummaryLoading = false;

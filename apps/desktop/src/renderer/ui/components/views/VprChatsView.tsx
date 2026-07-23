@@ -19,7 +19,7 @@ import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { VprPage } from '../vpr/VprKit';
 import { VprModelRowList } from '../vpr/VprModelRows';
-import { chatModelLabel, VprChatRow } from '../vpr/VprRecentChats';
+import { chatModelLabel, VprChatRow, VprChatRowsSkeleton } from '../vpr/VprRecentChats';
 import styles from './VprChatsView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -39,7 +39,8 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     discoverRows: state.discoverRows,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
-  const [conversations, setConversations] = useState<BuyerConversationSummary[]>([]);
+  // null = the buyer hasn't answered the first conversations query yet.
+  const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -58,7 +59,9 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      setConversations((await window.antseedDesktop?.buyerConversationsList?.()) ?? []);
+      // null = buyer unreachable; keep whatever list we last had.
+      const next = await window.antseedDesktop?.buyerConversationsList?.();
+      if (next) setConversations(next);
     } catch { /* buyer offline — keep the last list */ }
   }, []);
 
@@ -69,13 +72,13 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   }, [refresh]);
 
   const selected = selectedId
-    ? conversations.find((chat) => chat.id === selectedId) ?? null
+    ? conversations?.find((chat) => chat.id === selectedId) ?? null
     : null;
   // A selected chat that disappears (deleted elsewhere, aged out) falls back
   // to the list; the rename draft resets per visited chat.
   useEffect(() => {
-    if (selectedId && conversations.length > 0 && !selected) drillBack();
-  }, [selectedId, selected, conversations.length, drillBack]);
+    if (selectedId && (conversations?.length ?? 0) > 0 && !selected) drillBack();
+  }, [selectedId, selected, conversations?.length, drillBack]);
   useEffect(() => {
     setDraftLabel(null);
     setMessage(null);
@@ -188,6 +191,10 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                 Delete chat
               </button>
             </>
+          ) : conversations === null ? (
+            <div className={styles.listCard}>
+              <VprChatRowsSkeleton rows={3} />
+            </div>
           ) : conversations.length === 0 ? (
             <div className={styles.empty}>No tool chats yet — connect an app and send a prompt</div>
           ) : (

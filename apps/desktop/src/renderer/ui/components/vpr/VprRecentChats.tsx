@@ -58,16 +58,46 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
   );
 }
 
+/** Placeholder rows while the buyer hasn't answered the first conversations
+    query yet (it boots alongside the app) — same silhouette as VprChatRow. */
+export function VprChatRowsSkeleton({ rows = 2 }: { rows?: number }): JSX.Element {
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className={styles.skeletonRow}>
+          <span className={styles.skeletonIcon} />
+          <span className={styles.skeletonText}>
+            <span className={styles.skeletonLine} />
+            <span className={`${styles.skeletonLine} ${styles.skeletonLineShort}`} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Full-width "Recent chats" sample card; every interaction leads to the
-    dedicated Chats page (via onOpen), where chats are managed. Renders
-    nothing while no tool chat has been seen. */
-export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, onOpen }: {
+    dedicated Chats page (via onOpen), where chats are managed. Shows
+    skeleton rows while the chat list is still loading, and renders nothing
+    once it's known that no tool chat has been seen. */
+export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, loading, onOpen }: {
   conversations: BuyerConversationSummary[];
   catalog: VprModelCatalogEntry[];
   defaultModelLabel: string | null;
+  loading?: boolean;
   onOpen: () => void;
 }): JSX.Element | null {
-  if (conversations.length === 0) return null;
+  if (conversations.length === 0) {
+    if (!loading) return null;
+    return (
+      <div className={styles.card}>
+        <div className={styles.head}>
+          <span className={styles.headTitle}>Recent chats</span>
+        </div>
+        <VprChatRowsSkeleton />
+      </div>
+    );
+  }
   return (
     <div className={styles.card}>
       <div className={styles.head}>

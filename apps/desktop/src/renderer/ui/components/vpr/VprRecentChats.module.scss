@@ -142,3 +142,61 @@
     animation: none;
   }
 }
+
+/* ---------- Loading skeleton (buyer hasn't answered yet) ---------- */
+
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px;
+}
+
+.skeletonIcon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+}
+
+.skeletonText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.skeletonLine {
+  height: 10px;
+  width: 60%;
+  border-radius: 5px;
+}
+
+.skeletonLineShort {
+  height: 8px;
+  width: 40%;
+}
+
+.skeletonIcon,
+.skeletonLine {
+  background: var(--bg-hover);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonIcon,
+  .skeletonLine {
+    animation: none;
+  }
+}

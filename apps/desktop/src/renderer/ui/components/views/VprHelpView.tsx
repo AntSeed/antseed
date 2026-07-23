@@ -18,7 +18,7 @@ declare const __APP_VERSION__: string;
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const TELEGRAM_URL = 'https://t.me/antseed';
-const X_URL = 'https://x.com/antseed';
+const X_URL = 'https://x.com/antseedai';
 const DOCS_BASE_URL = 'https://antseed.com/docs';
 
 type HelpSection = { heading: string; body: string };
@@ -558,11 +558,11 @@ export function VprHelpView({ onSelectView }: Props) {
         <div className={styles.section}>
           <p className={styles.sectionLabel}>Legal</p>
           <VprCard>
-            <button type="button" className={styles.row} onClick={() => openExternal('https://antseed.com/privacy')}>
+            <button type="button" className={styles.row} onClick={() => openExternal('https://antseed.com/terms-of-service#16-privacy-and-data')}>
               <span className={styles.rowLabel}>Privacy Policy</span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>
-            <button type="button" className={styles.row} onClick={() => openExternal('https://antseed.com/terms')}>
+            <button type="button" className={styles.row} onClick={() => openExternal('https://antseed.com/terms-of-service')}>
               <span className={styles.rowLabel}>Terms of Service</span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>
@@ -572,7 +572,7 @@ export function VprHelpView({ onSelectView }: Props) {
         <div className={styles.section}>
           <p className={styles.sectionLabel}>App details</p>
           <VprCard>
-            <button type="button" className={styles.row} onClick={() => openExternal('https://antseed.com/changelog')}>
+            <button type="button" className={styles.row} onClick={() => openExternal('https://github.com/AntSeed/antseed/blob/main/CHANGELOG.md')}>
               <span className={styles.rowLabel}>Changelog</span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>

@@ -403,7 +403,8 @@ export type DesktopBridge = {
 
   /* Floating always-on-top pill window */
   vprFloatSetExpanded?: (expanded: boolean) => void;
-  buyerConversationsList?: () => Promise<BuyerConversationSummary[]>;
+  /** null while the buyer is unreachable (e.g. still starting up). */
+  buyerConversationsList?: () => Promise<BuyerConversationSummary[] | null>;
   buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;

@@ -59,7 +59,9 @@ export function VprHomeView({ onSelectView }: Props) {
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
-  const [conversations, setConversations] = useState<BuyerConversationSummary[]>([]);
+  // null = the buyer hasn't answered the first conversations query yet (it
+  // boots alongside the app) — the Recent chats card shows a skeleton then.
+  const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
   const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
@@ -101,15 +103,21 @@ export function VprHomeView({ onSelectView }: Props) {
         const [nextProfiles, nextState, nextConversations] = await Promise.all([
           bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
           bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
-          bridge?.buyerConversationsList?.() ?? Promise.resolve([]),
+          bridge?.buyerConversationsList?.() ?? Promise.resolve(null),
         ]);
         if (cancelled) return;
         setProfiles(nextProfiles);
         setProxyState(nextState);
-        setConversations(nextConversations);
+        // null = buyer unreachable; keep whatever list we last had.
+        if (nextConversations) setConversations(nextConversations);
       } catch {
         if (!cancelled) setProxyState(null);
       }
+      // Usage tiles: the module throttle absorbs this to one real fetch per
+      // window once data has loaded, but while the payments backend is still
+      // booting (startup) every tick retries, so the tiles fill in as soon
+      // as it's up instead of showing zeros.
+      void actions.refreshPaymentSummary();
     }
     void refreshTools();
     const timer = window.setInterval(() => { void refreshTools(); }, PROXY_STATE_POLL_MS);
@@ -117,7 +125,7 @@ export function VprHomeView({ onSelectView }: Props) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [actions]);
 
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
   const connectedProfiles = useMemo(
@@ -226,9 +234,10 @@ export function VprHomeView({ onSelectView }: Props) {
      interaction leads to the dedicated Chats page where chats are managed. */
   const recentChats = (
     <VprRecentChatsCard
-      conversations={conversations}
+      conversations={conversations ?? []}
       catalog={snap.catalog}
       defaultModelLabel={defaultModelLabel}
+      loading={conversations === null}
       onOpen={() => onSelectView?.('chats')}
     />
   );
@@ -418,7 +427,7 @@ export function VprHomeView({ onSelectView }: Props) {
           {/* The connect pitch is for first-timers — once chats exist the
               user knows the flow, so only the "More apps" link (below the
               chats) remains. */}
-          {conversations.length === 0 && (
+          {(conversations?.length ?? 0) === 0 && (
           <div className={styles.appsGroup}>
             <p className={styles.appsLabel}>Use it on your favorite app</p>
 

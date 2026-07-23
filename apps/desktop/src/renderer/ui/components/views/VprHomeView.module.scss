@@ -25,8 +25,7 @@
 .scrollerViewport {
   overflow-y: auto;
   overflow-x: clip;
-  /* Top padding preserves the 24px stack gap between the hero and content. */
-  padding: 24px 16px;
+  padding: 16px;
   scroll-timeline: --active-view-scroll y;
 }
 

@@ -801,7 +801,13 @@ async function stopManagedRuntimes(): Promise<void> {
   try {
     await processManager.stopAll();
   } finally {
-    await clearSystemProxySettings();
+    // Quit path: restore OS proxy settings and unpatch tool configs so
+    // nothing routes through the dead proxy while the app is closed — but
+    // keep system-proxy.state.json: launch reads it to reconnect the same
+    // profiles automatically. Explicit disconnects go through
+    // stopSystemProxyRuntime(true), which does delete it.
+    await clearSystemProxyTransportSettings();
+    await unlink(systemProxyPidPath()).catch(() => undefined);
     removeAllConfigPatches();
     traySystemProxyProfiles = new Set();
   }
@@ -3619,7 +3625,9 @@ ipcMain.on('vpr-float:set-expanded', (_event, expanded: unknown) => {
 
 // Conversations seen by the buyer (per-chat routing). The renderer cannot
 // call the buyer's loopback control endpoints directly (CORS), so the main
-// process proxies list/update.
+// process proxies list/update. Returns null (not []) when the buyer is
+// unreachable — e.g. still starting up — so the UI can show a loading state
+// instead of a wrong "no chats" one.
 ipcMain.handle('buyer:conversations-list', async () => {
   try {
     const buyerPort = await resolveBuyerProxyPort();
@@ -3629,7 +3637,7 @@ ipcMain.handle('buyer:conversations-list', async () => {
     const parsed = await response.json() as { conversations?: unknown[] };
     return Array.isArray(parsed.conversations) ? parsed.conversations : [];
   } catch {
-    return [];
+    return null;
   }
 });
 
