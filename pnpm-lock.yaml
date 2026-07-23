@@ -70,81 +70,30 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@antseed/api-adapter':
-        specifier: workspace:*
-        version: link:../../packages/api-adapter
       '@antseed/node':
         specifier: workspace:*
         version: link:../../packages/node
       '@antseed/payments':
         specifier: workspace:*
         version: link:../payments
-      '@antseed/ui':
-        specifier: workspace:*
-        version: link:../../packages/ui
-      '@crossmint/client-sdk-react-ui':
-        specifier: ^4.3.1
-        version: 4.3.1(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(@solana/web3.js@1.98.1(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@5.0.10))(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1(react@18.3.1))(react-native@0.74.0(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(react@18.3.1)(utf-8-validate@5.0.10))(react@18.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)
-      '@fastify/cors':
-        specifier: ^10.0.0
-        version: 10.1.0
-      '@fastify/static':
-        specifier: ^9.0.0
-        version: 9.0.0
-      '@fastify/websocket':
-        specifier: ^11.2.0
-        version: 11.2.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       '@mariozechner/pi-ai':
         specifier: ^0.64.0
         version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       '@mariozechner/pi-coding-agent':
         specifier: ^0.64.0
         version: 0.64.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
-      '@radix-ui/react-tooltip':
-        specifier: ^1.2.8
-        version: 1.2.8(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@silentbot1/nat-api':
-        specifier: ^0.4.9
-        version: 0.4.9
       '@sinclair/typebox':
         specifier: ^0.34.48
         version: 0.34.48
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2
-      bittorrent-dht:
-        specifier: ^11.0.11
-        version: 11.0.11
-      chalk:
-        specifier: ^5.6.2
-        version: 5.6.2
-      cli-table3:
-        specifier: ^0.6.5
-        version: 0.6.5
-      commander:
-        specifier: ^14.0.3
-        version: 14.0.3
-      dompurify:
-        specifier: ^3.3.2
-        version: 3.3.2
-      dotenv:
-        specifier: ^16.6.1
-        version: 16.6.1
       electron-updater:
         specifier: ^6.8.3
         version: 6.8.3
-      ethers:
-        specifier: ^6.13.0
-        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-      fastify:
-        specifier: ^5.7.4
-        version: 5.7.4
       fflate:
         specifier: 0.8.2
         version: 0.8.2
-      marked:
-        specifier: ^17.0.4
-        version: 17.0.4
       node-datachannel:
         specifier: ^0.7.0
         version: 0.7.0
@@ -154,22 +103,13 @@ importers:
       open:
         specifier: ^11.0.0
         version: 11.0.0
-      ora:
-        specifier: ^9.3.0
-        version: 9.3.0
-      pdfjs-dist:
-        specifier: 5.6.205
-        version: 5.6.205
-      qrcode:
-        specifier: ^1.5.4
-        version: 1.5.4
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
     devDependencies:
+      '@antseed/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@crossmint/client-sdk-react-ui':
+        specifier: ^4.3.1
+        version: 4.3.1(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(@solana/web3.js@1.98.1(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@5.0.10))(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1(react@18.3.1))(react-native@0.74.0(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(react@18.3.1)(utf-8-validate@5.0.10))(react@18.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)
       '@electron/notarize':
         specifier: ^3.1.1
         version: 3.1.1
@@ -179,6 +119,9 @@ importers:
       '@hugeicons/react':
         specifier: ^1.1.5
         version: 1.1.5(react@18.3.1)
+      '@radix-ui/react-tooltip':
+        specifier: ^1.2.8
+        version: 1.2.8(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.33
@@ -197,12 +140,27 @@ importers:
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       electron:
         specifier: ^31.6.0
         version: 31.7.7
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
+      marked:
+        specifier: ^17.0.4
+        version: 17.0.4
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       react-loading-skeleton:
         specifier: ^3.5.0
         version: 3.5.0(react@18.3.1)
@@ -2987,9 +2945,6 @@ packages:
 
   '@fastify/static@9.0.0':
     resolution: {integrity: sha512-r64H8Woe/vfilg5RTy7lwWlE8ZZcTrc3kebYFMEUBrMqlydhQyoiExQXdYAy2REVpST/G35+stAM8WYp1WGmMA==}
-
-  '@fastify/websocket@11.2.0':
-    resolution: {integrity: sha512-3HrDPbAG1CzUCqnslgJxppvzaAZffieOVbLp1DAy1huCSynUWPifSvfdEDUR8HlJLp3sp1A36uOM2tJogADS8w==}
 
   '@floating-ui/core@1.7.5':
     resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
@@ -7369,10 +7324,6 @@ packages:
   domhandler@5.0.3:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
-
-  dompurify@3.3.2:
-    resolution: {integrity: sha512-6obghkliLdmKa56xdbLOpUZ43pAR6xFy1uOrxBaIDjT+yaRuuybLjGS9eVBoSR/UPU5fq3OXClEHLJNGvbxKpQ==}
-    engines: {node: '>=20'}
 
   domutils@2.8.0:
     resolution: {integrity: sha512-w96Cjofp72M5IIhpjgobBimYEfoPjx1Vx0BSX9P30WBdZW2WIKU0T1Bd0kz2eNZ9ikjKgHbEyKx8BB6H1L3h3A==}
@@ -17041,15 +16992,6 @@ snapshots:
       fastq: 1.20.1
       glob: 13.0.6
 
-  '@fastify/websocket@11.2.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)':
-    dependencies:
-      duplexify: 4.1.3
-      fastify-plugin: 5.1.0
-      ws: 8.19.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@floating-ui/core@1.7.5':
     dependencies:
       '@floating-ui/utils': 0.2.11
@@ -23736,10 +23678,6 @@ snapshots:
   domhandler@5.0.3:
     dependencies:
       domelementtype: 2.3.0
-
-  dompurify@3.3.2:
-    optionalDependencies:
-      '@types/trusted-types': 2.0.7
 
   domutils@2.8.0:
     dependencies:
