@@ -34,7 +34,9 @@ import {
   parsePeerPinnedService,
   rewritePeerPinnedServiceInBody,
   substituteRoutedModelAlias,
+  overrideRoutedModelInBody,
   ROUTED_MODEL_ALIAS,
+  SYSTEM_ROUTED_MODEL_HEADER,
 } from './request-utils.js'
 import {
   getExplicitProviderOverride,
@@ -1160,6 +1162,11 @@ export class BuyerProxy {
     }
     // Remove host header (points to localhost, not the seller)
     delete headers['host']
+    // Internal marker from the system proxy: the body's model was assigned
+    // by the proxy's route rewrite, not chosen by the tool. Stripped here so
+    // it never reaches a seller.
+    const systemRoutedModel = headers[SYSTEM_ROUTED_MODEL_HEADER] === '1'
+    delete headers[SYSTEM_ROUTED_MODEL_HEADER]
 
     let serializedReq: SerializedHttpRequest = {
       requestId: randomUUID(),
@@ -1176,7 +1183,10 @@ export class BuyerProxy {
     // Per-chat routing: completion requests carry a stable per-conversation
     // identity (see conversation-identity.ts). A chat pinned to a model
     // overrides the session default when resolving the `antseed` alias;
-    // subagent sessions inherit their parent chat's pin.
+    // subagent sessions inherit their parent chat's pin. The default route
+    // only steers a chat's first request — the model that serves it becomes
+    // the chat's own pin (ConversationStore.touch), so changing the default
+    // later applies to new chats only.
     const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
     const conversationBody = isConversationRequest
       ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
@@ -1216,13 +1226,30 @@ export class BuyerProxy {
       log(`Model alias applied: ${ROUTED_MODEL_ALIAS} -> ${effectiveRoutedModel}${chatPinnedModel ? ' (chat pin)' : ''}`)
     }
 
+    // System-proxy-intercepted tools can't carry the alias — the proxy
+    // rewrites their upstream model names to its connect-time route and
+    // marks the request. A chat pin must still win there, exactly as it
+    // does for alias-carrying configs; otherwise pinning a chat in the
+    // desktop silently does nothing for intercepted apps.
+    let chatPinOverrideApplied = false
+    if (systemRoutedModel && !aliasResult.aliasRequested && chatPinnedModel) {
+      const pinOverride = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, chatPinnedModel)
+      if (pinOverride.overridden) {
+        serializedReq = { ...serializedReq, body: pinOverride.body, headers: pinOverride.headers }
+        chatPinOverrideApplied = true
+        log(`Chat pin applied to system-routed model: -> ${chatPinnedModel}`)
+      }
+    }
+
     // Track the conversation (subagent traffic rolls up into the parent
     // chat). The snippet is only extracted the first time a chat is seen.
     if (conversationIdentity) {
       const rawModel = typeof conversationBody?.['model'] === 'string' ? conversationBody['model'] : ''
       const resolvedModel = aliasResult.substituted
         ? effectiveRoutedModel
-        : (parsePeerPinnedService(rawModel) ? rawModel : null)
+        : chatPinOverrideApplied
+          ? chatPinnedModel
+          : (parsePeerPinnedService(rawModel) ? rawModel : null)
       const trackedKey = conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       const known = this._conversations.get(`${conversationIdentity.tool}:${trackedKey}`)
       this._conversations.touch({

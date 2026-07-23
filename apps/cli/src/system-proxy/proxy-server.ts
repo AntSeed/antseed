@@ -3,6 +3,7 @@ import * as https from 'node:https'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
+import { SYSTEM_ROUTED_MODEL_HEADER } from '../proxy/request-utils.js'
 import type { CertCache } from './cert-cache.js'
 import type {
   SystemProxyCorsRule,
@@ -29,6 +30,10 @@ export interface BuyerForwardRequest {
   source: SystemProxySource
   response?: SystemProxyResponseTransform
   conversation?: ConversationForwardContext
+  /** True when the proxy assigned the body's `model` from its configured
+      route (vs forwarding a client-chosen AntSeed route untouched). Marked
+      on the forward so the buyer can let a per-chat pin override it. */
+  modelRouted?: boolean
 }
 
 export interface ConversationForwardContext {
@@ -283,6 +288,11 @@ export class SystemProxyServer {
       }
       forwardHeaders['host'] = `127.0.0.1:${this.config.buyerProxyPort}`
       forwardHeaders['connection'] = 'close'
+      if (buyerRequest.modelRouted) {
+        // The model in this body is ours, not the tool's — let the buyer
+        // swap it for the chat's pinned route when one exists.
+        forwardHeaders[SYSTEM_ROUTED_MODEL_HEADER] = '1'
+      }
       if (body.length > 0) {
         forwardHeaders['content-length'] = String(body.length)
       }
@@ -563,27 +573,31 @@ export function buildBuyerForwardRequest(opts: {
     }
   }
   if (forwardRule) {
-    return {
-      path: forwardRule.targetPath ?? opts.path,
-      body: opts.isJson
-        ? rewriteRequestBody(opts.rawBody, opts.peerId, {
-          defaultModel: opts.defaultModel,
-          servedModels: opts.servedModels,
-        })
-        : opts.rawBody,
-      source: forwardRule.source,
-      response: forwardRule.response,
-    }
-  }
-  return {
-    path: opts.path,
-    body: opts.isJson
+    const rewritten = opts.isJson
       ? rewriteRequestBody(opts.rawBody, opts.peerId, {
         defaultModel: opts.defaultModel,
         servedModels: opts.servedModels,
       })
-      : opts.rawBody,
+      : null
+    return {
+      path: forwardRule.targetPath ?? opts.path,
+      body: rewritten?.body ?? opts.rawBody,
+      source: forwardRule.source,
+      response: forwardRule.response,
+      modelRouted: rewritten?.modelRouted ?? false,
+    }
+  }
+  const rewritten = opts.isJson
+    ? rewriteRequestBody(opts.rawBody, opts.peerId, {
+      defaultModel: opts.defaultModel,
+      servedModels: opts.servedModels,
+    })
+    : null
+  return {
+    path: opts.path,
+    body: rewritten?.body ?? opts.rawBody,
     source: 'standard',
+    modelRouted: rewritten?.modelRouted ?? false,
   }
 }
 
@@ -591,18 +605,19 @@ export function rewriteRequestBody(
   raw: Buffer,
   peerId: string,
   modelDefaults: ModelDefaultOptions = {},
-): Buffer {
-  if (raw.length === 0) return raw
+): { body: Buffer; modelRouted: boolean } {
+  if (raw.length === 0) return { body: raw, modelRouted: false }
   try {
     const json = JSON.parse(raw.toString('utf8')) as Record<string, unknown>
     const rawModel = typeof json['model'] === 'string' ? json['model'] : ''
     const model = resolveSystemProxyModel(rawModel, modelDefaults)
+    const modelRouted = Boolean(model && peerId)
     if (model && peerId) {
       json['model'] = `${peerId}@${model}`
     }
-    return Buffer.from(JSON.stringify(json), 'utf8')
+    return { body: Buffer.from(JSON.stringify(json), 'utf8'), modelRouted }
   } catch {
-    return raw
+    return { body: raw, modelRouted: false }
   }
 }
 

@@ -171,6 +171,31 @@ test('snippet: pure title request yields null, never a label', () => {
   }), null)
 })
 
+test('snippet: injected project-doc blobs never label a chat', () => {
+  // Codex sends AGENTS.md/CLAUDE.md contents as a user message ahead of the
+  // real prompt; the doc must be skipped in favor of the genuine turn.
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions for /Users/shahafan/Development/antseed\n\n# CLAUDE.md --...' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>cwd=/tmp</environment_context>' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix the failing tests' }] },
+    ],
+  }), 'fix the failing tests')
+  // A doc-only request yields null instead of falling back to the blob —
+  // even when wrapped in a machine-context tag.
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<user_instructions># AGENTS.md instructions for /repo ...</user_instructions>' }] },
+    ],
+  }), null)
+})
+
+test('sanitizeStoredSnippet heals stored project-doc labels to empty', async () => {
+  const { sanitizeStoredSnippet } = await import('./conversation-identity.js')
+  assert.equal(sanitizeStoredSnippet('# AGENTS.md instructions for /Users/shahafan/Development/antseed # CLAUDE.md --…'), '')
+  assert.equal(sanitizeStoredSnippet('fix the login bug'), 'fix the login bug')
+})
+
 test('snippet: null for empty or non-conversation bodies', () => {
   assert.equal(extractFirstUserSnippet(null), null)
   assert.equal(extractFirstUserSnippet({ model: 'x' }), null)

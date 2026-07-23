@@ -300,6 +300,46 @@ export function substituteRoutedModelAlias(
   return { body: rewritten, headers: updatedHeaders, aliasRequested: true, substituted: true }
 }
 
+/**
+ * Marker header the system proxy stamps on requests whose `model` field IT
+ * rewrote from the connect-time route — intercepted tools (Claude Code
+ * talking to api.anthropic.com through the MITM proxy) send upstream model
+ * names, not an AntSeed route, so the model on such requests is AntSeed
+ * plumbing rather than a client choice. The buyer treats those models like
+ * the routed-model alias for per-chat routing: a chat's pinned model
+ * overrides the proxy-resolved route. Internal — stripped before dispatch.
+ */
+export const SYSTEM_ROUTED_MODEL_HEADER = 'x-antseed-system-routed'
+
+/**
+ * Replace a proxy-assigned model with the chat's pinned route. Only used for
+ * requests carrying SYSTEM_ROUTED_MODEL_HEADER — client-chosen models are
+ * never overridden.
+ */
+export function overrideRoutedModelInBody(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  pinnedModel: string,
+): { body: Uint8Array; headers: Record<string, string>; overridden: boolean } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, overridden: false }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) {
+    return { body, headers, overridden: false }
+  }
+  const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  if (!rawModel || rawModel === pinnedModel) {
+    return { body, headers, overridden: false }
+  }
+  obj['model'] = pinnedModel
+  if (typeof obj['service'] === 'string' && obj['service'].trim() === rawModel) {
+    obj['service'] = pinnedModel
+  }
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
+  return { body: rewritten, headers: updatedHeaders, overridden: true }
+}
+
 function encodeRewrittenJsonBody(
   obj: Record<string, unknown>,
   headers: Record<string, string>,

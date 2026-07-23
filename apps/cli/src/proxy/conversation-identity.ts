@@ -63,6 +63,12 @@ const TITLE_REQUEST_PREFIXES = [
   'summarize this coding conversation',
 ]
 
+/** Injected project-doc blobs — Codex sends AGENTS.md / CLAUDE.md contents
+    as a user message ("# AGENTS.md instructions for <cwd> ..."). Like title
+    requests these must never label a chat, not even as a fallback; matched
+    against the tag-stripped text so a wrapper can't hide the doc header. */
+const INSTRUCTION_DOC_PATTERN = /^#*\s*(agents|claude|gemini)\.md\b/i
+
 function getHeader(headers: Record<string, string>, name: string): string {
   const direct = headers[name]
   if (typeof direct === 'string') return direct
@@ -238,7 +244,7 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
   const genuine = usable.filter((text) => !looksLikeMachineContext(text))
   for (const text of [...genuine, ...usable]) {
     const normalized = normalizeSnippet(text)
-    if (normalized.length > 0) return normalized
+    if (normalized.length > 0 && !INSTRUCTION_DOC_PATTERN.test(normalized)) return normalized
   }
   return null
 }
@@ -252,7 +258,10 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
 export function sanitizeStoredSnippet(text: string): string {
   if (!text) return ''
   if (looksLikeTitleRequest(text)) return ''
-  return normalizeSnippet(text)
+  const normalized = normalizeSnippet(text)
+  // Stored labels from before the instruction-doc rule heal to empty so the
+  // next real turn names the chat.
+  return INSTRUCTION_DOC_PATTERN.test(normalized) ? '' : normalized
 }
 
 /** Convenience: parse a raw body for identity/snippet extraction. */

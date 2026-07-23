@@ -14,6 +14,7 @@ import {
   selectCandidatePeersForRouting,
   substituteRoutedModelAlias,
 } from './buyer-proxy.js'
+import { overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -1118,6 +1119,38 @@ test('substituteRoutedModelAlias leaves non-alias models untouched', () => {
   assert.equal(result.body, body)
 })
 
+test('overrideRoutedModelInBody swaps the model, mirrors an identical service field, and fixes content-length', () => {
+  const oldRoute = `${validPeerId}@gpt-4o`
+  const newRoute = `${'bb'.repeat(20)}@glm-5`
+  const body = makeJsonBody({ model: oldRoute, service: oldRoute, messages: [] })
+  const headers = { ...jsonHeaders, 'content-length': String(body.length) }
+  const result = overrideRoutedModelInBody(body, headers, newRoute)
+  assert.equal(result.overridden, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], newRoute)
+  assert.equal(parsed['service'], newRoute)
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
+test('overrideRoutedModelInBody leaves a differing service field alone', () => {
+  const body = makeJsonBody({ model: `${validPeerId}@gpt-4o`, service: 'something-else', messages: [] })
+  const result = overrideRoutedModelInBody(body, jsonHeaders, `${'bb'.repeat(20)}@glm-5`)
+  assert.equal(result.overridden, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], `${'bb'.repeat(20)}@glm-5`)
+  assert.equal(parsed['service'], 'something-else')
+})
+
+test('overrideRoutedModelInBody no-ops on a matching model, a missing model, or non-JSON bodies', () => {
+  const route = `${validPeerId}@gpt-4o`
+  const matching = makeJsonBody({ model: route })
+  assert.equal(overrideRoutedModelInBody(matching, jsonHeaders, route).overridden, false)
+  const missing = makeJsonBody({ messages: [] })
+  assert.equal(overrideRoutedModelInBody(missing, jsonHeaders, route).overridden, false)
+  const nonJson = makeJsonBody({ model: 'other' })
+  assert.equal(overrideRoutedModelInBody(nonJson, { 'content-type': 'text/plain' }, route).overridden, false)
+})
+
 test('route control endpoint sets, persists, and returns the default routed model', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-route-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -1244,6 +1277,47 @@ test('per-chat pin overrides the default routed model for the antseed alias', as
     const second = store.get('codex-exec:sess-2')
     assert.equal(second?.lastModel, defaultRoute)
     assert.equal(second?.snippet, 'second chat')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('chat pin overrides a system-proxy-routed model on intercepted requests', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const proxyRoute = `${'aa'.repeat(20)}@default-model`
+    const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
+    const store = (proxy as any)._conversations
+
+    // First intercepted request: the system proxy already rewrote the tool's
+    // upstream model to its connect-time route and marked the request. The
+    // chat auto-pins to the model that served it.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1', [SYSTEM_ROUTED_MODEL_HEADER]: '1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'hello there' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.pinnedModel, proxyRoute)
+
+    // The user re-pins the chat from the desktop (float / chats view).
+    store.setPinnedModel('claude-code:cc-1', pinnedRoute)
+
+    // Later requests still arrive with the proxy-assigned model; the pin wins.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1', [SYSTEM_ROUTED_MODEL_HEADER]: '1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'again' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, pinnedRoute)
+
+    // Without the marker the model is a client choice and is respected.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'explicit' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, proxyRoute)
     await store.flush()
   } finally {
     await rm(dir, { recursive: true, force: true })

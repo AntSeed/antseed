@@ -22,7 +22,10 @@ export type StoredConversation = {
   snippet: string
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
-  /** Per-chat route pin as `<peerId>@<service>`; null follows the default route. */
+  /** Per-chat route pin as `<peerId>@<service>`. The default route only
+      steers a chat's first request: the model that serves it is pinned here
+      (see touch), so later default changes affect only new chats. Null only
+      until the chat's first resolved request. */
   pinnedModel: string | null
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
@@ -129,6 +132,10 @@ export class ConversationStore {
   /**
    * Record activity for a conversation, creating it on first sight. The
    * snippet only sticks at creation — later turns keep the original label.
+   *
+   * The first model that actually serves the chat becomes its pin: the
+   * session default only steers chats that haven't resolved a request yet,
+   * so changing the default never re-routes an existing conversation.
    */
   touch(input: { tool: string; sessionKey: string; snippet?: string | null; lastModel?: string | null }): StoredConversation {
     const id = conversationId(input.tool, input.sessionKey)
@@ -140,6 +147,7 @@ export class ConversationStore {
         ...existing,
         lastActiveAt: now,
         lastModel: input.lastModel ?? existing.lastModel,
+        pinnedModel: existing.pinnedModel ?? input.lastModel ?? null,
         snippet: existing.snippet || (input.snippet ?? ''),
       }
     } else {
@@ -149,7 +157,7 @@ export class ConversationStore {
         sessionKey: input.sessionKey,
         snippet: input.snippet ?? '',
         label: null,
-        pinnedModel: null,
+        pinnedModel: input.lastModel ?? null,
         lastModel: input.lastModel ?? null,
         createdAt: now,
         lastActiveAt: now,

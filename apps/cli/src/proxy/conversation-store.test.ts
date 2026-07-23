@@ -28,6 +28,36 @@ test('touch creates a conversation and keeps the original snippet', async () => 
   }
 })
 
+test('first resolved model becomes the pin and later touches never replace it', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(dir)
+    const firstModel = 'a'.repeat(40) + '@gpt-5.4'
+    const laterModel = 'b'.repeat(40) + '@glm-5'
+
+    // Created without a resolved model (e.g. a title request): no pin yet.
+    const created = store.touch({ tool: 'codex', sessionKey: 's1' })
+    assert.equal(created.pinnedModel, null)
+
+    // The first request that resolves a model pins the chat to it.
+    const pinned = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: firstModel })
+    assert.equal(pinned.pinnedModel, firstModel)
+
+    // A later request served by a different route (default changed) keeps
+    // the original pin — the default only steers chats that haven't started.
+    const touched = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: laterModel })
+    assert.equal(touched.pinnedModel, firstModel)
+    assert.equal(touched.lastModel, laterModel)
+
+    // A brand-new chat pins to its first model immediately.
+    const fresh = store.touch({ tool: 'codex', sessionKey: 's2', lastModel: laterModel })
+    assert.equal(fresh.pinnedModel, laterModel)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('persists to conversations.json and reloads across instances', async () => {
   const dir = await makeDir()
   try {

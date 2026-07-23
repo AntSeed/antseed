@@ -61,14 +61,15 @@ const WORKFLOW_FORWARD_RULE: SystemProxyForwardRule = {
 test('rewriteRequestBody: injects peerId into model field', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-default', messages: [] }))
   const result = rewriteRequestBody(body, 'peer123')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'peer123@model-default')
+  assert.equal(result.modelRouted, true)
 })
 
 test('rewriteRequestBody: leaves other fields intact', () => {
   const input = { model: 'model-legacy', messages: [{ role: 'user', content: 'hi' }], max_tokens: 100 }
   const result = rewriteRequestBody(Buffer.from(JSON.stringify(input)), 'peer')
-  const parsed = JSON.parse(result.toString('utf8')) as typeof input
+  const parsed = JSON.parse(result.body.toString('utf8')) as typeof input
   assert.deepEqual(parsed.messages, input.messages)
   assert.equal(parsed.max_tokens, 100)
 })
@@ -76,34 +77,39 @@ test('rewriteRequestBody: leaves other fields intact', () => {
 test('rewriteRequestBody: no-op when model field is absent', () => {
   const body = Buffer.from(JSON.stringify({ input: 'hello', stream: true }))
   const result = rewriteRequestBody(body, 'peer123')
-  const parsed = JSON.parse(result.toString('utf8')) as { input: string; model?: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { input: string; model?: string }
   assert.equal(parsed.model, undefined)
   assert.equal(parsed.input, 'hello')
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: no-op for empty peerId', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-default' }))
   const result = rewriteRequestBody(body, '')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'model-default')
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: passes through non-JSON unchanged', () => {
   const raw = Buffer.from('not json at all')
   const result = rewriteRequestBody(raw, 'peer')
-  assert.deepEqual(result, raw)
+  assert.deepEqual(result.body, raw)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: passes through empty buffer unchanged', () => {
   const result = rewriteRequestBody(Buffer.alloc(0), 'peer')
-  assert.equal(result.length, 0)
+  assert.equal(result.body.length, 0)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: handles model as non-string (leaves unchanged)', () => {
   const body = Buffer.from(JSON.stringify({ model: 42 }))
   const result = rewriteRequestBody(body, 'peer')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: unknown }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: unknown }
   assert.equal(parsed.model, 42)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: uses default model when requested model is not served by the peer', () => {
@@ -112,8 +118,9 @@ test('rewriteRequestBody: uses default model when requested model is not served 
     defaultModel: 'model-large',
     servedModels: new Set(['model-large']),
   })
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'peer@model-large')
+  assert.equal(result.modelRouted, true)
 })
 
 test('rewriteRequestBody: keeps requested model when selected peer serves it', () => {
@@ -122,8 +129,9 @@ test('rewriteRequestBody: keeps requested model when selected peer serves it', (
     defaultModel: 'model-small',
     servedModels: new Set(['model-large', 'model-small']),
   })
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'peer@model-large')
+  assert.equal(result.modelRouted, true)
 })
 
 test('shouldSystemProxyRequest: only matches configured model API routes', () => {
