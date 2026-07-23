@@ -216,6 +216,9 @@ export function FloatApp() {
   ) ?? null;
 
   const modelLabel = selectedModel?.label ?? 'Select model';
+  // Routing state: while the buyer runtime is stopped the pill shows a
+  // "Not connected" status and the dropdown hides recent chats.
+  const runtimeOn = data?.runtimeOn ?? true;
 
   // The model that served the most recent chat (its pin, set by the buyer on
   // the chat's first request) — shown on the pill face instead of the
@@ -314,14 +317,17 @@ export function FloatApp() {
             ) : null}
           </span>
           <span className={styles.usage}>
-            {/* Status: orange pulse while ready, green while traffic moves —
-                then naming the model currently being routed (the newest
-                chat's resolved pin). */}
+            {/* Status: red when routing is stopped, steady orange while
+                ready, pulsing green while traffic moves — then naming the
+                model currently being routed (the newest chat's resolved
+                pin). */}
             <span
-              className={`${styles.statusDot}${data?.trafficActive ? '' : ` ${styles.statusDotReady}`}`}
+              className={`${styles.statusDot}${
+                runtimeOn ? (data?.trafficActive ? '' : ` ${styles.statusDotReady}`) : ` ${styles.statusDotStopped}`
+              }`}
               aria-hidden="true"
             />
-            {data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
+            {!runtimeOn ? 'Not connected' : data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
           </span>
         </span>
       </button>
@@ -334,9 +340,15 @@ export function FloatApp() {
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
+              {/* Routing stopped: no chat rows — they'd read as connected. */}
+              {!runtimeOn ? (
+                <div className={styles.menuEmpty}>
+                  Not connected — routing is stopped. Open VPR to start it.
+                </div>
+              ) : null}
               {/* First-run guidance only — once any chat exists the list
                   speaks for itself. */}
-              {conversations.length === 0 && idleApps.map((app) => (
+              {runtimeOn && conversations.length === 0 && idleApps.map((app) => (
                 <div key={app.name} className={styles.menuHint}>
                   <BrandIcon name={app.name} hints={[app.displayName]} size={16} />
                   <span className={styles.menuHintText}>
@@ -345,7 +357,7 @@ export function FloatApp() {
                   </span>
                 </div>
               ))}
-              {conversations.length === 0 ? (
+              {!runtimeOn ? null : conversations.length === 0 ? (
                 idleApps.length === 0 ? <div className={styles.menuEmpty}>No tool chats seen yet</div> : null
               ) : conversations.map((chat) => {
                 // Name the model the chat runs on: its pin (set by the buyer

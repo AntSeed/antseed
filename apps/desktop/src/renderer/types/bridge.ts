@@ -491,6 +491,9 @@ export type VprFloatData = {
   /** True when the balance is effectively empty but the selected default
       model is paid — the pill shows an "Add balance" shortcut. */
   needsFunds?: boolean;
+  /** True while the buyer (connect) runtime is running. When false the pill
+      shows a "Not connected" state and hides recent chats. */
+  runtimeOn?: boolean;
   /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
   identityLabel?: string;
   /**

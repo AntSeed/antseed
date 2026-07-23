@@ -261,6 +261,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     const selection = uiState.vprRouteSelection.model;
     const { models, favoriteKeys } = floatModels();
     const identity = identityLabel();
+    const runtimeOn = uiState.processes.some(
+      (process) => process.mode === 'connect' && process.running === true,
+    );
 
     return {
       apps: connected.map((profile) => ({
@@ -272,10 +275,13 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       models,
       favoriteKeys,
       selectedModel: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
-      conversations: await loadConversations(),
+      // No chats while routing is stopped — a dead runtime serving a live
+      // chat list reads as connected when it isn't.
+      conversations: runtimeOn ? await loadConversations() : [],
       usageLabel: usageLabel(),
       balanceLabel: balanceLabel(),
       needsFunds: needsFunds(),
+      runtimeOn,
       ...(identity ? { identityLabel: identity } : {}),
       trafficActive: logTrafficActive() || buyerDeltaActive,
     };

@@ -256,7 +256,7 @@ export function VprHomeView({ onSelectView }: Props) {
         {/* Power / status hero over the brand gradient banner */}
         <div className={styles.hero}>
           <div
-            className={`${styles.heroBanner}${connected ? ` ${styles.heroBannerLive}` : ''}`}
+            className={`${styles.heroBanner}${connected ? ` ${styles.heroBannerLive}` : ` ${styles.heroBannerOff}`}`}
             aria-hidden="true"
           />
           <button
@@ -271,7 +271,7 @@ export function VprHomeView({ onSelectView }: Props) {
           </button>
           <button
             type="button"
-            className={`${styles.power}${runtimeOn ? ` ${styles.powerOn}` : ''}`}
+            className={`${styles.power}${runtimeOn ? ` ${styles.powerOn}` : ` ${styles.powerOff}`}`}
             onClick={() => { void (runtimeOn ? actions.stopAll() : actions.startAll()); }}
             aria-pressed={runtimeOn}
             aria-label={runtimeOn ? 'Stop routing' : 'Start routing'}

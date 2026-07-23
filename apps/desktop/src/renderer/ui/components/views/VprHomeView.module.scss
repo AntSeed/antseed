@@ -79,6 +79,17 @@
 /* Shimmer band that sweeps the banner every few seconds while connected.
    Speckled by a noise mask and blended over the texture so it reads as the
    grain dots lighting up in a wave. */
+/* Off: recolor the brand banner red — a color-blend overlay shifts the
+   texture's green hues to red while keeping its luminance detail. The
+   parent's mask clips the overlay with it. */
+.heroBannerOff::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--danger);
+  mix-blend-mode: color;
+}
+
 .heroBanner::after {
   content: '';
   position: absolute;
@@ -134,8 +145,10 @@
   transition: color 0.15s ease, transform 0.1s ease;
 }
 
+/* Hover keeps the current state's color — a green preview here reads as
+   "running" while the mouse rests on the button right after stopping. */
 .power:hover {
-  color: var(--accent-green);
+  filter: brightness(1.08);
 }
 
 .power:active {
@@ -151,6 +164,11 @@
 
 .powerOn {
   color: var(--brand);
+}
+
+/* Off: red — unmistakably not connected. */
+.powerOff {
+  color: var(--danger);
 }
 
 .statusLine {

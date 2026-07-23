@@ -1026,6 +1026,48 @@ async function resolveBuyerProxyPort(): Promise<number> {
   return DEFAULT_BUYER_PROXY_PORT;
 }
 
+/**
+ * Kill any leftover process still listening on the buyer proxy port after the
+ * desktop's own runtime child was stopped. The CLI reuses a compatible
+ * listener instead of failing on EADDRINUSE, so an orphaned runtime from an
+ * earlier session can keep the proxy alive — chats keep working and the UI
+ * reads as connected even though Stop was pressed. Only processes from our
+ * own runtime family (node/antseed/electron) are reaped.
+ */
+async function killOrphanBuyerProxy(): Promise<void> {
+  if (process.platform === 'win32') return;
+  try {
+    const port = await resolveBuyerProxyPort();
+    const out = execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pids = out
+      .split(/\s+/)
+      .map((raw) => Number(raw))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+    for (const pid of pids) {
+      let command = '';
+      try {
+        command = execFileSync('ps', ['-o', 'comm=', '-p', String(pid)], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+      } catch {
+        continue; // Already gone.
+      }
+      if (!/node|antseed|electron/i.test(command)) continue;
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // Already gone.
+      }
+    }
+  } catch {
+    // lsof unavailable or nothing listening — nothing to reap.
+  }
+}
+
 async function requestBuyerPeerRefresh(): Promise<void> {
   const port = await resolveBuyerProxyPort();
   const controller = new AbortController();
@@ -1813,6 +1855,11 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
 
 ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
   const state = await processManager.stop(mode);
+  if (mode === 'connect') {
+    // Stop must actually silence the buyer proxy, not just our child — an
+    // orphaned runtime reusing the port would keep serving requests.
+    await killOrphanBuyerProxy();
+  }
   return {
     state,
     processes: getCombinedProcessState(),

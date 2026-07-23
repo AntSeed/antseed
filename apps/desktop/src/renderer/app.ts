@@ -425,6 +425,10 @@ async function actionStopConnect(): Promise<void> {
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
   try {
+    // Stopping routing also disconnects connected apps — their configs are
+    // restored so requests go direct again instead of failing against a
+    // stopped runtime while the UI still says "Connected".
+    await bridge?.systemProxyStop?.().catch(() => undefined);
     await stop('connect');
     await refreshAll('manual');
   } catch (err) {

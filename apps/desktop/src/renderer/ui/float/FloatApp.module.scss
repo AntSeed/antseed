@@ -202,13 +202,13 @@
   top: 80px;
   left: 8px;
   right: 8px;
-  bottom: 8px;
+  /* Ends above the fixed footer — the dark footer rounds its own bottom
+     corners against the transparent window, so no panel background can
+     fringe around them. */
+  bottom: 44px;
   overflow: hidden;
-  border-radius: 16px;
-  /* Transparent shell: the scroll area and pinned rows paint their own
-     backgrounds. A shell background here bleeds through as a light fringe
-     where the inverted footer's corners meet the panel's rounded clip. */
-  background: transparent;
+  border-radius: 16px 16px 0 0;
+  background: var(--bg-card);
   box-shadow: var(--shadow-float);
   -webkit-app-region: no-drag;
   display: flex;
@@ -218,7 +218,6 @@
 .menuScroll {
   flex: 1 1 auto;
   min-height: 0;
-  background: var(--bg-card);
 }
 
 .menuScrollContent {
@@ -243,8 +242,14 @@
   cursor: pointer;
 }
 
+/* Hover fills are solid, clearly darker colors — translucent tints read as
+   broken transparency over the panel. */
 .menuRow:hover {
-  background: var(--bg-surface);
+  background: #e9e6dd;
+}
+
+:global(body.dark-theme) .menuRow:hover {
+  background: #3a3a3c;
 }
 
 /* The new-session-model row is a setting, not another chat: a quiet
@@ -257,9 +262,6 @@
   border: none;
   border-top: 1px solid var(--border-light);
   border-radius: 0;
-  /* Sits outside the scroll area on the transparent panel shell — carries
-     the card background itself. */
-  background: var(--bg-card);
 }
 
 .menuRowDefaultTitle {
@@ -410,8 +412,12 @@
 }
 
 .menuOpenApp:hover {
-  background: var(--bg-surface);
+  background: #e9e6dd;
   color: var(--text-primary);
+}
+
+:global(body.dark-theme) .menuOpenApp:hover {
+  background: #3a3a3c;
 }
 
 /* Level transition inside the conversations panel: drilling in slides from
@@ -528,14 +534,19 @@
   animation: none;
 }
 
+.statusDotStopped {
+  background: var(--danger, #ef4444);
+  animation: none;
+}
+
 /* Empty balance + paid model: warning-toned label jumping to the deposit
    screen. */
 .addBalance {
   margin-left: 8px;
   padding: 1px 8px;
-  border: 1px solid rgba(var(--warning-rgb), 0.45);
+  border: 1px solid #edd191;
   border-radius: 999px;
-  background: rgba(var(--warning-rgb), 0.16);
+  background: #fdf1cf;
   color: var(--text-primary);
   font-size: 10px;
   font-weight: 600;
@@ -546,8 +557,18 @@
 }
 
 .addBalance:hover {
-  border-color: rgba(var(--warning-rgb), 0.7);
-  background: rgba(var(--warning-rgb), 0.28);
+  border-color: #e2bc5c;
+  background: #fbe6ab;
+}
+
+:global(body.dark-theme) .addBalance {
+  border-color: #6e5f33;
+  background: #48401f;
+}
+
+:global(body.dark-theme) .addBalance:hover {
+  border-color: #8a7840;
+  background: #574d26;
 }
 
 .close,
@@ -582,40 +603,43 @@
 /* Pinned footer of the dropdown panel: opens the main AntSeed window. Sits
    below the scroll area so it stays visible however long the list gets. */
 .menuFooter {
-  flex: 0 0 auto;
+  /* Fixed to the window bottom, below the panel — it owns its rounded
+     bottom corners against the transparent window. */
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 34px;
   padding: 8px 12px;
-  /* Bottom corners match the panel's 16px radius exactly — relying on the
-     panel's overflow clipping instead leaves a white antialiasing fringe of
-     the panel background at the corners. */
   border: none;
   border-radius: 0 0 16px 16px;
+  box-shadow: var(--shadow-float);
   /* Inverted footer: the dark theme's card color in light mode, flipped to
-     near-white with dark text in dark mode. */
+     near-white with dark text in dark mode. Hover only darkens the
+     background — solid colors, no opacity or text changes. */
   background: #2a2a2c;
-  color: rgba(251, 249, 244, 0.88);
+  color: #f0eee8;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
 
 .menuFooter:hover {
-  background: #363638;
-  color: #fbf9f4;
+  background: #19191b;
 }
 
 :global(body.dark-theme) .menuFooter {
   background: #e6edf3;
-  color: rgba(17, 23, 20, 0.88);
+  color: #24292b;
 }
 
 :global(body.dark-theme) .menuFooter:hover {
-  background: #ffffff;
-  color: #111714;
+  background: #cdd6dd;
 }
 
 .menuFooterLabel {
