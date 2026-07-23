@@ -190,6 +190,29 @@
   font-weight: 500;
 }
 
+.signerValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.keyAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.keyAction:hover {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
 .inlineLink {
   padding: 0;
   border: none;

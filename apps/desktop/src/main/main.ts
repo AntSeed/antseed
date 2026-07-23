@@ -28,7 +28,7 @@ import {
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
 import { toolDesktopAppName, toolResumeCommand } from '../shared/tool-resume.js';
 import { loadAppIdentitySettings, loadAppLaunchSettings, normalizeToolSlugs, setAppIdentitySetting, setAppLaunchSetting, type AppLaunchTarget } from './app-launch-settings.js';
-import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
+import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity, exportIdentityPrivateKeyHex, importIdentityPrivateKeyHex } from './identity.js';
 import { ANTSTokenClient, ChannelsClient, DepositsClient, DepositRelayClient, EmissionsClient, signSpendingAuth, makeChannelsDomain, makeUsdcDomain, buildReceiveAuthorization, peerRelaysSweeps, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import type { SweepRequestPayload, SweepReceiptPayload } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
@@ -2025,6 +2025,49 @@ ipcMain.handle('identity:get', async () => {
     };
   } catch (err) {
     return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('identity:export-key', async () => {
+  try {
+    await ensureSecureIdentity();
+    const hex = exportIdentityPrivateKeyHex();
+    if (!hex) {
+      return { ok: false, canceled: false, error: 'Identity not available (safeStorage may not be ready)' };
+    }
+    const saveOptions = {
+      title: 'Save signer private key',
+      defaultPath: 'antseed-signer.key',
+      filters: [{ name: 'Key file', extensions: ['key', 'txt'] }],
+    };
+    const win = getMainWindow();
+    const result = win
+      ? await dialog.showSaveDialog(win, saveOptions)
+      : await dialog.showSaveDialog(saveOptions);
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true, error: null };
+    }
+    await writeFile(result.filePath, `${hex}\n`, { mode: 0o600 });
+    return { ok: true, canceled: false, path: result.filePath, error: null };
+  } catch (err) {
+    return { ok: false, canceled: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('identity:import-key', async (_event, rawKey: unknown) => {
+  try {
+    if (typeof rawKey !== 'string') {
+      return { ok: false, error: 'Private key must be a string' };
+    }
+    await ensureSecureIdentity();
+    const result = await importIdentityPrivateKeyHex(rawKey);
+    if (result.ok) {
+      // Balances cached for the previous signer no longer apply.
+      cachedCreditsInfo = null;
+    }
+    return result;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 

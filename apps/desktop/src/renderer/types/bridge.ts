@@ -333,6 +333,10 @@ export type DesktopBridge = {
   installUpdate?: () => Promise<InstallUpdateResult>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  /** Prompts a native save dialog and writes the signer private key to the chosen file. */
+  identityExportKey?: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string | null }>;
+  /** Replaces the signer private key (the current one is backed up on disk first). */
+  identityImportKey?: (privateKeyHex: string) => Promise<{ ok: boolean; address?: string; backupPath?: string | null; error?: string }>;
 
   paymentsSignSpendingAuth?: (params: {
     channelId: string;

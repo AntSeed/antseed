@@ -11,7 +11,7 @@
   --as-text-muted: var(--text-muted, #9a9489);
   --as-accent: var(--accent, #1fd87a);
   --as-accent-text: var(--accent-text, #06281a);
-  --as-accent-contrast: var(--accent-contrast, #06281a);
+  --as-accent-contrast: var(--accent-contrast, #ffffff);
   --as-accent-dim: var(--accent-dim, rgba(31, 216, 122, 0.08));
   --as-accent-border: var(--accent-border, rgba(31, 216, 122, 0.35));
   --as-danger: var(--danger, #dc3545);
@@ -93,11 +93,11 @@
 }
 
 .as-button--danger {
-  background: transparent;
-  border-color: var(--as-danger-border);
-  color: var(--as-danger);
+  background: var(--as-danger);
+  color: #ffffff;
 
-  &:hover:not(:disabled) { background: var(--as-danger-dim); }
+  &:hover:not(:disabled) { filter: brightness(1.06); }
+  &:active:not(:disabled) { filter: brightness(0.96); }
 }
 
 .as-button__icon {

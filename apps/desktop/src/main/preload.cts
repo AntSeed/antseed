@@ -486,6 +486,8 @@ const api = {
   creditsGetInfo() {
     return ipcRenderer.invoke('credits:get-info');
   },
+  identityExportKey: () => ipcRenderer.invoke('identity:export-key'),
+  identityImportKey: (privateKeyHex: string) => ipcRenderer.invoke('identity:import-key', privateKeyHex),
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),

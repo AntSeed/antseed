@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowRight01Icon, CreditCardIcon, SquareLock01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon, CreditCardIcon, Download01Icon, SquareLock01Icon, Upload01Icon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import { setDepositIntent, type DepositMethod } from '../../lib/depositIntent';
+import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
@@ -27,6 +28,8 @@ export function VprCreditsView({ onSelectView }: Props) {
   // also refresh the summary, and mirroring their in-flight state here made
   // the button flip to "Refreshing..." constantly while traffic flowed.
   const [refreshing, setRefreshing] = useState(false);
+  const [exportKeyOpen, setExportKeyOpen] = useState(false);
+  const [importKeyOpen, setImportKeyOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -133,9 +136,32 @@ export function VprCreditsView({ onSelectView }: Props) {
         <VprCard className={styles.detailsCard}>
           <div className={styles.detailRow}><span>Reserved</span><span>${formatCredits(snap.reserved)}</span></div>
           <div className={styles.detailRow}><span>Total</span><span>${formatCredits(snap.total)}</span></div>
-          <div className={styles.detailRow}><span>Wallet</span><span>{shortAddress(snap.evmAddress)}</span></div>
           <div className={styles.detailRow}>
-            <span>Operator</span>
+            <span>Signer</span>
+            <span className={styles.signerValue}>
+              <button
+                type="button"
+                className={styles.keyAction}
+                title="Back up private key"
+                aria-label="Back up private key"
+                onClick={() => setExportKeyOpen(true)}
+              >
+                <HugeiconsIcon icon={Download01Icon} size={14} strokeWidth={2} />
+              </button>
+              <button
+                type="button"
+                className={styles.keyAction}
+                title="Import private key"
+                aria-label="Import private key"
+                onClick={() => setImportKeyOpen(true)}
+              >
+                <HugeiconsIcon icon={Upload01Icon} size={14} strokeWidth={2} />
+              </button>
+              {shortAddress(snap.evmAddress)}
+            </span>
+          </div>
+          <div className={styles.detailRow}>
+            <span>Wallet</span>
             {snap.operatorAddress ? (
               <span>{shortAddress(snap.operatorAddress)}</span>
             ) : (
@@ -160,6 +186,12 @@ export function VprCreditsView({ onSelectView }: Props) {
         </VprCard>
       </div>
       </VprPage>
+      <ExportSignerKeyDialog isOpen={exportKeyOpen} onClose={() => setExportKeyOpen(false)} />
+      <ImportSignerKeyDialog
+        isOpen={importKeyOpen}
+        onClose={() => setImportKeyOpen(false)}
+        onImported={() => { void refresh(); }}
+      />
     </section>
   );
 }
