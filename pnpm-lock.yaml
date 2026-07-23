@@ -6,6 +6,7 @@ settings:
 
 overrides:
   webpack: ^5.95.0
+  electron: 31.7.6
 
 patchedDependencies:
   cli-highlight:
@@ -144,8 +145,8 @@ importers:
         specifier: ^16.6.1
         version: 16.6.1
       electron:
-        specifier: ^31.6.0
-        version: 31.7.7
+        specifier: 31.7.6
+        version: 31.7.6
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
@@ -7391,8 +7392,8 @@ packages:
   electron-updater@6.8.3:
     resolution: {integrity: sha512-Z6sgw3jgbikWKXei1ENdqFOxBP0WlXg3TtKfz0rgw2vIZFJUyI4pD7ZN7jrkm7EoMK+tcm/qTnPUdqfZukBlBQ==}
 
-  electron@31.7.7:
-    resolution: {integrity: sha512-HZtZg8EHsDGnswFt0QeV8If8B+et63uD6RJ7I4/xhcXqmTIbI08GoubX/wm+HdY0DwcuPe1/xsgqpmYvjdjRoA==}
+  electron@31.7.6:
+    resolution: {integrity: sha512-fc2kMaEc/zxGTW6oCxbuE7BQNOlDucSo+351AiovBAcp7G0iQkVu3k2kHIQolSsD38+tPdBj/N02DVpZTzi7rg==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -23795,7 +23796,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@31.7.7:
+  electron@31.7.6:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 20.19.33

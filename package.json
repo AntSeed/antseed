@@ -9,7 +9,8 @@
   },
   "pnpm": {
     "overrides": {
-      "webpack": "^5.95.0"
+      "webpack": "^5.95.0",
+      "electron": "31.7.6"
     },
     "patchedDependencies": {
       "cli-highlight": "patches/cli-highlight.patch"
