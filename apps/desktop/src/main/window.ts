@@ -38,6 +38,21 @@ const FLOAT_WINDOW_MIN_HEIGHT = Math.min(FLOAT_WINDOW_HEIGHT, FLOAT_WINDOW_COMPA
    pushes it to the float renderer on change and on load. The renderer can't
    reliably infer it from its own size, so this is the source of truth. */
 let floatCompact = false;
+/* Whether a dropdown currently holds the pill at its expanded height. Tracked
+   here (not read back from getBounds) so the Windows drag-inflation guard
+   below knows the size the window is supposed to have. */
+let floatExpanded = false;
+
+/** The size the pill window should currently have, per main-process state. */
+function floatTargetSize(): { width: number; height: number } {
+  if (floatCompact) {
+    return { width: FLOAT_WINDOW_COMPACT_SIZE, height: FLOAT_WINDOW_COMPACT_SIZE };
+  }
+  return {
+    width: FLOAT_WINDOW_WIDTH,
+    height: floatExpanded ? FLOAT_WINDOW_EXPANDED_HEIGHT : FLOAT_WINDOW_HEIGHT,
+  };
+}
 
 function sendFloatCompact(): void {
   const win = getFloatWindow();
@@ -106,6 +121,8 @@ export function setFloatWindowCompact(compact: boolean): void {
   const win = getFloatWindow();
   if (!win) return;
   floatCompact = compact;
+  // Both entering and leaving compact land on the collapsed pill height.
+  floatExpanded = false;
   // Tell the renderer first so the layout swaps even if the OS clamps the
   // resize below — the shape must always match the intended state.
   sendFloatCompact();
@@ -135,6 +152,7 @@ export function setFloatWindowCompact(compact: boolean): void {
 export function setFloatWindowExpanded(expanded: boolean): void {
   const win = getFloatWindow();
   if (!win || floatCompact) return;
+  floatExpanded = expanded;
   const bounds = win.getBounds();
   const height = expanded ? FLOAT_WINDOW_EXPANDED_HEIGHT : FLOAT_WINDOW_HEIGHT;
   if (bounds.height === height) return;
@@ -173,8 +191,9 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
     : { x: 0, y: 0, width: 0, height: 0 };
   const workArea = screen.getDisplayMatching(anchor).workArea;
 
-  // A freshly opened pill always starts full-size.
+  // A freshly opened pill always starts full-size, collapsed.
   floatCompact = false;
+  floatExpanded = false;
 
   floatWindow = new BrowserWindow({
     width: FLOAT_WINDOW_WIDTH,
@@ -210,6 +229,22 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
   // the Dock.
   created.setAlwaysOnTop(true, 'floating');
   created.setVisibleOnAllWorkspaces(true);
+
+  // Windows: dragging a frameless non-resizable window on a display with
+  // fractional DPI scaling inflates its bounds a bit on every drag — the
+  // native move loop re-applies size constraints with mismatched DIP↔pixel
+  // rounding (long-standing Electron bug). Snap back to the intended size
+  // after each move.
+  if (process.platform === 'win32') {
+    created.on('moved', () => {
+      if (created.isDestroyed()) return;
+      const { width, height } = floatTargetSize();
+      const bounds = created.getBounds();
+      if (bounds.width !== width || bounds.height !== height) {
+        created.setBounds({ x: bounds.x, y: bounds.y, width, height });
+      }
+    });
+  }
 
   created.webContents.once('did-finish-load', () => {
     if (created.isDestroyed()) return;
