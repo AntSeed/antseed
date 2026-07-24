@@ -21,6 +21,27 @@ function runFileSilent(cmd: string, args: string[]): void {
   execFileSync(cmd, args, { stdio: 'pipe' })
 }
 
+/**
+ * Windows caches Internet Settings per-process — writing the `ProxyServer`/
+ * `ProxyEnable` registry values alone doesn't make already-running WinINET
+ * apps (and sometimes new ones) pick up the change. This broadcasts the
+ * same `InternetSetOption` refresh that Control Panel's proxy UI issues.
+ * No native dependency: routed through PowerShell's P/Invoke support.
+ */
+function notifyWindowsProxyChanged(): void {
+  const script = [
+    '$sig = \'[DllImport("wininet.dll", SetLastError=true)] public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);\'',
+    '$t = Add-Type -MemberDefinition $sig -Name AntSeedWinInet -Namespace AntSeed -PassThru',
+    '$t::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null',
+    '$t::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null',
+  ].join('; ')
+  try {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'pipe' })
+  } catch {
+    // Best-effort: settings still take effect for newly-launched processes.
+  }
+}
+
 function getEnabledNetworkServices(): string[] {
   try {
     const out = execFileSync('networksetup', ['-listallnetworkservices'], { encoding: 'utf8' })
@@ -114,6 +135,7 @@ export function restoreSystemProxySnapshot(snapshot: SystemProxySnapshot): void 
           ])
         } catch { /* missing value */ }
       }
+      notifyWindowsProxyChanged()
     } catch { /* best-effort */ }
   }
 }
@@ -135,6 +157,7 @@ export function setSystemProxy(settings: ProxySettings): SystemProxySnapshot {
       'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
       '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', `${host}:${port}`, '/f',
     ])
+    notifyWindowsProxyChanged()
   }
   // Linux: env vars only — no system-level setter
   return snapshot
@@ -157,6 +180,7 @@ export function clearSystemProxy(settings?: ProxySettings): void {
         'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
         '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f',
       ])
+      notifyWindowsProxyChanged()
     } catch { /* best-effort */ }
   }
 }

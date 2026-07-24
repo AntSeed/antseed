@@ -1,11 +1,11 @@
 import 'reflect-metadata'
 import * as x509 from '@peculiar/x509'
-import { webcrypto, X509Certificate } from 'node:crypto'
+import { webcrypto, X509Certificate, randomUUID } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { execSync, execFileSync } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 x509.cryptoProvider.set(webcrypto as any)
@@ -66,6 +66,11 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
+/** Escape a value for interpolation inside a single-quoted PowerShell string. */
+function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
 /** Failure output of a spawned command WITHOUT the command line itself —
     exec errors embed the entire shell invocation in `message`, which reads
     like something went deeply wrong when shown to a user. */
@@ -82,11 +87,12 @@ function commandErrorDetail(err: unknown): string {
 /**
  * Classify a failed privileged trust-store command into a calm, one-phrase
  * reason for the UI, keeping the raw output separate for logs. The common
- * case is the user dismissing the macOS administrator password prompt.
+ * case is the user dismissing the macOS administrator password prompt or the
+ * Windows UAC prompt.
  */
 export function describeTrustInstallFailure(err: unknown): { reason: string; detail: string } {
   const detail = commandErrorDetail(err)
-  if (/user canceled/i.test(detail) || detail.includes('-128')) {
+  if (/user canceled|canceled by the user/i.test(detail) || detail.includes('-128')) {
     return { reason: 'the administrator prompt was cancelled', detail }
   }
   return { reason: 'the system-level install failed', detail }
@@ -240,19 +246,7 @@ export class CAManager {
     if (platform === 'darwin') {
       return this.installMacOS()
     } else if (platform === 'win32') {
-      // Drop any older AntSeed CA trusted under the same name first, so the OS
-      // can't try to verify current leaves against a stale key.
-      const current = this.fingerprint()
-      for (const hash of new Set(this.listInstalledFingerprints().map(normalizeFingerprint))) {
-        if (!hash || hash === current) continue
-        try {
-          execFileSync('certutil', ['-delstore', '-f', 'Root', hash], { stdio: 'pipe' })
-        } catch {
-          // Best-effort.
-        }
-      }
-      execFileSync('certutil', ['-addstore', '-f', 'Root', this.certPath], { stdio: 'pipe' })
-      return { target: 'windows-root' }
+      return this.installWindows()
     } else {
       execFileSync('sudo', ['cp', this.certPath, '/usr/local/share/ca-certificates/antseed-ca.crt'], { stdio: 'pipe' })
       execFileSync('sudo', ['update-ca-certificates'], { stdio: 'pipe' })
@@ -326,6 +320,71 @@ export class CAManager {
           + `(${adminFailure.detail}; ${loginFailure.detail})`,
         )
       }
+    }
+  }
+
+  /**
+   * `certutil -addstore Root` always targets the Local Machine store, which
+   * requires administrator rights — Node can't request elevation directly,
+   * so both the stale-cert purge and the add run as ONE elevated `cmd.exe`
+   * (one UAC prompt) via PowerShell's `Start-Process -Verb RunAs`.
+   */
+  private installWindows(): CAInstallResult {
+    const current = this.fingerprint()
+    const staleHashes = [...new Set(this.listInstalledFingerprints().map(normalizeFingerprint))]
+      .filter((hash) => hash && hash !== current)
+
+    const commands = [
+      ...staleHashes.map((hash) => `certutil -delstore -f Root ${hash}`),
+      `certutil -addstore -f Root "${this.certPath}"`,
+    ]
+    try {
+      this.runElevatedCertutil(commands)
+      return { target: 'windows-root' }
+    } catch (err) {
+      const failure = describeTrustInstallFailure(err)
+      throw new Error(
+        `The certificate could not be trusted automatically because ${failure.reason}. `
+        + `Trust it manually: open ${this.certPath}, click "Install Certificate", choose "Local Machine", `
+        + 'and place it in "Trusted Root Certification Authorities". '
+        + `(${failure.detail})`,
+      )
+    }
+  }
+
+  /**
+   * Runs `commands` inside one elevated `cmd.exe`, redirecting its combined
+   * stdout+stderr to a temp file — an elevated child's stdio can't be piped
+   * back to this process directly, and `certutil` writes its real errors
+   * (e.g. "Access is denied") to stdout, which a plain `execFileSync` never
+   * surfaces.
+   */
+  private runElevatedCertutil(commands: string[]): void {
+    const outFile = join(tmpdir(), `antseed-ca-install-${randomUUID()}.log`)
+    const innerCmd = `${commands.join(' & ')} > "${outFile}" 2>&1`
+    const psCommand = [
+      `$p = Start-Process -FilePath cmd.exe -ArgumentList '/d','/c',${psQuote(innerCmd)} -Verb RunAs -Wait -PassThru -WindowStyle Hidden`,
+      'exit $p.ExitCode',
+    ].join('; ')
+
+    let execErr: unknown = null
+    try {
+      execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand], { stdio: 'pipe' })
+    } catch (err) {
+      execErr = err
+    }
+
+    let fileOutput = ''
+    try {
+      fileOutput = readFileSync(outFile, 'utf8').trim()
+    } catch {
+      // Elevation itself may have failed before certutil ever ran.
+    } finally {
+      try { unlinkSync(outFile) } catch { /* best-effort cleanup */ }
+    }
+
+    if (execErr) {
+      throw new Error(fileOutput || commandErrorDetail(execErr))
     }
   }
 }

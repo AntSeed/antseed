@@ -690,6 +690,27 @@ async function runGuiSystemProxyTrustProbe(): Promise<{ ok: boolean; statusCode?
   });
 }
 
+/**
+ * Windows caches Internet Settings per-process — writing the `ProxyServer`/
+ * `ProxyEnable` registry values alone doesn't make already-running WinINET
+ * apps (and sometimes new ones) pick up the change. This broadcasts the
+ * same `InternetSetOption` refresh Control Panel's proxy UI issues.
+ * Mirrors `notifyWindowsProxyChanged` in apps/cli/src/system-proxy/system-proxy.ts.
+ */
+function notifyWindowsProxyChanged(): void {
+  const script = [
+    '$sig = \'[DllImport("wininet.dll", SetLastError=true)] public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);\'',
+    '$t = Add-Type -MemberDefinition $sig -Name AntSeedWinInet -Namespace AntSeed -PassThru',
+    '$t::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null',
+    '$t::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null',
+  ].join('; ');
+  try {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'pipe' });
+  } catch {
+    // Best-effort: settings still take effect for newly-launched processes.
+  }
+}
+
 function clearOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): void {
   if (process.platform === 'darwin') {
     for (const service of getEnabledNetworkServices()) {
@@ -715,6 +736,7 @@ function clearOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): void {
         'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
         '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f',
       ], { stdio: 'pipe' });
+      notifyWindowsProxyChanged();
     } catch { /* best-effort */ }
   }
 }
@@ -762,6 +784,7 @@ function restoreOsSystemProxySnapshot(rawSnapshot: unknown): boolean {
           ], { stdio: 'pipe' });
         } catch { /* missing value */ }
       }
+      notifyWindowsProxyChanged();
     } catch { /* best-effort */ }
     return true;
   }
@@ -3334,7 +3357,7 @@ function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; er
   } else if (process.platform === 'win32') {
     const programData = process.env['ProgramData'];
     const appData = process.env['APPDATA'];
-    const roots = [
+    const shortcutRoots = [
       programData ? path.join(programData, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : null,
       appData ? path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs') : null,
     ].filter((root): root is string => root !== null);
@@ -3356,7 +3379,45 @@ function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; er
         }
       }
     };
-    for (const root of roots) walk(root, 0);
+    for (const root of shortcutRoots) walk(root, 0);
+
+    // Many per-user tool installs (VS Code, Cursor, Windsurf, ...) live under
+    // %LOCALAPPDATA%\Programs\<App>\<App>.exe without ever registering a
+    // Start Menu shortcut (e.g. a silent install, or "don't create a start
+    // menu entry" during setup) — those are invisible to the scan above.
+    // %ProgramFiles% installs normally DO get a Start Menu shortcut, but not
+    // always, so it's scanned too, one level deep, to stay fast and avoid
+    // picking up bundled helper binaries (updaters, crash handlers, uninstallers).
+    const localAppData = process.env['LOCALAPPDATA'];
+    const exeRoots = [
+      localAppData ? path.join(localAppData, 'Programs') : null,
+      process.env['ProgramFiles'] ?? null,
+      process.env['ProgramFiles(x86)'] ?? null,
+    ].filter((root): root is string => root !== null);
+    const noiseNamePattern = /^(unins|uninstall|setup|update|updater|crashpad|vc_redist)/i;
+    for (const root of exeRoots) {
+      let appDirs;
+      try {
+        appDirs = readdirSync(root, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const appDir of appDirs) {
+        if (!appDir.isDirectory()) continue;
+        let files;
+        try {
+          files = readdirSync(path.join(root, appDir.name), { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const file of files) {
+          if (file.isDirectory() || !file.name.toLowerCase().endsWith('.exe')) continue;
+          const name = file.name.slice(0, -'.exe'.length);
+          if (noiseNamePattern.test(name) || apps.has(name)) continue;
+          apps.set(name, { name, path: path.join(root, appDir.name, file.name) });
+        }
+      }
+    }
   } else {
     return { ok: false, apps: [], error: 'Listing installed apps is not supported on this platform.' };
   }
@@ -3364,17 +3425,35 @@ function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; er
 }
 
 // Icons are extracted per entry — on macOS via the QuickLook thumbnail
-// (app.getFileIcon returns the same generic icon for every .app bundle),
-// on Windows via getFileIcon which resolves .lnk targets properly. A few
-// hundred lookups, so the enriched list is computed once per run and cached.
+// (app.getFileIcon returns the same generic icon for every .app bundle); on
+// Windows, app.getFileIcon resolves icons weakly for .lnk shortcuts (it's
+// built for real files), so shortcuts are first resolved to their target
+// .exe. A few hundred lookups, so the enriched list is computed once per
+// run and cached.
 async function installedAppIcon(entryPath: string): Promise<string | null> {
   try {
-    const icon = process.platform === 'darwin'
-      ? await nativeImage.createThumbnailFromPath(entryPath, { width: 48, height: 48 })
-      : await app.getFileIcon(entryPath, { size: 'normal' });
+    if (process.platform === 'darwin') {
+      const icon = await nativeImage.createThumbnailFromPath(entryPath, { width: 48, height: 48 });
+      return icon.isEmpty() ? null : icon.toDataURL();
+    }
+    const icon = await app.getFileIcon(windowsIconSourcePath(entryPath), { size: 'normal' });
     return icon.isEmpty() ? null : icon.toDataURL();
   } catch {
     return null; // no icon — the renderer falls back to a brand mark
+  }
+}
+
+/** Resolves a Start Menu `.lnk` shortcut to its target executable, which
+    `app.getFileIcon` extracts an icon from far more reliably than the
+    shortcut file itself. Falls back to the shortcut path if it isn't a
+    `.lnk`, or the target can't be read. No-op on non-Windows platforms. */
+function windowsIconSourcePath(entryPath: string): string {
+  if (process.platform !== 'win32' || !entryPath.toLowerCase().endsWith('.lnk')) return entryPath;
+  try {
+    const target = shell.readShortcutLink(entryPath).target;
+    return target && existsSync(target) ? target : entryPath;
+  } catch {
+    return entryPath;
   }
 }
 
