@@ -274,6 +274,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
         name: profile.name,
         displayName: profile.displayName,
         ...(profile.toolSlugs ? { toolSlugs: profile.toolSlugs } : {}),
+        // Carry the app's real icon so the pill matches the main window's
+        // app rows instead of always drawing the generic brand mark.
+        ...(profile.iconDataUri ? { iconDataUri: profile.iconDataUri } : {}),
       })),
       selectedApp,
       models,

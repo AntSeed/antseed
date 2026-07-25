@@ -458,6 +458,9 @@ export type VprFloatApp = {
   /** Client names that attribute conversations to this app (see
       SystemProxyProfileSummary.toolSlugs). */
   toolSlugs?: string[];
+  /** The associated application's real icon, same as the main window's app
+      rows use; without one the pill falls back to a drawn brand mark. */
+  iconDataUri?: string;
 };
 
 /** Full catalog entries flow to the pill so its model list renders exactly

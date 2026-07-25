@@ -237,6 +237,14 @@
   padding: 6px;
 }
 
+/* Real application icon on app/chat rows — sized inline by the caller so one
+   class serves both the 16px rows and the 14px header shortcut. */
+.appIcon {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
 .menuRow {
   display: flex;
   align-items: center;

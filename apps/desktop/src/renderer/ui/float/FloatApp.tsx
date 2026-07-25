@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
-import type { VprFloatData } from '../../types/bridge';
+import type { VprFloatApp, VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/conversations';
 import { displayToolName } from '../../modules/tool-names';
 import { AntStationMark } from '../components/AntStationLogo';
@@ -14,6 +14,26 @@ import styles from './FloatApp.module.scss';
 /* Viewport width below this means the window is at compact-chip size (88px)
    rather than the full pill (272px). */
 const COMPACT_MAX_WIDTH = 160;
+
+/**
+ * App mark for a connected app or a chat's tool: the associated
+ * application's real icon when the profile carries one — the same image the
+ * main window's app rows show — falling back to the drawn brand mark.
+ */
+function AppMark({ app, tool, size }: { app?: VprFloatApp | null; tool?: string; size: number }) {
+  if (app?.iconDataUri) {
+    return (
+      <img
+        src={app.iconDataUri}
+        alt=""
+        className={styles.appIcon}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  const name = tool ?? app?.name;
+  return <BrandIcon name={name} hints={[app?.displayName ?? name]} size={size} />;
+}
 
 /**
  * Content of the detachable always-on-top pill window (Figma "flowing
@@ -170,6 +190,13 @@ export function FloatApp() {
     ),
     [data?.apps, conversations],
   );
+  // The connected app a chat belongs to — its profile carries the real app
+  // icon, so chat rows show the same mark as the app rows.
+  const appForTool = useMemo(() => {
+    const apps = data?.apps ?? [];
+    return (tool: string): VprFloatApp | null =>
+      apps.find((app) => conversationMatchesApp(tool, app)) ?? null;
+  }, [data?.apps]);
   // Level-2 target chat; a chat that ages out of the list mid-visit falls
   // back to the conversations list.
   const targetChat = chatTarget && chatTarget !== 'default'
@@ -350,7 +377,7 @@ export function FloatApp() {
                   speaks for itself. */}
               {runtimeOn && conversations.length === 0 && idleApps.map((app) => (
                 <div key={app.name} className={styles.menuHint}>
-                  <BrandIcon name={app.name} hints={[app.displayName]} size={16} />
+                  <AppMark app={app} size={16} />
                   <span className={styles.menuHintText}>
                     <span className={styles.menuHintTitle}>{app.displayName} connected</span>
                     <span className={styles.menuHintMeta}>Start a new session and send your first prompt</span>
@@ -374,7 +401,7 @@ export function FloatApp() {
                     onClick={() => drillIn(chat.id)}
                     title={chat.title}
                   >
-                    <BrandIcon name={chat.tool} hints={[chat.tool]} size={16} />
+                    <AppMark app={appForTool(chat.tool)} tool={chat.tool} size={16} />
                     <span className={styles.menuRowText}>
                       <span className={styles.menuRowTitleLine}>
                         <span className={styles.menuRowTitle}>{chat.title}</span>
@@ -413,7 +440,7 @@ export function FloatApp() {
                     title={`Open ${displayToolName(targetChat.tool)}`}
                     aria-label={`Open ${displayToolName(targetChat.tool)}`}
                   >
-                    <BrandIcon name={targetChat.tool} hints={[targetChat.tool]} size={14} />
+                    <AppMark app={appForTool(targetChat.tool)} tool={targetChat.tool} size={14} />
                     <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
                   </button>
                 ) : null}
