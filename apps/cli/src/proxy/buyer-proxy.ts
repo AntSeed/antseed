@@ -1301,7 +1301,9 @@ export class BuyerProxy {
 
     // Track the conversation (subagent traffic rolls up into the parent
     // chat). The snippet is only extracted the first time a chat is seen.
-    if (conversationIdentity) {
+    // A thread the tool opened for its own housekeeping is routed and paid
+    // for normally, but is not a chat — Codex titles every new chat from one.
+    if (conversationIdentity?.isUserThread) {
       const rawModel = typeof conversationBody?.['model'] === 'string' ? conversationBody['model'] : ''
       const resolvedModel = aliasResult.substituted
         ? effectiveRoutedModel

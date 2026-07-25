@@ -1324,6 +1324,42 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
   }
 })
 
+test('a thread the tool opened for itself never becomes a chat', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const store = (proxy as any)._conversations
+    const turnMetadata = (threadId: string, threadSource: string): string =>
+      JSON.stringify({ thread_id: threadId, request_kind: 'turn', thread_source: threadSource })
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        originator: 'Codex Desktop',
+        'thread-id': 'thread-real',
+        'x-codex-turn-metadata': turnMetadata('thread-real', 'user'),
+      },
+      body: { input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'yo' }] }] },
+    }))
+
+    // Codex titles the chat from a system thread of its own, milliseconds later.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        originator: 'Codex Desktop',
+        'thread-id': 'thread-title',
+        'x-codex-turn-metadata': turnMetadata('thread-title', 'system'),
+      },
+      body: { input: 'You are a helpful assistant... provide a short title...\n\nUser prompt:\nyo' },
+    }))
+
+    assert.deepEqual(store.list().map((c: any) => c.id), ['codex-desktop:thread-real'])
+    assert.equal(store.get('codex-desktop:thread-real')?.snippet, 'yo')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('conversation control endpoints list, rename, pin, reject bad pins, delete', async () => {
   const { proxy, dir } = await makeConversationProxy()
   try {

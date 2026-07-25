@@ -14,6 +14,10 @@ import { parseJsonObject } from '@antseed/api-adapter'
  *   - OpenCode      headers `x-session-id` / `x-session-affinity`, and
  *                   `x-parent-session-id` on subagent sessions.
  *
+ * Not every thread a tool opens is a chat — housekeeping (titling,
+ * summarizing) runs in threads of its own. Those declare themselves; see
+ * `isUserThread`.
+ *
  * The buyer uses this identity to key per-chat routing overrides and the
  * conversations list shown in the desktop app. pi sends no wire identity
  * today, so its requests simply resolve to no conversation.
@@ -30,6 +34,10 @@ export type ConversationIdentity = {
   sessionKey: string
   /** Parent session for subagent traffic (OpenCode), when advertised. */
   parentSessionKey: string | null
+  /** False when the tool declares this thread as its own housekeeping rather
+      than a user's chat. True by default — a tool that says nothing is taken
+      at face value. */
+  isUserThread: boolean
 }
 
 /* Snippets are labels, not previews — keep them short. */
@@ -107,6 +115,27 @@ function toolSessionHeader(headers: Record<string, string>): { tool: string; ses
   return null
 }
 
+/**
+ * Whether the tool considers this thread a user's chat, read off any
+ * `*-turn-metadata` header. Codex sends `x-codex-turn-metadata` with
+ * `thread_source: "user"` for a chat and `"system"` for the threads it opens
+ * for itself — titling a new chat runs in one, under a thread-id of its own.
+ * Silence means user: a chat wrongly hidden is worse than one wrongly listed.
+ */
+function isUserThread(headers: Record<string, string>): boolean {
+  for (const name of Object.keys(headers)) {
+    if (!name.toLowerCase().endsWith('-turn-metadata')) continue
+    const raw = headers[name]
+    if (typeof raw !== 'string' || raw.length === 0) continue
+    let source: unknown
+    try {
+      source = (JSON.parse(raw) as Record<string, unknown>)['thread_source']
+    } catch { continue }
+    if (typeof source === 'string' && source.length > 0) return source === 'user'
+  }
+  return true
+}
+
 /** Normalize a client identifier into a display-safe slug. */
 function slugifyTool(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '')
@@ -170,6 +199,7 @@ export function extractConversationIdentity(
     tool: named?.tool ?? detectTool(headers),
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
+    isUserThread: isUserThread(headers),
   }
 }
 

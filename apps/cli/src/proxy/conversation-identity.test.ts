@@ -25,7 +25,28 @@ test('claude code identity comes from x-claude-code-session-id', () => {
     tool: 'claude-code',
     sessionKey: '43ddc5e7-0b8e-491f-a5d1-f2a6854f689d',
     parentSessionKey: null,
+    isUserThread: true,
   })
+})
+
+test('turn metadata marks a tool-opened thread as not a user chat', () => {
+  const meta = (threadSource: string): string => JSON.stringify({
+    thread_id: '019f9adc-ad46-7ba1-bdfc-b9612c116462',
+    request_kind: 'turn',
+    thread_source: threadSource,
+  })
+  const headers = (turnMetadata: string): Record<string, string> => ({
+    'originator': 'Codex Desktop',
+    'thread-id': '019f9adc-ad46-7ba1-bdfc-b9612c116462',
+    'x-codex-turn-metadata': turnMetadata,
+  })
+  // Codex titles a new chat from a system thread of its own.
+  assert.equal(extractConversationIdentity(headers(meta('system')), null)?.isUserThread, false)
+  assert.equal(extractConversationIdentity(headers(meta('user')), null)?.isUserThread, true)
+  // Missing, unparseable or silent metadata is taken as a user chat.
+  assert.equal(extractConversationIdentity(headers('{not json'), null)?.isUserThread, true)
+  assert.equal(extractConversationIdentity(headers('{}'), null)?.isUserThread, true)
+  assert.equal(extractConversationIdentity({ 'thread-id': 't1' }, null)?.isUserThread, true)
 })
 
 test('user-agent product token identifies the tool generically', () => {
@@ -64,7 +85,7 @@ test('opencode identity uses x-session-id and carries the parent session', () =>
     'x-session-affinity': 'ses_abc',
     'x-parent-session-id': 'ses_parent',
   }, null)
-  assert.deepEqual(identity, { tool: 'opencode', sessionKey: 'ses_abc', parentSessionKey: 'ses_parent' })
+  assert.deepEqual(identity, { tool: 'opencode', sessionKey: 'ses_abc', parentSessionKey: 'ses_parent', isUserThread: true })
 })
 
 test('any x-<tool>-session-id header identifies the tool generically', () => {
@@ -72,7 +93,7 @@ test('any x-<tool>-session-id header identifies the tool generically', () => {
     'user-agent': 'SomeNewTool/0.1',
     'x-cursor-session-id': 'sess-42',
   }, null)
-  assert.deepEqual(identity, { tool: 'cursor', sessionKey: 'sess-42', parentSessionKey: null })
+  assert.deepEqual(identity, { tool: 'cursor', sessionKey: 'sess-42', parentSessionKey: null, isUserThread: true })
 })
 
 test('x-parent-session-id is never mistaken for a tool session header', () => {
@@ -81,7 +102,7 @@ test('x-parent-session-id is never mistaken for a tool session header', () => {
     'x-session-id': 'ses_child',
     'x-parent-session-id': 'ses_parent',
   }, null)
-  assert.deepEqual(identity, { tool: 'opencode', sessionKey: 'ses_child', parentSessionKey: 'ses_parent' })
+  assert.deepEqual(identity, { tool: 'opencode', sessionKey: 'ses_child', parentSessionKey: 'ses_parent', isUserThread: true })
 })
 
 test('requests without any identity return null', () => {
