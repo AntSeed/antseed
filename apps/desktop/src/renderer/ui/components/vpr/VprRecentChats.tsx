@@ -49,11 +49,11 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
             ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" />
             : null}
           <span className={styles.sessionId}>{shortSessionId(chat.sessionKey)}</span>
+          {cost ? <span className={styles.chatCost}>{cost}</span> : null}
         </span>
         <span className={styles.chatMeta}>
           {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
           {modelLabel ? ` · ${modelLabel}` : ''}
-          {cost ? <span className={styles.chatCost}>{cost}</span> : null}
         </span>
       </span>
       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.chatChevron} />

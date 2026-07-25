@@ -99,14 +99,18 @@
   line-height: 15px;
 }
 
-/* What the chat has cost. Set apart from the rest of the meta line so the
-   number is findable when scanning a list of chats for the expensive one. */
+/* What the chat has cost, parked at the end of the title row: a column of
+   right-aligned figures scans for the expensive chat far better than a number
+   buried mid-sentence. `margin-left: auto` claims the slack the truncating
+   title leaves behind. */
 .chatCost {
-  margin-left: 6px;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: var(--bg-hover);
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 6px;
   color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
   font-variant-numeric: tabular-nums;
 }
 

@@ -478,7 +478,12 @@ export class BuyerProxy {
     if (!entry) return
     this._conversations.addSpend(
       entry.convId,
-      { amountUsdc: event.amountUsdc, inputTokens: event.inputTokens, outputTokens: event.outputTokens },
+      {
+        amountUsdc: event.amountUsdc,
+        inputTokens: event.inputTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens,
+      },
       !entry.counted,
     )
     entry.counted = true

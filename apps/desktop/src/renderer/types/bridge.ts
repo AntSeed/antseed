@@ -442,7 +442,10 @@ export type BuyerConversationSummary = {
   /** USDC base units this chat has cost (bigint string), subagents included.
       Rows written before spend tracking shipped report '0'. */
   spentUsdc?: string;
+  /** `cachedInputTokens` is the cached subset of `inputTokens`, not a separate
+      bucket — fresh input is the difference between the two. */
   inputTokens?: string;
+  cachedInputTokens?: string;
   outputTokens?: string;
   requestCount?: number;
   createdAt: number;

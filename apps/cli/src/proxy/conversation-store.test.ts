@@ -199,14 +199,15 @@ test('addSpend accumulates cost and counts requests only when told to', async ()
     assert.equal(created.spentUsdc, '0')
     assert.equal(created.requestCount, 0)
 
-    store.addSpend(created.id, { amountUsdc: '12000', inputTokens: '900', outputTokens: '120' })
+    store.addSpend(created.id, { amountUsdc: '12000', inputTokens: '900', cachedInputTokens: '600', outputTokens: '120' })
     // A second delta for the same request: cost adds up, the request does not.
-    store.addSpend(created.id, { amountUsdc: '3000', inputTokens: '0', outputTokens: '0' }, false)
-    store.addSpend(created.id, { amountUsdc: '5000', inputTokens: '100', outputTokens: '40' })
+    store.addSpend(created.id, { amountUsdc: '3000', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' }, false)
+    store.addSpend(created.id, { amountUsdc: '5000', inputTokens: '100', cachedInputTokens: '25', outputTokens: '40' })
 
     const row = store.get(created.id)
     assert.equal(row?.spentUsdc, '20000')
     assert.equal(row?.inputTokens, '1000')
+    assert.equal(row?.cachedInputTokens, '625')
     assert.equal(row?.outputTokens, '160')
     assert.equal(row?.requestCount, 2)
     await store.flush()
@@ -222,11 +223,11 @@ test('addSpend ignores unknown ids, empty deltas and malformed amounts', async (
     const created = store.touch({ tool: 'codex', sessionKey: 's1' })
 
     // A chat pruned mid-request must not come back as a spend-only row.
-    store.addSpend('codex:gone', { amountUsdc: '5000', inputTokens: '0', outputTokens: '0' })
+    store.addSpend('codex:gone', { amountUsdc: '5000', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
     assert.equal(store.get('codex:gone'), null)
 
-    store.addSpend(created.id, { amountUsdc: '0', inputTokens: '0', outputTokens: '0' })
-    store.addSpend(created.id, { amountUsdc: 'not-a-number', inputTokens: '0', outputTokens: '0' })
+    store.addSpend(created.id, { amountUsdc: '0', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
+    store.addSpend(created.id, { amountUsdc: 'not-a-number', inputTokens: '0', cachedInputTokens: '0', outputTokens: '0' })
     const row = store.get(created.id)
     assert.equal(row?.spentUsdc, '0')
     assert.equal(row?.requestCount, 0)
@@ -241,26 +242,51 @@ test('spend counters survive a reload and heal from corrupt values', async () =>
   try {
     const store = new ConversationStore(dir)
     const created = store.touch({ tool: 'codex', sessionKey: 's1' })
-    store.addSpend(created.id, { amountUsdc: '7500', inputTokens: '10', outputTokens: '5' })
+    store.addSpend(created.id, { amountUsdc: '7500', inputTokens: '10', cachedInputTokens: '4', outputTokens: '5' })
     // addSpend defers persistence to the next touch, mirroring live traffic.
     store.touch({ tool: 'codex', sessionKey: 's1' })
     await store.flush()
 
     const reloaded = new ConversationStore(dir)
     assert.equal(reloaded.get(created.id)?.spentUsdc, '7500')
+    assert.equal(reloaded.get(created.id)?.cachedInputTokens, '4')
     assert.equal(reloaded.get(created.id)?.requestCount, 1)
 
     const { writeFile } = await import('node:fs/promises')
     await writeFile(join(dir, CONVERSATIONS_FILE), JSON.stringify({
       conversations: [{
-        tool: 'codex', sessionKey: 's2', spentUsdc: 'garbage', requestCount: -3,
+        tool: 'codex', sessionKey: 's2', spentUsdc: 'garbage', cachedInputTokens: null, requestCount: -3,
         createdAt: Date.now(), lastActiveAt: Date.now(),
       }],
     }), 'utf8')
     const healed = new ConversationStore(dir)
     assert.equal(healed.get(conversationId('codex', 's2'))?.spentUsdc, '0')
+    assert.equal(healed.get(conversationId('codex', 's2'))?.cachedInputTokens, '0')
     assert.equal(healed.get(conversationId('codex', 's2'))?.requestCount, 0)
     await healed.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('cached input is clamped to the input it is a subset of', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(dir)
+    const created = store.touch({ tool: 'codex', sessionKey: 's1' })
+
+    // A seller reporting more cached than total input is malformed — the
+    // subset must never exceed the whole it is measured against.
+    store.addSpend(created.id, { amountUsdc: '1000', inputTokens: '50', cachedInputTokens: '900', outputTokens: '10' })
+    const row = store.get(created.id)
+    assert.equal(row?.inputTokens, '50')
+    assert.equal(row?.cachedInputTokens, '50')
+
+    // Fresh input stays derivable as inputTokens - cachedInputTokens.
+    store.addSpend(created.id, { amountUsdc: '1000', inputTokens: '200', cachedInputTokens: '150', outputTokens: '10' })
+    const after = store.get(created.id)
+    assert.equal(BigInt(after!.inputTokens) - BigInt(after!.cachedInputTokens), 50n)
+    await store.flush()
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

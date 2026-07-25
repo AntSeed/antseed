@@ -382,10 +382,10 @@ export function FloatApp() {
                             same signal as the chat list's running dot. */}
                         {chat.active ? <span className={styles.runningDot} role="img" aria-label="Receiving traffic" /> : null}
                         <span className={styles.sessionId}>{chat.sessionShort}</span>
+                        {chat.cost ? <span className={styles.menuRowCost}>{chat.cost}</span> : null}
                       </span>
                       <span className={styles.menuRowMeta}>
                         {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)} · {pinnedLabel ?? modelLabel}
-                        {chat.cost ? <span className={styles.menuRowCost}>{chat.cost}</span> : null}
                       </span>
                     </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />

@@ -33,8 +33,11 @@ export type StoredConversation = {
       Subagent traffic rolls up into the parent chat, same as everything else
       here. This is what the chat has cost, not what has settled on-chain. */
   spentUsdc: string
-  /** Cumulative tokens across this chat's requests (bigint as string). */
+  /** Cumulative tokens across this chat's requests (bigint as string).
+      `cachedInputTokens` is the cached SUBSET of `inputTokens`, not a separate
+      bucket — fresh input is `inputTokens - cachedInputTokens`. */
   inputTokens: string
+  cachedInputTokens: string
   outputTokens: string
   /** Requests whose spend was attributed to this chat. */
   requestCount: number
@@ -82,6 +85,7 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
     inputTokens: sanitizeCounter(record.inputTokens),
+    cachedInputTokens: sanitizeCounter(record.cachedInputTokens),
     outputTokens: sanitizeCounter(record.outputTokens),
     requestCount: typeof record.requestCount === 'number' && record.requestCount > 0 ? record.requestCount : 0,
     createdAt: typeof record.createdAt === 'number' ? record.createdAt : Date.now(),
@@ -185,6 +189,7 @@ export class ConversationStore {
         lastModel: input.lastModel ?? null,
         spentUsdc: '0',
         inputTokens: '0',
+        cachedInputTokens: '0',
         outputTokens: '0',
         requestCount: 0,
         createdAt: now,
@@ -212,26 +217,32 @@ export class ConversationStore {
    */
   addSpend(
     id: string,
-    delta: { amountUsdc: string; inputTokens: string; outputTokens: string },
+    delta: { amountUsdc: string; inputTokens: string; cachedInputTokens: string; outputTokens: string },
     countRequest = true,
   ): void {
     const existing = this._byId.get(id)
     if (!existing) return
     let amount: bigint
     let input: bigint
+    let cachedInput: bigint
     let output: bigint
     try {
       amount = BigInt(delta.amountUsdc || '0')
       input = BigInt(delta.inputTokens || '0')
+      cachedInput = BigInt(delta.cachedInputTokens || '0')
       output = BigInt(delta.outputTokens || '0')
     } catch {
       return
     }
+    // Cached input is a subset of input, so a delta reporting only cached
+    // tokens is malformed — clamp rather than let the subset exceed the whole.
+    if (cachedInput > input) cachedInput = input
     if (amount <= 0n && input <= 0n && output <= 0n) return
     this._byId.set(id, {
       ...existing,
       spentUsdc: (BigInt(existing.spentUsdc) + (amount > 0n ? amount : 0n)).toString(),
       inputTokens: (BigInt(existing.inputTokens) + (input > 0n ? input : 0n)).toString(),
+      cachedInputTokens: (BigInt(existing.cachedInputTokens) + (cachedInput > 0n ? cachedInput : 0n)).toString(),
       outputTokens: (BigInt(existing.outputTokens) + (output > 0n ? output : 0n)).toString(),
       requestCount: existing.requestCount + (countRequest ? 1 : 0),
     })
