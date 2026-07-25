@@ -4,6 +4,9 @@ import type { PaymentMux } from '../p2p/payment-mux.js';
 import type {
   SpendingAuthPayload,
   PaymentRequiredPayload,
+  CloseChannelRequestPayload,
+  CloseChannelResultPayload,
+  CloseChannelRejectCode,
 } from '../types/protocol.js';
 import { ChannelsClient } from './evm/channels-client.js';
 import {
@@ -44,14 +47,26 @@ const DEFAULT_MIN_BUDGET_PER_REQUEST = '500000';
 export const DEFAULT_MIN_SETTLE_DELTA_STR = '2000';
 const DEFAULT_MIN_SETTLE_DELTA = BigInt(DEFAULT_MIN_SETTLE_DELTA_STR);
 
+/**
+ * How long a buyer-requested close waits for an in-flight SpendingAuth to land
+ * before declaring the channel still mid-accumulation. Mirrors the request
+ * path's catch-up wait: the buyer's auth for the last response may still be on
+ * the wire when the close request arrives.
+ */
+const CLOSE_CATCH_UP_WAIT_MS = 5_000;
+/** `retryAfterMs` hint returned with 'busy' / 'pending_auth' rejections. */
+const CLOSE_RETRY_AFTER_MS = 2_000;
+
 const TOP_UP_THRESHOLD_NOT_MET_SELECTOR = '0x1ea4506b';
 const INSUFFICIENT_BALANCE_SELECTOR = '0xf4d678b8';
 const IN_FLIGHT_TX_LIMIT_PHRASE = 'in-flight transaction limit';
 
 type TopUpFailureKind = 'retryable-threshold' | 'retryable-tx-backpressure' | 'insufficient-balance' | 'non-retryable';
-/** `amount` is the finalAmount actually submitted on-chain, which may differ
- *  from what a caller that joined an in-flight close intended to submit. */
-type CloseResult = { closed: true; amount: bigint } | { closed: false; error: unknown };
+/** `amount`/`txHash` describe the close actually submitted on-chain, which may
+ *  differ from what a caller that joined an in-flight close intended to submit. */
+type CloseResult =
+  | { closed: true; amount: bigint; txHash: string }
+  | { closed: false; error: unknown };
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -136,6 +151,15 @@ export class SellerPaymentManager {
    * a duplicate transaction.
    */
   private readonly _closingChannels = new Map<string, Promise<CloseResult>>();
+
+  /**
+   * buyerPeerId -> number of billable requests currently being served.
+   * Incremented before the provider call and decremented only after the
+   * request's spend has been recorded and its NeedAuth sent, so a non-zero
+   * count means "this buyer is still accumulating" and the channel must not be
+   * closed out from under it.
+   */
+  private readonly _inFlightRequests = new Map<string, number>();
 
   /** channelId -> cumulative amount last successfully settled on-chain by this
    *  process. Lets the idle-settle loop skip the `getSession` RPC when the
@@ -294,8 +318,8 @@ export class SellerPaymentManager {
     if (existing) return existing;
 
     const operation: Promise<CloseResult> = submit().then(
-      () => ({ closed: true, amount }),
-      (error: unknown) => ({ closed: false, error }),
+      (txHash: string) => ({ closed: true as const, amount, txHash }),
+      (error: unknown) => ({ closed: false as const, error }),
     );
     this._closingChannels.set(channelId, operation);
     void operation.finally(() => {
@@ -1125,6 +1149,14 @@ export class SellerPaymentManager {
     }
 
     // Clean up maps after successful close, zero-cumulative deferral, or exhausted retries
+    this._forgetChannel(channelId, buyerPeerId);
+  }
+
+  /**
+   * Drop all in-memory state for a channel that is no longer live. Does not
+   * touch persisted status — callers set that first (SETTLED / TIMEOUT).
+   */
+  private _forgetChannel(channelId: string, buyerPeerId: string): void {
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
@@ -1136,6 +1168,25 @@ export class SellerPaymentManager {
     this._hydratedChannelIds.delete(channelId);
     this._releaseAcceptedWaiters(channelId);
     this._deactivateBuyerForChannel(buyerPeerId, channelId);
+  }
+
+  // ── In-flight request tracking ────────────────────────────────
+
+  /** Mark a billable request as started for this buyer. */
+  beginBillableRequest(buyerPeerId: string): void {
+    this._inFlightRequests.set(buyerPeerId, (this._inFlightRequests.get(buyerPeerId) ?? 0) + 1);
+  }
+
+  /** Mark a billable request as fully accounted for (spend recorded, NeedAuth sent). */
+  endBillableRequest(buyerPeerId: string): void {
+    const next = (this._inFlightRequests.get(buyerPeerId) ?? 0) - 1;
+    if (next > 0) this._inFlightRequests.set(buyerPeerId, next);
+    else this._inFlightRequests.delete(buyerPeerId);
+  }
+
+  /** Whether this buyer has requests still being served and billed. */
+  hasInFlightRequests(buyerPeerId: string): boolean {
+    return (this._inFlightRequests.get(buyerPeerId) ?? 0) > 0;
   }
 
   // ── Disconnect handling ───────────────────────────────────────
@@ -1406,6 +1457,229 @@ export class SellerPaymentManager {
     };
   }
 
+  // ── Buyer-requested cooperative close ─────────────────────────
+
+  /**
+   * Handle a buyer's CloseChannelRequest: close the channel on-chain right
+   * away so the buyer's reserve is released without the `requestClose()` →
+   * 15-minute grace → `withdraw()` detour.
+   *
+   * The seller only agrees when it is not mid-accumulation with this buyer:
+   * no billable request in flight, and no served work the buyer has not signed
+   * for. It closes at `max(own last-accepted auth, buyer-supplied auth)`, so a
+   * buyer cannot use this path to settle below what it already owes, and a
+   * seller that lost the buyer's latest auth can still be paid in full by the
+   * copy the buyer attaches.
+   */
+  async handleCloseChannelRequest(
+    buyerPeerId: string,
+    payload: CloseChannelRequestPayload,
+    paymentMux: PaymentMux,
+  ): Promise<CloseChannelResultPayload> {
+    const reject = (
+      code: CloseChannelRejectCode,
+      reason: string,
+      extra: Partial<CloseChannelResultPayload> = {},
+    ): CloseChannelResultPayload => {
+      debugLog(`[SellerPayment] Declining close of ${payload.channelId.slice(0, 18)}... — ${code}: ${reason}`);
+      return { version: 1, channelId: payload.channelId, status: 'rejected', code, reason, ...extra };
+    };
+
+    let session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
+    if (!session) {
+      return reject('no_channel', 'no active channel for this buyer');
+    }
+    if (session.sessionId.toLowerCase() !== payload.channelId.toLowerCase()) {
+      return reject('no_channel', `active channel is ${session.sessionId}, not the requested channel`);
+    }
+
+    const channelId = session.sessionId;
+
+    if (this.hasInFlightRequests(buyerPeerId)) {
+      return reject('busy', 'a request is still being served on this channel', {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+      });
+    }
+    if (this._closingChannels.has(channelId)) {
+      return reject('busy', 'a close is already in flight for this channel', {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+      });
+    }
+
+    // Let any SpendingAuth already being processed finish before reading the
+    // accepted cumulative, then re-check the channel still exists.
+    await this.waitForPendingAuths(buyerPeerId);
+    session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
+    if (!session || session.sessionId !== channelId) {
+      return reject('no_channel', 'channel was retired while the close request was being processed');
+    }
+
+    // Verify the buyer's optional auth before comparing it with our own.
+    let buyerAuth: LatestAuth | null;
+    try {
+      buyerAuth = await this._verifyBuyerCloseAuth(session, payload);
+    } catch (err) {
+      return reject('invalid_auth', err instanceof Error ? err.message : String(err));
+    }
+    if (buyerAuth) {
+      this._adoptBuyerCloseAuth(channelId, buyerAuth);
+    }
+
+    // Anything served but not yet signed for is unclaimable — ask for the
+    // catch-up auth rather than closing at a loss.
+    let spent = this._spent.get(channelId) ?? 0n;
+    let best = this._getSettleParams(channelId);
+    if (spent > best.amount) {
+      await this.awaitAcceptedAtLeast(channelId, spent, CLOSE_CATCH_UP_WAIT_MS);
+      spent = this._spent.get(channelId) ?? 0n;
+      best = this._getSettleParams(channelId);
+    }
+    if (spent > best.amount) {
+      const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+      try {
+        paymentMux.sendNeedAuth({
+          channelId,
+          requiredCumulativeAmount: spent.toString(),
+          currentAcceptedCumulative: accepted.toString(),
+          deposit: session.authMax ?? '0',
+        });
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to send catch-up NeedAuth before close: ${this._formatError(err)}`);
+      }
+      return reject('pending_auth', `unsigned spend outstanding (spent=${spent} signed=${best.amount})`, {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+        requiredCumulativeAmount: spent.toString(),
+      });
+    }
+
+    // The contract rejects a finalAmount at or below what is already settled
+    // (InvalidAmount) and skips signature verification when they are equal, so
+    // fall back to an unsigned close-at-settled when we have nothing better.
+    let onChainSettled: bigint;
+    try {
+      onChainSettled = (await this._channelsClient.getSession(channelId)).settled;
+    } catch (err) {
+      return reject('close_failed', `could not read on-chain channel state: ${this._formatError(err)}`);
+    }
+
+    const useSignedAuth = best.sig !== '0x' && best.amount > onChainSettled;
+    const finalAmount = useSignedAuth ? best.amount : onChainSettled;
+    const metadata = useSignedAuth ? best.metadata : '0x';
+    const sig = useSignedAuth ? best.sig : '0x';
+
+    debugLog(
+      `[SellerPayment] Buyer-requested close of ${channelId.slice(0, 18)}... ` +
+      `finalAmount=${finalAmount} (signed=${useSignedAuth})`,
+    );
+    // Share the close with every other close path. The busy check above runs
+    // before several awaits, so a background close can still start in between —
+    // report that transaction rather than submitting a competing one.
+    const closeResult = await this._submitClose(
+      channelId,
+      finalAmount,
+      () => this._channelsClient.close(this._signer, channelId, finalAmount, metadata, sig),
+    );
+    if (!closeResult.closed) {
+      const message = this._formatError(closeResult.error);
+      debugWarn(`[SellerPayment] Buyer-requested close failed for ${channelId.slice(0, 18)}...: ${message}`);
+      return reject('close_failed', message, {
+        ...(this._isRetryableTxSubmissionFailure(closeResult.error) ? { retryAfterMs: CLOSE_RETRY_AFTER_MS } : {}),
+      });
+    }
+
+    this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, closeResult.amount.toString());
+    this._forgetChannel(channelId, buyerPeerId);
+    debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed on buyer request (tx=${closeResult.txHash})`);
+
+    return {
+      version: 1,
+      channelId,
+      status: 'closed',
+      txHash: closeResult.txHash,
+      finalAmount: closeResult.amount.toString(),
+    };
+  }
+
+  /**
+   * Verify a SpendingAuth attached to a CloseChannelRequest. Returns null when
+   * the buyer attached nothing; throws with a caller-safe message when the
+   * attached auth does not check out.
+   */
+  private async _verifyBuyerCloseAuth(
+    session: StoredChannel,
+    payload: CloseChannelRequestPayload,
+  ): Promise<LatestAuth | null> {
+    const { cumulativeAmount, metadataHash, metadata, spendingAuthSig } = payload;
+    if (
+      cumulativeAmount === undefined || metadataHash === undefined
+      || metadata === undefined || spendingAuthSig === undefined
+    ) {
+      return null;
+    }
+
+    let amount: bigint;
+    try {
+      amount = BigInt(cumulativeAmount);
+    } catch {
+      throw new Error(`cumulativeAmount "${cumulativeAmount}" is not an integer`);
+    }
+    if (amount < 0n) throw new Error('cumulativeAmount must not be negative');
+
+    if (keccak256(metadata).toLowerCase() !== metadataHash.toLowerCase()) {
+      throw new Error('metadataHash does not match metadata');
+    }
+
+    const { channels } = await this._resolvedAddresses!;
+    const channelsDomain = makeChannelsDomain(this._config.chainId, channels);
+    const recovered = verifyTypedData(
+      channelsDomain,
+      SPENDING_AUTH_TYPES,
+      { channelId: session.sessionId, cumulativeAmount: amount, metadataHash },
+      spendingAuthSig,
+    );
+    if (recovered.toLowerCase() !== session.buyerEvmAddr.toLowerCase()) {
+      throw new Error(`signature recovers to ${recovered}, not the channel buyer`);
+    }
+
+    return { spendingAuthSig, cumulativeAmount: amount, metadataHash, metadata };
+  }
+
+  /**
+   * Take the buyer-supplied auth as our latest when it authorizes strictly more
+   * than what we already hold. Persisted so a crash between here and close()
+   * doesn't lose the higher claim.
+   */
+  private _adoptBuyerCloseAuth(channelId: string, buyerAuth: LatestAuth): void {
+    const current = this._latestAuth.get(channelId);
+    if (current && current.spendingAuthSig.length > 0 && current.cumulativeAmount >= buyerAuth.cumulativeAmount) {
+      return;
+    }
+
+    this._latestAuth.set(channelId, buyerAuth);
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+    if (buyerAuth.cumulativeAmount > accepted) {
+      this._acceptedCumulative.set(channelId, buyerAuth.cumulativeAmount);
+      this._notifyAcceptedUpdate(channelId, buyerAuth.cumulativeAmount);
+    }
+
+    const stored = this._channelStore.getChannel(channelId);
+    if (stored) {
+      stored.authMax = (
+        buyerAuth.cumulativeAmount > BigInt(stored.authMax || '0') ? buyerAuth.cumulativeAmount : BigInt(stored.authMax)
+      ).toString();
+      stored.latestBuyerSig = buyerAuth.spendingAuthSig;
+      stored.latestSpendingAuthSig = buyerAuth.spendingAuthSig;
+      stored.latestMetadata = buyerAuth.metadata;
+      stored.updatedAt = Date.now();
+      this._channelStore.upsertChannel(stored);
+    }
+
+    debugLog(
+      `[SellerPayment] Adopted buyer-supplied close auth for ${channelId.slice(0, 18)}... ` +
+      `cumulative=${buyerAuth.cumulativeAmount} (was ${current?.cumulativeAmount ?? 0n})`,
+    );
+  }
+
   // ── CloseRequested handling ───────────────────────────────────
 
   /**
@@ -1440,23 +1714,8 @@ export class SellerPaymentManager {
       this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
     }
 
-    // Clean up in-memory state
-    this._acceptedCumulative.delete(channelId);
-    this._spent.delete(channelId);
-    this._latestAuth.delete(channelId);
-    this._closeRetryCount.delete(channelId);
-    this._reserveMax.delete(channelId);
-    this._pendingTopUp.delete(channelId);
-    this._blockedChannels.delete(channelId);
-    this._lastSettledCumulative.delete(channelId);
-    this._hydratedChannelIds.delete(channelId);
-    this._releaseAcceptedWaiters(channelId);
-
-    // Find and remove buyer from active set
-    const channel = this._channelStore.getChannel(channelId);
-    if (channel) {
-      this._deactivateBuyerForChannel(channel.peerId, channelId);
-    }
+    // Clean up in-memory state, including removing the buyer from the active set
+    this._forgetChannel(channelId, this._channelStore.getChannel(channelId)?.peerId ?? '');
   }
 
   /**

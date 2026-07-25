@@ -53,6 +53,9 @@ function makeSpmMock(overrides: Record<string, unknown> = {}): any {
     waitForPendingAuths: async () => {},
     awaitAcceptedAtLeast: async () => false,
     settleSession: vi.fn(async () => {}),
+    beginBillableRequest: vi.fn(),
+    endBillableRequest: vi.fn(),
+    hasInFlightRequests: () => false,
     ...overrides,
   };
 }

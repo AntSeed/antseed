@@ -80,7 +80,7 @@ async function listBuyerChannels(buyerCmd: Command, options: { status?: string; 
 export function registerBuyerChannelsCommand(buyerCmd: Command): void {
   const channelsCmd = buyerCmd
     .command('channels')
-    .description('List, request-close, and withdraw buyer payment channels');
+    .description('List, close, request-close, and withdraw buyer payment channels');
 
   channelsCmd
     .command('list')
