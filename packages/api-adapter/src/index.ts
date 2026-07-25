@@ -15,6 +15,10 @@ export {
 } from './stream-transform.js';
 
 export {
+  DEFAULT_ANTHROPIC_MAX_TOKENS,
+} from './canonical.js';
+
+export {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,

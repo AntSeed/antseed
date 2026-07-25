@@ -3,6 +3,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol 
 import { transformRequest } from '../src/request-transform.js';
 import { transformResponse } from '../src/response-transform.js';
 import { createStreamingAdapter } from '../src/stream-transform.js';
+import { DEFAULT_ANTHROPIC_MAX_TOKENS } from '../src/canonical.js';
 import {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
@@ -959,6 +960,51 @@ describe('transformRequest responses to chat', () => {
     });
   });
 
+  it('keeps parallel tool calls in one assistant message followed by their results', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { type: 'function_call', call_id: 'get_goal:0', name: 'get_goal', arguments: '{}' },
+          { type: 'function_call', call_id: 'search:1', name: 'search', arguments: '{"q":"antseed"}' },
+          { type: 'function_call_output', call_id: 'get_goal:0', output: 'ship it' },
+          { type: 'function_call_output', call_id: 'search:1', output: 'done' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages).toHaveLength(3);
+    expect(messages[0].role).toBe('assistant');
+    expect((messages[0].tool_calls as Array<Record<string, unknown>>).map((call) => call.id))
+      .toEqual(['get_goal:0', 'search:1']);
+    expect(messages[1]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'search:1', content: 'done' });
+  });
+
+  it('drops reasoning items so they cannot split a tool call from its result', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+          { type: 'reasoning', id: 'rs_1', summary: [] },
+          { type: 'function_call', call_id: 'get_goal:0', name: 'get_goal', arguments: '{}' },
+          { type: 'reasoning', id: 'rs_2', summary: [] },
+          { type: 'function_call_output', call_id: 'get_goal:0', output: 'ship it' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
+  });
+
   it('returns null for unsupported request protocols', () => {
     const request = makeResponsesRequest();
     expect(transformRequest(request, { from: 'openai-completions', to: 'openai-chat-completions' })).toBeNull();
@@ -1015,6 +1061,36 @@ describe('transformRequest responses to anthropic', () => {
         content: [{ type: 'tool_result', tool_use_id: 'call_search_1', content: 'done' }],
       },
     ]);
+  });
+
+  it('defaults max_tokens when the responses request omits max_output_tokens', () => {
+    const result = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.max_tokens).toBe(DEFAULT_ANTHROPIC_MAX_TOKENS);
+  });
+
+  it('defaults max_tokens when the chat completions request omits max_tokens', () => {
+    const result = transformRequest({
+      requestId: 'req-chat-no-max',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'hello' }],
+      })),
+    }, { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.max_tokens).toBe(DEFAULT_ANTHROPIC_MAX_TOKENS);
   });
 });
 

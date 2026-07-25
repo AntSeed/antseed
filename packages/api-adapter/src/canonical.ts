@@ -18,6 +18,9 @@ export type CanonicalToolChoice =
   | 'required'
   | { type: 'function'; name: string };
 
+// Anthropic requires max_tokens; the OpenAI protocols treat it as optional.
+export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
+
 export type CanonicalInputItem =
   | { type: 'message'; role: 'user' | 'assistant'; text: string }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string }
@@ -93,13 +96,14 @@ export function renderCanonicalRequestToOpenAIChatBody(
         type: 'function',
         function: { name: item.name, arguments: stringifyToolArguments(item.arguments) },
       };
-      if (options.groupAssistantToolCallsWithPreviousMessage) {
-        const previous = messages[messages.length - 1];
-        if (isAssistantMessage(previous)) {
-          const toolCalls = Array.isArray(previous.tool_calls) ? previous.tool_calls : [];
-          previous.tool_calls = [...toolCalls, toolCall];
-          continue;
-        }
+      // Parallel calls must share one assistant message: OpenAI requires the
+      // tool results to immediately follow the message that requested them.
+      const previous = messages[messages.length - 1];
+      if (isAssistantMessage(previous)
+        && (options.groupAssistantToolCallsWithPreviousMessage || Array.isArray(previous.tool_calls))) {
+        const toolCalls = Array.isArray(previous.tool_calls) ? previous.tool_calls : [];
+        previous.tool_calls = [...toolCalls, toolCall];
+        continue;
       }
       messages.push({
         role: 'assistant',
@@ -222,7 +226,9 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     stream: request.stream,
   };
   if (request.instructions !== undefined) body.system = request.instructions;
-  if (typeof request.maxOutputTokens === 'number') body.max_tokens = request.maxOutputTokens;
+  body.max_tokens = typeof request.maxOutputTokens === 'number'
+    ? request.maxOutputTokens
+    : DEFAULT_ANTHROPIC_MAX_TOKENS;
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop_sequences = Array.isArray(request.stop) ? request.stop : [request.stop];
@@ -393,6 +399,11 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
         });
         continue;
       }
+
+      // Codex interleaves reasoning/local_shell_call items with messages. They
+      // have no role, and turning them into empty messages would separate a
+      // function_call from its output.
+      if (type !== 'message' && typeof msg.role !== 'string') continue;
 
       const role = msg.role === 'assistant' ? 'assistant' : 'user';
       request.input.push({ type: 'message', role, text: textFromResponsesContent(msg.content) });
