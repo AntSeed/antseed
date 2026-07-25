@@ -1324,6 +1324,34 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
   }
 })
 
+test('count_tokens is answered locally and never reaches a seller', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    let routed = 0
+    ;(proxy as any)._getPeers = async () => { routed += 1; return [] }
+
+    const res = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages/count_tokens',
+      headers: { 'x-claude-code-session-id': 'cc-count' },
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: 'You are a CLI assistant. '.repeat(40),
+        messages: [{ role: 'user', content: 'how big is this conversation?' }],
+      },
+    }))
+
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.body) as { input_tokens: number }
+    assert.ok(body.input_tokens > 50, `expected a token count, got ${JSON.stringify(body)}`)
+    assert.equal(routed, 0, 'count_tokens must not route to a peer')
+    // It is a probe about a chat, not a turn in one.
+    assert.deepEqual((proxy as any)._conversations.list(), [])
+    await (proxy as any)._conversations.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('a thread the tool opened for itself never becomes a chat', async () => {
   const { proxy, dir } = await makeConversationProxy()
   try {

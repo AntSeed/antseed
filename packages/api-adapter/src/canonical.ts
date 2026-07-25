@@ -26,6 +26,24 @@ export type CanonicalInputItem =
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string }
   | { type: 'function_call_output'; callId: string; output: string };
 
+/**
+ * Where a prompt prefix ends and may be cached by the seller's upstream.
+ *
+ * Only Anthropic expresses this in the request (`cache_control` markers); the
+ * OpenAI protocols cache prefixes automatically. Carrying the positions
+ * through canonical form lets an Anthropic client's own breakpoints survive a
+ * round trip, and lets a request that arrived without any get a standard set
+ * on the way out to an Anthropic seller — which otherwise caches nothing.
+ */
+export interface CanonicalCacheBreakpoints {
+  /** End the cacheable prefix after the system prompt. */
+  instructions: boolean;
+  /** End it after the tool definitions. */
+  tools: boolean;
+  /** Indices into `input` after which the prefix may be cached. */
+  inputIndices: number[];
+}
+
 export interface CanonicalLlmRequest {
   model: string | null;
   stream: boolean;
@@ -40,6 +58,7 @@ export interface CanonicalLlmRequest {
   metadata?: Record<string, unknown>;
   user?: string;
   promptCacheKey?: string;
+  cacheBreakpoints?: CanonicalCacheBreakpoints;
 }
 
 export type CanonicalOutputItem =
@@ -131,6 +150,10 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
+  // Routes the request to the cache that holds this conversation's prefix.
+  // Anthropic clients have no such field, so their per-session `user_id`
+  // stands in for it (see normalizeAnthropicMessagesRequestBody).
+  if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
   return body;
 }
 
@@ -187,8 +210,49 @@ export function renderCanonicalRequestToOpenAIResponsesBody(
   return body;
 }
 
+const EPHEMERAL_CACHE_CONTROL = { type: 'ephemeral' } as const;
+
+/**
+ * Below Anthropic's minimum cacheable prompt a breakpoint buys nothing, and a
+ * cache write costs more than a plain read — so a synthesized breakpoint is
+ * only worth placing on a prompt that is plausibly over it. Measured in
+ * characters (~4 per token) against the 1024-token floor, with headroom.
+ */
+const MIN_SYNTHESIZED_CACHE_CHARS = 6_000;
+
+/**
+ * Breakpoints to render for an Anthropic seller. A request that carried its
+ * own is reproduced verbatim — the client knows its prompt best. One that
+ * carried none (every OpenAI-protocol client, which never declares them) gets
+ * the standard pair: after the tools + system preamble, and after the last
+ * turn, so the next turn reads back everything before its own input.
+ */
+function resolveCacheBreakpoints(request: CanonicalLlmRequest): CanonicalCacheBreakpoints {
+  const declared = request.cacheBreakpoints;
+  if (declared && (declared.instructions || declared.tools || declared.inputIndices.length > 0)) {
+    return declared;
+  }
+
+  const instructionsLength = request.instructions?.length ?? 0;
+  const inputLength = request.input.reduce((total, item) => (
+    total + (item.type === 'message' ? item.text.length : item.type === 'function_call_output' ? item.output.length : 0)
+  ), 0);
+  if (instructionsLength + inputLength < MIN_SYNTHESIZED_CACHE_CHARS) {
+    return { instructions: false, tools: false, inputIndices: [] };
+  }
+
+  return {
+    // Tools sit before the system prompt in Anthropic's prefix order, so one
+    // marker after the system prompt already covers both.
+    instructions: instructionsLength > 0,
+    tools: instructionsLength === 0 && (request.tools?.length ?? 0) > 0,
+    inputIndices: request.input.length > 0 ? [request.input.length - 1] : [],
+  };
+}
+
 export function renderCanonicalRequestToAnthropicMessagesBody(request: CanonicalLlmRequest): Record<string, unknown> {
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown[] }> = [];
+  const breakpoints = resolveCacheBreakpoints(request);
 
   const appendBlock = (role: 'user' | 'assistant', block: Record<string, unknown>): void => {
     const previous = messages[messages.length - 1];
@@ -199,25 +263,32 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     messages.push({ role, content: [block] });
   };
 
-  for (const item of request.input) {
+  const markLastBlock = (): void => {
+    const lastMessage = messages[messages.length - 1];
+    const lastBlock = lastMessage?.content[lastMessage.content.length - 1];
+    if (lastBlock && typeof lastBlock === 'object') {
+      (lastBlock as Record<string, unknown>).cache_control = EPHEMERAL_CACHE_CONTROL;
+    }
+  };
+
+  for (const [index, item] of request.input.entries()) {
     if (item.type === 'message') {
       appendBlock(item.role, { type: 'text', text: item.text });
-      continue;
-    }
-    if (item.type === 'function_call') {
+    } else if (item.type === 'function_call') {
       appendBlock('assistant', {
         type: 'tool_use',
         id: item.id,
         name: item.name,
         input: parseToolArguments(item.arguments),
       });
-      continue;
+    } else {
+      appendBlock('user', {
+        type: 'tool_result',
+        tool_use_id: item.callId,
+        content: item.output,
+      });
     }
-    appendBlock('user', {
-      type: 'tool_result',
-      tool_use_id: item.callId,
-      content: item.output,
-    });
+    if (breakpoints.inputIndices.includes(index)) markLastBlock();
   }
 
   const body: Record<string, unknown> = {
@@ -225,7 +296,11 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     messages,
     stream: request.stream,
   };
-  if (request.instructions !== undefined) body.system = request.instructions;
+  if (request.instructions !== undefined) {
+    body.system = breakpoints.instructions
+      ? [{ type: 'text', text: request.instructions, cache_control: EPHEMERAL_CACHE_CONTROL }]
+      : request.instructions;
+  }
   body.max_tokens = typeof request.maxOutputTokens === 'number'
     ? request.maxOutputTokens
     : DEFAULT_ANTHROPIC_MAX_TOKENS;
@@ -233,7 +308,13 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop_sequences = Array.isArray(request.stop) ? request.stop : [request.stop];
   const tools = renderCanonicalToolsToAnthropic(request.tools);
-  if (tools) body.tools = tools;
+  if (tools) {
+    if (breakpoints.tools) {
+      const lastTool = tools[tools.length - 1];
+      if (lastTool) lastTool.cache_control = EPHEMERAL_CACHE_CONTROL;
+    }
+    body.tools = tools;
+  }
   const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata || request.user) {
@@ -252,6 +333,8 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
     input: [],
   };
 
+  const breakpoints: CanonicalCacheBreakpoints = { instructions: false, tools: false, inputIndices: [] };
+
   const messages = Array.isArray(body.messages) ? body.messages : [];
   for (const rawMessage of messages) {
     if (!rawMessage || typeof rawMessage !== 'object') continue;
@@ -259,7 +342,10 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
     const role = message.role === 'assistant' ? 'assistant' : 'user';
 
     if (Array.isArray(message.content)) {
-      appendAnthropicContentBlocks(request.input, role, message.content);
+      const cached = appendAnthropicContentBlocks(request.input, role, message.content);
+      // Blocks coalesce into items, so the marker lands on the item the
+      // message ends with — the position a client's breakpoint means.
+      if (cached && request.input.length > 0) breakpoints.inputIndices.push(request.input.length - 1);
       continue;
     }
 
@@ -271,6 +357,11 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
 
   const instructions = body.system !== undefined ? toStringContent(body.system) : '';
   if (instructions.length > 0) request.instructions = instructions;
+  breakpoints.instructions = hasAnthropicCacheControl(body.system);
+  breakpoints.tools = hasAnthropicCacheControl(body.tools);
+  if (breakpoints.instructions || breakpoints.tools || breakpoints.inputIndices.length > 0) {
+    request.cacheBreakpoints = breakpoints;
+  }
   if (typeof body.max_tokens === 'number') request.maxOutputTokens = body.max_tokens;
   if (typeof body.temperature === 'number') request.temperature = body.temperature;
   if (typeof body.top_p === 'number') request.topP = body.top_p;
@@ -734,11 +825,23 @@ function textFromResponsesContent(value: unknown): string {
     .join('\n');
 }
 
+/** True when any block in this value carries a `cache_control` marker. */
+function hasAnthropicCacheControl(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some((block) => (
+    block !== null
+    && typeof block === 'object'
+    && (block as Record<string, unknown>).cache_control !== undefined
+  ));
+}
+
+/** Returns whether the message declared a cache breakpoint on any of its blocks. */
 function appendAnthropicContentBlocks(
   input: CanonicalInputItem[],
   role: 'user' | 'assistant',
   blocks: unknown[],
-): void {
+): boolean {
+  const startLength = input.length;
   const textParts: string[] = [];
   const flushText = (): void => {
     if (textParts.length === 0) return;
@@ -777,6 +880,7 @@ function appendAnthropicContentBlocks(
   }
 
   flushText();
+  return input.length > startLength && hasAnthropicCacheControl(blocks);
 }
 
 function normalizeAnthropicTools(toolsRaw: unknown): CanonicalFunctionTool[] | undefined {
@@ -824,7 +928,9 @@ function normalizeResponsesTools(tools: unknown[]): CanonicalFunctionTool[] | un
   return out.length > 0 ? out : undefined;
 }
 
-function renderCanonicalToolsToAnthropic(tools: CanonicalFunctionTool[] | undefined): unknown[] | undefined {
+function renderCanonicalToolsToAnthropic(
+  tools: CanonicalFunctionTool[] | undefined,
+): Array<Record<string, unknown>> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.map((tool) => ({
     name: tool.name,

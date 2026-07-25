@@ -3,7 +3,11 @@ import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol 
 import { transformRequest } from '../src/request-transform.js';
 import { transformResponse } from '../src/response-transform.js';
 import { createStreamingAdapter } from '../src/stream-transform.js';
-import { DEFAULT_ANTHROPIC_MAX_TOKENS } from '../src/canonical.js';
+import {
+  DEFAULT_ANTHROPIC_MAX_TOKENS,
+  normalizeAnthropicMessagesRequestBody,
+  renderCanonicalRequestToAnthropicMessagesBody,
+} from '../src/canonical.js';
 import {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
@@ -245,6 +249,115 @@ describe('transformRequest anthropic to chat', () => {
         function: { name: 'search', arguments: '{"q":"antseed"}' },
       }],
     }]);
+  });
+});
+
+describe('prompt cache breakpoints', () => {
+  const decode = (body: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const long = 'The repository holds the protocol SDK, plugins, a CLI and a desktop app. '.repeat(120);
+  const anthropicRequest = (body: Record<string, unknown>): SerializedHttpRequest =>
+    makeRequest({ body: new TextEncoder().encode(JSON.stringify(body)) });
+  const responsesRequest = (body: Record<string, unknown>): SerializedHttpRequest =>
+    makeRequest({ path: '/v1/responses', body: new TextEncoder().encode(JSON.stringify(body)) });
+
+  it('carries an anthropic session identity to a chat-completions cache key', () => {
+    const transformed = transformRequest(anthropicRequest({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+      metadata: { user_id: 'user_abc_session_f00d' },
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+
+    expect(decode(transformed!.request.body).prompt_cache_key).toBe('user_abc_session_f00d');
+  });
+
+  it('omits the chat-completions cache key when the request has no session identity', () => {
+    const transformed = transformRequest(anthropicRequest({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+
+    expect(decode(transformed!.request.body).prompt_cache_key).toBeUndefined();
+  });
+
+  it('gives an anthropic seller breakpoints a responses client never declares', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      instructions: `You are a coding agent. ${long}`,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: long }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect(body.system).toEqual([{
+      type: 'text',
+      text: `You are a coding agent. ${long}`,
+      cache_control: { type: 'ephemeral' },
+    }]);
+    // The last turn closes the prefix, so the next turn reads all of it back.
+    const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(messages.at(-1)!.content.at(-1)!.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('marks the tools when an anthropic seller gets no system prompt', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      tools: [{ type: 'function', name: 'write', description: long, parameters: { type: 'object' } }],
+      input: [{ role: 'user', content: [{ type: 'input_text', text: long }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect((body.tools as Array<Record<string, unknown>>).at(-1)!.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('leaves a short prompt unmarked — a cache write there costs more than it saves', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      instructions: 'You are terse.',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect(body.system).toBe('You are terse.');
+    expect(JSON.stringify(body)).not.toContain('cache_control');
+  });
+
+  it('reproduces the breakpoints a client declared rather than synthesizing new ones', () => {
+    // Same-protocol requests are passed through untouched, so exercise the
+    // round trip directly: a client that declares breakpoints must get back
+    // exactly those positions, not the standard pair.
+    const canonical = normalizeAnthropicMessagesRequestBody({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      system: [
+        { type: 'text', text: 'You are a coding agent.' },
+        { type: 'text', text: long, cache_control: { type: 'ephemeral' } },
+      ],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: long, cache_control: { type: 'ephemeral' } }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }] },
+        { role: 'user', content: [{ type: 'text', text: 'and now?' }] },
+      ],
+    });
+    expect(canonical.cacheBreakpoints).toEqual({ instructions: true, tools: false, inputIndices: [0] });
+
+    const rendered = renderCanonicalRequestToAnthropicMessagesBody(canonical);
+    const messages = rendered.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect((rendered.system as Array<Record<string, unknown>>)[0]!.cache_control).toEqual({ type: 'ephemeral' });
+    expect(messages[0]!.content[0]!.cache_control).toEqual({ type: 'ephemeral' });
+    // The client left the final turn unmarked — it stays unmarked.
+    expect(messages.at(-1)!.content.at(-1)!.cache_control).toBeUndefined();
+  });
+
+  it('records no breakpoints for an anthropic request that declares none', () => {
+    const canonical = normalizeAnthropicMessagesRequestBody({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      system: 'be helpful',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    expect(canonical.cacheBreakpoints).toBeUndefined();
   });
 });
 

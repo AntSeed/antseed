@@ -60,6 +60,7 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
+import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -1208,6 +1209,18 @@ export class BuyerProxy {
       chunks.push(chunk as Buffer)
     }
     const body = Buffer.concat(chunks)
+
+    // `/v1/messages/count_tokens` sits under the completion prefix but is not
+    // a turn — Anthropic tools call it before most turns to size the context.
+    // Answering it locally keeps it off the wire: routed to a seller it costs
+    // a full inference and answers in a shape the caller cannot read.
+    if (method === 'POST' && isCountTokensPath(normalizedPath)) {
+      const inputTokens = estimateAnthropicPromptTokens(new Uint8Array(body))
+      log(`count_tokens answered locally: ${inputTokens} tokens`)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ input_tokens: inputTokens }))
+      return
+    }
 
     // Build serialized request
     const headers: Record<string, string> = {}

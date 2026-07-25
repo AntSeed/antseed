@@ -71,6 +71,12 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
+export {
+  computeCostUsdc,
+  estimateTokensFromBytes,
+  estimateTokensFromText,
+  type ServicePricing,
+} from './payments/pricing.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export {
   DepositRelayClient,
