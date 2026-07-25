@@ -54,6 +54,7 @@ import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   type SweepRequestPayload,
   type SweepReceiptPayload,
+  type CloseChannelResultPayload,
 } from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
@@ -976,6 +977,52 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Ask a seller to close our payment channel with it right now, releasing the
+   * reserved deposit without the on-chain `requestClose()` → 15-minute grace →
+   * `withdraw()` round trip.
+   *
+   * The seller refuses while it is still serving (or still owed for) requests
+   * on that channel; those refusals come back as `{ status: 'rejected', code }`
+   * rather than as exceptions. Only a missing session, a peer we can't reach,
+   * or an unanswered request throws.
+   *
+   * By default the buyer attaches its latest SpendingAuth so a seller that lost
+   * the last one can still close at the full amount owed; the seller settles at
+   * whichever cumulative is higher.
+   */
+  async requestChannelClose(
+    sellerPeerId: string,
+    opts: { includeAuth?: boolean; timeoutMs?: number } = {},
+  ): Promise<CloseChannelResultPayload> {
+    const negotiator = this._buyerNegotiator;
+    if (!negotiator) {
+      throw new Error('Buyer payments are not configured on this node');
+    }
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+
+    const peerId = sellerPeerId as PeerId;
+    let conn = this._connectionManager.getConnection(peerId);
+    if (!conn || (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated)) {
+      const peer = await this.findPeer(sellerPeerId);
+      if (!peer) {
+        throw new Error(
+          `Seller ${sellerPeerId.slice(0, 12)}... is not connected and could not be found on the network. ` +
+          `A cooperative close needs the seller online — otherwise use the on-chain request-close flow.`,
+        );
+      }
+      await this.connectToPeer(peer);
+      conn = this._connectionManager.getConnection(peer.peerId);
+      if (!conn) {
+        throw new Error(`Failed to establish a connection to seller ${sellerPeerId.slice(0, 12)}...`);
+      }
+    }
+
+    return negotiator.requestChannelClose(peerId, conn, opts);
+  }
+
+  /**
    * Query session stats for a specific seller peer.
    * Combines channel store data (authoritative payment/session info) with
    * metering events when available.
@@ -1605,9 +1652,43 @@ export class AntseedNode extends EventEmitter {
             debugWarn(`[Node] SpendingAuth handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
           });
       });
+      paymentMux.onCloseChannelRequest((payload) => {
+        void spm.handleCloseChannelRequest(buyerPeerId, payload, paymentMux)
+          .then((result) => {
+            paymentMux.sendCloseChannelResult(result);
+            if (result.status === 'closed') {
+              this.emit('payment:channel-closed', {
+                buyerPeerId,
+                channelId: result.channelId,
+                txHash: result.txHash,
+                finalAmount: result.finalAmount,
+              });
+            }
+          })
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] CloseChannelRequest handler error for ${buyerPeerId.slice(0, 12)}...: ${message}`);
+            paymentMux.sendCloseChannelResult({
+              version: 1,
+              channelId: payload.channelId,
+              status: 'rejected',
+              code: 'close_failed',
+              reason: message,
+            });
+          });
+      });
     } else {
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
+      });
+      paymentMux.onCloseChannelRequest((payload) => {
+        paymentMux.sendCloseChannelResult({
+          version: 1,
+          channelId: payload.channelId,
+          status: 'rejected',
+          code: 'unsupported',
+          reason: 'This peer has no payment manager configured',
+        });
       });
     }
     if (this._sellerFreeUsageManager) {

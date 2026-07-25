@@ -424,6 +424,11 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
+      // Hold the channel open for the whole billable span — provider call,
+      // spend recording, and NeedAuth — so a buyer-requested close can't land
+      // between serving the request and claiming its cost.
+      const isBillable = !isFreeService && (spm?.hasSession(buyerPeerId) ?? false);
+      if (isBillable) spm!.beginBillableRequest(buyerPeerId);
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
@@ -579,6 +584,7 @@ export class SellerRequestHandler {
         }
       } finally {
         this.adjustProviderLoad(provider.name, -1);
+        if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
     });
 

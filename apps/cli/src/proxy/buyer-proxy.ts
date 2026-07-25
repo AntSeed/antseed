@@ -998,6 +998,53 @@ export class BuyerProxy {
       return
     }
 
+    // Ask a seller to cooperatively close a payment channel, skipping the
+    // on-chain request-close → grace → withdraw flow. Needs the daemon's live
+    // seller connection, so it can only run here.
+    if (path === '/_antseed/channels/close' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      let includeAuth = true
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        peerId = String(body.peerId ?? '')
+        if (body.includeAuth === false) includeAuth = false
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (!peerId) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Missing peerId' }))
+        return
+      }
+      try {
+        const result = await this._node.requestChannelClose(peerId, { includeAuth })
+        log(
+          `Cooperative close of ${result.channelId.slice(0, 18)}... with ${peerId.slice(0, 12)}...: ` +
+          `${result.status}${result.code ? ` (${result.code})` : ''}`,
+        )
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, result }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
     const sweepReceiptMatch = path.match(/^\/_antseed\/sweep\/(0x[0-9a-fA-F]{64})$/)
     if (sweepReceiptMatch && method === 'GET') {
       const receipt = this._sweepReceipts.get(sweepReceiptMatch[1]!.toLowerCase()) ?? null

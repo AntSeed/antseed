@@ -3,7 +3,11 @@ import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  type PaymentRequiredPayload,
+  type CloseChannelResultPayload,
+} from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
@@ -20,6 +24,9 @@ import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
 
 export interface BuyerNegotiatorConfig {}
+
+/** How long to wait for a seller's CloseChannelResult before giving up. */
+const CLOSE_REQUEST_TIMEOUT_MS = 60_000;
 
 /** Emitter interface — subset of EventEmitter used by the negotiator. */
 export interface NegotiationEmitter {
@@ -94,6 +101,13 @@ export class BuyerPaymentNegotiator {
   private readonly _muxes = new Map<PeerId, PaymentMux>();
   /** In-flight NeedAuth handlers keyed by seller peerId. */
   private readonly _pendingNeedAuth = new Map<string, Promise<void>>();
+  /** In-flight cooperative-close requests keyed by seller peerId. */
+  private readonly _pendingCloseRequests = new Map<string, {
+    channelId: string;
+    resolve: (payload: CloseChannelResultPayload) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   constructor(
     identity: Identity,
@@ -165,6 +179,24 @@ export class BuyerPaymentNegotiator {
       });
     });
 
+    pmux.onCloseChannelResult((payload) => {
+      const pending = this._pendingCloseRequests.get(peerId);
+      if (!pending) {
+        debugWarn(`[BuyerNegotiator] Unsolicited CloseChannelResult from ${peerId.slice(0, 12)}... — ignoring`);
+        return;
+      }
+      if (pending.channelId.toLowerCase() !== payload.channelId.toLowerCase()) {
+        debugWarn(
+          `[BuyerNegotiator] CloseChannelResult from ${peerId.slice(0, 12)}... is for ` +
+          `${payload.channelId.slice(0, 18)}..., expected ${pending.channelId.slice(0, 18)}... — ignoring`,
+        );
+        return;
+      }
+      clearTimeout(pending.timer);
+      this._pendingCloseRequests.delete(peerId);
+      pending.resolve(payload);
+    });
+
     pmux.onPaymentRequired((payload) => {
       const pending = this._pendingPaymentRequired.get(peerId);
       if (pending) {
@@ -213,7 +245,7 @@ export class BuyerPaymentNegotiator {
     }
     // Skip if cost data was already consumed by post-response auth
     if (!this._lastResponseCost.has(peer.peerId)) return;
-    await this._sendPerRequestAuth(peer, conn);
+    await this._sendPerRequestAuth(peer.peerId, conn);
   }
 
   /**
@@ -222,12 +254,18 @@ export class BuyerPaymentNegotiator {
    * even if the buyer disconnects before the next request.
    */
   async sendPostResponseAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    if (!this._lockedPeers.has(peer.peerId)) return;
-    if (!this._lastResponseCost.has(peer.peerId)) return;
-    await this._sendPerRequestAuth(peer, conn);
+    await this.sendPostResponseAuthTo(peer.peerId, conn);
   }
 
-  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+  /** peerId-only variant of sendPostResponseAuth. */
+  async sendPostResponseAuthTo(peerId: PeerId, conn: PeerConnection): Promise<void> {
+    if (!this._lockedPeers.has(peerId)) return;
+    if (!this._lastResponseCost.has(peerId)) return;
+    await this._sendPerRequestAuth(peerId, conn);
+  }
+
+  private async _sendPerRequestAuth(peerId: PeerId, conn: PeerConnection): Promise<void> {
+    const peer = { peerId };
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
 
     const lastCost = this._lastResponseCost.get(peer.peerId);
@@ -257,6 +295,88 @@ export class BuyerPaymentNegotiator {
       debugWarn(`[BuyerNegotiator] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
       throw err;
     }
+  }
+
+  /**
+   * Ask a seller to close the buyer's payment channel now, bypassing the
+   * on-chain `requestClose()` → grace period → `withdraw()` flow.
+   *
+   * Resolves with the seller's verdict — `status: 'closed'` carries the
+   * transaction hash. A rejection is a normal outcome (the seller may still be
+   * serving requests, or be owed for work the buyer hasn't signed for), so it
+   * resolves rather than throws; only "we never got an answer" throws.
+   */
+  async requestChannelClose(
+    peerId: PeerId,
+    conn: PeerConnection,
+    { includeAuth = true, timeoutMs = CLOSE_REQUEST_TIMEOUT_MS }: {
+      includeAuth?: boolean;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<CloseChannelResultPayload> {
+    if (this._pendingCloseRequests.has(peerId)) {
+      throw new Error(`A channel close request is already in flight for ${peerId.slice(0, 12)}...`);
+    }
+
+    const session = this._bpm.getActiveSession(peerId);
+    if (!session) {
+      throw new Error(`No active payment channel with seller ${peerId.slice(0, 12)}...`);
+    }
+
+    // Flush any SpendingAuth the buyer still owes for the last response first —
+    // otherwise the seller rejects with 'pending_auth' on the very first try.
+    await this.drainPendingNeedAuth();
+    await this.sendPostResponseAuthTo(peerId, conn).catch((err) => {
+      debugWarn(`[BuyerNegotiator] Pre-close auth flush failed for ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+    });
+
+    const pmux = this.getOrCreatePaymentMux(peerId, conn);
+    const payload = await this._bpm.buildCloseChannelRequest(peerId, { includeAuth });
+
+    const result = await new Promise<CloseChannelResultPayload>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingCloseRequests.delete(peerId);
+        reject(new Error(
+          `Seller ${peerId.slice(0, 12)}... did not answer the channel close request within ${timeoutMs}ms. ` +
+          `The channel is unchanged — retry, or fall back to the on-chain request-close flow.`,
+        ));
+      }, timeoutMs);
+      this._pendingCloseRequests.set(peerId, { channelId: payload.channelId, resolve, reject, timer });
+
+      try {
+        pmux.sendCloseChannelRequest(payload);
+        debugLog(`[BuyerNegotiator] CloseChannelRequest sent to ${peerId.slice(0, 12)}... channel=${payload.channelId.slice(0, 18)}...`);
+      } catch (err) {
+        clearTimeout(timer);
+        this._pendingCloseRequests.delete(peerId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+
+    if (result.status === 'closed') {
+      const finalAmount = result.finalAmount != null ? safeBigInt(result.finalAmount) : null;
+      this._bpm.retireSession(peerId, CHANNEL_STATUS.SETTLED, finalAmount ?? undefined);
+      this._lockedPeers.delete(peerId);
+      this._firstRequestSent.delete(peerId);
+      this._lastResponseCost.delete(peerId);
+      debugLog(
+        `[BuyerNegotiator] Seller ${peerId.slice(0, 12)}... closed channel ` +
+        `${result.channelId.slice(0, 18)}... at ${result.finalAmount ?? '?'} (tx=${result.txHash ?? '?'})`,
+      );
+      this._emit.emit('payment:channel-closed', {
+        peerId,
+        channelId: result.channelId,
+        txHash: result.txHash,
+        finalAmount: result.finalAmount,
+      });
+    } else {
+      debugWarn(
+        `[BuyerNegotiator] Seller ${peerId.slice(0, 12)}... declined to close ` +
+        `${result.channelId.slice(0, 18)}...: ${result.code ?? 'unknown'} — ${result.reason ?? 'no reason given'}`,
+      );
+    }
+
+    return result;
   }
 
   async handle402(
@@ -618,6 +738,13 @@ export class BuyerPaymentNegotiator {
       pendingPR.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected during payment negotiation`));
     }
 
+    const pendingClose = this._pendingCloseRequests.get(peerId);
+    if (pendingClose) {
+      clearTimeout(pendingClose.timer);
+      this._pendingCloseRequests.delete(peerId);
+      pendingClose.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected before answering the channel close request`));
+    }
+
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
     this._lastResponseCost.delete(peerId);
@@ -644,6 +771,12 @@ export class BuyerPaymentNegotiator {
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
     this._negotiationLocks.clear();
+
+    for (const [, pending] of this._pendingCloseRequests) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Node stopped'));
+    }
+    this._pendingCloseRequests.clear();
   }
 
   /**

@@ -21,6 +21,8 @@ export enum MessageType {
   NeedFreeUsageAuth = 0x55,
   PaymentRequired = 0x56,
   NeedAuth = 0x58,
+  CloseChannelRequest = 0x59,
+  CloseChannelResult = 0x5A,
 
   // Report message types
   PeerReport = 0x60,
@@ -46,10 +48,19 @@ export enum MessageType {
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
 export const CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1 = 'payments.relays-sweeps.v1' as const;
+/** Seller honours buyer-initiated cooperative channel close (0x59 / 0x5A). */
+export const CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1 = 'payments.cooperative-close.v1' as const;
 
 export function peerRelaysSweeps(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true
     || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true;
+}
+
+export function peerSupportsCooperativeClose(
+  peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } },
+): boolean {
+  return peer.capabilities?.includes(CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1) === true
+    || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1) === true;
 }
 
 export interface FramedMessage {
@@ -204,6 +215,76 @@ export interface NeedAuthPayload {
   freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
+}
+
+// ─── Cooperative Channel Close Messages ─────────────────────────
+
+/**
+ * Buyer asks the seller to close a payment channel now, skipping the on-chain
+ * `requestClose()` → 15-minute grace → `withdraw()` path.
+ *
+ * The buyer MAY attach its latest SpendingAuth so the seller can close at that
+ * cumulative even if the seller never received it (e.g. the frame was lost on
+ * disconnect). The seller closes at whichever cumulative is higher — its own
+ * last-accepted auth or the one attached here — so neither side can use this
+ * message to under-report spend.
+ *
+ * All four auth fields travel together: either all are present or none are.
+ */
+export interface CloseChannelRequestPayload {
+  version: 1;
+  /** Channel the buyer wants closed. Must match the seller's active channel. */
+  channelId: string;
+  /** Cumulative USDC (base units) the attached signature authorizes. */
+  cumulativeAmount?: string;
+  /** bytes32 keccak256 of `metadata`. */
+  metadataHash?: string;
+  /** Hex-encoded abi.encode(...) usage metadata covered by the signature. */
+  metadata?: string;
+  /** EIP-712 SpendingAuth signature over (channelId, cumulativeAmount, metadataHash). */
+  spendingAuthSig?: string;
+}
+
+/** Why a seller declined to close a channel on request. */
+export const CLOSE_CHANNEL_REJECT_CODES = [
+  /** Seller is still serving requests for this buyer — retry shortly. */
+  'busy',
+  /** Seller has served work the buyer has not signed for yet. A NeedAuth was
+   *  sent alongside this result; sign `requiredCumulativeAmount` and retry. */
+  'pending_auth',
+  /** No active channel for this buyer, or `channelId` does not match it. */
+  'no_channel',
+  /** The attached SpendingAuth failed verification. */
+  'invalid_auth',
+  /** The on-chain close() call failed. `reason` carries the revert text. */
+  'close_failed',
+  /** Seller has no payment manager configured. */
+  'unsupported',
+] as const;
+
+export type CloseChannelRejectCode = typeof CLOSE_CHANNEL_REJECT_CODES[number];
+
+/**
+ * Seller's answer to a CloseChannelRequest. On success it carries the
+ * transaction hash of the on-chain `close()`; on refusal, a stable code the
+ * buyer can switch on.
+ */
+export interface CloseChannelResultPayload {
+  version: 1;
+  channelId: string;
+  status: 'closed' | 'rejected';
+  /** Present when status === 'closed'. */
+  txHash?: string;
+  /** Cumulative the channel was closed at (base units). Present on success. */
+  finalAmount?: string;
+  /** Present when status === 'rejected'. */
+  code?: CloseChannelRejectCode;
+  /** Human-readable detail. Never load-bearing — switch on `code`. */
+  reason?: string;
+  /** Hint for 'busy' / 'pending_auth': wait this long before retrying. */
+  retryAfterMs?: number;
+  /** For 'pending_auth': the cumulative the buyer must sign before retrying. */
+  requiredCumulativeAmount?: string;
 }
 
 // ─── Deposit Sweep Messages ─────────────────────────────────────
