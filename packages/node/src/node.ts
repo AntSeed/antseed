@@ -52,6 +52,8 @@ import { VerificationMux } from "./verification/verification-mux.js";
 import { DepositRelayer } from "./payments/deposit-relayer.js";
 import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  peerSupportsCooperativeClose,
   type SweepRequestPayload,
   type SweepReceiptPayload,
   type CloseChannelResultPayload,
@@ -1017,6 +1019,23 @@ export class AntseedNode extends EventEmitter {
       if (!conn) {
         throw new Error(`Failed to establish a connection to seller ${sellerPeerId.slice(0, 12)}...`);
       }
+    }
+
+    // A seller that predates this feature drops the 0x59 frame silently, so
+    // without this the buyer would wait out the full 60s response timeout and
+    // get a vague "did not answer". Note the capability must come from the
+    // peer's discovery metadata (`_peerCapabilities`), not
+    // `conn.hasRemoteCapability` — the latter is only populated for *inbound*
+    // connections, so on the buyer's own outbound connection it is always
+    // empty and would reject every close.
+    const capabilities = this._peerCapabilities.get(peerId);
+    if (capabilities && capabilities.size > 0
+      && !peerSupportsCooperativeClose({ capabilities: [...capabilities] })) {
+      throw new Error(
+        `Seller ${sellerPeerId.slice(0, 12)}... does not support cooperative close ` +
+        `(missing ${CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1}). ` +
+        `Use the on-chain request-close flow instead.`,
+      );
     }
 
     return negotiator.requestChannelClose(peerId, conn, opts);

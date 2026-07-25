@@ -98,7 +98,14 @@ empty signature, which the contract accepts without signature verification
 (`finalAmount == settled`) and which claims no unproven spend.
 
 Sellers advertise support with the `payments.cooperative-close.v1` capability in
-discovery metadata and in the connection handshake.
+discovery metadata and in the connection handshake. A seller predating this
+protocol drops the unrecognized `0x59` frame silently, so buyers MUST check the
+capability before sending and fail fast rather than waiting out the response
+timeout. The check reads the peer's **discovery metadata**; the connection
+handshake's remote-capability set is only populated for inbound connections and
+so is empty on the buyer's own outbound connection. A buyer that has no
+capability data for a peer at all SHOULD attempt the close anyway — absence of
+data is not evidence of non-support.
 
 ## 2. EIP-712 Signed Messages
 
