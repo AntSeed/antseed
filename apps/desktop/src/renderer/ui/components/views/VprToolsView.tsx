@@ -47,6 +47,9 @@ export function VprToolsView() {
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The app being connected right now. Connecting also restarts an app that
+  // was already running, so the row has to stay busy well past the click.
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [guiTest, setGuiTest] = useState<GuiTestResult | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
@@ -225,6 +228,7 @@ export function VprToolsView() {
 
   const connectProfile = useCallback((profileName: string) => {
     const names = Array.from(new Set([...activeProfileNames, profileName]));
+    setConnecting(profileName);
     void startProfiles(names).then((ok) => {
       if (!ok) return;
       // Surface the pill right away, dropdown open, so the "start a new
@@ -240,7 +244,7 @@ export function VprToolsView() {
       } else if (profile.launchAppName || profile.appAction === 'open-tool') {
         void openTool(profile.toolName ?? profile.name);
       }
-    });
+    }).finally(() => setConnecting(null));
   }, [actions, activeProfileNames, openTool, openUrl, profiles, startProfiles]);
 
   const disconnectProfile = useCallback((profileName: string) => {
@@ -523,7 +527,14 @@ export function VprToolsView() {
                         )}
                       </span>
                     </span>
-                    {canOpen ? (
+                    {connecting === profile.name ? (
+                      <span
+                        className={styles.appBusy}
+                        role="status"
+                        aria-label={`Connecting ${profile.displayName}`}
+                        title={`Connecting ${profile.displayName}`}
+                      />
+                    ) : canOpen ? (
                       <button
                         type="button"
                         className={styles.appOpen}

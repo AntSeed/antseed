@@ -556,28 +556,165 @@ function getMacAppProcessInfo(appName: string): { running: boolean; pid?: number
   }
 }
 
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Whether the application behind a launch target has a live process. macOS
+    matches the bundle's executable directory, so an Electron app's helper
+    processes count; Windows matches the executable image name, and a `.lnk`
+    shortcut carries no resolvable image so it reads as not running. */
+function isAppTargetRunning(target: AppLaunchTarget): boolean {
+  if (process.platform === 'darwin') {
+    if (!target.path.endsWith('.app')) {
+      return getMacAppProcessInfo(target.name).running;
+    }
+    try {
+      execFileSync('pgrep', ['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)], { stdio: 'pipe' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (process.platform === 'win32') {
+    const image = path.basename(target.path);
+    if (path.extname(image).toLowerCase() !== '.exe') return false;
+    try {
+      const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/NH'], { encoding: 'utf8' });
+      return out.toLowerCase().includes(image.toLowerCase());
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function quitAppTarget(target: AppLaunchTarget): void {
+  if (process.platform === 'darwin') {
+    // By POSIX path when we have one: two same-named bundles in /Applications
+    // and ~/Applications would otherwise be ambiguous.
+    const reference = target.path.endsWith('.app') ? target.path : target.name;
+    execFileSync('osascript', ['-e', `tell application "${reference.replace(/(["\\])/g, '\\$1')}" to quit`], { stdio: 'pipe' });
+    return;
+  }
+  if (process.platform === 'win32') {
+    execFileSync('taskkill', ['/IM', path.basename(target.path)], { stdio: 'pipe' });
+  }
+}
+
+function killAppTarget(target: AppLaunchTarget): void {
+  if (process.platform === 'darwin') {
+    const args = target.path.endsWith('.app')
+      ? ['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)]
+      : ['-x', target.name];
+    execFileSync('pkill', args, { stdio: 'pipe' });
+    return;
+  }
+  if (process.platform === 'win32') {
+    execFileSync('taskkill', ['/F', '/IM', path.basename(target.path)], { stdio: 'pipe' });
+  }
+}
+
+/**
+ * Quit and relaunch an application so it re-reads what we just changed — both
+ * config-patch files and the system HTTPS proxy are read at startup.
+ *
+ * `force` kills the app when it doesn't quit within the grace period; leave it
+ * off for automatic restarts, where an app holding a "save changes?" dialog
+ * must be left alone rather than killed out from under the user.
+ */
+async function restartAppTarget(
+  target: AppLaunchTarget,
+  opts: { force?: boolean; launchIfStopped?: boolean } = {},
+): Promise<{ ok: boolean; restarted: boolean; error?: string }> {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+    return { ok: false, restarted: false, error: `Restarting ${target.name} is not supported on this platform.` };
+  }
+  // `open` hands off to LaunchServices and returns immediately, so wait for
+  // the process to actually come back — the caller's busy state is what tells
+  // the user the app is on its way.
+  const launch = async (): Promise<{ ok: boolean; restarted: boolean; error?: string }> => {
+    const result = target.path
+      ? launchAppTarget(target)
+      : (() => {
+        try {
+          execFileSync('open', ['-a', target.name], { stdio: 'pipe' });
+          return { ok: true } as { ok: boolean; error?: string };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      })();
+    if (result.ok) await waitForAppTarget(target);
+    return { ok: result.ok, restarted: result.ok, ...(result.error ? { error: result.error } : {}) };
+  };
+
+  if (!isAppTargetRunning(target)) {
+    if (!opts.launchIfStopped) return { ok: true, restarted: false };
+    return { ...(await launch()), restarted: false };
+  }
+
+  try {
+    quitAppTarget(target);
+  } catch {
+    // Continue: the app may not respond to AppleScript / may already be gone.
+  }
+  const startedWaitingAt = Date.now();
+  while (Date.now() - startedWaitingAt < 10_000 && isAppTargetRunning(target)) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (isAppTargetRunning(target)) {
+    if (!opts.force) {
+      return { ok: false, restarted: false, error: `${target.name} did not quit — restart it manually to pick up the new settings.` };
+    }
+    try {
+      killAppTarget(target);
+    } catch { /* best-effort */ }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return launch();
+}
+
+async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 15_000): Promise<void> {
+  const startedWaitingAt = Date.now();
+  while (Date.now() - startedWaitingAt < timeoutMs && !isAppTargetRunning(target)) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+}
+
 async function restartMacApp(appName: string): Promise<{ ok: boolean; error?: string }> {
   if (process.platform !== 'darwin') {
     return { ok: false, error: `${appName} restart is currently supported on macOS only.` };
   }
-  try {
-    try {
-      execFileSync('osascript', ['-e', `tell application "${appName}" to quit`], { stdio: 'pipe' });
-    } catch {
-      // Continue: the app may not be running or may not respond to AppleScript.
-    }
-    const startedWaitingAt = Date.now();
-    while (Date.now() - startedWaitingAt < 10_000 && getMacAppProcessInfo(appName).running) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    if (getMacAppProcessInfo(appName).running) {
-      execFileSync('pkill', ['-x', appName], { stdio: 'pipe' });
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    execFileSync('open', ['-a', appName], { stdio: 'pipe' });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  const result = await restartAppTarget({ name: appName, path: '' }, { force: true, launchIfStopped: true });
+  return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+}
+
+/** Null for terminal-only tools, which have nothing to restart. */
+function restartTargetForProfile(profileName: string): AppLaunchTarget | null {
+  const launchTarget = effectiveLaunchTarget(profileName);
+  if (launchTarget) return launchTarget;
+  // Name-only targets are addressed through `open -a` / AppleScript.
+  if (process.platform !== 'darwin') return null;
+  const appName = allSystemProxyProfiles().find((item) => item.name === profileName)?.restartAppName;
+  return appName ? { name: appName, path: '' } : null;
+}
+
+/** Restart the apps we just connected that were already running — a live app
+    keeps the config and proxy settings it read at launch, so without this the
+    user connects and nothing routes until they restart it themselves. */
+async function restartConnectedApps(profileNames: string[]): Promise<void> {
+  for (const profileName of profileNames) {
+    const target = restartTargetForProfile(profileName);
+    if (!target || !isAppTargetRunning(target)) continue;
+    const label = allSystemProxyProfiles().find((item) => item.name === profileName)?.label ?? profileName;
+    const result = await restartAppTarget(target);
+    appendLog(
+      'system-proxy',
+      'system',
+      result.restarted
+        ? `${label}: restarted ${target.name} to apply the new connection`
+        : `${label}: ${result.error ?? `could not restart ${target.name}`}`,
+    );
   }
 }
 
@@ -1228,6 +1365,10 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
       ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
       : [...traySystemProxyProfiles],
   );
+  // Only apps joining the connection get restarted below — re-applying a
+  // route to already-connected apps (model switch, startup restore) must not
+  // bounce them.
+  const newlyConnectedProfiles = allProfiles.filter((name) => !previousProfiles.has(name));
 
   for (const name of previousProfiles) {
     if (allProfiles.includes(name) || !isConfigPatchProfileName(name)) continue;
@@ -1301,6 +1442,9 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
     running: proxyProfiles.length > 0 ? state?.running === true : configPatchProfiles.length > 0,
   } as RuntimeProcessState & Record<string, unknown>;
   await setActiveSystemProxyState(nextState);
+  // Last, so the relaunched app reads config patches already on disk and a
+  // proxy already listening.
+  await restartConnectedApps(newlyConnectedProfiles);
   return getSystemProxyProcessState();
 }
 

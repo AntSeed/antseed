@@ -165,6 +165,33 @@
   transition: color 0.12s ease, background 0.12s ease;
 }
 
+/* Occupies the open arrow's slot while the app is being connected — which
+   includes quitting and relaunching it when it was already running. */
+.appBusy {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+
+.appBusy::after {
+  content: '';
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--brand);
+  animation: app-busy-spin 0.75s linear infinite;
+}
+
+@keyframes app-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Per-app config toggle (gear) — same chip treatment as the open arrow. */
 .configAction {
   flex: 0 0 auto;
