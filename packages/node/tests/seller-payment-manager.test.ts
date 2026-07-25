@@ -238,6 +238,51 @@ describe('SellerPaymentManager', () => {
     expect(store.getChannel(replacementChannelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
   });
 
+  it('shares an in-flight disconnect close and preserves the replacement session', async () => {
+    const priorChannelId = makeChannelId(116);
+    const replacementChannelId = makeChannelId(117);
+
+    const priorReserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, priorChannelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, priorReserve, mux);
+    const priorAuth = await buildSpendingAuth(buyerIdentity, sellerIdentity, priorChannelId, {
+      cumulativeAmount: 200_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, priorAuth, mux);
+
+    let resolveClose!: (value: string) => void;
+    const closePromise = new Promise<string>((resolve) => { resolveClose = resolve; });
+    vi.mocked(manager.channelsClient.close).mockReturnValue(closePromise);
+
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+    await vi.waitFor(() => {
+      expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    });
+
+    const replacement = await buildSpendingAuth(buyerIdentity, sellerIdentity, replacementChannelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    const replacementPromise = manager.handleSpendingAuth(buyerIdentity.peerId, replacement, mux);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    expect(manager.channelsClient.reserve).toHaveBeenCalledOnce();
+
+    resolveClose('0xclose-hash');
+    await expect(replacementPromise).resolves.toBe('reserved');
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    expect(manager.channelsClient.reserve).toHaveBeenCalledTimes(2);
+    expect(store.getChannel(priorChannelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
+    expect(store.getChannel(replacementChannelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+    expect(manager.getChannelByPeer(buyerIdentity.peerId)?.sessionId).toBe(replacementChannelId);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+  });
+
   it('closes a zero-spend prior channel before reserving a replacement channel', async () => {
     const priorChannelId = makeChannelId(112);
     const replacementChannelId = makeChannelId(113);

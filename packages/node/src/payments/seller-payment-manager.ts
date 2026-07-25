@@ -49,6 +49,7 @@ const INSUFFICIENT_BALANCE_SELECTOR = '0xf4d678b8';
 const IN_FLIGHT_TX_LIMIT_PHRASE = 'in-flight transaction limit';
 
 type TopUpFailureKind = 'retryable-threshold' | 'retryable-tx-backpressure' | 'insufficient-balance' | 'non-retryable';
+type CloseResult = { closed: true } | { closed: false; error: unknown };
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -127,8 +128,12 @@ export class SellerPaymentManager {
   /** Channels that must not serve more paid work until closed/renegotiated. */
   private readonly _blockedChannels = new Set<string>();
 
-  /** channelIds with an in-flight close() tx/estimate. Prevents duplicate close submissions. */
-  private readonly _closingChannels = new Set<string>();
+  /**
+   * channelId -> in-flight close() result. Every close path shares this map so
+   * replacement negotiation can await an existing close instead of submitting
+   * a duplicate transaction.
+   */
+  private readonly _closingChannels = new Map<string, Promise<CloseResult>>();
 
   /** channelId -> cumulative amount last successfully settled on-chain by this
    *  process. Lets the idle-settle loop skip the `getSession` RPC when the
@@ -259,15 +264,40 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
-    this._closingChannels.delete(channelId);
     this._hydratedChannelIds.delete(channelId);
     this._reserveMax.delete(channelId);
     this._pendingTopUp.delete(channelId);
     this._blockedChannels.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
     this._releaseAcceptedWaiters(channelId);
-    this._activeBuyers.delete(peerId);
+    this._deactivateBuyerForChannel(peerId, channelId);
     debugLog(`[SellerPayment] Evicted stale channel ${channelId.slice(0, 18)}... — ${reason}`);
+  }
+
+  /** Remove connectivity only if it still belongs to the channel being cleaned up. */
+  private _deactivateBuyerForChannel(peerId: string, channelId: string): void {
+    const current = this._channelStore.getActiveChannelByPeer(peerId, CHANNEL_ROLE.SELLER);
+    if (!current || current.sessionId === channelId) {
+      this._activeBuyers.delete(peerId);
+    }
+  }
+
+  /** Submit at most one close transaction per channel and share its outcome. */
+  private _submitClose(channelId: string, submit: () => Promise<string>): Promise<CloseResult> {
+    const existing = this._closingChannels.get(channelId);
+    if (existing) return existing;
+
+    const operation: Promise<CloseResult> = submit().then(
+      () => ({ closed: true }),
+      (error: unknown) => ({ closed: false, error }),
+    );
+    this._closingChannels.set(channelId, operation);
+    void operation.finally(() => {
+      if (this._closingChannels.get(channelId) === operation) {
+        this._closingChannels.delete(channelId);
+      }
+    });
+    return operation;
   }
 
   /**
@@ -1007,10 +1037,6 @@ export class SellerPaymentManager {
 
   // ── Settlement ──────────────────────────────────────────────
 
-  /**
-   * Close a completed session on-chain using the latest buyer-signed dual signatures.
-   * Uses close() for final settlement (releases remaining deposit to buyer).
-   */
   /** Get the latest SpendingAuth params for a channel, or zero-auth if none exists. */
   private _getSettleParams(channelId: string): { amount: bigint; metadata: string; sig: string } {
     const latestAuth = this._latestAuth.get(channelId);
@@ -1049,49 +1075,44 @@ export class SellerPaymentManager {
       await this._settleLatestAuth(channelId, 'idle settle', { respectMinSettleDelta: true });
       return;
     } else {
-      if (this._closingChannels.has(channelId)) {
-        debugLog(`[SellerPayment] Close already in flight for ${channelId.slice(0, 18)}... — skipping duplicate request`);
-        return;
-      }
-
       const retries = this._closeRetryCount.get(channelId) ?? 0;
       if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
         debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
         this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
       } else {
         debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${amount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
-        this._closingChannels.add(channelId);
-        try {
-          await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
+        const closeResult = await this._submitClose(
+          channelId,
+          () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
+        );
+        if (closeResult.closed) {
           this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
           this._closeRetryCount.delete(channelId);
-        } catch (err) {
-          if (this._isRetryableTxSubmissionFailure(err)) {
+        } else {
+          if (this._isRetryableTxSubmissionFailure(closeResult.error)) {
             debugWarn(
               `[SellerPayment] Close hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
-              `— keeping channel state for retry: ${this._formatError(err)}`,
+              `— keeping channel state for retry: ${this._formatError(closeResult.error)}`,
             );
             if (cleanupOnFailure) {
-              this._activeBuyers.delete(buyerPeerId);
+              this._deactivateBuyerForChannel(buyerPeerId, channelId);
             }
             return;
           }
 
           const failedAttempts = retries + 1;
-          debugWarn(`[SellerPayment] Failed to close channel (attempt ${failedAttempts}): ${err instanceof Error ? err.message : err}`);
+          debugWarn(`[SellerPayment] Failed to close channel (attempt ${failedAttempts}): ${this._formatError(closeResult.error)}`);
           this._closeRetryCount.set(channelId, failedAttempts);
 
           if (failedAttempts < SellerPaymentManager.MAX_CLOSE_RETRIES) {
             if (cleanupOnFailure) {
-              this._activeBuyers.delete(buyerPeerId);
+              this._deactivateBuyerForChannel(buyerPeerId, channelId);
             }
             return;
           }
 
           debugWarn(`[SellerPayment] close() failed ${failedAttempts} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
           this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
-        } finally {
-          this._closingChannels.delete(channelId);
         }
       }
     }
@@ -1101,14 +1122,13 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
-    this._closingChannels.delete(channelId);
     this._reserveMax.delete(channelId);
     this._pendingTopUp.delete(channelId);
     this._blockedChannels.delete(channelId);
     this._lastSettledCumulative.delete(channelId);
     this._hydratedChannelIds.delete(channelId);
     this._releaseAcceptedWaiters(channelId);
-    this._activeBuyers.delete(buyerPeerId);
+    this._deactivateBuyerForChannel(buyerPeerId, channelId);
   }
 
   // ── Disconnect handling ───────────────────────────────────────
@@ -1221,7 +1241,11 @@ export class SellerPaymentManager {
     try {
       if (accepted > 0n) {
         const { amount, metadata, sig } = this._getSettleParams(channelId);
-        await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
+        const closeResult = await this._submitClose(
+          channelId,
+          () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
+        );
+        if (!closeResult.closed) return false;
         this._evictStaleChannel(
           channelId,
           channel.peerId,
@@ -1237,13 +1261,17 @@ export class SellerPaymentManager {
             `replacement reserve: on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`,
           );
         } else {
-          await this._channelsClient.close(
-            this._signer,
+          const closeResult = await this._submitClose(
             channelId,
-            onChainState.channel.settled,
-            '0x',
-            '0x',
+            () => this._channelsClient.close(
+              this._signer,
+              channelId,
+              onChainState.channel.settled,
+              '0x',
+              '0x',
+            ),
           );
+          if (!closeResult.closed) return false;
           this._evictStaleChannel(
             channelId,
             channel.peerId,
@@ -1269,11 +1297,6 @@ export class SellerPaymentManager {
    * remaining reserved deposit back to the buyer.
    */
   private async _closeWithoutAuth(channelId: string, peerId: string, onChainSettled: bigint): Promise<void> {
-    if (this._closingChannels.has(channelId)) {
-      debugLog(`[SellerPayment] Close already in flight for ${channelId.slice(0, 18)}... — skipping zombie close`);
-      return;
-    }
-
     const retries = this._closeRetryCount.get(channelId) ?? 0;
     if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
       debugWarn(`[SellerPayment] Zombie close failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to local eviction`);
@@ -1281,24 +1304,22 @@ export class SellerPaymentManager {
       return;
     }
 
-    this._closingChannels.add(channelId);
     debugLog(`[SellerPayment] Closing zombie channel ${channelId.slice(0, 18)}... finalAmount=${onChainSettled} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
-    try {
-      await this._channelsClient.close(this._signer, channelId, onChainSettled, '0x', '0x');
+    const closeResult = await this._submitClose(
+      channelId,
+      () => this._channelsClient.close(this._signer, channelId, onChainSettled, '0x', '0x'),
+    );
+    if (closeResult.closed) {
       this._closeRetryCount.delete(channelId);
       this._evictStaleChannel(channelId, peerId, 'zombie closed on-chain', CHANNEL_STATUS.SETTLED);
-    } catch (err) {
-      if (this._isRetryableTxSubmissionFailure(err)) {
-        debugWarn(
-          `[SellerPayment] Zombie close hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
-          `— keeping channel for retry: ${this._formatError(err)}`,
-        );
-      } else {
-        this._closeRetryCount.set(channelId, retries + 1);
-        debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
-      }
-    } finally {
-      this._closingChannels.delete(channelId);
+    } else if (this._isRetryableTxSubmissionFailure(closeResult.error)) {
+      debugWarn(
+        `[SellerPayment] Zombie close hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
+        `— keeping channel for retry: ${this._formatError(closeResult.error)}`,
+      );
+    } else {
+      this._closeRetryCount.set(channelId, retries + 1);
+      debugWarn(`[SellerPayment] Zombie close failed (attempt ${retries + 1}): ${this._formatError(closeResult.error)}`);
     }
   }
 
@@ -1388,14 +1409,19 @@ export class SellerPaymentManager {
     if (accepted > 0n) {
       const { amount, metadata, sig } = this._getSettleParams(channelId);
       debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${amount}`);
-      try {
-        await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
-        this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
-        debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
-      } catch (err) {
-        debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
+      const closeResult = await this._submitClose(
+        channelId,
+        () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
+      );
+      if (!closeResult.closed) {
+        debugWarn(
+          `[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... ` +
+          `after CloseRequested: ${this._formatError(closeResult.error)}`,
+        );
         return;
       }
+      this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
+      debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
     } else {
       // No voucher — seller can't claim anything. Clean up locally;
       // buyer will withdraw after grace period.
@@ -1408,7 +1434,6 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
-    this._closingChannels.delete(channelId);
     this._reserveMax.delete(channelId);
     this._pendingTopUp.delete(channelId);
     this._blockedChannels.delete(channelId);
@@ -1419,7 +1444,7 @@ export class SellerPaymentManager {
     // Find and remove buyer from active set
     const channel = this._channelStore.getChannel(channelId);
     if (channel) {
-      this._activeBuyers.delete(channel.peerId);
+      this._deactivateBuyerForChannel(channel.peerId, channelId);
     }
   }
 
