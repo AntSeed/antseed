@@ -40,6 +40,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed payment channels letting a buyer invalidate work they had already consumed. `requestClose()` leaves a channel `Active` and its withdraw timer was never re-anchored, so a buyer could start the timer on an unused channel, let it mature, and return later to consume service that became uncollectible the moment they withdrew. `AntseedChannels.topUp()` now cancels a pending close request and emits `CloseRequestCancelled`, so a stale timer never covers newly added reserve, and sellers refuse to recover channels with a pending close by default. Buyers can call `requestClose()` again to restart the grace period. The new `payments.serveWhileClosePending` option restores the old seller behavior for those who accept the risk.
 - Fixed the DIEM staking site so wallet transactions explicitly switch to and execute on Base mainnet instead of following a wallet that remains on Ethereum mainnet.
 - Fixed Desktop auto-update failures so download and install errors appear in the title bar with copyable details, and fixed macOS Quit so the first menu action exits after cleanup instead of requiring a second click.
 - Fixed buyer response-auth timeout warnings for non-inference probes and sellers that do not advertise response-auth support.

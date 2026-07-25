@@ -35,6 +35,8 @@ export interface SellerPaymentConfig {
    * the full amount so no dust is left behind. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
 }
 
 /** Default minimum budget per request: $0.50 USDC (base units). */
@@ -136,6 +138,8 @@ export class SellerPaymentManager {
 
   private readonly _minSettleDelta: bigint;
 
+  private readonly _serveWhileClosePending: boolean;
+
   /** Max close() retries before giving up (buyer must requestClose on-chain) */
   private static readonly MAX_CLOSE_RETRIES = 3;
 
@@ -165,6 +169,8 @@ export class SellerPaymentManager {
     this._minSettleDelta = config.minSettleDelta !== undefined
       ? BigInt(config.minSettleDelta)
       : DEFAULT_MIN_SETTLE_DELTA;
+
+    this._serveWhileClosePending = config.serveWhileClosePending ?? false;
 
     // Hydrate from persisted channels
     const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
@@ -858,6 +864,16 @@ export class SellerPaymentManager {
     if (!onChainState.exists || onChainState.status !== 'active') return false;
     if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
     const onChain = onChainState.channel;
+
+    // Active status hides a running withdraw timer that may already have matured.
+    if (onChain.closeRequestedAt > 0n && !this._serveWhileClosePending) {
+      debugWarn(
+        `[SellerPayment] Refusing to recover channel ${channelId.slice(0, 18)}... — ` +
+        `buyer requested close on-chain at ${onChain.closeRequestedAt}; funds served against it ` +
+        `may be unrecoverable. Set serveWhileClosePending to accept this risk.`,
+      );
+      return false;
+    }
 
     const metadataMsg = {
       channelId,

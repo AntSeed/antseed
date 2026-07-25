@@ -86,6 +86,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event ChannelClosed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 settledAmount, uint128 refund);
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 additionalAmount, uint128 newDeposit);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd);
+    event CloseRequestCancelled(bytes32 indexed channelId, address indexed buyer, address indexed seller);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 refund);
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -241,6 +242,13 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.deadline = deadline;
 
         emit ChannelTopUp(channelId, channel.buyer, channel.seller, additionalAmount, newMaxAmount);
+
+        // A buyer-signed ReserveAuth re-commits funds, so it cancels a pending
+        // close rather than leaving a stale timer over the added reserve.
+        if (channel.closeRequestedAt != 0) {
+            channel.closeRequestedAt = 0;
+            emit CloseRequestCancelled(channelId, channel.buyer, channel.seller);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
