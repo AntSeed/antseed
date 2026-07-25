@@ -29,6 +29,15 @@ export type StoredConversation = {
   pinnedModel: string | null
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
+  /** USDC base units authorized for this chat's requests (bigint as string).
+      Subagent traffic rolls up into the parent chat, same as everything else
+      here. This is what the chat has cost, not what has settled on-chain. */
+  spentUsdc: string
+  /** Cumulative tokens across this chat's requests (bigint as string). */
+  inputTokens: string
+  outputTokens: string
+  /** Requests whose spend was attributed to this chat. */
+  requestCount: number
   createdAt: number
   lastActiveAt: number
 }
@@ -42,6 +51,17 @@ const MAX_LABEL_CHARS = 120
 
 export function conversationId(tool: string, sessionKey: string): string {
   return `${tool}:${sessionKey}`
+}
+
+/** Reads a persisted bigint-as-string counter, healing anything unparseable to '0'. */
+function sanitizeCounter(value: unknown): string {
+  if (typeof value !== 'string') return '0'
+  try {
+    const parsed = BigInt(value)
+    return parsed > 0n ? parsed.toString() : '0'
+  } catch {
+    return '0'
+  }
 }
 
 function sanitizeRecord(value: unknown): StoredConversation | null {
@@ -60,6 +80,10 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
+    spentUsdc: sanitizeCounter(record.spentUsdc),
+    inputTokens: sanitizeCounter(record.inputTokens),
+    outputTokens: sanitizeCounter(record.outputTokens),
+    requestCount: typeof record.requestCount === 'number' && record.requestCount > 0 ? record.requestCount : 0,
     createdAt: typeof record.createdAt === 'number' ? record.createdAt : Date.now(),
     lastActiveAt: typeof record.lastActiveAt === 'number' ? record.lastActiveAt : Date.now(),
   }
@@ -159,6 +183,10 @@ export class ConversationStore {
         label: null,
         pinnedModel: input.lastModel ?? null,
         lastModel: input.lastModel ?? null,
+        spentUsdc: '0',
+        inputTokens: '0',
+        outputTokens: '0',
+        requestCount: 0,
         createdAt: now,
         lastActiveAt: now,
       }
@@ -168,6 +196,45 @@ export class ConversationStore {
     this._prune()
     void this._persist()
     return record
+  }
+
+  /**
+   * Add one signed spend delta to a conversation. No-ops for unknown ids —
+   * a chat pruned mid-request should not resurrect as a spend-only row.
+   *
+   * A single request can produce several deltas (the buyer- and seller-driven
+   * auth paths both advance the cumulative), so `countRequest` is the caller's
+   * to decide: it knows which delta was the first for a given request id.
+   *
+   * Not persisted immediately: touch() already rewrites the file on every
+   * turn, so the counters ride along with the next write. At most the last
+   * request's cost is lost on a hard kill.
+   */
+  addSpend(
+    id: string,
+    delta: { amountUsdc: string; inputTokens: string; outputTokens: string },
+    countRequest = true,
+  ): void {
+    const existing = this._byId.get(id)
+    if (!existing) return
+    let amount: bigint
+    let input: bigint
+    let output: bigint
+    try {
+      amount = BigInt(delta.amountUsdc || '0')
+      input = BigInt(delta.inputTokens || '0')
+      output = BigInt(delta.outputTokens || '0')
+    } catch {
+      return
+    }
+    if (amount <= 0n && input <= 0n && output <= 0n) return
+    this._byId.set(id, {
+      ...existing,
+      spentUsdc: (BigInt(existing.spentUsdc) + (amount > 0n ? amount : 0n)).toString(),
+      inputTokens: (BigInt(existing.inputTokens) + (input > 0n ? input : 0n)).toString(),
+      outputTokens: (BigInt(existing.outputTokens) + (output > 0n ? output : 0n)).toString(),
+      requestCount: existing.requestCount + (countRequest ? 1 : 0),
+    })
   }
 
   /** Newest-activity first (stable sort over reversed insertion order keeps

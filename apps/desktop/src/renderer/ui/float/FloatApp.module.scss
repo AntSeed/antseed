@@ -344,6 +344,17 @@
   line-height: 14px;
 }
 
+/* What the chat has cost — set apart from the rest of the meta line so it
+   stays findable when the line is truncated. */
+.menuRowCost {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Short session id at the end of the title line — quieter than the title. */
 .sessionId {
   flex: 0 0 auto;

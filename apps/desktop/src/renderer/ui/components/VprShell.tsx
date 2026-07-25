@@ -38,7 +38,7 @@ const bottomNavEntries = navViews('bottom');
 
 export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
-    creditsAvailableUsdc: state.creditsAvailableUsdc,
+    creditsSpendableUsdc: state.creditsSpendableUsdc,
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
@@ -127,7 +127,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
               title="Add credits"
               onClick={() => onSelectView('deposit')}
             >
-              ${formatCredits(snap.creditsAvailableUsdc)}
+              ${formatCredits(snap.creditsSpendableUsdc)}
             </button>
           </div>
         )}

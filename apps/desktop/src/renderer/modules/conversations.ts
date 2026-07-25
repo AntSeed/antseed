@@ -55,6 +55,27 @@ export function shortSessionId(sessionKey: string): string {
   return sessionKey.replace(/^[a-z]+_/i, '').slice(0, 8);
 }
 
+/**
+ * What a chat has cost so far, as a meta-line fragment ("$0.42", "<$0.01").
+ * Null when nothing has been attributed yet — free routes, chats from before
+ * spend tracking shipped, or a first request still in flight — so callers can
+ * drop the segment instead of printing a misleading "$0.00".
+ */
+export function conversationCost(record: BuyerConversationSummary): string | null {
+  let baseUnits: bigint;
+  try {
+    baseUnits = BigInt(record.spentUsdc ?? '0');
+  } catch {
+    return null;
+  }
+  if (baseUnits <= 0n) return null;
+  // USDC has 6 decimals; anything under a cent rounds to $0.00, which reads
+  // as free rather than cheap.
+  if (baseUnits < 10_000n) return '<$0.01';
+  const cents = baseUnits / 10_000n;
+  return `$${(cents / 100n).toString()}.${(cents % 100n).toString().padStart(2, '0')}`;
+}
+
 /** Compact relative timestamp for chat rows ("now", "5m", "2h", "3d"). */
 export function conversationAge(timestamp: number): string {
   const delta = Date.now() - timestamp;

@@ -19,6 +19,8 @@ export function VprCreditsView({ onSelectView }: Props) {
     available: state.creditsAvailableUsdc,
     reserved: state.creditsReservedUsdc,
     total: state.creditsTotalUsdc,
+    pending: state.creditsPendingUsdc,
+    spendable: state.creditsSpendableUsdc,
     evmAddress: state.creditsEvmAddress,
     operatorAddress: state.creditsOperatorAddress,
     usage: state.creditsBuyerUsage,
@@ -62,9 +64,11 @@ export function VprCreditsView({ onSelectView }: Props) {
         <div className={styles.balanceGroup}>
           <VprCard className={styles.balanceCard}>
             <div className={styles.balanceText}>
-              <span className={styles.balanceLabel}>Available balance</span>
-              <span className={styles.balanceValue}>${formatCredits(snap.available)}</span>
-              <span className={styles.balanceHint}>Pay only for what you use - no subscriptions, no lock-in.</span>
+              <span className={styles.balanceLabel}>Your balance</span>
+              <span className={styles.balanceValue}>${formatCredits(snap.spendable)}</span>
+              <span className={styles.balanceHint}>
+                Everything you have on deposit, less the spend you have already authorized.
+              </span>
             </div>
             <div className={styles.payButtons}>
               <button type="button" onClick={() => openDeposit('card')}>
@@ -91,6 +95,26 @@ export function VprCreditsView({ onSelectView }: Props) {
             Withdraw unused credits
           </button>
         </div>
+
+        {/* Where the money sits. Reserving a channel moves deposits into the
+            "held" bucket without spending them, and a signed SpendingAuth
+            spends without moving anything until the seller settles — so
+            neither number alone answers "how much do I have left?". */}
+        <VprCard className={styles.detailsCard}>
+          <div className={styles.detailRow}>
+            <span>Ready to use</span><span>${formatCredits(snap.available)}</span>
+          </div>
+          <div className={styles.detailRow}>
+            <span>Held in open sessions</span><span>${formatCredits(snap.reserved)}</span>
+          </div>
+          <div className={styles.detailRow}>
+            <span>Authorized, not yet charged</span>
+            <span>{Number(snap.pending) > 0 ? '-' : ''}${formatCredits(snap.pending)}</span>
+          </div>
+          <div className={`${styles.detailRow} ${styles.detailRowTotal}`}>
+            <span>Total deposited</span><span>${formatCredits(snap.total)}</span>
+          </div>
+        </VprCard>
 
         <VprStatRow>
           <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
@@ -134,8 +158,6 @@ export function VprCreditsView({ onSelectView }: Props) {
         </VprCard>
 
         <VprCard className={styles.detailsCard}>
-          <div className={styles.detailRow}><span>Reserved</span><span>${formatCredits(snap.reserved)}</span></div>
-          <div className={styles.detailRow}><span>Total</span><span>${formatCredits(snap.total)}</span></div>
           <div className={styles.detailRow}>
             <span>Signer</span>
             <span className={styles.signerValue}>

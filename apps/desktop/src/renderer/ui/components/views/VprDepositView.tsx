@@ -173,7 +173,7 @@ const TRUST_POINTS: Array<{ icon: IconSvgElement; text: string }> = [
 export function VprDepositView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
-    available: state.creditsAvailableUsdc,
+    spendable: state.creditsSpendableUsdc,
     total: state.creditsTotalUsdc,
   }), shallowEqual);
 
@@ -393,8 +393,8 @@ export function VprDepositView({ onSelectView }: Props) {
         <div className={styles.stack}>
 
           <VprCard className={styles.balanceCard}>
-            <span className={styles.balanceLabel}>Available balance</span>
-            <span className={styles.balanceValue}>${formatCredits(snap.available)}</span>
+            <span className={styles.balanceLabel}>Your balance</span>
+            <span className={styles.balanceValue}>${formatCredits(snap.spendable)}</span>
             <span className={styles.balanceHint}>
               Credits are USDC held for you in AntSeed's on-chain escrow. You only pay for
               what you use, and unused credits can be withdrawn anytime.

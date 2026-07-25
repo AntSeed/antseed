@@ -10,6 +10,7 @@ import type {
   VprFloatModel,
 } from '../types/bridge';
 import {
+  conversationCost,
   conversationMatchesApp,
   conversationPinnedServiceId,
   conversationTitle,
@@ -103,9 +104,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     return `${formatCompactTokens(usage?.totalInputTokens, usage?.totalOutputTokens)} tok`;
   }
 
-  /** Current available balance. */
+  /** What the user still owns: deposits minus spend already authorized. */
   function balanceLabel(): string {
-    return `$${formatCredits(uiState.creditsAvailableUsdc)}`;
+    return `$${formatCredits(uiState.creditsSpendableUsdc)}`;
   }
 
   /** The buyer identity (signer address), shortened. */
@@ -116,7 +117,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   /** True when the balance is effectively empty but the selected default
       model is paid — the pill then offers an "Add balance" shortcut. */
   function needsFunds(): boolean {
-    const balance = Number(uiState.creditsAvailableUsdc);
+    // Money locked in a live channel still buys requests, so the nudge keys
+    // off spendable — not the unreserved slice, which a reserve drains to ~0.
+    const balance = Number(uiState.creditsSpendableUsdc);
     if (!(balance < 0.01)) return false;
     const selection = uiState.vprRouteSelection.model;
     if (!selection) return false;
@@ -226,6 +229,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       pinnedServiceId: conversationPinnedServiceId(record),
       lastActiveAt: record.lastActiveAt,
       active: isConversationActive(record.lastActiveAt),
+      cost: conversationCost(record),
     };
   }
 

@@ -66,6 +66,29 @@ export interface PerRequestAuthResult {
 }
 
 /**
+ * One request's newly authorized spend, reported as it is signed.
+ *
+ * Both the buyer-initiated (signPerRequestAuth) and seller-initiated
+ * (handleNeedAuth) paths can advance the cumulative for the same request, so
+ * a single request may produce more than one event; the amounts are disjoint
+ * deltas and sum to the request's total. Token counts follow the same
+ * lower-bound rule as metadata attribution — whichever path counts the request
+ * first reports the tokens, the other reports zero.
+ */
+export interface BuyerSpendEvent {
+  sellerPeerId: string;
+  /** Proxy request id, when the caller threaded one through. */
+  requestId: string | null;
+  /** USDC base units newly authorized by this signature. */
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+}
+
+export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
+
+/**
  * Manages buyer-side payment sessions using EIP-712 SpendingAuth
  * with cumulative authorization, bytes/4 cost verification, and overdraft control.
  */
@@ -416,6 +439,27 @@ export class BuyerPaymentManager {
    * records its requestId here so the other path attributes only the amount delta.
    */
   private readonly _serviceTokensCounted = new CountedRequestTracker();
+
+  private _spendListener: BuyerSpendListener | null = null;
+
+  /**
+   * Observe per-request spend as it is signed. Used to attribute cost to the
+   * caller's own unit of work (a tool conversation, say), which only the layer
+   * that issued the request can know.
+   */
+  setSpendListener(listener: BuyerSpendListener | null): void {
+    this._spendListener = listener;
+  }
+
+  private _reportSpend(event: BuyerSpendEvent): void {
+    if (!this._spendListener) return;
+    try {
+      this._spendListener(event);
+    } catch (err) {
+      // Accounting is a bystander here — never let it break the payment path.
+      debugWarn(`[BuyerPayment] spend listener threw: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   private _persistServiceMetadata(sessionId: string, metadata: SpendingAuthMetadata): void {
     this._channelStore.replaceMetadataServiceTotals(sessionId, this._sanitizeMetadata(metadata).services);
@@ -838,6 +882,15 @@ export class BuyerPaymentManager {
     this._metadata.set(sellerPeerId, newMeta);
     this._persistServiceMetadata(session.sessionId, newMeta);
 
+    this._reportSpend({
+      sellerPeerId,
+      requestId: responseStats.requestId ?? null,
+      amountUsdc: signedDelta.toString(),
+      inputTokens: (alreadyCounted ? 0n : estimatedInputTokens).toString(),
+      cachedInputTokens: (alreadyCounted ? 0n : estimatedCachedInputTokens).toString(),
+      outputTokens: (alreadyCounted ? 0n : estimatedOutputTokens).toString(),
+    });
+
     debugLog(
       `[BuyerPayment] signPerRequestAuth #${newMeta.cumulativeRequestCount}: ` +
       `thisReq in=${estimatedInputTokens} out=${estimatedOutputTokens} | ` +
@@ -1029,6 +1082,14 @@ export class BuyerPaymentManager {
     // Send via PaymentMux
     try {
       await this._sendUpdatedSpendingAuth(session, sellerPeerId, effectiveAmount, newMeta, paymentMux);
+      this._reportSpend({
+        sellerPeerId,
+        requestId: payload.requestId ?? null,
+        amountUsdc: signedDelta.toString(),
+        inputTokens: (alreadyCounted ? 0n : reportedInputTokens).toString(),
+        cachedInputTokens: (alreadyCounted ? 0n : reportedCachedInputTokens).toString(),
+        outputTokens: (alreadyCounted ? 0n : reportedOutputTokens).toString(),
+      });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${effectiveAmount}`);
     } catch {
       debugLog(`[BuyerPayment] NeedAuth: connection closed before SpendingAuth could be sent`);

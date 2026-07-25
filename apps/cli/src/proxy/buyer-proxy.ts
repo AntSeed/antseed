@@ -7,6 +7,7 @@ import {
   computeOnChainReputationScore,
   decodeSweepRequest,
   type AntseedNode,
+  type BuyerSpendEvent,
   type PeerInfo,
   type PeerMetadata,
   type RequestStreamResponseMetadata,
@@ -105,6 +106,12 @@ function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes:
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
+/**
+ * Requests kept in the spend-attribution map. Entries outlive their request on
+ * purpose (a seller-initiated auth can land after the response), so this is
+ * sized for in-flight plus recently-finished traffic, not for concurrency.
+ */
+const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
 
 type PeerFailureEntry = {
   count: number
@@ -401,6 +408,16 @@ export class BuyerProxy {
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
   private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
 
+  /**
+   * requestId -> the conversation that issued it, so the node's per-request
+   * spend events can be attributed to a chat. Only the proxy knows this
+   * mapping; the payment layer sees a seller and a request id.
+   *
+   * `counted` guards requestCount: one request can produce several spend
+   * deltas (buyer- and seller-initiated auth both advance the cumulative).
+   */
+  private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
+
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._port = config.port
@@ -433,6 +450,15 @@ export class BuyerProxy {
       })
     }
 
+    const spendEventNode = this._node as AntseedNode & {
+      on?: (event: 'payment:spend', listener: (event: BuyerSpendEvent) => void) => unknown
+    }
+    if (typeof spendEventNode.on === 'function') {
+      spendEventNode.on('payment:spend', (event: BuyerSpendEvent) => {
+        this._attributeSpend(event)
+      })
+    }
+
     const eventNode = this._node as AntseedNode & {
       on?: (event: 'peers:discovered', listener: (peers: PeerInfo[]) => void) => unknown
     }
@@ -442,6 +468,33 @@ export class BuyerProxy {
         log(`Background discovery found ${peers.length} peer(s)`)
         this._replacePeers(peers)
       })
+    }
+  }
+
+  /** Roll a signed spend delta into the conversation that triggered it. */
+  private _attributeSpend(event: BuyerSpendEvent): void {
+    if (!event.requestId) return
+    const entry = this._requestConversations.get(event.requestId)
+    if (!entry) return
+    this._conversations.addSpend(
+      entry.convId,
+      { amountUsdc: event.amountUsdc, inputTokens: event.inputTokens, outputTokens: event.outputTokens },
+      !entry.counted,
+    )
+    entry.counted = true
+  }
+
+  /**
+   * Remember which chat a request belongs to for the life of the request plus
+   * a grace window — the seller-initiated auth path can land just after the
+   * response is returned. Bounded so a leaked id can't grow the map forever.
+   */
+  private _trackRequestConversation(requestId: string, convId: string): void {
+    this._requestConversations.set(requestId, { convId, counted: false })
+    while (this._requestConversations.size > MAX_TRACKED_REQUEST_CONVERSATIONS) {
+      const oldest = this._requestConversations.keys().next().value
+      if (oldest === undefined) break
+      this._requestConversations.delete(oldest)
     }
   }
 
@@ -1252,7 +1305,7 @@ export class BuyerProxy {
           : (parsePeerPinnedService(rawModel) ? rawModel : null)
       const trackedKey = conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       const known = this._conversations.get(`${conversationIdentity.tool}:${trackedKey}`)
-      this._conversations.touch({
+      const tracked = this._conversations.touch({
         tool: conversationIdentity.tool,
         sessionKey: trackedKey,
         // Extract until a label sticks: a tool's title-generation request can
@@ -1260,6 +1313,9 @@ export class BuyerProxy {
         snippet: known?.snippet ? null : extractFirstUserSnippet(conversationBody),
         lastModel: resolvedModel,
       })
+      // Bind the request to the chat so its cost can be attributed when the
+      // payment layer signs for it (see _attributeSpend).
+      this._trackRequestConversation(serializedReq.requestId, tracked.id)
     }
 
     const {

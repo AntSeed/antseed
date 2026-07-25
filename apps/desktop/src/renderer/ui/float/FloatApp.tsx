@@ -385,6 +385,7 @@ export function FloatApp() {
                       </span>
                       <span className={styles.menuRowMeta}>
                         {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)} · {pinnedLabel ?? modelLabel}
+                        {chat.cost ? <span className={styles.menuRowCost}>{chat.cost}</span> : null}
                       </span>
                     </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />

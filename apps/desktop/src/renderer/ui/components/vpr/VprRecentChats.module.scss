@@ -99,6 +99,17 @@
   line-height: 15px;
 }
 
+/* What the chat has cost. Set apart from the rest of the meta line so the
+   number is findable when scanning a list of chats for the expensive one. */
+.chatCost {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Short session id at the end of the title line — quieter than the title. */
 .sessionId {
   flex: 0 0 auto;

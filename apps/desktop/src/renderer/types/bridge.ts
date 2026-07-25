@@ -52,6 +52,9 @@ export type DesktopPaymentChannelSummary = {
   seller: string;
   reserveMax: string;
   cumulativeSigned: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+      is what the seller can still claim against this channel. */
+  settledUsdc: string;
   reservedAt: number;
   status: string;
   requestCount: number;
@@ -332,7 +335,7 @@ export type DesktopBridge = {
   onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
   installUpdate?: () => Promise<InstallUpdateResult>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
   /** Prompts a native save dialog and writes the signer private key to the chosen file. */
   identityExportKey?: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string | null }>;
   /** Replaces the signer private key (the current one is backed up on disk first). */
@@ -436,6 +439,12 @@ export type BuyerConversationSummary = {
   pinnedModel: string | null;
   /** Model that served the most recent request (`<peerId>@<service>`). */
   lastModel: string | null;
+  /** USDC base units this chat has cost (bigint string), subagents included.
+      Rows written before spend tracking shipped report '0'. */
+  spentUsdc?: string;
+  inputTokens?: string;
+  outputTokens?: string;
+  requestCount?: number;
   createdAt: number;
   lastActiveAt: number;
 };
@@ -467,6 +476,9 @@ export type VprFloatConversation = {
   /** True while the chat is receiving traffic (recent request activity) —
       drives the green pulse on its row. */
   active: boolean;
+  /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
+      has been attributed to it yet. */
+  cost: string | null;
 };
 
 /** Display payload the main window pushes to the floating pill. */

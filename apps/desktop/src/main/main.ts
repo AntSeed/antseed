@@ -76,6 +76,7 @@ import {
 } from './window.js';
 import { createDesktopTray, updateDesktopTray } from './tray.js';
 import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
+import { pendingSpendFromChannels, spendableBalance } from './credits-balance.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
 import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
@@ -151,6 +152,9 @@ type DesktopPaymentChannelSummary = {
   seller: string;
   reserveMax: string;
   cumulativeSigned: string;
+  /** Amount the seller has already settled on-chain (base units). Filled by
+      enrichChannelStatuses; '0' until the channel is checked against chain. */
+  settledUsdc: string;
   reservedAt: number;
   status: string;
   requestCount: number;
@@ -2344,10 +2348,27 @@ ipcMain.handle(
 type CreditsInfo = {
   evmAddress: string | null;
   operatorAddress: string | null;
+  /** Everything on deposit for this buyer: unreserved + locked in channels. */
   balanceUsdc: string;
+  /** Locked into open payment channels (still the buyer's money). */
   reservedUsdc: string;
+  /** Unreserved deposits — what a new channel reserve or a withdrawal can draw on. */
   availableUsdc: string;
+  /** Signed via SpendingAuth but not settled on-chain yet: committed, not gone. */
+  pendingUsdc: string;
+  /** balanceUsdc - pendingUsdc — what the buyer actually still owns. */
+  spendableUsdc: string;
   creditLimitUsdc: string;
+};
+
+const EMPTY_CREDITS: Omit<CreditsInfo, 'evmAddress'> = {
+  operatorAddress: null,
+  balanceUsdc: '0',
+  reservedUsdc: '0',
+  availableUsdc: '0',
+  pendingUsdc: '0',
+  spendableUsdc: '0',
+  creditLimitUsdc: '0',
 };
 
 // Use shared formatUsdc from @antseed/node
@@ -2412,13 +2433,13 @@ const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
-    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress: null, ...EMPTY_CREDITS };
   }
 
   const evmAddress = identity.wallet.address;
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
-    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, ...EMPTY_CREDITS };
   }
 
   // Back off after repeated RPC failures; retry after cooldown so transient
@@ -2426,7 +2447,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
     if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
       if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
+      return { evmAddress, ...EMPTY_CREDITS };
     }
     // Cooldown elapsed — allow a retry attempt
     creditsRpcFailCount = 0;
@@ -2435,7 +2456,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress, ...(cc.chainId ? { evmChainId: cc.chainId } : {}) });
 
   try {
-    const [balance, creditLimit, operatorAddress] = await Promise.all([
+    const [balance, creditLimit, operatorAddress, pending] = await Promise.all([
       depositsClient.getBuyerBalance(evmAddress),
       depositsClient.getBuyerCreditLimit(evmAddress),
       (async (): Promise<string | null> => {
@@ -2444,15 +2465,21 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
           return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
         } catch { return null; }
       })(),
+      getPendingSpendUsdc().catch(() => 0n),
     ]);
     creditsRpcFailCount = 0;
+
+    const deposited = balance.available + balance.reserved;
+    const spendable = spendableBalance(deposited, pending);
 
     const info: CreditsInfo = {
       evmAddress,
       operatorAddress,
-      balanceUsdc: formatUsdc6(balance.available + balance.reserved),
+      balanceUsdc: formatUsdc6(deposited),
       reservedUsdc: formatUsdc6(balance.reserved),
       availableUsdc: formatUsdc6(balance.available),
+      pendingUsdc: formatUsdc6(pending),
+      spendableUsdc: formatUsdc6(spendable),
       creditLimitUsdc: formatUsdc6(creditLimit),
     };
     cachedCreditsInfo = info;
@@ -2465,7 +2492,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       catch { /* EPIPE — ignore */ }
     }
     if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, ...EMPTY_CREDITS };
   }
 }
 
@@ -2929,6 +2956,7 @@ function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSu
     seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
     reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
     cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
+    settledUsdc: readStringField(raw, 'settledAmount') || '0',
     reservedAt: readNumberField(raw, 'reservedAt'),
     status: readStringField(raw, 'status') || 'unknown',
     requestCount: readNumberField(raw, 'requestCount'),
@@ -3078,6 +3106,7 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   await Promise.allSettled(candidates.map(async (row) => {
     const info = await client.getSession(row.channelId);
     const closeRequestedAt = Number(info.closeRequestedAt);
+    row.settledUsdc = info.settled.toString();
     if (info.status === 2) row.status = 'settled';
     else if (info.status === 3) row.status = 'timedout';
     else if (info.status === 1 && closeRequestedAt > 0) {
@@ -3089,17 +3118,50 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   }));
 }
 
-ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
-  const body = await fetchBuyerProxyJson('/_antseed/channels?all=1');
-  if (!body) {
-    return { ok: false, data: null, error: 'buyer proxy unreachable' };
-  }
+/** Fetch buyer channels from the local proxy and re-check them on-chain. */
+async function loadBuyerChannels(all: boolean): Promise<DesktopPaymentChannelSummary[] | null> {
+  const body = await fetchBuyerProxyJson(`/_antseed/channels${all ? '?all=1' : ''}`);
+  if (!body) return null;
   const channels = Array.isArray(body['channels'])
     ? body['channels']
       .map((entry) => normalizePaymentChannelSummary(entry))
       .filter((entry): entry is DesktopPaymentChannelSummary => entry !== null)
     : [];
   await enrichChannelStatuses(channels).catch(() => {});
+  return channels;
+}
+
+// Pending spend rides on the credits poll, which runs every 60s normally and
+// every 5s while the payment card is up. Cache it so the fast poll reuses one
+// buyer-proxy round trip plus its channel reads instead of repeating them.
+const PENDING_SPEND_TTL_MS = 20_000;
+let cachedPendingSpend = 0n;
+let cachedPendingSpendAt = 0;
+
+function notePendingSpend(channels: readonly DesktopPaymentChannelSummary[]): bigint {
+  cachedPendingSpend = pendingSpendFromChannels(channels);
+  cachedPendingSpendAt = Date.now();
+  return cachedPendingSpend;
+}
+
+/**
+ * Signed-but-unsettled spend across the buyer's open channels. Falls back to
+ * the last known value when the buyer proxy is unreachable — dropping to 0
+ * there would silently inflate the displayed balance.
+ */
+async function getPendingSpendUsdc(): Promise<bigint> {
+  if (Date.now() - cachedPendingSpendAt < PENDING_SPEND_TTL_MS) return cachedPendingSpend;
+  const channels = await loadBuyerChannels(false).catch(() => null);
+  if (!channels) return cachedPendingSpend;
+  return notePendingSpend(channels);
+}
+
+ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
+  const channels = await loadBuyerChannels(true);
+  if (!channels) {
+    return { ok: false, data: null, error: 'buyer proxy unreachable' };
+  }
+  notePendingSpend(channels);
   return { ok: true, data: channels, error: null };
 });
 

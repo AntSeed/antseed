@@ -263,9 +263,16 @@ export type RendererUiState = {
   pluginInstallBusy: boolean;
 
   // --- Credits / Payments ---
+  /** Unreserved deposits — what a new channel reserve or a withdrawal draws on.
+      Payment gating reads this; the headline balance does not. */
   creditsAvailableUsdc: string;
   creditsReservedUsdc: string;
+  /** Everything on deposit (available + reserved). */
   creditsTotalUsdc: string;
+  /** Signed but not yet settled on-chain — spent in every sense but the ledger's. */
+  creditsPendingUsdc: string;
+  /** Total minus pending: the balance the user actually still owns. Headline. */
+  creditsSpendableUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
@@ -420,6 +427,8 @@ export function createInitialUiState(): RendererUiState {
     creditsAvailableUsdc: '0',
     creditsReservedUsdc: '0',
     creditsTotalUsdc: '0',
+    creditsPendingUsdc: '0',
+    creditsSpendableUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,

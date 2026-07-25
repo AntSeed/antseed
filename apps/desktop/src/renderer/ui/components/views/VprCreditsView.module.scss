@@ -190,6 +190,17 @@
   font-weight: 500;
 }
 
+/* Closing row of a breakdown — ruled off and set in the primary colour so the
+   running total reads as a sum, not another line item. */
+.detailRowTotal {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.detailRowTotal span:first-child {
+  color: var(--text-primary);
+}
+
 .signerValue {
   display: inline-flex;
   align-items: center;

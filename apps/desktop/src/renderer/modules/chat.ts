@@ -306,6 +306,8 @@ export function initChatModule({
       uiState.creditsAvailableUsdc = result.data.availableUsdc;
       uiState.creditsReservedUsdc = result.data.reservedUsdc;
       uiState.creditsTotalUsdc = result.data.balanceUsdc;
+      uiState.creditsPendingUsdc = result.data.pendingUsdc;
+      uiState.creditsSpendableUsdc = result.data.spendableUsdc;
       uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
       uiState.creditsEvmAddress = result.data.evmAddress;
       uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;

@@ -55,7 +55,7 @@ export function VprHomeView({ onSelectView }: Props) {
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
     floatOpen: state.vprFloatOpen,
-    creditsAvailable: state.creditsAvailableUsdc,
+    creditsSpendable: state.creditsSpendableUsdc,
   }), shallowEqual);
   const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
   const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
@@ -219,10 +219,11 @@ export function VprHomeView({ onSelectView }: Props) {
   const connected = snap.connectBadge.tone === 'active' || runtimeOn;
 
   // The Add Balance banner is a nudge for low balances only — with more than
-  // $5 available it's just noise.
-  const creditsAvailableNum = Number(snap.creditsAvailable);
+  // $5 left it's just noise. Keyed off spendable, not the unreserved slice: an
+  // open session holds funds that still buy requests.
+  const creditsSpendableNum = Number(snap.creditsSpendable);
   const showAddBalance = !addBalanceDismissed
-    && !(Number.isFinite(creditsAvailableNum) && creditsAvailableNum > 5);
+    && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
 
   function submitDraft(): void {
     const text = draft.trim();

@@ -5,6 +5,7 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import type { BuyerConversationSummary } from '../../../types/bridge';
 import {
   conversationAge,
+  conversationCost,
   conversationPinnedServiceId,
   conversationTitle,
   isConversationActive,
@@ -37,6 +38,7 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
   onClick: () => void;
 }): JSX.Element {
   const title = conversationTitle(chat);
+  const cost = conversationCost(chat);
   return (
     <button type="button" className={styles.chatRow} onClick={onClick} title={title}>
       <BrandIcon name={chat.tool} hints={[chat.tool]} size={18} />
@@ -51,6 +53,7 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
         <span className={styles.chatMeta}>
           {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
           {modelLabel ? ` · ${modelLabel}` : ''}
+          {cost ? <span className={styles.chatCost}>{cost}</span> : null}
         </span>
       </span>
       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.chatChevron} />

@@ -36,6 +36,17 @@ function isActiveStatus(status: string): boolean {
   return status === 'active' || status === 'open';
 }
 
+/** Signed but not yet settled on this channel, in base units. */
+function unsettledBaseUnits(row: { cumulativeSigned: string; settledUsdc: string }): bigint {
+  try {
+    const signed = BigInt(row.cumulativeSigned || '0');
+    const settled = BigInt(row.settledUsdc || '0');
+    return signed > settled ? signed - settled : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
 /** Row action: close an active channel, withdraw once the grace period ran. */
 function rowAction(status: string): 'Close' | 'Withdraw' | null {
   if (isActiveStatus(status)) return 'Close';
@@ -67,7 +78,6 @@ export function VprActivityView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     channels: state.creditsChannels,
-    reserved: state.creditsReservedUsdc,
     loading: state.creditsSummaryLoading,
   }), shallowEqual);
 
@@ -91,6 +101,12 @@ export function VprActivityView({ onSelectView }: Props) {
   );
   const activeCount = rows.filter((row) => isActiveStatus(row.status)).length;
   const totalSpent = sumBaseUnits(rows.map((row) => row.cumulativeSigned));
+  // Authorized on channels the seller can still settle against — already
+  // committed, so it is deducted from the headline balance elsewhere.
+  const totalPending = rows
+    .filter((row) => isActiveStatus(row.status) || row.status === 'closing' || row.status === 'withdrawable')
+    .reduce((sum, row) => sum + unsettledBaseUnits(row), 0n)
+    .toString();
 
   const closeChannel = (channelId: string) => {
     void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'close-channel', channelId });
@@ -103,7 +119,7 @@ export function VprActivityView({ onSelectView }: Props) {
 
         <VprStatRow>
           <VprStatTile label="Active" value={activeCount} />
-          <VprStatTile label="Reserved" value={`$${snap.reserved || '0'}`} />
+          <VprStatTile label="Pending" value={`$${baseUnitsToUsd(totalPending)}`} />
           <VprStatTile label="Spent" value={`$${baseUnitsToUsd(totalSpent)}`} />
         </VprStatRow>
 
@@ -132,7 +148,11 @@ export function VprActivityView({ onSelectView }: Props) {
                 </div>
                 <div className={styles.rowSide}>
                   <span className={styles.rowAmount}>${baseUnitsToUsd(row.cumulativeSigned)}</span>
-                  <span className={styles.rowReserve}>of ${baseUnitsToUsd(row.reserveMax)}</span>
+                  <span className={styles.rowReserve}>
+                    {unsettledBaseUnits(row) > 0n
+                      ? `$${baseUnitsToUsd(unsettledBaseUnits(row).toString())} pending`
+                      : `of $${baseUnitsToUsd(row.reserveMax)}`}
+                  </span>
                   {rowAction(row.status) && (
                     <button type="button" className={styles.rowAction} onClick={() => closeChannel(row.channelId)}>
                       <span>{rowAction(row.status)}</span>

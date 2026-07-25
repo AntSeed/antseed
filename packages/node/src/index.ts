@@ -146,6 +146,7 @@ export type {
 } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
+export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';

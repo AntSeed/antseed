@@ -1560,6 +1560,9 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        // Re-emit per-request spend so callers can attribute it to whatever
+        // issued the request — the node only knows the seller and requestId.
+        this._buyerPaymentManager.setSpendListener((event) => this.emit('payment:spend', event));
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
