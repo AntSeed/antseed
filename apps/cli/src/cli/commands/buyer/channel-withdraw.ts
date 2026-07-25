@@ -147,7 +147,13 @@ export function registerBuyerChannelWithdrawCommands(channelsCmd: Command, buyer
       try {
         result = await daemonRequestClose(config.buyer.proxyPort, localChannel.peerId, options.auth);
       } catch (err) {
+        // An unreachable seller lands here, and that is the likeliest reason to
+        // be running this command at all — so give the same actionable fallback
+        // the decline path gives, not just the raw error.
         spinner.fail(chalk.red(`Close request failed: ${(err as Error).message}`));
+        console.log(chalk.dim('The channel is unchanged. To release the reserve without the seller:'));
+        console.log(chalk.cyan(`  antseed buyer channels request-close ${localChannel.sessionId}`));
+        console.log(chalk.dim(`  ...then after ${formatWait(CHANNEL_CLOSE_GRACE_PERIOD_SECONDS)}: antseed buyer channels withdraw ${localChannel.sessionId}`));
         process.exit(1);
       }
 
