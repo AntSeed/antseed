@@ -283,6 +283,49 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
+  it('keeps the replacement session active when a superseded channel is evicted afterwards', async () => {
+    const priorChannelId = makeChannelId(118);
+    const replacementChannelId = makeChannelId(119);
+
+    const priorReserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, priorChannelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, priorReserve, mux);
+    const priorAuth = await buildSpendingAuth(buyerIdentity, sellerIdentity, priorChannelId, {
+      cumulativeAmount: 200_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, priorAuth, mux);
+
+    const replacement = await buildSpendingAuth(buyerIdentity, sellerIdentity, replacementChannelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+
+    // checkTimeouts snapshots the active channels before it awaits getSession.
+    // Negotiate the replacement inside that await so the eviction below runs
+    // against a channel the buyer has already moved off of.
+    let negotiated = false;
+    vi.spyOn(manager.channelsClient, 'getSession').mockImplementation(async () => {
+      if (!negotiated) {
+        negotiated = true;
+        await manager.handleSpendingAuth(buyerIdentity.peerId, replacement, mux);
+      }
+      // Prior channel is already closed on-chain — checkTimeouts evicts it locally.
+      return makeOnChainChannel(buyerIdentity, sellerIdentity, { status: 2 });
+    });
+
+    await manager.checkTimeouts();
+
+    // Evicting the superseded channel must not deactivate the buyer, who now
+    // belongs to the replacement channel.
+    expect(store.getChannel(priorChannelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
+    expect(store.getChannel(replacementChannelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
+    expect(manager.getChannelByPeer(buyerIdentity.peerId)?.sessionId).toBe(replacementChannelId);
+    expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+  });
+
   it('closes a zero-spend prior channel before reserving a replacement channel', async () => {
     const priorChannelId = makeChannelId(112);
     const replacementChannelId = makeChannelId(113);
