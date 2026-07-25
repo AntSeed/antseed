@@ -3,8 +3,10 @@ import { beforeEach, test } from 'vitest';
 
 import type { VprRoutingPreferences, VprRouteSelection } from '../core/state';
 import {
+  applyPeerListing,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
+  peerListingOf,
   saveVprRouteSelection,
   saveVprRoutingPreferences,
   VPR_PREFERENCES_STORAGE_KEY,
@@ -16,6 +18,8 @@ const fallbackPreferences: VprRoutingPreferences = {
   preferFreePeers: false,
   maxInputUsdPerMillion: 25,
   minTrustScore: 0,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
 };
 
 const fallbackRouteSelection: VprRouteSelection = {
@@ -57,6 +61,8 @@ test('valid VPR preferences and route selection save and load', () => {
     preferFreePeers: true,
     maxInputUsdPerMillion: 3.5,
     minTrustScore: 62,
+    allowedPeerIds: ['peer-1'],
+    blockedPeerIds: ['peer-2', 'peer-3'],
   };
   const routeSelection: VprRouteSelection = {
     model: {
@@ -74,6 +80,45 @@ test('valid VPR preferences and route selection save and load', () => {
 
   assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences), preferences);
   assert.deepEqual(loadVprRouteSelection(fallbackRouteSelection), routeSelection);
+});
+
+test('peer lists from older stored preferences fall back to empty', () => {
+  localStorage.setItem(
+    VPR_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ autoRouting: false, preferFreePeers: true, maxInputUsdPerMillion: 4, minTrustScore: 10 }),
+  );
+
+  const loaded = loadVprRoutingPreferences(fallbackPreferences);
+  assert.deepEqual(loaded.allowedPeerIds, []);
+  assert.deepEqual(loaded.blockedPeerIds, []);
+});
+
+test('stored peer lists are trimmed, de-duplicated and blank-free', () => {
+  localStorage.setItem(
+    VPR_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ ...fallbackPreferences, blockedPeerIds: [' peer-1 ', 'peer-1', '', 7, 'peer-2'] }),
+  );
+
+  assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences).blockedPeerIds, ['peer-1', 'peer-2']);
+});
+
+test('applyPeerListing moves a peer between lists and off them', () => {
+  const allowed = applyPeerListing(fallbackPreferences, 'peer-1', 'allowed');
+  assert.deepEqual(allowed.allowedPeerIds, ['peer-1']);
+  assert.equal(peerListingOf(allowed, 'peer-1'), 'allowed');
+
+  const blocked = applyPeerListing(allowed, 'peer-1', 'blocked');
+  assert.deepEqual(blocked.allowedPeerIds, []);
+  assert.deepEqual(blocked.blockedPeerIds, ['peer-1']);
+  assert.equal(peerListingOf(blocked, 'peer-1'), 'blocked');
+
+  const cleared = applyPeerListing(blocked, 'peer-1', 'none');
+  assert.deepEqual(cleared.blockedPeerIds, []);
+  assert.equal(peerListingOf(cleared, 'peer-1'), 'none');
+});
+
+test('applyPeerListing ignores blank peer ids', () => {
+  assert.equal(applyPeerListing(fallbackPreferences, '   ', 'blocked'), fallbackPreferences);
 });
 
 test('invalid route mode falls back', () => {

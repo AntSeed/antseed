@@ -16,7 +16,7 @@ type VprRouteTarget = {
 function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   const selection = uiState.vprRouteSelection;
   if (!selection.model) return null;
-  const routes = routesForSelectedModel(uiState.discoverRows, selection.model);
+  const routes = routesForSelectedModel(uiState.vprRoutableRows, selection.model);
   const route = selection.mode === 'pinned-peer' && selection.peerId
     ? routes.find((candidate) => candidate.peerId === selection.peerId) ?? null
     : chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
@@ -26,7 +26,7 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   // Routes aggregate serviceId variants of the model — send the id the
   // chosen peer actually advertises, not the selection's representative.
   const model = route?.serviceId ?? selection.model.serviceId;
-  const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.discoverRows);
+  const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.vprRoutableRows);
   const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
   // The resolved model must always be in the served list — main's route
   // computation drops the default model when the list doesn't contain it.

@@ -17,11 +17,13 @@ import { findCatalogEntry } from './modules/vpr-model-catalog';
 import { resolveVprChatOption } from './modules/vpr-chat-projection';
 import type { VprRouteSelection } from './core/state';
 import {
+  applyPeerListing,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   saveVprRouteSelection,
   saveVprRoutingPreferences,
 } from './modules/vpr-preferences';
+import { isPeerRoutable } from './modules/vpr-routing';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
 import { registerActions } from './ui/actions';
@@ -204,7 +206,7 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // whichever chat option happens to sort first.
   const option = resolveVprChatOption(
     uiState.chatServiceOptions,
-    uiState.discoverRows,
+    uiState.vprRoutableRows,
     selection,
     uiState.vprRoutingPreferences,
   );
@@ -513,7 +515,32 @@ registerActions({
   updateVprRoutingPreferences: (patch) => {
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    // Peer rules gate which sellers and models are visible at all, so a patch
+    // touching them has to re-derive the catalog, not just repaint.
+    if (patch.allowedPeerIds || patch.blockedPeerIds) {
+      chatApi.applyPeerAccessRules();
+    }
     notifyUiStateChanged();
+  },
+  setVprPeerListing: (peerId, listing) => {
+    uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
+    saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    chatApi.applyPeerAccessRules();
+
+    // A pin the new lists rule out would keep routing to a peer the user just
+    // blocked (the pinned path bypasses scoring), so drop it back to auto.
+    const pinned = uiState.vprRouteSelection.peerId;
+    if (
+      uiState.vprRouteSelection.mode === 'pinned-peer'
+      && pinned
+      && !isPeerRoutable(pinned, uiState.vprRoutingPreferences)
+    ) {
+      uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    }
+
+    notifyUiStateChanged();
+    void applyVprRouteToConnectedProxy(bridge, uiState);
   },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,

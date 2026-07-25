@@ -466,7 +466,7 @@ function buildPaginationTokens(page: number, totalPages: number): PaginationToke
 }
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
-  const rows = useUiSelector((state) => state.discoverRows);
+  const rows = useUiSelector((state) => state.vprRoutableRows);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => estimatePageSize());

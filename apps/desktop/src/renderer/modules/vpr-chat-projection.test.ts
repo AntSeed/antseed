@@ -57,6 +57,8 @@ const preferences: VprRoutingPreferences = {
   preferFreePeers: false,
   maxInputUsdPerMillion: 10,
   minTrustScore: 50,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
 };
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {

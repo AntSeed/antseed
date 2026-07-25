@@ -5,6 +5,8 @@ import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from './discover-rows.js';
 import { resolveVprChatOption } from './vpr-chat-projection.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from './vpr-model-catalog.js';
+import { filterRoutableVprRoutes } from './vpr-routing.js';
+import { routesForSelectedModel } from './vpr-view-models.js';
 import { saveVprRouteSelection } from './vpr-preferences.js';
 import {
   applyOpenRouterBaselines,
@@ -75,6 +77,9 @@ type ChatModuleOptions = {
 
 export type ChatModuleApi = {
   refreshChatServiceOptions: () => Promise<void>;
+  /** Re-derive the routable rows, model catalog and service list after a peer
+      allow/block rule changes. */
+  applyPeerAccessRules: () => void;
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
@@ -1159,6 +1164,36 @@ export function initChatModule({
     notifyUiStateChanged();
   }
 
+  /**
+   * Re-derive everything gated by the peer allow/block rules from the last
+   * discovery snapshot: the routable rows, the model catalog and the chat
+   * service list. Called whenever a rule changes so excluded sellers — and the
+   * models only they offer — disappear immediately instead of lingering until
+   * the next discovery refresh.
+   */
+  function applyPeerAccessRules(): void {
+    uiState.vprRoutableRows = filterRoutableVprRoutes(
+      uiState.discoverRows,
+      uiState.vprRoutingPreferences,
+    );
+    uiState.vprModelCatalog = applyOpenRouterBaselines(
+      projectRowsToVprModelCatalog(uiState.vprRoutableRows),
+      getCachedOpenRouterPrices(),
+    );
+
+    // The selected model may only have been offered by a seller the new rules
+    // exclude — leaving it selected would strand every send with no route.
+    const selected = uiState.vprRouteSelection.model;
+    if (selected && routesForSelectedModel(uiState.vprRoutableRows, selected).length === 0) {
+      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
+      uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    }
+
+    updateChatServiceOptions(projectRowsToChatServiceOptions(uiState.vprRoutableRows));
+    notifyUiStateChanged();
+  }
+
   function updateChatServiceOptions(entries: NormalizedChatServiceEntry[]): void {
     if (serviceSelectFocused) {
       pendingServiceOptions = entries;
@@ -1237,11 +1272,14 @@ export function initChatModule({
         .map((raw) => normalizeDiscoverRow(raw))
         .filter((row): row is DiscoverRow => row !== null);
       uiState.discoverRows = rows;
+      uiState.vprRoutableRows = filterRoutableVprRoutes(rows, uiState.vprRoutingPreferences);
       uiState.chatDiscoverRowsLoaded = true;
-      const nextVprCatalog = projectRowsToVprModelCatalog(rows);
-      if (nextVprCatalog.length > 0 || uiState.vprModelCatalog.length === 0) {
+      // Guard on the raw discovery result, not the projection: an allowlist
+      // that excludes every discovered seller must empty the catalog, while a
+      // transient empty discovery snapshot must leave the last one standing.
+      if (rows.length > 0 || uiState.vprModelCatalog.length === 0) {
         uiState.vprModelCatalog = applyOpenRouterBaselines(
-          nextVprCatalog,
+          projectRowsToVprModelCatalog(uiState.vprRoutableRows),
           getCachedOpenRouterPrices(),
         );
       }
@@ -1263,7 +1301,9 @@ export function initChatModule({
           uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
         }
       }
-      const optionsToRender = rows.length > 0 ? projectRowsToChatServiceOptions(rows) : fallback;
+      const optionsToRender = rows.length > 0
+        ? projectRowsToChatServiceOptions(uiState.vprRoutableRows)
+        : fallback;
       updateChatServiceOptions(optionsToRender);
       setRuntimeActivity(
         optionsToRender.length > 0 ? 'active' : 'warn',
@@ -2947,6 +2987,7 @@ export function initChatModule({
     setChatPermissionMode,
     decideToolApproval,
     refreshChatServiceOptions,
+    applyPeerAccessRules,
     refreshChatProxyStatus,
     refreshChatConversations,
     refreshWorkspace,

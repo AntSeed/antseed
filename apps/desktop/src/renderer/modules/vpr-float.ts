@@ -240,7 +240,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
 
   /** Best route peer for a model, mirroring how the global selection routes. */
   function resolvePinRoute(provider: string, serviceId: string): string | null {
-    const routes = routesForSelectedModel(uiState.discoverRows, { provider, serviceId });
+    const routes = routesForSelectedModel(uiState.vprRoutableRows, { provider, serviceId });
     const peerId = chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
     return peerId ? `${peerId}@${serviceId}` : null;
   }

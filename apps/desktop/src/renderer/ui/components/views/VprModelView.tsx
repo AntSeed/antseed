@@ -34,7 +34,7 @@ export function VprModelView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
-    discoverRows: state.discoverRows,
+    discoverRows: state.vprRoutableRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);

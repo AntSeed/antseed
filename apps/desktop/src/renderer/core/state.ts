@@ -95,7 +95,17 @@ export type VprRoutingPreferences = {
   preferFreePeers: boolean;
   maxInputUsdPerMillion: number;
   minTrustScore: number;
+  /**
+   * Peer allowlist. While non-empty, auto routing only ever considers these
+   * peers — every other seller is dropped before scoring.
+   */
+  allowedPeerIds: string[];
+  /** Peers auto routing never selects. Takes precedence over the allowlist. */
+  blockedPeerIds: string[];
 };
+
+/** Which routing list a peer sits on. A peer is never on both. */
+export type VprPeerListing = 'allowed' | 'blocked' | 'none';
 
 export type VprModelCatalogEntry = {
   provider: string;
@@ -314,6 +324,12 @@ export type RendererUiState = {
   chatLifetimeSessions: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   discoverRows: DiscoverRow[];
+  /**
+   * `discoverRows` minus every seller the peer allow/block rules exclude.
+   * Every browse and routing surface reads this; `discoverRows` stays complete
+   * so the Manage-sellers modal can still list the peers being excluded.
+   */
+  vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
   vprRouteSelection: VprRouteSelection;
   vprRoutingPreferences: VprRoutingPreferences;
@@ -453,6 +469,7 @@ export function createInitialUiState(): RendererUiState {
     chatLifetimeSessions: '',
     chatServiceOptions: [],
     discoverRows: [],
+    vprRoutableRows: [],
     vprModelCatalog: [],
     vprRouteSelection: {
       model: null,
@@ -464,6 +481,8 @@ export function createInitialUiState(): RendererUiState {
       preferFreePeers: false,
       maxInputUsdPerMillion: 25,
       minTrustScore: 0,
+      allowedPeerIds: [],
+      blockedPeerIds: [],
     },
     vprFloatOpen: false,
     chatDiscoverRowsLoaded: false,

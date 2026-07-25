@@ -36,7 +36,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
-    discoverRows: state.discoverRows,
+    discoverRows: state.vprRoutableRows,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
   // null = the buyer hasn't answered the first conversations query yet.

@@ -165,6 +165,24 @@
   line-height: 24px;
 }
 
+/* ---------- Seller access ---------- */
+
+.accessManage {
+  padding: 4px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.accessManage:hover {
+  background: var(--bg-hover);
+}
+
 /* ---------- Appearance ---------- */
 
 .appearanceSection {

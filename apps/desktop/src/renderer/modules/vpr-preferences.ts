@@ -1,4 +1,4 @@
-import type { VprRoutingPreferences, VprRouteSelection } from '../core/state';
+import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../core/state';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
@@ -35,6 +35,18 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 
 function readNonNegativeFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/** Trimmed, de-duplicated, blank-free peer id list — order preserved. */
+export function normalizePeerIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const peerId = item.trim();
+    if (peerId.length > 0) seen.add(peerId);
+  }
+  return [...seen];
 }
 
 function loadRouteModel(value: unknown): VprRouteSelection['model'] {
@@ -74,6 +86,12 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
       fallback.maxInputUsdPerMillion,
     ),
     minTrustScore: readNonNegativeFiniteNumber(parsed.minTrustScore, fallback.minTrustScore),
+    allowedPeerIds: Array.isArray(parsed.allowedPeerIds)
+      ? normalizePeerIdList(parsed.allowedPeerIds)
+      : fallback.allowedPeerIds,
+    blockedPeerIds: Array.isArray(parsed.blockedPeerIds)
+      ? normalizePeerIdList(parsed.blockedPeerIds)
+      : fallback.blockedPeerIds,
   };
 }
 
@@ -82,6 +100,33 @@ export function saveVprRoutingPreferences(value: VprRoutingPreferences): void {
     return;
   }
   localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify(value));
+}
+
+export function peerListingOf(preferences: VprRoutingPreferences, peerId: string): VprPeerListing {
+  if (preferences.blockedPeerIds.includes(peerId)) return 'blocked';
+  if (preferences.allowedPeerIds.includes(peerId)) return 'allowed';
+  return 'none';
+}
+
+/**
+ * Move a peer onto one routing list, off the other. The lists stay mutually
+ * exclusive so the UI never has to render a peer that is both allowed and
+ * blocked.
+ */
+export function applyPeerListing(
+  preferences: VprRoutingPreferences,
+  peerId: string,
+  listing: VprPeerListing,
+): VprRoutingPreferences {
+  const id = peerId.trim();
+  if (id.length === 0) return preferences;
+
+  const allowed = preferences.allowedPeerIds.filter((entry) => entry !== id);
+  const blocked = preferences.blockedPeerIds.filter((entry) => entry !== id);
+  if (listing === 'allowed') allowed.push(id);
+  if (listing === 'blocked') blocked.push(id);
+
+  return { ...preferences, allowedPeerIds: allowed, blockedPeerIds: blocked };
 }
 
 export function loadVprRouteSelection(fallback: VprRouteSelection): VprRouteSelection {

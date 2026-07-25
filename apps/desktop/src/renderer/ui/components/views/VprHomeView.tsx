@@ -50,7 +50,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
-    discoverRows: state.discoverRows,
+    discoverRows: state.vprRoutableRows,
     processes: state.processes,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,

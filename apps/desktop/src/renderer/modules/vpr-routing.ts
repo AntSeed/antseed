@@ -62,8 +62,27 @@ export function scoreVprRoute(row: DiscoverRow, preferences: VprRoutingPreferenc
   return { row, score, reasons };
 }
 
+/**
+ * Whether auto routing may select this peer.
+ *
+ * The blocklist is absolute. The allowlist is exclusive while it holds any
+ * entry — an empty allowlist means "no restriction", not "nothing allowed".
+ */
+export function isPeerRoutable(peerId: string, preferences: VprRoutingPreferences): boolean {
+  if (preferences.blockedPeerIds.includes(peerId)) return false;
+  return preferences.allowedPeerIds.length === 0 || preferences.allowedPeerIds.includes(peerId);
+}
+
+/** Drop every route whose peer the allow/block lists rule out. */
+export function filterRoutableVprRoutes(
+  rows: DiscoverRow[],
+  preferences: VprRoutingPreferences,
+): DiscoverRow[] {
+  return rows.filter((row) => isPeerRoutable(row.peerId, preferences));
+}
+
 export function chooseBestVprRoute(rows: DiscoverRow[], preferences: VprRoutingPreferences): DiscoverRow | null {
-  const best = rows
+  const best = filterRoutableVprRoutes(rows, preferences)
     .map((row) => scoreVprRoute(row, preferences))
     .sort(compareScoredRoutes)[0];
 

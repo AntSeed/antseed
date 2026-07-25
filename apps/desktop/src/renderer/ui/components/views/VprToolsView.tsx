@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
-import { chooseBestVprRoute } from '../../../modules/vpr-routing';
+import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/vpr-routing';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
 import {
   activeProfilesFromRuntimeState,
@@ -40,7 +40,7 @@ export function VprToolsView() {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
-    discoverRows: state.discoverRows,
+    discoverRows: state.vprRoutableRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
@@ -84,7 +84,13 @@ export function VprToolsView() {
   const [installedApps, setInstalledApps] = useState<InstalledAppEntry[] | null>(null);
   const [installedAppsError, setInstalledAppsError] = useState<string | null>(null);
 
-  const peerOptions = useMemo(() => buildVprPeerOptions(snap.lastPeers, snap.discoverRows), [snap.lastPeers, snap.discoverRows]);
+  // lastPeers is the raw scan, so it has to be filtered too — otherwise an
+  // excluded seller would still be offerable as a per-app route here.
+  const peerOptions = useMemo(
+    () => buildVprPeerOptions(snap.lastPeers, snap.discoverRows)
+      .filter((peer) => isPeerRoutable(peer.peerId, snap.preferences)),
+    [snap.lastPeers, snap.discoverRows, snap.preferences],
+  );
   const modelRoutes = useMemo(() => routesForSelectedModel(snap.discoverRows, snap.selection.model), [snap.discoverRows, snap.selection.model]);
   const bestRoute = useMemo(() => chooseBestVprRoute(modelRoutes, snap.preferences), [modelRoutes, snap.preferences]);
   const defaultPeerId = snap.selection.peerId || bestRoute?.peerId || peerOptions[0]?.peerId || '';

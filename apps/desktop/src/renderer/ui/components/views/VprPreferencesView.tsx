@@ -2,11 +2,14 @@ import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import { peerAccessSummaryLabel } from '../../../modules/vpr-peer-access';
+import { buildVprPeerOptions } from '../../../modules/vpr-tools';
 import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/vpr-seller-format';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
 import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
+import { VprPeerAccessDialog } from './VprPeerAccessDialog';
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -17,8 +20,17 @@ export function VprPreferencesView({ onSelectView }: Props) {
     preferences: state.vprRoutingPreferences,
     selection: state.vprRouteSelection,
     discoverRows: state.discoverRows,
+    lastPeers: state.lastPeers,
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
+  const [accessOpen, setAccessOpen] = useState(false);
+
+  const peerOptions = useMemo(
+    () => buildVprPeerOptions(snap.lastPeers, snap.discoverRows),
+    [snap.lastPeers, snap.discoverRows],
+  );
+  const { allowedPeerIds, blockedPeerIds } = snap.preferences;
+  const accessSummary = peerAccessSummaryLabel(allowedPeerIds.length, blockedPeerIds.length);
 
   const selectTheme = (mode: ThemeMode) => {
     applyThemeMode(mode);
@@ -99,6 +111,21 @@ export function VprPreferencesView({ onSelectView }: Props) {
             />
             <div className={styles.sliderHint}>Sellers charging more than this per million input tokens are never used</div>
           </div>
+
+          <VprSettingRow
+            title="Seller access"
+            caption={`(${accessSummary})`}
+            hint="Block sellers you never want used, or allow a few to use only those."
+            control={(
+              <button
+                type="button"
+                className={styles.accessManage}
+                onClick={() => setAccessOpen(true)}
+              >
+                Manage sellers
+              </button>
+            )}
+          />
         </div>
 
         {pinnedRoute ? (
@@ -158,6 +185,15 @@ export function VprPreferencesView({ onSelectView }: Props) {
         </div>
       </div>
       </VprPage>
+
+      <VprPeerAccessDialog
+        isOpen={accessOpen}
+        onClose={() => setAccessOpen(false)}
+        preferences={snap.preferences}
+        peerOptions={peerOptions}
+        onSetListing={actions.setVprPeerListing}
+        onClearAllowlist={() => actions.updateVprRoutingPreferences({ allowedPeerIds: [] })}
+      />
     </section>
   );
 }

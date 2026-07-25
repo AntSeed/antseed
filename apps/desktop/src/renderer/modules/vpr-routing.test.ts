@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../core/state';
-import { chooseBestVprRoute, scoreVprRoute } from './vpr-routing.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, scoreVprRoute } from './vpr-routing.js';
+import { projectRowsToVprModelCatalog } from './vpr-model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
   autoRouting: true,
   preferFreePeers: false,
   maxInputUsdPerMillion: 10,
   minTrustScore: 50,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
 };
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
@@ -156,4 +159,55 @@ test('known priced route beats unknown route even when trust is lower', () => {
   assert.equal(scoreVprRoute(unpriced, preferences).score, 110);
   assert.equal(scoreVprRoute(cheap, preferences).score, 107);
   assert.equal(chooseBestVprRoute([unpriced, cheap], preferences)?.peerId, 'cheap');
+});
+
+test('blocked peers are never chosen, even when they score best', () => {
+  const blocked = discoverRow({ peerId: 'blocked', inputUsdPerMillion: 0, outputUsdPerMillion: 0, onChainTrustScore: 100 });
+  const other = discoverRow({ peerId: 'other', inputUsdPerMillion: 5, outputUsdPerMillion: 5 });
+  const prefs = { ...preferences, blockedPeerIds: ['blocked'] };
+
+  assert.equal(chooseBestVprRoute([blocked, other], prefs)?.peerId, 'other');
+  assert.equal(isPeerRoutable('blocked', prefs), false);
+  assert.equal(chooseBestVprRoute([blocked], prefs), null);
+});
+
+test('a non-empty allowlist restricts routing to its peers', () => {
+  const allowed = discoverRow({ peerId: 'allowed', inputUsdPerMillion: 9, outputUsdPerMillion: 9 });
+  const cheaper = discoverRow({ peerId: 'cheaper', inputUsdPerMillion: 1, outputUsdPerMillion: 1 });
+  const prefs = { ...preferences, allowedPeerIds: ['allowed'] };
+
+  assert.equal(chooseBestVprRoute([cheaper, allowed], prefs)?.peerId, 'allowed');
+  assert.equal(isPeerRoutable('cheaper', prefs), false);
+});
+
+test('an empty allowlist means no restriction', () => {
+  const rows = [discoverRow({ peerId: 'a' }), discoverRow({ peerId: 'b' })];
+
+  assert.deepEqual(filterRoutableVprRoutes(rows, preferences).map((row) => row.peerId), ['a', 'b']);
+});
+
+test('the blocklist wins over the allowlist for the same peer', () => {
+  const prefs = { ...preferences, allowedPeerIds: ['peer-1'], blockedPeerIds: ['peer-1'] };
+
+  assert.equal(isPeerRoutable('peer-1', prefs), false);
+});
+
+test('the catalog built from routable rows drops models only excluded sellers offer', () => {
+  const rows = [
+    discoverRow({ peerId: 'allowed', serviceId: 'shared' }),
+    discoverRow({ peerId: 'other', serviceId: 'shared' }),
+    discoverRow({ peerId: 'other', serviceId: 'other-only' }),
+  ];
+  const prefs = { ...preferences, allowedPeerIds: ['allowed'] };
+
+  const catalog = projectRowsToVprModelCatalog(filterRoutableVprRoutes(rows, prefs));
+  assert.deepEqual(catalog.map((entry) => entry.serviceId), ['shared']);
+  assert.equal(catalog[0].peerCount, 1);
+});
+
+test('blocking the only seller of a model removes it from the catalog', () => {
+  const rows = [discoverRow({ peerId: 'solo', serviceId: 'solo-model' })];
+  const prefs = { ...preferences, blockedPeerIds: ['solo'] };
+
+  assert.deepEqual(projectRowsToVprModelCatalog(filterRoutableVprRoutes(rows, prefs)), []);
 });
