@@ -177,6 +177,16 @@
   outline: none;
 }
 
+/* The trigger covers the whole pill face, so any focus decoration reads as
+   the pill itself changing — including the global button focus tint
+   (`button:focus-visible` in global.scss, which outranks the transparent
+   background above). Keep the face completely unstyled on focus; the panel
+   opening is the affordance. */
+.pillTrigger:focus-visible {
+  background: transparent;
+  box-shadow: none;
+}
+
 .triggerLabel {
   /* The title line must clear the shrink + close buttons in the top-right
      corner; the usage line below may run underneath them. */
@@ -335,13 +345,32 @@
 
 .menuRowMeta {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 400;
   line-height: 14px;
+}
+
+.menuRowMetaText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The model the chat routes to, right-aligned under the cost — see the
+   matching rule in VprRecentChats. */
+.menuRowModel {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* What the chat has cost, right-aligned on the title row — see the matching
@@ -358,8 +387,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Short session id at the end of the title line — quieter than the title. */
+/* Short session id at the end of the title line — quieter than the title.
+   Hidden for now, matching the VPR chat rows. Drop the `display: none` to
+   bring it back. */
 .sessionId {
+  display: none;
   flex: 0 0 auto;
   color: var(--text-muted);
   font-size: 10px;

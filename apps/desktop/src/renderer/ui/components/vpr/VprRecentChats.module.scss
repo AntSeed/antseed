@@ -91,12 +91,31 @@
 
 .chatMeta {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 15px;
+}
+
+.chatMetaText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The model the chat routes to, parked at the right edge under the cost so
+   both figures form a scannable column instead of trailing a sentence. */
+.chatModel {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* What the chat has cost, parked at the end of the title row: a column of
@@ -114,8 +133,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Short session id at the end of the title line — quieter than the title. */
+/* Short session id at the end of the title line — quieter than the title.
+   Hidden for now: the row reads cleaner without it. Drop the `display: none`
+   to bring it back. */
 .sessionId {
+  display: none;
   flex: 0 0 auto;
   color: var(--text-muted);
   font-size: 10px;

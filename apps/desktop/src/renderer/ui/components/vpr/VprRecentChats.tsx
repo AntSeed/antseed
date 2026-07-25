@@ -30,8 +30,9 @@ export function chatModelLabel(
   return catalog.find((entry) => entry.serviceId === pinnedServiceId)?.label ?? pinnedServiceId;
 }
 
-/** One chat row: title + session id on the first line, tool · time · model
-    on the second — the same layout as the floating pill's dropdown. */
+/** One chat row: title + session id on the first line, tool · time on the
+    second with the model right-aligned under the cost — the same layout as
+    the floating pill's dropdown. */
 export function VprChatRow({ chat, modelLabel, onClick }: {
   chat: BuyerConversationSummary;
   modelLabel: string;
@@ -52,8 +53,10 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
           {cost ? <span className={styles.chatCost}>{cost}</span> : null}
         </span>
         <span className={styles.chatMeta}>
-          {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
-          {modelLabel ? ` · ${modelLabel}` : ''}
+          <span className={styles.chatMetaText}>
+            {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
+          </span>
+          {modelLabel ? <span className={styles.chatModel}>{modelLabel}</span> : null}
         </span>
       </span>
       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.chatChevron} />
