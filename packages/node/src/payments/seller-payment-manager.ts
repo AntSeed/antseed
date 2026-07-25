@@ -49,7 +49,9 @@ const INSUFFICIENT_BALANCE_SELECTOR = '0xf4d678b8';
 const IN_FLIGHT_TX_LIMIT_PHRASE = 'in-flight transaction limit';
 
 type TopUpFailureKind = 'retryable-threshold' | 'retryable-tx-backpressure' | 'insufficient-balance' | 'non-retryable';
-type CloseResult = { closed: true } | { closed: false; error: unknown };
+/** `amount` is the finalAmount actually submitted on-chain, which may differ
+ *  from what a caller that joined an in-flight close intended to submit. */
+type CloseResult = { closed: true; amount: bigint } | { closed: false; error: unknown };
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -282,13 +284,17 @@ export class SellerPaymentManager {
     }
   }
 
-  /** Submit at most one close transaction per channel and share its outcome. */
-  private _submitClose(channelId: string, submit: () => Promise<string>): Promise<CloseResult> {
+  /**
+   * Submit at most one close transaction per channel and share its outcome.
+   * Callers that join an in-flight close receive the amount that close actually
+   * submitted, not the one they asked for — persist that, not `amount`.
+   */
+  private _submitClose(channelId: string, amount: bigint, submit: () => Promise<string>): Promise<CloseResult> {
     const existing = this._closingChannels.get(channelId);
     if (existing) return existing;
 
     const operation: Promise<CloseResult> = submit().then(
-      () => ({ closed: true }),
+      () => ({ closed: true, amount }),
       (error: unknown) => ({ closed: false, error }),
     );
     this._closingChannels.set(channelId, operation);
@@ -1083,10 +1089,11 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${amount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
         const closeResult = await this._submitClose(
           channelId,
+          amount,
           () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
         );
         if (closeResult.closed) {
-          this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
+          this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, closeResult.amount.toString());
           this._closeRetryCount.delete(channelId);
         } else {
           if (this._isRetryableTxSubmissionFailure(closeResult.error)) {
@@ -1243,6 +1250,7 @@ export class SellerPaymentManager {
         const { amount, metadata, sig } = this._getSettleParams(channelId);
         const closeResult = await this._submitClose(
           channelId,
+          amount,
           () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
         );
         if (!closeResult.closed) return false;
@@ -1263,6 +1271,7 @@ export class SellerPaymentManager {
         } else {
           const closeResult = await this._submitClose(
             channelId,
+            onChainState.channel.settled,
             () => this._channelsClient.close(
               this._signer,
               channelId,
@@ -1307,6 +1316,7 @@ export class SellerPaymentManager {
     debugLog(`[SellerPayment] Closing zombie channel ${channelId.slice(0, 18)}... finalAmount=${onChainSettled} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
     const closeResult = await this._submitClose(
       channelId,
+      onChainSettled,
       () => this._channelsClient.close(this._signer, channelId, onChainSettled, '0x', '0x'),
     );
     if (closeResult.closed) {
@@ -1411,6 +1421,7 @@ export class SellerPaymentManager {
       debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${amount}`);
       const closeResult = await this._submitClose(
         channelId,
+        amount,
         () => this._channelsClient.close(this._signer, channelId, amount, metadata, sig),
       );
       if (!closeResult.closed) {
@@ -1420,7 +1431,7 @@ export class SellerPaymentManager {
         );
         return;
       }
-      this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, amount.toString());
+      this._channelStore.updateChannelStatus(channelId, CHANNEL_STATUS.SETTLED, closeResult.amount.toString());
       debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
     } else {
       // No voucher — seller can't claim anything. Clean up locally;

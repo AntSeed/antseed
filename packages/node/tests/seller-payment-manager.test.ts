@@ -1157,6 +1157,46 @@ describe('SellerPaymentManager', () => {
     await Promise.all([first, second]);
   });
 
+  it('records the amount actually submitted when joining an in-flight close', async () => {
+    const channelId = makeChannelId(120);
+
+    const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      isReserve: true,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+    const firstAuth = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, firstAuth, mux);
+
+    let resolveClose!: (value: string) => void;
+    const closePromise = new Promise<string>((resolve) => { resolveClose = resolve; });
+    vi.mocked(manager.channelsClient.close).mockReturnValue(closePromise);
+
+    const first = manager.settleSession(buyerIdentity.peerId);
+    expect(manager.channelsClient.close).toHaveBeenCalledWith(
+      expect.anything(), channelId, 200_000n, expect.anything(), expect.anything(),
+    );
+
+    // A later auth raises the local cumulative while the close is still in flight.
+    const laterAuth = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 400_000n,
+      reserveMaxAmount: '1000000',
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, laterAuth, mux);
+
+    const second = manager.settleSession(buyerIdentity.peerId);
+    resolveClose('0xclose-hash');
+    await Promise.all([first, second]);
+
+    // The joiner must not claim its own (higher) cumulative was settled — only
+    // 200_000 was ever submitted on-chain.
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    expect(store.getChannel(channelId)!.settledAmount).toBe('200000');
+  });
+
   it('rejects SpendingAuth when cumulative exceeds on-chain deposit', async () => {
     const channelId = makeChannelId(40);
 
