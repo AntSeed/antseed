@@ -458,6 +458,19 @@ export class SellerPaymentManager {
           return 'rejected';
         }
         debugLog(`[SellerPayment] ReserveAuth verified for buyer ${buyerPeerId.slice(0, 12)}...`);
+
+        const superseded = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
+        if (superseded && superseded.sessionId !== channelId) {
+          const closed = await this._closeSupersededChannel(superseded);
+          if (!closed) {
+            debugWarn(
+              `[SellerPayment] Cannot reserve replacement channel ${channelId.slice(0, 18)}... ` +
+              `while prior channel ${superseded.sessionId.slice(0, 18)}... remains active`,
+            );
+            return 'rejected';
+          }
+        }
+
         debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
         const reserveSalt = payload.reserveSalt ?? channelId;
         await this._channelsClient.reserve(
@@ -1188,6 +1201,64 @@ export class SellerPaymentManager {
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to process channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }
+    }
+  }
+
+  /**
+   * Close the seller's previous channel before accepting a replacement
+   * ReserveAuth from the same buyer. Buyers may lose local channel state and
+   * generate a new channel ID while the previous reserve remains active
+   * on-chain. The contract rejects a second active channel for the same pair,
+   * so recover synchronously using the seller's durable state instead of
+   * leaving both peers in an unrecoverable negotiation loop.
+   */
+  private async _closeSupersededChannel(channel: StoredChannel): Promise<boolean> {
+    const channelId = channel.sessionId;
+    const accepted = this._acceptedCumulative.get(channelId)
+      ?? this._restorePersistedSpendingAuth(channel)
+      ?? 0n;
+
+    try {
+      if (accepted > 0n) {
+        const { amount, metadata, sig } = this._getSettleParams(channelId);
+        await this._channelsClient.close(this._signer, channelId, amount, metadata, sig);
+        this._evictStaleChannel(
+          channelId,
+          channel.peerId,
+          'closed before replacement reserve',
+          CHANNEL_STATUS.SETTLED,
+        );
+      } else {
+        const onChainState = classifyOnChainChannel(await this._channelsClient.getSession(channelId));
+        if (!onChainState.exists || onChainState.status !== 'active') {
+          this._evictStaleChannel(
+            channelId,
+            channel.peerId,
+            `replacement reserve: on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`,
+          );
+        } else {
+          await this._channelsClient.close(
+            this._signer,
+            channelId,
+            onChainState.channel.settled,
+            '0x',
+            '0x',
+          );
+          this._evictStaleChannel(
+            channelId,
+            channel.peerId,
+            'zero-auth channel closed before replacement reserve',
+            CHANNEL_STATUS.SETTLED,
+          );
+        }
+      }
+      return true;
+    } catch (err) {
+      debugWarn(
+        `[SellerPayment] Failed to close superseded channel ${channelId.slice(0, 18)}...: ` +
+        `${err instanceof Error ? err.message : err}`,
+      );
+      return false;
     }
   }
 
