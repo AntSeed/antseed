@@ -82,6 +82,7 @@ import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
+import { isWindowsProxyPointingAt, parseRegQueryValue } from './windows-proxy-state.js';
 import { mergeWithDefaultAppProfiles } from './default-apps.js';
 import {
   customAppName,
@@ -741,32 +742,96 @@ async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 30_000): Pr
   }
 }
 
-async function restartMacApp(appName: string): Promise<{ ok: boolean; error?: string }> {
-  if (process.platform !== 'darwin') {
-    return { ok: false, error: `${appName} restart is currently supported on macOS only.` };
+/** Restart an app we know only by name. `restartAppTarget` handles macOS and
+    Windows; the name is resolved to a real target first because Windows can't
+    launch by name alone. */
+async function restartNamedApp(appName: string): Promise<{ ok: boolean; error?: string }> {
+  const target = namedAppTarget(appName);
+  if (!target) {
+    return process.platform === 'darwin' || process.platform === 'win32'
+      ? { ok: false, error: `Could not find ${appName} on this device. Quit and reopen it to apply the connection.` }
+      : { ok: false, error: `${appName} restart is not supported on this platform.` };
   }
-  const result = await restartAppTarget({ name: appName, path: '' }, { force: true, launchIfStopped: true });
+  const result = await restartAppTarget(target, { force: true, launchIfStopped: true });
   return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
+}
+
+/** A launch target for an app we only know by name. macOS addresses those
+    through `open -a` / AppleScript, so the bare name is enough; Windows has no
+    name-based launcher, so the name is resolved against installed apps to
+    recover a real executable path.
+
+    A profile's `restartAppName` may be the friendly Start Menu name or the
+    executable's name — "Visual Studio Code" ships Code.exe — so when no entry
+    name matches, entries are re-matched by their resolved executable's
+    basename. That resolution reads each `.lnk` in turn, so it only runs on the
+    miss path. */
+function namedAppTarget(appName: string): AppLaunchTarget | null {
+  if (!appName) return null;
+  if (process.platform === 'darwin') return { name: appName, path: '' };
+  if (process.platform === 'win32') {
+    const apps = cachedInstalledApplications();
+    const wanted = appName.toLowerCase();
+    const byName = apps.find((entry) => entry.name.toLowerCase() === wanted);
+    if (byName) return byName;
+    return apps.find((entry) => {
+      const executable = windowsExecutablePath(entry.path);
+      return executable !== null && path.basename(executable, '.exe').toLowerCase() === wanted;
+    }) ?? null;
+  }
+  return null;
+}
+
+/** `listInstalledApplications` walks Start Menu shortcuts and program folders
+    synchronously — cheap once, not per lookup. `restartConnectedApps` resolves
+    a name per profile in a loop, so the scan is done once per run (matching
+    the icon list's lifetime in `installedAppsPromise`). */
+let installedApplicationsCache: AppLaunchTarget[] | null = null;
+function cachedInstalledApplications(): AppLaunchTarget[] {
+  if (installedApplicationsCache === null) {
+    const listed = listInstalledApplications();
+    // A failed scan stays uncached so a later call can retry.
+    if (!listed.ok) return [];
+    installedApplicationsCache = listed.apps;
+  }
+  return installedApplicationsCache;
 }
 
 /** Null for terminal-only tools, which have nothing to restart. */
 function restartTargetForProfile(profileName: string): AppLaunchTarget | null {
   const launchTarget = effectiveLaunchTarget(profileName);
   if (launchTarget) return launchTarget;
-  // Name-only targets are addressed through `open -a` / AppleScript.
-  if (process.platform !== 'darwin') return null;
   const appName = allSystemProxyProfiles().find((item) => item.name === profileName)?.restartAppName;
-  return appName ? { name: appName, path: '' } : null;
+  return appName ? namedAppTarget(appName) : null;
 }
 
 /** Restart the apps we just connected that were already running — a live app
     keeps the config and proxy settings it read at launch, so without this the
-    user connects and nothing routes until they restart it themselves. */
+    user connects and nothing routes until they restart it themselves.
+ *
+ * An app we can't resolve to a launch target is the same failure wearing a
+ * disguise: it keeps its pre-connect settings and nothing routes, but silently.
+ * Say so in the log rather than skipping, so "connected but nothing is
+ * intercepted" is traceable to the app that was never restarted. */
 async function restartConnectedApps(profileNames: string[]): Promise<void> {
   for (const profileName of profileNames) {
+    const profile = allSystemProxyProfiles().find((item) => item.name === profileName);
+    const label = profile?.label ?? profileName;
     const target = restartTargetForProfile(profileName);
-    if (!target || !isAppTargetRunning(target)) continue;
-    const label = allSystemProxyProfiles().find((item) => item.name === profileName)?.label ?? profileName;
+    if (!target) {
+      // Only worth flagging for apps that have something to restart at all —
+      // terminal-only tools legitimately have no target.
+      if (profile?.restartAppName) {
+        appendLog(
+          'system-proxy',
+          'system',
+          `${label}: could not locate ${profile.restartAppName} to restart it — `
+          + 'quit and reopen it so it picks up the connection, or set its path in the app settings',
+        );
+      }
+      continue;
+    }
+    if (!isAppTargetRunning(target)) continue;
     const result = await restartAppTarget(target);
     appendLog(
       'system-proxy',
@@ -789,6 +854,29 @@ function getEnabledNetworkServices(): string[] {
   } catch {
     return ['Wi-Fi'];
   }
+}
+
+/**
+ * Whether the Windows registry proxy actually points at our System Proxy —
+ * the counterpart of `getSystemProxyServices` on Windows, and what decides
+ * whether anything gets intercepted there. Read back rather than assumed: the
+ * values can be overwritten after we set them, and that failure is otherwise
+ * silent (traffic goes direct while the app still looks connected).
+ */
+function isWindowsSystemProxyConfigured(port = DEFAULT_SYSTEM_PROXY_PORT): boolean {
+  if (process.platform !== 'win32') return false;
+  const read = (name: string): string | null => {
+    try {
+      const out = execFileSync('reg', [
+        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v', name,
+      ], { encoding: 'utf8' });
+      return parseRegQueryValue(out, name);
+    } catch {
+      return null;
+    }
+  };
+  return isWindowsProxyPointingAt(read('ProxyEnable'), read('ProxyServer'), port);
 }
 
 function getSystemProxyServices(port = DEFAULT_SYSTEM_PROXY_PORT): string[] {
@@ -2137,10 +2225,21 @@ ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
       await shell.openExternal(profile.openUrl);
       return { ok: true, fallback: profile.openUrl };
     }
-    if (profile.restartAppName && process.platform === 'darwin') {
+    if (profile.restartAppName) {
+      const target = namedAppTarget(profile.restartAppName);
+      if (!target) {
+        return { ok: false, error: `Could not find ${profile.restartAppName} on this device.` };
+      }
       try {
-        execFileSync('open', ['-a', profile.restartAppName], { stdio: 'pipe' });
-        await waitForAppTarget({ name: profile.restartAppName, path: '' });
+        // A resolved path launches the same way everywhere; macOS name-only
+        // targets still go through `open -a`.
+        if (target.path) {
+          const result = launchAppTarget(target);
+          if (!result.ok) return result;
+        } else {
+          execFileSync('open', ['-a', target.name], { stdio: 'pipe' });
+        }
+        await waitForAppTarget(target);
         return { ok: true };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3906,7 +4005,9 @@ ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number })
   const targetApp = restartTargetProcessInfo();
   const proxyConfigured = process.platform === 'darwin'
     ? getSystemProxyServices(port).length > 0
-    : true;
+    : process.platform === 'win32'
+      ? isWindowsSystemProxyConfigured(port)
+      : true;
   const proxyReachable = await canConnectToLocalPort(port);
   const needsAppRestartByStartTime = Boolean(
     targetApp.running
@@ -3938,7 +4039,9 @@ ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number })
       appRunning: targetApp.running,
       needsAppRestart: needsAppRestartByStartTime,
       appPid: targetApp.pid,
-      error: 'macOS HTTPS proxy is not pointing at System Proxy.',
+      error: process.platform === 'win32'
+        ? 'The Windows proxy settings are not pointing at System Proxy — another tool (VPN, corporate policy) may have overwritten them.'
+        : 'macOS HTTPS proxy is not pointing at System Proxy.',
     };
   }
 
@@ -3968,7 +4071,7 @@ ipcMain.handle('system-proxy:restart-app', async (_event, opts: { app: string })
   if (!appName) {
     return { ok: false, error: `No restart target configured for ${profileName || 'this profile'}.` };
   }
-  return restartMacApp(appName);
+  return restartNamedApp(appName);
 });
 
 ipcMain.handle('system-proxy:ca-exists', () => {
