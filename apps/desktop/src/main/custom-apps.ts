@@ -21,7 +21,6 @@ const FAVICON_TIMEOUT_MS = 4_000;
 export const CUSTOM_APP_DEFAULT_PATH_PREFIXES: readonly string[] = [
   '/v1/responses',
   '/v1/chat/completions',
-  '/v1/completions',
   '/v1/messages',
 ];
 
