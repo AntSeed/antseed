@@ -85,3 +85,33 @@ test('resolveLatestPeerBinding returns the latest non-empty peer binding', () =>
 
   assert.deepEqual(binding, { peerId: 'peer-new', peerLabel: 'New peer' });
 });
+
+test('resolveLatestPeerBinding surfaces the recorded route mode', () => {
+  const binding = resolveLatestPeerBinding([
+    { type: 'custom', customType: ANTSEED_PEER_CUSTOM_TYPE, data: { peerId: 'peer-1', routeMode: 'pinned' } },
+  ]);
+  assert.deepEqual(binding, { peerId: 'peer-1', routeMode: 'pinned' });
+});
+
+test('a legacy binding without a route mode resolves to undefined', () => {
+  // Threads predate route-mode tracking; callers treat these as auto.
+  const binding = resolveLatestPeerBinding([
+    { type: 'custom', customType: ANTSEED_PEER_CUSTOM_TYPE, data: { peerId: 'peer-1' } },
+  ]);
+  assert.deepEqual(binding, { peerId: 'peer-1' });
+});
+
+test('an unrecognized route mode is ignored rather than trusted', () => {
+  const binding = resolveLatestPeerBinding([
+    { type: 'custom', customType: ANTSEED_PEER_CUSTOM_TYPE, data: { peerId: 'peer-1', routeMode: 'whatever' } },
+  ]);
+  assert.deepEqual(binding, { peerId: 'peer-1' });
+});
+
+test('the newest binding wins when the route mode changes', () => {
+  const binding = resolveLatestPeerBinding([
+    { type: 'custom', customType: ANTSEED_PEER_CUSTOM_TYPE, data: { peerId: 'peer-1', routeMode: 'auto' } },
+    { type: 'custom', customType: ANTSEED_PEER_CUSTOM_TYPE, data: { peerId: 'peer-2', routeMode: 'pinned' } },
+  ]);
+  assert.deepEqual(binding, { peerId: 'peer-2', routeMode: 'pinned' });
+});

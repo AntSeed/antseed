@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, scoreVprRoute } from './vpr-routing.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRowCoolingDown, scoreVprRoute } from './vpr-routing.js';
 import { projectRowsToVprModelCatalog } from './vpr-model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -55,6 +55,9 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     networkRequests: null,
     networkInputTokens: null,
     networkOutputTokens: null,
+    peerCooldownUntil: null,
+    peerFailureStreak: 0,
+    peerLastFailureReason: null,
     selectionValue: `${provider}\u0001${serviceId}\u0001${peerId}`,
     ...overrides,
   };
@@ -210,4 +213,97 @@ test('blocking the only seller of a model removes it from the catalog', () => {
   const prefs = { ...preferences, blockedPeerIds: ['solo'] };
 
   assert.deepEqual(projectRowsToVprModelCatalog(filterRoutableVprRoutes(rows, prefs)), []);
+});
+
+const NOW = 1_700_000_000_000;
+
+test('a cooling-down peer loses even when it is cheaper and more trusted', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({
+        peerId: 'cooling',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.1,
+        onChainTrustScore: 99,
+        peerCooldownUntil: NOW + 30_000,
+      }),
+      discoverRow({ peerId: 'healthy', inputUsdPerMillion: 5, outputUsdPerMillion: 5, onChainTrustScore: 60 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'healthy');
+});
+
+test('a cooling-down priced peer loses to a healthy unknown-price peer', () => {
+  // Guards the compare-order fix: the known-price tier used to be evaluated
+  // before the score, so no cooldown penalty could ever outrank it.
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'cooling', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
+      discoverRow({ peerId: 'unpriced', inputUsdPerMillion: null, outputUsdPerMillion: null }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'unpriced');
+});
+
+test('routing still returns a peer when every candidate is cooling down', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'a', inputUsdPerMillion: 5, outputUsdPerMillion: 5, peerCooldownUntil: NOW + 30_000 }),
+      discoverRow({ peerId: 'b', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  // Cooldown is a penalty, never a filter — the cheapest of a bad set wins.
+  assert.equal(best?.peerId, 'b');
+});
+
+test('an expired or absent cooldown is ignored', () => {
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW - 1 }), NOW), false);
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: null }), NOW), false);
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 1_000 }), NOW), true);
+});
+
+test('an impossibly distant cooldown is treated as no cooldown', () => {
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 86_400_000 }), NOW), false);
+});
+
+test('failure streak breaks a tie between otherwise identical peers', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'flaky', peerFailureStreak: 2 }),
+      discoverRow({ peerId: 'clean', peerFailureStreak: 0 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'clean');
+});
+
+test('the blocklist still wins over a healthy peer', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'blocked' }),
+      discoverRow({ peerId: 'cooling', peerCooldownUntil: NOW + 30_000 }),
+    ],
+    { ...preferences, blockedPeerIds: ['blocked'] },
+    NOW,
+  );
+
+  // Blocked is absolute; cooling down is only a preference.
+  assert.equal(best?.peerId, 'cooling');
+});
+
+test('scoreVprRoute explains why a cooling-down peer was deprioritized', () => {
+  const scored = scoreVprRoute(discoverRow({ peerCooldownUntil: NOW + 30_000 }), preferences, NOW);
+  assert.ok(scored.reasons.includes('peer cooling down'));
+  assert.ok(scored.score < 0);
 });

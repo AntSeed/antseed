@@ -206,6 +206,12 @@ export type DiscoverRow = {
   networkOutputTokens: string | null;
 
   // Derived — encoded selection for existing chat open path
+  // Peer health (buyer-proxy cooldown). A peer that recently stopped
+  // responding is deprioritized by auto routing until its cooldown lapses.
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
+
   selectionValue: string;
 };
 
@@ -320,6 +326,12 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
+  /**
+   * Non-error routing notice, e.g. "peer X isn't responding, retrying on Y".
+   * Kept separate from `chatError` because a successful failover is not a
+   * failure and must not be rendered as one.
+   */
+  chatRoutingNotice: string | null;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -470,6 +482,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
+    chatRoutingNotice: null,
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',

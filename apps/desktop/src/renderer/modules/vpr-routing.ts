@@ -12,6 +12,25 @@ export type VprScoredRoute = {
 // routes and dodge the max-input-price preference entirely.
 const UNKNOWN_PRICE_PENALTY = 10;
 
+// A peer the buyer proxy has put in cooldown recently stopped responding.
+// Deprioritized, never excluded: the penalty must lose to any healthy peer, but
+// when every peer is cooling down they all take it equally and the best of a bad
+// set still wins — which is why routing can never deadlock.
+const COOLING_DOWN_PENALTY = 1000;
+// Failures that have not yet reached the cooldown threshold still break ties
+// against an otherwise equivalent healthy peer.
+const FAILURE_STREAK_PENALTY = 3;
+
+/** Sanity bound mirroring the proxy's cooldown ceiling. */
+const MAX_COOLDOWN_MS = 8 * 60_000;
+
+export function isRowCoolingDown(row: DiscoverRow, now: number = Date.now()): boolean {
+  const until = row.peerCooldownUntil;
+  if (until === null || until <= now) return false;
+  // A corrupt or clock-skewed future value must not strand a peer forever.
+  return until - now <= MAX_COOLDOWN_MS;
+}
+
 function hasKnownPrice(row: DiscoverRow): boolean {
   return totalRowPrice(row) !== null;
 }
@@ -20,7 +39,15 @@ function comparableTotalPrice(row: DiscoverRow): number {
   return totalRowPrice(row) ?? Number.POSITIVE_INFINITY;
 }
 
-function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute): number {
+function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute, now: number): number {
+  // Health outranks price certainty. Without this tier a cooling-down priced
+  // route would still beat a healthy unknown-price one, because the
+  // known-price check below is evaluated before `score` — no penalty, however
+  // large, could overcome it.
+  const aCooling = isRowCoolingDown(a.row, now);
+  const bCooling = isRowCoolingDown(b.row, now);
+  if (aCooling !== bCooling) return aCooling ? 1 : -1;
+
   const aKnown = hasKnownPrice(a.row);
   const bKnown = hasKnownPrice(b.row);
   if (aKnown !== bKnown) return aKnown ? -1 : 1;
@@ -29,9 +56,21 @@ function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute): number {
     || a.row.peerId.localeCompare(b.row.peerId);
 }
 
-export function scoreVprRoute(row: DiscoverRow, preferences: VprRoutingPreferences): VprScoredRoute {
+export function scoreVprRoute(
+  row: DiscoverRow,
+  preferences: VprRoutingPreferences,
+  now: number = Date.now(),
+): VprScoredRoute {
   const reasons: string[] = [];
   let score = 100;
+
+  if (isRowCoolingDown(row, now)) {
+    score -= COOLING_DOWN_PENALTY;
+    reasons.push('peer cooling down');
+  } else if (row.peerFailureStreak > 0) {
+    score -= FAILURE_STREAK_PENALTY * row.peerFailureStreak;
+    reasons.push('recent peer failures');
+  }
 
   if (preferences.preferFreePeers && row.inputUsdPerMillion === 0 && row.outputUsdPerMillion === 0) {
     score += 25;
@@ -67,6 +106,9 @@ export function scoreVprRoute(row: DiscoverRow, preferences: VprRoutingPreferenc
  *
  * The blocklist is absolute. The allowlist is exclusive while it holds any
  * entry — an empty allowlist means "no restriction", not "nothing allowed".
+ *
+ * Deliberately knows nothing about cooldowns: those are a scoring penalty, not
+ * a filter, so that a network where every peer is cooling down still routes.
  */
 export function isPeerRoutable(peerId: string, preferences: VprRoutingPreferences): boolean {
   if (preferences.blockedPeerIds.includes(peerId)) return false;
@@ -81,10 +123,14 @@ export function filterRoutableVprRoutes(
   return rows.filter((row) => isPeerRoutable(row.peerId, preferences));
 }
 
-export function chooseBestVprRoute(rows: DiscoverRow[], preferences: VprRoutingPreferences): DiscoverRow | null {
+export function chooseBestVprRoute(
+  rows: DiscoverRow[],
+  preferences: VprRoutingPreferences,
+  now: number = Date.now(),
+): DiscoverRow | null {
   const best = filterRoutableVprRoutes(rows, preferences)
-    .map((row) => scoreVprRoute(row, preferences))
-    .sort(compareScoredRoutes)[0];
+    .map((row) => scoreVprRoute(row, preferences, now))
+    .sort((a, b) => compareScoredRoutes(a, b, now))[0];
 
   return best?.row ?? null;
 }

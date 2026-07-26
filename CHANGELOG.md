@@ -33,6 +33,9 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added a buyer-side metadata v2 service attribution opt-out for CLI and Desktop. Buyers can disable per-service attribution while preserving aggregate usage metadata in paid SpendingAuth and free-usage records.
 - Added `antseed buyer emissions info` and `antseed buyer emissions claim` for buyer-side ANTS emissions.
 - Added generic API request, response, and streaming adapters that transform between Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses through internal canonical models.
+- Added buyer peer health cooldowns, so a seller that stops responding is temporarily deprioritized by automatic routing instead of being selected again on every request. Cooldowns escalate from 30 seconds to a maximum of 8 minutes, are cleared by any response from the peer, and are advisory only — a pinned or explicitly named peer is always still dispatched to. Exposed over the buyer control plane as `GET /_antseed/peer-health` and `POST /_antseed/peer-health/clear`.
+- Added automatic peer failover for Desktop chats using automatic routing: when the bound peer stops responding, the retry moves to the next-best healthy peer and the chat reports which peer it switched to. Chats pinned to a peer by hand always keep that peer.
+- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so buyer-side problems such as empty deposits, an unreachable chain RPC, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
 
 ### Removed
 
@@ -58,6 +61,8 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed buyer proxy protocol transforms so requests routed to OpenAI Responses always set upstream `stream: true` without forcing non-stream clients to receive SSE.
 - Fixed API adapter cache-token accounting so Anthropic cache reads and OpenAI cached token details stay separate from fresh input tokens across response and streaming transforms.
 - Fixed API adapter request transforms to propagate a per-session `prompt_cache_key` (derived from Anthropic `metadata.user_id`) to OpenAI Responses upstreams, improving prompt cache hit rates for cross-protocol buyers.
+- Fixed buyer payment negotiation so an unreachable chain RPC is reported immediately as a buyer-side `chain_rpc_unavailable` error. Previously the failed deposit-balance read was swallowed, negotiation continued without it, and the request stalled for the full 30-second lock-confirmation timeout before failing with an error that blamed the seller.
+- Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
 - Fixed buyer reserve replay after channel top-ups so reconnecting buyers resend the original first-reserve amount instead of an expanded top-up ceiling that can exceed the on-chain first-sign cap.
 - Fixed seller payment handling so temporary delegated-account transaction queue backpressure defers top-ups and retries closes instead of permanently rejecting active buyer sessions.
 

@@ -16,6 +16,7 @@ import {
   ANTSEED_PEER_CUSTOM_TYPE,
   normalizeChatPeerSelectionRequest,
   resolveLatestPeerBinding,
+  type ChatRouteMode,
   type ChatPeerSelectionRequest,
 } from './chat-peer-selection.js';
 import {
@@ -58,6 +59,7 @@ import {
   requiresToolApproval,
 } from './chat-tool-policy.js';
 import { DEFAULT_BUYER_STATE_PATH, LOCALHOST, LOCALHOST_URL } from './constants.js';
+import { readPeerHealth, type RawPeerHealth } from './peer-cache.js';
 import { PROXY_PROVIDER_ID, normalizeProviderId, sanitizeProviderHint } from './chat-provider-hint.js';
 import { asErrorMessage } from './utils.js';
 import {
@@ -160,6 +162,8 @@ type AiConversation = {
   provider?: string;
   peerId?: string;
   peerLabel?: string;
+  /** Undefined on threads created before route modes were recorded. */
+  routeMode?: ChatRouteMode;
   messages: AiChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -174,6 +178,7 @@ type AiConversationSummary = {
   provider?: string;
   peerId?: string;
   peerLabel?: string;
+  routeMode?: ChatRouteMode;
   messageCount: number;
   createdAt: number;
   updatedAt: number;
@@ -299,6 +304,14 @@ type DiscoverRowEntry = {
   networkRequests: string | null;
   networkInputTokens: string | null;
   networkOutputTokens: string | null;
+  /**
+   * Buyer-proxy peer health. Auto routing deprioritizes a peer while it is
+   * cooling down, so a seller that stopped responding stops being chosen
+   * without being permanently blocked.
+   */
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
   selectionValue: string;
 };
 
@@ -643,6 +656,7 @@ async function buildDiscoverRows(
   }>,
   buyerStateDiscoveredPeers: Record<string, BuyerStateDiscoveredPeer>,
   networkStats: Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>,
+  peerHealth: Record<string, RawPeerHealth> = {},
 ): Promise<DiscoverRowEntry[]> {
   const rows: DiscoverRowEntry[] = [];
   for (const entry of catalog) {
@@ -675,6 +689,7 @@ async function buildDiscoverRows(
     const networkRequests = netForAgent ? netForAgent.requests.toString() : null;
     const networkInputTokens = netForAgent ? netForAgent.inputTokens.toString() : null;
     const networkOutputTokens = netForAgent ? netForAgent.outputTokens.toString() : null;
+    const health = readPeerHealth(peerHealth[peerId], Date.now());
 
     rows.push({
       rowKey: `${peerId}:${entry.id}`,
@@ -714,6 +729,9 @@ async function buildDiscoverRows(
       networkRequests,
       networkInputTokens,
       networkOutputTokens,
+      peerCooldownUntil: health.cooldownUntil,
+      peerFailureStreak: health.failureStreak,
+      peerLastFailureReason: health.lastFailureReason,
       selectionValue: `${entry.provider}\u0001${entry.id}\u0001${peerId}`,
     });
   }
@@ -1221,7 +1239,7 @@ function extractToolCallFromPartial(
   };
 }
 
-type AntseedPeerData = { peerId: string; peerLabel?: string };
+type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
 function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
   return resolveLatestPeerBinding(
@@ -1302,6 +1320,7 @@ class PiConversationStore {
       usage,
       ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
       ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+      ...(peerData?.routeMode ? { routeMode: peerData.routeMode } : {}),
       ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }
@@ -1348,6 +1367,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.routeMode ? { routeMode: conversation.routeMode } : {}),
         ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
@@ -1371,6 +1391,7 @@ class PiConversationStore {
         totalEstimatedCostUsd: deriveCost(conversation.messages),
         ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
         ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+        ...(conversation.routeMode ? { routeMode: conversation.routeMode } : {}),
         ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
       });
     }
@@ -1390,7 +1411,13 @@ class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(service?: string, provider?: string, peerId?: string, peerLabel?: string): Promise<AiConversation> {
+  async create(
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    peerLabel?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation> {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     // Persist '' (not the local proxy sentinel) when no real upstream
@@ -1404,6 +1431,7 @@ class PiConversationStore {
       manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {
         peerId: trimmedPeerId,
         ...(peerLabel ? { peerLabel } : {}),
+        ...(routeMode ? { routeMode } : {}),
       } satisfies AntseedPeerData);
     }
     const sessionPath = manager.getSessionFile();
@@ -1416,10 +1444,21 @@ class PiConversationStore {
     return conversation;
   }
 
-  async setPeer(id: string, peerId: string, peerLabel?: string): Promise<void> {
+  /**
+   * Bind a conversation to a peer.
+   *
+   * Omitting `routeMode` carries the existing one forward. Peer bindings are
+   * also written from non-user paths (the peer observed in response metadata),
+   * and those must not silently downgrade a thread the user explicitly pinned.
+   */
+  async setPeer(id: string, peerId: string, peerLabel?: string, routeMode?: ChatRouteMode): Promise<void> {
     const manager = await this.openSessionManager(id);
     if (!manager) return;
-    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
+    const effectiveMode = routeMode ?? extractPeerFromEntries(manager)?.routeMode;
+    manager.appendCustomEntry(
+      ANTSEED_PEER_CUSTOM_TYPE,
+      { peerId, peerLabel, ...(effectiveMode ? { routeMode: effectiveMode } : {}) } satisfies AntseedPeerData,
+    );
   }
 
   /** Persist an in-conversation model switch. Without this the rebinding only
@@ -2722,9 +2761,13 @@ export function registerPiChatHandlers({
       // `discoverChatServiceCatalog` read for why these must not be
       // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
+      let peerHealthMap: Record<string, RawPeerHealth> = {};
       try {
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.peerHealth && typeof parsed.peerHealth === 'object' && !Array.isArray(parsed.peerHealth)) {
+          peerHealthMap = parsed.peerHealth as Record<string, RawPeerHealth>;
+        }
         const arr = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
         const enrichmentTasks: Array<Promise<void>> = [];
         for (const p of arr) {
@@ -2783,7 +2826,7 @@ export function registerPiChatHandlers({
         }
       })();
 
-      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats))
+      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats, peerHealthMap))
         .filter((row) => isPriceAllowedByBuyerMax(
           row.inputUsdPerMillion,
           row.outputUsdPerMillion,
@@ -2858,12 +2901,21 @@ export function registerPiChatHandlers({
     return { ok: true, data: enriched };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
+  ipcMain.handle('chat:ai-create-conversation', async (
+    _event,
+    service: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ) => {
     const trimmedPeerId = peerId?.trim() ?? '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
       : undefined;
-    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel);
+    const conversation = await store.create(
+      service, provider, trimmedPeerId || undefined, peerLabel,
+      routeMode === 'auto' || routeMode === 'pinned' ? routeMode : undefined,
+    );
     if (trimmedPeerId) {
       preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
     } else {
@@ -2975,7 +3027,9 @@ export function registerPiChatHandlers({
       if (peerId) {
         preferredPeerByConversationId.set(conversationId, peerId);
         const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel);
+        // Choosing a peer by hand pins the thread to it: auto routing must not
+        // move the user off a peer they picked.
+        await store.setPeer(conversationId, peerId, peerLabel, 'pinned');
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);

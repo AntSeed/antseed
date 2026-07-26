@@ -167,6 +167,30 @@ function describeHttpStatus(statusCode: number): string {
   return COMMON_HTTP_STATUS_TEXT[statusCode] ?? 'HTTP Error';
 }
 
+/**
+ * Buyer-side faults the proxy reports as a structured 503 rather than a
+ * peer-blaming 502. Matched on the codes the proxy and negotiator emit.
+ */
+const BUYER_FAULT_PATTERN =
+  /buyer_request_failed|buyer-deposits-insufficient|buyer-session-state|buyer-transport-closed|buyer-budget-too-low|buyer-reserve-misconfigured|chain[-_]rpc[-_]unavailable|payment_negotiation_failed|deposits_not_configured|node-not-started|node-stopped/i;
+
+function isBuyerFaultBody(normalized: string): boolean {
+  return BUYER_FAULT_PATTERN.test(normalized);
+}
+
+function buildBuyerFaultMessage(normalized: string, statusCode: number): string {
+  if (/chain[-_]rpc[-_]unavailable/i.test(normalized)) {
+    return 'Could not reach the chain RPC to check your deposits. '
+      + 'Check your network and the RPC URL in chain settings, then retry.';
+  }
+  if (/buyer-deposits-insufficient|deposits_not_configured/i.test(normalized)) {
+    return 'Your deposit balance is too low to open a payment channel. '
+      + 'Top up your deposits and retry.';
+  }
+  return `The request failed on this device (HTTP ${String(statusCode)}). `
+    + 'This is a buyer-side problem, not the peer — check your deposits, network and chain settings.';
+}
+
 function buildHttpErrorMessage(statusCode: number, retryable: boolean): string {
   const statusText = describeHttpStatus(statusCode);
   return retryable
@@ -224,12 +248,19 @@ export function classifyChatStreamFailure({
   }
 
   if (typeof statusCode === 'number') {
-    const retryable = statusCode >= 500 || statusCode === 429;
+    // 503 from the buyer proxy means the fault is on our side — empty deposits,
+    // an unreachable chain RPC, bad config. Retrying, or worse failing over to
+    // another peer, would walk the whole peer list while hiding the one thing
+    // the user actually needs to fix.
+    const buyerFault = statusCode === 503 && isBuyerFaultBody(normalized);
+    const retryable = !buyerFault && (statusCode >= 500 || statusCode === 429);
     return {
       kind: 'http_error',
-      source: 'upstream',
+      source: buyerFault ? 'transport' : 'upstream',
       retryable,
-      message: buildHttpErrorMessage(statusCode, retryable),
+      message: buyerFault
+        ? buildBuyerFaultMessage(normalized, statusCode)
+        : buildHttpErrorMessage(statusCode, retryable),
       statusCode,
       ...(errorCode ? { errorCode } : {}),
     };

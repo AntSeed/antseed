@@ -102,6 +102,9 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     networkRequests: null,
     networkInputTokens: null,
     networkOutputTokens: null,
+    peerCooldownUntil: null,
+    peerFailureStreak: 0,
+    peerLastFailureReason: null,
     selectionValue: `${provider}${serviceId}${peerId}`,
     ...overrides,
   };
@@ -134,5 +137,63 @@ test('pinned mode still requires the exact peer', () => {
   assert.equal(
     resolveVprChatOption([other], rows, { ...autoSelection, mode: 'pinned-peer', peerId: 'peer-1' }, preferences),
     null,
+  );
+});
+
+const NOW = 1_700_000_000_000;
+
+test('auto mode skips an excluded peer', () => {
+  const a = option({ peerId: 'peer-a', value: 'openaigpt-testpeer-a' });
+  const b = option({ peerId: 'peer-b', value: 'openaigpt-testpeer-b' });
+  const rows = [
+    discoverRow({ peerId: 'peer-a', inputUsdPerMillion: 1, outputUsdPerMillion: 1 }),
+    discoverRow({ peerId: 'peer-b', inputUsdPerMillion: 5, outputUsdPerMillion: 5 }),
+  ];
+
+  // peer-a is cheaper and would normally win; excluding it moves us to peer-b.
+  assert.equal(
+    resolveVprChatOption([a, b], rows, autoSelection, preferences, { excludePeerIds: ['peer-a'], now: NOW }),
+    b,
+  );
+});
+
+test('auto mode falls back to the full candidate set when exclusion empties it', () => {
+  const a = option({ peerId: 'peer-a', value: 'openaigpt-testpeer-a' });
+  const rows = [discoverRow({ peerId: 'peer-a' })];
+
+  // Better to retry the peer that just failed than to refuse to dispatch.
+  assert.equal(
+    resolveVprChatOption([a], rows, autoSelection, preferences, { excludePeerIds: ['peer-a'], now: NOW }),
+    a,
+  );
+});
+
+test('auto mode prefers a healthy peer over a cooling-down one', () => {
+  const cooling = option({ peerId: 'peer-cooling', value: 'openaigpt-testpeer-cooling' });
+  const healthy = option({ peerId: 'peer-healthy', value: 'openaigpt-testpeer-healthy' });
+  const rows = [
+    discoverRow({ peerId: 'peer-cooling', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
+    discoverRow({ peerId: 'peer-healthy', inputUsdPerMillion: 9, outputUsdPerMillion: 9 }),
+  ];
+
+  assert.equal(
+    resolveVprChatOption([cooling, healthy], rows, autoSelection, preferences, { now: NOW }),
+    healthy,
+  );
+});
+
+test('pinned mode ignores both exclusions and cooldowns', () => {
+  const pinned = option({ peerId: 'peer-1' });
+  const rows = [discoverRow({ peerId: 'peer-1', peerCooldownUntil: NOW + 30_000 })];
+
+  // The user chose this peer. Failover must never quietly move them off it.
+  assert.equal(
+    resolveVprChatOption(
+      [pinned], rows,
+      { ...autoSelection, mode: 'pinned-peer', peerId: 'peer-1' },
+      preferences,
+      { excludePeerIds: ['peer-1'], now: NOW },
+    ),
+    pinned,
   );
 });
