@@ -360,7 +360,9 @@ export function FloatApp() {
               }`}
               aria-hidden="true"
             />
-            {!runtimeOn ? 'Not connected' : data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
+            <span className={styles.usageLabel}>
+              {!runtimeOn ? 'Not connected' : data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
+            </span>
           </span>
         </span>
       </button>
