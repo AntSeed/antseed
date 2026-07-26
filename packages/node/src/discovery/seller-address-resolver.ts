@@ -2,6 +2,7 @@ import type { PeerId } from "../types/peer.js";
 import { peerIdToAddress } from "../types/peer.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { debugWarn } from "../utils/debug.js";
+import type { AntseedErrorCode, FaultAttribution } from "../errors.js";
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_CACHE_MAX_ENTRIES = 1024;
@@ -18,10 +19,41 @@ export type IsOperatorChecker = (
   peerAddress: string,
 ) => Promise<boolean>;
 
+/**
+ * Authorization could not be established for a peer.
+ *
+ * The two ways that happens point in opposite directions: the chain said the
+ * peer is not an operator (the peer's problem), or we could not reach the chain
+ * to ask (ours). Callers that penalize peers must be able to tell them apart, so
+ * the verdict travels on the error rather than in its message.
+ */
 export class SellerAuthorizationError extends Error {
-  constructor(reason: string) {
+  readonly attribution: FaultAttribution;
+  readonly code: AntseedErrorCode;
+
+  constructor(reason: string, attribution: FaultAttribution, code: AntseedErrorCode) {
     super(`seller authorization failed: ${reason}`);
     this.name = "SellerAuthorizationError";
+    this.attribution = attribution;
+    this.code = code;
+  }
+
+  /** The chain answered, and the answer was no. */
+  static peerNotAuthorized(): SellerAuthorizationError {
+    return new SellerAuthorizationError(
+      "peer is not an authorized operator",
+      "peer",
+      "peer-not-authorized",
+    );
+  }
+
+  /** We never got an answer — our RPC, not their authorization. */
+  static rpcUnavailable(): SellerAuthorizationError {
+    return new SellerAuthorizationError(
+      "isOperator RPC failed",
+      "buyer",
+      "chain-rpc-unavailable",
+    );
   }
 }
 
@@ -93,7 +125,7 @@ export class SellerAddressResolver {
       debugWarn(
         `[Resolver] peer ${peerId.slice(0, 12)}... is NOT an operator of ${sellerContract}`,
       );
-      throw new SellerAuthorizationError("peer is not an authorized operator");
+      throw SellerAuthorizationError.peerNotAuthorized();
     }
 
     this._pruneCache();
@@ -133,7 +165,7 @@ export class SellerAddressResolver {
         lastErr instanceof Error ? lastErr.message : lastErr
       }`,
     );
-    throw new SellerAuthorizationError("isOperator RPC failed");
+    throw SellerAuthorizationError.rpcUnavailable();
   }
 
   private _pruneCache(): void {

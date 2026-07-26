@@ -26,6 +26,7 @@ import type { PeerMetadata } from '../discovery/peer-metadata.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
 import { advanceUsageMetadata, CountedRequestTracker, RequestServiceTracker } from './channel-usage-accounting.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
+import { buyerFault, faultCodeOf } from '../errors.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -276,7 +277,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -310,7 +311,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -359,7 +360,7 @@ export class BuyerPaymentManager {
     const session = this.getActiveSession(sellerPeerId);
     const salt = this._reserveSalt.get(sellerPeerId);
     if (!session || !salt) {
-      throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     // Force a fresh AuthAck after replaying the reserve path.
@@ -768,7 +769,7 @@ export class BuyerPaymentManager {
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`, 'buyer-session-state');
     }
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
@@ -1131,12 +1132,15 @@ export class BuyerPaymentManager {
     try {
       const balance = await this.getBalance();
       if (balance.available < additionalReserve) {
-        throw new Error(
+        throw buyerFault(
           `Insufficient buyer deposits for reserve top-up: available=${balance.available} required=${additionalReserve}`,
+          'buyer-deposits-insufficient',
         );
       }
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith('Insufficient buyer deposits')) {
+      // Re-throw our own insufficient-deposits verdict; only a failed balance
+      // read (RPC trouble) should fall through to the warn-and-continue below.
+      if (faultCodeOf(err) === 'buyer-deposits-insufficient') {
         throw err;
       }
       debugWarn(

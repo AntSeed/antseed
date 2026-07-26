@@ -213,6 +213,29 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
+    it('reports an unreachable chain RPC as a buyer fault instead of negotiating blind', async () => {
+      // The balance read is our own RPC. Swallowing this failure used to let
+      // negotiation proceed, stall for the 30s lock timeout, and surface as a
+      // 502 that blamed the seller for the buyer's dead RPC.
+      depositsClient = {
+        getBuyerBalance: vi.fn().mockRejectedValue(new Error('could not detect network')),
+      } as unknown as DepositsClient;
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('return');
+
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
+        error: 'payment_negotiation_failed',
+        reason: 'chain_rpc_unavailable',
+      });
+      // Never reached the peer, so nothing about the peer was exercised.
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+    });
+
     it('requires a fresh AuthAck when a seller with no local session asks for payment again', async () => {
       // First, lock the peer through successful negotiation
       await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);

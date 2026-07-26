@@ -19,6 +19,7 @@ import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.
 import { verifyResponseAuth } from "./verification/response-auth.js";
 import { tryParseJsonObject } from "./utils/json-codec.js";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "./types/protocol.js";
+import { buyerFault, peerFault } from "./errors.js";
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -81,7 +82,7 @@ export class BuyerRequestHandler {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!req.requestId || typeof req.requestId !== "string") {
-      throw new Error("requestId must be a non-empty string");
+      throw buyerFault("requestId must be a non-empty string", "invalid-request");
     }
 
     const opName = callbacks ? "sendRequestStream" : "sendRequest";
@@ -281,7 +282,7 @@ export class BuyerRequestHandler {
               const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
               if (nextBufferedBytes > maxStreamBufferBytes) {
                 mux.cancelProxyRequest(req.requestId);
-                fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
+                fail(buyerFault(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`, "buyer-stream-limit"));
                 return;
               }
               streamBufferedBytes = nextBufferedBytes;
@@ -292,7 +293,7 @@ export class BuyerRequestHandler {
           if (!chunk.done) return;
 
           if (!streamStartResponse) {
-            fail(new Error(`Stream ${req.requestId} ended before response start`));
+            fail(peerFault(`Stream ${req.requestId} ended before response start`, "peer-protocol-violation"));
             return;
           }
 
