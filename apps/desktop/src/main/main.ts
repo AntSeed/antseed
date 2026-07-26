@@ -89,6 +89,7 @@ import {
   customAppToCliProfile,
   deriveCustomAppTarget,
   fetchCustomAppSiteMetadata,
+  probeCustomAppModelsEndpoint,
   loadCustomApps,
   saveCustomApps,
   type CustomAppRecord,
@@ -3909,7 +3910,7 @@ ipcMain.handle('system-proxy:set-app-identity', (_event, opts: { name?: string; 
   return { ok: true };
 });
 
-ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: string; app?: unknown }) => {
+ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: string; app?: unknown; force?: boolean }) => {
   try {
     const apiUrl = typeof opts?.apiUrl === 'string' ? opts.apiUrl.trim() : '';
     const target = deriveCustomAppTarget(apiUrl);
@@ -3917,6 +3918,19 @@ ipcMain.handle('system-proxy:add-custom-app', async (_event, opts: { apiUrl?: st
     const conflict = existingProfiles.find((profile) => profile.kind === 'proxy' && profile.domains.includes(target.host));
     if (conflict) {
       return { ok: false, error: `${target.host} is already handled by ${conflict.label}.` };
+    }
+    // Verify the URL points at an AI API before intercepting it. Inconclusive
+    // probes (gateways behind bot challenges, offline hosts) only warn — the
+    // renderer retries with force after the user confirms.
+    if (opts?.force !== true) {
+      const probe = await probeCustomAppModelsEndpoint(apiUrl);
+      if (!probe.ok) {
+        return {
+          ok: false,
+          unverified: true,
+          error: `This does not look like a supported AI API: ${probe.url} ${probe.detail}. You can add it anyway if you are sure.`,
+        };
+      }
     }
     // When the user picked the application that talks to this API, its name
     // and icon identify the entry — no favicon fetch needed. Without a pick,

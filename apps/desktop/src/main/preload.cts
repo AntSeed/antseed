@@ -515,8 +515,8 @@ const api = {
   systemProxyListProfiles() {
     return ipcRenderer.invoke('system-proxy:list-profiles');
   },
-  systemProxyAddCustomApp(opts: { apiUrl: string; app?: { name: string; path: string } | null }): Promise<{ ok: boolean; name?: string; error?: string }> {
-    return ipcRenderer.invoke('system-proxy:add-custom-app', opts) as Promise<{ ok: boolean; name?: string; error?: string }>;
+  systemProxyAddCustomApp(opts: { apiUrl: string; app?: { name: string; path: string } | null; force?: boolean }): Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:add-custom-app', opts) as Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }>;
   },
   systemProxySetAppIdentity(opts: { name: string; toolSlugs: string[] | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:set-app-identity', opts) as Promise<{ ok: boolean; error?: string }>;

@@ -68,6 +68,9 @@ export function VprToolsView() {
   const [addStep, setAddStep] = useState<1 | 2 | 3>(1);
   const [addedName, setAddedName] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  // The endpoint probe could not confirm the URL is an AI API — the error is
+  // shown as a warning and the submit button becomes "Add anyway".
+  const [addUnverified, setAddUnverified] = useState(false);
   const [caInfo, setCaInfo] = useState<{ path: string; exists: boolean } | null>(null);
   const [caTrust, setCaTrust] = useState<'trusted' | 'stale' | 'absent' | 'unknown'>('unknown');
   const [caCopied, setCaCopied] = useState(false);
@@ -385,7 +388,7 @@ export function VprToolsView() {
     setAddPane({ pane: 'main', dir: 'forward' });
   }, []);
 
-  const addCustomApp = useCallback(async () => {
+  const addCustomApp = useCallback(async (force = false) => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyAddCustomApp) return;
     setAddBusy(true);
@@ -394,11 +397,14 @@ export function VprToolsView() {
       const result = await bridge.systemProxyAddCustomApp({
         apiUrl: addUrl,
         app: addApp ? { name: addApp.name, path: addApp.path } : null,
+        force,
       });
       if (!result.ok) {
+        setAddUnverified(result.unverified === true);
         setAddError(result.error ?? 'Unable to add custom app');
         return;
       }
+      setAddUnverified(false);
       setAddedName(result.name ?? null);
       await refresh();
       // Intercepting a custom app's HTTPS needs the local CA trusted, so the
@@ -611,6 +617,7 @@ export function VprToolsView() {
             setAddStep(1);
             setAddedName(null);
             setAddError(null);
+            setAddUnverified(false);
             setMessage(null);
             ensureInstalledApps();
           }}
@@ -974,7 +981,7 @@ export function VprToolsView() {
               className={styles.settingsBody}
               onSubmit={(event) => {
                 event.preventDefault();
-                void addCustomApp();
+                void addCustomApp(addUnverified);
               }}
             >
               <section className={styles.settingSection}>
@@ -993,7 +1000,11 @@ export function VprToolsView() {
                   placeholder="https://api.example.com/v1"
                   autoFocus
                   spellCheck={false}
-                  onChange={(event) => setAddUrl(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setAddUrl(event.currentTarget.value);
+                    // A changed URL invalidates the previous probe result.
+                    setAddUnverified(false);
+                  }}
                   disabled={addBusy}
                 />
               </section>
@@ -1032,7 +1043,7 @@ export function VprToolsView() {
                   Cancel
                 </button>
                 <button type="submit" className={styles.settingPrimary} disabled={addBusy || addUrl.trim().length === 0}>
-                  {addBusy ? 'Adding...' : 'Continue'}
+                  {addBusy ? (addUnverified ? 'Adding...' : 'Checking...') : addUnverified ? 'Add anyway' : 'Continue'}
                 </button>
               </div>
             </form>

@@ -76,6 +76,15 @@ export function deriveCustomAppTarget(apiUrl: string): {
   host: string;
   pathPrefixes: string[];
 } {
+  const url = parseCustomAppUrl(apiUrl);
+  const enteredPath = url.pathname.replace(/\/+$/, '');
+  return {
+    host: url.hostname.toLowerCase(),
+    pathPrefixes: enteredPath ? [enteredPath] : [...CUSTOM_APP_DEFAULT_PATH_PREFIXES],
+  };
+}
+
+function parseCustomAppUrl(apiUrl: string): URL {
   const trimmed = apiUrl.trim();
   if (!trimmed) throw new Error('Enter the API URL the app calls.');
   let url: URL;
@@ -88,11 +97,78 @@ export function deriveCustomAppTarget(apiUrl: string): {
     throw new Error('Only https:// API endpoints can be intercepted.');
   }
   if (!url.hostname) throw new Error('The API URL needs a hostname.');
-  const enteredPath = url.pathname.replace(/\/+$/, '');
-  return {
-    host: url.hostname.toLowerCase(),
-    pathPrefixes: enteredPath ? [enteredPath] : [...CUSTOM_APP_DEFAULT_PATH_PREFIXES],
-  };
+  return url;
+}
+
+const MODELS_PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * Endpoint suffixes stripped from the entered path when deriving the models
+ * URL, so a pasted full request URL still probes the API base. Longer
+ * suffixes first: `/chat/completions` must win over `/completions`.
+ */
+const API_ENDPOINT_SUFFIXES: readonly string[] = [
+  '/chat/completions',
+  '/completions',
+  '/messages',
+  '/responses',
+  '/models',
+];
+
+export type CustomAppEndpointProbeResult =
+  | { ok: true; url: string; authRequired: boolean }
+  | { ok: false; url: string; detail: string };
+
+/**
+ * The models-listing URL used to verify an entered API URL. The entered path
+ * is the API base (OpenRouter lives under `/api/v1`, not `/v1`); a bare
+ * domain assumes the standard `/v1` base.
+ */
+export function customAppModelsProbeUrl(apiUrl: string): string {
+  const url = parseCustomAppUrl(apiUrl);
+  let base = url.pathname.replace(/\/+$/, '');
+  const suffix = API_ENDPOINT_SUFFIXES.find((candidate) => base.endsWith(candidate));
+  if (suffix) base = base.slice(0, base.length - suffix.length);
+  return `${url.origin}${base || '/v1'}/models`;
+}
+
+/**
+ * Verify the entered API URL points at an AI API by requesting its models
+ * listing without credentials. Two shapes count as verified: a 2xx JSON body
+ * with a `data` array (the OpenAI-style listing that Anthropic, OpenAI, and
+ * OpenRouter all return), or a 401/403 JSON body with an `error` field (an
+ * auth-gated AI API rejecting the key-less probe). Anything else — HTML,
+ * other statuses, unreachable host — is unverified, not a hard failure:
+ * callers surface it as a warning the user can override.
+ */
+export async function probeCustomAppModelsEndpoint(
+  apiUrl: string,
+  options: { fetch?: typeof fetch; timeoutMs?: number } = {},
+): Promise<CustomAppEndpointProbeResult> {
+  const probeUrl = customAppModelsProbeUrl(apiUrl);
+  const fetchImpl = options.fetch ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('request timed out')), options.timeoutMs ?? MODELS_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(probeUrl, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+    if (response.ok && body !== null && Array.isArray(body['data'])) {
+      return { ok: true, url: probeUrl, authRequired: false };
+    }
+    if ((response.status === 401 || response.status === 403) && body !== null && body['error'] !== undefined && body['error'] !== null) {
+      return { ok: true, url: probeUrl, authRequired: true };
+    }
+    return { ok: false, url: probeUrl, detail: `did not return a model list (HTTP ${response.status})` };
+  } catch (err) {
+    const cause = err instanceof Error && err.cause instanceof Error ? err.cause : err;
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { ok: false, url: probeUrl, detail: `could not be reached (${message})` };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Stable unique profile name for a host, avoiding collisions with existing names. */

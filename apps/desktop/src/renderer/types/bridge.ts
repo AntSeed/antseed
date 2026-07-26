@@ -385,7 +385,7 @@ export type DesktopBridge = {
   /** Override the client names that attribute requests to an app profile;
       null resets to the profile's defaults. */
   systemProxySetAppIdentity?: (opts: { name: string; toolSlugs: string[] | null }) => Promise<{ ok: boolean; error?: string }>;
-  systemProxyAddCustomApp?: (opts: { apiUrl: string; app?: { name: string; path: string } | null }) => Promise<{ ok: boolean; name?: string; error?: string }>;
+  systemProxyAddCustomApp?: (opts: { apiUrl: string; app?: { name: string; path: string } | null; force?: boolean }) => Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }>;
   systemProxyRemoveCustomApp?: (name: string) => Promise<{ ok: boolean; error?: string }>;
   systemProxyStop?: () => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
