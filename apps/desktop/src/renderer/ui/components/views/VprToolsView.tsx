@@ -226,25 +226,28 @@ export function VprToolsView() {
     if (result && !result.ok) setMessage(result.error ?? 'Could not open tool');
   }, []);
 
-  const connectProfile = useCallback((profileName: string) => {
+  const connectProfile = useCallback(async (profileName: string) => {
     const names = Array.from(new Set([...activeProfileNames, profileName]));
     setConnecting(profileName);
-    void startProfiles(names).then((ok) => {
-      if (!ok) return;
+    try {
+      if (!await startProfiles(names)) return;
       // Surface the pill right away, dropdown open, so the "start a new
       // session" guidance is in view while the user switches to the tool.
       void actions.openVprFloat?.(profileName, { openMenu: true });
       // Bring the app itself forward too — same launch rules as the row's
       // open arrow: a user-picked application wins over the packaged
-      // open-url action.
+      // open-url action. Awaited, so the row stays busy until the app is
+      // actually up rather than until the launch request is accepted.
       const profile = profiles.find((entry) => entry.name === profileName);
       if (!profile) return;
       if (profile.appAction === 'open-url' && profile.openUrl && !profile.launchAppName) {
-        void openUrl(profile.openUrl);
+        await openUrl(profile.openUrl);
       } else if (profile.launchAppName || profile.appAction === 'open-tool') {
-        void openTool(profile.toolName ?? profile.name);
+        await openTool(profile.toolName ?? profile.name);
       }
-    }).finally(() => setConnecting(null));
+    } finally {
+      setConnecting(null);
+    }
   }, [actions, activeProfileNames, openTool, openUrl, profiles, startProfiles]);
 
   const disconnectProfile = useCallback((profileName: string) => {
@@ -568,7 +571,7 @@ export function VprToolsView() {
                         type="button"
                         className={styles.connectAction}
                         disabled={busy !== null || !defaultPeerId}
-                        onClick={() => connectProfile(profile.name)}
+                        onClick={() => { void connectProfile(profile.name); }}
                       >
                         Connect
                       </button>
@@ -894,7 +897,7 @@ export function VprToolsView() {
                         disabled={busy !== null || !defaultPeerId}
                         onClick={() => {
                           setSettingsFor(null);
-                          connectProfile(settingsProfile.name);
+                          void connectProfile(settingsProfile.name);
                         }}
                       >
                         Connect
@@ -1107,7 +1110,7 @@ export function VprToolsView() {
                     onClick={() => {
                       if (!addedName) return;
                       setAddOpen(false);
-                      connectProfile(addedName);
+                      void connectProfile(addedName);
                     }}
                   >
                     Connect

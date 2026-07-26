@@ -589,6 +589,38 @@ function isAppTargetRunning(target: AppLaunchTarget): boolean {
   return false;
 }
 
+/** Name-only targets (`open -a Claude`) carry no bundle path, so the window
+    check below has nothing to match — fill it in from the usual install
+    locations when the name maps to a bundle. */
+function bundleForAppTarget(target: AppLaunchTarget): AppLaunchTarget {
+  if (process.platform !== 'darwin' || target.path.endsWith('.app')) return target;
+  for (const dir of ['/Applications', path.join(homedir(), 'Applications')]) {
+    const candidate = path.join(dir, `${target.name}.app`);
+    if (existsSync(candidate)) return { name: target.name, path: candidate };
+  }
+  return target;
+}
+
+/** Whether a bundle is a Chromium/Electron app — those get the stronger
+    window-is-up check below. */
+function isElectronAppTarget(target: AppLaunchTarget): boolean {
+  if (process.platform !== 'darwin' || !target.path.endsWith('.app')) return false;
+  return existsSync(path.join(target.path, 'Contents', 'Frameworks', 'Electron Framework.framework'));
+}
+
+/** A Chromium app spawns its renderer helper only once a window is created, so
+    this is the closest permission-free signal we have to "the UI is up" — the
+    main process alone is alive seconds earlier, while the app is still booting. */
+function hasAppTargetWindowProcess(target: AppLaunchTarget): boolean {
+  const pattern = `${escapeRegExpLiteral(`${target.path}/Contents/Frameworks/`)}.*${escapeRegExpLiteral('Helper (Renderer)')}`;
+  try {
+    execFileSync('pgrep', ['-f', pattern], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function quitAppTarget(target: AppLaunchTarget): void {
   if (process.platform === 'darwin') {
     // By POSIX path when we have one: two same-named bundles in /Applications
@@ -674,9 +706,22 @@ async function restartAppTarget(
   return launch();
 }
 
-async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 15_000): Promise<void> {
+/**
+ * Wait for a launched app to be usable, not merely alive: `open` returns as soon
+ * as LaunchServices accepts the request, and a Chromium app's main process comes
+ * up seconds before its window paints. Callers use this to hold a busy state, so
+ * it is bounded — apps we can't read a window signal from fall back to the
+ * process check they had before.
+ */
+async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 30_000): Promise<void> {
   const startedWaitingAt = Date.now();
-  while (Date.now() - startedWaitingAt < timeoutMs && !isAppTargetRunning(target)) {
+  const expired = () => Date.now() - startedWaitingAt >= timeoutMs;
+  while (!expired() && !isAppTargetRunning(target)) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  const bundle = bundleForAppTarget(target);
+  if (!isElectronAppTarget(bundle)) return;
+  while (!expired() && !hasAppTargetWindowProcess(bundle)) {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 }
@@ -2067,7 +2112,11 @@ ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
     // for known tools) wins over the packaged open action.
     const launchTarget = effectiveLaunchTarget(profile.name);
     if (launchTarget) {
-      return launchAppTarget(launchTarget);
+      const result = launchAppTarget(launchTarget);
+      // Resolve only once the app is actually up — the caller's connect
+      // spinner runs off this promise.
+      if (result.ok) await waitForAppTarget(launchTarget);
+      return result;
     }
     if (profile.openUrl) {
       await shell.openExternal(profile.openUrl);
@@ -2076,6 +2125,7 @@ ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
     if (profile.restartAppName && process.platform === 'darwin') {
       try {
         execFileSync('open', ['-a', profile.restartAppName], { stdio: 'pipe' });
+        await waitForAppTarget({ name: profile.restartAppName, path: '' });
         return { ok: true };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
