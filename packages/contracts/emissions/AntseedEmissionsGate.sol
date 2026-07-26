@@ -321,8 +321,9 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         // same-epoch _setMinter already scheduled a checkpoint at
         // currentEpoch() + 1.
         _recordMinterShare(id, currentEpoch() + 1, 0);
-        delete controllerMinterIds[existing.controller];
-        delete _minters[id];
+        // Entry retained with a zero share: _chargeMinterBudget authorizes
+        // against it, so deleting it would strand already-earned budget.
+        _minters[id] = Minter({ controller: existing.controller, shareBps: 0, editable: existing.editable });
         emit MinterRemoved(id, existing.controller);
     }
 

@@ -2382,11 +2382,41 @@ contract AntseedEmissionsGateTest is Test {
 
         gate.removeMinter(CUSTOM_MINTER_ID);
         assertEq(gate.totalMinterShareBps(), 40_000);
-        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), 0);
+        // Removal only zeroes the share from the next epoch; epoch 5 keeps its
+        // checkpointed budget, which this minter has already drained in full.
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), budget);
 
         vm.prank(customMinter);
-        vm.expectRevert(AntseedEmissionsGate.NotEmissionMinter.selector);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
         gate.claim(5, customMinter, 1);
+    }
+
+    function test_removedMinterCanStillClaimFinalizedEpochsEarnedBeforeRemoval() public {
+        _deployGate(4, address(this), address(0));
+        address customMinter = address(0xCAFE);
+        gate.setMinter(CUSTOM_MINTER_ID, customMinter, 7_000, true);
+
+        _warpGateEpoch(5);
+        uint256 budget = _shareBudget(7_000, 5);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 5), budget);
+
+        // Epoch 5 finalizes with nothing claimed, then the owner removes the
+        // minter. Budget already earned in a finalized epoch must survive.
+        _warpGateEpoch(6);
+        gate.removeMinter(CUSTOM_MINTER_ID);
+
+        vm.prank(customMinter);
+        gate.claim(5, customMinter, budget);
+        assertEq(token.balanceOf(customMinter), budget);
+
+        // Epoch 6 was in flight when removal landed, so it keeps its share;
+        // epoch 7 is the first the removal zeroes.
+        _warpGateEpoch(8);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 6), budget);
+        assertEq(gate.minterEpochBudget(CUSTOM_MINTER_ID, 7), 0);
+        vm.prank(customMinter);
+        vm.expectRevert(AntseedEmissionsGate.BucketBudgetExceeded.selector);
+        gate.claim(7, customMinter, 1);
     }
 
     function test_ownerCanChangeNamedMinterShare() public {
