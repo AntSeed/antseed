@@ -199,10 +199,19 @@ function loadCustomAppRecords(): CustomAppRecord[] {
   return loadCustomApps(resolveConnectDataDir());
 }
 
+/**
+ * A custom app displays under its picked application's name. Deriving it from
+ * the launch setting (rather than trusting the record's displayName alone)
+ * also fixes records whose application was picked before renames persisted.
+ */
+function customAppDisplayName(record: CustomAppRecord): string {
+  return loadAppLaunchSettings(resolveConnectDataDir())[record.name]?.name ?? record.displayName;
+}
+
 function customAppDesktopProfile(record: CustomAppRecord): DesktopSystemProxyProfile {
   return {
     name: record.name,
-    label: record.displayName,
+    label: customAppDisplayName(record),
     kind: 'proxy',
     method: 'HTTPS proxy',
     domains: [record.host],
@@ -224,7 +233,10 @@ function systemProxyProfilesEnv(): Record<string, string> {
   // The CLI child reads profiles once at startup, so hand it a merged file
   // combining the built-in defaults, the packaged/env profiles, and the
   // user's custom apps.
-  const merged = [...SYSTEM_PROXY_PROFILES_RAW, ...loadCustomAppRecords().map(customAppToCliProfile)];
+  const merged = [
+    ...SYSTEM_PROXY_PROFILES_RAW,
+    ...loadCustomAppRecords().map((record) => customAppToCliProfile({ ...record, displayName: customAppDisplayName(record) })),
+  ];
   const filePath = path.join(systemProxyDataDir(), 'profiles.merged.json');
   mkdirSync(systemProxyDataDir(), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
@@ -3692,17 +3704,20 @@ ipcMain.handle('system-proxy:list-profiles', async () => {
   }));
   const custom = await Promise.all(loadCustomAppRecords().map(async (record) => {
     const launchTarget = effectiveLaunchTarget(record.name);
-    const iconDataUri = record.iconDataUri
-      ?? (launchTarget ? await launchTargetIcon(launchTarget.path) : null);
+    // The picked application's name and icon identify a custom app, ahead of
+    // whatever the record captured (site favicon/title) when it was added.
+    const displayName = launchTarget?.name ?? record.displayName;
+    const iconDataUri = (launchTarget ? await launchTargetIcon(launchTarget.path) : null)
+      ?? record.iconDataUri;
     return {
       name: record.name,
-      displayName: record.displayName,
+      displayName,
       kind: 'proxy' as const,
       method: 'HTTPS proxy',
       domains: [record.host],
       canRestart: false,
       custom: true,
-      toolSlugs: effectiveToolSlugs(record.name, undefined, record.displayName),
+      toolSlugs: effectiveToolSlugs(record.name, undefined, displayName),
       ...(iconDataUri ? { iconDataUri } : {}),
       ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
     };
@@ -3861,26 +3876,50 @@ function launchAppTarget(target: AppLaunchTarget): { ok: boolean; error?: string
   }
 }
 
-ipcMain.handle('system-proxy:set-app-launch', (_event, opts: { name?: string; app?: { name?: string; path?: string } | null }) => {
+ipcMain.handle('system-proxy:set-app-launch', async (_event, opts: { name?: string; app?: { name?: string; path?: string } | null }) => {
   const name = typeof opts?.name === 'string' ? opts.name : '';
   if (!allSystemProxyProfiles().some((profile) => profile.name === name)) {
     return { ok: false, error: 'Unknown app.' };
   }
   const app = opts?.app;
-  if (app === null || app === undefined) {
-    setAppLaunchSetting(resolveConnectDataDir(), name, null);
-    return { ok: true };
+  let target: AppLaunchTarget | null = null;
+  if (app !== null && app !== undefined) {
+    target = readInstalledAppTarget(app);
+    if (!target) return { ok: false, error: 'That application could not be found.' };
   }
-  const appName = typeof app.name === 'string' ? app.name.trim() : '';
-  const appPath = typeof app.path === 'string' ? app.path.trim() : '';
-  // The path reaches a launcher — accept only real application entries.
-  const extension = path.extname(appPath).toLowerCase();
-  if (!appName || !appPath || !['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) {
-    return { ok: false, error: 'That application could not be found.' };
-  }
-  setAppLaunchSetting(resolveConnectDataDir(), name, { name: appName, path: appPath });
+  setAppLaunchSetting(resolveConnectDataDir(), name, target);
+  await syncCustomAppDisplay(name, target);
+  refreshTrayMenu();
   return { ok: true };
 });
+
+/**
+ * A custom app entry is identified by its picked application, so choosing one
+ * renames the record (name + icon); clearing the pick reverts to the API
+ * host's site metadata. Packaged profiles keep their own names — they have no
+ * custom record to update.
+ */
+async function syncCustomAppDisplay(profileName: string, target: AppLaunchTarget | null): Promise<void> {
+  const dataDir = resolveConnectDataDir();
+  const records = loadCustomApps(dataDir);
+  const record = records.find((entry) => entry.name === profileName);
+  if (!record) return;
+  let displayName: string;
+  let iconDataUri: string | undefined;
+  if (target) {
+    displayName = target.name;
+    iconDataUri = (await installedAppIcon(target.path)) ?? undefined;
+  } else {
+    const metadata = await fetchCustomAppSiteMetadata(record.host);
+    displayName = metadata.title ?? record.host;
+    iconDataUri = metadata.iconDataUri;
+  }
+  saveCustomApps(dataDir, records.map((entry) => {
+    if (entry.name !== profileName) return entry;
+    const { iconDataUri: _dropped, ...rest } = entry;
+    return { ...rest, displayName, ...(iconDataUri ? { iconDataUri } : {}) };
+  }));
+}
 
 /** Validate a renderer-passed installed-app reference (name + launcher path). */
 function readInstalledAppTarget(value: unknown): AppLaunchTarget | null {

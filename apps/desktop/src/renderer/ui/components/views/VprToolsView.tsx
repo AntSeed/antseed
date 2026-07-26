@@ -86,7 +86,10 @@ export function VprToolsView() {
   const [settingsPane, setSettingsPane] = useState<ModalPane>({ pane: 'main', dir: 'none' });
   const [pickerSearch, setPickerSearch] = useState('');
   const [identityDraft, setIdentityDraft] = useState('');
-  const [identityBusy, setIdentityBusy] = useState(false);
+  // Drafted "Open with" pick — undefined until the user touches it, applied
+  // together with the identity draft by the modal's Save button.
+  const [launchDraft, setLaunchDraft] = useState<InstalledAppEntry | null | undefined>(undefined);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [installedApps, setInstalledApps] = useState<InstalledAppEntry[] | null>(null);
   const [installedAppsError, setInstalledAppsError] = useState<string | null>(null);
 
@@ -339,49 +342,74 @@ export function VprToolsView() {
     setSettingsPane({ pane: 'main', dir: 'none' });
     setPickerSearch('');
     setIdentityDraft((profile.toolSlugs?.length ? profile.toolSlugs : [profile.name]).join(', '));
+    setLaunchDraft(undefined);
     ensureInstalledApps();
   }, [ensureInstalledApps]);
 
-  const chooseApp = useCallback(async (app: InstalledAppEntry | null) => {
-    if (!settingsFor) return;
-    const result = await window.antseedDesktop?.systemProxySetAppLaunch?.({ name: settingsFor, app });
+  // Picking an application only stages a draft — it applies on Save.
+  const chooseApp = useCallback((app: InstalledAppEntry | null) => {
+    setLaunchDraft(app);
     setSettingsPane({ pane: 'main', dir: 'back' });
-    if (result && !result.ok) {
-      setMessage(result.error ?? 'Could not save the app setting');
-      return;
-    }
-    await refresh();
-  }, [settingsFor, refresh]);
+  }, []);
 
   const settingsProfile = settingsFor ? profiles.find((profile) => profile.name === settingsFor) ?? null : null;
   const settingsIdentity = settingsProfile
     ? (settingsProfile.toolSlugs?.length ? settingsProfile.toolSlugs : [settingsProfile.name]).join(', ')
     : '';
   const identityDirty = settingsProfile !== null && identityDraft.trim() !== settingsIdentity;
+  const launchDirty = settingsProfile !== null && launchDraft !== undefined
+    && (launchDraft?.name ?? null) !== (settingsProfile.launchAppName ?? null);
+  const settingsDirty = identityDirty || launchDirty;
+  // The drafted pick wins over the persisted one for everything the modal shows.
+  const settingsLaunchName = launchDraft === undefined
+    ? settingsProfile?.launchAppName ?? null
+    : launchDraft?.name ?? null;
 
-  const saveIdentity = useCallback(async () => {
+  // Apply the drafted settings. A connected app disconnects first — the proxy
+  // runtime only reads profiles on connect, so edits never apply mid-session;
+  // reconnecting stays on the apps list row.
+  const saveSettings = useCallback(async () => {
     const bridge = window.antseedDesktop;
-    if (!settingsFor || !bridge?.systemProxySetAppIdentity) return;
-    setIdentityBusy(true);
+    if (!settingsFor || !bridge) return;
+    setSettingsSaving(true);
     setMessage(null);
     try {
-      const slugs = identityDraft.split(',').map((entry) => entry.trim()).filter(Boolean);
-      const result = await bridge.systemProxySetAppIdentity({ name: settingsFor, toolSlugs: slugs.length > 0 ? slugs : null });
-      if (!result.ok) {
-        setMessage(result.error ?? 'Could not save the client names');
-        return;
+      if (activeProfileNames.includes(settingsFor)) {
+        const remaining = activeProfileNames.filter((name) => name !== settingsFor);
+        if (remaining.length === 0) await disconnect();
+        else if (!await startProfiles(remaining)) return;
       }
-      // Sync the draft to the normalized value the main process persisted.
+      if (launchDirty && bridge.systemProxySetAppLaunch) {
+        const result = await bridge.systemProxySetAppLaunch({
+          name: settingsFor,
+          app: launchDraft ? { name: launchDraft.name, path: launchDraft.path } : null,
+        });
+        if (!result.ok) {
+          setMessage(result.error ?? 'Could not save the app setting');
+          return;
+        }
+      }
+      if (identityDirty && bridge.systemProxySetAppIdentity) {
+        const slugs = identityDraft.split(',').map((entry) => entry.trim()).filter(Boolean);
+        const result = await bridge.systemProxySetAppIdentity({ name: settingsFor, toolSlugs: slugs.length > 0 ? slugs : null });
+        if (!result.ok) {
+          setMessage(result.error ?? 'Could not save the client names');
+          return;
+        }
+      }
+      // Sync drafts to the normalized values the main process persisted —
+      // including a custom app renamed after its application pick.
       const listed = (await bridge.systemProxyListProfiles?.()) ?? [];
       setProfiles(listed);
+      setLaunchDraft(undefined);
       const updated = listed.find((profile) => profile.name === settingsFor);
       if (updated) setIdentityDraft((updated.toolSlugs?.length ? updated.toolSlugs : [updated.name]).join(', '));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
-      setIdentityBusy(false);
+      setSettingsSaving(false);
     }
-  }, [identityDraft, settingsFor]);
+  }, [activeProfileNames, disconnect, identityDirty, identityDraft, launchDirty, launchDraft, settingsFor, startProfiles]);
 
   const advanceAddStep = useCallback((step: 2 | 3) => {
     setAddStep(step);
@@ -742,8 +770,9 @@ export function VprToolsView() {
         </section>
       </Modal>
 
-      {/* Per-app settings: application to open, request-identity client
-          names, and the connection actions (Disconnect / Remove). */}
+      {/* Per-app settings: application to open and request-identity client
+          names, edited as drafts and applied by the footer Save (which
+          disconnects a connected app first), plus Disconnect / Remove. */}
       <Modal
         isOpen={settingsProfile !== null}
         onClose={() => setSettingsFor(null)}
@@ -777,8 +806,8 @@ export function VprToolsView() {
                   error={installedAppsError}
                   search={pickerSearch}
                   onSearch={setPickerSearch}
-                  activeName={settingsProfile.launchAppName ?? null}
-                  onChoose={(app) => void chooseApp(app)}
+                  activeName={settingsLaunchName}
+                  onChoose={chooseApp}
                   noneLabel={settingsProfile.custom ? 'No application' : 'Default action'}
                   noneMeta={settingsProfile.custom
                     ? 'No application associated with this app'
@@ -798,8 +827,8 @@ export function VprToolsView() {
                     </div>
                     <p className={styles.settingHint}>
                       {connected
-                        ? `${settingsProfile.displayName}'s AI requests currently route through VPR. Disconnecting restores its direct connection.`
-                        : `Connect to route ${settingsProfile.displayName}'s AI requests through VPR — served by the AntSeed network and paid from your balance.`}
+                        ? `${settingsProfile.displayName}'s AI requests currently route through VPR. Disconnecting restores its direct connection.${settingsDirty ? ' Saving these changes disconnects it first — reconnect from the apps list.' : ''}`
+                        : `Connect from the apps list to route ${settingsProfile.displayName}'s AI requests through VPR — served by the AntSeed network and paid from your balance.`}
                     </p>
                   </section>
 
@@ -820,7 +849,7 @@ export function VprToolsView() {
                         ? <img src={settingsProfile.iconDataUri} alt="" className={styles.pickerIcon} />
                         : <BrandIcon name={settingsProfile.name} hints={[settingsProfile.displayName]} size={20} />}
                       <span className={styles.settingValueName}>
-                        {settingsProfile.launchAppName
+                        {settingsLaunchName
                           ?? (settingsProfile.custom ? 'No application' : 'Default action')}
                       </span>
                       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.settingValueChevron} />
@@ -840,7 +869,7 @@ export function VprToolsView() {
                       className={styles.settingInputRow}
                       onSubmit={(event) => {
                         event.preventDefault();
-                        void saveIdentity();
+                        void saveSettings();
                       }}
                     >
                       <input
@@ -850,13 +879,8 @@ export function VprToolsView() {
                         placeholder={settingsProfile.name}
                         spellCheck={false}
                         onChange={(event) => setIdentityDraft(event.currentTarget.value)}
-                        disabled={identityBusy}
+                        disabled={settingsSaving}
                       />
-                      {identityDirty ? (
-                        <button type="submit" className={styles.settingPrimary} disabled={identityBusy}>
-                          {identityBusy ? 'Saving...' : 'Save'}
-                        </button>
-                      ) : null}
                     </form>
                   </section>
 
@@ -887,8 +911,19 @@ export function VprToolsView() {
                     </section>
                   ) : null}
 
+                  {/* Connect lives on the apps list row — the footer only
+                      saves drafted changes or disconnects a connected app. */}
                   <div className={styles.settingFooter}>
-                    {connected ? (
+                    {settingsDirty ? (
+                      <button
+                        type="button"
+                        className={styles.settingPrimary}
+                        disabled={settingsSaving || busy !== null}
+                        onClick={() => void saveSettings()}
+                      >
+                        {settingsSaving ? 'Saving...' : 'Save'}
+                      </button>
+                    ) : connected ? (
                       <button
                         type="button"
                         className={styles.settingDanger}
@@ -897,19 +932,7 @@ export function VprToolsView() {
                       >
                         Disconnect
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.settingPrimary}
-                        disabled={busy !== null || !defaultPeerId}
-                        onClick={() => {
-                          setSettingsFor(null);
-                          void connectProfile(settingsProfile.name);
-                        }}
-                      >
-                        Connect
-                      </button>
-                    )}
+                    ) : null}
                   </div>
                 </>
               )}
