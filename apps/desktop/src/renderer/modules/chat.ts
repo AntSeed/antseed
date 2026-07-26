@@ -8,6 +8,7 @@ import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel }
 import { filterRoutableVprRoutes } from './vpr-routing.js';
 import { routesForSelectedModel } from './vpr-view-models.js';
 import { saveVprRouteSelection } from './vpr-preferences.js';
+import { clearVprModelPin, saveVprModelPins, setVprModelPin } from './vpr-model-pins.js';
 import {
   applyOpenRouterBaselines,
   ensureOpenRouterPrices,
@@ -93,7 +94,7 @@ export type ChatModuleApi = {
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
-  handleServiceChange: (value: string, explicitPeerId?: string) => void;
+  handleServiceChange: (value: string, explicitPeerId?: string, rememberModelPin?: boolean) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
@@ -2283,7 +2284,7 @@ export function initChatModule({
   // Service select handlers (called by ChatView)
   // ---------------------------------------------------------------------------
 
-  function handleServiceChange(value: string, explicitPeerId?: string): void {
+  function handleServiceChange(value: string, explicitPeerId?: string, rememberModelPin = true): void {
     uiState.chatSelectedServiceValue = value;
     pendingServiceOptions = null;
     clearTransientChatNotices();
@@ -2309,23 +2310,41 @@ export function initChatModule({
       const catalogEntry = nextProvider
         ? findCatalogEntry(uiState.vprModelCatalog, nextProvider, nextServiceId)
         : null;
+      const selectedModel = catalogEntry
+        ? {
+            provider: catalogEntry.provider,
+            serviceId: catalogEntry.serviceId,
+            label: catalogEntry.label,
+            categories: [...catalogEntry.categories],
+          }
+        : {
+            provider: nextProvider ?? '',
+            serviceId: nextServiceId,
+            label: selectedOption?.label ?? nextServiceId,
+            categories: [...(selectedOption?.categories ?? [])],
+          };
       uiState.vprRouteSelection = {
-        model: catalogEntry
-          ? {
-              provider: catalogEntry.provider,
-              serviceId: catalogEntry.serviceId,
-              label: catalogEntry.label,
-              categories: [...catalogEntry.categories],
-            }
-          : {
-              provider: nextProvider ?? '',
-              serviceId: nextServiceId,
-              label: selectedOption?.label ?? nextServiceId,
-              categories: [...(selectedOption?.categories ?? [])],
-            },
+        model: selectedModel,
         mode: peerId ? 'pinned-peer' : 'auto',
         peerId: peerId || null,
       };
+      if (rememberModelPin) {
+        if (peerId) {
+          uiState.vprModelPins = setVprModelPin(
+            uiState.vprModelPins,
+            selectedModel.provider,
+            selectedModel.serviceId,
+            peerId,
+          );
+        } else {
+          uiState.vprModelPins = clearVprModelPin(
+            uiState.vprModelPins,
+            selectedModel.provider,
+            selectedModel.serviceId,
+          );
+        }
+        saveVprModelPins(uiState.vprModelPins);
+      }
       saveVprRouteSelection(uiState.vprRouteSelection);
     }
 

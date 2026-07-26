@@ -25,7 +25,7 @@ import {
 } from './modules/vpr-preferences';
 import {
   clearVprModelPin,
-  clearVprPinsForPeer,
+  filterVprModelPins,
   loadVprModelPins,
   saveVprModelPins,
   setVprModelPin,
@@ -257,7 +257,7 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprRoutingPreferences,
   );
   if (option) {
-    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId);
+    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
   }
   // handleServiceChange writes a pinned selection through; restore the
   // requested mode so auto keeps re-resolving the best route on future
@@ -583,10 +583,11 @@ registerActions({
     // A pin the new lists rule out would keep routing to a peer the user just
     // blocked (the pinned path bypasses scoring), so drop it back to auto —
     // for every model that remembers this peer, not only the active one.
-    if (!isPeerRoutable(peerId, uiState.vprRoutingPreferences)) {
-      uiState.vprModelPins = clearVprPinsForPeer(uiState.vprModelPins, peerId);
-      saveVprModelPins(uiState.vprModelPins);
-    }
+    uiState.vprModelPins = filterVprModelPins(
+      uiState.vprModelPins,
+      (pinnedPeerId) => isPeerRoutable(pinnedPeerId, uiState.vprRoutingPreferences),
+    );
+    saveVprModelPins(uiState.vprModelPins);
     const pinned = uiState.vprRouteSelection.peerId;
     if (
       uiState.vprRouteSelection.mode === 'pinned-peer'

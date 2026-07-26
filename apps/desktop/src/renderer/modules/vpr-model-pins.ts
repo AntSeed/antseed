@@ -8,13 +8,15 @@
  * store is what re-fills it on a model switch.
  */
 
+import { canonicalModelKey } from './model-identity.js';
+
 export const VPR_MODEL_PINS_STORAGE_KEY = 'antseed.desktop.vpr.modelPins';
 
-/** `provider:serviceId` -> pinned peer id. */
 export type VprModelPins = Record<string, string>;
 
 export function modelPinKey(provider: string, serviceId: string): string {
-  return `${provider}:${serviceId}`;
+  const canonical = canonicalModelKey(serviceId);
+  return canonical || `${provider.trim().toLowerCase()}:${serviceId.trim().toLowerCase()}`;
 }
 
 export function loadVprModelPins(): VprModelPins {
@@ -28,7 +30,12 @@ export function loadVprModelPins(): VprModelPins {
     for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof value !== 'string') continue;
       const peerId = value.trim();
-      if (key.length > 0 && peerId.length > 0) pins[key] = peerId;
+      if (key.length === 0 || peerId.length === 0) continue;
+      const separator = key.indexOf(':');
+      const normalizedKey = separator > 0
+        ? modelPinKey(key.slice(0, separator), key.slice(separator + 1))
+        : key;
+      pins[normalizedKey] = peerId;
     }
     return pins;
   } catch {
@@ -72,12 +79,21 @@ export function clearVprModelPin(
   return next;
 }
 
-/** Drop every pin on a peer — for peers the routing rules now exclude, which
- * would otherwise keep re-pinning the models they serve. */
 export function clearVprPinsForPeer(pins: VprModelPins, peerId: string): VprModelPins {
   const next: VprModelPins = {};
   for (const [key, value] of Object.entries(pins)) {
     if (value !== peerId) next[key] = value;
+  }
+  return next;
+}
+
+export function filterVprModelPins(
+  pins: VprModelPins,
+  keepPeer: (peerId: string) => boolean,
+): VprModelPins {
+  const next: VprModelPins = {};
+  for (const [key, peerId] of Object.entries(pins)) {
+    if (keepPeer(peerId)) next[key] = peerId;
   }
   return next;
 }

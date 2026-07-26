@@ -920,6 +920,7 @@ test('explicit dropdown pick overrides the VPR auto-selected model for a new cha
   // The write-through keeps the VPR selection in sync with the pick.
   assert.equal(uiState.vprRouteSelection.model?.serviceId, 'model-b');
   assert.equal(uiState.vprRouteSelection.peerId, 'peer-b');
+  assert.equal(uiState.vprModelPins['modelb'], 'peer-b');
 });
 
 test('active conversation with persisted peer ignores a different VPR selected model', async () => {
