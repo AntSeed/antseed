@@ -18,7 +18,7 @@
 .hero {
   position: relative;
   text-align: center;
-  padding: clamp(72px, 10vw, 118px) 20px 60px;
+  padding: clamp(72px, 10vw, 120px) 20px 60px;
   max-width: 900px;
   margin: 0 auto;
 }
@@ -45,7 +45,7 @@
   color: var(--as-text-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 .heroTitle {
   font-family: var(--as-font-display);
@@ -67,7 +67,7 @@
   color: var(--as-text-2);
   line-height: 1.7;
   max-width: 680px;
-  margin: 0 auto 34px;
+  margin: 0 auto 36px;
 }
 .heroCtas,
 .bottomCtaBtns {
@@ -118,7 +118,7 @@
 .payments,
 .reputation,
 .faq {
-  padding: clamp(54px, 7vw, 86px) 60px;
+  padding: clamp(56px, 7vw, 88px) 60px;
   max-width: 1120px;
   margin: 0 auto;
 }
@@ -128,7 +128,7 @@
 .paymentsHeader,
 .reputationHeader {
   text-align: center;
-  margin-bottom: 42px;
+  margin-bottom: 44px;
 }
 .pathsHeader h2,
 .privacyHeader h2,
@@ -173,7 +173,7 @@
 }
 .pathCard {
   border-radius: var(--as-radius);
-  padding: 30px;
+  padding: 32px;
   transition: transform .18s ease, border-color .18s ease, background .18s ease;
 }
 .pathCard:hover {
@@ -200,7 +200,7 @@
   font-weight: 550;
   letter-spacing: -0.01em;
   color: var(--as-text);
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 .pathCard > p,
 .payStepContent p,
@@ -252,11 +252,11 @@
 }
 .complianceCard {
   display: flex;
-  gap: 18px;
+  gap: 20px;
   align-items: flex-start;
   border-left: 3px solid var(--as-risk);
   border-radius: var(--as-radius);
-  padding: 22px 26px;
+  padding: 24px 28px;
   background: var(--as-risk-dim);
   border-top: 1px solid rgba(255, 107, 107, .12);
   border-right: 1px solid rgba(255, 107, 107, .12);
@@ -283,13 +283,13 @@
   letter-spacing: 1.6px;
   text-transform: uppercase;
   color: var(--as-risk);
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 .complianceBody p {
   font-size: 14px;
   color: #e7b9b9;
   line-height: 1.65;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 .complianceBody p:last-child { margin: 0; }
 .complianceBody strong { color: #ffd6d6; }
@@ -299,7 +299,7 @@
   grid-template-columns: 1fr 32px 1fr;
   gap: 0;
   border-radius: 18px;
-  padding: 34px 30px;
+  padding: 36px 32px;
 }
 .privacyDivider { display: flex; justify-content: center; padding: 40px 0 0; opacity: .45; }
 .privacyDivider line { stroke: rgba(151, 255, 199, .26); }
@@ -308,7 +308,7 @@
   font-weight: 700;
   letter-spacing: 1.7px;
   text-transform: uppercase;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--as-line);
 }
@@ -317,8 +317,8 @@
 .privacyRow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 0;
+  gap: 12px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--as-line);
   font-size: 14px;
   color: var(--as-text-2);
@@ -356,8 +356,8 @@
 .codeTermBar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 12px 16px;
   background: #03251A;
   border-bottom: 1px solid var(--as-line);
 }
@@ -365,7 +365,7 @@
 .codeTermTitle { font-size: 11px; color: var(--as-text-3); margin-left: auto; }
 .codePre {
   margin: 0 !important;
-  padding: 17px !important;
+  padding: 16px !important;
   font-size: 12px !important;
   line-height: 1.75 !important;
   color: #DCF7EE !important;
@@ -379,13 +379,13 @@
   width: 100%;
   box-sizing: border-box;
 }
-.codeNote { margin-top: 14px; padding: 0 4px; }
+.codeNote { margin-top: 16px; padding: 0 4px; }
 
 .payments { max-width: 960px; width: 100%; box-sizing: border-box; overflow-x: hidden; }
 .paymentsFlow { display: flex; flex-direction: column; margin-bottom: 36px; }
 .payStep {
   display: flex;
-  gap: 22px;
+  gap: 24px;
   align-items: flex-start;
   padding: 24px 0;
   border-bottom: 1px solid var(--as-line);
@@ -396,7 +396,7 @@
   font-weight: 700;
   color: var(--as-green);
   flex-shrink: 0;
-  padding-top: 3px;
+  padding-top: 4px;
   width: 28px;
 }
 .payStepContent h4 {
@@ -404,7 +404,7 @@
   font-size: 17px;
   font-weight: 550;
   color: var(--as-text);
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 .payStepContent p { margin: 0; }
 .paymentsEcon {
@@ -430,12 +430,12 @@
   flex-shrink: 0;
 }
 .econValue { font-size: 14px; color: var(--as-text); line-height: 1.5; }
-.paymentsWallet { display: flex; flex-direction: column; gap: 14px; min-width: 0; width: 100%; overflow-x: hidden; }
+.paymentsWallet { display: flex; flex-direction: column; gap: 16px; min-width: 0; width: 100%; overflow-x: hidden; }
 .walletNote { margin: 0; }
 
 .reputationCard {
   border-radius: var(--as-radius);
-  padding: 26px;
+  padding: 28px;
 }
 .reputationLabel {
   font-size: 12px;
@@ -478,7 +478,7 @@
   max-width: 680px;
   margin: 0 auto;
 }
-.bottomCta > p { margin-bottom: 30px; }
+.bottomCta > p { margin-bottom: 32px; }
 .bottomLinks {
   display: flex;
   align-items: center;
@@ -486,7 +486,7 @@
   gap: 12px;
   flex-wrap: wrap;
   font-size: 13px;
-  margin-top: 26px;
+  margin-top: 28px;
 }
 .bottomLinks span { color: var(--as-text-3); }
 
@@ -551,7 +551,7 @@
   .code,
   .payments,
   .reputation,
-  .faq { padding: 44px 20px 62px; }
+  .faq { padding: 44px 20px 64px; }
   .compliance { padding: 0 20px 32px; }
   .pathsGrid,
   .codeGrid,
@@ -560,7 +560,7 @@
   .privacyDivider { display: none; }
 }
 @media (max-width: 620px) {
-  .hero { padding: 62px 20px 42px; }
+  .hero { padding: 64px 20px 44px; }
   .heroTitle { font-size: clamp(34px, 11vw, 50px); }
   .heroCtas,
   .bottomCtaBtns { flex-direction: column; align-items: stretch; }
@@ -569,8 +569,8 @@
   .pathCard,
   .reputationCard { padding: 24px; }
   .privacyGrid { padding: 24px 20px; }
-  .complianceCard { padding: 18px; }
-  .econRow { flex-direction: column; gap: 4px; padding: 14px 18px; }
+  .complianceCard { padding: 20px; }
+  .econRow { flex-direction: column; gap: 4px; padding: 16px 20px; }
   .econLabel { min-width: 0; }
   .codePre { font-size: 11px !important; }
   .bottomLinks { flex-direction: column; gap: 8px; }

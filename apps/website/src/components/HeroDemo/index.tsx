@@ -17,7 +17,6 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react';
-import {BEST_PRICE_TEXT_PATH} from './bestPricePath';
 
 export const DEMO_FPS = 30;
 export const DEMO_TOTAL_FRAMES = 582;
@@ -445,7 +444,7 @@ function VprCard({left = 1110, top = 108}: {left?: number; top?: number}) {
 
   return (
     <div style={{position: 'absolute', left, top, width: 524, height: 648, zIndex: 3}}>
-      <div style={{position: 'absolute', inset: 0, borderRadius: 32, boxShadow: CARD_SHADOW, overflow: 'hidden'}}>
+      <div style={{position: 'absolute', inset: 0, borderRadius: 40, boxShadow: CARD_SHADOW, overflow: 'hidden'}}>
         <img
           src={asset('vpr-off.png')}
           alt=""
@@ -659,15 +658,6 @@ function NetworkBar({
         </defs>
         <circle cx={66} cy={25} r={6} fill="#00270A" />
         <circle cx={dotX} cy={dotY} r={3} fill="#38E1A9" filter="url(#sc-dot-glow)" />
-        <rect x={295} y={24} width={120} height={20} fill="#00270A" />
-        <path
-          d="M312.25 34.93L313.675 36.3547C314.08 36.7598 314.742 36.7424 315.125 36.3166L320 30.9"
-          stroke="#38E1A9"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path d={BEST_PRICE_TEXT_PATH} fill="#38E1A9" />
       </svg>
     </div>
   );

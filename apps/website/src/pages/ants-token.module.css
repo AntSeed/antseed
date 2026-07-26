@@ -25,7 +25,7 @@
 .hero {
   position: relative;
   text-align: center;
-  padding: clamp(72px, 10vw, 118px) 20px 60px;
+  padding: clamp(72px, 10vw, 120px) 20px 60px;
   max-width: 900px;
   margin: 0 auto;
 }
@@ -49,7 +49,7 @@
   font-weight: 700;
   color: var(--as-clay) !important;
   letter-spacing: 2px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   text-decoration: none !important;
   transition: opacity .15s;
 }
@@ -73,7 +73,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px 6px 10px;
+  padding: 8px 16px 8px 12px;
   border-radius: 999px;
   background: rgba(232, 163, 61, .08);
   border: 1px solid rgba(232, 163, 61, .22);
@@ -102,7 +102,7 @@
   color: var(--as-text-2);
   line-height: 1.7;
   max-width: 700px;
-  margin: 0 auto 34px;
+  margin: 0 auto 36px;
 }
 .heroCtas,
 .bottomCtaBtns {
@@ -117,8 +117,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin: -10px auto 30px;
-  padding: 10px 16px;
+  margin: -8px auto 32px;
+  padding: 12px 16px;
   border: 1px solid rgba(232, 163, 61, .28);
   border-radius: 999px;
   background: rgba(232, 163, 61, .07);
@@ -175,7 +175,7 @@
 .activity,
 .earn,
 .contracts {
-  padding: clamp(54px, 7vw, 86px) 60px;
+  padding: clamp(56px, 7vw, 88px) 60px;
   max-width: 1060px;
   margin: 0 auto;
 }
@@ -185,7 +185,7 @@
 .earnHeader,
 .contractsHeader {
   text-align: center;
-  margin-bottom: 38px;
+  margin-bottom: 40px;
 }
 .overviewHeader h2,
 .emissionsHeader h2,
@@ -212,7 +212,7 @@
   max-width: 720px;
 }
 
-.supplyBar { margin-bottom: 30px; }
+.supplyBar { margin-bottom: 32px; }
 .supplyBarTrack {
   height: 12px;
   background: rgba(232, 163, 61, .09);
@@ -268,7 +268,7 @@
   font-weight: 600;
   color: var(--as-text);
   letter-spacing: -0.01em;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .statLabel,
 .splitLabel {
@@ -297,7 +297,7 @@
 .emissionsCurrentTitle { font-size: 11px; font-weight: 700; color: var(--as-text-3); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
 .emissionsCurrentValue { color: var(--as-clay); font-size: clamp(28px, 3vw, 42px); }
 .emissionsCurrentSub { font-size: 13px; color: var(--as-text-3); }
-.splitCard { padding: 26px; }
+.splitCard { padding: 28px; }
 .splitCardAccent { border-color: rgba(232, 163, 61, .55); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 .splitCardAccent .splitPct { color: var(--as-clay); }
 .splitDesc,
@@ -310,16 +310,16 @@
 }
 .duneBanner {
   display: block;
-  padding: 34px 38px;
+  padding: 36px 40px;
   text-decoration: none !important;
   transition: background .15s, transform .15s, border-color .15s;
 }
 .duneBanner:hover { background: var(--as-soil-3); border-color: rgba(16,185,129,.25); transform: translateY(-2px); }
 .duneBannerContent { display: flex; align-items: center; gap: 24px; }
 .duneBannerIcon { width: 56px; height: 56px; border-radius: 16px; background: rgba(16,185,129,.09); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--as-green); }
-.duneBannerTitle { font-family: var(--as-font-display); font-size: 20px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin-bottom: 6px; }
+.duneBannerTitle { font-family: var(--as-font-display); font-size: 20px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin-bottom: 8px; }
 
-.flowCard { padding: 30px 28px 22px; margin-bottom: 28px; overflow: hidden; }
+.flowCard { padding: 32px 28px 24px; margin-bottom: 28px; overflow: hidden; }
 .flowSvg { width: 100%; height: auto; display: block; }
 .flowBox { fill: #03251A; stroke: rgba(151,255,199,.12); stroke-width: 1; }
 .flowBoxDark { fill: #120d07; stroke: rgba(232,163,61,.34); }
@@ -336,25 +336,25 @@
 .flowLineLabelGreen { fill: var(--as-clay); font-size: 11px; font-weight: 700; letter-spacing: .3px; }
 .flowPellet { fill: var(--as-text-2); }
 .flowPelletGreen { fill: var(--as-clay); filter: drop-shadow(0 0 6px rgba(232,163,61,.65)); }
-.flowLegend { display: flex; justify-content: center; gap: 28px; margin-top: 16px; padding-top: 18px; border-top: 1px solid var(--as-line); }
+.flowLegend { display: flex; justify-content: center; gap: 28px; margin-top: 16px; padding-top: 20px; border-top: 1px solid var(--as-line); }
 .flowLegendItem { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--as-text-3); }
 .flowLegendDot,
 .flowLegendDotGreen { width: 8px; height: 8px; border-radius: 50%; }
 .flowLegendDot { background: var(--as-text-2); }
 .flowLegendDotGreen { background: var(--as-clay); box-shadow: 0 0 6px rgba(232,163,61,.6); }
 .earnCard { padding: 32px; }
-.earnStep { font-size: 12px; font-weight: 700; color: var(--as-clay); margin-bottom: 14px; letter-spacing: 1px; }
+.earnStep { font-size: 12px; font-weight: 700; color: var(--as-clay); margin-bottom: 16px; letter-spacing: 1px; }
 .earnCard h3 { font-family: var(--as-font-display); font-size: 22px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin: 0 0 12px; }
 .contracts { max-width: 940px; }
 .contractsTable { overflow: hidden; }
-.contractsRow { display: flex; align-items: baseline; gap: 20px; padding: 16px 26px; border-bottom: 1px solid var(--as-line); }
+.contractsRow { display: flex; align-items: baseline; gap: 20px; padding: 16px 28px; border-bottom: 1px solid var(--as-line); }
 .contractsRow:last-child { border-bottom: none; }
 .contractsLabel { font-size: 11px; font-weight: 700; color: var(--as-clay); letter-spacing: .9px; white-space: nowrap; min-width: 160px; flex-shrink: 0; }
 .contractsValue { font-size: 14px; color: var(--as-text); line-height: 1.5; }
-.contractsLink { color: var(--as-clay) !important; text-decoration: none !important; font-size: 13px; font-weight: 700; border-bottom: 1px solid rgba(232,163,61,.34); padding-bottom: 1px; }
+.contractsLink { color: var(--as-clay) !important; text-decoration: none !important; font-size: 13px; font-weight: 700; border-bottom: 1px solid rgba(232,163,61,.34); padding-bottom: 0px; }
 .contractsLink:hover { border-color: var(--as-clay); }
 .bottomCta { text-align: center; padding: 72px 20px 96px; max-width: 680px; margin: 0 auto; }
-.bottomCta > p { margin-bottom: 30px; }
+.bottomCta > p { margin-bottom: 32px; }
 .bottomLinks { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
 .bottomLinks a { color: var(--as-clay) !important; text-decoration: none !important; border-bottom: 1px solid rgba(232,163,61,.32); }
 .bottomLinks a:hover { color: #f2b85b !important; }
@@ -410,7 +410,7 @@
   .emissions,
   .activity,
   .earn,
-  .contracts { padding: 44px 20px 62px; }
+  .contracts { padding: 44px 20px 64px; }
   .statsGrid,
   .splitGrid { grid-template-columns: repeat(2, 1fr); }
   .earnGrid { grid-template-columns: 1fr; }
@@ -421,7 +421,7 @@
   .duneBannerContent { gap: 16px; }
 }
 @media (max-width: 620px) {
-  .hero { padding: 62px 20px 42px; }
+  .hero { padding: 64px 20px 44px; }
   .heroTitle { font-size: clamp(34px, 11vw, 50px); }
   .heroSub { font-size: 15px; }
   .heroCtas,
@@ -432,10 +432,10 @@
   .splitGrid { grid-template-columns: 1fr; }
   .statCard,
   .splitCard,
-  .earnCard { padding: 22px; }
-  .contractsRow { padding: 14px 18px; }
+  .earnCard { padding: 24px; }
+  .contractsRow { padding: 16px 20px; }
   .duneBannerContent { flex-direction: column; text-align: center; }
-  .flowLegend { flex-direction: column; align-items: center; gap: 10px; }
+  .flowLegend { flex-direction: column; align-items: center; gap: 12px; }
   .bottomLinks { flex-direction: column; gap: 8px; }
   .bottomLinks span { display: none; }
 }

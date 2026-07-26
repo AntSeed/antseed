@@ -27,7 +27,7 @@
   color: var(--as-text-2);
   font-weight: 500;
   font-family: var(--as-font-data);
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 .heroTitle {
   font-family: var(--as-font-display);
@@ -48,7 +48,7 @@
 .heroSub code {
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 2px 6px;
+  padding: 4px 8px;
   border-radius: 6px;
   font-size: 14px;
   color: #001E12;
@@ -103,7 +103,7 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
-  padding: 7px 14px 7px 11px;
+  padding: 8px 16px 8px 12px;
   border-radius: 100px;
   background: #fff;
   border: 1px solid #DFDEDB;
@@ -133,7 +133,7 @@
   font-size: 11px;
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 1px 8px;
+  padding: 0px 8px;
   border-radius: 100px;
   color: #8F8E8B;
 }
@@ -157,7 +157,7 @@
   width: 100%;
   font-family: inherit;
   font-size: 14px;
-  padding: 12px 18px;
+  padding: 12px 20px;
   border: 1px solid #DFDEDB;
   border-radius: 100px;
   background: #fff;
@@ -195,9 +195,9 @@
 .catHeader {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
   border-bottom: 1px solid #DFDEDB;
 }
 .catGlyph {
@@ -211,7 +211,7 @@
   justify-content: center;
   color: var(--as-green);
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 .catGlyph svg { width: 20px; height: 20px; }
 .catHeaderText { flex: 1; min-width: 0; }
@@ -246,14 +246,14 @@
   color: #8F8E8B;
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 100px;
   flex-shrink: 0;
 }
 .catGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 @media (max-width: 720px) { .catTitle { font-size: 20px; } }
 
@@ -262,10 +262,10 @@
   background: #fff;
   border: 1px solid #DFDEDB;
   border-radius: 16px;
-  padding: 18px 18px 14px;
+  padding: 20px 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   text-decoration: none;
   color: inherit;
   transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -339,8 +339,8 @@
 .cardFooter {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 8px;
+  margin-top: 4px;
 }
 .cardSetup {
   font-family: var(--as-font-data);
@@ -349,7 +349,7 @@
   color: #8F8E8B;
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 3px 9px;
+  padding: 4px 8px;
   border-radius: 100px;
 }
 .cardArrow {
@@ -442,11 +442,11 @@
 .detailOneLiner {
   font-size: 15px;
   color: #4A5A51;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 .detailBadgeRow {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .detailBadge {
@@ -454,7 +454,7 @@
   font-size: 11px;
   font-family: var(--as-font-data);
   font-weight: 500;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 100px;
   background: #F3F2EF;
   color: #4A5A51;
@@ -481,7 +481,7 @@
 .description code {
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 1px 6px;
+  padding: 0px 8px;
   border-radius: 5px;
   font-size: 13px;
   color: #001E12;
@@ -500,17 +500,17 @@
   background: var(--as-primary-0);
   border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 14px;
-  padding: 18px 22px 22px;
+  padding: 20px 24px 24px;
   margin-bottom: 36px;
 }
-.runFirstCollapsed { padding-bottom: 18px; }
+.runFirstCollapsed { padding-bottom: 20px; }
 
 .runFirstHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
 }
 .runFirstCollapsed .runFirstHeader { margin-bottom: 0; }
@@ -564,7 +564,7 @@
   background: #fff;
   border: 1px solid rgba(16, 185, 129, 0.25);
   border-radius: 5px;
-  padding: 1px 6px;
+  padding: 0px 8px;
   font-size: 12px;
   color: var(--as-green);
   font-weight: 500;
@@ -578,7 +578,7 @@
   background: #fff;
   border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 100px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
@@ -595,7 +595,7 @@
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-left: 3px solid var(--as-green);
   border-radius: 10px;
-  padding: 18px 22px;
+  padding: 20px 24px;
   margin: 24px 0 0;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
 }
@@ -620,13 +620,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .wireFormatFacts > li {
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--as-text-2);
-  padding-left: 14px;
+  padding-left: 16px;
   position: relative;
 }
 .wireFormatFacts > li::before {
@@ -646,7 +646,7 @@
   background: var(--as-green-dim);
   border: 1px solid var(--as-line-strong);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 0px 4px;
   font-size: 12px;
   color: var(--as-inline-code-text);
 }
@@ -660,14 +660,14 @@
   border-left: 2px solid #f59e0b;
   border-radius: 6px;
   margin-top: 8px;
-  padding: 10px 12px 10px 12px !important;
+  padding: 12px 12px 12px 12px !important;
 }
 .wireFormatWarn strong { color: #92400e !important; }
 .wireFormatHint {
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--as-text-2);
-  margin: 14px 0 0;
+  margin: 16px 0 0;
   padding-top: 12px;
   border-top: 1px solid var(--as-line);
 }
@@ -684,10 +684,10 @@
 .wireFormatRow {
   display: grid;
   grid-template-columns: 200px 1fr auto;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
   font-size: 13px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   background: #f9fbfa;
   border: 1px solid rgba(0, 0, 0, 0.04);
   border-radius: 6px;
@@ -731,7 +731,7 @@
 }
 .glossaryList {
   margin: 0;
-  padding: 0 0 0 18px;
+  padding: 0 0 0 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -745,7 +745,7 @@
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 0px 4px;
   font-size: 12px;
   color: var(--as-green);
 }
@@ -757,10 +757,10 @@
 /* Field-list under a step — explains JSON keys returned by a command. */
 .runFirstFieldList {
   margin: 4px 0 0;
-  padding: 0 0 0 18px;
+  padding: 0 0 0 20px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   font-size: 12.5px;
   line-height: 1.55;
   color: #4A5A51;
@@ -769,7 +769,7 @@
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 0px 4px;
   font-size: 11.5px;
   color: var(--as-green);
 }
@@ -805,8 +805,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 24px 1fr;
-  gap: 14px;
-  padding-bottom: 18px;
+  gap: 16px;
+  padding-bottom: 20px;
 }
 .runFirstItem:last-child { padding-bottom: 0; }
 
@@ -825,7 +825,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 1px;
+  margin-top: 0px;
   box-shadow: 0 0 0 4px #f5fcf8;
 }
 .runFirstBody { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -834,20 +834,20 @@
   font-size: 14px;
   line-height: 1.55;
   color: #001E12;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   font-weight: 500;
 }
 .runFirstHint {
   font-size: 12.5px;
   line-height: 1.55;
   color: #676663;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
 }
 .runFirstHint code {
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 0px 4px;
   font-size: 11.5px;
   color: var(--as-green);
 }
@@ -855,7 +855,7 @@
   font-weight: 600;
   color: #001E12;
 }
-.runFirstHint + .runFirstHint { margin-top: 6px; }
+.runFirstHint + .runFirstHint { margin-top: 8px; }
 
 /* The optional last step is visually softened. */
 .runFirstItemOptional .runFirstNum {
@@ -875,7 +875,7 @@
   background: #fff;
   border: 1px solid #DFDEDB;
   border-radius: 100px;
-  padding: 2px 8px;
+  padding: 4px 8px;
   margin-right: 8px;
   vertical-align: 2px;
 }
@@ -897,12 +897,12 @@
   color: var(--as-green);
   font-weight: 600;
   font-family: var(--as-font-data);
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 .sectionTitle {
   font-size: 22px;
   font-weight: 600;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
   color: #001E12;
   letter-spacing: -0.4px;
 }
@@ -914,7 +914,7 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .step {
   display: flex;
@@ -940,7 +940,7 @@
   font-size: 14px;
   line-height: 1.6;
 }
-.bulletList li { margin-bottom: 6px; }
+.bulletList li { margin-bottom: 8px; }
 
 /* ====== Code blocks ======
  * We use a <div> (not <pre>) because Docusaurus' custom.css ships a global
@@ -959,7 +959,7 @@
   font-size: 11px;
   color: var(--as-green);
   font-family: var(--as-font-data);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   display: block;
 }
 .codeBlock {
@@ -967,7 +967,7 @@
   background: #0e1116 !important;
   color: #DFDEDB !important;
   border-radius: 10px;
-  padding: 14px 56px 14px 16px;
+  padding: 16px 56px 16px 16px;
   font-family: var(--as-font-data);
   font-size: 13px;
   line-height: 1.55;
@@ -1009,7 +1009,7 @@
   letter-spacing: 1.5px;
   text-transform: uppercase;
   color: #8F8E8B;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1027,7 +1027,7 @@
   background: #1a1f26;
   color: #cbd5e1;
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 16px 16px;
   font-family: var(--as-font-data);
   font-size: 12px;
   line-height: 1.55;
@@ -1050,7 +1050,7 @@
   color: #d8d8d3;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   font-size: 11px;
   font-family: var(--as-font-data);
   font-weight: 500;
@@ -1064,7 +1064,7 @@
 }
 
 /* ====== Env table (for env-var config blocks) ====== */
-.envBlock { display: flex; flex-direction: column; gap: 10px; }
+.envBlock { display: flex; flex-direction: column; gap: 12px; }
 .envTable {
   width: 100%;
   border-collapse: separate;
@@ -1077,7 +1077,7 @@
   overflow: hidden;
 }
 .envTable td {
-  padding: 9px 14px;
+  padding: 8px 16px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
   background: transparent;
   color: inherit;
@@ -1115,27 +1115,27 @@
   transition: transform 0.15s;
 }
 .envDetails[open] summary::before { content: '▾ '; }
-.envDetails > .codeBlockWrap { margin-top: 6px; }
+.envDetails > .codeBlockWrap { margin-top: 8px; }
 
 /* ====== GUI block (for GUI-only configurations) ====== */
 .guiBlock {
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 16px 16px;
   font-size: 14px;
   line-height: 1.6;
   color: #001E12;
   white-space: pre-wrap;
 }
 
-.configList { display: flex; flex-direction: column; gap: 14px; }
+.configList { display: flex; flex-direction: column; gap: 16px; }
 
 /* ====== Models ====== */
 .modelChips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin-top: 4px;
 }
 .modelChip {
@@ -1144,7 +1144,7 @@
   color: #001E12;
   font-family: var(--as-font-data);
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 100px;
 }
 .modelNote {
@@ -1156,7 +1156,7 @@
 .modelNote code {
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
-  padding: 1px 6px;
+  padding: 0px 8px;
   border-radius: 5px;
   font-size: 12px;
   color: #001E12;
@@ -1176,7 +1176,7 @@
   background: #fffaf0;
   border: 1px solid #f0e2c2;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 12px 16px;
   font-size: 14px;
   line-height: 1.55;
   color: #001E12;
@@ -1191,7 +1191,7 @@
 .troubleshootList code {
   background: rgba(0,0,0,0.05);
   border: 1px solid rgba(0,0,0,0.06);
-  padding: 1px 5px;
+  padding: 0px 4px;
   border-radius: 4px;
   font-size: 12px;
 }
@@ -1200,18 +1200,18 @@
 .linkRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 .linkRow a {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
   color: #001E12;
   background: #F3F2EF;
   border: 1px solid #DFDEDB;
   border-radius: 100px;
-  padding: 6px 14px;
+  padding: 8px 16px;
   text-decoration: none;
   transition: border-color 0.15s;
 }
@@ -1227,7 +1227,7 @@
   background: var(--as-primary-0);
   border: 1px solid rgba(16, 185, 129, 0.3);
   border-radius: 14px;
-  padding: 18px 20px;
+  padding: 20px 20px;
   margin: 32px 0 0;
 }
 .agentBox h3 {
@@ -1257,7 +1257,7 @@
   background: var(--as-green-dim);
   border: 1px solid var(--as-line-strong);
   color: var(--as-inline-code-text);
-  padding: 1px 6px;
+  padding: 0px 8px;
   border-radius: 5px;
   font-size: 13px;
 }
@@ -1280,7 +1280,7 @@
   background: #fff;
   border: 1px solid #DFDEDB;
   border-radius: 100px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   text-decoration: none;
 }
 .relatedRow a:hover { border-color: var(--as-green); text-decoration: none; }
@@ -1343,7 +1343,7 @@
   .detailWrap { padding: 28px 16px 56px; }
 
   /* Header: let text shrink below 240px and scale the H1. */
-  .detailHeader { gap: 14px; margin-bottom: 18px; }
+  .detailHeader { gap: 16px; margin-bottom: 20px; }
   .detailHeaderText { min-width: 0; flex: 1 1 100%; }
   .detailHeaderText h1 {
     font-size: 26px;
@@ -1356,12 +1356,12 @@
   .detailOneLiner { font-size: 14px; }
 
   /* Run-first banner: tighter padding, header stacks. */
-  .runFirst { padding: 14px 16px 16px; }
-  .runFirstHeader { gap: 10px; }
+  .runFirst { padding: 16px 16px 16px; }
+  .runFirstHeader { gap: 12px; }
   .runFirstSub { font-size: 13px; }
 
   /* Glossary: lighter padding so the green box doesn't crowd the text. */
-  .glossary { padding: 14px 16px; }
+  .glossary { padding: 16px 16px; }
 
   /* Hub hero: trim vertical padding on small screens. */
   .hero { padding: 48px 16px 24px; }
@@ -1382,7 +1382,7 @@
 .detailHeader {
   position: relative;
   text-align: center;
-  padding: clamp(72px, 10vw, 118px) 20px 36px;
+  padding: clamp(72px, 10vw, 120px) 20px 36px;
   max-width: 920px;
   margin: 0 auto;
 }
@@ -1428,7 +1428,7 @@
   text-transform: uppercase;
   color: var(--as-green);
   font-weight: 700;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 .heroTitle,
 .detailHeaderText h1,
@@ -1445,7 +1445,7 @@
 .detailHeaderText h1 {
   font-size: clamp(40px, 5.6vw, 72px);
   line-height: 1.03;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
   text-wrap: balance;
 }
 .heroSub,
@@ -1480,7 +1480,7 @@
   background: rgba(16, 185, 129, .08);
   border: 1px solid rgba(16, 185, 129, .18);
   border-radius: 6px;
-  padding: 2px 6px;
+  padding: 4px 8px;
 }
 .heroCta,
 .heroCtaGhost,
@@ -1502,7 +1502,7 @@
   background: var(--as-ink);
   border: 1px solid var(--as-ink);
   color: #001E12 !important;
-  padding: 0 22px;
+  padding: 0 24px;
 }
 .heroCta:hover { background: var(--as-primary-85); border-color: var(--as-primary-85); color: var(--as-white) !important; transform: translateY(-1px); }
 .heroCtaGhost,
@@ -1529,7 +1529,7 @@
 .bottomBlock {
   max-width: 1200px;
 }
-.jumpNav { margin: 14px auto 0; padding: 0 20px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.jumpNav { margin: 16px auto 0; padding: 0 20px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .jumpLink,
 .card,
 .runFirst,
@@ -1553,7 +1553,7 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
-  padding: 8px 14px 8px 11px;
+  padding: 8px 16px 8px 12px;
   border-radius: 999px;
   color: var(--as-text) !important;
   text-decoration: none !important;
@@ -1578,7 +1578,7 @@
   width: 100%;
   font-family: var(--as-font-ui);
   font-size: 14px;
-  padding: 13px 18px;
+  padding: 12px 20px;
   border: 1px solid var(--as-line-strong);
   border-radius: 999px;
   background: #02130D;
@@ -1588,20 +1588,20 @@
 .search:focus { border-color: var(--as-green); box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
 .search::placeholder { color: var(--as-text-3); }
 .resultCount { color: var(--as-text-3); font-family: var(--as-font-data); }
-.sections { margin: 30px auto 0; padding: 0 20px; }
-.catSection { margin: 0 0 58px; scroll-margin-top: 90px; }
-.catHeader { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--as-line); }
-.catGlyph { width: 42px; height: 42px; border-radius: 12px; background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+.sections { margin: 32px auto 0; padding: 0 20px; }
+.catSection { margin: 0 0 60px; scroll-margin-top: 92px; }
+.catHeader { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--as-line); }
+.catGlyph { width: 42px; height: 42px; border-radius: 12px; background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 4px; }
 .catTitleRow { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; flex-wrap: wrap; }
 .catTitle { font-size: 25px; margin: 0; line-height: 1.2; }
-.catCount { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 10px; flex-shrink: 0; }
-.catGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.catCount { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 12px; flex-shrink: 0; }
+.catGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .card {
   border-radius: var(--as-radius);
-  padding: 18px 18px 14px;
+  padding: 20px 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   text-decoration: none !important;
   color: inherit;
   transition: transform .15s, border-color .15s, box-shadow .15s, background .15s;
@@ -1616,19 +1616,19 @@
 .cardTitle { color: var(--as-text); margin: 0; font-size: 18px; font-weight: 600; }
 .cardCategory { color: var(--as-text-3); }
 .cardFooter { margin-top: auto; display: flex; align-items: center; gap: 8px; }
-.cardSetup { font-size: 10px; padding: 3px 9px; }
+.cardSetup { font-size: 10px; padding: 4px 8px; }
 .cardArrow { margin-left: auto; }
 .bottomBlock { margin: 24px auto 80px; padding: 32px; border-radius: 18px; text-align: center; }
 
-.detailWrap { margin: 0 auto; padding: 0 20px 90px; }
-.breadcrumb { display: flex; gap: 8px; align-items: center; color: var(--as-text-3); font-size: 12px; margin: 30px 0; }
+.detailWrap { margin: 0 auto; padding: 0 20px 92px; }
+.breadcrumb { display: flex; gap: 8px; align-items: center; color: var(--as-text-3); font-size: 12px; margin: 32px 0; }
 .breadcrumb a { color: var(--as-text-2); text-decoration: none; }
 .breadcrumb a:hover { color: var(--as-green); }
-.detailHeader { display: flex; text-align: left; gap: 22px; align-items: center; padding-top: 52px; }
+.detailHeader { display: flex; text-align: left; gap: 24px; align-items: center; padding-top: 52px; }
 .detailLogo { width: 72px; height: 72px; border-radius: 18px; display: flex; align-items: center; justify-content: center; background: #02130D; flex-shrink: 0; }
 .detailOneLiner { font-size: 17px; }
-.detailBadgeRow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.detailBadge { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; padding: 5px 10px; }
+.detailBadgeRow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.detailBadge { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; padding: 4px 12px; }
 .detailBadgeGreen { color: var(--as-green); border-color: rgba(16,185,129,.25); }
 .description { max-width: 780px; margin: 0 auto 28px; font-size: 15px; }
 .runFirst,
@@ -1636,21 +1636,21 @@
 .glossary,
 .agentBox,
 .bottomBlock { border-radius: 18px; }
-.runFirst { margin: 26px 0; padding: 22px; }
-.runFirstHeader { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
+.runFirst { margin: 28px 0; padding: 24px; }
+.runFirstHeader { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
 .runFirstKicker { color: var(--as-green); font-size: 11px; text-transform: uppercase; letter-spacing: 1.8px; margin: 0 0 4px; }
 .runFirstDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--as-green); margin-right: 8px; box-shadow: 0 0 12px rgba(16,185,129,.65); }
 .runFirstRail,
-.stepList { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 14px; }
+.stepList { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 16px; }
 .runFirstItem,
-.step { border-radius: var(--as-radius); padding: 18px; }
-.runFirstItem { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 14px; border: 1px solid var(--as-line); background: rgba(255,255,255,.015); }
+.step { border-radius: var(--as-radius); padding: 20px; }
+.runFirstItem { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 16px; border: 1px solid var(--as-line); background: rgba(255,255,255,.015); }
 .runFirstNum { color: var(--as-green); font-weight: 700; }
-.runFirstStepTitle { margin: 0 0 6px; font-size: 18px; }
+.runFirstStepTitle { margin: 0 0 8px; font-size: 18px; }
 .runFirstItemOptional { border-color: rgba(232,163,61,.2); }
 .runFirstOptionalTag { color: var(--as-clay); }
 .glossary,
-.wireFormat { padding: 22px; margin: 22px 0; }
+.wireFormat { padding: 24px; margin: 24px 0; }
 .glossaryTitle,
 .wireFormatTitle { color: var(--as-green); letter-spacing: 1.5px; text-transform: uppercase; font-size: 11px; }
 .wireFormatGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 16px; }
@@ -1678,12 +1678,12 @@
 .section { margin: 52px 0; }
 .sectionTitle { font-size: clamp(28px, 3vw, 40px); margin: 0 0 20px; }
 .step { border: 1px solid var(--as-line); }
-.stepLabel { color: var(--as-green); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 10px; }
+.stepLabel { color: var(--as-green); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 12px; }
 .bulletList { padding-left: 20px; }
 .codeBlockWrap,
 .exampleOutputWrap { margin: 12px 0; min-width: 0; }
 .codeBlockPath,
-.exampleOutputLabel { display: block; color: var(--as-text-3); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; margin: 0 0 6px; }
+.exampleOutputLabel { display: block; color: var(--as-text-3); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; margin: 0 0 8px; }
 .codeBlock,
 .exampleOutput {
   position: relative;
@@ -1701,9 +1701,9 @@
 .envTable td { border-bottom: 1px solid var(--as-line); padding: 8px; color: var(--as-text-2); }
 .envDetails summary { color: var(--as-green); cursor: pointer; }
 .configList,
-.troubleshootList { border-radius: 14px; padding: 18px 22px; }
+.troubleshootList { border-radius: 14px; padding: 20px 24px; }
 .modelChips { display: flex; flex-wrap: wrap; gap: 8px; }
-.modelChip { padding: 5px 10px; font-size: 11px; }
+.modelChip { padding: 4px 12px; font-size: 11px; }
 
 :global(html[data-theme='light']) .heroTitle,
 :global(html[data-theme='light']) .detailHeaderText h1,
