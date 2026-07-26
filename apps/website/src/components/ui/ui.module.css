@@ -37,7 +37,7 @@
   font-size: 14px;
   font-weight: 600;
   line-height: 20px;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-radius: 32px;
   text-decoration: none;
   transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
@@ -148,7 +148,7 @@
 
 .title {
   font-family: var(--as-font-display);
-  font-weight: 600;
+  font-weight: 500;
   font-size: clamp(32px, 3.4vw, 48px);
   line-height: 1.125;
   letter-spacing: -1px;
@@ -235,7 +235,7 @@
 }
 
 .faqCollapseOpen .faqAnswer {
-  padding-bottom: 18px;
+  padding-bottom: 20px;
 }
 
 .faqAnswer a {

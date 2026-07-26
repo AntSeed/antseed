@@ -101,7 +101,7 @@
   margin-bottom: 24px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .searchWrap {
@@ -120,7 +120,7 @@
 
 .searchInput {
   width: 100%;
-  padding: 14px 40px 14px 44px;
+  padding: 16px 40px 16px 44px;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   font-size: 14px;
@@ -166,7 +166,7 @@
 }
 
 .chip {
-  padding: 6px 14px;
+  padding: 8px 16px;
   border: 1px solid #e2e8f0;
   border-radius: 20px;
   font-size: 12px;
@@ -227,7 +227,7 @@
 }
 
 .table th {
-  padding: 14px 20px;
+  padding: 16px 20px;
   font-family: var(--as-font-data);
   font-size: 10px;
   font-weight: 600;
@@ -284,7 +284,7 @@
 .modelCell {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
 }
 
 .modelLogo {
@@ -314,7 +314,7 @@
 .modelMeta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -329,7 +329,7 @@
   font-family: var(--as-font-data);
   font-weight: 500;
   border-radius: 10px;
-  padding: 2px 8px;
+  padding: 4px 8px;
   text-transform: lowercase;
   letter-spacing: 0.02em;
 }
@@ -359,7 +359,7 @@
   font-weight: 500;
   color: #666e7a;
   background: #f5f7fa;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 6px;
 }
 
@@ -426,7 +426,7 @@
 
 .searchRow {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: stretch;
 }
 
@@ -437,8 +437,8 @@
 .filterToggle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 18px;
+  gap: 8px;
+  padding: 0 20px;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   font-size: 13px;
@@ -478,7 +478,7 @@
 .filterGroup {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .filterGroupWide {
@@ -612,7 +612,7 @@
 .bestPeer {
   font-size: 10px;
   color: #8b949e;
-  margin-top: 2px;
+  margin-top: 4px;
   font-family: var(--as-font-data);
 }
 
@@ -657,7 +657,7 @@
   }
 
   .filterBar {
-    gap: 10px;
+    gap: 12px;
   }
 
   .searchInput {
@@ -744,7 +744,7 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     display: block;
-    margin-bottom: 2px;
+    margin-bottom: 4px;
     font-weight: 400;
   }
 
@@ -769,7 +769,7 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     display: block;
-    margin-bottom: 2px;
+    margin-bottom: 4px;
     font-weight: 400;
   }
 
@@ -782,7 +782,7 @@
 
   .tagBadge {
     font-size: 8px;
-    padding: 1px 5px;
+    padding: 0px 4px;
   }
 
   .searchRow {

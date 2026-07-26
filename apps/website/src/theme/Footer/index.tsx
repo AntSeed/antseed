@@ -1,12 +1,6 @@
 import Link from '@docusaurus/Link';
 import styles from './footer.module.css';
 
-function AntMark() {
-  return (
-    <img src="/logo.svg" alt="" className={styles.logoMark} aria-hidden="true" />
-  );
-}
-
 const COLUMNS: {title: string; links: {label: string; to?: string; href?: string}[]}[] = [
   {
     title: 'Product',
@@ -43,8 +37,7 @@ export default function Footer(): JSX.Element {
       <div className={styles.inner}>
         <div className={styles.brandCol}>
           <div className={styles.brandRow}>
-            <AntMark />
-            <span className={styles.wordmark}>ANTSEED</span>
+            <img src="/logo-white.svg" alt="AntSeed" className={styles.logo} />
           </div>
           <p className={styles.tagline}>
             The open market for AI inference.

@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type MutableRefObject, type RefObject} from 'react';
+import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode} from 'react';
 import Head from '@docusaurus/Head';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
@@ -6,6 +6,36 @@ import styles from './index.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
 import {HeroDemo, DEMO_BEATS, DEMO_TOTAL_FRAMES} from '../components/HeroDemo';
+import {
+  Anthropic,
+  OpenAI,
+  Google,
+  DeepSeek,
+  Meta,
+  Qwen,
+  Mistral,
+  Moonshot,
+  Zhipu,
+  Minimax,
+  Cohere,
+  NousResearch,
+} from '@lobehub/icons';
+
+type IconSize = (props: {size?: number}) => JSX.Element;
+const LOBE_ICONS: Record<string, {Combine?: IconSize; Text?: IconSize}> = {
+  Anthropic,
+  OpenAI,
+  Google,
+  DeepSeek,
+  Meta,
+  Qwen,
+  Mistral,
+  Moonshot,
+  Zhipu,
+  Minimax,
+  Cohere,
+  NousResearch,
+};
 
 /* ============================================================
    COUNT-UP — numbers tick up (expo ease) when scrolled into view.
@@ -71,7 +101,10 @@ const ANT_H = 800;
 const ANT_W = Math.round((15.2738 / 18) * ANT_H);
 const DOT_LIGHT = '213,217,215';
 const DOT_DARK = '197,208,203';
+const SPARKLE_RGB = [16, 185, 129] as const;
 const SAMPLE_OFFSETS = [-4, 0, 4];
+
+const parseRgb = (s: string) => s.split(',').map(Number);
 
 const isDarkTheme = () =>
   document.documentElement.dataset.theme === 'dark' ||
@@ -86,6 +119,7 @@ interface HeroDot {
   sizeFactor: number;
   appearAt: number;
   dissolveAt: number;
+  sparkles: {start: number; end: number}[];
 }
 
 function HeroDotCanvas({
@@ -111,6 +145,7 @@ function HeroDotCanvas({
     let width = 0;
     let height = 0;
     let dots: HeroDot[] = [];
+    let dotScale = 1;
 
     // Offscreen raster of the ant silhouette, alpha-sampled per dot.
     const antCanvas = document.createElement('canvas');
@@ -140,6 +175,8 @@ function HeroDotCanvas({
       const rect = host.getBoundingClientRect();
       width = Math.max(1, Math.round(rect.width));
       height = Math.max(1, Math.round(rect.height));
+      dotScale = width <= 640 ? 0.6 : 1;
+      const step = 9 * dotScale;
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -159,12 +196,26 @@ function HeroDotCanvas({
       const diagonal = Math.hypot(width, height);
 
       const next: HeroDot[] = [];
-      for (let y = 0; y <= height + 9; y += 9) {
-        for (let x = 0; x <= width + 9; x += 9) {
+      for (let y = 0; y <= height + step; y += step) {
+        for (let x = 0; x <= width + step; x += step) {
           const dist = Math.hypot(x - originX, y - originY);
           const coverage = antAlpha ? antCoverage(x - antLeft, y - antTop, antAlpha) : 0;
           const isAnt = coverage > 0;
           const sizeFactor = isAnt ? (0.4 + 0.6 * coverage) * (0.85 + 0.3 * Math.random()) : 1;
+
+          // A sparse subset of ant dots twinkle green once the ant has settled.
+          const sparkles: {start: number; end: number}[] = [];
+          if (isAnt && Math.random() < 0.035) {
+            const lifeStart = BEATS.surfaceStart + 70;
+            const lifeEnd = BEATS.fadeOutStart - 20;
+            let t = lifeStart + Math.random() * (lifeEnd - lifeStart);
+            while (t < lifeEnd) {
+              const dur = 22 + Math.random() * 12;
+              sparkles.push({start: t, end: t + dur});
+              t += dur + 200 + Math.random() * 300;
+            }
+          }
+
           next.push({
             x,
             y,
@@ -175,6 +226,7 @@ function HeroDotCanvas({
             dissolveAt: isAnt
               ? BEATS.fadeOutStart + Math.random() * (BEATS.fadeOutEnd - BEATS.fadeOutStart)
               : 0,
+            sparkles,
           });
         }
       }
@@ -198,14 +250,42 @@ function HeroDotCanvas({
 
     const drawFrame = (frame: number) => {
       ctx.clearRect(0, 0, width, height);
+      const baseRgb = parseRgb(color);
       for (const dot of dots) {
         const alpha = dot.isAnt
           ? antAlphaAt(frame, dot.appearAt, dot.dissolveAt)
           : rippleAlphaAt(frame - dot.arrival);
         if (alpha <= 0.01) continue;
-        const radius = 2.6 * dot.sizeFactor * (0.5 + 0.5 * alpha);
+
+        let pulse = 0;
+        for (const s of dot.sparkles) {
+          if (frame >= s.start && frame <= s.end) {
+            const progress = (frame - s.start) / (s.end - s.start);
+            pulse = Math.sin(progress * Math.PI); // smooth ease in/out, 0 -> 1 -> 0
+            break;
+          }
+        }
+
+        const radius = 2.6 * dotScale * dot.sizeFactor * (0.5 + 0.5 * alpha) * (1 + 0.6 * pulse);
+
+        if (pulse > 0.02) {
+          const glowRadius = radius * (1 + 1.6 * pulse);
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(${SPARKLE_RGB[0]},${SPARKLE_RGB[1]},${SPARKLE_RGB[2]},${0.16 * pulse})`;
+          ctx.arc(dot.x, dot.y, glowRadius, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+
         ctx.beginPath();
-        ctx.fillStyle = `rgba(${color},${0.75 * alpha})`;
+        if (pulse > 0.02) {
+          const sparkleT = pulse * 0.7;
+          const r = Math.round(baseRgb[0] + (SPARKLE_RGB[0] - baseRgb[0]) * sparkleT);
+          const g = Math.round(baseRgb[1] + (SPARKLE_RGB[1] - baseRgb[1]) * sparkleT);
+          const b = Math.round(baseRgb[2] + (SPARKLE_RGB[2] - baseRgb[2]) * sparkleT);
+          ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, 0.75 * alpha + 0.25 * pulse)})`;
+        } else {
+          ctx.fillStyle = `rgba(${color},${0.75 * alpha})`;
+        }
         ctx.arc(dot.x, dot.y, radius, 0, 2 * Math.PI);
         ctx.fill();
       }
@@ -216,7 +296,7 @@ function HeroDotCanvas({
       for (const dot of dots) {
         ctx.beginPath();
         ctx.fillStyle = `rgba(${color},${dot.isAnt ? 0.4 : 0.16})`;
-        ctx.arc(dot.x, dot.y, 2.6 * dot.sizeFactor, 0, 2 * Math.PI);
+        ctx.arc(dot.x, dot.y, 2.6 * dotScale * dot.sizeFactor, 0, 2 * Math.PI);
         ctx.fill();
       }
     };
@@ -324,7 +404,10 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
   const download = useLatestDesktopDownload();
   return (
     <div className={styles.ctaBlock}>
-      <Button href={download.href} osIcons size={size}>Download VPR</Button>
+      <Button href={download.href} osIcons size={size} className="vprBtn">
+        <span className="vprLabelDesktop">Download VPR</span>
+        <span className="vprLabelMobile">Get Started<ArrowRight /></span>
+      </Button>
       {caption && <span className={styles.ctaCaption}>{caption}</span>}
     </div>
   );
@@ -369,24 +452,50 @@ function Hero() {
 /* ============================================================
    LOGO MARQUEE — model lockups drifting across the ink band
    ============================================================ */
-const MARQUEE_LOCKUPS: [string, string][] = [
-  ['anthropic.svg', 'Anthropic'],
-  ['cohere.svg', 'Cohere'],
-  ['deepseek.svg', 'DeepSeek'],
-  ['gemini.svg', 'Gemini'],
-  ['grok.svg', 'Grok'],
-  ['meta.svg', 'Meta AI'],
-  ['mistral.svg', 'Mistral AI'],
-  ['qwen.svg', 'Qwen'],
-  ['openai.svg', 'OpenAI'],
+/* Per-logo optical height — normalizes perceived size, not component
+   defaults. Wide/flat wordmarks sit a touch shorter; compact icon+text
+   marks sit a touch taller, so every lockup reads as roughly the same
+   visual weight in the row. Rendered via @lobehub/icons' `.Combine`
+   (icon + real wordmark) so every brand gets its official lockup. */
+const MARQUEE_LOCKUPS: [string, number][] = [
+  ['Anthropic', 16],
+  ['OpenAI', 22],
+  ['Google', 22],
+  ['DeepSeek', 22],
+  ['Meta', 22],
+  ['Qwen', 22],
+  ['Mistral', 20],
+  ['Moonshot', 20],
+  ['Zhipu', 20],
+  ['Minimax', 20],
+  ['Cohere', 20],
+  ['NousResearch', 18],
 ];
 
 function LogoMarquee() {
-  const run = MARQUEE_LOCKUPS.map(([file, name]) => (
-    <span className={styles.marqueeItem} key={name}>
-      <img src={`/logos/lockups/${file}`} alt={name} loading="lazy" />
-    </span>
-  ));
+  const run = MARQUEE_LOCKUPS.map(([name, size]) => {
+    const Icon = LOBE_ICONS[name];
+    // Anthropic ships no `.Combine` in this package — `.Text` is its full
+    // wordmark (same official mark). Google ships icon-only variants, and
+    // Meta's `.Text` here actually draws "Llama" (the model brand), not
+    // the Meta wordmark — both fall back to the real fetched SVGs.
+    let content: ReactNode;
+    if (name === 'Google' || name === 'Meta') {
+      const file = name === 'Google' ? 'google.svg' : 'meta.svg';
+      content = <img src={`/logos/lockups/${file}`} alt={name} loading="lazy" style={{height: size}} />;
+    } else if (Icon.Combine) {
+      // Each brand ships its own text/icon ratio (0.45–0.85); normalize
+      // to one consistent multiple so no wordmark reads smaller than the rest.
+      content = <Icon.Combine size={size} textMultiple={0.85} />;
+    } else {
+      content = <Icon.Text size={size} />;
+    }
+    return (
+      <span className={styles.marqueeItem} key={name}>
+        {content}
+      </span>
+    );
+  });
   return (
     <section className={styles.marqueeBand} aria-label="Models available on the network">
       <div className={styles.marquee}>
@@ -426,11 +535,34 @@ function PersonIcon() {
   );
 }
 
+/* Drop-trail dots — spaced to match the dashed line asset's 8px pitch
+   (dots at y=3..91), each lighting up in sequence top-to-bottom. */
+const DROP_TRAIL_DOTS = Array.from({length: 11}, (_, i) => 3 + i * 8);
+const DROP_TRAIL_CYCLE = 1.6;
+
 function PricingSection() {
   const download = useLatestDesktopDownload();
   return (
     <section className={styles.pricingSection}>
-      <div className={styles.dropTrail} aria-hidden="true" />
+      <div className={styles.dropTrail} aria-hidden="true">
+        <img src="/img/home/dots-down.svg" alt="" className={styles.dropTrailLine} />
+        {DROP_TRAIL_DOTS.map((top, i) => {
+          // Line asset fades in top-to-bottom (transparent at y=3, solid
+          // at y=91) — each dot's peak brightness follows that same ramp.
+          const peak = 0.25 + 0.75 * ((top - 3) / 88);
+          return (
+            <span
+              key={i}
+              className={styles.dropTrailDot}
+              style={{
+                top,
+                animationDelay: `${i * (DROP_TRAIL_CYCLE / DROP_TRAIL_DOTS.length)}s`,
+                ['--dot-peak' as string]: peak,
+              }}
+            />
+          );
+        })}
+      </div>
       <div className={styles.sectionInner}>
         <Reveal>
           <SectionHeader
@@ -441,11 +573,14 @@ function PricingSection() {
                 <span className={styles.titleAccent}>A fraction of the price.</span>
               </>
             }
-            lead="Providers set their own prices on the open market, and you always see the cost before a request is sent."
+            lead="Providers set their own prices on the open market, and that competition is what keeps pushing the cost down."
           />
         </Reveal>
         <Reveal className={styles.buttonRow} delay={60}>
-          <Button href={download.href} osIcons>Download VPR</Button>
+          <Button href={download.href} osIcons className="vprBtn">
+            <span className="vprLabelDesktop">Download VPR</span>
+            <span className="vprLabelMobile">Get Started<ArrowRight /></span>
+          </Button>
           <Button href="https://antseedstats.com/network" variant="ghost" arrow>See live pricing</Button>
         </Reveal>
         <Reveal className={styles.priceCard} delay={120}>
@@ -508,8 +643,8 @@ function PrivateByDesign() {
   return (
     <section className={styles.privacyWrap}>
       <div className={styles.privacyPanel}>
-        <img className={styles.privacyDotsLeft} src="/img/home/antdots-b.png" alt="" aria-hidden="true" />
-        <img className={styles.privacyDotsRight} src="/img/home/antdots-b.png" alt="" aria-hidden="true" />
+        <img className={styles.privacyDotsLeft} src="/img/home/antdots-w.png" alt="" aria-hidden="true" />
+        <img className={styles.privacyDotsRight} src="/img/home/antdots-w.png" alt="" aria-hidden="true" />
         <Reveal>
           <h2 className={styles.privacyGhostTitle}>Private by design</h2>
         </Reveal>
@@ -541,37 +676,22 @@ function PrivateByDesign() {
 /* ============================================================
    OWNED BY NO ONE — decentralization cards
    ============================================================ */
-function SellersIllo() {
-  return (
-    <div className={styles.sellersIllo} aria-hidden="true">
-      <img className={styles.sellers1} src="/img/home/sellers-1.png" alt="" />
-      <img className={styles.sellers3} src="/img/home/sellers-3.png" alt="" />
-      <img className={styles.sellers0} src="/img/home/sellers-0.png" alt="" />
-      <img className={styles.sellers2} src="/img/home/sellers-2.png" alt="" />
-    </div>
-  );
-}
-
 const OWNED_CARDS = [
   {
-    title: 'Best prices',
-    body: 'Set by open market competition between providers, not a rate one company decided to charge.',
-    illo: <SellersIllo />,
+    title: 'Open Source and On‑Chain',
+    body: 'The Protocol, VPR, Verifications, Network Data and Payments',
+    illo: <img src="/img/home/illo-best-prices.svg" alt="" aria-hidden="true" />,
+    link: {href: 'https://github.com/AntSeed/antseed', label: 'View on GitHub'},
   },
   {
     title: 'Private by design',
     body: 'No account, no email, nothing tying your requests back to you. Choose TEE verified providers for hardware level privacy.',
-    illo: <img className={styles.peerFlowIllo} src="/img/home/peer-flow.svg" alt="" aria-hidden="true" />,
+    illo: <img src="/img/home/illo-private-by-design.svg" alt="" aria-hidden="true" />,
   },
   {
     title: 'Distributed and always on',
     body: "The routing layer that can't go down, can't lock your account, and can't read your prompts.",
-    illo: (
-      <div className={styles.powerIllo} aria-hidden="true">
-        <img className={styles.isoRings} src="/img/home/iso-rings.svg" alt="" />
-        <img className={styles.powerBtn} src="/img/home/power-button.svg" alt="" />
-      </div>
-    ),
+    illo: <img src="/img/home/illo-distributed-always-on.svg" alt="" aria-hidden="true" />,
   },
 ];
 
@@ -602,6 +722,17 @@ function OwnedByNoOne() {
               <div className={styles.featureCopy}>
                 <h3>{card.title}</h3>
                 <p>{card.body}</p>
+                {card.link && (
+                  <a
+                    href={card.link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.featureLinkArrow}
+                  >
+                    {card.link.label}
+                    <ArrowRight />
+                  </a>
+                )}
               </div>
             </Reveal>
           ))}
@@ -614,75 +745,21 @@ function OwnedByNoOne() {
 /* ============================================================
    RUNS ON YOUR COMPUTER
    ============================================================ */
-function EasySetupIllo() {
-  return (
-    <div className={styles.illoWell} aria-hidden="true">
-      <div className={styles.setupMenuBar}>
-        <img src="/img/home/menubar-icons.svg" alt="" height="30" />
-      </div>
-      <div className={styles.setupWindow}>
-        <img src="/img/home/vpr-on.png" alt="" />
-      </div>
-      <img className={styles.setupAntBadge} src="/img/home/ant-badge.svg" alt="" />
-    </div>
-  );
-}
-
-function ToolsRouteIllo() {
-  return (
-    <div className={styles.illoWell} aria-hidden="true">
-      <svg className={styles.routeArcs} viewBox="0 0 317 200" fill="none">
-        <path d="M68 46 C 100 46, 100 99, 132 99" stroke="#A4A5A4" strokeWidth="1.5" />
-        <path d="M68 99 H 132" stroke="#A4A5A4" strokeWidth="1.5" />
-        <path d="M68 153 C 100 153, 100 99, 132 99" stroke="#A4A5A4" strokeWidth="1.5" />
-        <defs>
-          <linearGradient id="routeFade" x1="244" y1="99" x2="318" y2="99" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#10B981" />
-            <stop offset="1" stopColor="#10B981" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d="M244 99 H 318" stroke="url(#routeFade)" strokeWidth="4" strokeDasharray="4 6" strokeLinecap="round" />
-      </svg>
-      <div className={styles.routeTools}>
-        <img src="/img/home/tool-opencode.svg" alt="" />
-        <img src="/img/home/tool-codex.svg" alt="" />
-        <img src="/img/home/tool-custom.svg" alt="" />
-      </div>
-      <span className={styles.routePill}>Localhost:8377</span>
-    </div>
-  );
-}
-
-function PaymentsIllo() {
-  return (
-    <div className={`${styles.illoWell} ${styles.payWell}`} aria-hidden="true">
-      <div className={styles.payRow}>
-        <img src="/img/home/pay-visa.svg" alt="Visa" />
-        <img src="/img/home/pay-mastercard.svg" alt="Mastercard" />
-        <img src="/img/home/pay-applepay.svg" alt="Apple Pay" />
-        <span className={styles.paySep} />
-        <img src="/img/home/pay-metamask.svg" alt="MetaMask" />
-        <img src="/img/home/pay-walletconnect.svg" alt="WalletConnect" />
-      </div>
-    </div>
-  );
-}
-
 const RUNS_CARDS = [
   {
     title: 'Easy setup.',
     body: 'Download, run, done. No config, no migration.',
-    illo: <EasySetupIllo />,
+    illo: <img src="/img/home/illo-easy-setup.svg" alt="" aria-hidden="true" />,
   },
   {
     title: 'Your tools, unchanged.',
     body: 'Point to your own agents and AI apps at one local address.',
-    illo: <ToolsRouteIllo />,
+    illo: <img src="/img/home/illo-tools-unchanged.svg" alt="" aria-hidden="true" />,
   },
   {
     title: 'Pay how you want.',
     body: 'Top up by card or crypto, whichever you prefer.',
-    illo: <PaymentsIllo />,
+    illo: <img src="/img/home/illo-pay-how-you-want.svg" alt="" aria-hidden="true" />,
   },
 ];
 
@@ -704,7 +781,7 @@ function RunsOnYourComputer() {
         <div className={styles.cardGrid3}>
           {RUNS_CARDS.map((card, i) => (
             <Reveal key={card.title} className={styles.runsCard} delay={i * 100}>
-              {card.illo}
+              <div className={styles.runsIlloWell}>{card.illo}</div>
               <div className={styles.featureCopy}>
                 <h3>{card.title}</h3>
                 <p>{card.body}</p>
@@ -741,19 +818,28 @@ function TerminalCard() {
       </div>
       <div className={styles.terminalBlock}>
         <span className={styles.tComment}># Route Claude Code through AntSeed</span>
-        <span className={styles.tWhite}>$ antseed claude</span>
+        <span>
+          <span className={styles.tGreen}>$ </span>
+          <span className={styles.tPurple}>antseed</span> <span className={styles.tBlue}>claude</span>
+        </span>
       </div>
       <div className={styles.terminalBlock}>
         <span className={styles.tComment}># Codex pinned to the best provider</span>
-        <span className={styles.tGreen}>$ antseed codex --model deepseek-v3</span>
+        <span>
+          <span className={styles.tGreen}>$ </span>
+          <span className={styles.tPurple}>antseed</span> <span className={styles.tBlue}>codex</span>{' '}
+          <span className={styles.tYellow}>--model</span> <span className={styles.tOrange}>deepseek-v3</span>
+        </span>
       </div>
       <div className={styles.terminalBlock}>
         <span className={styles.tComment}># Or call any compatible client</span>
-        <span className={styles.tGreen}>
-          $ curl -X POST http://localhost:8377/v1/chat/completions \{'\n'}
-          {'  '}-H &quot;Content-Type: application/json&quot; \{'\n'}
-          {'  '}-d &apos;{'{'}&quot;model&quot;: &quot;deepseek-v3&quot;,{'\n'}
-          {'    '}&quot;messages&quot;: [{'{'}&quot;role&quot;: &quot;user&quot;,&quot;content&quot;: &quot;hi&quot;{'}'}]{'}'}&apos;
+        <span>
+          <span className={styles.tGreen}>$ </span>
+          <span className={styles.tPurple}>curl</span> <span className={styles.tYellow}>-X</span>{' '}
+          <span className={styles.tBlue}>POST</span> <span className={styles.tBlue}>http://localhost:8377/v1/chat/completions</span> \{'\n'}
+          {'  '}<span className={styles.tYellow}>-H</span> <span className={styles.tGreen}>&quot;Content-Type: application/json&quot;</span> \{'\n'}
+          {'  '}<span className={styles.tYellow}>-d</span> &apos;{'{'}<span className={styles.tBlue}>&quot;model&quot;</span>: <span className={styles.tOrange}>&quot;deepseek-v3&quot;</span>,{'\n'}
+          {'    '}<span className={styles.tBlue}>&quot;messages&quot;</span>: [{'{'}<span className={styles.tBlue}>&quot;role&quot;</span>: <span className={styles.tGreen}>&quot;user&quot;</span>,<span className={styles.tBlue}>&quot;content&quot;</span>: <span className={styles.tGreen}>&quot;hi&quot;</span>{'}'}]{'}'}&apos;
         </span>
       </div>
     </div>
@@ -784,7 +870,7 @@ function FlowChips() {
 function LocalhostSection() {
   return (
     <section className={styles.darkSection}>
-      <img className={styles.darkAnt} src="/img/home/antdots-w.png" alt="" aria-hidden="true" />
+      <img className={styles.darkAnt} src="/img/home/antdots-green.png" alt="" aria-hidden="true" />
       <div className={styles.sectionInner}>
         <div className={styles.localhostGrid}>
           <Reveal className={styles.localhostCopy}>
@@ -842,7 +928,6 @@ const STEPS = [
 function StepsSection() {
   return (
     <section className={styles.stepsSection}>
-      <img className={styles.stepsAnt} src="/img/home/ant-v-dots.png" alt="" aria-hidden="true" />
       <div className={styles.sectionInner}>
         <Reveal>
           <h2 className={styles.stepsTitle}>
@@ -882,6 +967,8 @@ function SellSection() {
   return (
     <section className={styles.sellSection}>
       <div className={styles.sectionInner}>
+        <div className={styles.sellCardWrap}>
+        <img className={styles.sellAntMobile} src="/img/home/ant-v-dots.png" alt="" aria-hidden="true" />
         <Reveal className={styles.sellCard}>
           <div className={styles.sellGrid}>
             <div className={styles.sellCopy}>
@@ -894,7 +981,7 @@ function SellSection() {
               <ul className={styles.sellList}>
                 {SELLABLES.map((item) => (
                   <li key={item}>
-                    <span className={styles.sellLine} aria-hidden="true" />
+                    <img className={styles.sellLine} src="/img/home/greendots.svg" alt="" aria-hidden="true" />
                     {item}
                   </li>
                 ))}
@@ -909,7 +996,10 @@ function SellSection() {
             <div className={styles.earningsCol}>
               <div className={styles.earningsHead}>
                 <span>Live provider earnings</span>
-                <span className={styles.liveTag}><span className={styles.liveDot} /> Live</span>
+                <span className={styles.liveTag}>
+                  <span className={styles.signalDots} aria-hidden="true"><i /><i /><i /></span>
+                  Live
+                </span>
               </div>
               <div className={styles.earningsBig}>
                 <strong><CountUp value="$143K" duration={1400} /></strong>
@@ -934,6 +1024,7 @@ function SellSection() {
             </div>
           </div>
         </Reveal>
+        </div>
       </div>
     </section>
   );
@@ -986,8 +1077,6 @@ function FAQSection() {
 function FinalCta() {
   return (
     <section className={styles.finalCta}>
-      <img className={styles.finalCtaAnt} src="/img/home/antdots-w.png" alt="" aria-hidden="true" />
-      <div className={styles.finalCtaGlow} aria-hidden="true" />
       <Reveal className={styles.finalCtaInner}>
         <h2 className={styles.finalTitle}>Your AI should work for you</h2>
         <p className={styles.finalSub}>Every Model, No Middleman. Anonymous and Always On.</p>
@@ -1003,7 +1092,10 @@ function FinalCta() {
 function FinalCtaButton() {
   const download = useLatestDesktopDownload();
   return (
-    <Button href={download.href} variant="white" size="lg" osIcons>Download VPR</Button>
+    <Button href={download.href} variant="white" size="lg" osIcons className="vprBtn">
+      <span className="vprLabelDesktop">Download VPR</span>
+      <span className="vprLabelMobile">Get Started<ArrowRight /></span>
+    </Button>
   );
 }
 
@@ -1042,8 +1134,11 @@ export default function Home(): JSX.Element {
       <OwnedByNoOne />
       <RunsOnYourComputer />
       <LocalhostSection />
-      <StepsSection />
-      <SellSection />
+      <div className={styles.stepsSellWrap}>
+        <img className={styles.stepsAnt} src="/img/home/ant-v-dots.png" alt="" aria-hidden="true" />
+        <StepsSection />
+        <SellSection />
+      </div>
       <FAQSection />
       <FinalCta />
     </Layout>

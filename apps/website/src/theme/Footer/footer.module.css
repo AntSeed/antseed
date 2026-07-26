@@ -21,21 +21,13 @@
 .brandRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
-.logoMark {
-  width: 36px;
-  height: 36px;
+.logo {
+  height: 32px;
+  width: auto;
   display: block;
-}
-
-.wordmark {
-  font-family: var(--as-font-app);
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -0.01em;
-  color: #ffffff;
 }
 
 .tagline {
@@ -53,7 +45,7 @@
 }
 
 .social a {
-  color: #ffffff;
+  color: var(--as-gray-5);
   transition: color 0.15s ease;
   display: inline-flex;
   width: 24px;
@@ -63,7 +55,7 @@
 }
 
 .social a:hover {
-  color: var(--as-primary-3);
+  color: #ffffff;
 }
 
 .copyright {
@@ -132,5 +124,12 @@
   .inner {
     flex-direction: column;
     gap: 36px;
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 24px;
+    row-gap: 36px;
   }
 }

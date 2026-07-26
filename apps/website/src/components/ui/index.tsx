@@ -125,7 +125,7 @@ export function Button({
   const inner = (
     <>
       {osIcons && (
-        <span className={styles.osIcons}>
+        <span className={`${styles.osIcons} vprOsIcons`}>
           <AppleIcon />
           <WindowsIcon />
         </span>
