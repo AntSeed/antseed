@@ -53,7 +53,7 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
 
 test('recommended catalog lists frontier models in lineup order, not popularity', () => {
   const catalog = projectRowsToVprModelCatalog([
-    // deepseek is the most popular (2 peers) but gpt-5.6 leads the lineup.
+    // deepseek is the most popular (2 peers) but trails both lineup slots.
     discoverRow({ provider: 'openai', serviceId: 'deepseek-v4', peerId: 'p1' }),
     discoverRow({ provider: 'openai', serviceId: 'deepseek-v4', peerId: 'p2' }),
     discoverRow({ provider: 'anthropic', serviceId: 'claude-fable-5', peerId: 'p3' }),
@@ -63,32 +63,57 @@ test('recommended catalog lists frontier models in lineup order, not popularity'
   const recommended = selectRecommendedVprCatalog(catalog);
 
   assert.deepEqual(recommended.map((entry) => entry.serviceId), [
-    'gpt-5.6',
     'claude-fable-5',
+    'gpt-5.6',
     'deepseek-v4',
   ]);
 });
 
-test('recommended catalog picks one variant per family, preferring the exact model', () => {
+test('recommended catalog lists named variants separately, each on its own slot', () => {
   const catalog = projectRowsToVprModelCatalog([
-    // Sol is more popular, but the exact family model wins when advertised.
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-sol', peerId: 'p1' }),
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-sol', peerId: 'p2' }),
-    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', peerId: 'p3' }),
-    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra-pro', peerId: 'p4' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna', peerId: 'p3' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', peerId: 'p4' }),
   ]);
 
-  assert.deepEqual(selectRecommendedVprCatalog(catalog).map((entry) => entry.serviceId), ['gpt-5.6']);
+  // Lineup order: sol, luna, then the generic 5.6 slot landing on the base model.
+  assert.deepEqual(selectRecommendedVprCatalog(catalog).map((entry) => entry.serviceId), [
+    'gpt-5.6-sol',
+    'gpt-5.6-luna',
+    'gpt-5.6',
+  ]);
 });
 
-test('recommended catalog falls back to the most popular family variant', () => {
+test('a broad slot falls back to the most popular variant no earlier slot claimed', () => {
   const catalog = projectRowsToVprModelCatalog([
+    // No base gpt-5.6 advertised: luna takes its own slot, and the generic
+    // slot falls through to terra rather than being starved.
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p1' }),
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna', peerId: 'p2' }),
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna', peerId: 'p3' }),
   ]);
 
-  assert.deepEqual(selectRecommendedVprCatalog(catalog).map((entry) => entry.serviceId), ['gpt-5.6-luna']);
+  assert.deepEqual(selectRecommendedVprCatalog(catalog).map((entry) => entry.serviceId), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+});
+
+test('recommended catalog covers the Claude lineup alongside GPT', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'anthropic', serviceId: 'claude-sonnet-5', peerId: 'p1' }),
+    discoverRow({ provider: 'anthropic', serviceId: 'claude-opus-5', peerId: 'p2' }),
+    discoverRow({ provider: 'anthropic', serviceId: 'claude-fable-5', peerId: 'p3' }),
+    discoverRow({ provider: 'openai', serviceId: 'minimax-m3', peerId: 'p4' }),
+  ]);
+
+  assert.deepEqual(selectRecommendedVprCatalog(catalog).map((entry) => entry.serviceId), [
+    'claude-opus-5',
+    'claude-fable-5',
+    'claude-sonnet-5',
+    'minimax-m3',
+  ]);
 });
 
 test('recommended catalog appends free models and drops unknown paid models', () => {

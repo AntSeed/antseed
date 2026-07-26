@@ -16,7 +16,7 @@ import styles from './VprModelDropdown.module.scss';
 
 /* The menu shows the curated recommended lineup (frontier + free models);
    the full list lives on the Models page via the footer link. */
-const TOP_MODEL_COUNT = 8;
+const TOP_MODEL_COUNT = 12;
 
 type VprModelDropdownProps = {
   catalog: VprModelCatalogEntry[];

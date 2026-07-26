@@ -26,7 +26,7 @@ import styles from './VprExploreView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-const RECOMMENDED_LIMIT = 12;
+const RECOMMENDED_LIMIT = 18;
 
 // Renderer-lifetime cache: tab/search/filter/sort survive drilling into a
 // model page and back (ViewHost unmounts inactive views).
