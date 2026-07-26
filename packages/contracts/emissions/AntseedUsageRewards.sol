@@ -75,11 +75,21 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     mapping(uint256 => bool) public epochRemainderSettled;
 
     // ─── Dynamic Share Config ────────────────────────────────────────
-    uint32 public buyerMinShareBps = 5_000;
-    uint32 public buyerMaxShareBps = 10_000;
-    uint32 public sellerMinShareBps = 5_000;
-    uint32 public sellerMaxShareBps = 10_000;
-    uint256 public volumeShareTarget = 1_000_000e6;
+    /// @dev Config changes take effect from the next epoch. The outgoing
+    ///      config is retained so elapsed epochs whose budgets are not yet
+    ///      frozen keep pricing against the config active while they ran.
+    struct DynamicUsageConfig {
+        uint32 buyerMinShareBps;
+        uint32 buyerMaxShareBps;
+        uint32 sellerMinShareBps;
+        uint32 sellerMaxShareBps;
+        uint256 volumeShareTarget;
+    }
+
+    DynamicUsageConfig private _currentConfig;
+    DynamicUsageConfig private _pendingConfig;
+    /// @dev First epoch `_pendingConfig` applies to; 0 = none scheduled.
+    uint256 private _pendingFromEpoch;
 
     // ─── Events ──────────────────────────────────────────────────────
     event SellerPoolsSet(address indexed sellerPools);
@@ -132,7 +142,8 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint32 buyerMaxShareBps,
         uint32 sellerMinShareBps,
         uint32 sellerMaxShareBps,
-        uint256 volumeShareTarget
+        uint256 volumeShareTarget,
+        uint256 fromEpoch
     );
     event UsageEpochBudgetsFrozen(uint256 indexed epoch, uint256 buyerBudget, uint256 sellerBudget);
     event UsageRewardRemainderSettled(
@@ -157,6 +168,14 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
         registry = IAntseedRegistry(_registry);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
+
+        _currentConfig = DynamicUsageConfig({
+            buyerMinShareBps: 5_000,
+            buyerMaxShareBps: 10_000,
+            sellerMinShareBps: 5_000,
+            sellerMaxShareBps: 10_000,
+            volumeShareTarget: 1_000_000e6
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -272,15 +291,28 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
                 || _volumeShareTarget == 0
         ) revert InvalidValue();
 
-        buyerMinShareBps = _buyerMinShareBps;
-        buyerMaxShareBps = _buyerMaxShareBps;
-        sellerMinShareBps = _sellerMinShareBps;
-        sellerMaxShareBps = _sellerMaxShareBps;
-        volumeShareTarget = _volumeShareTarget;
+        uint256 fromEpoch = emissionsGate.currentEpoch() + 1;
+        if (_pendingFromEpoch != 0 && _pendingFromEpoch < fromEpoch) {
+            _currentConfig = _pendingConfig;
+        }
+        _pendingConfig = DynamicUsageConfig({
+            buyerMinShareBps: _buyerMinShareBps,
+            buyerMaxShareBps: _buyerMaxShareBps,
+            sellerMinShareBps: _sellerMinShareBps,
+            sellerMaxShareBps: _sellerMaxShareBps,
+            volumeShareTarget: _volumeShareTarget
+        });
+        _pendingFromEpoch = fromEpoch;
 
         emit DynamicUsageConfigSet(
-            _buyerMinShareBps, _buyerMaxShareBps, _sellerMinShareBps, _sellerMaxShareBps, _volumeShareTarget
+            _buyerMinShareBps, _buyerMaxShareBps, _sellerMinShareBps, _sellerMaxShareBps, _volumeShareTarget, fromEpoch
         );
+    }
+
+    /// @notice Dynamic share config active for `epoch`.
+    function dynamicUsageConfigAt(uint256 epoch) public view returns (DynamicUsageConfig memory) {
+        if (_pendingFromEpoch != 0 && epoch >= _pendingFromEpoch) return _pendingConfig;
+        return _currentConfig;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -500,11 +532,17 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _buyerShareBpsAt(uint256 epoch) internal view returns (uint32) {
-        return AntseedShareMath.saturatingShareBps(_epochVolume(epoch), buyerMinShareBps, buyerMaxShareBps, volumeShareTarget);
+        DynamicUsageConfig memory config = dynamicUsageConfigAt(epoch);
+        return AntseedShareMath.saturatingShareBps(
+            _epochVolume(epoch), config.buyerMinShareBps, config.buyerMaxShareBps, config.volumeShareTarget
+        );
     }
 
     function _sellerShareBpsAt(uint256 epoch) internal view returns (uint32) {
-        return AntseedShareMath.saturatingShareBps(_epochVolume(epoch), sellerMinShareBps, sellerMaxShareBps, volumeShareTarget);
+        DynamicUsageConfig memory config = dynamicUsageConfigAt(epoch);
+        return AntseedShareMath.saturatingShareBps(
+            _epochVolume(epoch), config.sellerMinShareBps, config.sellerMaxShareBps, config.volumeShareTarget
+        );
     }
 
     function _epochVolume(uint256 epoch) internal view returns (uint256) {

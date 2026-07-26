@@ -71,9 +71,19 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public immutable initialIndexEpoch;
 
     // ─── Dynamic Share Config ────────────────────────────────────────
-    uint32 public stakerMinShareBps = 2_000;
-    uint32 public stakerMaxShareBps = 40_000;
-    uint256 public stakeShareTarget = 400_000_000e18;
+    /// @dev Config changes take effect from the next epoch. The outgoing
+    ///      config is retained so elapsed epochs whose budgets are not yet
+    ///      frozen keep pricing against the config active while they ran.
+    struct DynamicStakerConfig {
+        uint32 minShareBps;
+        uint32 maxShareBps;
+        uint256 stakeShareTarget;
+    }
+
+    DynamicStakerConfig private _currentConfig;
+    DynamicStakerConfig private _pendingConfig;
+    /// @dev First epoch `_pendingConfig` applies to; 0 = none scheduled.
+    uint256 private _pendingFromEpoch;
 
     struct ClaimRoute {
         address recipient;
@@ -123,7 +133,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         uint256 toEpoch,
         uint256 claimableAmount
     );
-    event DynamicStakerConfigSet(uint32 minShareBps, uint32 maxShareBps, uint256 stakeShareTarget);
+    event DynamicStakerConfigSet(uint32 minShareBps, uint32 maxShareBps, uint256 stakeShareTarget, uint256 fromEpoch);
     event StakerEpochBudgetFrozen(uint256 indexed epoch, uint256 budget);
     event StakerRewardRemainderSettled(
         uint256 indexed epoch, uint256 unallocatedAmount, uint256 burnedAmount, uint256 reserveAmount
@@ -145,6 +155,9 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         sellerPools = IAntseedSellerPools(_sellerPools);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
         initialIndexEpoch = IAntseedUsageAccounting(_usageAccounting).currentEpoch();
+
+        _currentConfig =
+            DynamicStakerConfig({ minShareBps: 2_000, maxShareBps: 40_000, stakeShareTarget: 400_000_000e18 });
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -290,10 +303,22 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (minShareBps > maxShareBps || maxShareBps > MAX_STAKER_SHARE_BPS || _stakeShareTarget == 0) {
             revert InvalidValue();
         }
-        stakerMinShareBps = minShareBps;
-        stakerMaxShareBps = maxShareBps;
-        stakeShareTarget = _stakeShareTarget;
-        emit DynamicStakerConfigSet(minShareBps, maxShareBps, _stakeShareTarget);
+
+        uint256 fromEpoch = emissionsGate.currentEpoch() + 1;
+        if (_pendingFromEpoch != 0 && _pendingFromEpoch < fromEpoch) {
+            _currentConfig = _pendingConfig;
+        }
+        _pendingConfig =
+            DynamicStakerConfig({ minShareBps: minShareBps, maxShareBps: maxShareBps, stakeShareTarget: _stakeShareTarget });
+        _pendingFromEpoch = fromEpoch;
+
+        emit DynamicStakerConfigSet(minShareBps, maxShareBps, _stakeShareTarget, fromEpoch);
+    }
+
+    /// @notice Dynamic share config active for `epoch`.
+    function dynamicStakerConfigAt(uint256 epoch) public view returns (DynamicStakerConfig memory) {
+        if (_pendingFromEpoch != 0 && epoch >= _pendingFromEpoch) return _pendingConfig;
+        return _currentConfig;
     }
 
     function stakerEpochBudget(uint256 epoch) public view returns (uint256) {
@@ -304,8 +329,10 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _liveStakerEpochBudget(uint256 epoch) internal view returns (uint256) {
         uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
-        uint32 shareBps =
-            AntseedShareMath.saturatingShareBps(activeStake, stakerMinShareBps, stakerMaxShareBps, stakeShareTarget);
+        DynamicStakerConfig memory config = dynamicStakerConfigAt(epoch);
+        uint32 shareBps = AntseedShareMath.saturatingShareBps(
+            activeStake, config.minShareBps, config.maxShareBps, config.stakeShareTarget
+        );
         if (shareBps == 0) return 0;
 
         uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
