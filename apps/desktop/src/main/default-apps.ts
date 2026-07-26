@@ -1,3 +1,6 @@
+import { homedir } from 'node:os';
+import path from 'node:path';
+
 /**
  * Built-in "Connected apps" catalog for the VPR Connected apps screen.
  *
@@ -10,6 +13,27 @@
  * replaces the default here, so releases can still tweak or extend the
  * catalog; user-added custom apps (custom-apps.ts) merge in separately.
  */
+
+/**
+ * Per-platform config path for tools that follow Windows conventions instead
+ * of `~/.config`. `~/`-style paths expand against homedir() everywhere, which
+ * is right for home-rooted tools (codex `~/.codex`, pi `~/.pi`, opencode
+ * `~/.config/opencode` — verified home-based even on Windows) but wrong for
+ * tools whose Windows builds read from the known folders. Resolved here, at
+ * definition time, so the patcher keeps a single path string per profile.
+ */
+export function platformConfigPath(
+  posixPath: string,
+  windowsFolder: { base: 'APPDATA' | 'LOCALAPPDATA'; segments: readonly string[] } | null,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform !== 'win32' || !windowsFolder) return posixPath;
+  const fallback = windowsFolder.base === 'APPDATA' ? ['AppData', 'Roaming'] : ['AppData', 'Local'];
+  const root = env[windowsFolder.base] || path.join(homedir(), ...fallback);
+  return path.join(root, ...windowsFolder.segments);
+}
+
 export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
   {
     name: 'opencode',
@@ -74,7 +98,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     pathPrefixes: [],
     configPatch: {
       format: 'crush',
-      configPath: '~/.config/crush/crush.json',
+      // Windows: crush (charm) resolves its global config under LOCALAPPDATA.
+      configPath: platformConfigPath('~/.config/crush/crush.json', {
+        base: 'LOCALAPPDATA',
+        segments: ['crush', 'crush.json'],
+      }),
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
@@ -90,7 +118,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     pathPrefixes: [],
     configPatch: {
       format: 'goose',
-      configPath: '~/.config/goose/config.yaml',
+      // Windows: goose reads %APPDATA%\Block\goose\config\config.yaml.
+      configPath: platformConfigPath('~/.config/goose/config.yaml', {
+        base: 'APPDATA',
+        segments: ['Block', 'goose', 'config', 'config.yaml'],
+      }),
       // goose provider engine; the host root is patched to the buyer proxy.
       providerKey: 'openai',
       baseURL: 'http://localhost:{buyerPort}',
@@ -106,7 +138,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     pathPrefixes: [],
     configPatch: {
       format: 'zed',
-      configPath: '~/.config/zed/settings.json',
+      // Windows: Zed reads %APPDATA%\Zed\settings.json.
+      configPath: platformConfigPath('~/.config/zed/settings.json', {
+        base: 'APPDATA',
+        segments: ['Zed', 'settings.json'],
+      }),
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
