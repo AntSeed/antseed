@@ -560,6 +560,18 @@ function escapeRegExpLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function windowsExecutablePath(targetPath: string): string | null {
+  if (process.platform !== 'win32') return null;
+  if (path.extname(targetPath).toLowerCase() === '.exe') return targetPath;
+  if (!targetPath.toLowerCase().endsWith('.lnk')) return null;
+  try {
+    const executable = shell.readShortcutLink(targetPath).target;
+    return executable && path.extname(executable).toLowerCase() === '.exe' ? executable : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether the application behind a launch target has a live process. macOS
     matches the bundle's executable directory, so an Electron app's helper
     processes count; Windows matches the executable image name, and a `.lnk`
@@ -577,8 +589,9 @@ function isAppTargetRunning(target: AppLaunchTarget): boolean {
     }
   }
   if (process.platform === 'win32') {
-    const image = path.basename(target.path);
-    if (path.extname(image).toLowerCase() !== '.exe') return false;
+    const executable = windowsExecutablePath(target.path);
+    if (!executable) return false;
+    const image = path.basename(executable);
     try {
       const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/NH'], { encoding: 'utf8' });
       return out.toLowerCase().includes(image.toLowerCase());
@@ -630,7 +643,8 @@ function quitAppTarget(target: AppLaunchTarget): void {
     return;
   }
   if (process.platform === 'win32') {
-    execFileSync('taskkill', ['/IM', path.basename(target.path)], { stdio: 'pipe' });
+    const executable = windowsExecutablePath(target.path);
+    if (executable) execFileSync('taskkill', ['/IM', path.basename(executable)], { stdio: 'pipe' });
   }
 }
 
@@ -643,7 +657,8 @@ function killAppTarget(target: AppLaunchTarget): void {
     return;
   }
   if (process.platform === 'win32') {
-    execFileSync('taskkill', ['/F', '/IM', path.basename(target.path)], { stdio: 'pipe' });
+    const executable = windowsExecutablePath(target.path);
+    if (executable) execFileSync('taskkill', ['/F', '/IM', path.basename(executable)], { stdio: 'pipe' });
   }
 }
 
