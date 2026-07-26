@@ -1,7 +1,15 @@
 /* AntSeed shared UI tokens and primitive styles.
    Apps can map their own theme tokens to these --as-* variables. */
 
-:root {
+/* Declared on BOTH :root and body so the mapping re-resolves at each scope.
+   A custom property substitutes where it is declared, then inherits as a
+   finished value — so a mapping declared only on :root would freeze the
+   light-theme colors even when an app switches themes further down the tree
+   (the desktop app themes on `body.dark-theme`). Re-declaring on body lets
+   those overrides feed back into the --as-* tokens. For apps that theme on
+   :root alone, body inherits the same values and this resolves identically. */
+:root,
+body {
   --as-bg-primary: var(--page-bg, var(--bg-primary, #f6f1e5));
   --as-bg-surface: var(--card-bg, var(--bg-card, #fffdf8));
   --as-bg-muted: var(--box-bg, var(--bg-surface, #ece6d6));

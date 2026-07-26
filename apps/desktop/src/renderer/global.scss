@@ -99,6 +99,10 @@ body.dark-theme {
   --bg-sidebar-active: rgba(52, 211, 153, 0.12);
   --accent: #1fd87a;
   --accent-green: #1fd87a;
+  /* The dark accent is a bright mint, so on-accent text must be dark —
+     white-on-mint fails contrast (shared primitives read this via
+     --as-accent-contrast for primary buttons). */
+  --accent-contrast: #06281a;
   --brand: #10b981;
   --accent-blue: #58a6ff;
   --accent-yellow: #f2cc60;
