@@ -57,6 +57,7 @@ import {
   extractConversationIdentity,
   extractFirstUserSnippet,
   isCompletionRequestPath,
+  isTitleGenerationRequest,
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
@@ -1325,13 +1326,18 @@ export class BuyerProxy {
           : (parsePeerPinnedService(rawModel) ? rawModel : null)
       const trackedKey = conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       const known = this._conversations.get(`${conversationIdentity.tool}:${trackedKey}`)
+      // A title turn runs on the tool's own small model and races ahead of the
+      // first real turn, so it must not become the chat's model: that pin
+      // outranks the default route for every later turn, which would strand
+      // the whole session on a model the user never picked.
+      const titleTurn = isTitleGenerationRequest(conversationBody)
       const tracked = this._conversations.touch({
         tool: conversationIdentity.tool,
         sessionKey: trackedKey,
         // Extract until a label sticks: a tool's title-generation request can
         // race ahead of the first real turn and create the row snippet-less.
         snippet: known?.snippet ? null : extractFirstUserSnippet(conversationBody),
-        lastModel: resolvedModel,
+        lastModel: titleTurn ? null : resolvedModel,
       })
       // Bind the request to the chat so its cost can be attributed when the
       // payment layer signs for it (see _attributeSpend).

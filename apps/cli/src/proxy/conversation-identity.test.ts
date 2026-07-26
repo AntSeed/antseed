@@ -4,6 +4,7 @@ import {
   extractConversationIdentity,
   extractFirstUserSnippet,
   isCompletionRequestPath,
+  isTitleGenerationRequest,
 } from './conversation-identity.js'
 
 test('isCompletionRequestPath matches API turn endpoints', () => {
@@ -221,4 +222,37 @@ test('snippet: null for empty or non-conversation bodies', () => {
   assert.equal(extractFirstUserSnippet(null), null)
   assert.equal(extractFirstUserSnippet({ model: 'x' }), null)
   assert.equal(extractFirstUserSnippet({ messages: [{ role: 'assistant', content: 'hi' }] }), null)
+})
+
+test('title turns are recognised so they cannot define a chat model', () => {
+  // OpenCode's verbatim shape: the instruction is its own leading message and
+  // the conversation being titled follows it, on the chat's own session id.
+  assert.equal(isTitleGenerationRequest({
+    messages: [
+      { role: 'user', content: 'Generate a title for this conversation:\n' },
+      { role: 'user', content: 'hi' },
+    ],
+  }), true)
+  // Claude Code's phrasing, as a Responses-style item list.
+  assert.equal(isTitleGenerationRequest({
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Please write a 5-10 word title for the following conversation' }],
+    }],
+  }), true)
+})
+
+test('real turns are not mistaken for title turns', () => {
+  assert.equal(isTitleGenerationRequest({ messages: [{ role: 'user', content: 'hi' }] }), false)
+  // Only the leading message counts — a later turn quoting the instruction
+  // (it is in the history once titling ran) is still a real turn.
+  assert.equal(isTitleGenerationRequest({
+    messages: [
+      { role: 'user', content: 'fix the failing tests' },
+      { role: 'user', content: 'Generate a title for this conversation:' },
+    ],
+  }), false)
+  assert.equal(isTitleGenerationRequest(null), false)
+  assert.equal(isTitleGenerationRequest({ model: 'x' }), false)
 })

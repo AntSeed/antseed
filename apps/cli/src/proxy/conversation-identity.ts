@@ -280,6 +280,33 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
 }
 
 /**
+ * True when the request is a tool's title/summary housekeeping turn rather
+ * than a chat turn — its *leading* user message is a title instruction.
+ *
+ * Keyed on the first message because OpenCode sends
+ * `[{"Generate a title for this conversation:"}, ...the real conversation]`,
+ * so the conversation being titled is in the body too; a genuine turn never
+ * opens with the instruction.
+ *
+ * These ride the chat's own session id (OpenCode fires one concurrently with
+ * the first real turn) and tools send them on their own "small" model, so
+ * without this the first model to touch a brand-new chat is the tool's title
+ * model — and that becomes the chat's pin, outranking the selected model for
+ * the rest of the session.
+ */
+export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | null): boolean {
+  if (!parsedBody) return false
+  const candidates: string[] = []
+  candidates.push(...userTextsFromMessageList(parsedBody['messages']))
+  const input = parsedBody['input']
+  if (typeof input === 'string') candidates.push(input)
+  else candidates.push(...userTextsFromMessageList(input))
+
+  const first = candidates.find((text) => text.trim().length > 0)
+  return first !== undefined && looksLikeTitleRequest(first)
+}
+
+/**
  * Re-clean a snippet that was persisted by an older version of this pipeline:
  * stored title-request instructions are dropped (empty snippets get upgraded
  * by the next real turn), everything else goes through the current
