@@ -419,19 +419,35 @@ function systemProxyStatePath(): string {
   return path.join(systemProxyDataDir(), 'system-proxy.state.json');
 }
 
+/**
+ * Desktop-owned copy of the connection state. The CLI child owns
+ * system-proxy.state.json — it rewrites it on boot and deletes it in its
+ * graceful-shutdown handler — so the desktop's reconnect-at-launch memory
+ * must live in a file the child never touches, or every clean quit forgets
+ * which apps were connected.
+ */
+function systemProxyDesktopStatePath(): string {
+  return path.join(systemProxyDataDir(), 'system-proxy.desktop.json');
+}
+
 function systemProxySnapshotPath(): string {
   return path.join(systemProxyDataDir(), 'system-proxy.snapshot.json');
 }
 
 function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(readFileSync(systemProxyStatePath(), 'utf8')) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
+  // Desktop file first; the CLI child's state file only as a fallback (it
+  // exists while the child runs, and older desktop builds persisted there).
+  for (const filePath of [systemProxyDesktopStatePath(), systemProxyStatePath()]) {
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Missing or invalid — try the next source.
+    }
   }
+  return {};
 }
 
 function loadPersistedSystemProxyState(): void {
@@ -489,7 +505,7 @@ function getSystemProxyProcessState(): RuntimeProcessState | null {
 async function setActiveSystemProxyState(state: RuntimeProcessState & Record<string, unknown>): Promise<void> {
   activeSystemProxyState = state;
   await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
-  await writeFile(systemProxyStatePath(), JSON.stringify({
+  await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
     port: state['port'],
     peerId: state['peerId'],
     defaultModel: state['defaultModel'],
@@ -1109,6 +1125,7 @@ async function clearSystemProxyRuntimeFiles(): Promise<void> {
   await Promise.all([
     unlink(systemProxyPidPath()).catch(() => undefined),
     unlink(systemProxyStatePath()).catch(() => undefined),
+    unlink(systemProxyDesktopStatePath()).catch(() => undefined),
   ]);
   activeSystemProxyState = null;
 }
@@ -1489,6 +1506,8 @@ type SystemProxyStartRequest = {
   servedModels?: string[];
   toolRoutes?: Record<string, { peerId: string; model: string }>;
   profileSwitch?: boolean;
+  /** Overrides the 5s default — launch restore allows a slow cold start. */
+  readyTimeoutMs?: number;
 };
 
 function routeForTool(opts: SystemProxyStartRequest, profileName: string): { peerId: string; model: string; services: string[] } {
@@ -1579,7 +1598,7 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
       setSystemProxy: true,
     });
     try {
-      await waitForSystemProxyReady(port);
+      await waitForSystemProxyReady(port, opts.readyTimeoutMs);
     } catch (err) {
       await stopSystemProxyRuntime(true).catch(() => undefined);
       throw err;
@@ -1612,6 +1631,34 @@ async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<R
 async function restartSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
   await processManager.stop('system-proxy');
   return startSystemProxyRuntime(opts);
+}
+
+/**
+ * Launch-time reconnect of the previous session's connected apps. Cold starts
+ * are slow (native modules, P2P bootstrap) and a quick relaunch can find the
+ * old instance still holding the port, so this allows a generous ready
+ * timeout and retries. A failed start wipes the persisted state file (that is
+ * correct for explicit disconnects), so if every attempt fails the profiles
+ * are re-persisted — the next launch retries instead of silently forgetting
+ * which apps were connected.
+ */
+async function restoreSystemProxyProfilesAtLaunch(opts: SystemProxyStartRequest): Promise<void> {
+  const persisted = readSystemProxyRuntimeMetadata();
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // A manual connect while we were backing off owns the runtime now.
+    if (attempt > 1 && activeSystemProxyState !== null) return;
+    try {
+      await startSystemProxyRuntime({ ...opts, readyTimeoutMs: 20_000 });
+      return;
+    } catch (err) {
+      appendLog('system-proxy', 'system', `System Proxy auto-start attempt ${attempt}/${attempts} failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 3_000 * attempt));
+    }
+  }
+  if (activeSystemProxyState !== null) return;
+  await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+  await writeFile(systemProxyDesktopStatePath(), JSON.stringify(persisted), 'utf8').catch(() => undefined);
 }
 
 async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimeProcessState | null> {
@@ -4349,7 +4396,7 @@ app.whenReady().then(async () => {
     ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
     : [];
   if (restoredProfiles.length > 0 && typeof activeSystemProxyState?.['peerId'] === 'string') {
-    void startSystemProxyRuntime({
+    void restoreSystemProxyProfilesAtLaunch({
       peerId: activeSystemProxyState['peerId'],
       port: DEFAULT_SYSTEM_PROXY_PORT,
       profiles: restoredProfiles,
