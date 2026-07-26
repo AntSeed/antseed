@@ -26,6 +26,14 @@ export type VprModelRowListProps = {
    * under the name and the trailing chevron is dropped, so the model name
    * keeps the full row width instead of truncating after a few characters. */
   compact?: boolean;
+  /** Rows only pick a model instead of drilling into its page (the Home
+   * dropdown, the chat model pickers) — the trailing chevron is dropped so
+   * the row doesn't promise a navigation that never happens. */
+  selectOnly?: boolean;
+  /** Seller names for models pinned to one peer, keyed `provider:serviceId`.
+   * A matching row swaps its peer count for the seller, so a non-auto route is
+   * visible without opening the model page. */
+  pinnedPeerLabels?: ReadonlyMap<string, string>;
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
@@ -48,13 +56,17 @@ function priceRangeLabel(entry: VprModelCatalogEntry): string | null {
   return formatUsdShort(min);
 }
 
-function ModelRow({ entry, checked, favorite, badge, compact, onClick }: {
+function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
   favorite?: boolean;
   badge?: JSX.Element | null;
   compact?: boolean;
+  /** Trailing right chevron — only for rows that open the model page. */
+  chevron?: boolean;
+  /** Seller this model is pinned to; replaces the peer count on the meta line. */
+  pinnedPeerLabel?: string | null;
   onClick: () => void;
 }): JSX.Element {
   const free = isFreeEntry(entry);
@@ -99,7 +111,14 @@ function ModelRow({ entry, checked, favorite, badge, compact, onClick }: {
           {badge}
         </span>
         <span className={styles.metaLine}>
-          {entry.peerCount} {entry.peerCount === 1 ? 'peer' : 'peers'}
+          {/* A pinned seller is the whole story of where the model routes —
+              the seller's name replaces the peer count, unlabelled: naming a
+              peer already says routing isn't on auto. */}
+          {pinnedPeerLabel ? (
+            <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
+          ) : (
+            `${entry.peerCount} ${entry.peerCount === 1 ? 'peer' : 'peers'}`
+          )}
           {/* Compact rows trade the category tags for the price, which no
               longer has a column of its own. */}
           {compact ? (
@@ -115,7 +134,9 @@ function ModelRow({ entry, checked, favorite, badge, compact, onClick }: {
       {!compact && (
         <>
           <span className={styles.priceBlock}>{priceParts}</span>
-          <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
+          {chevron && (
+            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
+          )}
         </>
       )}
     </button>
@@ -124,10 +145,12 @@ function ModelRow({ entry, checked, favorite, badge, compact, onClick }: {
 
 /** The currently selected model as a standalone card pinned above the list
  * (Figma: checked "model list" row with the "• Auto" badge). */
-export function VprSelectedModelCard({ entry, auto, onClick }: {
+export function VprSelectedModelCard({ entry, auto, pinnedPeerLabel, onClick }: {
   entry: VprModelCatalogEntry;
   /** Whether seller routing for the model is in auto mode. */
   auto: boolean;
+  /** Seller the model is pinned to, shown in place of the peer count. */
+  pinnedPeerLabel?: string | null;
   onClick: () => void;
 }): JSX.Element {
   return (
@@ -136,6 +159,7 @@ export function VprSelectedModelCard({ entry, auto, onClick }: {
         entry={entry}
         checked
         badge={<VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
+        pinnedPeerLabel={auto ? null : pinnedPeerLabel}
         onClick={onClick}
       />
     </div>
@@ -152,6 +176,8 @@ export function VprModelRowList({
   favoriteKeys,
   frameless,
   compact,
+  selectOnly,
+  pinnedPeerLabels,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
     return (
@@ -185,6 +211,9 @@ export function VprModelRowList({
           || sameCanonicalModel(entry.serviceId, selectedServiceId ?? '')
         );
         const free = isFreeEntry(entry);
+        // Pins are per model, so any row can name a seller — not just the
+        // selected one.
+        const pinned = pinnedPeerLabels?.get(key) ?? null;
 
         return (
           <ModelRow
@@ -192,6 +221,8 @@ export function VprModelRowList({
             entry={entry}
             checked={selected}
             compact={compact}
+            chevron={!selectOnly}
+            pinnedPeerLabel={pinned}
             favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
             badge={free ? (
               <VprBadge tone="green">Free</VprBadge>

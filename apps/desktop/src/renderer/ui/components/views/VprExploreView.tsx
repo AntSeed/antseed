@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { StarIcon } from '@hugeicons/core-free-icons';
-import { filterVprCatalog, sortVprCatalog, type VprCatalogSort } from '../../../modules/vpr-view-models';
+import {
+  filterVprCatalog,
+  pinnedSellerLabel,
+  pinnedSellerLabels,
+  sortVprCatalog,
+  type VprCatalogSort,
+} from '../../../modules/vpr-view-models';
 import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
 import { loadFavoriteModels } from '../../../modules/vpr-favorites';
 import {
@@ -36,6 +42,8 @@ export function VprExploreView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
+    modelPins: state.vprModelPins,
+    discoverRows: state.vprRoutableRows,
     discoverRowsLoaded: state.chatDiscoverRowsLoaded,
     connectBadge: state.connectBadge,
   }), shallowEqual);
@@ -45,6 +53,12 @@ export function VprExploreView({ onSelectView }: Props) {
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
+
+  // Non-auto routing: the selected model's rows name the pinned seller.
+  const pinnedSeller = useMemo(
+    () => pinnedSellerLabel(snap.discoverRows, snap.selection),
+    [snap.discoverRows, snap.selection],
+  );
 
   const categories = useMemo(
     () => Array.from(new Set(snap.catalog.flatMap((entry) => entry.categories))).sort((a, b) => a.localeCompare(b)),
@@ -70,6 +84,13 @@ export function VprExploreView({ onSelectView }: Props) {
       sort,
     );
   }, [category, favorites, search, snap.catalog, sort, tab]);
+
+  // Any listed model that remembers a pin names its seller in place of the
+  // peer count — pins are per model and survive switching between them.
+  const listedPins = useMemo(
+    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, [...favoriteEntries, ...entries]),
+    [entries, favoriteEntries, snap.discoverRows, snap.modelPins],
+  );
 
   const selectedModel = snap.selection.model;
   const selectedEntry = selectedModel
@@ -122,6 +143,7 @@ export function VprExploreView({ onSelectView }: Props) {
           <VprSelectedModelCard
             entry={selectedEntry}
             auto={snap.selection.mode === 'auto'}
+            pinnedPeerLabel={pinnedSeller}
             onClick={() => onSelectView?.('model')}
           />
         )}
@@ -166,6 +188,7 @@ export function VprExploreView({ onSelectView }: Props) {
               selectedProvider={selectedModel?.provider}
               selectedServiceId={selectedModel?.serviceId}
               favoriteKeys={favorites}
+              pinnedPeerLabels={listedPins}
               onSelect={(provider, serviceId) => {
                 actions.selectVprModel(provider, serviceId);
                 onSelectView?.('model');
@@ -184,6 +207,7 @@ export function VprExploreView({ onSelectView }: Props) {
               entries={entries}
               selectedProvider={selectedModel?.provider}
               selectedServiceId={selectedModel?.serviceId}
+              pinnedPeerLabels={listedPins}
               onSelect={(provider, serviceId) => {
                 actions.selectVprModel(provider, serviceId);
                 onSelectView?.('model');

@@ -243,6 +243,12 @@ export function FloatApp() {
   ) ?? null;
 
   const modelLabel = selectedModel?.label ?? 'Select model';
+  // Seller names for pinned models, keyed the same way model rows are.
+  const pinnedSellers = useMemo(
+    () => new Map(Object.entries(data?.pinnedSellers ?? {})),
+    [data?.pinnedSellers],
+  );
+  const pinnedSeller = selectedModelValue ? pinnedSellers.get(selectedModelValue) ?? null : null;
   // Routing state: while the buyer runtime is stopped the pill shows a
   // "Not connected" status and the dropdown hides recent chats.
   const runtimeOn = data?.runtimeOn ?? true;
@@ -451,6 +457,9 @@ export function FloatApp() {
                 selectedServiceId={targetChat ? (targetChat.pinnedServiceId ?? undefined) : data?.selectedModel?.serviceId}
                 favoriteKeys={favoriteKeys}
                 compact
+                // Per-model pins belong to the default route — a chat's own
+                // pin is a different scope.
+                pinnedPeerLabels={targetChat ? undefined : pinnedSellers}
                 onSelect={(provider, serviceId) => {
                   if (targetChat) {
                     bridge?.vprFloatAction?.({ type: 'pin-chat-model', conversationId: targetChat.id, provider, serviceId });
@@ -474,7 +483,12 @@ export function FloatApp() {
               onClick={() => drillIn('default')}
             >
               <span className={styles.menuRowDefaultTitle}>New session model</span>
-              <span className={styles.menuRowValue}>{modelLabel}</span>
+              <span className={styles.menuRowValue}>
+                <span className={styles.menuRowValueModel}>{modelLabel}</span>
+                {/* Pinned routing names its seller here — the pill has no
+                    other place that says where requests actually go. */}
+                {pinnedSeller ? <span className={styles.menuRowSeller}>{pinnedSeller}</span> : null}
+              </span>
               <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
             </button>
           ) : null}

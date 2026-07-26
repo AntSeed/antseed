@@ -268,7 +268,8 @@
 }
 
 .modelCardCaption {
-  display: inline-flex;
+  min-width: 0;
+  display: flex;
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
@@ -276,8 +277,29 @@
   line-height: 16px;
 }
 
-.modelCardTokens {
+/* Caption parts keep their size — the seller caps itself with max-width
+   instead of squeezing the label next to it. */
+.modelCardCaption > span {
+  flex: 0 0 auto;
+}
+
+/* Same separator the dropdown rows use between meta parts. */
+.modelCardDivider {
   color: var(--text-muted);
+}
+
+.modelCardMeta {
+  color: var(--text-muted);
+}
+
+/* The pinned seller reads as the routing target, not as muted metadata. */
+.modelCardSeller {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-green);
+  font-weight: 500;
 }
 
 .modelCardTitle {

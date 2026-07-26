@@ -25,7 +25,7 @@ import {
   selectRecommendedVprCatalog,
 } from './vpr-recommended-models';
 import { chooseBestVprRoute } from './vpr-routing';
-import { routesForSelectedModel } from './vpr-view-models';
+import { pinnedSellerLabels, routesForSelectedModel } from './vpr-view-models';
 import { activeProfilesFromRuntimeState } from './vpr-tools';
 
 const FLOAT_UPDATE_INTERVAL_MS = 3_000;
@@ -265,6 +265,11 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     const selection = uiState.vprRouteSelection.model;
     const { models, favoriteKeys } = floatModels();
     const identity = identityLabel();
+    // Named sellers for pinned models — the pill says where requests go, not
+    // just which model, same as the main window.
+    const pinnedSellers = Object.fromEntries(
+      pinnedSellerLabels(uiState.vprRoutableRows, uiState.vprModelPins, models),
+    );
     const runtimeOn = uiState.processes.some(
       (process) => process.mode === 'connect' && process.running === true,
     );
@@ -282,6 +287,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       models,
       favoriteKeys,
       selectedModel: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
+      ...(Object.keys(pinnedSellers).length > 0 ? { pinnedSellers } : {}),
       // No chats while routing is stopped — a dead runtime serving a live
       // chat list reads as connected when it isn't.
       conversations: runtimeOn ? await loadConversations() : [],

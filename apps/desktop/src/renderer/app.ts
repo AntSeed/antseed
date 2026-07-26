@@ -23,7 +23,16 @@ import {
   saveVprRouteSelection,
   saveVprRoutingPreferences,
 } from './modules/vpr-preferences';
+import {
+  clearVprModelPin,
+  clearVprPinsForPeer,
+  loadVprModelPins,
+  saveVprModelPins,
+  setVprModelPin,
+  vprModelPinFor,
+} from './modules/vpr-model-pins';
 import { isPeerRoutable } from './modules/vpr-routing';
+import { routesForSelectedModel } from './modules/vpr-view-models';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
 import { registerActions } from './ui/actions';
@@ -94,6 +103,22 @@ void applyMacOsRtlClass();
 const uiState = createInitialUiState();
 uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPreferences);
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
+uiState.vprModelPins = loadVprModelPins();
+// Sessions that pinned a seller before pins were stored per model carry the
+// pin only on the selection — seed the store from it so the first model
+// switch doesn't silently drop it.
+{
+  const restored = uiState.vprRouteSelection;
+  if (restored.mode === 'pinned-peer' && restored.peerId && restored.model) {
+    uiState.vprModelPins = setVprModelPin(
+      uiState.vprModelPins,
+      restored.model.provider,
+      restored.model.serviceId,
+      restored.peerId,
+    );
+    saveVprModelPins(uiState.vprModelPins);
+  }
+}
 initStore(uiState);
 
 bridge?.onFullscreenChange?.((isFullscreen) => {
@@ -189,9 +214,30 @@ bridge?.onPaymentsCompleted?.(() => {
   void creditsApi.refreshPaymentSummary(true);
 });
 
+/**
+ * The seller a model should route to when it is selected without an explicit
+ * peer: its remembered pin, as long as that seller is still serving the model
+ * and still passes the peer rules. Anything else means auto.
+ */
+function rememberedPinFor(provider: string, serviceId: string): string | null {
+  const peerId = vprModelPinFor(uiState.vprModelPins, provider, serviceId);
+  if (!peerId || !isPeerRoutable(peerId, uiState.vprRoutingPreferences)) return null;
+  const serves = routesForSelectedModel(uiState.vprRoutableRows, { provider, serviceId })
+    .some((route) => route.peerId === peerId);
+  return serves ? peerId : null;
+}
+
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
+  // A bare model switch restores that model's own pin instead of dropping to
+  // auto — pinning one model then browsing others must not unpin it. Only
+  // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
+  const pinnedPeerId = peerId ?? rememberedPinFor(entry.provider, entry.serviceId);
+  if (pinnedPeerId) {
+    uiState.vprModelPins = setVprModelPin(uiState.vprModelPins, entry.provider, entry.serviceId, pinnedPeerId);
+    saveVprModelPins(uiState.vprModelPins);
+  }
   const selection: VprRouteSelection = {
     model: {
       provider: entry.provider,
@@ -199,8 +245,8 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
       label: entry.label,
       categories: [...entry.categories],
     },
-    mode: peerId ? 'pinned-peer' : 'auto',
-    peerId: peerId ?? null,
+    mode: pinnedPeerId ? 'pinned-peer' : 'auto',
+    peerId: pinnedPeerId,
   };
   // Auto mode resolves the peer through the routing-preferences scorer, not
   // whichever chat option happens to sort first.
@@ -211,7 +257,7 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprRoutingPreferences,
   );
   if (option) {
-    chatApi.handleServiceChange(option.value, peerId ?? option.peerId);
+    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId);
   }
   // handleServiceChange writes a pinned selection through; restore the
   // requested mode so auto keeps re-resolving the best route on future
@@ -508,6 +554,13 @@ registerActions({
   clearPinnedPeer: chatApi.clearPinnedPeer,
   selectVprModel: actionSelectVprModel,
   clearVprPinnedPeer: () => {
+    // Forgetting the pin has to reach the per-model store too, or selecting
+    // the model again would restore the pin the user just cleared.
+    const model = uiState.vprRouteSelection.model;
+    if (model) {
+      uiState.vprModelPins = clearVprModelPin(uiState.vprModelPins, model.provider, model.serviceId);
+      saveVprModelPins(uiState.vprModelPins);
+    }
     uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
     saveVprRouteSelection(uiState.vprRouteSelection);
     notifyUiStateChanged();
@@ -528,7 +581,12 @@ registerActions({
     chatApi.applyPeerAccessRules();
 
     // A pin the new lists rule out would keep routing to a peer the user just
-    // blocked (the pinned path bypasses scoring), so drop it back to auto.
+    // blocked (the pinned path bypasses scoring), so drop it back to auto —
+    // for every model that remembers this peer, not only the active one.
+    if (!isPeerRoutable(peerId, uiState.vprRoutingPreferences)) {
+      uiState.vprModelPins = clearVprPinsForPeer(uiState.vprModelPins, peerId);
+      saveVprModelPins(uiState.vprModelPins);
+    }
     const pinned = uiState.vprRouteSelection.peerId;
     if (
       uiState.vprRouteSelection.mode === 'pinned-peer'

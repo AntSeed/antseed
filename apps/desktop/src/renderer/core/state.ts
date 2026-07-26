@@ -339,6 +339,9 @@ export type RendererUiState = {
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
   vprRouteSelection: VprRouteSelection;
+  /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
+   * pinned model stays pinned across model switches. */
+  vprModelPins: Record<string, string>;
   vprRoutingPreferences: VprRoutingPreferences;
   /** Whether the detachable always-on-top pill window is currently open. */
   vprFloatOpen: boolean;
@@ -485,6 +488,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,
       preferFreePeers: false,

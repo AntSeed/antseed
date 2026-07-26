@@ -1,5 +1,7 @@
-import type { DiscoverRow, VprModelCatalogEntry } from '../core/state';
+import type { DiscoverRow, VprModelCatalogEntry, VprRouteSelection } from '../core/state';
 import { sameCanonicalModel } from './model-identity';
+import { modelPinKey, type VprModelPins } from './vpr-model-pins';
+import { shortPeerId } from './vpr-tools';
 
 export type VprCatalogSort = 'Popular' | 'Price' | 'Savings' | 'Name';
 
@@ -99,4 +101,42 @@ export function routesForSelectedModel(
   // serviceIds and different provider strings — all of them are routes for
   // the selected model. Dispatch must carry the chosen row's own serviceId.
   return rows.filter((row) => sameCanonicalModel(row.serviceId, serviceId));
+}
+
+/** The seller a model is pinned to, so model lists can say which peer serves
+ * it instead of only "N peers" — null while routing is on auto. Falls back to
+ * a short peer id when the pinned seller is missing from the current discover
+ * rows (offline, or filtered out by preferences). */
+export function pinnedSellerLabel(
+  rows: DiscoverRow[],
+  selection: VprRouteSelection,
+): string | null {
+  if (selection.mode !== 'pinned-peer') return null;
+  const peerId = selection.peerId;
+  if (!peerId) return null;
+  const route = routesForSelectedModel(rows, selection.model)
+    .find((candidate) => candidate.peerId === peerId);
+  return route?.peerDisplayName?.trim() || route?.peerLabel?.trim() || shortPeerId(peerId);
+}
+
+/**
+ * Seller names for every listed model that remembers a pin, keyed the same way
+ * model rows are (`provider:serviceId`). Pins whose seller no longer serves
+ * the model are left out — a stale pin shouldn't claim a route that's gone.
+ */
+export function pinnedSellerLabels(
+  rows: DiscoverRow[],
+  pins: VprModelPins,
+  entries: readonly { provider: string; serviceId: string }[],
+): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const entry of entries) {
+    const key = modelPinKey(entry.provider, entry.serviceId);
+    const peerId = pins[key];
+    if (!peerId || labels.has(key)) continue;
+    const route = routesForSelectedModel(rows, entry).find((candidate) => candidate.peerId === peerId);
+    if (!route) continue;
+    labels.set(key, route.peerDisplayName?.trim() || route.peerLabel?.trim() || shortPeerId(peerId));
+  }
+  return labels;
 }

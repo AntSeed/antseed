@@ -12,7 +12,7 @@ import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileS
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/vpr-view-models';
 import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
 import { displayModelLabel } from '../../../modules/model-identity';
 import { loadFavoriteModels } from '../../../modules/vpr-favorites';
@@ -37,7 +37,7 @@ type Props = { onSelectView?: (view: ViewName) => void };
 const PROXY_STATE_POLL_MS = 3_000;
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
-const DROPDOWN_MODEL_COUNT = 3;
+const DROPDOWN_MODEL_COUNT = 5;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry) return false;
@@ -50,6 +50,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
+    modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
     processes: state.processes,
     connectBadge: state.connectBadge,
@@ -83,20 +84,11 @@ export function VprHomeView({ onSelectView }: Props) {
     [snap.catalog, selectedModel],
   );
   const modelIsFree = isFreeEntry(selectedEntry);
-  // Lifetime buyer usage of the selected model ("1.7m tokens" in the Figma
-  // model card) — summed across every seller serving it.
-  const modelTokensLabel = useMemo(() => {
-    const routes = routesForSelectedModel(snap.discoverRows, selectedModel);
-    let input = 0;
-    let output = 0;
-    for (const route of routes) {
-      input += route.lifetimeInputTokens;
-      output += route.lifetimeOutputTokens;
-    }
-    if (input + output <= 0) return null;
-    return `${formatCompactTokens(String(input), String(output))} tokens`;
-  }, [selectedModel, snap.discoverRows]);
-
+  // Non-auto routing: the model row names the seller it is pinned to.
+  const pinnedSeller = useMemo(
+    () => pinnedSellerLabel(snap.discoverRows, snap.selection),
+    [snap.discoverRows, snap.selection],
+  );
   useEffect(() => {
     let cancelled = false;
     async function refreshTools(): Promise<void> {
@@ -176,18 +168,26 @@ export function VprHomeView({ onSelectView }: Props) {
   }, [modelMenuOpen]);
 
   // The dropdown lists starred favorites first (marked with a star), then the
-  // curated recommended lineup, with the current selection always present.
+  // curated recommended lineup, with the current selection always present. The
+  // whole list is capped — favorites included — so the menu can't outgrow the
+  // hero; everything past the cap lives behind "All models".
   const dropdownEntries = useMemo(() => {
     const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
     const recommended = selectRecommendedVprCatalog(snap.catalog)
-      .filter((entry) => !favorites.has(catalogEntryKey(entry)))
-      .slice(0, DROPDOWN_MODEL_COUNT);
-    const top = [...favoriteEntries, ...recommended];
+      .filter((entry) => !favorites.has(catalogEntryKey(entry)));
+    const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
     if (selectedEntry && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top];
+      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
   }, [favorites, selectedEntry, snap.catalog]);
+
+  // Every listed model that remembers a pin names its seller, not just the
+  // selected one — pins survive switching models.
+  const dropdownPins = useMemo(
+    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, dropdownEntries),
+    [dropdownEntries, snap.discoverRows, snap.modelPins],
+  );
 
   // One-click connect from the app buttons; falls back to the Apps page when
   // the profile can't be connected automatically (e.g. no route yet).
@@ -292,7 +292,7 @@ export function VprHomeView({ onSelectView }: Props) {
               onClick={() => setModelMenuOpen((open) => !open)}
               aria-haspopup="listbox"
               aria-expanded={modelMenuOpen}
-              title="Change default model"
+              title="Change new session model"
             >
               <span className={styles.modelCardBody}>
                 <span className={styles.modelCardTitle}>
@@ -306,8 +306,21 @@ export function VprHomeView({ onSelectView }: Props) {
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
                 </span>
                 <span className={styles.modelCardCaption}>
-                  <span>Default model</span>
-                  {modelTokensLabel && <span className={styles.modelCardTokens}>{modelTokensLabel}</span>}
+                  {/* Same wording as the pill: this picks the model the next
+                      app session starts on, not a global default. */}
+                  <span>New session model</span>
+                  {/* Where the model routes: the pinned seller by name, or
+                      how many peers are serving it while on auto. */}
+                  {(pinnedSeller || selectedEntry) && (
+                    <span className={styles.modelCardDivider} aria-hidden="true">|</span>
+                  )}
+                  {pinnedSeller ? (
+                    <span className={styles.modelCardSeller}>{pinnedSeller}</span>
+                  ) : selectedEntry ? (
+                    <span className={styles.modelCardMeta}>
+                      {selectedEntry.peerCount} {selectedEntry.peerCount === 1 ? 'peer' : 'peers'}
+                    </span>
+                  ) : null}
                 </span>
               </span>
               <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
@@ -319,6 +332,8 @@ export function VprHomeView({ onSelectView }: Props) {
                   selectedProvider={selectedModel?.provider}
                   selectedServiceId={selectedModel?.serviceId}
                   favoriteKeys={favorites}
+                  selectOnly
+                  pinnedPeerLabels={dropdownPins}
                   onSelect={(provider, serviceId) => {
                     setModelMenuOpen(false);
                     actions.selectVprModel(provider, serviceId);

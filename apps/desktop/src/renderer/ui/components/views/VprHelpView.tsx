@@ -60,8 +60,8 @@ const HELP_TOPICS: HelpTopic[] = [
         intro: 'Open Models to browse every model available on the network, with live prices and expected savings against retail. Tap a model to see its sellers, their reputation scores, and per-token prices.',
         sections: [
           {
-            heading: 'Set a default model',
-            body: 'Apply sets the model as your default: everything you connect routes through it. With Auto select on, AntSeed keeps re-picking the best seller for that model based on your price and trust preferences.',
+            heading: 'Set the new session model',
+            body: 'Apply sets the model new sessions start on: everything you connect routes through it. With Auto select on, AntSeed keeps re-picking the best seller for that model based on your price and trust preferences.',
           },
           {
             heading: 'Pin a seller',
@@ -93,7 +93,7 @@ const HELP_TOPICS: HelpTopic[] = [
         sections: [
           {
             heading: 'Switch model or pin a chat',
-            body: 'Click the model name to open the list: the Default model row changes the global route, and each recent chat can pin its own model. A chat that is receiving traffic shows a green pulse next to its name.',
+            body: 'Click the model name to open the list: the New session model row changes the global route, and each recent chat can pin its own model. A chat that is receiving traffic shows a green pulse next to its name.',
           },
           {
             heading: 'Back to the main window',

@@ -186,6 +186,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                     entries={models}
                     selectedServiceId={conversationPinnedServiceId(selected) ?? undefined}
                     favoriteKeys={favorites}
+                    selectOnly
                     onSelect={(provider, serviceId) => { void pinChat(selected.id, provider, serviceId); }}
                     emptyLabel="No models available"
                     frameless

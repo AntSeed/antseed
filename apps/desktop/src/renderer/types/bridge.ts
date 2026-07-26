@@ -500,6 +500,9 @@ export type VprFloatData = {
       star, same as the Home dropdown. */
   favoriteKeys?: string[];
   selectedModel: { provider: string; serviceId: string } | null;
+  /** Seller names for pinned models, keyed `provider:serviceId` — pins are per
+      model, so a model keeps its seller while another one is selected. */
+  pinnedSellers?: Record<string, string>;
   /** Recent tool chats, newest first (per-chat routing scope picker). */
   conversations: VprFloatConversation[];
   /** Usage line: buyer-wide total tokens ("1.2M tok"). */
