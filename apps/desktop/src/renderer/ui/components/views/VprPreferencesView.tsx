@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
-import { peerAccessSummaryLabel } from '../../../modules/vpr-peer-access';
-import { buildVprPeerOptions } from '../../../modules/vpr-tools';
-import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/vpr-seller-format';
+import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { peerAccessSummaryLabel } from '../../../modules/routing/peer-access';
+import { buildVprPeerOptions } from '../../../modules/routing/tools';
+import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';

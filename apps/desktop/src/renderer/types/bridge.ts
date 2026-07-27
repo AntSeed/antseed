@@ -166,7 +166,7 @@ export type ChatWorkspaceGitStatus = {
   error: string | null;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). The renderer cannot import from main, so the
 // shape is mirrored here for IPC. Keep in sync with that file and with
 // apps/desktop/src/main/preload.cts when fields change.
@@ -189,7 +189,7 @@ export type RawChatAttachment = {
 
 export type ChatPermissionMode = 'manual' | 'full';
 export type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
-// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram-bridge.ts;
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts;
 // keep in sync with the preload copy in apps/desktop/src/main/preload.cts.
 export type TelegramBridgeStatus = {
   configured: boolean;

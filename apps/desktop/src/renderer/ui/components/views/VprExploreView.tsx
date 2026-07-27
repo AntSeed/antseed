@@ -7,14 +7,14 @@ import {
   pinnedSellerLabels,
   sortVprCatalog,
   type VprCatalogSort,
-} from '../../../modules/vpr-view-models';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
-import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+} from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
-} from '../../../modules/vpr-recommended-models';
+} from '../../../modules/catalog/recommended';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';

@@ -4,18 +4,18 @@ import {
   conversationPinnedServiceId,
   conversationTitle,
   shortSessionId,
-} from '../../../modules/conversations';
-import { displayModelLabel } from '../../../modules/model-identity';
-import { displayToolName } from '../../../modules/tool-names';
-import { loadFavoriteModels } from '../../../modules/vpr-favorites';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
+} from '../../../modules/routing/conversations';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
+import { displayToolName } from '../../../modules/routing/tool-names';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
-} from '../../../modules/vpr-recommended-models';
-import { chooseBestVprRoute } from '../../../modules/vpr-routing';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+} from '../../../modules/catalog/recommended';
+import { chooseBestVprRoute } from '../../../modules/routing/select';
+import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { VprPage } from '../vpr/VprKit';
 import { VprModelRowList } from '../vpr/VprModelRows';

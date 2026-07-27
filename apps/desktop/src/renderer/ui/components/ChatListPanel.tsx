@@ -9,7 +9,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react';
 import { MoreVerticalIcon, Add01Icon, Search01Icon } from '@hugeicons/core-free-icons';
 import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
-import { displayModelLabel } from '../../modules/model-identity';
+import { displayModelLabel } from '../../modules/catalog/model-identity';
 import { formatUsdcAmount } from '../../core/format';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { useActions } from '../hooks/useActions';

@@ -11,17 +11,17 @@ import {
 import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
-import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
-import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/vpr-view-models';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
-import { displayModelLabel } from '../../../modules/model-identity';
-import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
+import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
-} from '../../../modules/vpr-recommended-models';
-import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
+} from '../../../modules/catalog/recommended';
+import { connectVprProfile } from '../../../modules/routing/proxy-sync';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';

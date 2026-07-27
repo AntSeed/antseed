@@ -3,14 +3,14 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon, ArrowRight01Icon, StarIcon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { formatPerMillionPrice } from '../../../core/peer-utils';
-import { displayModelLabel, sameCanonicalModel } from '../../../modules/model-identity';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
-import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+import { displayModelLabel, sameCanonicalModel } from '../../../modules/catalog/model-identity';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
-} from '../../../modules/vpr-recommended-models';
+} from '../../../modules/catalog/recommended';
 import { BrandIcon } from '../brand/BrandIcon';
 import styles from './VprModelDropdown.module.scss';
 

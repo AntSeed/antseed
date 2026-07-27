@@ -10,8 +10,8 @@ import {
   conversationTitle,
   isConversationActive,
   shortSessionId,
-} from '../../../modules/conversations';
-import { displayToolName } from '../../../modules/tool-names';
+} from '../../../modules/routing/conversations';
+import { displayToolName } from '../../../modules/routing/tool-names';
 import { BrandIcon } from '../brand/BrandIcon';
 import styles from './VprRecentChats.module.scss';
 

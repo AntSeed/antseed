@@ -1,4 +1,4 @@
-import type { RuntimeMode } from './process-manager.js';
+import type { RuntimeMode } from './runtime/process-manager.js';
 
 export type AppendLogFn = (mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string) => void;
 

@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
-import { chooseBestVprRoute } from '../../../modules/vpr-routing';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
-import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../../../modules/vpr-favorites';
-import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/vpr-seller-format';
+import { chooseBestVprRoute } from '../../../modules/routing/select';
+import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../../../modules/catalog/favorites';
+import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import type { DiscoverRow } from '../../../core/state';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';

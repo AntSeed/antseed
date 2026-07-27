@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RuntimeMode, RuntimeProcessState, StartOptions } from './process-manager.js';
+import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -141,7 +141,7 @@ type ToolApprovalRequest = {
   canAlwaysAllow: boolean;
 };
 
-// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram-bridge.ts
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts
 // (sandboxed preload cannot import from main). Keep in sync — and with the
 // renderer copy in apps/desktop/src/renderer/types/bridge.ts.
 type TelegramBridgeStatus = {
@@ -154,7 +154,7 @@ type TelegramBridgeStatus = {
   lastError: string | null;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). This preload runs in a sandboxed context and
 // cannot import from main, so the shape is mirrored here for IPC. Keep the
 // `kind`, `source`, and field set in sync with the source-of-truth type —

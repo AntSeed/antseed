@@ -3,13 +3,13 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
-import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/vpr-routing';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
+import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
   resolveVprToolRouteForPeerOptions,
-} from '../../../modules/vpr-tools';
+} from '../../../modules/routing/tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
