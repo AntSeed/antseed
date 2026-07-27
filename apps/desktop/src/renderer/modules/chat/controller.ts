@@ -2505,6 +2505,49 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onChatDefaultRouteChanged) {
+      // A non-renderer frontend (the Telegram bridge's /model) moved the
+      // sticky model selection. Adopt it exactly as a dropdown pick would —
+      // minus the active-conversation rebind, which main already applied to
+      // its own conversation — so the next catalog poll re-posts the new
+      // route instead of stomping it with the stale selection.
+      bridge.onChatDefaultRouteChanged((data) => {
+        const peerId = typeof data.peerId === 'string' ? data.peerId.trim() : '';
+        const serviceId = normalizeChatServiceId(data.service);
+        if (!peerId || !serviceId) return;
+        const provider = normalizeProviderId(data.provider);
+        const option = uiState.chatServiceOptions.find((o) => (
+          o.peerId === peerId && normalizeChatServiceId(o.id) === serviceId
+        ));
+        uiState.chatSelectedServiceValue = option?.value ?? encodeChatServiceSelection(serviceId, provider, peerId);
+        uiState.chatSelectedPeerId = peerId;
+        const catalogEntry = findCatalogEntry(uiState.vprModelCatalog, option?.provider ?? provider ?? '', serviceId);
+        const selectedModel = catalogEntry
+          ? {
+              provider: catalogEntry.provider,
+              serviceId: catalogEntry.serviceId,
+              label: catalogEntry.label,
+              categories: [...catalogEntry.categories],
+            }
+          : {
+              provider: option?.provider ?? provider ?? '',
+              serviceId,
+              label: option?.label ?? serviceId,
+              categories: [...(option?.categories ?? [])],
+            };
+        uiState.vprRouteSelection = { model: selectedModel, mode: 'pinned-peer', peerId };
+        uiState.vprModelPins = setVprModelPin(
+          uiState.vprModelPins,
+          selectedModel.provider,
+          selectedModel.serviceId,
+          peerId,
+        );
+        saveVprModelPins(uiState.vprModelPins);
+        saveVprRouteSelection(uiState.vprRouteSelection);
+        notifyUiStateChanged();
+      });
+    }
+
     // --- Streaming callbacks ---
 
     function getStreamingBlocks(message: ChatMessage | null = uiState.chatStreamingMessage): ContentBlock[] {

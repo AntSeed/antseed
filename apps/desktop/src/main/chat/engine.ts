@@ -84,6 +84,13 @@ export type PiChatEngine = {
   getProxyPort(): Promise<number>;
   /** Discovered network service catalog, sorted the way the chat UI lists models. */
   discoverServiceCatalog(): Promise<ChatServiceCatalogEntry[]>;
+  /** Rebinds a conversation's model/peer — same semantics as the chat UI's model dropdown. */
+  selectPeer(request: ChatPeerSelectionRequest): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Sets the buyer default route (the sticky "current model" new conversations
+   * inherit) and tells the renderer so the UI selection follows suit.
+   */
+  setDefaultRoute(peerId: string, service: string, provider?: string): Promise<{ ok: boolean; error?: string }>;
 };
 
 export function registerPiChatHandlers({
@@ -656,7 +663,7 @@ export function registerPiChatHandlers({
     return { ok: true };
   });
 
-  ipcMain.handle('chat:ai-select-peer', async (_event, payload: ChatPeerSelectionRequest | string | null) => {
+  const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
     const { conversationId, peerId, service, provider } = normalizeChatPeerSelectionRequest(payload);
 
     if (conversationId) {
@@ -690,16 +697,18 @@ export function registerPiChatHandlers({
     } catch (err) {
       return { ok: false, error: asErrorMessage(err) };
     }
-  });
+  };
+
+  ipcMain.handle('chat:ai-select-peer', async (_event, payload: ChatPeerSelectionRequest | string | null) => applyPeerSelection(payload));
 
   // Keep the buyer proxy's default route (`antseed` model alias, and the
   // route the Telegram bridge reads) on the renderer's current VPR selection.
   // Best-effort: the buyer proxy may not be running yet — the renderer calls
   // this again on its catalog poll, so the route lands once the proxy is up.
   let lastPostedDefaultRoute = '';
-  ipcMain.handle('chat:set-buyer-default-route', async (_event, payload: { peerId?: unknown; service?: unknown }) => {
-    const peerId = typeof payload?.peerId === 'string' ? payload.peerId.trim() : '';
-    const service = typeof payload?.service === 'string' ? payload.service.trim() : '';
+  const setBuyerDefaultRoute = async (peerIdRaw: unknown, serviceRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
+    const peerId = typeof peerIdRaw === 'string' ? peerIdRaw.trim() : '';
+    const service = typeof serviceRaw === 'string' ? serviceRaw.trim() : '';
     if (!peerId || !service) return { ok: false, error: 'peerId and service are required' };
     const model = `${peerId}@${service}`;
     if (model === lastPostedDefaultRoute) return { ok: true };
@@ -716,7 +725,11 @@ export function registerPiChatHandlers({
     } catch (err) {
       return { ok: false, error: asErrorMessage(err) };
     }
-  });
+  };
+
+  ipcMain.handle('chat:set-buyer-default-route', async (_event, payload: { peerId?: unknown; service?: unknown }) => (
+    setBuyerDefaultRoute(payload?.peerId, payload?.service)
+  ));
 
   return {
     createConversation,
@@ -732,5 +745,11 @@ export function registerPiChatHandlers({
     resolveToolApproval,
     getProxyPort: () => resolveProxyPort(configPath),
     discoverServiceCatalog: refreshServiceCatalogFromNetwork,
+    selectPeer: applyPeerSelection,
+    setDefaultRoute: async (peerId, service, provider) => {
+      const result = await setBuyerDefaultRoute(peerId, service);
+      sendToRenderer('chat:default-route-changed', { peerId, service, provider: provider ?? null });
+      return result;
+    },
   };
 }

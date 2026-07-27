@@ -68,8 +68,18 @@ const WELCOME_TEXT = [
   'Connected to your VPR. Messages here run on the agent on your computer.',
   '',
   '/new — start a fresh conversation',
+  '/model — choose which model answers',
   '/stop — cancel the reply in progress',
 ].join('\n');
+
+/** Inline keyboards get unwieldy past this; the catalog is sorted best-first. */
+const MODEL_PICK_LIMIT = 10;
+
+const BOT_COMMANDS = [
+  { command: 'new', description: 'Start a fresh conversation' },
+  { command: 'model', description: 'Choose which model answers' },
+  { command: 'stop', description: 'Cancel the reply in progress' },
+];
 
 type ActiveTurn = {
   conversationId: string;
@@ -142,6 +152,14 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
   const pendingApprovals = new Map<string, PendingApproval>();
   /** Conversations this bridge created — used to claim bus events. */
   const bridgeConversationIds = new Set<string>();
+  /** Snapshot behind the /model keyboard; gen invalidates stale keyboards. */
+  let modelPick: {
+    gen: number;
+    options: Array<{ id: string; label: string; peerId: string; provider: string }>;
+    chatId: number;
+    messageId: number;
+  } | null = null;
+  let modelPickGen = 0;
 
   const log = (line: string): void => { appendLog(`[telegram] ${line}`); };
 
@@ -377,6 +395,69 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
     return {};
   };
 
+  const showModelPicker = async (): Promise<void> => {
+    let entries: Awaited<ReturnType<PiChatEngine['discoverServiceCatalog']>> = [];
+    try {
+      entries = await engine.discoverServiceCatalog();
+    } catch {
+      // Fall through to the empty-catalog message.
+    }
+    // One row per model: the catalog is sorted best-first and repeats a model
+    // once per serving peer — keep the top-ranked peer for each.
+    const seen = new Set<string>();
+    const options: NonNullable<typeof modelPick>['options'] = [];
+    for (const entry of entries) {
+      if (!entry.peerId) continue;
+      const key = entry.id.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({ id: entry.id, label: entry.label || entry.id, peerId: entry.peerId, provider: entry.provider });
+      if (options.length >= MODEL_PICK_LIMIT) break;
+    }
+    if (options.length === 0) {
+      void sendToOwner('No models discovered yet — try again in a moment.');
+      return;
+    }
+    const current = (await resolveDefaultRoute()).service?.trim().toLowerCase() ?? '';
+    modelPickGen += 1;
+    const gen = modelPickGen;
+    const keyboard: TgReplyMarkup = {
+      inline_keyboard: options.map((option, index) => ([{
+        text: `${option.id.trim().toLowerCase() === current ? '✓ ' : ''}${option.label}`,
+        callback_data: `mdl:${String(gen)}:${String(index)}`,
+      }])),
+    };
+    const sent = await sendToOwner('Pick a model — it applies to this chat and becomes the default in the app:', keyboard);
+    if (sent && settings?.ownerChatId != null) {
+      modelPick = { gen, options, chatId: settings.ownerChatId, messageId: sent.message_id };
+    }
+  };
+
+  const handleModelPick = async (query: TgCallbackQuery, gen: number, index: number): Promise<void> => {
+    if (!client) return;
+    const pick = modelPick;
+    const option = pick?.gen === gen ? pick.options[index] : undefined;
+    if (!pick || !option) {
+      await client.answerCallbackQuery(query.id, 'Expired — send /model again.').catch(() => {});
+      return;
+    }
+    modelPick = null;
+    // Same two writes a dropdown pick in the app performs: rebind the active
+    // conversation, and move the sticky selection new conversations inherit
+    // (buyer default route + the app UI, via setDefaultRoute's notification).
+    const conversationId = settings?.activeConversationId;
+    const rebind = conversationId
+      ? await engine.selectPeer({ conversationId, peerId: option.peerId, service: option.id, provider: option.provider })
+      : { ok: true as const };
+    await engine.setDefaultRoute(option.peerId, option.id, option.provider);
+    await client.answerCallbackQuery(query.id, 'Model set').catch(() => {});
+    await client.editMessageText(pick.chatId, pick.messageId, `Model: ${option.label}`).catch(() => {});
+    if (!rebind.ok && rebind.error) {
+      // The pin is stored; the warmup hiccup only means the first request connects cold.
+      log(`Peer warmup after /model failed: ${rebind.error}`);
+    }
+  };
+
   const ensureConversation = async (): Promise<string> => {
     if (settings?.activeConversationId) return settings.activeConversationId;
     const route = await resolveDefaultRoute();
@@ -480,6 +561,10 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       void sendToOwner('Fresh conversation — send your next message.');
       return;
     }
+    if (text === '/model') {
+      await showModelPicker();
+      return;
+    }
     if (text === '/stop') {
       const turn = activeTurn;
       if (!turn) {
@@ -498,6 +583,11 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
     if (!client) return;
     if (settings?.ownerChatId == null || query.from.id !== settings.ownerChatId) {
       await client.answerCallbackQuery(query.id).catch(() => {});
+      return;
+    }
+    const modelMatch = /^mdl:(\d+):(\d+)$/.exec(query.data ?? '');
+    if (modelMatch) {
+      await handleModelPick(query, Number(modelMatch[1]), Number(modelMatch[2]));
       return;
     }
     const match = /^apr:(a1|ap|d):(.+)$/.exec(query.data ?? '');
@@ -621,8 +711,11 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       client = createTelegramBotClient(settings.botToken);
       try {
         await client.deleteWebhook();
+        // Re-assert on every resume so bots connected before a command was
+        // added still get it in their menu.
+        await client.setMyCommands(BOT_COMMANDS);
       } catch (err) {
-        log(`deleteWebhook failed (continuing): ${asErrorMessage(err)}`);
+        log(`Bot setup call failed (continuing): ${asErrorMessage(err)}`);
       }
       startPolling();
       log(`Resumed bridge for @${settings.botUsername}.`);
@@ -662,10 +755,7 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       await saveTelegramSettings(settings);
       try {
         await client.deleteWebhook();
-        await client.setMyCommands([
-          { command: 'new', description: 'Start a fresh conversation' },
-          { command: 'stop', description: 'Cancel the reply in progress' },
-        ]);
+        await client.setMyCommands(BOT_COMMANDS);
       } catch (err) {
         log(`Bot setup call failed (continuing): ${asErrorMessage(err)}`);
       }

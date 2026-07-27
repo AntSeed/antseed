@@ -399,6 +399,11 @@ const api = {
     ipcRenderer.on('chat:conversation-title-updated', listener);
     return () => ipcRenderer.off('chat:conversation-title-updated', listener);
   },
+  onChatDefaultRouteChanged(handler: (data: { peerId: string; service: string; provider: string | null }) => void): () => void {
+    const listener = (_: unknown, data: { peerId: string; service: string; provider: string | null }) => handler(data);
+    ipcRenderer.on('chat:default-route-changed', listener);
+    return () => ipcRenderer.off('chat:default-route-changed', listener);
+  },
   // Streaming events
   onChatAiStreamStart(handler: (data: { conversationId: string; turn: number }) => void): () => void {
     const listener = (_: unknown, data: { conversationId: string; turn: number }) => handler(data);
