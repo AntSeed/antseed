@@ -141,6 +141,19 @@ type ToolApprovalRequest = {
   canAlwaysAllow: boolean;
 };
 
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram-bridge.ts
+// (sandboxed preload cannot import from main). Keep in sync — and with the
+// renderer copy in apps/desktop/src/renderer/types/bridge.ts.
+type TelegramBridgeStatus = {
+  configured: boolean;
+  running: boolean;
+  botUsername: string | null;
+  paired: boolean;
+  ownerName: string | null;
+  pairingLink: string | null;
+  lastError: string | null;
+};
+
 // NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
 // (`ChatStreamStopReason`). This preload runs in a sandboxed context and
 // cannot import from main, so the shape is mirrored here for IPC. Keep the
@@ -428,6 +441,20 @@ const api = {
     const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => handler(data);
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
+  },
+  telegramGetStatus(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:get-status');
+  },
+  telegramConnect(botToken: string): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:connect', botToken);
+  },
+  telegramDisconnect(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:disconnect');
+  },
+  onTelegramStatusChanged(handler: (data: TelegramBridgeStatus) => void): () => void {
+    const listener = (_: unknown, data: TelegramBridgeStatus) => handler(data);
+    ipcRenderer.on('telegram:status-changed', listener);
+    return () => ipcRenderer.off('telegram:status-changed', listener);
   },
   onChatToolApprovalRequested(handler: (data: ToolApprovalRequest) => void): () => void {
     const listener = (_: unknown, data: ToolApprovalRequest) => handler(data);

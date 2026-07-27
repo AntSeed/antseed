@@ -1767,6 +1767,24 @@ async function generateConversationTitleWithModel({
   }
 }
 
+/**
+ * Programmatic surface over the chat engine for non-renderer frontends
+ * (currently the Telegram bridge). Events still flow through the
+ * sendToRenderer callback — tee it into the chat event bus to observe them.
+ */
+export type PiChatEngine = {
+  createConversation(service?: string, provider?: string, peerId?: string): Promise<AiConversation>;
+  sendMessageStream(
+    conversationId: string,
+    userMessage: string,
+    options?: { service?: string; peerId?: string; permissionMode?: ChatPermissionMode },
+  ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }>;
+  abort(conversationId?: string): Promise<void>;
+  /** Resolves a pending tool approval; returns false when the id is unknown (already decided). */
+  resolveToolApproval(id: string, decision: ToolApprovalDecision): boolean;
+  getProxyPort(): Promise<number>;
+};
+
 export function registerPiChatHandlers({
   ipcMain,
   sendToRenderer,
@@ -1775,7 +1793,7 @@ export function registerPiChatHandlers({
   ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
-}: RegisterPiChatHandlersOptions): void {
+}: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
@@ -1822,15 +1840,24 @@ export function registerPiChatHandlers({
     }
   });
 
+  const resolveToolApproval = (id: string, decision: ToolApprovalDecision): boolean => {
+    const pending = pendingToolApprovals.get(id);
+    if (!pending) return false;
+    pendingToolApprovals.delete(id);
+    pending.resolve(decision);
+    // Any surface may decide first; tell the others the request is settled.
+    sendToRenderer('chat:tool-approval-cleared', { id, conversationId: pending.conversationId });
+    return true;
+  };
+
   ipcMain.handle('chat:tool-approval-decision', async (_event, payload: { id?: unknown; decision?: unknown }) => {
     const id = typeof payload?.id === 'string' ? payload.id : '';
     const decision = payload?.decision === 'allow_once' || payload?.decision === 'always_allow_peer'
       ? payload.decision
       : 'deny';
-    const pending = pendingToolApprovals.get(id);
-    if (!pending) return { ok: false, error: 'Approval request not found' };
-    pendingToolApprovals.delete(id);
-    pending.resolve(decision);
+    if (!resolveToolApproval(id, decision)) {
+      return { ok: false, error: 'Approval request not found' };
+    }
     return { ok: true };
   });
 
@@ -2858,7 +2885,7 @@ export function registerPiChatHandlers({
     return { ok: true, data: enriched };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
+  const createConversation = async (service?: string, provider?: string, peerId?: string): Promise<AiConversation> => {
     const trimmedPeerId = peerId?.trim() ?? '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
@@ -2869,7 +2896,11 @@ export function registerPiChatHandlers({
     } else {
       preferredPeerByConversationId.delete(conversation.id);
     }
-    return { ok: true, data: conversation };
+    return conversation;
+  };
+
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
+    return { ok: true, data: await createConversation(service, provider, peerId) };
   });
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
@@ -2956,15 +2987,19 @@ export function registerPiChatHandlers({
     },
   );
 
-  ipcMain.handle('chat:ai-abort', async (_event, conversationId?: string) => {
+  const abortConversations = async (conversationId?: string): Promise<void> => {
     const trimmedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
     const activeRuns = trimmedConversationId
       ? [activeRunsByConversation.get(trimmedConversationId)].filter((run): run is ActiveRun => Boolean(run))
       : Array.from(activeRunsByConversation.values());
     if (activeRuns.length === 0) {
-      return { ok: true };
+      return;
     }
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
+  };
+
+  ipcMain.handle('chat:ai-abort', async (_event, conversationId?: string) => {
+    await abortConversations(conversationId);
     return { ok: true };
   });
 
@@ -3004,4 +3039,18 @@ export function registerPiChatHandlers({
     }
   });
 
+  return {
+    createConversation,
+    sendMessageStream: (conversationId, userMessage, options) => runStreamingPrompt(
+      conversationId,
+      userMessage,
+      options?.service,
+      undefined,
+      options?.peerId,
+      options?.permissionMode,
+    ),
+    abort: abortConversations,
+    resolveToolApproval,
+    getProxyPort: () => resolveProxyPort(configPath),
+  };
 }

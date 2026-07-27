@@ -28,6 +28,7 @@ export type BrandKey =
   | 'grok'
   | 'mistral'
   | 'llama'
+  | 'telegram'
   | 'generic';
 
 type BrandGlyph = (props: { size: number }) => JSX.Element;
@@ -40,6 +41,7 @@ const GLM_BLUE = '#3859FF';
 const GEMINI_BLUE = '#4285F4';
 const MISTRAL_ORANGE = '#FA500F';
 const META_BLUE = '#0668E1';
+const TELEGRAM_BLUE = '#26A5E4';
 
 const glyphs: Record<BrandKey, BrandGlyph> = {
   // Anthropic / Claude — radiating sunburst mark.
@@ -206,6 +208,18 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       />
     </svg>
   ),
+  // Telegram — paper-plane in the brand blue.
+  telegram: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M20.5 4.2L3.9 10.6c-1 .4-1 1.4 0 1.7l4.2 1.3 1.6 5c.3.9 1.1 1.1 1.8.4l2.3-2.2 4.4 3.2c.8.4 1.6 0 1.8-.9l2.6-13.1c.2-1-.6-1.6-2.1-.8z"
+        stroke={TELEGRAM_BLUE}
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+      <path d="M8.1 13.6l8.6-6.2-6.8 7.2" stroke={TELEGRAM_BLUE} strokeWidth={1.3} strokeLinejoin="round" />
+    </svg>
+  ),
   // Fallback — generic chip.
   generic: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -230,6 +244,7 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['mistral', /(mistral|mixtral|magistral|devstral|codestral)/i],
   ['llama', /llama/i],
   // Vendors that double as provider/protocol slugs.
+  ['telegram', /telegram/i],
   ['anthropic', /(anthropic|claude)/i],
   ['codex', /codex/i],
   ['openai', /(openai|chatgpt|gpt|gpt-)/i],

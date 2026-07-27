@@ -14,6 +14,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
+import { TelegramBotCard } from './TelegramBotCard';
 import styles from './VprToolsView.module.scss';
 
 
@@ -514,6 +515,8 @@ export function VprToolsView() {
         <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
 
         {message ? <p className={styles.note} role="status">{message}</p> : null}
+
+        <TelegramBotCard searchQuery={search} />
 
         {visibleProfiles.length === 0 ? (
           <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>

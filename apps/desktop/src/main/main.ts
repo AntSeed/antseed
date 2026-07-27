@@ -17,7 +17,7 @@ const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, isIP } from 'node:net';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -26,6 +26,8 @@ import {
   resolveConnectDataDir,
 } from './process-manager.js';
 import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
+import { emitChatEvent } from './chat-event-bus.js';
+import { createTelegramBridge } from './telegram-bridge.js';
 import { toolDesktopAppName, toolResumeCommand } from '../shared/tool-resume.js';
 import { loadAppIdentitySettings, loadAppLaunchSettings, normalizeToolSlugs, setAppIdentitySetting, setAppLaunchSetting, type AppLaunchTarget } from './app-launch-settings.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity, exportIdentityPrivateKeyHex, importIdentityPrivateKeyHex } from './identity.js';
@@ -70,6 +72,7 @@ import {
   openFloatWindow,
   closeFloatWindow,
   getFloatWindow,
+  moveFloatWindowBy,
   setFloatWindowCompact,
   setFloatWindowExpanded,
   getFloatWindowCompact,
@@ -82,7 +85,7 @@ import { resolveAttachmentPath } from './attachment-store.js';
 import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
-import { isWindowsProxyPointingAt, parseRegQueryValue } from './windows-proxy-state.js';
+import { isWindowsProxyPointingAt, parseRegQueryValue, windowsProxyRestoreWrites } from './windows-proxy-state.js';
 import { mergeWithDefaultAppProfiles } from './default-apps.js';
 import {
   customAppName,
@@ -885,6 +888,9 @@ function getEnabledNetworkServices(): string[] {
   }
 }
 
+/** Where WinINET keeps the per-user proxy settings every browser reads. */
+const WINDOWS_INTERNET_SETTINGS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+
 /**
  * Whether the Windows registry proxy actually points at our System Proxy —
  * the counterpart of `getSystemProxyServices` on Windows, and what decides
@@ -897,7 +903,7 @@ function isWindowsSystemProxyConfigured(port = DEFAULT_SYSTEM_PROXY_PORT): boole
   const read = (name: string): string | null => {
     try {
       const out = execFileSync('reg', [
-        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        'query', WINDOWS_INTERNET_SETTINGS_KEY,
         '/v', name,
       ], { encoding: 'utf8' });
       return parseRegQueryValue(out, name);
@@ -1044,14 +1050,14 @@ function clearOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): void {
     try {
       // Ownership guard: only disable the proxy if it points at the AntSeed proxy.
       const out = execFileSync('reg', [
-        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        'query', WINDOWS_INTERNET_SETTINGS_KEY,
         '/v', 'ProxyServer',
       ], { encoding: 'utf8' });
       if (!out.includes(`127.0.0.1:${port}`) && !out.includes(`localhost:${port}`)) {
         return;
       }
       execFileSync('reg', [
-        'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        'add', WINDOWS_INTERNET_SETTINGS_KEY,
         '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f',
       ], { stdio: 'pipe' });
       notifyWindowsProxyChanged();
@@ -1082,28 +1088,19 @@ function restoreOsSystemProxySnapshot(rawSnapshot: unknown): boolean {
     return true;
   }
   if (snapshot['platform'] === 'win32') {
-    const proxyEnable = typeof snapshot['proxyEnable'] === 'string' ? snapshot['proxyEnable'] : '0';
-    const proxyServer = typeof snapshot['proxyServer'] === 'string' ? snapshot['proxyServer'] : '';
-    try {
-      execFileSync('reg', [
-        'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-        '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', proxyEnable, '/f',
-      ], { stdio: 'pipe' });
-      if (proxyServer) {
-        execFileSync('reg', [
-          'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-          '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', proxyServer, '/f',
-        ], { stdio: 'pipe' });
-      } else {
-        try {
-          execFileSync('reg', [
-            'delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-            '/v', 'ProxyServer', '/f',
-          ], { stdio: 'pipe' });
-        } catch { /* missing value */ }
+    for (const write of windowsProxyRestoreWrites(snapshot)) {
+      try {
+        execFileSync('reg', write.type === 'delete'
+          ? ['delete', WINDOWS_INTERNET_SETTINGS_KEY, '/v', write.name, '/f']
+          : ['add', WINDOWS_INTERNET_SETTINGS_KEY, '/v', write.name, '/t', write.type, '/d', write.value, '/f'],
+        { stdio: 'pipe' });
+      } catch {
+        // A delete of an already-absent value, or a write we aren't allowed to
+        // make. Keep going — the remaining writes still matter, and
+        // ProxyEnable is the one that decides whether traffic flows.
       }
-      notifyWindowsProxyChanged();
-    } catch { /* best-effort */ }
+    }
+    notifyWindowsProxyChanged();
     return true;
   }
   return false;
@@ -1119,6 +1116,108 @@ async function restoreOsSystemProxy(port = DEFAULT_SYSTEM_PROXY_PORT): Promise<v
     }
   } catch { /* no snapshot */ }
   clearOsSystemProxy(port);
+}
+
+/**
+ * Synchronous counterpart of `restoreOsSystemProxy`, for the shutdown paths
+ * that cannot await. The OS proxy setting is global, persistent state: while
+ * it points at 127.0.0.1:<port> and nothing is listening there, every WinINET
+ * app on the machine — browsers, the Store, Windows Update — loses network
+ * until the user finds the setting by hand. So it has to be restored before
+ * anything that can block or be cut short (Windows kills apps that take too
+ * long to quit at logout/shutdown).
+ */
+function restoreOsSystemProxySync(port = DEFAULT_SYSTEM_PROXY_PORT): void {
+  try {
+    const raw = readFileSync(systemProxySnapshotPath(), 'utf8');
+    if (restoreOsSystemProxySnapshot(JSON.parse(raw) as unknown)) {
+      try { unlinkSync(systemProxySnapshotPath()); } catch { /* already gone */ }
+      return;
+    }
+  } catch { /* no snapshot */ }
+  clearOsSystemProxy(port);
+}
+
+function isOsSystemProxyConfigured(port: number): boolean {
+  if (process.platform === 'win32') return isWindowsSystemProxyConfigured(port);
+  if (process.platform === 'darwin') return getSystemProxyServices(port).length > 0;
+  return false;
+}
+
+/**
+ * Whether this run is meant to have an OS proxy set at all. Connections made
+ * purely by config patch never touch the OS setting, and a run that connected
+ * nothing has nothing to watch — anything left over from a *previous* run is
+ * the launch-time fail-open's job, not this one's.
+ */
+function expectsOsSystemProxy(): boolean {
+  const profiles = Array.isArray(activeSystemProxyState?.['activeProfileNames'])
+    ? activeSystemProxyState['activeProfileNames']
+    : [];
+  return profiles.some((name: unknown) => typeof name === 'string' && !isConfigPatchProfileName(name));
+}
+
+/**
+ * Fail-open watchdog for the OS proxy setting.
+ *
+ * The quit path restores the setting, but plenty of ways out of the app never
+ * reach it: the CLI child crashing or being killed from Task Manager, the app
+ * being force-quit, a power cut. Any of those leaves the machine pointing at a
+ * proxy that no longer exists and takes the user's whole browser offline — the
+ * failure users actually report, and one they have no reason to connect back
+ * to this app. So the setting is polled against a real connect to the port and
+ * cleared as soon as it outlives the proxy it points at.
+ */
+const SYSTEM_PROXY_WATCHDOG_INTERVAL_MS = 15_000;
+let systemProxyWatchdog: ReturnType<typeof setInterval> | null = null;
+/** Non-zero while a start/restart is mid-flight — the setting is legitimately
+    up with nothing listening yet during that window. */
+let systemProxyStartsInFlight = 0;
+
+function startSystemProxyWatchdog(): void {
+  if (systemProxyWatchdog) return;
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return;
+  let busy = false;
+  // One failed probe is not enough: a restart briefly has the setting up with
+  // no listener. Only a second consecutive miss counts as a dead proxy.
+  let consecutiveMisses = 0;
+  systemProxyWatchdog = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    void (async () => {
+      try {
+        // Cheap gates first, in cost order — `isOsSystemProxyConfigured` shells
+        // out to reg/networksetup synchronously, so it must not run on the
+        // healthy path every tick.
+        if (systemProxyStartsInFlight > 0 || !expectsOsSystemProxy()) {
+          consecutiveMisses = 0;
+          return;
+        }
+        const port = Number(activeSystemProxyState?.['port']) || DEFAULT_SYSTEM_PROXY_PORT;
+        if (await canConnectToLocalPort(port)) {
+          consecutiveMisses = 0;
+          return;
+        }
+        if (!isOsSystemProxyConfigured(port)) {
+          consecutiveMisses = 0;
+          return;
+        }
+        consecutiveMisses += 1;
+        if (consecutiveMisses < 2) return;
+        consecutiveMisses = 0;
+        appendLog(
+          'system-proxy',
+          'system',
+          `System Proxy is not listening on 127.0.0.1:${port} but the OS proxy still points at it — `
+          + 'restoring the previous proxy setting so other apps keep working.',
+        );
+        await restoreOsSystemProxy(port);
+      } catch { /* best-effort */ } finally {
+        busy = false;
+      }
+    })();
+  }, SYSTEM_PROXY_WATCHDOG_INTERVAL_MS);
+  systemProxyWatchdog.unref?.();
 }
 
 async function clearSystemProxyRuntimeFiles(): Promise<void> {
@@ -1535,6 +1634,15 @@ function routeForTool(opts: SystemProxyStartRequest, profileName: string): { pee
 }
 
 async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
+  systemProxyStartsInFlight += 1;
+  try {
+    return await startSystemProxyRuntimeInner(opts);
+  } finally {
+    systemProxyStartsInFlight -= 1;
+  }
+}
+
+async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
   const port = opts.port ?? DEFAULT_SYSTEM_PROXY_PORT;
   const allProfiles = opts.profiles ?? [];
   const proxyProfiles = allProfiles.filter((name) => !isConfigPatchProfileName(name));
@@ -1659,6 +1767,10 @@ async function restoreSystemProxyProfilesAtLaunch(opts: SystemProxyStartRequest)
   if (activeSystemProxyState !== null) return;
   await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
   await writeFile(systemProxyDesktopStatePath(), JSON.stringify(persisted), 'utf8').catch(() => undefined);
+  // Reconnect is being retried next launch, not now — so the OS must not be
+  // left pointing at a proxy that never came up. The profiles are remembered
+  // in the state file above; the proxy setting is not part of that memory.
+  await clearSystemProxyTransportSettings().catch(() => undefined);
 }
 
 async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimeProcessState | null> {
@@ -1948,6 +2060,7 @@ async function stopPaymentsPortal(): Promise<void> {
 }
 
 async function stopDesktopServices(): Promise<void> {
+  telegramBridge.stop();
   await Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]);
 }
 
@@ -3591,10 +3704,13 @@ ipcMain.handle('payments:get-rewards-summary', async (): Promise<{ ok: boolean; 
 });
 
 // ── AI Chat IPC Handlers ──
-registerPiChatHandlers({
+const piChatEngine = registerPiChatHandlers({
   ipcMain,
   sendToRenderer: (channel, payload) => {
     getMainWindow()?.webContents.send(channel, payload);
+    // Tee every chat event into the bus so the Telegram bridge can follow
+    // stream deltas, completions, and tool-approval requests.
+    emitChatEvent(channel, payload);
   },
   configPath: ACTIVE_CONFIG_PATH,
   isBuyerRuntimeRunning: () => getCombinedProcessState().some((state) => state.mode === "connect" && state.running),
@@ -3651,6 +3767,32 @@ registerPiChatHandlers({
         && peer.port > 0
         && peer.port <= 65535);
   },
+});
+
+// ── Telegram bridge ──
+const telegramBridge = createTelegramBridge({
+  engine: piChatEngine,
+  appendLog: (line) => { appendLog('connect', 'system', line); },
+  onStatusChanged: (status) => {
+    getMainWindow()?.webContents.send('telegram:status-changed', status);
+  },
+});
+
+ipcMain.handle('telegram:get-status', async () => {
+  return { ok: true, data: telegramBridge.getStatus() };
+});
+
+ipcMain.handle('telegram:connect', async (_event, botToken: unknown) => {
+  if (typeof botToken !== 'string' || botToken.trim().length === 0) {
+    return { ok: false, error: 'Bot token is required' };
+  }
+  const result = await telegramBridge.connect(botToken);
+  return { ok: result.ok, data: result.status, error: result.error };
+});
+
+ipcMain.handle('telegram:disconnect', async () => {
+  await telegramBridge.disconnect();
+  return { ok: true, data: telegramBridge.getStatus() };
 });
 
 ipcMain.handle('runtime:scan-network', async () => {
@@ -4249,11 +4391,9 @@ ipcMain.handle('vpr-float:get-compact', () => getFloatWindowCompact());
 // click target (flip/expand), so it can't be a -webkit-app-region drag
 // handle — the renderer streams pointer deltas instead.
 ipcMain.on('vpr-float:move-by', (_event, dx: unknown, dy: unknown) => {
-  const win = getFloatWindow();
-  if (!win || typeof dx !== 'number' || typeof dy !== 'number') return;
+  if (typeof dx !== 'number' || typeof dy !== 'number') return;
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
-  const bounds = win.getBounds();
-  win.setPosition(Math.round(bounds.x + dx), Math.round(bounds.y + dy));
+  moveFloatWindowBy(dx, dy);
 });
 
 ipcMain.on('vpr-float:update', (_event, data: unknown) => {
@@ -4372,17 +4512,33 @@ app.whenReady().then(async () => {
       return;
     }
     createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+    // Windows only, and the reason this is here rather than on `app`:
+    // 'before-quit' is NOT emitted when the app goes down with an OS shutdown,
+    // restart or logout, so this is the last chance to hand the proxy setting
+    // back — and there is only time for the synchronous restore. Without it
+    // the machine reboots into a system proxy pointing at nothing.
+    getMainWindow()?.on('session-end', () => {
+      restoreOsSystemProxySync();
+    });
   };
 
   showMainWindow();
 
-  // Stale System Proxy cleanup (no persisted state) — fire-and-forget so clean
-  // launches don't block window creation on networksetup/reg calls.
-  if (!activeSystemProxyState) {
-    void clearSystemProxySettings().catch((err) => {
-      appendLog('system-proxy', 'system', `System Proxy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
-  }
+  // Fail open before anything else. Whatever the OS proxy is set to right now
+  // was left behind by the previous run — and if that run ended in a crash,
+  // a force-quit or an OS shutdown, it still points at a proxy that is not
+  // running, which is the whole machine offline. Restore it unconditionally
+  // and let the reconnect below re-arm it only once a proxy really listens.
+  // Fire-and-forget so clean launches don't block window creation on
+  // networksetup/reg calls; only the state files differ between the two cases
+  // (persisted state is the reconnect memory and must survive).
+  const systemProxyFailOpen = (activeSystemProxyState
+    ? clearSystemProxyTransportSettings()
+    : clearSystemProxySettings()
+  ).catch((err) => {
+    appendLog('system-proxy', 'system', `System Proxy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  startSystemProxyWatchdog();
 
   createDesktopTray({
     appName: APP_NAME,
@@ -4396,14 +4552,20 @@ app.whenReady().then(async () => {
     ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
     : [];
   if (restoredProfiles.length > 0 && typeof activeSystemProxyState?.['peerId'] === 'string') {
-    void restoreSystemProxyProfilesAtLaunch({
-      peerId: activeSystemProxyState['peerId'],
+    const restorePeerId = activeSystemProxyState['peerId'];
+    const restoreDefaultModel = typeof activeSystemProxyState['defaultModel'] === 'string'
+      ? activeSystemProxyState['defaultModel']
+      : undefined;
+    // Sequenced after the fail-open above, or the clear could land after the
+    // child has already re-armed the setting and silently disconnect it.
+    void systemProxyFailOpen.then(() => restoreSystemProxyProfilesAtLaunch({
+      peerId: restorePeerId,
       port: DEFAULT_SYSTEM_PROXY_PORT,
       profiles: restoredProfiles,
-      defaultModel: typeof activeSystemProxyState['defaultModel'] === 'string' ? activeSystemProxyState['defaultModel'] : undefined,
+      defaultModel: restoreDefaultModel,
       servedModels: [],
       profileSwitch: true,
-    }).catch((err) => {
+    })).catch((err) => {
       appendLog('system-proxy', 'system', `System Proxy auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
@@ -4411,6 +4573,12 @@ app.whenReady().then(async () => {
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
+  });
+
+  // Resume the Telegram bridge if a bot was connected in a previous session.
+  // Needs app-ready because the token store decrypts via safeStorage.
+  void telegramBridge.start().catch((err) => {
+    appendLog('connect', 'system', `[telegram] Bridge resume failed: ${err instanceof Error ? err.message : String(err)}`);
   });
 
   // Payments portal starts lazily on first open (via payments:open-portal IPC)
@@ -4568,6 +4736,13 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
+  // First, and synchronously: the async teardown below waits on child
+  // processes and can be cut short (Windows gives an app only a few seconds
+  // to quit at logout/shutdown before killing it). An OS proxy left pointing
+  // at the dead port breaks networking machine-wide, so it must not be
+  // downstream of anything that can block.
+  restoreOsSystemProxySync();
+
   void stopDesktopServices().finally(() => {
     app.exit(0);
   });
@@ -4576,10 +4751,12 @@ app.on('before-quit', (event) => {
 // Ensure child processes are cleaned up if the main process receives a terminal
 // stop signal before before-quit fires.
 process.on('SIGINT', () => {
+  restoreOsSystemProxySync();
   void stopDesktopServices().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
+  restoreOsSystemProxySync();
   void stopDesktopServices().finally(() => process.exit(0));
 });
 
