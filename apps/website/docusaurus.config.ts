@@ -162,15 +162,17 @@ const config: Config = {
     ],
     colorMode: {
       defaultMode: 'light',
-      disableSwitch: false,
+      disableSwitch: true,
       respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'ANTSEED',
+      title: '',
       logo: {
         alt: 'AntSeed',
         src: 'logo-light.svg',
-        srcDark: 'logo.svg',
+        srcDark: 'logo-dark.svg',
+        width: 104,
+        height: 36,
       },
       items: [
         {

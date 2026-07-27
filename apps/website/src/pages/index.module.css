@@ -48,7 +48,7 @@
   position: relative;
   overflow: hidden;
   background: var(--as-soil-1);
-  padding: 136px 16px 48px;
+  padding: 80px 16px 48px;
   text-align: center;
 }
 
@@ -178,16 +178,23 @@
 }
 
 /* ============================================================
-   LOGO MARQUEE — ink band, lockups white @60%, 28px tall
+   LOGO MARQUEE — infinite scroll, edge fade, no hover state.
+   Lockups render white @60% opacity; each logo keeps its own
+   optically-balanced height (set inline per logo).
    ============================================================ */
 .marqueeBand {
   background: var(--as-void);
-  padding: 48px 0;
+  height: 96px;
+  display: flex;
+  align-items: center;
 }
 
 .marquee {
   display: flex;
   overflow: hidden;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 9% 91%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 9% 91%, transparent);
 }
@@ -198,10 +205,6 @@
   flex-shrink: 0;
   min-width: 100%;
   animation: marquee 48s linear infinite;
-}
-
-.marquee:hover .marqueeRun {
-  animation-play-state: paused;
 }
 
 @keyframes marquee {
@@ -216,24 +219,46 @@
   }
 }
 
+/* Equal gap between logos — each lockup keeps its true aspect ratio
+   and natural width, centered on the same baseline, at its own
+   optically-balanced height (set inline per logo). */
 .marqueeItem {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  padding: 0 24px;
-}
-
-.marqueeItem img {
-  height: 28px;
-  width: auto;
+  margin: 0 22px;
   /* lockups render white @60% on the ink band, per Figma */
-  filter: brightness(0) invert(1);
+  color: #FFFFFF;
   opacity: 0.6;
-  transition: opacity 0.2s ease;
 }
 
-.marqueeItem:hover img {
-  opacity: 1;
+.marqueeItem svg {
+  fill: currentColor;
+  display: block;
+}
+
+/* @lobehub/icons' Combine wrapper (`.lobe-flex`) relies on a runtime
+   style provider we don't have wired up, so its row layout silently
+   doesn't apply — force it here instead of pulling in the provider. */
+.marqueeItem :global(.lobe-flex) {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+}
+
+/* Google/Meta fall back to plain <img> (external SVG) — currentColor
+   can't reach into those, so force the same white silhouette via filter. */
+.marqueeItem img {
+  height: 100%;
+  width: auto;
+  filter: brightness(0) invert(1);
+}
+
+@media (max-width: 640px) {
+  .marqueeItem {
+    margin: 0 16px;
+  }
 }
 
 /* ============================================================
@@ -245,37 +270,61 @@
   background: var(--as-soil-1);
 }
 
-/* dotted trail dripping out of the hero — 6px dots on an 8px pitch,
-   fading in from the top (Figma), dots flow downward */
+/* dotted trail dripping out of the hero — static dashed line (Figma
+   asset), with each dot along it lighting up in sequence, top to bottom */
 .dropTrail {
   position: absolute;
-  top: 0;
+  top: 24px;
   left: 50%;
   width: 6px;
-  height: 88px;
-  background-image: radial-gradient(circle at 3px 4px, var(--as-line) 3px, transparent 3.5px);
-  background-size: 6px 8px;
-  background-repeat: repeat-y;
+  height: 94px;
   transform: translateX(-50%);
-  -webkit-mask-image: linear-gradient(transparent, #000 85%);
-  mask-image: linear-gradient(transparent, #000 85%);
-  animation: dropFlow 1.2s linear infinite;
 }
 
-@keyframes dropFlow {
-  to {
-    background-position-y: 8px;
+.dropTrailLine {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dropTrailDot {
+  position: absolute;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--as-green);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  box-shadow: 0 0 0 0 var(--as-green-glow);
+  animation: dropLight 1.6s ease-in-out infinite;
+}
+
+@keyframes dropLight {
+  0%, 92%, 100% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 var(--as-green-glow);
+  }
+  8% {
+    opacity: var(--dot-peak, 1);
+    box-shadow: 0 0 calc(6px * var(--dot-peak, 1)) 1px var(--as-green-glow);
+  }
+  20% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 var(--as-green-glow);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dropTrail {
+  .dropTrailDot {
     animation: none;
+    opacity: 0;
   }
 }
 
 .pricingSection :global(h2) {
-  margin-top: 88px;
+  margin-top: 96px;
 }
 
 .priceCard {
@@ -293,7 +342,8 @@
   left: -345px;
   top: -265px;
   width: 719px;
-  height: 812px;
+  height: auto;
+  aspect-ratio: 854 / 964;
   opacity: 0.15;
   pointer-events: none;
 }
@@ -349,10 +399,44 @@
   height: 6px;
   border-radius: 50%;
   background: #D8D9D8;
+  animation: signalLight 1.6s ease-in-out infinite;
 }
 
-.signalDots i:last-child {
-  background: var(--as-green);
+.signalDots i:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.signalDots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.signalDots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes signalLight {
+  0%, 92%, 100% {
+    background: #D8D9D8;
+    box-shadow: 0 0 0 0 var(--as-green-glow);
+  }
+  8% {
+    background: var(--as-green);
+    box-shadow: 0 0 6px 1px var(--as-green-glow);
+  }
+  20% {
+    background: #D8D9D8;
+    box-shadow: 0 0 0 0 var(--as-green-glow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signalDots i {
+    animation: none;
+  }
+
+  .signalDots i:last-child {
+    background: var(--as-green);
+  }
 }
 
 .priceRows {
@@ -451,7 +535,7 @@
 .bestBadge {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   font-style: normal;
   font-size: 12px;
   line-height: 16px;
@@ -459,7 +543,7 @@
   color: var(--as-live-text);
   background: var(--as-badge-green-bg);
   border-radius: 8px;
-  padding: 0 6px 0 4px;
+  padding: 0 8px 0 4px;
   white-space: nowrap;
 }
 
@@ -481,7 +565,7 @@
 .providerChip {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   color: var(--as-heading);
 }
 
@@ -547,7 +631,6 @@
   width: 889px;
   height: 1004px;
   top: -247px;
-  opacity: 0.15;
   pointer-events: none;
 }
 
@@ -711,6 +794,29 @@
   margin: 0;
 }
 
+.featureLinkArrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.featureLinkArrow:hover {
+  color: var(--as-accent, var(--as-heading));
+}
+
+.featureLinkArrow svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 /* sellers stack (exact Figma placement in a 287×176 canvas) */
 .sellersIllo {
   position: relative;
@@ -801,6 +907,16 @@
   overflow: hidden;
 }
 
+.runsIlloWell {
+  padding: 0 8px 8px;
+}
+
+.runsIlloWell img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* easy setup */
 .setupMenuBar {
   display: flex;
@@ -808,7 +924,7 @@
   height: 30px;
   background: var(--as-soil-2);
   border-radius: 16px 16px 0 0;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .setupMenuBar img {
@@ -857,7 +973,7 @@
   top: 22px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .routeTools img {
@@ -895,7 +1011,7 @@
 .payRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .payRow img {
@@ -907,7 +1023,7 @@
   width: 1px;
   height: 24px;
   background: #D4DBD7;
-  margin: 0 6px;
+  margin: 0 8px;
 }
 
 /* ============================================================
@@ -920,13 +1036,23 @@
   overflow: hidden;
 }
 
+.darkSection::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--as-green) 1px, transparent 1px);
+  background-size: 11.34px 11.34px;
+  opacity: 0.2;
+  pointer-events: none;
+}
+
 .darkAnt {
   position: absolute;
   right: -222px;
   top: 75px;
   width: 430px;
   height: 480px;
-  opacity: 0.4;
+  opacity: 1;
   pointer-events: none;
 }
 
@@ -1061,6 +1187,10 @@
 .tComment { color: #A3A29F; }
 .tWhite { color: #FFFFFF; }
 .tGreen { color: var(--as-green); }
+.tOrange { color: #DB9400; }
+.tYellow { color: #EAE784; }
+.tPurple { color: #9D93FF; }
+.tBlue { color: #00AFFF; }
 
 /* flow chips */
 .flowRow {
@@ -1107,10 +1237,14 @@
 /* ============================================================
    3 STEPS
    ============================================================ */
+.stepsSellWrap {
+  position: relative;
+  background: var(--as-soil-1);
+}
+
 .stepsSection {
   position: relative;
   padding: 96px 16px;
-  background: var(--as-soil-1);
 }
 
 .stepsAnt {
@@ -1127,10 +1261,10 @@
 
 .stepsTitle {
   font-family: var(--as-font-display);
-  font-size: clamp(28px, 2.6vw, 36px);
-  line-height: 43px;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-size: clamp(32px, 3.4vw, 48px);
+  line-height: 1.125;
+  font-weight: 500;
+  letter-spacing: -1px;
   text-align: center;
   color: var(--as-heading);
   margin: 0 0 32px;
@@ -1208,19 +1342,42 @@
 .sellSection {
   position: relative;
   padding: 40px 16px 96px;
-  background: var(--as-soil-1);
 }
 
-.sellCard {
+.sellCardWrap {
   position: relative;
   max-width: 1024px;
   margin: 0 auto;
+}
+
+.sellAntMobile {
+  display: none;
+  pointer-events: none;
+}
+
+/* Liquid Glass (Apple, WWDC25 / macOS Tahoe): a thin, dense, polished
+   material — not flat blur-and-tint glassmorphism. Three layers do the
+   work: (1) a light backdrop blur that reads the material's thickness,
+   (2) a multi-edge inset box-shadow standing in for how a lens catches
+   light differently on each of its rounded edges, (3) a screen-blended
+   sheen for the specular reflection across the top face. Where the
+   browser can run an SVG displacement filter (Chromium), the backdrop
+   itself is gently bent instead of only blurred — real refraction. */
+/* Matches the actual Figma render (confirmed via get_screenshot): a clean
+   soft blur over the dot pattern, thin dark stroke, no visible warping or
+   colour fringing. Figma's own "Glass" effect doesn't export as CSS at
+   all — this is a plain backdrop-blur approximation of it, not a
+   refraction simulation. */
+.sellCard {
+  position: relative;
+  z-index: 1;
   border: 1px solid var(--as-ink);
   border-radius: 40px;
   background: rgba(255, 255, 255, 0.6);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   padding: 32px 52px;
+  overflow: hidden;
 }
 
 .sellGrid {
@@ -1280,8 +1437,6 @@
 .sellLine {
   width: 32px;
   height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--as-green), rgba(16, 185, 129, 0));
   flex-shrink: 0;
 }
 
@@ -1322,23 +1477,6 @@
   line-height: 22px;
   font-weight: 500;
   color: var(--as-heading);
-}
-
-.liveDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--as-live);
-  animation: livePulse 2s var(--as-ease) infinite;
-}
-
-@keyframes livePulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .liveDot { animation: none; }
 }
 
 .earningsBig {
@@ -1438,34 +1576,10 @@
    ============================================================ */
 .finalCta {
   position: relative;
-  background: var(--as-void-cta);
+  background: var(--as-void-cta) url('/img/home/final-cta-bg.png') center / cover no-repeat;
   padding: 96px 16px;
   text-align: center;
   overflow: hidden;
-}
-
-.finalCtaAnt {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: 16px;
-  width: 856px;
-  height: 956px;
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.finalCtaGlow {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: 178px;
-  width: 800px;
-  height: 800px;
-  border-radius: 50%;
-  background: rgba(16, 185, 129, 0.5);
-  filter: blur(246px);
-  pointer-events: none;
 }
 
 .finalCtaInner {
@@ -1514,6 +1628,10 @@
     max-width: 480px;
   }
 
+  .stepCard {
+    min-height: 160px;
+  }
+
   .privacyGrid {
     grid-template-columns: 1fr;
     max-width: 480px;
@@ -1521,6 +1639,10 @@
 
   .localhostGrid {
     grid-template-columns: 1fr;
+  }
+
+  .localhostGrid > * {
+    min-width: 0;
   }
 
   .sellGrid {
@@ -1543,25 +1665,64 @@
   }
 
   .priceRow {
-    grid-template-columns: 40px 1fr auto;
-    row-gap: 8px;
+    grid-template-columns: 40px minmax(0, 2.2fr) minmax(0, 1fr);
+    grid-template-areas:
+      "logo    model   save"
+      "official official best";
+    row-gap: 10px;
+    column-gap: 8px;
+    align-items: start;
+  }
+
+  .priceLogo {
+    grid-area: logo;
+  }
+
+  .priceModel strong {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
+
+  .priceModel {
+    grid-area: model;
   }
 
   .priceOfficial {
-    grid-column: 2;
+    grid-area: official;
   }
 
   .priceBest {
-    grid-column: 2 / 4;
+    grid-area: best;
+    align-items: flex-end;
+    text-align: right;
+  }
+
+  .priceBestTop {
+    justify-content: flex-end;
+  }
+
+  .priceBestSub {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    white-space: nowrap;
+  }
+
+  .providerChip {
+    white-space: nowrap;
   }
 
   .priceSave {
-    grid-column: 3;
-    grid-row: 1;
+    grid-area: save;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: baseline;
+    gap: 6px;
   }
 
-  .stepsAnt,
-  .darkAnt {
+  .darkAnt,
+  .stepsAnt {
     display: none;
   }
 }
@@ -1573,7 +1734,20 @@
   }
 
   .hero {
-    padding: 112px 16px 48px;
+    padding: 40px 16px 48px;
+  }
+
+  .priceCard {
+    width: calc(100% + 32px);
+    max-width: none;
+    margin-left: -16px;
+    margin-right: -16px;
+    border-radius: 20px;
+    padding: 20px 16px;
+  }
+
+  .priceRow {
+    padding: 12px;
   }
 
   .statsRow {
@@ -1582,31 +1756,84 @@
     gap: 24px;
   }
 
+  .statValue {
+    font-size: 28px;
+    line-height: 36px;
+  }
+
   .demoFrame {
     margin-top: 32px;
     transform: none;
+    width: calc(100% + 32px);
+    max-width: none;
+    margin-left: -16px;
+    margin-right: -16px;
   }
 
   .privacyPanel {
     padding: 40px 16px;
   }
 
-  .privacySpy,
-  .privacyShield,
   .privacyDotsLeft,
   .privacyDotsRight {
     display: none;
   }
 
+  .privacyCardDark,
+  .privacyCardGreen {
+    min-height: 240px;
+  }
+
+  .privacySpy {
+    left: auto;
+    right: -32px;
+    top: auto;
+    bottom: -24px;
+    width: 168px;
+    height: 213px;
+  }
+
+  .privacyShield {
+    left: auto;
+    right: -20px;
+    top: auto;
+    bottom: -16px;
+    width: 156px;
+    height: 210px;
+  }
+
   .privacyCopy,
   .privacyCopyGreen {
+    position: relative;
+    left: auto;
+    top: auto;
     width: auto;
     margin: 0;
-    padding: 32px 24px;
+    padding: 24px;
   }
 
   .darkSection {
     padding: 64px 16px;
+  }
+
+  .sellAntMobile {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 680px;
+    max-width: none;
+    height: auto;
+    aspect-ratio: 1400 / 1568;
+    opacity: 0.35;
+    z-index: 0;
+  }
+
+  .terminalBlock {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: visible;
   }
 
   .terminalTagline {

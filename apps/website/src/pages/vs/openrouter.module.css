@@ -33,7 +33,7 @@
   color: var(--as-text-2);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
 }
 .title {
   font-family: var(--as-font-display);
@@ -41,7 +41,7 @@
   font-weight: 550;
   line-height: 1.03;
   letter-spacing: -0.018em;
-  margin: 0 auto 22px;
+  margin: 0 auto 24px;
   color: var(--as-text);
   max-width: 920px;
   text-wrap: balance;
@@ -78,7 +78,7 @@
   overflow: hidden;
   max-width: 100%;
   min-width: 0;
-  margin: 46px 0 58px;
+  margin: 48px 0 60px;
   box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
 }
 .tableHead,
@@ -142,12 +142,12 @@
   background: #03251A !important;
   border: 1px solid var(--as-line);
   border-radius: 10px;
-  padding: 14px 18px;
+  padding: 16px 20px;
   font-family: var(--as-font-data);
   font-size: 14px;
   color: var(--as-green);
   display: block;
-  margin: 0 auto 18px;
+  margin: 0 auto 20px;
   max-width: 100%;
   width: fit-content;
   min-width: 0;
@@ -177,7 +177,7 @@
 :global(html[data-theme='light']) .footerCta { background: #fff; border-color: rgba(19,146,86,.16); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
 :global(html[data-theme='light']) .code { background: #001E12 !important; border-color: rgba(10,14,20,.12); }
 @media (max-width: 768px) {
-  .page { padding: 58px 18px 76px; }
+  .page { padding: 60px 20px 76px; }
   .header { padding-bottom: 36px; }
   .ctaRow { flex-direction: column; align-items: stretch; }
   .ctaPrimary,
@@ -188,7 +188,7 @@
   .tableRow .colDim { color: var(--as-text-3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
   .colOr::before { content: 'OpenRouter: '; color: var(--as-text-3); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-top: 8px; font-family: var(--as-font-data); }
   .colAnt::before { content: 'AntSeed: '; color: var(--as-green); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; font-family: var(--as-font-data); }
-  .footerCta { padding: 34px 20px; }
+  .footerCta { padding: 36px 20px; }
   .code { width: 100%; }
 }
 
