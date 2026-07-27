@@ -493,6 +493,8 @@ export function VprToolsView() {
     return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
   }, [profiles, search, activeProfiles]);
 
+  const telegramVisible = !search.trim() || 'telegram bot'.includes(search.trim().toLowerCase());
+
   // Certificate trust presentation. A live probe failure (certTrustError) or a
   // stale/absent keychain state all mean the same thing to the user: press
   // Trust. `stale` is the CERT_SIGNATURE_FAILURE case — an older CA trusted
@@ -516,12 +518,11 @@ export function VprToolsView() {
 
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        <TelegramBotCard searchQuery={search} />
-
-        {visibleProfiles.length === 0 ? (
+        {visibleProfiles.length === 0 && !telegramVisible ? (
           <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
         ) : (
           <div className={styles.appList}>
+            {telegramVisible ? <TelegramBotCard /> : null}
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const canOpenUrl = connected && profile.appAction === 'open-url' && !!profile.openUrl;

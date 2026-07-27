@@ -8,6 +8,7 @@ import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel }
 import { filterRoutableVprRoutes } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
+import { syncBuyerDefaultRoute } from '../routing/proxy-sync.js';
 import { clearVprModelPin, saveVprModelPins, setVprModelPin } from '../routing/model-pins.js';
 import {
   applyOpenRouterBaselines,
@@ -1304,6 +1305,10 @@ export function initChatModule({
           uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
         }
       }
+      // Keep the buyer proxy's default route on the current selection. Runs
+      // on every poll tick, but main dedupes repeats — the repetition is what
+      // lands the route once the buyer proxy finishes starting.
+      void syncBuyerDefaultRoute(bridge, uiState);
       const optionsToRender = rows.length > 0
         ? projectRowsToChatServiceOptions(uiState.vprRoutableRows)
         : fallback;
@@ -2346,6 +2351,7 @@ export function initChatModule({
         saveVprModelPins(uiState.vprModelPins);
       }
       saveVprRouteSelection(uiState.vprRouteSelection);
+      void syncBuyerDefaultRoute(bridge, uiState);
     }
 
     if (activeConversation) {

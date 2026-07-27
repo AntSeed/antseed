@@ -315,6 +315,26 @@
   font-size: 10px;
 }
 
+/* Inline hint text that opens an external link (e.g. @BotFather). */
+.settingHintLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settingHintLink code {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s ease;
+}
+
+.settingHintLink:hover code {
+  color: var(--text-primary);
+}
+
 /* Current-value row (selected application) — click slides to the picker.
    Transparent fill: a surface tint here reads as a disabled control. */
 .settingValueRow {

@@ -82,6 +82,8 @@ export type PiChatEngine = {
   /** Resolves a pending tool approval; returns false when the id is unknown (already decided). */
   resolveToolApproval(id: string, decision: ToolApprovalDecision): boolean;
   getProxyPort(): Promise<number>;
+  /** Discovered network service catalog, sorted the way the chat UI lists models. */
+  discoverServiceCatalog(): Promise<ChatServiceCatalogEntry[]>;
 };
 
 export function registerPiChatHandlers({
@@ -690,6 +692,32 @@ export function registerPiChatHandlers({
     }
   });
 
+  // Keep the buyer proxy's default route (`antseed` model alias, and the
+  // route the Telegram bridge reads) on the renderer's current VPR selection.
+  // Best-effort: the buyer proxy may not be running yet — the renderer calls
+  // this again on its catalog poll, so the route lands once the proxy is up.
+  let lastPostedDefaultRoute = '';
+  ipcMain.handle('chat:set-buyer-default-route', async (_event, payload: { peerId?: unknown; service?: unknown }) => {
+    const peerId = typeof payload?.peerId === 'string' ? payload.peerId.trim() : '';
+    const service = typeof payload?.service === 'string' ? payload.service.trim() : '';
+    if (!peerId || !service) return { ok: false, error: 'peerId and service are required' };
+    const model = `${peerId}@${service}`;
+    if (model === lastPostedDefaultRoute) return { ok: true };
+    try {
+      const proxyPort = await resolveProxyPort(configPath);
+      const response = await fetch(`${LOCALHOST_URL}:${proxyPort}/_antseed/route`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (result.ok) lastPostedDefaultRoute = model;
+      return { ok: result.ok ?? false, error: result.error };
+    } catch (err) {
+      return { ok: false, error: asErrorMessage(err) };
+    }
+  });
+
   return {
     createConversation,
     sendMessageStream: (conversationId, userMessage, options) => runStreamingPrompt(
@@ -703,5 +731,6 @@ export function registerPiChatHandlers({
     abort: abortConversations,
     resolveToolApproval,
     getProxyPort: () => resolveProxyPort(configPath),
+    discoverServiceCatalog: refreshServiceCatalogFromNetwork,
   };
 }

@@ -345,6 +345,7 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
   // ── Inbound Telegram updates ────────────────────────────────────────
 
   const resolveDefaultRoute = async (): Promise<{ peerId?: string; service?: string }> => {
+    let bareModel = '';
     try {
       const port = await engine.getProxyPort();
       const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/route`);
@@ -354,8 +355,24 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       if (at > 0) {
         return { peerId: model.slice(0, at), service: model.slice(at + 1) };
       }
+      bareModel = model;
     } catch {
-      // Buyer proxy offline or no default route — the engine will fall back.
+      // Buyer proxy offline or no default route — fall through to the catalog.
+    }
+    // No routed peer (fresh install: the buyer route is only set when a proxy
+    // app connects, and the buyer proxy refuses to auto-select). Mirror the
+    // chat UI's new-chat default: the first discovered catalog entry — or the
+    // entry serving the routed bare model name, when one is set.
+    try {
+      const entries = await engine.discoverServiceCatalog();
+      const wanted = bareModel.toLowerCase();
+      const match = wanted
+        ? entries.find((entry) => entry.id.trim().toLowerCase() === wanted && entry.peerId)
+        : undefined;
+      const chosen = match ?? entries.find((entry) => entry.peerId);
+      if (chosen?.peerId) return { peerId: chosen.peerId, service: chosen.id };
+    } catch {
+      // Discovery unavailable — the engine will surface the buyer error.
     }
     return {};
   };

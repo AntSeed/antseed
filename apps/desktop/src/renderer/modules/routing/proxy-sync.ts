@@ -67,6 +67,24 @@ async function startProfilesOnRoute(
 }
 
 /**
+ * Push the current VPR selection to the buyer proxy's default route
+ * (`POST /_antseed/route`), keeping the proxy the single routing authority:
+ * the `antseed` model alias and headless frontends (the Telegram bridge)
+ * resolve their peer from this route instead of re-deriving it. Best-effort —
+ * main dedupes repeat values and the buyer proxy may not be running yet, so
+ * this is safe to call from polling refreshes.
+ */
+export async function syncBuyerDefaultRoute(
+  bridge: DesktopBridge | undefined,
+  uiState: RendererUiState,
+): Promise<void> {
+  if (!bridge?.chatSetBuyerDefaultRoute) return;
+  const target = resolveRouteTarget(uiState);
+  if (!target) return;
+  await bridge.chatSetBuyerDefaultRoute({ peerId: target.peerId, service: target.model }).catch(() => undefined);
+}
+
+/**
  * Re-point the running system proxy at the current VPR route selection.
  *
  * Without this, changing the default model (Home dropdown, model view Apply,
@@ -75,15 +93,17 @@ async function startProfilesOnRoute(
  * connect time — apps then request models the newly pinned peer doesn't
  * serve ("Service X is not served by this peer").
  *
- * No-op when no profile is connected. Per-app route overrides made in the
- * Apps view are reset to the new default route; adjust them there afterwards
- * if needed.
+ * The buyer default route always follows the selection; the profile restart
+ * below is a no-op when no app profile is connected. Per-app route overrides
+ * made in the Apps view are reset to the new default route; adjust them there
+ * afterwards if needed.
  */
 export async function applyVprRouteToConnectedProxy(
   bridge: DesktopBridge | undefined,
   uiState: RendererUiState,
 ): Promise<void> {
   if (!bridge) return;
+  void syncBuyerDefaultRoute(bridge, uiState);
   const profileNames = await activeProfileNames(bridge);
   if (profileNames.length === 0) return;
   const target = resolveRouteTarget(uiState);

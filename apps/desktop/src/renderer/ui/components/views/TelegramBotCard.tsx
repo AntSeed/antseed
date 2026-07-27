@@ -11,7 +11,7 @@ import styles from './VprToolsView.module.scss';
  * not intercept anything — it pairs the user's personal Telegram bot with
  * the local chat agent (main-process bridge long-polls the Bot API).
  */
-export function TelegramBotCard({ searchQuery }: { searchQuery: string }) {
+export function TelegramBotCard() {
   const [status, setStatus] = useState<TelegramBridgeStatus | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
@@ -74,15 +74,12 @@ export function TelegramBotCard({ searchQuery }: { searchQuery: string }) {
     });
   }, [status?.pairingLink]);
 
-  const query = searchQuery.trim().toLowerCase();
-  if (query && !'telegram bot'.includes(query)) return null;
-
   const configured = status?.configured ?? false;
   const paired = status?.paired ?? false;
   const showTokenForm = !configured || changingBot;
 
   const meta = !configured
-    ? 'Chat with your VPR from Telegram'
+    ? null
     : !paired
       ? 'Waiting for pairing in Telegram'
       : `@${status?.botUsername ?? ''}`;
@@ -103,7 +100,7 @@ export function TelegramBotCard({ searchQuery }: { searchQuery: string }) {
                   </span>
                 ) : null}
               </span>
-              <span className={styles.appMeta}>{meta}</span>
+              {meta ? <span className={styles.appMeta}>{meta}</span> : null}
             </span>
           </span>
           {configured ? (
@@ -145,7 +142,16 @@ export function TelegramBotCard({ searchQuery }: { searchQuery: string }) {
                 <span className={styles.settingTitle}>1. Create a bot</span>
               </div>
               <p className={styles.settingHint}>
-                In Telegram, message <code>@BotFather</code>, send <code>/newbot</code> and
+                In Telegram, message{' '}
+                <button
+                  type="button"
+                  className={styles.settingHintLink}
+                  onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://t.me/BotFather')}
+                  title="Open @BotFather in Telegram"
+                >
+                  <code>@BotFather</code>
+                </button>
+                , send <code>/newbot</code> and
                 pick a name. BotFather replies with a token like <code>123456:ABC-…</code>.
               </p>
             </section>
