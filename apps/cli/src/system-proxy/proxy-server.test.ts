@@ -463,7 +463,10 @@ test('ResponsesSseNormalizer: removes duplicate terminal text payloads', () => {
 // CONNECT tunnel. This keeps tests reliable while covering the critical
 // handleDecrypted logic: body rewriting, header stripping, response forwarding.
 
-async function startFakeBuyerProxy(): Promise<{
+async function startFakeBuyerProxy(
+  /** Optional pre-handler; return true when the response was written. */
+  respond?: (req: http.IncomingMessage, res: http.ServerResponse, body: Buffer) => boolean,
+): Promise<{
   port: number
   captured: { method: string; path: string; headers: http.IncomingHttpHeaders; body: Buffer }[]
   close: () => Promise<void>
@@ -473,12 +476,14 @@ async function startFakeBuyerProxy(): Promise<{
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
+      const body = Buffer.concat(chunks)
       captured.push({
         method: req.method ?? 'GET',
         path: req.url ?? '/',
         headers: req.headers,
-        body: Buffer.concat(chunks),
+        body,
       })
+      if (respond?.(req, res, body)) return
       if (req.url === '/v1/responses') {
         const responseBody = [
           'event: response.created',
@@ -870,6 +875,95 @@ test('Proxy: handles profile CORS preflight without forwarding', { timeout: 15_0
       assert.equal(result.headers['access-control-allow-headers'], 'content-type,x-workflow-version,x-workflow-distinct-id')
       assert.equal(result.headers['access-control-max-age'], '600')
       assert.equal(buyer.captured.length, 0, 'preflight should not hit buyer proxy')
+    } finally {
+      await proxy.stop()
+      await buyer.close()
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+// ── 402 → plain-text out-of-credits notice ───────────────────────────────────
+
+function respond402PaymentRequired(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+): boolean {
+  const body = JSON.stringify({
+    error: 'payment_required',
+    code: 'insufficient_deposits',
+    peerId: 'testPeer',
+    message: 'You are out of AntSeed credits for this request.',
+  })
+  res.writeHead(402, {
+    'content-type': 'application/json',
+    'content-length': String(Buffer.byteLength(body)),
+    'connection': 'close',
+  })
+  res.end(body)
+  return true
+}
+
+test('Proxy: rewrites a 402 body into a plain-text out-of-credits notice', { timeout: 15_000 }, async () => {
+  const tmpDir = await mkdtemp(join(tmpdir(), 'antseed-proxy-test-'))
+  try {
+    const buyer = await startFakeBuyerProxy(respond402PaymentRequired)
+    const { proxy, caKeys } = await makeProxy(tmpDir, buyer.port)
+    try {
+      const requestBody = Buffer.from(JSON.stringify({
+        model: 'model-default',
+        stream: true,
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }))
+      const result = await tlsHttpRequest({
+        host: '127.0.0.1',
+        port: proxy.innerTlsPort,
+        servername: 'api-a.example.test',
+        caCert: caKeys.certPem,
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+        body: requestBody,
+      })
+
+      assert.equal(result.statusCode, 402, 'payment failures keep their 402 status')
+      assert.ok(result.headers['content-type']?.includes('text/plain'), 'body is plain text, not JSON')
+      const text = result.body.toString('utf8')
+      assert.ok(text.includes('out of credits'), 'notice tells the user what happened')
+      assert.ok(text.includes('AntSeed app'), 'notice tells the user where to fix it')
+      assert.ok(!text.includes('payment_required'), 'raw error JSON never reaches the client')
+      assert.ok(!text.includes('{'), 'no JSON syntax leaks into the notice')
+    } finally {
+      await proxy.stop()
+      await buyer.close()
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test('Proxy: rewrites non-chat 402s with the same plain-text notice', { timeout: 15_000 }, async () => {
+  const tmpDir = await mkdtemp(join(tmpdir(), 'antseed-proxy-test-'))
+  try {
+    const buyer = await startFakeBuyerProxy(respond402PaymentRequired)
+    const { proxy, caKeys } = await makeProxy(tmpDir, buyer.port)
+    try {
+      const result = await tlsHttpRequest({
+        host: '127.0.0.1',
+        port: proxy.innerTlsPort,
+        servername: 'api-b.example.test',
+        caCert: caKeys.certPem,
+        method: 'POST',
+        path: '/v1/audio/transcriptions',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: Buffer.from('raw audio'),
+      })
+
+      assert.equal(result.statusCode, 402)
+      assert.ok(result.headers['content-type']?.includes('text/plain'))
+      assert.ok(result.body.toString('utf8').includes('out of credits'))
     } finally {
       await proxy.stop()
       await buyer.close()
