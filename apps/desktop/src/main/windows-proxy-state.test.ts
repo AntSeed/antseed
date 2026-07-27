@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isWindowsProxyPointingAt, parseRegQueryValue } from './windows-proxy-state.js';
+import { isWindowsProxyPointingAt, parseRegQueryValue, windowsProxyRestoreWrites } from './windows-proxy-state.js';
 
 const REG_OUTPUT = [
   '',
@@ -63,4 +63,54 @@ test('a port merely starting with ours is not ours', () => {
 test('missing registry values read as not configured', () => {
   assert.equal(isWindowsProxyPointingAt(null, null, 8378), false);
   assert.equal(isWindowsProxyPointingAt('0x1', null, 8378), false);
+});
+
+test('a snapshot restores every value it captured', () => {
+  assert.deepEqual(
+    windowsProxyRestoreWrites({
+      platform: 'win32',
+      proxyEnable: '0x1',
+      proxyServer: '10.0.0.1:3128',
+      proxyOverride: '<local>',
+    }),
+    [
+      { name: 'ProxyEnable', type: 'REG_DWORD', value: '0x1' },
+      { name: 'ProxyServer', type: 'REG_SZ', value: '10.0.0.1:3128' },
+      { name: 'ProxyOverride', type: 'REG_SZ', value: '<local>' },
+    ],
+  );
+});
+
+test('a value that was unset before is deleted, not written empty', () => {
+  assert.deepEqual(
+    windowsProxyRestoreWrites({ platform: 'win32', proxyEnable: '0x0', proxyServer: null, proxyOverride: null }),
+    [
+      { name: 'ProxyEnable', type: 'REG_DWORD', value: '0x0' },
+      { name: 'ProxyServer', type: 'delete' },
+      { name: 'ProxyOverride', type: 'delete' },
+    ],
+  );
+});
+
+// The silent-damage case: snapshots written before the bypass list existed
+// carry no proxyOverride key, and we never wrote one for them either. Treating
+// that absence as "was unset" would delete a bypass list the user never asked
+// us to touch.
+test('a snapshot from before the bypass list leaves ProxyOverride alone', () => {
+  assert.deepEqual(
+    windowsProxyRestoreWrites({ platform: 'win32', proxyEnable: '0x0', proxyServer: null }),
+    [
+      { name: 'ProxyEnable', type: 'REG_DWORD', value: '0x0' },
+      { name: 'ProxyServer', type: 'delete' },
+    ],
+  );
+});
+
+// Restoring is the fail-open path, so an unreadable snapshot must land on
+// "proxy off" rather than leaving the machine pointing at a dead port.
+test('an unreadable ProxyEnable restores the proxy to off', () => {
+  assert.deepEqual(
+    windowsProxyRestoreWrites({ platform: 'win32', proxyEnable: 42, proxyServer: null })[0],
+    { name: 'ProxyEnable', type: 'REG_DWORD', value: '0' },
+  );
 });

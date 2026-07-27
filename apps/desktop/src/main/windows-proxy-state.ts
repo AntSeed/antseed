@@ -10,6 +10,46 @@
  * decision itself is testable.
  */
 
+/** One registry mutation: write a value, or remove it so the key falls back
+    to "unset" (there is no other way to express an absent value). */
+export type WindowsProxyRegistryWrite =
+  | { name: string; type: 'REG_DWORD' | 'REG_SZ'; value: string }
+  | { name: string; type: 'delete' };
+
+/**
+ * The registry writes that restoring a captured proxy snapshot implies.
+ *
+ * Split out from the `reg` calls because the interesting decision is a
+ * silent-damage one: `ProxyOverride` (the bypass list) is only ours to put
+ * back when the snapshot actually captured it. Snapshots written before the
+ * bypass list existed have no such key, and a missing key means "we never
+ * touched this", not "it was empty" — restoring `null` there would delete a
+ * bypass list the user or their IT department set, which nothing else in the
+ * app would ever surface.
+ */
+export function windowsProxyRestoreWrites(
+  snapshot: Record<string, unknown>,
+): WindowsProxyRegistryWrite[] {
+  const stringOrNull = (value: unknown): string | null =>
+    typeof value === 'string' && value ? value : null;
+  const restore = (name: string, value: unknown): WindowsProxyRegistryWrite => {
+    const text = stringOrNull(value);
+    return text ? { name, type: 'REG_SZ', value: text } : { name, type: 'delete' };
+  };
+  const writes: WindowsProxyRegistryWrite[] = [{
+    name: 'ProxyEnable',
+    type: 'REG_DWORD',
+    // Anything unreadable restores to "off": leaving the proxy on is what
+    // takes the machine offline, so that is the safe direction to fail.
+    value: stringOrNull(snapshot['proxyEnable']) ?? '0',
+  }];
+  writes.push(restore('ProxyServer', snapshot['proxyServer']));
+  if ('proxyOverride' in snapshot) {
+    writes.push(restore('ProxyOverride', snapshot['proxyOverride']));
+  }
+  return writes;
+}
+
 /** A `reg query` line's value, e.g. "    ProxyEnable    REG_DWORD    0x1".
     Matched on the whole first column, not a prefix — `Proxy` must not read
     `ProxyEnable`'s value. Registry value names are case-insensitive. */
