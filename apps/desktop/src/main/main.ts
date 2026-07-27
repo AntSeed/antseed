@@ -86,6 +86,7 @@ import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
 import { getOpenRouterReferencePrices } from './openrouter-catalog.js';
 import { applyConfigPatch, removeConfigPatch, type ConfigPatchDef } from './system-proxy-config-patch.js';
 import { isWindowsProxyPointingAt, parseRegQueryValue, windowsProxyRestoreWrites } from './windows-proxy-state.js';
+import { appsFolderPath, isAppsFolderTarget, parseStartApps } from './windows-start-apps.js';
 import { mergeWithDefaultAppProfiles } from './default-apps.js';
 import {
   customAppName,
@@ -861,6 +862,20 @@ async function restartConnectedApps(profileNames: string[]): Promise<void> {
           + 'quit and reopen it so it picks up the connection, or set its path in the app settings',
         );
       }
+      continue;
+    }
+    // A packaged (Store / MSIX) app is addressed by AppUserModelID, which we
+    // can't map to a process image — so we can neither tell whether it is
+    // running nor quit it. Say so: an app that isn't restarted keeps using
+    // the proxy settings it read at startup, and silently skipping it looks
+    // exactly like a connection that worked.
+    if (isAppsFolderTarget(target.path)) {
+      appendLog(
+        'system-proxy',
+        'system',
+        `${label}: ${target.name} is a Microsoft Store app and can't be restarted automatically — `
+        + 'quit and reopen it so it picks up the connection',
+      );
       continue;
     }
     if (!isAppTargetRunning(target)) continue;
@@ -3917,6 +3932,33 @@ ipcMain.handle('system-proxy:list-profiles', async () => {
 // Installed applications the user can associate with an app profile ("Open
 // with"). macOS: .app bundles in the standard application folders. Windows:
 // Start Menu shortcuts (per-machine and per-user).
+/**
+ * Apps as the Start menu lists them, which is the only enumeration that
+ * includes Store / MSIX packages. Best-effort: on any failure the filesystem
+ * scans still stand on their own, so the picker degrades to what it showed
+ * before rather than coming back empty.
+ */
+function listWindowsStartApps(): ReturnType<typeof parseStartApps> {
+  try {
+    const stdout = execFileSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      // Runs on the main process, so it blocks the UI: bounded well below the
+      // point a user would call the app hung. Overshooting just costs the
+      // packaged apps this run, and the scan is cached for the rest of it.
+      timeout: 8_000,
+      // Without this the PowerShell console flashes up over the app.
+      windowsHide: true,
+    });
+    return parseStartApps(stdout);
+  } catch {
+    return [];
+  }
+}
+
 function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; error?: string } {
   const apps = new Map<string, AppLaunchTarget>();
   if (process.platform === 'darwin') {
@@ -3993,6 +4035,17 @@ function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; er
         }
       }
     }
+
+    // Last, so a real file path always wins: Microsoft Store / MSIX apps are
+    // invisible to both scans above — they live under %ProgramFiles%\
+    // WindowsApps (ACL-locked, and not a root we walk) and get no Start Menu
+    // .lnk, because the Start menu renders them from their package manifest.
+    // Claude for Windows ships this way, so it never appeared in the picker
+    // at all. These entries are addressed by AppUserModelID instead of path.
+    for (const entry of listWindowsStartApps()) {
+      if (apps.has(entry.name)) continue;
+      apps.set(entry.name, { name: entry.name, path: appsFolderPath(entry.appId) });
+    }
   } else {
     return { ok: false, apps: [], error: 'Listing installed apps is not supported on this platform.' };
   }
@@ -4006,6 +4059,9 @@ function listInstalledApplications(): { ok: boolean; apps: AppLaunchTarget[]; er
 // .exe. A few hundred lookups, so the enriched list is computed once per
 // run and cached.
 async function installedAppIcon(entryPath: string): Promise<string | null> {
+  // A packaged app has no file to extract an icon from; the renderer draws
+  // its brand mark instead.
+  if (isAppsFolderTarget(entryPath)) return null;
   try {
     if (process.platform === 'darwin') {
       const icon = await nativeImage.createThumbnailFromPath(entryPath, { width: 48, height: 48 });
@@ -4055,7 +4111,11 @@ function launchAppTarget(target: AppLaunchTarget): { ok: boolean; error?: string
       return { ok: true };
     }
     if (process.platform === 'win32') {
-      const child = spawn('cmd.exe', ['/c', 'start', '', target.path], { detached: true, stdio: 'ignore' });
+      // A packaged app has no path to start — it is addressed by
+      // AppUserModelID, and explorer is what resolves those.
+      const child = isAppsFolderTarget(target.path)
+        ? spawn('explorer.exe', [target.path], { detached: true, stdio: 'ignore' })
+        : spawn('cmd.exe', ['/c', 'start', '', target.path], { detached: true, stdio: 'ignore' });
       child.unref();
       return { ok: true };
     }
@@ -4116,8 +4176,16 @@ function readInstalledAppTarget(value: unknown): AppLaunchTarget | null {
   const raw = value as Record<string, unknown>;
   const appName = typeof raw['name'] === 'string' ? raw['name'].trim() : '';
   const appPath = typeof raw['path'] === 'string' ? raw['path'].trim() : '';
+  if (!appName || !appPath) return null;
+  // A packaged app is addressed by AppUserModelID, so there is no path to
+  // stat — validate it against the enumerated list instead.
+  if (isAppsFolderTarget(appPath)) {
+    return cachedInstalledApplications().some((entry) => entry.path === appPath)
+      ? { name: appName, path: appPath }
+      : null;
+  }
   const extension = path.extname(appPath).toLowerCase();
-  if (!appName || !appPath || !['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) return null;
+  if (!['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) return null;
   return { name: appName, path: appPath };
 }
 
