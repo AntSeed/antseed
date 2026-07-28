@@ -123,14 +123,14 @@ test('rewriteRequestBody: uses default model when requested model is not served 
   assert.equal(result.modelRouted, true)
 })
 
-test('rewriteRequestBody: keeps requested model when selected peer serves it', () => {
+test('rewriteRequestBody: selected default overrides a client model served by the peer', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-large', messages: [] }))
   const result = rewriteRequestBody(body, 'peer', {
     defaultModel: 'model-small',
     servedModels: new Set(['model-large', 'model-small']),
   })
   const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
-  assert.equal(parsed.model, 'peer@model-large')
+  assert.equal(parsed.model, 'peer@model-small')
   assert.equal(result.modelRouted, true)
 })
 
@@ -235,6 +235,7 @@ test('buildBuyerForwardRequest: routes conversation message requests to chat com
   assert.ok(result)
   assert.equal(result.path, '/v1/chat/completions')
   assert.equal(result.source, 'conversation')
+  assert.equal(result.modelRouted, true)
   assert.ok(result.conversation)
   assert.equal(result.conversation.conversationId.length > 0, true)
   assert.equal(result.conversation.modelSlug, 'auto')

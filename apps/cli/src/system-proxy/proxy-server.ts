@@ -613,6 +613,7 @@ export function buildBuyerForwardRequest(opts: {
       conversation: forwardRule.response?.kind === 'conversation-sse'
         ? extractConversationForwardContext(opts.rawBody, body, forwardRule.response)
         : undefined,
+      modelRouted: Boolean(opts.peerId),
     }
   }
   if (forwardRule) {
@@ -956,31 +957,11 @@ type ModelDefaultOptions = {
 }
 
 function resolveSystemProxyModel(rawModel: string, opts: ModelDefaultOptions): string | null {
-  const requested = rawModel.trim()
   const fallback = opts.defaultModel?.trim()
-  if (!fallback) {
-    return requested.length > 0 ? requested : null
-  }
+  if (fallback) return fallback
 
-  if (requested.length === 0 || requested.toLowerCase() === 'auto') {
-    return fallback
-  }
-
-  const served = opts.servedModels ? normalizeServedModels(opts.servedModels) : new Set<string>()
-  if (served.size > 0 && !served.has(requested.toLowerCase())) {
-    return fallback
-  }
-
-  return requested
-}
-
-function normalizeServedModels(models: Set<string>): Set<string> {
-  const normalized = new Set<string>()
-  for (const model of models) {
-    const value = model.trim().toLowerCase()
-    if (value.length > 0) normalized.add(value)
-  }
-  return normalized
+  const requested = rawModel.trim()
+  return requested.length > 0 ? requested : null
 }
 
 function extractConversationForwardContext(
