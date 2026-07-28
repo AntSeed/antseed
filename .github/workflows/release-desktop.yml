@@ -118,6 +118,36 @@ jobs:
             npm run release:mac
           fi
 
+      # Keep the rolling `alpha` release pointing at the newest prerelease
+      # build, under fixed asset names, so a single shareable link
+      # (releases/download/alpha/AntSeed-VPR-alpha-arm64.dmg) always serves
+      # the latest alpha. Prerelease + non-semver tag, so electron-updater
+      # and stable users never see it. Skipped for stable versions.
+      - name: Mirror installers to the rolling alpha release
+        if: inputs.dry_run != true
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          case "$version" in
+            *-*) ;;
+            *) echo "Stable version $version — skipping alpha mirror"; exit 0 ;;
+          esac
+          mkdir -p release/alpha
+          cp "release/AntSeed-VPR-${version}-arm64.dmg" "release/alpha/AntSeed-VPR-alpha-arm64.dmg"
+          cp "release/AntSeed-VPR-${version}.dmg" "release/alpha/AntSeed-VPR-alpha.dmg"
+          # Both platform jobs may race to create the release; treat an
+          # existing release (or a lost create race) as success.
+          if ! gh release view alpha >/dev/null 2>&1; then
+            gh release create alpha --prerelease --title "AntSeed VPR alpha (rolling)" \
+              --notes "Rolling prerelease — always the latest alpha build." || true
+          fi
+          gh release upload alpha release/alpha/*.dmg --clobber
+          gh release edit alpha --prerelease --draft=false \
+            --notes "Rolling prerelease — always the latest alpha build. Currently mirrors v${version}."
+
       - name: Upload installers as workflow artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -175,6 +205,26 @@ jobs:
           } else {
             npm run release:win
           }
+        shell: pwsh
+
+      # Windows half of the rolling alpha mirror — see the mac job's step.
+      - name: Mirror installers to the rolling alpha release
+        if: inputs.dry_run != true
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($version -notmatch '-') { Write-Host "Stable version $version — skipping alpha mirror"; exit 0 }
+          New-Item -ItemType Directory -Force -Path release/alpha | Out-Null
+          Copy-Item "release/AntSeed-VPR-Setup-$version.exe" "release/alpha/AntSeed-VPR-Setup-alpha.exe"
+          gh release view alpha *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create alpha --prerelease --title "AntSeed VPR alpha (rolling)" --notes "Rolling prerelease — always the latest alpha build."
+            if ($LASTEXITCODE -ne 0) { Write-Host "Release exists (create race) — continuing" }
+          }
+          gh release upload alpha "release/alpha/AntSeed-VPR-Setup-alpha.exe" --clobber
+          if ($LASTEXITCODE -ne 0) { exit 1 }
         shell: pwsh
 
       - name: Upload installers as workflow artifacts
