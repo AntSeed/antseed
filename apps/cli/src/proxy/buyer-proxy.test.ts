@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, buyerFault, type PeerInfo } from '@antseed/node'
+import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  buyerFault,
+  type PeerInfo,
+} from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
@@ -533,6 +538,41 @@ test('a buyer-attributed failure returns 503 and never blames the peer', async (
   assert.equal(health?.failureStreak, 0, 'a buyer fault must never build a peer streak')
   assert.equal(health?.cooldownUntil, 0)
   assert.equal((proxy as any)._cachedPeers[0]?.peerId, peer.peerId)
+})
+
+test('a buyer-authored 503 does not affect router metrics or peer health', async () => {
+  const peer = makePeer('a', ['openai'])
+  const routerResults: Array<{ success: boolean }> = []
+  const router = {
+    allowsPeerForPolicy: () => true,
+    onResult: (_peer: PeerInfo, result: { success: boolean }) => {
+      routerResults.push(result)
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: {
+      'content-type': 'application/json',
+      [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+    },
+    body: Buffer.from(JSON.stringify({
+      error: 'payment_negotiation_failed',
+      reason: 'chain_rpc_unavailable',
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  assert.equal(res.statusCode, 503)
+  assert.equal(routerResults.length, 0)
+  const health = healthOf(proxy, peer)
+  assert.equal(health?.lastReason, 'buyer-local')
+  assert.equal(health?.failureStreak, 0)
+  assert.equal(health?.cooldownUntil, 0)
 })
 
 test('an untagged transport failure records a streak without evicting the peer', async () => {

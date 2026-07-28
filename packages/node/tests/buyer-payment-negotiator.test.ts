@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BuyerPaymentNegotiator, type BuyerNegotiatorConfig, type NegotiationEmitter } from '../src/payments/buyer-payment-negotiator.js';
 import type { PeerInfo, PeerId } from '../src/types/peer.js';
-import type { SerializedHttpResponse, SerializedHttpRequest } from '../src/types/http.js';
+import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  type SerializedHttpResponse,
+  type SerializedHttpRequest,
+} from '../src/types/http.js';
 import type { BuyerPaymentManager } from '../src/payments/buyer-payment-manager.js';
 import type { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { ChannelsClient, ChannelInfo } from '../src/payments/evm/channels-client.js';
@@ -228,6 +232,7 @@ describe('BuyerPaymentNegotiator', () => {
 
       const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
       expect(res.statusCode).toBe(503);
+      expect(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]).toBe('buyer');
       expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
         error: 'payment_negotiation_failed',
         reason: 'chain_rpc_unavailable',

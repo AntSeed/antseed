@@ -4,6 +4,7 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   computeOnChainReputationScore,
   decodeSweepRequest,
   faultAttributionOf,
@@ -155,6 +156,13 @@ function failureReasonForStatus(statusCode: number): PeerFailureReason | null {
   if (statusCode === 429) return 'seller-busy'
   if (statusCode >= 500 && statusCode <= 504) return 'seller-5xx'
   return null
+}
+
+function responseFaultAttribution(response: SerializedHttpResponse): FaultAttribution {
+  const attribution = response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase()
+  return attribution === 'buyer' || attribution === 'peer' || attribution === 'unknown'
+    ? attribution
+    : 'peer'
 }
 
 type BuyerPolicyRouter = Router & {
@@ -2046,7 +2054,8 @@ export class BuyerProxy {
           responseForClient.body,
           selectedPeer,
         )
-        if (router) {
+        const responseFault = responseFaultAttribution(responseForClient)
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
@@ -2054,9 +2063,13 @@ export class BuyerProxy {
           })
         }
 
-        this._recordPeerResponseHealth(
-          selectedPeer.peerId, responseForClient.statusCode, requestForPeer.path,
-        )
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(
+            selectedPeer.peerId, responseForClient.statusCode, requestForPeer.path,
+          )
+        }
 
         if (streamed) {
           // Headers already sent to client, can't retry
@@ -2120,8 +2133,8 @@ export class BuyerProxy {
           latencyMs,
         )
 
-        // Report result to router for learning
-        if (router) {
+        const responseFault = responseFaultAttribution(response)
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
@@ -2129,7 +2142,11 @@ export class BuyerProxy {
           })
         }
 
-        this._recordPeerResponseHealth(selectedPeer.peerId, response.statusCode, requestForPeer.path)
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(selectedPeer.peerId, response.statusCode, requestForPeer.path)
+        }
 
         // Check if retryable
         if (retryableStatusCodes.has(response.statusCode)) {

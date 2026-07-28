@@ -10,7 +10,6 @@ import { ConnectionState, type ConnectionConfig } from "../types/connection.js";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "../types/protocol.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
 import type { Wallet } from "ethers";
-import { buyerFault } from "../errors.js";
 import {
   type ConnectionAuthEnvelope,
   NonceReplayGuard,
@@ -202,7 +201,7 @@ export class PeerConnection extends EventEmitter {
   /** Send a message through the active transport. */
   send(data: Uint8Array): void {
     if (this._state !== ConnectionState.Open && this._state !== ConnectionState.Authenticated) {
-      throw buyerFault(`Cannot send in state ${this._state}`, "buyer-transport-closed");
+      throw new Error(`Cannot send in state ${this._state}`);
     }
 
     if (this._dataChannel && this._dataChannel.isOpen()) {
@@ -219,7 +218,7 @@ export class PeerConnection extends EventEmitter {
       // Transport is unexpectedly unavailable while state is Open — eagerly fail the
       // connection so it is evicted from the pool and the next request gets a fresh
       // connection instead of also hitting this error.
-      const err = buyerFault(`Cannot send to ${this.remotePeerId}: no writable transport`, "buyer-transport-closed");
+      const err = new Error(`Cannot send to ${this.remotePeerId}: no writable transport`);
       this.fail(err);
       throw err;
     }

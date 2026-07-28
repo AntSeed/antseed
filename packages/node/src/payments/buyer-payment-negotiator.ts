@@ -2,7 +2,7 @@ import type { Identity } from '../p2p/identity.js';
 import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
+import { ANTSEED_FAULT_ATTRIBUTION_HEADER, type SerializedHttpRequest, type SerializedHttpResponse } from '../types/http.js';
 import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
@@ -343,7 +343,11 @@ export class BuyerPaymentNegotiator {
         response: {
           ...response,
           statusCode,
-          headers: { ...response.headers, 'content-type': 'application/json' },
+          headers: {
+            ...response.headers,
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
           body: new TextEncoder().encode(JSON.stringify({
             error: 'payment_negotiation_failed',
             reason,

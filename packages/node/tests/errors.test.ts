@@ -7,6 +7,7 @@ import {
   faultCodeOf,
 } from '../src/errors.js';
 import { SellerAuthorizationError } from '../src/discovery/seller-address-resolver.js';
+import { PeerConnection } from '../src/p2p/connection-manager.js';
 
 describe('fault attribution', () => {
   it('defaults an untagged error to unknown, never to peer', () => {
@@ -50,6 +51,24 @@ describe('fault attribution', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toBe('Node stopped');
     expect(err.name).toBe('AntseedRequestError');
+  });
+
+  it('keeps a closed peer connection ambiguous so failover remains possible', () => {
+    const connection = new PeerConnection({
+      remotePeerId: 'a'.repeat(40),
+      isInitiator: true,
+    });
+
+    let err: unknown;
+    try {
+      connection.send(new Uint8Array([1]));
+    } catch (caught) {
+      err = caught;
+    }
+
+    expect(err).toBeInstanceOf(Error);
+    expect(faultAttributionOf(err)).toBe('unknown');
+    expect(faultCodeOf(err)).toBe(null);
   });
 });
 
