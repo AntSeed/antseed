@@ -211,6 +211,8 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
       existing.webContents.send('vpr-float:data', initialData);
     }
     existing.showInactive();
+    // Windows drops the topmost flag on showInactive() — put it back.
+    if (process.platform === 'win32') existing.setAlwaysOnTop(true, 'floating');
     return existing;
   }
 
@@ -272,6 +274,14 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
         created.setBounds({ x: bounds.x, y: bounds.y, width, height });
       }
     });
+    // Windows silently drops the topmost flag — showInactive() clears it, and
+    // z-order shuffles by other windows can too (long-standing Electron bugs).
+    // Re-assert it whenever the pill is shown or loses focus.
+    const reassertOnTop = (): void => {
+      if (!created.isDestroyed()) created.setAlwaysOnTop(true, 'floating');
+    };
+    created.on('show', reassertOnTop);
+    created.on('blur', reassertOnTop);
   }
 
   created.webContents.once('did-finish-load', () => {
