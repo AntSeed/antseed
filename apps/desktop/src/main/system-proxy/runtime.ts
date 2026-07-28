@@ -19,7 +19,6 @@ import {
   namedAppTarget,
   restartAppTarget,
 } from '../connected-apps/launcher.js';
-import { isAppsFolderTarget } from '../connected-apps/windows-start-menu.js';
 import { getNetworkSnapshot, lookupPeer, type DashboardNetworkPeer } from '../runtime/peer-cache.js';
 import type { ProcessManager, RuntimeMode, RuntimeProcessState } from '../runtime/process-manager.js';
 import { applyWindowView, getMainWindow } from '../ui/window.js';
@@ -246,20 +245,6 @@ export async function restartConnectedApps(profileNames: string[]): Promise<void
           + 'quit and reopen it so it picks up the connection, or set its path in the app settings',
         );
       }
-      continue;
-    }
-    // A packaged (Store / MSIX) app is addressed by AppUserModelID, which we
-    // can't map to a process image — so we can neither tell whether it is
-    // running nor quit it. Say so: an app that isn't restarted keeps using
-    // the proxy settings it read at startup, and silently skipping it looks
-    // exactly like a connection that worked.
-    if (isAppsFolderTarget(target.path)) {
-      deps().appendLog(
-        'system-proxy',
-        'system',
-        `${label}: ${target.name} is a Microsoft Store app and can't be restarted automatically — `
-        + 'quit and reopen it so it picks up the connection',
-      );
       continue;
     }
     if (!isAppTargetRunning(target)) continue;

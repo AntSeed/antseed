@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AppLaunchTarget } from './launch-settings.js';
 import { launchAppTarget, listInstalledApplications } from './installed.js';
+import { APPS_FOLDER_PREFIX, isAppsFolderTarget } from './windows-start-menu.js';
 
 export function isCertificateTrustError(message: string): boolean {
   return /certificate|cert_|err_cert|authority|trust|ssl|tls/i.test(message);
@@ -21,7 +22,10 @@ export function isCertificateTrustError(message: string): boolean {
 
 export type AppProcessInfo = { running: boolean; pid?: number; startedAt?: number };
 
-const managedAppProcesses = new Map<string, number>();
+type ManagedAppProcess = { launchedAt: number; pid?: number; startedAt?: number };
+
+const managedAppProcesses = new Map<string, ManagedAppProcess>();
+const windowsPackagedExecutables = new Map<string, string>();
 
 function appTargetKey(target: AppLaunchTarget): string {
   return `${target.name}\u0000${target.path}`;
@@ -59,10 +63,34 @@ export function escapeRegExpLiteral(value: string): string {
 export function windowsExecutablePath(targetPath: string): string | null {
   if (process.platform !== 'win32') return null;
   if (path.extname(targetPath).toLowerCase() === '.exe') return targetPath;
+  if (isAppsFolderTarget(targetPath)) {
+    const cached = windowsPackagedExecutables.get(targetPath);
+    if (cached) return cached;
+    const appId = targetPath.slice(APPS_FOLDER_PREFIX.length);
+    try {
+      const executable = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$id = '${appId.replace(/'/g, "''")}'; $app = Get-AppxPackage | ForEach-Object { $package = $_; try { Get-AppxPackageManifest -Package $package | ForEach-Object { $manifest = $_; $manifest.Package.Applications.Application | Where-Object { ($package.PackageFamilyName + '!' + $_.Id) -eq $id } | ForEach-Object { Join-Path $package.InstallLocation $_.Executable } } } catch {} } | Select-Object -First 1; if ($app) { $app }`,
+        ],
+        { encoding: 'utf8', windowsHide: true, timeout: 10_000 },
+      ).trim();
+      if (!executable || path.extname(executable).toLowerCase() !== '.exe') return null;
+      windowsPackagedExecutables.set(targetPath, executable);
+      return executable;
+    } catch {
+      return null;
+    }
+  }
   if (!targetPath.toLowerCase().endsWith('.lnk')) return null;
   try {
-    const executable = shell.readShortcutLink(targetPath).target;
-    return executable && path.extname(executable).toLowerCase() === '.exe' ? executable : null;
+    const shortcut = shell.readShortcutLink(targetPath);
+    const processStart = /--processStart(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/i.exec(shortcut.args ?? '')?.slice(1).find(Boolean);
+    if (processStart && path.extname(processStart).toLowerCase() === '.exe') return processStart;
+    return shortcut.target && path.extname(shortcut.target).toLowerCase() === '.exe' ? shortcut.target : null;
   } catch {
     return null;
   }
@@ -117,16 +145,30 @@ export function isAppTargetRunning(target: AppLaunchTarget): boolean {
 }
 
 export function markAppTargetManaged(target: AppLaunchTarget, launchedAt = Date.now()): void {
-  managedAppProcesses.set(appTargetKey(target), launchedAt);
+  managedAppProcesses.set(appTargetKey(target), { launchedAt });
+}
+
+export function captureManagedAppTarget(target: AppLaunchTarget): void {
+  const managed = managedAppProcesses.get(appTargetKey(target));
+  if (!managed) return;
+  const processInfo = appTargetProcessInfo(target);
+  if (!processInfo.running) return;
+  managedAppProcesses.set(appTargetKey(target), {
+    ...managed,
+    ...(processInfo.pid ? { pid: processInfo.pid } : {}),
+    ...(processInfo.startedAt ? { startedAt: processInfo.startedAt } : {}),
+  });
 }
 
 export function appTargetNeedsRestart(target: AppLaunchTarget, connectedAt: number | null): boolean {
   const processInfo = appTargetProcessInfo(target);
   if (!processInfo.running) return false;
-  const managedAt = managedAppProcesses.get(appTargetKey(target));
-  if (!managedAt) return true;
-  if (processInfo.startedAt && processInfo.startedAt > managedAt + 2_000) return true;
-  return connectedAt !== null && managedAt < connectedAt;
+  const managed = managedAppProcesses.get(appTargetKey(target));
+  if (!managed) return true;
+  if (managed.pid && processInfo.pid && managed.pid !== processInfo.pid) return true;
+  if (managed.startedAt && processInfo.startedAt && Math.abs(managed.startedAt - processInfo.startedAt) > 2_000) return true;
+  if (!managed.pid && processInfo.startedAt && processInfo.startedAt > managed.launchedAt + 2_000) return true;
+  return connectedAt !== null && managed.launchedAt < connectedAt;
 }
 
 /** Name-only targets (`open -a Claude`) carry no bundle path, so the window
@@ -171,7 +213,7 @@ export function quitAppTarget(target: AppLaunchTarget): void {
   }
   if (process.platform === 'win32') {
     const executable = windowsExecutablePath(target.path);
-    if (executable) execFileSync('taskkill', ['/IM', path.basename(executable)], { stdio: 'pipe' });
+    if (executable) execFileSync('taskkill', ['/T', '/IM', path.basename(executable)], { stdio: 'pipe', windowsHide: true });
   }
 }
 
@@ -185,7 +227,7 @@ export function killAppTarget(target: AppLaunchTarget): void {
   }
   if (process.platform === 'win32') {
     const executable = windowsExecutablePath(target.path);
-    if (executable) execFileSync('taskkill', ['/F', '/IM', path.basename(executable)], { stdio: 'pipe' });
+    if (executable) execFileSync('taskkill', ['/F', '/T', '/IM', path.basename(executable)], { stdio: 'pipe', windowsHide: true });
   }
 }
 
@@ -212,6 +254,7 @@ export async function restartAppTarget(
     if (result.ok) {
       markAppTargetManaged(target);
       await waitForAppTarget(target);
+      captureManagedAppTarget(target);
     }
     return { ok: result.ok, restarted: result.ok, ...(result.error ? { error: result.error } : {}) };
   };
