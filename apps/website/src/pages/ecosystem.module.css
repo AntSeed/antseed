@@ -502,6 +502,20 @@
   margin: 0;
 }
 
+.disclosure {
+  max-width: 760px;
+  margin: 18px auto 0;
+  text-align: center;
+}
+
+.disclosure p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
 .bottomBlock {
   display: grid;
   grid-template-columns: 1fr 1fr;

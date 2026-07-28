@@ -271,6 +271,11 @@ export default function Ecosystem(): JSX.Element {
             </p>
           </div>
         </div>
+        <div className={styles.disclosure}>
+          <p>
+            * Ecosystem listings are for discovery only and do not represent endorsement, sponsorship, verification, or approval by AntSeed. Review each project independently before using it.
+          </p>
+        </div>
       </Section>
 
       <FinalCta
