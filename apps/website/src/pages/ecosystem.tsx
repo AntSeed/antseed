@@ -48,6 +48,19 @@ const resources: Resource[] = [
 
 const projects: EcosystemProject[] = [
   {
+    name: 'Diem AntSeed',
+    href: 'https://diemantseed.com',
+    category: 'Capacity program',
+    oneLiner: 'A DIEM provider capacity program built around AntSeed.',
+    description:
+      'Lock DIEM to participate in provider capacity on AntSeed, with allocations and incentives governed by program rules.',
+    glyph: 'DA',
+    status: 'Live',
+    color: '#e8a33d',
+    colorSoft: 'rgba(232, 163, 61, 0.2)',
+    theme: 'diem',
+  },
+  {
     name: 'AntSeedStats',
     href: 'https://antseedstats.com',
     category: 'Analytics',
@@ -74,19 +87,6 @@ const projects: EcosystemProject[] = [
     colorSoft: 'rgba(31, 216, 122, 0.18)',
     logo: 'https://antscan.co/logos/antseed-public-ant.svg',
     theme: 'scan',
-  },
-  {
-    name: 'Diem AntSeed',
-    href: 'https://diemantseed.com',
-    category: 'Capacity program',
-    oneLiner: 'A DIEM provider capacity program built around AntSeed.',
-    description:
-      'Lock DIEM to participate in provider capacity on AntSeed, with allocations and incentives governed by program rules.',
-    glyph: 'DA',
-    status: 'Live',
-    color: '#e8a33d',
-    colorSoft: 'rgba(232, 163, 61, 0.2)',
-    theme: 'diem',
   },
 ];
 
@@ -206,6 +206,21 @@ export default function Ecosystem(): JSX.Element {
         <Button to="/docs" variant="ghost">Build on AntSeed</Button>
       </PageHero>
 
+      <Section width="xl">
+        <div className={styles.sectionHead}>
+          <SectionHeader
+            kicker="Discover AntSeed ecosystem"
+            title="Live projects"
+            lead="A directory of applications, tools, and infrastructure built on or around AntSeed."
+          />
+        </div>
+        <div className={styles.grid}>
+          {projects.map((project) => (
+            <ProjectCard key={project.href} project={project} />
+          ))}
+        </div>
+      </Section>
+
       <Section tone="tinted" width="xl">
         <div className={styles.introGrid}>
           <div className={styles.introCopy}>
@@ -220,21 +235,6 @@ export default function Ecosystem(): JSX.Element {
               <ResourceCard key={resource.title} resource={resource} />
             ))}
           </div>
-        </div>
-      </Section>
-
-      <Section width="xl">
-        <div className={styles.sectionHead}>
-          <SectionHeader
-            kicker="Discover AntSeed ecosystem"
-            title="Live projects"
-            lead="A directory of applications, tools, and infrastructure built on or around AntSeed."
-          />
-        </div>
-        <div className={styles.grid}>
-          {projects.map((project) => (
-            <ProjectCard key={project.href} project={project} />
-          ))}
         </div>
       </Section>
 
