@@ -7,6 +7,7 @@ import { createConnection } from 'node:net';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Model } from '@mariozechner/pi-ai';
+import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { LOCALHOST, LOCALHOST_URL } from '../constants.js';
 import { PROXY_PROVIDER_ID } from './provider-hint.js';
 import type { ChatServiceProtocol } from './service-catalog.js';
@@ -51,8 +52,8 @@ export function makeProxyService(
     reasoning: true,
     input: inputModalities,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200_000,
-    maxTokens: 16_384,
+    contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW,
+    maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
     headers,
   };
 

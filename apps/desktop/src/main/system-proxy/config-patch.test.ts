@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,7 +71,7 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
         name?: string;
         npm?: string;
         options?: { baseURL?: string; apiKey?: string };
-        models?: Record<string, { name: string }>;
+        models?: Record<string, { name: string; limit: { context: number; output: number } }>;
       }>;
       model: string;
       disabled_providers?: string[];
@@ -83,9 +84,9 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
     assert.equal(config.provider.antseed?.options?.baseURL, 'http://127.0.0.1:9456/v1');
     assert.equal(config.provider.antseed?.options?.apiKey, 'antseed');
     assert.deepEqual(config.provider.antseed?.models, {
-      antseed: { name: 'AntSeed Auto' },
-      [`${PEER_ID}@model-a`]: { name: 'model-a' },
-      [`${PEER_ID}@model-b`]: { name: 'model-b' },
+      antseed: { name: 'AntSeed Auto', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
+      [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
+      [`${PEER_ID}@model-b`]: { name: 'model-b', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
     });
     assert.equal(config.model, `antseed/${PEER_ID}@model-b`);
     assert.deepEqual(config.disabled_providers, ['other']);
@@ -114,12 +115,12 @@ test('applyConfigPatch falls back to an advertised model when no default model i
     applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, ['model-a']);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as {
-      provider?: Record<string, { models?: Record<string, { name: string }> }>;
+      provider?: Record<string, { models?: Record<string, { name: string; limit: { context: number; output: number } }> }>;
       model?: string;
     };
     assert.deepEqual(config.provider?.antseed?.models, {
-      antseed: { name: 'AntSeed Auto' },
-      [`${PEER_ID}@model-a`]: { name: 'model-a' },
+      antseed: { name: 'AntSeed Auto', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
+      [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
     });
     assert.equal(config.model, `antseed/${PEER_ID}@model-a`);
   });
@@ -208,6 +209,7 @@ test('applyConfigPatch (codex) sets top-level keys before tables and appends a m
     const firstTable = lines.findIndex((line) => line.startsWith('['));
     assert.ok(lines.indexOf('model_provider = "antseed"') < firstTable);
     assert.ok(lines.indexOf(`model = "${PEER_ID}@model-b"`) < firstTable);
+    assert.ok(lines.indexOf(`model_context_window = ${ANTSEED_MODEL_CONTEXT_WINDOW}`) < firstTable);
     assert.equal(lines[0], '# user comment');
     assert.equal(lines.filter((line) => /^\s*model\s*=/.test(line)).length, 1);
     assert.ok(raw.includes('[mcp_servers.docs]'));
@@ -246,6 +248,7 @@ test('removeConfigPatch (codex) removes the managed table and model selection bu
     assert.ok(raw.includes('[mcp_servers.docs]'));
     assert.ok(!raw.includes('model_provider'));
     assert.ok(!raw.includes(`model = "${PEER_ID}@model-a"`));
+    assert.ok(!raw.includes('model_context_window'));
     assert.ok(!raw.includes('[model_providers.antseed]'));
 
     assert.equal(removeConfigPatch(patch), false);
@@ -283,16 +286,16 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 'model-b', 9456, ['model-a', 'model-b']);
 
     const models = JSON.parse(await readFile(modelsPath, 'utf8')) as {
-      providers: Record<string, { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string; name: string }> }>;
+      providers: Record<string, { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string; name: string; contextWindow: number; maxTokens: number }> }>;
     };
     assert.ok(models.providers.ollama);
     assert.equal(models.providers.antseed?.baseUrl, 'http://127.0.0.1:9456/v1');
     assert.equal(models.providers.antseed?.api, 'openai-completions');
     assert.equal(models.providers.antseed?.apiKey, 'antseed');
     assert.deepEqual(models.providers.antseed?.models, [
-      { id: 'antseed', name: 'AntSeed Auto' },
-      { id: `${PEER_ID}@model-a`, name: 'model-a' },
-      { id: `${PEER_ID}@model-b`, name: 'model-b' },
+      { id: 'antseed', name: 'AntSeed Auto', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      { id: `${PEER_ID}@model-a`, name: 'model-a', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      { id: `${PEER_ID}@model-b`, name: 'model-b', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
     ]);
 
     const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
@@ -388,6 +391,8 @@ test('applyConfigPatch (crush) writes an openai-compat provider and the large/sm
       provider['models'].map((model: Record<string, unknown>) => model['id']),
       ['antseed', `${PEER_ID}@model-a`, `${PEER_ID}@model-b`],
     );
+    assert.ok(provider['models'].every((model: Record<string, unknown>) => model['context_window'] === ANTSEED_MODEL_CONTEXT_WINDOW));
+    assert.ok(provider['models'].every((model: Record<string, unknown>) => model['default_max_tokens'] === ANTSEED_MODEL_MAX_OUTPUT_TOKENS));
     assert.deepEqual(config['models']['large'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
     assert.deepEqual(config['models']['small'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
     assert.ok(existsSync(`${configPath}.antseed.bak`));
@@ -501,7 +506,7 @@ test('applyConfigPatch (zed) writes the openai_compatible provider and agent def
     const provider = config['language_models']['openai_compatible']['AntSeed'];
     assert.equal(provider['api_url'], 'http://127.0.0.1:8377/v1');
     assert.equal(provider['available_models'][0]['name'], 'antseed');
-    assert.ok(provider['available_models'].every((model: Record<string, unknown>) => typeof model['max_tokens'] === 'number'));
+    assert.ok(provider['available_models'].every((model: Record<string, unknown>) => model['max_tokens'] === ANTSEED_MODEL_CONTEXT_WINDOW));
     assert.deepEqual(config['agent']['default_model'], { provider: 'AntSeed', model: 'antseed' });
     assert.ok(existsSync(`${configPath}.antseed.bak`));
   });

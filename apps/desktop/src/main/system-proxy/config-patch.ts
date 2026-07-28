@@ -1,3 +1,4 @@
+import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -251,11 +252,19 @@ function buildConfigPatchModels(
   if (patch.modelFormat === 'peer-routed') {
     for (const svc of cleanServedModels) {
       const key = peerId ? `${peerId}@${svc}` : svc;
-      models[key] = { name: svc };
+      models[key] = {
+        name: svc,
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      };
     }
     if (model) {
       const key = peerId ? `${peerId}@${model}` : model;
-      if (!models[key]) models[key] = { name: model };
+      if (!models[key]) {
+        models[key] = {
+          name: model,
+          limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+        };
+      }
     }
   }
   return models;
@@ -321,7 +330,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
       apiKey: 'antseed',
     },
     models: {
-      [ROUTED_MODEL_ALIAS]: { name: ROUTED_MODEL_ALIAS_LABEL },
+      [ROUTED_MODEL_ALIAS]: {
+        name: ROUTED_MODEL_ALIAS_LABEL,
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      },
       ...buildConfigPatchModels(patch, peerId, selectedService, servedModels),
     },
   };
@@ -429,8 +441,8 @@ function tomlTopLevelKeyIndex(lines: readonly string[], key: string): number {
   return -1;
 }
 
-function setTomlTopLevelString(lines: readonly string[], key: string, value: string): string[] {
-  const assignment = `${key} = ${tomlBasicString(value)}`;
+function setTomlTopLevelValue(lines: readonly string[], key: string, value: string): string[] {
+  const assignment = `${key} = ${value}`;
   const index = tomlTopLevelKeyIndex(lines, key);
   if (index !== -1) {
     const next = [...lines];
@@ -439,6 +451,10 @@ function setTomlTopLevelString(lines: readonly string[], key: string, value: str
   }
   const limit = firstTomlTableIndex(lines);
   return [...lines.slice(0, limit), assignment, ...lines.slice(limit)];
+}
+
+function setTomlTopLevelString(lines: readonly string[], key: string, value: string): string[] {
+  return setTomlTopLevelValue(lines, key, tomlBasicString(value));
 }
 
 function readTomlTopLevelString(lines: readonly string[], key: string): string | undefined {
@@ -462,6 +478,7 @@ function applyCodexConfigPatch(patch: CodexConfigPatchDef, peerId: string, servi
   lines = removeCodexProviderTable(lines, patch.providerKey).lines;
   lines = setTomlTopLevelString(lines, 'model_provider', patch.providerKey);
   lines = setTomlTopLevelString(lines, 'model', useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service));
+  lines = setTomlTopLevelValue(lines, 'model_context_window', String(ANTSEED_MODEL_CONTEXT_WINDOW));
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
   lines.push(
     '',
@@ -485,6 +502,7 @@ function removeCodexConfigPatch(patch: CodexConfigPatchDef): boolean {
   if (readTomlTopLevelString(lines, 'model_provider') === patch.providerKey) {
     lines = removeTomlTopLevelKey(lines, 'model_provider');
     lines = removeTomlTopLevelKey(lines, 'model');
+    lines = removeTomlTopLevelKey(lines, 'model_context_window');
     changed = true;
   }
   if (!changed) return false;
@@ -512,8 +530,18 @@ function applyPiConfigPatch(patch: PiConfigPatchDef, peerId: string, service: st
     api: patch.api,
     apiKey: 'antseed',
     models: [
-      { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL },
-      ...routedModelEntries(peerId, service, servedModels),
+      {
+        id: ROUTED_MODEL_ALIAS,
+        name: ROUTED_MODEL_ALIAS_LABEL,
+        contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW,
+        maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+      },
+      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => ({
+        id,
+        name,
+        contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW,
+        maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+      })),
     ],
   };
   config['providers'] = providers;
@@ -560,10 +588,6 @@ function asObject(value: unknown): JsonObject {
 // `type: "openai-compat"`; the default model selection lives under
 // `models.large` / `models.small` as `{ provider, model }`.
 
-/** Conservative defaults — Crush requires a context window per model. */
-const CRUSH_CONTEXT_WINDOW = 200_000;
-const CRUSH_DEFAULT_MAX_TOKENS = 8_192;
-
 function applyCrushConfigPatch(patch: CrushConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
@@ -575,9 +599,9 @@ function applyCrushConfigPatch(patch: CrushConfigPatchDef, peerId: string, servi
     base_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
     api_key: 'antseed',
     models: [
-      { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL, context_window: CRUSH_CONTEXT_WINDOW, default_max_tokens: CRUSH_DEFAULT_MAX_TOKENS },
+      { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL, context_window: ANTSEED_MODEL_CONTEXT_WINDOW, default_max_tokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
       ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
-        { id, name, context_window: CRUSH_CONTEXT_WINDOW, default_max_tokens: CRUSH_DEFAULT_MAX_TOKENS }
+        { id, name, context_window: ANTSEED_MODEL_CONTEXT_WINDOW, default_max_tokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS }
       )),
     ],
   };
@@ -712,9 +736,6 @@ function removeGooseConfigPatch(patch: GooseConfigPatchDef): boolean {
 // Zed asks for the provider's API key once in its UI — any value satisfies
 // the keyless buyer proxy.
 
-/** Zed requires max_tokens (context window) per available model. */
-const ZED_MAX_TOKENS = 200_000;
-
 function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
@@ -724,9 +745,9 @@ function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: 
   compatible[patch.providerName] = {
     api_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
     available_models: [
-      { name: ROUTED_MODEL_ALIAS, display_name: ROUTED_MODEL_ALIAS_LABEL, max_tokens: ZED_MAX_TOKENS },
+      { name: ROUTED_MODEL_ALIAS, display_name: ROUTED_MODEL_ALIAS_LABEL, max_tokens: ANTSEED_MODEL_CONTEXT_WINDOW },
       ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
-        { name: id, display_name: name, max_tokens: ZED_MAX_TOKENS }
+        { name: id, display_name: name, max_tokens: ANTSEED_MODEL_CONTEXT_WINDOW }
       )),
     ],
   };
