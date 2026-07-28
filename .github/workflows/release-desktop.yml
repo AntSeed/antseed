@@ -136,8 +136,10 @@ jobs:
             *) echo "Stable version $version — skipping alpha mirror"; exit 0 ;;
           esac
           mkdir -p release/alpha
-          cp "release/AntSeed-VPR-${version}-arm64.dmg" "release/alpha/AntSeed-VPR-alpha-arm64.dmg"
-          cp "release/AntSeed-VPR-${version}.dmg" "release/alpha/AntSeed-VPR-alpha.dmg"
+          # Glob: the on-disk names use the product name with a space
+          # ("AntSeed VPR-<version>-arm64.dmg"); GitHub sanitizes it on upload.
+          cp release/*"${version}-arm64.dmg" "release/alpha/AntSeed-VPR-alpha-arm64.dmg"
+          cp release/*"${version}.dmg" "release/alpha/AntSeed-VPR-alpha.dmg"
           # Both platform jobs may race to create the release; treat an
           # existing release (or a lost create race) as success.
           if ! gh release view alpha >/dev/null 2>&1; then
@@ -217,7 +219,11 @@ jobs:
           $version = node -p "require('./package.json').version"
           if ($version -notmatch '-') { Write-Host "Stable version $version — skipping alpha mirror"; exit 0 }
           New-Item -ItemType Directory -Force -Path release/alpha | Out-Null
-          Copy-Item "release/AntSeed-VPR-Setup-$version.exe" "release/alpha/AntSeed-VPR-Setup-alpha.exe"
+          # Glob: the on-disk name uses the product name with a space
+          # ("AntSeed VPR-Setup-<version>.exe"); GitHub sanitizes it on upload.
+          $setup = Get-ChildItem "release" -Filter "*Setup*$version.exe" | Select-Object -First 1
+          if (-not $setup) { Write-Error "Setup installer for $version not found in release/"; exit 1 }
+          Copy-Item $setup.FullName "release/alpha/AntSeed-VPR-Setup-alpha.exe"
           gh release view alpha *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create alpha --prerelease --title "AntSeed VPR alpha (rolling)" --notes "Rolling prerelease — always the latest alpha build."
