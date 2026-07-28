@@ -33,5 +33,6 @@ export function toolDesktopAppName(tool: string): string | null {
   // Goose Desktop and the goose CLI share ~/.config/goose; Zed is app-only.
   if (tool === 'goose') return 'Goose';
   if (tool === 'zed') return 'Zed';
+  if (tool === 't3code') return 'T3 Code (Alpha)';
   return null;
 }

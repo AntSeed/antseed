@@ -77,13 +77,22 @@ export type ZedConfigPatchDef = {
   readonly baseURL: string;
 };
 
+export type T3CodeConfigPatchDef = {
+  readonly format: 't3code';
+  readonly configPath: string;
+  readonly providerKey: string;
+  readonly providerName: string;
+  readonly baseURL: string;
+};
+
 export type ConfigPatchDef =
   | OpencodeConfigPatchDef
   | CodexConfigPatchDef
   | PiConfigPatchDef
   | CrushConfigPatchDef
   | GooseConfigPatchDef
-  | ZedConfigPatchDef;
+  | ZedConfigPatchDef
+  | T3CodeConfigPatchDef;
 
 type JsonObject = Record<string, unknown>;
 
@@ -314,6 +323,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
     applyZedConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
     return;
   }
+  if (patch.format === 't3code') {
+    applyT3CodeConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    return;
+  }
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const selectedModel = useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, selectedService);
@@ -359,6 +372,9 @@ export function removeConfigPatch(patch: ConfigPatchDef): boolean {
   }
   if (patch.format === 'zed') {
     return removeZedConfigPatch(patch);
+  }
+  if (patch.format === 't3code') {
+    return removeT3CodeConfigPatch(patch);
   }
   const filePath = expandTilde(patch.configPath);
   const config = tryReadConfigPatchFile(filePath);
@@ -789,6 +805,53 @@ function removeZedConfigPatch(patch: ZedConfigPatchDef): boolean {
     }
   }
   if (!changed) return false;
+  backupConfigFile(filePath);
+  writeJsonFile(filePath, config);
+  return true;
+}
+
+function applyT3CodeConfigPatch(patch: T3CodeConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+  const filePath = expandTilde(patch.configPath);
+  backupConfigFile(filePath);
+  const config = readConfigPatchFile(filePath);
+  const providerInstances = asObject(config['providerInstances']);
+  const routedModels = routedModelEntries(peerId, service, servedModels).map(({ id }) => id);
+  const customModels = [...new Set([
+    ...(useAlias ? [ROUTED_MODEL_ALIAS] : []),
+    ...routedModels,
+  ])];
+  providerInstances[patch.providerKey] = {
+    driver: 'claudeAgent',
+    displayName: patch.providerName,
+    environment: [
+      { name: 'ANTHROPIC_BASE_URL', value: patch.baseURL.replace('{buyerPort}', String(buyerPort)), sensitive: false },
+      { name: 'ANTHROPIC_API_KEY', value: 'antseed', sensitive: false },
+    ],
+    enabled: true,
+    config: { customModels },
+  };
+  config['providerInstances'] = providerInstances;
+  writeJsonFile(filePath, config);
+}
+
+function removeT3CodeConfigPatch(patch: T3CodeConfigPatchDef): boolean {
+  const filePath = expandTilde(patch.configPath);
+  const config = tryReadConfigPatchFile(filePath);
+  if (!config) return false;
+  const providerInstances = config['providerInstances'];
+  if (!providerInstances || typeof providerInstances !== 'object' || Array.isArray(providerInstances)) return false;
+  const instance = (providerInstances as JsonObject)[patch.providerKey];
+  if (!instance || typeof instance !== 'object' || Array.isArray(instance)) return false;
+  const environment = (instance as JsonObject)['environment'];
+  const ownsInstance = Array.isArray(environment) && environment.some((variable) => {
+    if (!variable || typeof variable !== 'object' || Array.isArray(variable)) return false;
+    const value = (variable as JsonObject)['value'];
+    return (variable as JsonObject)['name'] === 'ANTHROPIC_BASE_URL'
+      && isLoopbackHost(typeof value === 'string' ? value : undefined);
+  });
+  if (!ownsInstance) return false;
+  delete (providerInstances as JsonObject)[patch.providerKey];
+  if (Object.keys(providerInstances as JsonObject).length === 0) delete config['providerInstances'];
   backupConfigFile(filePath);
   writeJsonFile(filePath, config);
   return true;

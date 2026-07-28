@@ -72,6 +72,22 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     },
   },
   {
+    name: 't3code',
+    displayName: 'T3 Code',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['claude-code', 'claude-cli'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 't3code',
+      configPath: '~/.t3/userdata/settings.json',
+      providerKey: 'antseed',
+      providerName: 'AntSeed',
+      baseURL: 'http://localhost:{buyerPort}',
+    },
+  },
+  {
     name: 'pi',
     displayName: 'pi',
     kind: 'config-patch',

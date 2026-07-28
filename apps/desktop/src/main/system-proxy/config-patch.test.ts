@@ -26,6 +26,16 @@ function makePatch(configPath: string): ConfigPatchDef {
   };
 }
 
+function makeT3CodePatch(configPath: string): ConfigPatchDef {
+  return {
+    format: 't3code',
+    configPath,
+    providerKey: 'antseed',
+    providerName: 'AntSeed',
+    baseURL: 'http://localhost:{buyerPort}',
+  };
+}
+
 async function withTempConfig(fn: (dir: string, configPath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(tmpdir(), 'antseed-desktop-system-proxy-'));
   try {
@@ -479,6 +489,57 @@ test('removeConfigPatch (goose) keeps a provider selection it does not own', asy
     const raw = await readFile(configPath, 'utf8');
     assert.ok(raw.includes('GOOSE_MODEL: "gpt-4o"'));
     assert.ok(raw.includes('OPENAI_HOST: "https://api.openai.com"'));
+  });
+});
+
+// --- T3 Code ---
+
+test('T3 Code patch adds an AntSeed Claude provider and preserves existing settings', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    await writeFile(configPath, JSON.stringify({
+      theme: 'dark',
+      providerInstances: {
+        codex: { driver: 'codex', displayName: 'Codex' },
+      },
+    }), 'utf8');
+
+    applyConfigPatch(makeT3CodePatch(configPath), PEER_ID, 'model-a', 9456, ['model-a', 'model-b'], true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    assert.equal(config['theme'], 'dark');
+    const providers = config['providerInstances'] as Record<string, Record<string, unknown>>;
+    assert.deepEqual(providers['codex'], { driver: 'codex', displayName: 'Codex' });
+    assert.deepEqual(providers['antseed'], {
+      driver: 'claudeAgent',
+      displayName: 'AntSeed',
+      environment: [
+        { name: 'ANTHROPIC_BASE_URL', value: 'http://localhost:9456', sensitive: false },
+        { name: 'ANTHROPIC_API_KEY', value: 'antseed', sensitive: false },
+      ],
+      enabled: true,
+      config: {
+        customModels: [
+          'antseed',
+          `${PEER_ID}@model-a`,
+          `${PEER_ID}@model-b`,
+        ],
+      },
+    });
+  });
+});
+
+test('T3 Code patch removal only removes the managed AntSeed provider', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    const patch = makeT3CodePatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 'model-a', 8377, ['model-a'], true);
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    (config['providerInstances'] as Record<string, unknown>)['codex'] = { driver: 'codex' };
+    await writeFile(configPath, JSON.stringify(config), 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    const cleaned = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    assert.deepEqual(cleaned['providerInstances'], { codex: { driver: 'codex' } });
+    assert.equal(removeConfigPatch(patch), false);
   });
 });
 
