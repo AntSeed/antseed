@@ -302,6 +302,9 @@ const api = {
   chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
   },
+  chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('chat:sync-model-picker', payload);
+  },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },

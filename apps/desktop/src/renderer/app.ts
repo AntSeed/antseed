@@ -12,6 +12,7 @@ import {
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
 import { initVprFloatModule } from './modules/app/float';
+import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
@@ -281,6 +282,10 @@ const vprFloatApi = initVprFloatModule({
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
 });
+
+// Keep the main process fed with the curated model list (favorites +
+// recommended) so the Telegram /model picker matches the app's dropdown.
+initModelPickerSync({ bridge, uiState });
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */

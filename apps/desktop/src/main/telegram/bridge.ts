@@ -77,8 +77,9 @@ const WELCOME_TEXT = [
   '/stop — cancel the reply in progress',
 ].join('\n');
 
-/** Inline keyboards get unwieldy past this; the catalog is sorted best-first. */
-const MODEL_PICK_LIMIT = 10;
+/** Inline keyboards get unwieldy past this. Sized for the app's dropdown:
+ *  starred favorites plus the ~12-slot recommended lineup. */
+const MODEL_PICK_LIMIT = 24;
 
 const BOT_COMMANDS = [
   { command: 'new', description: 'Start a fresh conversation' },
@@ -160,7 +161,7 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
   /** Snapshot behind the /model keyboard; gen invalidates stale keyboards. */
   let modelPick: {
     gen: number;
-    options: Array<{ id: string; label: string; peerId: string; provider: string }>;
+    options: Array<{ id: string; label: string; peerId: string; provider: string; favorite?: boolean }>;
     chatId: number;
     messageId: number;
   } | null = null;
@@ -369,6 +370,7 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
 
   const resolveDefaultRoute = async (): Promise<{ peerId?: string; service?: string }> => {
     let bareModel = '';
+    let routed: { peerId: string; service: string } | null = null;
     try {
       const port = await engine.getProxyPort();
       const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/route`);
@@ -376,19 +378,46 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       const model = typeof body.model === 'string' ? body.model.trim() : '';
       const at = model.indexOf('@');
       if (at > 0) {
-        return { peerId: model.slice(0, at), service: model.slice(at + 1) };
+        routed = { peerId: model.slice(0, at), service: model.slice(at + 1) };
+      } else {
+        bareModel = model;
       }
-      bareModel = model;
     } catch {
       // Buyer proxy offline or no default route — fall through to the catalog.
     }
-    // No routed peer (fresh install: the buyer route is only set when a proxy
-    // app connects, and the buyer proxy refuses to auto-select). Mirror the
-    // chat UI's new-chat default: the first discovered catalog entry — or the
-    // entry serving the routed bare model name, when one is set.
     try {
       const entries = await engine.discoverServiceCatalog();
-      const wanted = bareModel.toLowerCase();
+      if (routed) {
+        // A stored route can point at a peer the buyer routing policy now
+        // rejects (seller repriced, limits changed) — the proxy would 502
+        // every message. Trust it only while the policy-filtered catalog
+        // still lists the pair; an empty catalog just means discovery isn't
+        // ready yet, so keep the route in that case.
+        const peerId = routed.peerId.toLowerCase();
+        const service = routed.service.trim().toLowerCase();
+        const allowed = entries.length === 0 || entries.some((entry) => (
+          entry.peerId?.toLowerCase() === peerId && entry.id.trim().toLowerCase() === service
+        ));
+        if (allowed) return routed;
+        log(`Default route ${routed.peerId.slice(0, 12)}...@${routed.service} is outside the buyer routing policy — picking a fresh default.`);
+        bareModel = routed.service;
+      }
+      // No usable routed peer (fresh install, or a route the policy rejects).
+      // Mirror the app's picker: the renderer-pushed curated list (favorites
+      // first) when available, otherwise the first discovered catalog entry —
+      // preferring whichever serves the routed bare model name, if any.
+      const wanted = bareModel.trim().toLowerCase();
+      const pickerModels = (engine.getModelPicker()?.models ?? []).filter((model) => model.routePeerId);
+      const pickerMatch = wanted
+        ? pickerModels.find((model) => (
+          (model.routeServiceId ?? model.serviceId).trim().toLowerCase() === wanted
+          || model.serviceId.trim().toLowerCase() === wanted
+        ))
+        : undefined;
+      const picked = pickerMatch ?? pickerModels[0];
+      if (picked?.routePeerId) {
+        return { peerId: picked.routePeerId, service: picked.routeServiceId ?? picked.serviceId };
+      }
       const match = wanted
         ? entries.find((entry) => entry.id.trim().toLowerCase() === wanted && entry.peerId)
         : undefined;
@@ -401,23 +430,39 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
   };
 
   const showModelPicker = async (): Promise<void> => {
-    let entries: Awaited<ReturnType<PiChatEngine['discoverServiceCatalog']>> = [];
-    try {
-      entries = await engine.discoverServiceCatalog();
-    } catch {
-      // Fall through to the empty-catalog message.
-    }
-    // One row per model: the catalog is sorted best-first and repeats a model
-    // once per serving peer — keep the top-ranked peer for each.
-    const seen = new Set<string>();
     const options: NonNullable<typeof modelPick>['options'] = [];
-    for (const entry of entries) {
-      if (!entry.peerId) continue;
-      const key = entry.id.trim().toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      options.push({ id: entry.id, label: entry.label || entry.id, peerId: entry.peerId, provider: entry.provider });
+    // The renderer-pushed curated list — the exact rows the app's model
+    // dropdown shows (starred favorites first, then the recommended lineup).
+    const picker = engine.getModelPicker();
+    for (const model of picker?.models ?? []) {
+      if (!model.routePeerId) continue;
+      options.push({
+        id: model.routeServiceId ?? model.serviceId,
+        label: model.label || model.serviceId,
+        peerId: model.routePeerId,
+        provider: model.routeProvider ?? model.provider,
+        favorite: model.favorite,
+      });
       if (options.length >= MODEL_PICK_LIMIT) break;
+    }
+    if (options.length === 0) {
+      // No renderer push yet (early after launch) — fall back to the
+      // policy-filtered catalog: one row per model, best-ranked peer first.
+      let entries: Awaited<ReturnType<PiChatEngine['discoverServiceCatalog']>> = [];
+      try {
+        entries = await engine.discoverServiceCatalog();
+      } catch {
+        // Fall through to the empty-catalog message.
+      }
+      const seen = new Set<string>();
+      for (const entry of entries) {
+        if (!entry.peerId) continue;
+        const key = entry.id.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        options.push({ id: entry.id, label: entry.label || entry.id, peerId: entry.peerId, provider: entry.provider });
+        if (options.length >= MODEL_PICK_LIMIT) break;
+      }
     }
     if (options.length === 0) {
       void sendToOwner('No models discovered yet — try again in a moment.');
@@ -428,7 +473,11 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
     const gen = modelPickGen;
     const keyboard: TgReplyMarkup = {
       inline_keyboard: options.map((option, index) => ([{
-        text: `${option.id.trim().toLowerCase() === current ? '✓ ' : ''}${option.label}`,
+        text: [
+          option.id.trim().toLowerCase() === current ? '✓ ' : '',
+          option.favorite ? '★ ' : '',
+          option.label,
+        ].join(''),
         callback_data: `mdl:${String(gen)}:${String(index)}`,
       }])),
     };

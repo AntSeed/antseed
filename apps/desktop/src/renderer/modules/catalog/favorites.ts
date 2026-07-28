@@ -4,6 +4,10 @@ import { canonicalModelKey } from './model-identity';
 
 export const VPR_FAVORITES_STORAGE_KEY = 'antseed.desktop.vpr.favoriteModels';
 
+/** Fired on window after a star toggle so listeners outside React (the
+ *  main-process model-picker sync) can react without polling localStorage. */
+export const VPR_FAVORITES_CHANGED_EVENT = 'antseed:vpr-favorites-changed';
+
 /** Canonical so a star sticks to the model, not to one seller's serviceId
  *  variant (catalog entries aggregate variants). Provider is a tiebreaker
  *  only for ids that don't canonicalize. */
@@ -33,6 +37,9 @@ export function toggleFavoriteModel(provider: string, serviceId: string): Set<st
   }
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(VPR_FAVORITES_STORAGE_KEY, JSON.stringify([...favorites]));
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(VPR_FAVORITES_CHANGED_EVENT));
   }
   return favorites;
 }

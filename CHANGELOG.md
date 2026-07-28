@@ -50,6 +50,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed the Desktop Telegram bridge so `/model` offers the same curated list as the in-app model dropdown (starred favorites first, then the recommended lineup, routed to the same sellers), and so models outside the buyer pricing policy are never offered or kept as the default route — previously a stored route to an over-priced seller made every Telegram message fail with a routing-policy 502.
 - Fixed the DIEM staking site so wallet transactions explicitly switch to and execute on Base mainnet instead of following a wallet that remains on Ethereum mainnet.
 - Fixed Desktop auto-update failures so download and install errors appear in the title bar with copyable details, and fixed macOS Quit so the first menu action exits after cleanup instead of requiring a second click.
 - Fixed buyer response-auth timeout warnings for non-inference probes and sellers that do not advertise response-auth support.

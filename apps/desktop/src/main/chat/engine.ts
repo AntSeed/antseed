@@ -56,6 +56,10 @@ import {
   type DiscoverRowEntry,
 } from './service-discovery.js';
 import { isPortReachable, resolveProxyPort } from './proxy-service.js';
+import {
+  normalizeModelPickerSnapshot,
+  type ModelPickerSnapshot,
+} from '../../shared/model-picker.js';
 import { PiConversationStore } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
 import type {
@@ -82,8 +86,19 @@ export type PiChatEngine = {
   /** Resolves a pending tool approval; returns false when the id is unknown (already decided). */
   resolveToolApproval(id: string, decision: ToolApprovalDecision): boolean;
   getProxyPort(): Promise<number>;
-  /** Discovered network service catalog, sorted the way the chat UI lists models. */
+  /**
+   * Discovered network service catalog, sorted the way the chat UI lists
+   * models and narrowed to entries within the buyer's routing policy — the
+   * buyer proxy refuses pinned peers outside the pricing limits, so offering
+   * them would only manufacture 502s.
+   */
   discoverServiceCatalog(): Promise<ChatServiceCatalogEntry[]>;
+  /**
+   * Latest curated model-picker list pushed by the renderer (favorites first,
+   * then recommended — the same rows as the in-app model dropdown). Null until
+   * the renderer's first push after launch.
+   */
+  getModelPicker(): ModelPickerSnapshot | null;
   /** Rebinds a conversation's model/peer — same semantics as the chat UI's model dropdown. */
   selectPeer(request: ChatPeerSelectionRequest): Promise<{ ok: boolean; error?: string }>;
   /**
@@ -286,6 +301,25 @@ export function registerPiChatHandlers({
 
     return serviceCatalogRefreshPromise;
   };
+
+  // The catalog offered to non-renderer frontends (Telegram): only entries
+  // the buyer routing policy will actually accept. The renderer applies the
+  // same filter in chat:ai-list-discover-rows; without it here, /model
+  // offered peers the buyer proxy then rejected with a policy 502.
+  const discoverPolicyAllowedCatalog = async (): Promise<ChatServiceCatalogEntry[]> => {
+    const entries = await refreshServiceCatalogFromNetwork();
+    const buyerMaxPricing = await loadBuyerMaxPricingDefaults(configPath);
+    return entries.filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+  };
+
+  // Curated model-picker snapshot pushed by the renderer — see
+  // shared/model-picker.ts. Main only caches the latest push.
+  let modelPickerSnapshot: ModelPickerSnapshot | null = null;
+  ipcMain.handle('chat:sync-model-picker', (_event, payload: unknown) => {
+    const normalized = normalizeModelPickerSnapshot(payload);
+    if (normalized) modelPickerSnapshot = normalized;
+    return { ok: normalized != null };
+  });
 
   const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
     const normalizedServiceId = serviceId.trim().toLowerCase();
@@ -744,7 +778,8 @@ export function registerPiChatHandlers({
     abort: abortConversations,
     resolveToolApproval,
     getProxyPort: () => resolveProxyPort(configPath),
-    discoverServiceCatalog: refreshServiceCatalogFromNetwork,
+    discoverServiceCatalog: discoverPolicyAllowedCatalog,
+    getModelPicker: () => modelPickerSnapshot,
     selectPeer: applyPeerSelection,
     setDefaultRoute: async (peerId, service, provider) => {
       const result = await setBuyerDefaultRoute(peerId, service);
