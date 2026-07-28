@@ -13,7 +13,13 @@ import { resolveConnectDataDir } from '../runtime/process-manager.js';
 import { loadAppLaunchSettings, normalizeToolSlugs } from '../connected-apps/launch-settings.js';
 import { customAppToCliProfile, loadCustomApps, type CustomAppRecord } from '../connected-apps/custom.js';
 import { mergeWithDefaultAppProfiles } from '../connected-apps/defaults.js';
-import { removeConfigPatch, type ConfigPatchDef } from './config-patch.js';
+import {
+  readConfigPatch,
+  readRequiredString,
+  readString,
+  removeConfigPatch,
+  type ConfigPatchDef,
+} from './config-patch.js';
 import { systemProxyDataDir } from './paths.js';
 
 export const DEFAULT_SYSTEM_PROXY_PORT = 8378;
@@ -161,79 +167,6 @@ export function readProfileMetadata(value: unknown): DesktopSystemProxyProfileMe
     ...(readString(raw, 'restartAppName') ? { restartAppName: readString(raw, 'restartAppName') } : {}),
   };
   return Object.keys(metadata).length > 0 ? metadata : undefined;
-}
-
-export function readConfigPatch(value: unknown, profileName: string): ConfigPatchDef | undefined {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`configPatch for ${profileName} must be an object`);
-  }
-  const raw = value as Record<string, unknown>;
-  const configPath = readRequiredString(raw, 'configPath', profileName);
-  const providerKey = readRequiredString(raw, 'providerKey', profileName);
-  const baseURL = readRequiredString(raw, 'baseURL', profileName);
-  const format = readString(raw, 'format');
-  if (format === 'codex') {
-    return {
-      format: 'codex',
-      configPath,
-      providerKey,
-      providerName: readRequiredString(raw, 'providerName', profileName),
-      baseURL,
-    };
-  }
-  if (format === 'pi') {
-    const api = raw['api'];
-    return {
-      format: 'pi',
-      configPath,
-      settingsPath: readRequiredString(raw, 'settingsPath', profileName),
-      providerKey,
-      baseURL,
-      api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
-    };
-  }
-  if (format === 'crush') {
-    return {
-      format: 'crush',
-      configPath,
-      providerKey,
-      providerName: readRequiredString(raw, 'providerName', profileName),
-      baseURL,
-    };
-  }
-  if (format === 'goose') {
-    return { format: 'goose', configPath, providerKey, baseURL };
-  }
-  if (format === 'zed') {
-    return {
-      format: 'zed',
-      configPath,
-      providerKey,
-      providerName: readRequiredString(raw, 'providerName', profileName),
-      baseURL,
-    };
-  }
-  return {
-    format: 'opencode',
-    configPath,
-    providerKey,
-    npm: readRequiredString(raw, 'npm', profileName),
-    providerName: readRequiredString(raw, 'providerName', profileName),
-    baseURL,
-    modelFormat: 'peer-routed',
-  };
-}
-
-export function readRequiredString(raw: Record<string, unknown>, key: string, context: string | number): string {
-  const value = readString(raw, key);
-  if (!value) throw new Error(`System Proxy profile ${context} requires ${key}`);
-  return value;
-}
-
-export function readString(raw: Record<string, unknown>, key: string): string | undefined {
-  const value = raw[key];
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 export function readStringArray(value: unknown): string[] {

@@ -9,9 +9,11 @@ import path from 'node:path';
 import {
   applyConfigPatch,
   parseJsoncObject,
+  readConfigPatch,
   removeConfigPatch,
   type ConfigPatchDef,
 } from './config-patch.js';
+import { DEFAULT_APP_PROFILES } from '../connected-apps/defaults.js';
 
 const PEER_ID = '0123456789abcdef0123456789abcdef01234567';
 
@@ -595,4 +597,19 @@ test('removeConfigPatch (zed) removes the managed provider and matching default 
     assert.equal(config['agent']['default_model'], undefined);
     assert.equal(config['agent']['always_allow_tool_actions'], true);
   });
+});
+
+// Every built-in profile must parse through readConfigPatch and keep its own
+// format. A format missing its branch falls through to opencode, whose `npm`
+// requirement throws while profiles load — which crashes the app at startup
+// (0.1.115-alpha-0.14 shipped that crash for t3code).
+test('readConfigPatch parses every default app profile under its declared format', () => {
+  for (const profile of DEFAULT_APP_PROFILES) {
+    const raw = profile as Record<string, unknown>;
+    const name = raw['name'] as string;
+    const rawPatch = raw['configPatch'] as Record<string, unknown>;
+    const parsed = readConfigPatch(rawPatch, name);
+    assert.ok(parsed, `default profile ${name} must define a configPatch`);
+    assert.equal(parsed.format, rawPatch['format'] ?? 'opencode', `profile ${name} fell through to another format`);
+  }
 });
