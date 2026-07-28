@@ -47,8 +47,8 @@ export type TelegramBridge = {
   connect(botToken: string): Promise<{ ok: boolean; status: TelegramBridgeStatus; error?: string }>;
   /** Stops polling and forgets the bot entirely. */
   disconnect(): Promise<void>;
-  /** Stops polling but keeps settings (app quit). */
-  stop(): void;
+  /** Sends a best-effort "going offline" notice, then stops polling but keeps settings (app quit). */
+  stop(): Promise<void>;
   getStatus(): TelegramBridgeStatus;
 };
 
@@ -58,6 +58,10 @@ export type TelegramBridgeOptions = {
   onStatusChanged?: (status: TelegramBridgeStatus) => void;
 };
 
+const OFFLINE_NOTE = 'I can only answer while your computer is on and the AntSeed app is running.';
+/** Cap on the best-effort goodbye send so a slow network can never delay quit. */
+const GOODBYE_TIMEOUT_MS = 3_000;
+
 const DRAFT_THROTTLE_MS = 900;
 const POLL_BACKOFF_MIN_MS = 1_000;
 const POLL_BACKOFF_MAX_MS = 30_000;
@@ -66,6 +70,7 @@ const TG_TEXT_LIMIT = 4096;
 
 const WELCOME_TEXT = [
   'Connected to your VPR. Messages here run on the agent on your computer.',
+  OFFLINE_NOTE,
   '',
   '/new — start a fresh conversation',
   '/model — choose which model answers',
@@ -558,7 +563,7 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
         settings.activeConversationId = null;
         await persistSettings();
       }
-      void sendToOwner('Fresh conversation — send your next message.');
+      void sendToOwner(`Fresh conversation — send your next message.\n${OFFLINE_NOTE}`);
       return;
     }
     if (text === '/model') {
@@ -781,12 +786,18 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
       notifyStatus();
     },
 
-    stop(): void {
+    async stop(): Promise<void> {
+      const wasRunning = pollAbort != null;
       stopPolling();
       if (unsubscribeBus) {
         unsubscribeBus();
         unsubscribeBus = null;
       }
+      if (!wasRunning || settings?.ownerChatId == null) return;
+      await Promise.race([
+        sendToOwner(`Going offline — the AntSeed app is closing. ${OFFLINE_NOTE}`),
+        new Promise((resolve) => { setTimeout(resolve, GOODBYE_TIMEOUT_MS); }),
+      ]);
     },
 
     getStatus,

@@ -309,8 +309,7 @@ initSystemProxyRuntime({
 // ── Payments Portal ──
 
 async function stopDesktopServices(): Promise<void> {
-  telegramBridge.stop();
-  await Promise.all([stopManagedRuntimes(), stopPaymentsPortal()]);
+  await Promise.all([telegramBridge.stop(), stopManagedRuntimes(), stopPaymentsPortal()]);
 }
 
 function getCombinedProcessState(): RuntimeProcessState[] {
