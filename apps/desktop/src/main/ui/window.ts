@@ -330,7 +330,7 @@ function normalWindowBounds(win: BrowserWindow): Rectangle | null {
   if (win.isDestroyed() || win.isFullScreen() || win.isMaximized()) {
     return null;
   }
-  return win.getBounds();
+  return win.getContentBounds();
 }
 
 function centerBoundsWithinDisplay(current: Rectangle, preset: WindowSizePreset): Rectangle {
@@ -366,7 +366,7 @@ function applySizePreset(presetName: WindowSizePresetName): { ok: true; skipped?
   }
 
   if (activeSizePreset === 'standard') {
-    lastStandardBounds = win.getNormalBounds();
+    lastStandardBounds = win.getContentBounds();
   }
   activeSizePreset = presetName;
 
@@ -386,12 +386,12 @@ function applySizePreset(presetName: WindowSizePresetName): { ok: true; skipped?
       preset,
     );
     win.setMinimumSize(preset.minWidth, preset.minHeight);
-    win.setBounds(targetBounds, true);
+    win.setContentBounds(targetBounds, true);
     return { ok: true };
   }
 
   win.setMinimumSize(preset.minWidth, preset.minHeight);
-  win.setBounds(centerBoundsWithinDisplay(currentBounds, preset), true);
+  win.setContentBounds(centerBoundsWithinDisplay(currentBounds, preset), true);
   return { ok: true };
 }
 
@@ -431,7 +431,7 @@ export function applyWindowPreset(presetName: string): { ok: true; skipped?: 'fu
   // Width grows to the standard minimum; height keeps the compact floor
   // since the expanded chat window stays at its current (compact) height.
   win.setMinimumSize(standard.minWidth, WINDOW_SIZE_PRESETS.compact.minHeight);
-  win.setBounds({ x, y: currentBounds.y, width, height: currentBounds.height }, true);
+  win.setContentBounds({ x, y: currentBounds.y, width, height: currentBounds.height }, true);
   return { ok: true };
 }
 
@@ -453,6 +453,8 @@ export function createWindow(config: WindowConfig): void {
     height: initialPreset.height,
     minWidth: initialPreset.minWidth,
     minHeight: initialPreset.minHeight,
+    useContentSize: true,
+    autoHideMenuBar: process.platform !== 'darwin',
     // Starts on the compact preset, which is fixed-size; applySizePreset
     // re-enables resizing when a standard-preset view (chat) is shown.
     resizable: false,
