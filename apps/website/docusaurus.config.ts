@@ -185,7 +185,7 @@ const config: Config = {
         },
         {to: '/integrations', label: 'Integrations', position: 'left'},
         {to: '/providers', label: 'Providers', position: 'left'},
-        {to: '/network', label: 'Ecosystem', position: 'left'},
+        {to: '/ecosystem', label: 'Ecosystem', position: 'left'},
         {to: '/ants-token', label: '$ANTS', position: 'right', className: 'header-ants-link'},
         {
           type: 'docSidebar',

@@ -8,6 +8,7 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
       {label: 'Pricing ↗', href: 'https://antseedstats.com/network'},
       {label: 'Integrations', to: '/integrations'},
       {label: 'Providers', to: '/providers'},
+      {label: 'Ecosystem', to: '/ecosystem'},
       {label: 'Docs', to: '/docs'},
       {label: 'Light Paper', to: '/docs/lightpaper'},
     ],
