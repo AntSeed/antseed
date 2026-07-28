@@ -24,6 +24,15 @@ const ROUTED_SENSITIVE_HEADERS = new Set([
   'x-csrf-token',
 ])
 
+/** Body sent to connected apps when the buyer rejects a request with 402 —
+    the user's balance can't cover the payment channel for this request.
+    Plain text, not JSON: apps surface the error body verbatim in their
+    "something went wrong" UI, so it must read as a sentence for the person
+    in front of the app, not as a machine payload. */
+const OUT_OF_CREDITS_MESSAGE =
+  'AntSeed is out of credits, so this request was not sent to a provider. '
+  + 'Open the AntSeed app and add funds to your balance, then send your message again.'
+
 export interface BuyerForwardRequest {
   path: string
   body: Buffer
@@ -315,6 +324,10 @@ export class SystemProxyServer {
             this.forwardResponsesSse(proxyRes, res, req, buyerRequest.response, forwardRule)
             return
           }
+          if (proxyRes.statusCode === 402) {
+            this.respondOutOfCredits(proxyRes, res, req, buyerRequest, forwardRule)
+            return
+          }
           const resHeaders = buildResponseHeaders(proxyRes, req, forwardRule)
           res.writeHead(proxyRes.statusCode ?? 200, resHeaders)
           proxyRes.pipe(res)
@@ -334,6 +347,36 @@ export class SystemProxyServer {
         proxyReq.end()
       }
     })
+  }
+
+  /**
+   * A 402 from the buyer proxy means the user can't pay for this request.
+   * Connected apps surface that JSON error blob raw ("API Error: 402
+   * {\"type\":\"api_error\",...}"), which gives the user no idea what
+   * happened or what to do — so keep the 402 status but replace the body
+   * with a plain-text sentence telling them to top up in the AntSeed app.
+   */
+  private respondOutOfCredits(
+    proxyRes: http.IncomingMessage,
+    res: http.ServerResponse,
+    req: http.IncomingMessage,
+    buyerRequest: BuyerForwardRequest,
+    forwardRule: SystemProxyForwardRule | undefined,
+  ): void {
+    // The buyer's error body is replaced, not forwarded — drain it.
+    proxyRes.resume()
+    log(`← 402 body rewritten as plain-text out-of-credits notice | source:${buyerRequest.source}`)
+    const body = Buffer.from(OUT_OF_CREDITS_MESSAGE, 'utf8')
+    const resHeaders: http.OutgoingHttpHeaders = {
+      'content-type': 'text/plain; charset=utf-8',
+      'content-length': String(body.length),
+      'connection': 'close',
+    }
+    if (forwardRule?.cors) {
+      Object.assign(resHeaders, buildCorsHeaders(req, forwardRule.cors, false))
+    }
+    res.writeHead(402, resHeaders)
+    res.end(body)
   }
 
   private forwardConversationResponse(
@@ -570,6 +613,7 @@ export function buildBuyerForwardRequest(opts: {
       conversation: forwardRule.response?.kind === 'conversation-sse'
         ? extractConversationForwardContext(opts.rawBody, body, forwardRule.response)
         : undefined,
+      modelRouted: Boolean(opts.peerId),
     }
   }
   if (forwardRule) {
@@ -913,31 +957,11 @@ type ModelDefaultOptions = {
 }
 
 function resolveSystemProxyModel(rawModel: string, opts: ModelDefaultOptions): string | null {
-  const requested = rawModel.trim()
   const fallback = opts.defaultModel?.trim()
-  if (!fallback) {
-    return requested.length > 0 ? requested : null
-  }
+  if (fallback) return fallback
 
-  if (requested.length === 0 || requested.toLowerCase() === 'auto') {
-    return fallback
-  }
-
-  const served = opts.servedModels ? normalizeServedModels(opts.servedModels) : new Set<string>()
-  if (served.size > 0 && !served.has(requested.toLowerCase())) {
-    return fallback
-  }
-
-  return requested
-}
-
-function normalizeServedModels(models: Set<string>): Set<string> {
-  const normalized = new Set<string>()
-  for (const model of models) {
-    const value = model.trim().toLowerCase()
-    if (value.length > 0) normalized.add(value)
-  }
-  return normalized
+  const requested = rawModel.trim()
+  return requested.length > 0 ? requested : null
 }
 
 function extractConversationForwardContext(

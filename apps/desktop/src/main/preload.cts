@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RuntimeMode, RuntimeProcessState, StartOptions } from './process-manager.js';
+import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -141,7 +141,20 @@ type ToolApprovalRequest = {
   canAlwaysAllow: boolean;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts
+// (sandboxed preload cannot import from main). Keep in sync — and with the
+// renderer copy in apps/desktop/src/renderer/types/bridge.ts.
+type TelegramBridgeStatus = {
+  configured: boolean;
+  running: boolean;
+  botUsername: string | null;
+  paired: boolean;
+  ownerName: string | null;
+  pairingLink: string | null;
+  lastError: string | null;
+};
+
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). This preload runs in a sandboxed context and
 // cannot import from main, so the shape is mirrored here for IPC. Keep the
 // `kind`, `source`, and field set in sync with the source-of-truth type —
@@ -286,6 +299,9 @@ const api = {
   chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
+  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
+  },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },
@@ -383,6 +399,11 @@ const api = {
     ipcRenderer.on('chat:conversation-title-updated', listener);
     return () => ipcRenderer.off('chat:conversation-title-updated', listener);
   },
+  onChatDefaultRouteChanged(handler: (data: { peerId: string; service: string; provider: string | null }) => void): () => void {
+    const listener = (_: unknown, data: { peerId: string; service: string; provider: string | null }) => handler(data);
+    ipcRenderer.on('chat:default-route-changed', listener);
+    return () => ipcRenderer.off('chat:default-route-changed', listener);
+  },
   // Streaming events
   onChatAiStreamStart(handler: (data: { conversationId: string; turn: number }) => void): () => void {
     const listener = (_: unknown, data: { conversationId: string; turn: number }) => handler(data);
@@ -428,6 +449,20 @@ const api = {
     const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => handler(data);
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
+  },
+  telegramGetStatus(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:get-status');
+  },
+  telegramConnect(botToken: string): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:connect', botToken);
+  },
+  telegramDisconnect(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:disconnect');
+  },
+  onTelegramStatusChanged(handler: (data: TelegramBridgeStatus) => void): () => void {
+    const listener = (_: unknown, data: TelegramBridgeStatus) => handler(data);
+    ipcRenderer.on('telegram:status-changed', listener);
+    return () => ipcRenderer.off('telegram:status-changed', listener);
   },
   onChatToolApprovalRequested(handler: (data: ToolApprovalRequest) => void): () => void {
     const listener = (_: unknown, data: ToolApprovalRequest) => handler(data);

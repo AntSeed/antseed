@@ -7,8 +7,21 @@ export interface ProxySettings {
 
 export type SystemProxySnapshot =
   | { platform: 'darwin'; services: MacProxyServiceSnapshot[] }
-  | { platform: 'win32'; proxyEnable: string | null; proxyServer: string | null }
+  | {
+      platform: 'win32'
+      proxyEnable: string | null
+      proxyServer: string | null
+      proxyOverride?: string | null
+    }
   | { platform: 'other' }
+
+/**
+ * Windows bypass list. Only the upstream AI APIs need intercepting, so
+ * loopback and intranet hosts are excluded — that keeps local dev servers and
+ * anything on the LAN reachable even in the window where the proxy is set but
+ * not answering, which is otherwise a total network outage for the user.
+ */
+const WINDOWS_PROXY_BYPASS = 'localhost;127.0.0.1;<local>'
 
 export interface MacProxyServiceSnapshot {
   service: string
@@ -99,6 +112,7 @@ export function captureSystemProxySnapshot(): SystemProxySnapshot {
       platform: 'win32',
       proxyEnable: readWindowsRegValue('ProxyEnable'),
       proxyServer: readWindowsRegValue('ProxyServer'),
+      proxyOverride: readWindowsRegValue('ProxyOverride'),
     }
   }
   return { platform: 'other' }
@@ -117,24 +131,30 @@ export function restoreSystemProxySnapshot(snapshot: SystemProxySnapshot): void 
     return
   }
   if (snapshot.platform === 'win32') {
+    const restoreValue = (name: string, value: string | null | undefined): void => {
+      if (value) {
+        runFileSilent('reg', [
+          'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+          '/v', name, '/t', 'REG_SZ', '/d', value, '/f',
+        ])
+        return
+      }
+      try {
+        runFileSilent('reg', [
+          'delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+          '/v', name, '/f',
+        ])
+      } catch { /* missing value */ }
+    }
     try {
       runFileSilent('reg', [
         'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
         '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', snapshot.proxyEnable ?? '0', '/f',
       ])
-      if (snapshot.proxyServer) {
-        runFileSilent('reg', [
-          'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-          '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', snapshot.proxyServer, '/f',
-        ])
-      } else {
-        try {
-          runFileSilent('reg', [
-            'delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-            '/v', 'ProxyServer', '/f',
-          ])
-        } catch { /* missing value */ }
-      }
+      restoreValue('ProxyServer', snapshot.proxyServer)
+      // Absent (not null) means the snapshot predates the bypass list, so we
+      // never wrote ProxyOverride — leave whatever is there alone.
+      if ('proxyOverride' in snapshot) restoreValue('ProxyOverride', snapshot.proxyOverride)
       notifyWindowsProxyChanged()
     } catch { /* best-effort */ }
   }
@@ -156,6 +176,10 @@ export function setSystemProxy(settings: ProxySettings): SystemProxySnapshot {
     runFileSilent('reg', [
       'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
       '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', `${host}:${port}`, '/f',
+    ])
+    runFileSilent('reg', [
+      'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+      '/v', 'ProxyOverride', '/t', 'REG_SZ', '/d', WINDOWS_PROXY_BYPASS, '/f',
     ])
     notifyWindowsProxyChanged()
   }

@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
+import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types'
 import { spawn } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -159,6 +160,8 @@ export function buildCodexConfigArgs(baseUrlV1: string, model: string): string[]
     `model=${tomlString(model)}`,
     '-c',
     'model_provider="antseed"',
+    '-c',
+    `model_context_window=${ANTSEED_MODEL_CONTEXT_WINDOW}`,
   ]
 }
 
@@ -175,6 +178,10 @@ export function buildOpenCodeConfigContent(baseUrlV1: string, model: string): st
         models: {
           [model]: {
             name: `${model} (via AntSeed)`,
+            limit: {
+              context: ANTSEED_MODEL_CONTEXT_WINDOW,
+              output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+            },
           },
         },
       },

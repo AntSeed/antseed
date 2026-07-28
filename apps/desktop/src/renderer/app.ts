@@ -1,20 +1,20 @@
 import '@antseed/ui/styles';
-import { initChatModule } from './modules/chat';
-import { initSettingsModule } from './modules/settings';
-import { initRuntimeModule } from './modules/runtime';
-import { initDashboardRenderModule } from './modules/dashboard-render';
-import { initDashboardApiModule } from './modules/dashboard-api';
+import { initChatModule } from './modules/chat/controller';
+import { initSettingsModule } from './modules/app/settings';
+import { initRuntimeModule } from './modules/app/runtime';
+import { initDashboardRenderModule } from './modules/dashboard/render';
+import { initDashboardApiModule } from './modules/dashboard/api';
 import {
   initPluginSetupModule,
   normalizeRouterRuntime,
   resolveRouterPackageName,
-} from './modules/plugin-setup';
-import { initAppSetupModule } from './modules/app-setup';
-import { initCreditsModule } from './modules/credits';
-import { initVprFloatModule } from './modules/vpr-float';
-import { applyVprRouteToConnectedProxy } from './modules/vpr-proxy-sync';
-import { findCatalogEntry } from './modules/vpr-model-catalog';
-import { resolveVprChatOption } from './modules/vpr-chat-projection';
+} from './modules/app/plugin-setup';
+import { initAppSetupModule } from './modules/app/setup';
+import { initCreditsModule } from './modules/app/credits';
+import { initVprFloatModule } from './modules/app/float';
+import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
+import { findCatalogEntry } from './modules/catalog/model-catalog';
+import { resolveVprChatOption } from './modules/chat/projection';
 import type { VprRouteSelection } from './core/state';
 import {
   applyPeerListing,
@@ -22,7 +22,7 @@ import {
   loadVprRoutingPreferences,
   saveVprRouteSelection,
   saveVprRoutingPreferences,
-} from './modules/vpr-preferences';
+} from './modules/routing/preferences';
 import {
   clearVprModelPin,
   filterVprModelPins,
@@ -30,9 +30,9 @@ import {
   saveVprModelPins,
   setVprModelPin,
   vprModelPinFor,
-} from './modules/vpr-model-pins';
-import { isPeerRoutable } from './modules/vpr-routing';
-import { routesForSelectedModel } from './modules/vpr-view-models';
+} from './modules/routing/model-pins';
+import { isPeerRoutable } from './modules/routing/select';
+import { routesForSelectedModel } from './modules/catalog/view-models';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
 import { registerActions } from './ui/actions';

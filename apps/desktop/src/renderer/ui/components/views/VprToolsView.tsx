@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
-import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
-import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/vpr-routing';
-import { routesForSelectedModel } from '../../../modules/vpr-view-models';
+import type { InstalledAppEntry, SystemProxyProfileSummary } from '../../../types/bridge';
+import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
+import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { installedAppsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
 import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
   resolveVprToolRouteForPeerOptions,
-} from '../../../modules/vpr-tools';
+} from '../../../modules/routing/tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
+import { TelegramBotCard } from './TelegramBotCard';
 import styles from './VprToolsView.module.scss';
 
 
@@ -44,8 +47,9 @@ export function VprToolsView() {
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
-  const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
-  const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
+  const proxyResource = useCachedResource(systemProxyResource);
+  const profiles = proxyResource.data?.profiles ?? [];
+  const proxyState = proxyResource.data?.state ?? null;
   const [busy, setBusy] = useState<string | null>(null);
   // The app being connected right now. Connecting also restarts an app that
   // was already running, so the row has to stay busy well past the click.
@@ -86,9 +90,13 @@ export function VprToolsView() {
   const [settingsPane, setSettingsPane] = useState<ModalPane>({ pane: 'main', dir: 'none' });
   const [pickerSearch, setPickerSearch] = useState('');
   const [identityDraft, setIdentityDraft] = useState('');
-  const [identityBusy, setIdentityBusy] = useState(false);
-  const [installedApps, setInstalledApps] = useState<InstalledAppEntry[] | null>(null);
-  const [installedAppsError, setInstalledAppsError] = useState<string | null>(null);
+  // Drafted "Open with" pick — undefined until the user touches it, applied
+  // together with the identity draft by the modal's Save button.
+  const [launchDraft, setLaunchDraft] = useState<InstalledAppEntry | null | undefined>(undefined);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const installedAppsResourceSnapshot = useCachedResource(installedAppsResource, false);
+  const installedApps = installedAppsResourceSnapshot.data;
+  const installedAppsError = installedAppsResourceSnapshot.error;
 
   // lastPeers is the raw scan, so it has to be filtered too — otherwise an
   // excluded seller would still be offerable as a per-app route here.
@@ -109,22 +117,7 @@ export function VprToolsView() {
 
   const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
 
-  const refresh = useCallback(async () => {
-    const bridge = window.antseedDesktop;
-    try {
-      const [nextProfiles, nextState, nextCa] = await Promise.all([
-        bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
-        bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
-        bridge?.systemProxyCaInfo?.() ?? Promise.resolve(null),
-      ]);
-      setProfiles(nextProfiles);
-      setProxyState(nextState);
-      setCaInfo(nextCa);
-    } catch {
-      setProfiles([]);
-      setProxyState(null);
-    }
-  }, []);
+  const refresh = systemProxyResource.refresh;
 
   // Trust state shells out to the CLI (which queries the OS keychain), so it is
   // fetched on demand — mount, after adding an app, after trusting — never on
@@ -144,11 +137,9 @@ export function VprToolsView() {
   }, []);
 
   useEffect(() => {
-    void refresh();
     void refreshCaTrust();
-    const timer = setInterval(() => { void refresh(); }, 3000);
-    return () => clearInterval(timer);
-  }, [refresh, refreshCaTrust]);
+    void window.antseedDesktop?.systemProxyCaInfo?.().then(setCaInfo);
+  }, [refreshCaTrust]);
 
   const testGui = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -203,9 +194,9 @@ export function VprToolsView() {
       setMessage(result.error ?? 'Unable to connect tool profile');
       return false;
     }
-    setProxyState(result.state ?? null);
+    systemProxyResource.setData({ profiles, state: result.state ?? null });
     return true;
-  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, proxyState?.running]);
+  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
 
   const disconnect = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -213,11 +204,11 @@ export function VprToolsView() {
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);
     if (result?.ok) {
-      setProxyState(result.state ?? null);
+      systemProxyResource.setData({ profiles, state: result.state ?? null });
     } else {
       setMessage(result?.error ?? 'Unable to disconnect tools');
     }
-  }, []);
+  }, [profiles]);
 
   const openUrl = useCallback(async (url: string) => {
     const result = await window.antseedDesktop?.openExternalUrl?.(url);
@@ -270,12 +261,13 @@ export function VprToolsView() {
     try {
       const result = await bridge.systemProxyRestartApp(profileName);
       setMessage(result.ok ? `Restarted ${label}` : (result.error ?? `Unable to restart ${label}`));
+      if (result.ok) await refresh();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setActionBusy(null);
     }
-  }, []);
+  }, [refresh]);
 
   const trustCa = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -321,67 +313,84 @@ export function VprToolsView() {
   // ---------- Per-app settings modal ----------
 
   const ensureInstalledApps = useCallback(() => {
-    // The installed-apps list is fetched once, on first modal open.
-    if (installedApps !== null) return;
-    void window.antseedDesktop?.listInstalledApps?.()
-      .then((result) => {
-        setInstalledApps(result.apps ?? []);
-        setInstalledAppsError(result.ok ? null : result.error ?? 'Could not list applications');
-      })
-      .catch((err: unknown) => {
-        setInstalledApps([]);
-        setInstalledAppsError(err instanceof Error ? err.message : String(err));
-      });
-  }, [installedApps]);
+    if (installedApps === null && !installedAppsResourceSnapshot.loading) {
+      void installedAppsResource.refresh();
+    }
+  }, [installedApps, installedAppsResourceSnapshot.loading]);
 
   const openSettings = useCallback((profile: SystemProxyProfileSummary) => {
     setSettingsFor(profile.name);
     setSettingsPane({ pane: 'main', dir: 'none' });
     setPickerSearch('');
     setIdentityDraft((profile.toolSlugs?.length ? profile.toolSlugs : [profile.name]).join(', '));
+    setLaunchDraft(undefined);
     ensureInstalledApps();
   }, [ensureInstalledApps]);
 
-  const chooseApp = useCallback(async (app: InstalledAppEntry | null) => {
-    if (!settingsFor) return;
-    const result = await window.antseedDesktop?.systemProxySetAppLaunch?.({ name: settingsFor, app });
+  // Picking an application only stages a draft — it applies on Save.
+  const chooseApp = useCallback((app: InstalledAppEntry | null) => {
+    setLaunchDraft(app);
     setSettingsPane({ pane: 'main', dir: 'back' });
-    if (result && !result.ok) {
-      setMessage(result.error ?? 'Could not save the app setting');
-      return;
-    }
-    await refresh();
-  }, [settingsFor, refresh]);
+  }, []);
 
   const settingsProfile = settingsFor ? profiles.find((profile) => profile.name === settingsFor) ?? null : null;
   const settingsIdentity = settingsProfile
     ? (settingsProfile.toolSlugs?.length ? settingsProfile.toolSlugs : [settingsProfile.name]).join(', ')
     : '';
   const identityDirty = settingsProfile !== null && identityDraft.trim() !== settingsIdentity;
+  const launchDirty = settingsProfile !== null && launchDraft !== undefined
+    && (launchDraft?.name ?? null) !== (settingsProfile.launchAppName ?? null);
+  const settingsDirty = identityDirty || launchDirty;
+  // The drafted pick wins over the persisted one for everything the modal shows.
+  const settingsLaunchName = launchDraft === undefined
+    ? settingsProfile?.launchAppName ?? null
+    : launchDraft?.name ?? null;
 
-  const saveIdentity = useCallback(async () => {
+  // Apply the drafted settings. A connected app disconnects first — the proxy
+  // runtime only reads profiles on connect, so edits never apply mid-session;
+  // reconnecting stays on the apps list row.
+  const saveSettings = useCallback(async () => {
     const bridge = window.antseedDesktop;
-    if (!settingsFor || !bridge?.systemProxySetAppIdentity) return;
-    setIdentityBusy(true);
+    if (!settingsFor || !bridge) return;
+    setSettingsSaving(true);
     setMessage(null);
     try {
-      const slugs = identityDraft.split(',').map((entry) => entry.trim()).filter(Boolean);
-      const result = await bridge.systemProxySetAppIdentity({ name: settingsFor, toolSlugs: slugs.length > 0 ? slugs : null });
-      if (!result.ok) {
-        setMessage(result.error ?? 'Could not save the client names');
-        return;
+      if (activeProfileNames.includes(settingsFor)) {
+        const remaining = activeProfileNames.filter((name) => name !== settingsFor);
+        if (remaining.length === 0) await disconnect();
+        else if (!await startProfiles(remaining)) return;
       }
-      // Sync the draft to the normalized value the main process persisted.
+      if (launchDirty && bridge.systemProxySetAppLaunch) {
+        const result = await bridge.systemProxySetAppLaunch({
+          name: settingsFor,
+          app: launchDraft ? { name: launchDraft.name, path: launchDraft.path } : null,
+        });
+        if (!result.ok) {
+          setMessage(result.error ?? 'Could not save the app setting');
+          return;
+        }
+      }
+      if (identityDirty && bridge.systemProxySetAppIdentity) {
+        const slugs = identityDraft.split(',').map((entry) => entry.trim()).filter(Boolean);
+        const result = await bridge.systemProxySetAppIdentity({ name: settingsFor, toolSlugs: slugs.length > 0 ? slugs : null });
+        if (!result.ok) {
+          setMessage(result.error ?? 'Could not save the client names');
+          return;
+        }
+      }
+      // Sync drafts to the normalized values the main process persisted —
+      // including a custom app renamed after its application pick.
       const listed = (await bridge.systemProxyListProfiles?.()) ?? [];
-      setProfiles(listed);
+      systemProxyResource.setData({ profiles: listed, state: proxyState });
+      setLaunchDraft(undefined);
       const updated = listed.find((profile) => profile.name === settingsFor);
       if (updated) setIdentityDraft((updated.toolSlugs?.length ? updated.toolSlugs : [updated.name]).join(', '));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
-      setIdentityBusy(false);
+      setSettingsSaving(false);
     }
-  }, [identityDraft, settingsFor]);
+  }, [activeProfileNames, disconnect, identityDirty, identityDraft, launchDirty, launchDraft, proxyState, settingsFor, startProfiles]);
 
   const advanceAddStep = useCallback((step: 2 | 3) => {
     setAddStep(step);
@@ -464,6 +473,8 @@ export function VprToolsView() {
     return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
   }, [profiles, search, activeProfiles]);
 
+  const telegramVisible = !search.trim() || 'telegram bot'.includes(search.trim().toLowerCase());
+
   // Certificate trust presentation. A live probe failure (certTrustError) or a
   // stale/absent keychain state all mean the same thing to the user: press
   // Trust. `stale` is the CERT_SIGNATURE_FAILURE case — an older CA trusted
@@ -487,17 +498,14 @@ export function VprToolsView() {
 
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        {visibleProfiles.length === 0 ? (
+        {visibleProfiles.length === 0 && !telegramVisible ? (
           <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
         ) : (
           <div className={styles.appList}>
+            {telegramVisible ? <TelegramBotCard /> : null}
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
-              const canOpenUrl = connected && profile.appAction === 'open-url' && !!profile.openUrl;
-              const canOpenTool = connected && (profile.appAction === 'open-tool' || !!profile.launchAppName);
-              const canOpen = canOpenUrl || canOpenTool;
-              const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
-              const hasActions = canRestart;
+              const canRestart = connected && profile.canRestart === true;
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
@@ -529,9 +537,9 @@ export function VprToolsView() {
                           )}
                         </span>
                         {connected && (
-                          <span className={styles.appMeta}>
-                            <span className={styles.connectedDot} aria-hidden="true" />
-                            Connected
+                          <span className={`${styles.appMeta}${profile.needsRestart ? ` ${styles.appMetaWarning}` : ''}`}>
+                            <span className={profile.needsRestart ? styles.restartDot : styles.connectedDot} aria-hidden="true" />
+                            {profile.needsRestart ? 'Restart required' : 'Connected'}
                           </span>
                         )}
                       </span>
@@ -543,21 +551,16 @@ export function VprToolsView() {
                         aria-label={`Connecting ${profile.displayName}`}
                         title={`Connecting ${profile.displayName}`}
                       />
-                    ) : canOpen ? (
+                    ) : canRestart ? (
                       <button
                         type="button"
-                        className={styles.appOpen}
-                        onClick={() => {
-                          // A user-picked "Open with" app wins over the
-                          // profile's packaged open-url action.
-                          void (canOpenUrl && !profile.launchAppName
-                            ? openUrl(profile.openUrl!)
-                            : openTool(profile.toolName ?? profile.name));
-                        }}
-                        aria-label={`Open ${profile.displayName}`}
-                        title={`Open ${profile.launchAppName ?? profile.displayName}`}
+                        className={`${styles.appOpen}${profile.needsRestart ? ` ${styles.appRestartNeeded}` : ''}`}
+                        onClick={() => { void restartApp(profile.name, profile.displayName); }}
+                        disabled={actionBusy === profile.name}
+                        aria-label={`Restart ${profile.displayName}`}
+                        title={profile.needsRestart ? `Restart ${profile.displayName} to apply the connection` : `Restart ${profile.displayName}`}
                       >
-                        <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+                        <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={16} strokeWidth={2} />
                       </button>
                     ) : null}
                     <button
@@ -584,21 +587,6 @@ export function VprToolsView() {
                     ) : null}
                   </div>
 
-                  {hasActions && (
-                    <div className={styles.appBody}>
-                      <div className={styles.actions}>
-                        {canRestart ? (
-                          <button
-                            type="button"
-                            onClick={() => { void restartApp(profile.name, profile.displayName); }}
-                            disabled={actionBusy === profile.name}
-                          >
-                            {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -742,8 +730,9 @@ export function VprToolsView() {
         </section>
       </Modal>
 
-      {/* Per-app settings: application to open, request-identity client
-          names, and the connection actions (Disconnect / Remove). */}
+      {/* Per-app settings: application to open and request-identity client
+          names, edited as drafts and applied by the footer Save (which
+          disconnects a connected app first), plus Disconnect / Remove. */}
       <Modal
         isOpen={settingsProfile !== null}
         onClose={() => setSettingsFor(null)}
@@ -777,8 +766,8 @@ export function VprToolsView() {
                   error={installedAppsError}
                   search={pickerSearch}
                   onSearch={setPickerSearch}
-                  activeName={settingsProfile.launchAppName ?? null}
-                  onChoose={(app) => void chooseApp(app)}
+                  activeName={settingsLaunchName}
+                  onChoose={chooseApp}
                   noneLabel={settingsProfile.custom ? 'No application' : 'Default action'}
                   noneMeta={settingsProfile.custom
                     ? 'No application associated with this app'
@@ -798,8 +787,8 @@ export function VprToolsView() {
                     </div>
                     <p className={styles.settingHint}>
                       {connected
-                        ? `${settingsProfile.displayName}'s AI requests currently route through VPR. Disconnecting restores its direct connection.`
-                        : `Connect to route ${settingsProfile.displayName}'s AI requests through VPR — served by the AntSeed network and paid from your balance.`}
+                        ? `${settingsProfile.displayName}'s AI requests currently route through VPR. Disconnecting restores its direct connection.${settingsDirty ? ' Saving these changes disconnects it first — reconnect from the apps list.' : ''}`
+                        : `Connect from the apps list to route ${settingsProfile.displayName}'s AI requests through VPR — served by the AntSeed network and paid from your balance.`}
                     </p>
                   </section>
 
@@ -809,7 +798,7 @@ export function VprToolsView() {
                     </div>
                     <p className={styles.settingHint}>
                       The installed application VPR launches for {settingsProfile.displayName} —
-                      used by the open arrow and when jumping back into a chat session.
+                       used by the restart button and when jumping back into a chat session.
                     </p>
                     <button
                       type="button"
@@ -820,7 +809,7 @@ export function VprToolsView() {
                         ? <img src={settingsProfile.iconDataUri} alt="" className={styles.pickerIcon} />
                         : <BrandIcon name={settingsProfile.name} hints={[settingsProfile.displayName]} size={20} />}
                       <span className={styles.settingValueName}>
-                        {settingsProfile.launchAppName
+                        {settingsLaunchName
                           ?? (settingsProfile.custom ? 'No application' : 'Default action')}
                       </span>
                       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.settingValueChevron} />
@@ -840,7 +829,7 @@ export function VprToolsView() {
                       className={styles.settingInputRow}
                       onSubmit={(event) => {
                         event.preventDefault();
-                        void saveIdentity();
+                        void saveSettings();
                       }}
                     >
                       <input
@@ -850,13 +839,8 @@ export function VprToolsView() {
                         placeholder={settingsProfile.name}
                         spellCheck={false}
                         onChange={(event) => setIdentityDraft(event.currentTarget.value)}
-                        disabled={identityBusy}
+                        disabled={settingsSaving}
                       />
-                      {identityDirty ? (
-                        <button type="submit" className={styles.settingPrimary} disabled={identityBusy}>
-                          {identityBusy ? 'Saving...' : 'Save'}
-                        </button>
-                      ) : null}
                     </form>
                   </section>
 
@@ -887,8 +871,19 @@ export function VprToolsView() {
                     </section>
                   ) : null}
 
+                  {/* Connect lives on the apps list row — the footer only
+                      saves drafted changes or disconnects a connected app. */}
                   <div className={styles.settingFooter}>
-                    {connected ? (
+                    {settingsDirty ? (
+                      <button
+                        type="button"
+                        className={styles.settingPrimary}
+                        disabled={settingsSaving || busy !== null}
+                        onClick={() => void saveSettings()}
+                      >
+                        {settingsSaving ? 'Saving...' : 'Save'}
+                      </button>
+                    ) : connected ? (
                       <button
                         type="button"
                         className={styles.settingDanger}
@@ -897,19 +892,7 @@ export function VprToolsView() {
                       >
                         Disconnect
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.settingPrimary}
-                        disabled={busy !== null || !defaultPeerId}
-                        onClick={() => {
-                          setSettingsFor(null);
-                          void connectProfile(settingsProfile.name);
-                        }}
-                      >
-                        Connect
-                      </button>
-                    )}
+                    ) : null}
                   </div>
                 </>
               )}

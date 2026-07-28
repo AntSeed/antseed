@@ -142,12 +142,25 @@
   line-height: 20px;
 }
 
-.connectedDot {
+.connectedDot,
+.restartDot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;
+}
+
+.connectedDot {
   background: var(--accent-green, #4ade80);
+}
+
+.restartDot {
+  background: #f59e0b;
+}
+
+.appMetaWarning,
+.appRestartNeeded {
+  color: #f59e0b;
 }
 
 .appOpen {
@@ -313,6 +326,26 @@
   background: var(--bg-surface);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10px;
+}
+
+/* Inline hint text that opens an external link (e.g. @BotFather). */
+.settingHintLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settingHintLink code {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s ease;
+}
+
+.settingHintLink:hover code {
+  color: var(--text-primary);
 }
 
 /* Current-value row (selected application) — click slides to the picker.

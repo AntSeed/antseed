@@ -5,7 +5,7 @@ import {
   filterVprCatalog,
   routesForSelectedModel,
   sortVprCatalog,
-} from '../../../modules/vpr-view-models.js';
+} from '../../../modules/catalog/view-models.js';
 
 function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
   return {

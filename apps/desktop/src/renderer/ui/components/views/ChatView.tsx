@@ -16,7 +16,7 @@ import {
   SecurityWarningIcon,
   Shield01Icon
 } from '@hugeicons/core-free-icons';
-import { displayModelLabel } from '../../../modules/model-identity';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';

@@ -1,0 +1,305 @@
+import { readFile } from 'node:fs/promises';
+import { DEFAULT_BUYER_STATE_PATH } from '../constants.js';
+
+export type DashboardNetworkPeer = {
+  peerId: string;
+  displayName: string | null;
+  host: string;
+  port: number;
+  providers: string[];
+  services: string[];
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  capacityMsgPerHour: number;
+  reputation: number;
+  onChainReputationScore: number | null;
+  lastSeen: number;
+  /**
+   * Last successful transport-level contact with the peer. This can be fresher
+   * than the DHT announcement timestamp when discovery temporarily misses a
+   * peer but requests are still succeeding.
+   */
+  lastReachedAt: number | null;
+  source: 'dht' | 'daemon';
+  online: boolean;
+  /**
+   * Buyer-proxy cooldown: peers that recently failed are deprioritized by auto
+   * routing until this passes. Null when the peer has no cooldown. Advisory —
+   * a cooling-down peer is still reachable if a request names it.
+   */
+  cooldownUntil: number | null;
+  failureStreak: number;
+  lastFailureReason: string | null;
+};
+
+/** Shape of one entry in buyer.state.json's `peerHealth` map. */
+export type RawPeerHealth = {
+  cooldownUntil?: unknown;
+  failureStreak?: unknown;
+  lastReason?: unknown;
+};
+
+export type PeerHealthView = {
+  cooldownUntil: number | null;
+  failureStreak: number;
+  lastFailureReason: string | null;
+};
+
+/**
+ * Normalize one raw health entry.
+ *
+ * An expired cooldown is surfaced as null rather than left for consumers to
+ * compare against the clock, so a stale timestamp can never read as "still
+ * cooling down".
+ */
+export function readPeerHealth(raw: RawPeerHealth | undefined, now: number): PeerHealthView {
+  if (!raw || typeof raw !== 'object') {
+    return { cooldownUntil: null, failureStreak: 0, lastFailureReason: null };
+  }
+  const cooldownUntil = typeof raw.cooldownUntil === 'number' && Number.isFinite(raw.cooldownUntil)
+    && raw.cooldownUntil > now
+    ? raw.cooldownUntil
+    : null;
+  const failureStreak = typeof raw.failureStreak === 'number' && Number.isFinite(raw.failureStreak)
+    ? Math.max(0, Math.trunc(raw.failureStreak))
+    : 0;
+  return {
+    cooldownUntil,
+    failureStreak,
+    lastFailureReason: typeof raw.lastReason === 'string' ? raw.lastReason : null,
+  };
+}
+
+/** Join a peer with its health entry. */
+export function mergePeerHealthIntoPeer(
+  peer: DashboardNetworkPeer,
+  raw: RawPeerHealth | undefined,
+  now: number,
+): DashboardNetworkPeer {
+  return { ...peer, ...readPeerHealth(raw, now) };
+}
+
+export type DashboardNetworkStats = {
+  totalPeers: number;
+  dhtNodeCount: number;
+  dhtHealthy: boolean;
+  lastScanAt: number | null;
+  totalLookups?: number;
+  successfulLookups?: number;
+  lookupSuccessRate?: number;
+  averageLookupLatencyMs?: number;
+  healthReason?: string;
+};
+
+export type DashboardNetworkResult = {
+  ok: boolean;
+  peers: DashboardNetworkPeer[];
+  stats: DashboardNetworkStats;
+  error: string | null;
+};
+
+export const PEER_ONLINE_TTL_MS = 2 * 60 * 60_000; // 2 hours — peers re-announce via DHT every 5 min
+
+const REFRESH_MIN_INTERVAL_MS = 5_000;
+
+const peerCache = new Map<string, DashboardNetworkPeer>();
+let peerCacheLastScanAt: number | null = null;
+let peerCacheLastRefreshAt = 0;
+let peerCacheLastSignature = '';
+const peersChangedListeners: Array<() => void> = [];
+
+/** Register a callback invoked when the peer set changes. Returns an unsubscribe function. */
+export function onPeersChanged(listener: () => void): () => void {
+  peersChangedListeners.push(listener);
+  return () => {
+    const idx = peersChangedListeners.indexOf(listener);
+    if (idx >= 0) peersChangedListeners.splice(idx, 1);
+  };
+}
+
+function computePeerSignature(): string {
+  // Fast hash: sorted peer IDs + their service lists.
+  const parts: string[] = [];
+  for (const [id, peer] of peerCache) {
+    // `cooldownUntil` is a fixed timestamp, not a computed remaining-ms — a
+    // countdown here would make the signature change on every refresh and fire
+    // the change listener continuously.
+    parts.push(
+      `${id}:${peer.services.join(',')}:${peer.onChainReputationScore ?? ''}:${peer.cooldownUntil ?? ''}`,
+    );
+  }
+  parts.sort();
+  return parts.join('|');
+}
+
+function emitIfChanged(): void {
+  const sig = computePeerSignature();
+  if (sig !== peerCacheLastSignature) {
+    peerCacheLastSignature = sig;
+    for (const listener of peersChangedListeners) {
+      try { listener(); } catch { /* ignore */ }
+    }
+  }
+}
+
+export function defaultNetworkStats(): DashboardNetworkStats {
+  return {
+    totalPeers: 0,
+    dhtNodeCount: 0,
+    dhtHealthy: false,
+    lastScanAt: null,
+    totalLookups: 0,
+    successfulLookups: 0,
+    lookupSuccessRate: 0,
+    averageLookupLatencyMs: 0,
+    healthReason: 'dashboard offline',
+  };
+}
+
+export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkPeer | null {
+  if (typeof pr.peerId !== 'string') return null;
+
+  let peerHost = '';
+  let peerPort = 0;
+  if (typeof pr.publicAddress === 'string') {
+    const addr = pr.publicAddress as string;
+    const lastColon = addr.lastIndexOf(':');
+    peerHost = lastColon > -1 ? addr.slice(0, lastColon) : addr;
+    peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
+  }
+
+  const displayName = typeof pr.displayName === 'string' && pr.displayName.trim().length > 0
+    ? pr.displayName.trim()
+    : null;
+
+  const providers = Array.isArray(pr.providers)
+    ? (pr.providers as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const services = Array.isArray(pr.services)
+    ? (pr.services as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  return {
+    peerId: pr.peerId as string,
+    displayName,
+    host: peerHost,
+    port: peerPort,
+    providers,
+    services,
+    inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
+    outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
+    capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
+    reputation: 100,
+    onChainReputationScore: typeof pr.onChainReputationScore === 'number' && Number.isFinite(pr.onChainReputationScore)
+      ? pr.onChainReputationScore
+      : null,
+    lastSeen: Number(pr.lastSeen) || Date.now(),
+    lastReachedAt: Number(pr.lastReachedAt) || null,
+    source: 'dht',
+    online: true,
+    cooldownUntil: null,
+    failureStreak: 0,
+    lastFailureReason: null,
+  };
+}
+
+function peerFreshnessAnchor(peer: Pick<DashboardNetworkPeer, 'lastSeen' | 'lastReachedAt'>): number {
+  return Math.max(Number(peer.lastSeen) || 0, Number(peer.lastReachedAt) || 0);
+}
+
+/** Refresh peer cache from buyer.state.json — derive online status from lastSeen / lastReachedAt. */
+export async function refreshPeerCache(): Promise<void> {
+  const now = Date.now();
+  // Use a shorter debounce until we've found at least one peer (startup phase).
+  const interval = peerCache.size === 0 ? 1_000 : REFRESH_MIN_INTERVAL_MS;
+  if (now - peerCacheLastRefreshAt < interval) {
+    return;
+  }
+  peerCacheLastRefreshAt = now;
+
+  try {
+    const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+    const rawHealth = parsed.peerHealth && typeof parsed.peerHealth === 'object' && !Array.isArray(parsed.peerHealth)
+      ? parsed.peerHealth as Record<string, RawPeerHealth>
+      : {};
+
+    for (const p of rawPeers) {
+      if (!p || typeof p !== 'object') continue;
+      const parsedPeer = parsePeerFromRaw(p as Record<string, unknown>);
+      if (!parsedPeer) continue;
+      const peer = mergePeerHealthIntoPeer(parsedPeer, rawHealth[parsedPeer.peerId], now);
+      // Skip legacy (non-EVM) peer IDs — EVM addresses are 40 hex chars
+      if (peer.peerId.length !== 40) continue;
+
+      const existing = peerCache.get(peer.peerId);
+      if (existing) {
+        peer.displayName = peer.displayName ?? existing.displayName;
+        peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
+        peer.services = peer.services.length > 0 ? peer.services : existing.services;
+        peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
+        peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
+        peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
+        peer.onChainReputationScore = peer.onChainReputationScore ?? existing.onChainReputationScore;
+        peer.lastSeen = Math.max(peer.lastSeen, existing.lastSeen);
+        peer.lastReachedAt = Math.max(peer.lastReachedAt ?? 0, existing.lastReachedAt ?? 0) || null;
+      }
+      // Derive online from the freshest known liveness signal. `lastSeen` is
+      // the DHT announcement timestamp; `lastReachedAt` is updated after a
+      // successful transport/request. If discovery misses all peers for a bit,
+      // using only lastSeen makes the desktop paint everything offline even
+      // though recently-used peers are still reachable.
+      peer.online = now - peerFreshnessAnchor(peer) < PEER_ONLINE_TTL_MS;
+      peerCache.set(peer.peerId, peer);
+    }
+
+    peerCacheLastScanAt = Number(parsed.peersUpdatedAt) || Date.now();
+  } catch {
+    // File doesn't exist yet — buyer runtime may not be running.
+  }
+
+  // Re-derive online for every cached peer so evicted / un-filed peers
+  // also transition to offline once both liveness timestamps expire.
+  for (const peer of peerCache.values()) {
+    peer.online = now - peerFreshnessAnchor(peer) < PEER_ONLINE_TTL_MS;
+  }
+
+  emitIfChanged();
+}
+
+export function getNetworkSnapshot(): DashboardNetworkResult {
+  const peers = Array.from(peerCache.values());
+  return {
+    ok: true,
+    peers,
+    stats: {
+      ...defaultNetworkStats(),
+      totalPeers: peers.length,
+      dhtHealthy: peers.some((p) => p.online),
+      lastScanAt: peerCacheLastScanAt,
+    },
+    error: null,
+  };
+}
+
+/**
+ * Mark a peer as recently active and online (e.g. after a chat response).
+ */
+export function touchPeer(peerId: string): boolean {
+  const peer = peerCache.get(peerId);
+  if (peer) {
+    const now = Date.now();
+    peer.lastSeen = now;
+    peer.lastReachedAt = now;
+    peer.online = true;
+    return true;
+  }
+  return false;
+}
+
+/** Look up a peer by ID from the in-memory cache. */
+export function lookupPeer(peerId: string): DashboardNetworkPeer | null {
+  return peerCache.get(peerId) ?? null;
+}

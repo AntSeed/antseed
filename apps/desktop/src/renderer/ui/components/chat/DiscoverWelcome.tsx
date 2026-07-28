@@ -15,7 +15,7 @@ import {
   formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
-import { displayModelLabel } from '../../../modules/model-identity';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
 import {
   getPeerGradient,
   getPeerDisplayName,

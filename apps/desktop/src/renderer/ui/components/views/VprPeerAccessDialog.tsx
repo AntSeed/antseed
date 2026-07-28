@@ -3,16 +3,16 @@ import { Button, Modal } from '@antseed/ui';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Cancel01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprPeerListing, VprRoutingPreferences } from '../../../core/state';
-import type { VprPeerOption } from '../../../modules/vpr-tools';
+import type { VprPeerOption } from '../../../modules/routing/tools';
 import {
   buildPeerAccessRows,
   filterPeerAccessRows,
   peerAccessModeLabel,
   PEER_ACCESS_STATUS_LABEL,
   type PeerAccessRow,
-} from '../../../modules/vpr-peer-access';
+} from '../../../modules/routing/peer-access';
 import { VprSearch } from '../vpr/VprKit';
-import type { PeerAccessStatus } from '../../../modules/vpr-peer-access';
+import type { PeerAccessStatus } from '../../../modules/routing/peer-access';
 import styles from './VprPeerAccessDialog.module.scss';
 
 /* CSS modules build with camelCaseOnly, so the status classes are looked up

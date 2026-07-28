@@ -321,7 +321,7 @@ export class BuyerPaymentNegotiator {
         peerId: peer.peerId,
         ...(req?.minBudgetPerRequest != null ? { minBudgetPerRequest: req.minBudgetPerRequest } : {}),
         ...(req?.suggestedAmount != null ? { suggestedAmount: req.suggestedAmount } : {}),
-        message: 'Deposits are insufficient to open a payment channel with this peer. Top up with "antseed buyer deposit <amount>" and retry.',
+        message: 'You are out of AntSeed credits for this request. Add funds in the AntSeed app, or run "antseed buyer deposit <amount>" from the CLI, then retry.',
       });
       return {
         action: 'return',

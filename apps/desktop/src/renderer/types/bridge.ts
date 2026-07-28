@@ -25,6 +25,7 @@ export type SystemProxyProfileSummary = {
   openUrl?: string;
   toolName?: string;
   canRestart?: boolean;
+  needsRestart?: boolean;
   /** True for user-added custom apps (removable, favicon-based icon). */
   custom?: boolean;
   iconDataUri?: string;
@@ -166,7 +167,7 @@ export type ChatWorkspaceGitStatus = {
   error: string | null;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). The renderer cannot import from main, so the
 // shape is mirrored here for IPC. Keep in sync with that file and with
 // apps/desktop/src/main/preload.cts when fields change.
@@ -189,6 +190,18 @@ export type RawChatAttachment = {
 
 export type ChatPermissionMode = 'manual' | 'full';
 export type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts;
+// keep in sync with the preload copy in apps/desktop/src/main/preload.cts.
+export type TelegramBridgeStatus = {
+  configured: boolean;
+  running: boolean;
+  botUsername: string | null;
+  paired: boolean;
+  ownerName: string | null;
+  pairingLink: string | null;
+  lastError: string | null;
+};
+
 export type ToolApprovalRequest = {
   id: string;
   conversationId: string;
@@ -284,8 +297,14 @@ export type DesktopBridge = {
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
   chatPeerPermissionModeSet?: (peerId: string, mode: ChatPermissionMode) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
   chatToolApprovalDecision?: (id: string, decision: ToolApprovalDecision) => Promise<{ ok: boolean; error?: string }>;
+  telegramGetStatus?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  telegramConnect?: (botToken: string) => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
+  onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   apiTryProxyRequest?: (params: {
     port: number;

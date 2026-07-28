@@ -4,24 +4,26 @@ import {
   ArrowDown01Icon,
   ArrowRight02Icon,
   ArrowUp02Icon,
-  ArrowUpRight01Icon,
-  Cancel01Icon,
-  PowerIcon,
+    ArrowUpRight01Icon,
+    Cancel01Icon,
+    PowerIcon,
+    ArrowReloadHorizontalIcon,
 } from '@hugeicons/core-free-icons';
-import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
-import { activeProfilesFromRuntimeState } from '../../../modules/vpr-tools';
-import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/vpr-view-models';
-import { findCatalogEntry } from '../../../modules/vpr-model-catalog';
-import { displayModelLabel } from '../../../modules/model-identity';
-import { loadFavoriteModels } from '../../../modules/vpr-favorites';
+import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
+import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
-} from '../../../modules/vpr-recommended-models';
-import { connectVprProfile } from '../../../modules/vpr-proxy-sync';
+} from '../../../modules/catalog/recommended';
+import { connectVprProfile } from '../../../modules/routing/proxy-sync';
+import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
@@ -34,7 +36,6 @@ import styles from './VprHomeView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-const PROXY_STATE_POLL_MS = 3_000;
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
@@ -58,12 +59,11 @@ export function VprHomeView({ onSelectView }: Props) {
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
   }), shallowEqual);
-  const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
-  const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
-  // null = the buyer hasn't answered the first conversations query yet (it
-  // boots alongside the app) — the Recent chats card shows a skeleton then,
-  // but only when a previous session actually saw chats (expectChats).
-  const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
+  const proxyResource = useCachedResource(systemProxyResource);
+  const conversationsResource = useCachedResource(buyerConversationsResource);
+  const profiles = proxyResource.data?.profiles ?? [];
+  const proxyState = proxyResource.data?.state ?? null;
+  const conversations = conversationsResource.data;
   const [expectChats] = useState(hasSeenChats);
   const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
@@ -90,44 +90,23 @@ export function VprHomeView({ onSelectView }: Props) {
     [snap.discoverRows, snap.selection],
   );
   useEffect(() => {
-    let cancelled = false;
-    async function refreshTools(): Promise<void> {
-      const bridge = window.antseedDesktop;
-      try {
-        const [nextProfiles, nextState, nextConversations] = await Promise.all([
-          bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
-          bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
-          bridge?.buyerConversationsList?.() ?? Promise.resolve(null),
-        ]);
-        if (cancelled) return;
-        setProfiles(nextProfiles);
-        setProxyState(nextState);
-        // null = buyer unreachable; keep whatever list we last had.
-        if (nextConversations) {
-          setConversations(nextConversations);
-          rememberSeenChats(nextConversations.length);
-        }
-      } catch {
-        if (!cancelled) setProxyState(null);
-      }
-      // Usage tiles: the module throttle absorbs this to one real fetch per
-      // window once data has loaded, but while the payments backend is still
-      // booting (startup) every tick retries, so the tiles fill in as soon
-      // as it's up instead of showing zeros.
-      void actions.refreshPaymentSummary();
-    }
-    void refreshTools();
-    const timer = window.setInterval(() => { void refreshTools(); }, PROXY_STATE_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    if (conversations) rememberSeenChats(conversations.length);
+  }, [conversations]);
+
+  useEffect(() => {
+    void actions.refreshPaymentSummary();
+    const timer = window.setInterval(() => { void actions.refreshPaymentSummary(); }, 3_000);
+    return () => window.clearInterval(timer);
   }, [actions]);
 
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
   const connectedProfiles = useMemo(
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
     [activeProfiles, profiles],
+  );
+  const restartProfiles = useMemo(
+    () => connectedProfiles.filter((profile) => profile.needsRestart),
+    [connectedProfiles],
   );
   const expectedSavingsPct = useMemo(() => {
     const values = snap.catalog
@@ -197,7 +176,9 @@ export function VprHomeView({ onSelectView }: Props) {
     try {
       const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);
       if (result.ok) {
-        if (result.state !== undefined) setProxyState(result.state);
+        if (result.state !== undefined) {
+          systemProxyResource.setData({ profiles, state: result.state });
+        }
         // Surface the pill right away, dropdown open, so the "start a new
         // session" guidance is in view while the user switches to the tool.
         void actions.openVprFloat?.(profileName, { openMenu: true });
@@ -370,6 +351,17 @@ export function VprHomeView({ onSelectView }: Props) {
           <div className={styles.connectedGroup}>
             {/* Connected apps live on the Apps page — home leads with the
                 chats themselves. */}
+            {restartProfiles.length > 0 ? (
+              <button type="button" className={styles.restartBanner} onClick={() => onSelectView?.('tools')}>
+                <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
+                <span>
+                  <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
+                  <small>Restart to apply the VPR connection.</small>
+                </span>
+                <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+              </button>
+            ) : null}
+
             {recentChats}
 
             <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>

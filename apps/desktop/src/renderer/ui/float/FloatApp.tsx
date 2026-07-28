@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatApp, VprFloatData } from '../../types/bridge';
-import { conversationAge, conversationMatchesApp } from '../../modules/conversations';
-import { displayToolName } from '../../modules/tool-names';
+import { conversationAge, conversationMatchesApp } from '../../modules/routing/conversations';
+import { displayToolName } from '../../modules/routing/tool-names';
 import { AntStationMark } from '../components/AntStationLogo';
 import { BrandIcon } from '../components/brand/BrandIcon';
 import { OverlayScrollArea } from '../components/OverlayScrollArea';
@@ -267,6 +267,20 @@ export function FloatApp() {
   // AntSeed mark; model branding stays inside the dropdown rows.
   const badgeIcon = <AntStationMark size={26} />;
 
+  // The idle state used to read "Ready", which people took to mean the app was
+  // doing something — the one thing it doesn't mean. Name the connection
+  // instead, and spell out all three states in the tooltip.
+  const statusLabel = !runtimeOn
+    ? 'Not connected'
+    : data?.trafficActive
+      ? (recentModelLabel ?? 'Routing...')
+      : 'Connected · idle';
+  const statusHint = !runtimeOn
+    ? 'Routing is stopped — apps are not going through AntSeed. Open VPR to start it.'
+    : data?.trafficActive
+      ? 'Connected — a request is being routed right now.'
+      : 'Connected and waiting. Nothing is being routed until an app sends a request.';
+
   if (compact) {
     return (
       <div className={styles.compactRoot}>
@@ -349,20 +363,18 @@ export function FloatApp() {
               </span>
             ) : null}
           </span>
-          <span className={styles.usage}>
+          <span className={styles.usage} title={statusHint}>
             {/* Status: red when routing is stopped, steady orange while
-                ready, pulsing green while traffic moves — then naming the
-                model currently being routed (the newest chat's resolved
-                pin). */}
+                connected but idle, pulsing green while traffic moves — then
+                naming the model currently being routed (the newest chat's
+                resolved pin). */}
             <span
               className={`${styles.statusDot}${
                 runtimeOn ? (data?.trafficActive ? '' : ` ${styles.statusDotReady}`) : ` ${styles.statusDotStopped}`
               }`}
               aria-hidden="true"
             />
-            <span className={styles.usageLabel}>
-              {!runtimeOn ? 'Not connected' : data?.trafficActive ? (recentModelLabel ?? 'Routing...') : 'Ready'}
-            </span>
+            <span className={styles.usageLabel}>{statusLabel}</span>
           </span>
         </span>
       </button>
