@@ -14,6 +14,7 @@ import {
   type Step,
 } from './integrations';
 import styles from './integrations.module.css';
+import {ArrowRight, Button, FinalCta, Ticks, ticksToHtml} from '../components/ui';
 
 function CopyButton({value}: {value: string}) {
   const [copied, setCopied] = useState(false);
@@ -75,7 +76,7 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
           <summary>Show as shell exports</summary>
           <CodeBlock snippet={lines} />
         </details>
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </div>
     );
   }
@@ -83,7 +84,7 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
     return (
       <>
         <CodeBlock path={b.path} language={b.language} snippet={b.snippet} />
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </>
     );
   }
@@ -91,14 +92,14 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
     return (
       <>
         <CodeBlock language={b.language} snippet={b.snippet} />
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </>
     );
   }
   return (
     <>
-      <div className={styles.guiBlock}>{b.instructions}</div>
-      {b.note && <p className={styles.stepNote}>{b.note}</p>}
+      <div className={styles.guiBlock}><Ticks>{b.instructions}</Ticks></div>
+      {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
     </>
   );
 }
@@ -109,7 +110,7 @@ function StepBlock({s}: {s: Step}) {
       <span className={styles.stepLabel}>{s.label}</span>
       {s.command && <CodeBlock language={s.language} snippet={s.command} />}
       {s.output && <ExampleOutput label={s.outputLabel} snippet={s.output} />}
-      {s.note && <p className={styles.stepNote}>{s.note}</p>}
+      {s.note && <p className={styles.stepNote}><Ticks>{s.note}</Ticks></p>}
     </li>
   );
 }
@@ -603,7 +604,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
   return (
     <Layout
-      title={`${i.name} + AntSeed`}
+      title={i.name}
       description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${i.oneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
@@ -631,7 +632,7 @@ export default function IntegrationPage({integration}: {integration: Integration
           </div>
           <div className={styles.detailHeaderText}>
             <h1>{i.name}</h1>
-            <p className={styles.detailOneLiner}>{i.oneLiner}</p>
+            <p className={styles.detailOneLiner}><Ticks>{i.oneLiner}</Ticks></p>
             <div className={styles.detailBadgeRow}>
               <span className={`${styles.detailBadge} ${styles.detailBadgeGreen}`}>{CATEGORY_LABELS[i.category]}</span>
               <span className={styles.detailBadge}>{FORMAT_LABELS[i.format]}</span>
@@ -644,7 +645,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
         <div className={styles.description}>
           {i.description.map((p, idx) => (
-            <p key={idx} dangerouslySetInnerHTML={{__html: p}} />
+            <p key={idx} dangerouslySetInnerHTML={{__html: ticksToHtml(p)}} />
           ))}
         </div>
 
@@ -653,7 +654,7 @@ export default function IntegrationPage({integration}: {integration: Integration
         {i.prereqs && i.prereqs.length > 0 && (
           <Section eyebrow="Before you start" title="Prerequisites">
             <ul className={styles.bulletList}>
-              {i.prereqs.map((p, idx) => <li key={idx}>{p}</li>)}
+              {i.prereqs.map((p, idx) => <li key={idx}><Ticks>{p}</Ticks></li>)}
             </ul>
           </Section>
         )}
@@ -679,7 +680,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             <div className={styles.modelChips}>
               {i.modelHints.suggested.map((m) => <span key={m} className={styles.modelChip}>{m}</span>)}
             </div>
-            {i.modelHints.note && <p className={styles.modelNote}>{i.modelHints.note}</p>}
+            {i.modelHints.note && <p className={styles.modelNote}><Ticks>{i.modelHints.note}</Ticks></p>}
             <p className={styles.modelNote}>
               The exact list of models depends on which peer you pin. Run{' '}
               <code>antseed network browse</code> or open the{' '}
@@ -705,8 +706,8 @@ export default function IntegrationPage({integration}: {integration: Integration
             <ul className={styles.troubleshootList}>
               {i.troubleshooting.map((t, idx) => (
                 <li key={idx}>
-                  <strong>{t.problem}</strong>
-                  {t.fix}
+                  <strong><Ticks>{t.problem}</Ticks></strong>
+                  <Ticks>{t.fix}</Ticks>
                 </li>
               ))}
             </ul>
@@ -718,7 +719,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             <p className={styles.sectionEyebrow}>Heads up</p>
             <h2 className={styles.sectionTitle}>Caveats</h2>
             <ul className={styles.bulletList}>
-              {i.caveats.map((c, idx) => <li key={idx}>{c}</li>)}
+              {i.caveats.map((c, idx) => <li key={idx}><Ticks>{c}</Ticks></li>)}
             </ul>
           </section>
         )}
@@ -738,7 +739,7 @@ export default function IntegrationPage({integration}: {integration: Integration
         {i.agentSummary && (
           <aside className={styles.agentBox}>
             <h3>For agents</h3>
-            <p>{i.agentSummary}</p>
+            <p><Ticks>{i.agentSummary}</Ticks></p>
             <p>
               Full machine-readable catalog of every AntSeed integration:{' '}
               <a href="/skill.md">/skill.md</a>
@@ -754,11 +755,24 @@ export default function IntegrationPage({integration}: {integration: Integration
               {related.map((r) => (
                 <Link key={r.slug} to={`/integrations/${r.slug}`}>{r.name}</Link>
               ))}
-              <Link to="/integrations">All integrations →</Link>
+              <Link to="/integrations">All integrations<ArrowRight size={16} /></Link>
             </div>
           </section>
         )}
       </article>
+
+      <FinalCta
+        title={`Run ${i.name} on the open market`}
+        sub="Install AntSeed, point this tool at your local proxy, and pay per request in USDC."
+        note={
+          <>
+            <a href="/integrations">All integrations</a>
+            <a href="/docs/guides/using-the-api">Protocol guide</a>
+          </>
+        }>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Install AntSeed</Button>
+        <Button to="/providers" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }

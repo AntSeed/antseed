@@ -1,319 +1,173 @@
-/* Providers landing page — AntSeed brand plate */
-.kicker,
-.heroKicker,
-.complianceTitle,
-.pathList li,
-.pathLink,
-.privacyColLabel,
-.codeCardLabel,
-.codeTerm,
-.codeTermTitle,
-.codePre,
-.payStepNum,
-.econLabel,
-.reputationLabel {
-  font-family: var(--as-font-data);
-}
+/* ============================================================
+   PROVIDERS — page-specific pieces only. Rhythm (bands, hero,
+   headings, buttons, FAQ, closing CTA) comes from components/ui,
+   so this page speaks the same language as the homepage.
+   ============================================================ */
 
-.hero {
-  position: relative;
-  text-align: center;
-  padding: clamp(72px, 10vw, 120px) 20px 60px;
-  max-width: 900px;
-  margin: 0 auto;
-}
-.hero::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 420px;
-  background-image: var(--as-dotgrid);
-  background-size: var(--as-dotgrid-size);
-  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
-  mask-image: linear-gradient(180deg, #000 55%, transparent);
-  pointer-events: none;
-  z-index: -1;
-}
-.kicker,
-.heroKicker {
-  display: inline-block;
-  font-family: var(--as-font-data);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--as-text-2);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  margin-bottom: 20px;
-}
-.heroTitle {
-  font-family: var(--as-font-display);
-  font-size: clamp(40px, 6vw, 74px);
-  font-weight: 550;
-  line-height: 1.02;
-  letter-spacing: -0.018em;
-  margin: 0 0 24px;
-  color: var(--as-text);
-  text-wrap: balance;
-}
-.heroTitle em {
-  font-style: normal;
-  font-weight: 500;
-  color: var(--as-green);
-}
-.heroSub {
-  font-size: 16px;
-  color: var(--as-text-2);
-  line-height: 1.7;
-  max-width: 680px;
-  margin: 0 auto 36px;
-}
-.heroCtas,
-.bottomCtaBtns {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.ctaPrimary,
-.ctaSecondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 24px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none !important;
-  transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.ctaPrimary {
-  background: var(--as-ink);
-  border: 1px solid var(--as-ink);
-  color: var(--as-white) !important;
-}
-.ctaPrimary:hover {
-  background: var(--as-primary-85);
-  border-color: var(--as-primary-85);
-  color: var(--as-white) !important;
-  transform: translateY(-1px);
-}
-.ctaSecondary {
-  background: var(--as-soil-2);
-  border: 1px solid var(--as-line-strong);
-  color: var(--as-text) !important;
-}
-.ctaSecondary:hover {
-  border-color: var(--as-ink);
-  color: var(--as-text) !important;
-  transform: translateY(-1px);
-}
-
-.paths,
-.privacy,
-.code,
-.payments,
-.reputation,
-.faq {
-  padding: clamp(56px, 7vw, 88px) 60px;
-  max-width: 1120px;
-  margin: 0 auto;
-}
-.pathsHeader,
-.privacyHeader,
-.codeHeader,
-.paymentsHeader,
-.reputationHeader {
-  text-align: center;
-  margin-bottom: 44px;
-}
-.pathsHeader h2,
-.privacyHeader h2,
-.codeHeader h2,
-.paymentsHeader h2,
-.reputationHeader h2,
-.faqTitle,
-.bottomCta h2 {
-  font-family: var(--as-font-display);
-  font-size: clamp(28px, 3.4vw, 44px);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  color: var(--as-text);
-  margin: 0 0 12px;
-}
-.pathsHeader p,
-.privacyHeader p,
-.codeHeader p,
-.paymentsHeader p,
-.reputationHeader p,
-.bottomCta > p {
-  font-size: 15px;
-  color: var(--as-text-2);
-  line-height: 1.65;
-  margin: 0 auto;
-  max-width: 700px;
-}
+/* ---------- three ways to provide ---------- */
 .pathsGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
-.pathCard,
-.privacyGrid,
-.complianceCard,
-.codeTerm,
-.paymentsEcon,
-.reputationCard {
+
+.pathCard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
-  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
+  border-radius: 24px;
+  padding: 24px;
 }
-.pathCard {
-  border-radius: var(--as-radius);
-  padding: 32px;
-  transition: transform .18s ease, border-color .18s ease, background .18s ease;
-}
-.pathCard:hover {
-  transform: translateY(-2px);
-  border-color: rgba(16, 185, 129, .3);
-  background: var(--as-soil-3);
-}
+
 .pathIcon {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  background: rgba(16, 185, 129, .08);
-  border: 1px solid rgba(16, 185, 129, .18);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20px;
-  color: var(--as-green);
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--as-green-dim);
+  color: var(--as-green-deep);
+  margin-bottom: 16px;
 }
-.pathIcon svg { stroke: currentColor; }
+
 .pathCard h3 {
   font-family: var(--as-font-display);
   font-size: 24px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-  color: var(--as-text);
-  margin: 0 0 12px;
+  line-height: 31px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+  margin: 0 0 8px;
 }
-.pathCard > p,
-.payStepContent p,
-.reputationCard p,
-.reputationNote,
-.codeNote,
-.walletNote,
-.faqAnswer {
+
+.pathCard > p {
   font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
   color: var(--as-text-2);
-  line-height: 1.65;
+  margin: 0;
 }
+
 .pathList {
   list-style: none;
   padding: 0;
-  margin: 20px 0 24px;
-  display: grid;
+  margin: 16px 0 20px;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
+
 .pathList li {
-  font-size: 12px;
-  color: var(--as-text-2);
-  letter-spacing: .4px;
-}
-.pathLink,
-.codeHeader a,
-.paymentsHeader a,
-.walletNote a,
-.reputationHeader a,
-.bottomLinks a {
-  color: var(--as-green) !important;
-  text-decoration: none !important;
-  border-bottom: 1px solid rgba(16, 185, 129, .28);
-}
-.pathLink:hover,
-.codeHeader a:hover,
-.paymentsHeader a:hover,
-.walletNote a:hover,
-.reputationHeader a:hover,
-.bottomLinks a:hover {
-  color: var(--as-green-bright) !important;
-  border-color: var(--as-green);
+  position: relative;
+  padding-left: 28px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
 }
 
+.pathList li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--as-green);
+}
+
+.pathCard .pathLink {
+  margin-top: auto;
+}
+
+/* ---------- compliance note ---------- */
 .compliance {
-  padding: 0 60px 36px;
-  max-width: 980px;
-  margin: 0 auto;
-}
-.complianceCard {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   align-items: flex-start;
+  max-width: 840px;
+  margin: 12px auto 0;
+  border: 1px solid var(--as-line);
   border-left: 3px solid var(--as-risk);
-  border-radius: var(--as-radius);
-  padding: 24px 28px;
+  border-radius: 24px;
   background: var(--as-risk-dim);
-  border-top: 1px solid rgba(255, 107, 107, .12);
-  border-right: 1px solid rgba(255, 107, 107, .12);
-  border-bottom: 1px solid rgba(255, 107, 107, .12);
+  padding: 24px;
 }
+
 .complianceIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  border: 1px solid rgba(255, 107, 107, .34);
+  flex-shrink: 0;
+  border: 1px solid var(--as-risk);
   border-radius: 50%;
   color: var(--as-risk);
   font-family: var(--as-font-data);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
-  flex-shrink: 0;
 }
+
 .complianceTitle {
+  font-family: var(--as-font-data);
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1.6px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--as-risk);
-  margin: 0 0 12px;
+  color: var(--as-risk-deep);
+  margin: 0 0 8px;
 }
+
 .complianceBody p {
   font-size: 14px;
-  color: #e7b9b9;
-  line-height: 1.65;
-  margin: 0 0 12px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 8px;
 }
-.complianceBody p:last-child { margin: 0; }
-.complianceBody strong { color: #ffd6d6; }
 
+.complianceBody p:last-child {
+  margin: 0;
+}
+
+.complianceBody strong {
+  color: var(--as-heading);
+}
+
+/* ---------- what the network sees ---------- */
 .privacyGrid {
   display: grid;
-  grid-template-columns: 1fr 32px 1fr;
-  gap: 0;
-  border-radius: 18px;
-  padding: 36px 32px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
-.privacyDivider { display: flex; justify-content: center; padding: 40px 0 0; opacity: .45; }
-.privacyDivider line { stroke: rgba(151, 255, 199, .26); }
+
+.privacyCol {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  padding: 24px;
+}
+
 .privacyColLabel {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.7px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  margin-bottom: 20px;
+  margin: 0 0 8px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--as-line);
 }
-.privacyColLabel.public { color: var(--as-green); }
-.privacyColLabel.private { color: var(--as-text-3); }
+
+.public { color: var(--as-live-text); }
+.private { color: var(--as-text-3); }
+
 .privacyRow {
   display: flex;
   align-items: center;
@@ -321,271 +175,240 @@
   padding: 12px 0;
   border-bottom: 1px solid var(--as-line);
   font-size: 14px;
-  color: var(--as-text-2);
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
 }
-.privacyRow:last-child { border-bottom: none; }
-.privacyCheck { color: var(--as-green); font-size: 13px; flex-shrink: 0; }
-.privacyLock { font-size: 12px; flex-shrink: 0; opacity: .72; }
 
-.codeGrid,
-.reputationGrid {
+.privacyRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.privacyIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.privacyCol .privacyIcon { color: var(--as-text-3); }
+.privacyColPublic .privacyIcon { color: var(--as-green); }
+
+/* ---------- config ---------- */
+.codeGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 12px;
   align-items: start;
 }
-.codeCard { min-width: 0; }
+
+.codeCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
 .codeCardLabel {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--as-text-3);
+  margin: 0;
+}
+
+.codeNote {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+/* ---------- settlement ---------- */
+.payFlow {
+  display: flex;
+  flex-direction: column;
   margin-bottom: 12px;
 }
-.codeTerm,
-.walletTerm {
-  border-radius: 14px;
-  overflow: hidden;
-  font-family: var(--as-font-data);
-  min-width: 0;
-  max-width: 100%;
-  background: #02130D;
-  border: 1px solid var(--as-line-strong);
-}
-.codeTermBar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: #03251A;
-  border-bottom: 1px solid var(--as-line);
-}
-.codeTermDot { width: 10px; height: 10px; border-radius: 50%; display: block; }
-.codeTermTitle { font-size: 11px; color: var(--as-text-3); margin-left: auto; }
-.codePre {
-  margin: 0 !important;
-  padding: 16px !important;
-  font-size: 12px !important;
-  line-height: 1.75 !important;
-  color: #DCF7EE !important;
-  background: transparent !important;
-  overflow-x: auto;
-  white-space: pre;
-  border: none !important;
-  border-radius: 0 !important;
-  text-shadow: none !important;
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-}
-.codeNote { margin-top: 16px; padding: 0 4px; }
 
-.payments { max-width: 960px; width: 100%; box-sizing: border-box; overflow-x: hidden; }
-.paymentsFlow { display: flex; flex-direction: column; margin-bottom: 36px; }
 .payStep {
   display: flex;
-  gap: 24px;
+  gap: 16px;
   align-items: flex-start;
-  padding: 24px 0;
+  padding: 20px 0;
   border-bottom: 1px solid var(--as-line);
 }
-.payStep:last-child { border-bottom: none; }
+
+.payStep:last-child {
+  border-bottom: none;
+}
+
 .payStepNum {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--as-green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
-  padding-top: 4px;
-  width: 28px;
-}
-.payStepContent h4 {
+  border: 1px solid var(--as-heading);
+  border-radius: 50%;
   font-family: var(--as-font-display);
-  font-size: 17px;
-  font-weight: 550;
-  color: var(--as-text);
-  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--as-heading);
 }
-.payStepContent p { margin: 0; }
-.paymentsEcon {
-  border-radius: 16px;
+
+.payStep h3 {
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+  margin: 4px 0 4px;
+}
+
+.payStep p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+/* ---------- key/value table (economics, on-chain facts) ---------- */
+.factTable {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 12px;
 }
-.econRow {
-  display: flex;
+
+.factRow {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
   align-items: baseline;
-  gap: 20px;
   padding: 16px 24px;
   border-bottom: 1px solid var(--as-line);
 }
-.econRow:last-child { border-bottom: none; }
-.econLabel {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--as-clay);
-  letter-spacing: .9px;
-  white-space: nowrap;
-  min-width: 160px;
-  flex-shrink: 0;
-}
-.econValue { font-size: 14px; color: var(--as-text); line-height: 1.5; }
-.paymentsWallet { display: flex; flex-direction: column; gap: 16px; min-width: 0; width: 100%; overflow-x: hidden; }
-.walletNote { margin: 0; }
 
-.reputationCard {
-  border-radius: var(--as-radius);
-  padding: 28px;
+.factRow:last-child {
+  border-bottom: none;
 }
-.reputationLabel {
+
+.factLabel {
+  font-family: var(--as-font-data);
   font-size: 12px;
-  font-weight: 700;
-  color: var(--as-green);
-  margin-bottom: 8px;
-  letter-spacing: .8px;
+  line-height: 22px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--as-text-3);
 }
-.reputationCard p { margin: 0; }
-.reputationNote { text-align: center; max-width: 700px; margin: 0 auto; }
 
-.faq { max-width: 820px; }
-.faqTitle { text-align: center; margin-bottom: 32px; }
-.faqList { display: flex; flex-direction: column; }
-.faqItem { border-top: 1px solid var(--as-line); }
-.faqItemFirst { border-top: none; }
-.faqSummary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  padding: 20px 0;
-  cursor: pointer;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--as-text);
-  user-select: none;
+.factValue {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
 }
-.faqSummary:hover { color: var(--as-green); }
-.faqChevron { font-size: 22px; color: var(--as-text-3); flex-shrink: 0; transition: transform .2s, color .2s; font-weight: 300; }
-.faqChevronOpen { transform: rotate(45deg); color: var(--as-green); }
-.faqCollapse { overflow: hidden; max-height: 0; transition: max-height .25s ease; }
-.faqCollapseOpen { max-height: 480px; }
-.faqCollapseInner { padding-bottom: 20px; }
-.faqAnswer { margin: 0; }
 
-.bottomCta {
-  text-align: center;
-  padding: 72px 20px 96px;
-  max-width: 680px;
-  margin: 0 auto;
-}
-.bottomCta > p { margin-bottom: 32px; }
-.bottomLinks {
+.walletBlock {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   gap: 12px;
-  flex-wrap: wrap;
-  font-size: 13px;
-  margin-top: 28px;
+  min-width: 0;
 }
-.bottomLinks span { color: var(--as-text-3); }
 
-:global(html[data-theme='light']) .heroTitle,
-:global(html[data-theme='light']) .pathsHeader h2,
-:global(html[data-theme='light']) .privacyHeader h2,
-:global(html[data-theme='light']) .codeHeader h2,
-:global(html[data-theme='light']) .paymentsHeader h2,
-:global(html[data-theme='light']) .reputationHeader h2,
-:global(html[data-theme='light']) .faqTitle,
-:global(html[data-theme='light']) .bottomCta h2,
-:global(html[data-theme='light']) .pathCard h3,
-:global(html[data-theme='light']) .payStepContent h4,
-:global(html[data-theme='light']) .econValue,
-:global(html[data-theme='light']) .faqSummary {
-  color: #001E12;
+.walletNote {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
 }
-:global(html[data-theme='light']) .heroSub,
-:global(html[data-theme='light']) .pathsHeader p,
-:global(html[data-theme='light']) .privacyHeader p,
-:global(html[data-theme='light']) .codeHeader p,
-:global(html[data-theme='light']) .paymentsHeader p,
-:global(html[data-theme='light']) .reputationHeader p,
-:global(html[data-theme='light']) .bottomCta > p,
-:global(html[data-theme='light']) .pathCard > p,
-:global(html[data-theme='light']) .pathList li,
-:global(html[data-theme='light']) .privacyRow,
-:global(html[data-theme='light']) .payStepContent p,
-:global(html[data-theme='light']) .reputationCard p,
-:global(html[data-theme='light']) .reputationNote,
-:global(html[data-theme='light']) .codeNote,
-:global(html[data-theme='light']) .walletNote,
-:global(html[data-theme='light']) .faqAnswer {
-  color: #4A5A51;
-}
-:global(html[data-theme='light']) .pathCard,
-:global(html[data-theme='light']) .privacyGrid,
-:global(html[data-theme='light']) .codeTerm,
-:global(html[data-theme='light']) .paymentsEcon,
-:global(html[data-theme='light']) .reputationCard {
-  background: rgba(255,255,255,.74);
-  border-color: rgba(10, 111, 77, .16);
-  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
-}
-:global(html[data-theme='light']) .pathCard:hover { background: #fff; }
-:global(html[data-theme='light']) .complianceCard { background: #fff1f1; border-color: rgba(199, 58, 58, .18); border-left-color: var(--as-risk); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
-:global(html[data-theme='light']) .complianceBody p { color: #6f3333; }
-:global(html[data-theme='light']) .complianceBody strong { color: #4d1717; }
-:global(html[data-theme='light']) .ctaPrimary { background: var(--as-ink); border-color: var(--as-ink); color: var(--as-white) !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
-:global(html[data-theme='light']) .privacyRow,
-:global(html[data-theme='light']) .privacyColLabel,
-:global(html[data-theme='light']) .payStep,
-:global(html[data-theme='light']) .econRow,
-:global(html[data-theme='light']) .faqItem { border-color: rgba(10,14,20,.08); }
-:global(html[data-theme='light']) .codeTerm,
-:global(html[data-theme='light']) .walletTerm { background: #001E12; border-color: rgba(10,14,20,.12); }
 
-@media (max-width: 980px) {
-  .paths,
-  .privacy,
-  .code,
-  .payments,
-  .reputation,
-  .faq { padding: 44px 20px 64px; }
-  .compliance { padding: 0 20px 32px; }
+/* ---------- reputation ---------- */
+.repGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.repCard {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  padding: 24px;
+}
+
+.repLabel {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-live-text);
+  margin: 0 0 8px;
+}
+
+.repCard p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+.repNote {
+  max-width: 664px;
+  margin: 24px auto 0;
+  text-align: center;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 996px) {
   .pathsGrid,
   .codeGrid,
-  .reputationGrid,
-  .privacyGrid { grid-template-columns: 1fr; }
-  .privacyDivider { display: none; }
+  .privacyGrid,
+  .repGrid {
+    grid-template-columns: 1fr;
+    max-width: 560px;
+    margin-inline: auto;
+  }
 }
-@media (max-width: 620px) {
-  .hero { padding: 64px 20px 44px; }
-  .heroTitle { font-size: clamp(34px, 11vw, 50px); }
-  .heroCtas,
-  .bottomCtaBtns { flex-direction: column; align-items: stretch; }
-  .ctaPrimary,
-  .ctaSecondary { width: 100%; }
+
+@media (max-width: 640px) {
   .pathCard,
-  .reputationCard { padding: 24px; }
-  .privacyGrid { padding: 24px 20px; }
-  .complianceCard { padding: 20px; }
-  .econRow { flex-direction: column; gap: 4px; padding: 16px 20px; }
-  .econLabel { min-width: 0; }
-  .codePre { font-size: 11px !important; }
-  .bottomLinks { flex-direction: column; gap: 8px; }
-  .bottomLinks span { display: none; }
-}
+  .privacyCol,
+  .repCard,
+  .compliance {
+    padding: 20px;
+    border-radius: 20px;
+  }
 
+  .factTable {
+    border-radius: 20px;
+  }
 
-/* Dark mode — ink buttons flip to emerald so they stay visible */
-:global(html[data-theme='dark']) .ctaPrimary {
-  background: var(--as-primary-5);
-  border-color: var(--as-primary-5);
-  color: #001E12 !important;
-}
-:global(html[data-theme='dark']) .ctaPrimary:hover {
-  background: var(--as-primary-4);
-  border-color: var(--as-primary-4);
-  color: #001E12 !important;
+  .factRow {
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 16px 20px;
+  }
+
+  .payStep {
+    gap: 12px;
+  }
 }

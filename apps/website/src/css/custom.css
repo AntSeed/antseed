@@ -753,10 +753,18 @@ aside.theme-doc-sidebar-container {
   max-width: 100% !important;
 }
 
-/* Content area max-width to match original (~600px text + padding) */
+/* …except on docs with no sidebar (e.g. /docs/faq), where flush-left
+   content would hug the viewport edge. */
+[class*='docMainContainerEnhanced'] .container {
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 1100px !important;
+}
+
+/* Reading column — same measure the marketing pages use for prose */
 .theme-doc-markdown {
-  max-width: 768px;
-  padding: 24px;
+  max-width: 800px;
+  padding: 40px 24px 64px;
 }
 
 /* Hide breadcrumbs */
@@ -772,58 +780,57 @@ aside.theme-doc-sidebar-container {
   flex: 1 !important;
 }
 
-/* Doc page title — the first h1/h2 */
+/* Doc headings speak the same display face as the rest of the site —
+   only code stays mono. */
 .markdown h1 {
-  font-family: var(--as-font-data);
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--as-font-display);
+  font-size: clamp(32px, 3.4vw, 40px);
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.5px;
   color: var(--ifm-heading-color);
-  margin-bottom: 12px;
-}
-
-.markdown h1::before {
-  content: '# ';
-  opacity: 0.3;
-  color: var(--ifm-color-primary-dark);
+  margin-bottom: 20px;
 }
 
 .markdown h2 {
-  font-family: var(--as-font-data);
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--as-font-display);
+  font-size: 24px;
+  line-height: 31px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--ifm-heading-color);
-  margin-top: 32px;
+  margin-top: 48px;
   margin-bottom: 12px;
   border-bottom: none;
   padding-bottom: 0;
 }
 
-.markdown h2::before {
-  content: '## ';
-  opacity: 0.3;
-  color: var(--ifm-color-primary-dark);
+.markdown h3 {
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ifm-heading-color);
+  margin-top: 32px;
+  margin-bottom: 8px;
 }
 
-.markdown h3 {
-  font-family: var(--as-font-data);
-  font-size: 13px;
-  font-weight: 700;
+.markdown h4 {
+  font-family: var(--as-font-display);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
   color: var(--ifm-heading-color);
   margin-top: 24px;
   margin-bottom: 8px;
 }
 
-.markdown h3::before {
-  content: '### ';
-  opacity: 0.3;
-  color: var(--ifm-color-primary-dark);
-}
-
 .markdown p {
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--ifm-font-color-base);
-  margin-bottom: 12px;
+  font-size: 15px;
+  line-height: 26px;
+  color: var(--as-text-2);
+  margin-bottom: 16px;
 }
 
 .markdown ul {
@@ -837,21 +844,39 @@ aside.theme-doc-sidebar-container {
 }
 
 .markdown li {
-  font-size: 14px;
-  color: var(--ifm-font-color-base);
+  font-size: 15px;
+  line-height: 26px;
+  color: var(--as-text-2);
+}
+
+.markdown a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.markdown blockquote {
+  border-left: 2px solid var(--as-line-strong);
+  border-radius: 0 16px 16px 0;
+  background: var(--as-soil-0);
+  padding: 16px 20px;
+  margin: 24px 0;
+}
+
+.markdown blockquote p:last-child {
+  margin-bottom: 0;
 }
 
 .markdown strong {
-  color: var(--ifm-heading-color);
-  font-weight: 700;
+  color: var(--as-heading);
+  font-weight: 600;
 }
 
 .markdown code {
   color: var(--as-inline-code-text);
   background: var(--as-inline-code-bg);
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 4px;
+  font-size: 0.85em;
+  padding: 2px 6px;
+  border-radius: 6px;
 }
 
 .markdown table {
@@ -881,6 +906,67 @@ aside.theme-doc-sidebar-container {
 
 .markdown table thead tr {
   border-bottom-color: var(--ifm-hr-border-color);
+}
+
+/* =============================================
+   Standalone markdown pages (Terms of Service, …)
+   — same reading voice as the docs.
+   ============================================= */
+[class*='mdxPageWrapper'] {
+  padding-top: 32px;
+}
+
+[class*='mdxPageWrapper'] article {
+  max-width: 800px;
+}
+
+[class*='mdxPageWrapper'] article h1 {
+  font-family: var(--as-font-display);
+  font-size: clamp(32px, 3.4vw, 40px);
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  margin-bottom: 20px;
+}
+
+[class*='mdxPageWrapper'] article h2 {
+  font-family: var(--as-font-display);
+  font-size: 24px;
+  line-height: 31px;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-top: 48px;
+  margin-bottom: 12px;
+}
+
+[class*='mdxPageWrapper'] article h3 {
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-top: 32px;
+  margin-bottom: 8px;
+}
+
+[class*='mdxPageWrapper'] article p,
+[class*='mdxPageWrapper'] article li {
+  font-size: 15px;
+  line-height: 26px;
+  color: var(--as-text-2);
+}
+
+[class*='mdxPageWrapper'] article strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+[class*='mdxPageWrapper'] article blockquote {
+  border-left: 2px solid var(--as-line-strong);
+  border-radius: 0 16px 16px 0;
+  background: var(--as-soil-0);
+  padding: 16px 20px;
+  margin: 24px 0;
 }
 
 /* =============================================
@@ -920,9 +1006,9 @@ pre code,
 
 /* Code blocks read as terminal cards */
 .theme-code-block {
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
-  border: 1px solid rgba(107, 213, 177, 0.16);
+  border: 1px solid var(--as-line-on-void);
   box-shadow: none;
 }
 
@@ -940,20 +1026,30 @@ pre code,
    Pagination — keep but style to match theme
    ============================================= */
 .pagination-nav__link {
-  border-color: var(--ifm-toc-border-color);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  padding: 20px 24px;
   background: transparent;
+  transition: border-color 0.15s ease;
 }
 
 .pagination-nav__link:hover {
-  border-color: var(--ifm-color-primary);
+  border-color: var(--as-line-strong);
 }
 
 .pagination-nav__sublabel {
-  color: var(--ifm-font-color-secondary);
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
 }
 
 .pagination-nav__label {
-  color: var(--ifm-heading-color);
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--as-heading);
 }
 
 /* =============================================
@@ -1306,9 +1402,36 @@ html[data-theme='light'] main[class*='blog'] {
 .blog-wrapper footer a b,
 .blog-wrapper a[class*='readMore'],
 .blog-wrapper .button {
-  font-family: var(--as-font-data);
-  color: var(--as-green) !important;
-  letter-spacing: 0.06em;
+  font-family: var(--as-font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--as-green-deep) !important;
+  letter-spacing: 0;
+}
+
+/* Author block is chrome, not data — keep it in the UI face */
+.blog-wrapper .avatar__name,
+.blog-wrapper .avatar__subtitle {
+  font-family: var(--as-font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.blog-wrapper .avatar__name,
+.blog-wrapper [class*='authorName'] {
+  font-family: var(--as-font-ui);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+}
+
+.blog-wrapper [class*='authorTitle'] {
+  font-family: var(--as-font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--as-text-3);
 }
 .blog-wrapper footer a:hover b,
 .blog-wrapper a[class*='readMore']:hover {
@@ -1329,8 +1452,29 @@ html[data-theme='light'] main[class*='blog'] {
 .blog-wrapper aside a,
 .blog-wrapper [class*='blogSidebar'] a {
   color: var(--as-text-2);
+  font-family: var(--as-font-ui);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+}
+
+/* Sidebar heading + year labels stay small caps, not mono paragraphs */
+.blog-wrapper aside nav > div:first-child,
+.blog-wrapper [class*='sidebarItemTitle'] {
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+}
+
+.blog-wrapper [class*='yearGroupHeading'] {
   font-family: var(--as-font-data);
   font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
 }
 .blog-wrapper aside a:hover,
 .blog-wrapper [class*='blogSidebar'] a:hover {
@@ -1359,10 +1503,8 @@ html[data-theme='light'] main[class*='blog'] {
 .blog-wrapper .pagination-nav__label {
   color: var(--as-text);
 }
-.blog-wrapper .avatar__name,
 .blog-wrapper .avatar__subtitle {
-  color: var(--as-text-2);
-  font-family: var(--as-font-data);
+  color: var(--as-text-3);
 }
 .blog-wrapper hr {
   border-color: rgba(151,255,199,0.09);

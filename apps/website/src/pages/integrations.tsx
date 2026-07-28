@@ -12,7 +12,7 @@ import {
   type Integration,
 } from '../integrations/integrations';
 import styles from '../integrations/integrations.module.css';
-import {Button} from '../components/ui';
+import {ArrowRight, Button, FinalCta, PageHero, Section, Ticks} from '../components/ui';
 
 /* --------------------------- Category icons --------------------------- *
  * Inline SVG, ~20x20, stroke-based. Centralized so we don't sprinkle
@@ -94,13 +94,13 @@ function IntegrationCard({i}: {i: Integration}) {
           <h3 className={styles.cardTitle}>{i.name}</h3>
         </div>
       </div>
-      <p className={styles.cardLine}>{i.oneLiner}</p>
+      <p className={styles.cardLine}><Ticks>{i.oneLiner}</Ticks></p>
       <div className={styles.cardFooter}>
         <span className={styles.cardSetup}>{i.setupMinutes} min</span>
         {i.status !== 'verified' && (
           <span className={styles.cardSetup}>{STATUS_LABELS[i.status]}</span>
         )}
-        <span className={styles.cardArrow} aria-hidden="true">→</span>
+        <span className={styles.cardArrow}><ArrowRight size={18} /></span>
       </div>
     </Link>
   );
@@ -188,7 +188,7 @@ export default function ConnectHub(): JSX.Element {
 
   return (
     <Layout
-      title="Integrations — AntSeed"
+      title="Integrations"
       description="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible. Drop-in via localhost:8377.">
       <Head>
         <link
@@ -199,101 +199,118 @@ export default function ConnectHub(): JSX.Element {
         />
       </Head>
 
-      <section className={styles.hero}>
-        <span className={styles.kicker}>Integrations</span>
-        <h1 className={styles.heroTitle}>One local endpoint. Every tool you already use.</h1>
-        <p className={styles.heroSub}>
-          AntSeed runs a buyer proxy at <code>http://localhost:8377</code> that speaks{' '}
-          <strong>all four major LLM API protocols</strong> — Anthropic Messages,
-          OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions — and
-          translates between them on the fly. Pick your tool below; AntSeed makes it
-          fit. Each <em>service</em> on the network advertises which protocols it
-          accepts <em>natively</em> in <code>providerServiceApiProtocols</code> —
-          matching your tool's wire format to that list is the smoothest path.
-        </p>
-        <div className={styles.heroCtaRow}>
-          <Button to="/docs/install" arrow>Install AntSeed</Button>
-          <Button href="/skill.md" variant="ghost" arrow>For agents: skill.md</Button>
+      <PageHero
+        kicker="Integrations"
+        title="One local endpoint. Every tool you already use."
+        lead={
+          <>
+            AntSeed runs a buyer proxy at <code>http://localhost:8377</code> that speaks{' '}
+            <strong>all four major LLM API protocols</strong> — Anthropic Messages,
+            OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions — and
+            translates between them on the fly. Pick your tool below; AntSeed makes it fit.
+          </>
+        }>
+        <Button to="/docs/install" arrow>Install AntSeed</Button>
+        <Button href="/skill.md" variant="ghost">For agents: skill.md</Button>
+      </PageHero>
+
+      <Section tone="tinted" width="xl" compact>
+        <nav className={styles.jumpNav} aria-label="Jump to category">
+          {CATEGORY_ORDER.map((cat) => {
+            const count = grouped[cat].length;
+            if (count === 0) return null;
+            return (
+              <a
+                key={cat}
+                href={`#cat-${cat}`}
+                data-jump={`cat-${cat}`}
+                className={styles.jumpLink}>
+                <span className={styles.jumpIcon}>
+                  <CategoryIcon category={cat} />
+                </span>
+                <span className={styles.jumpLabel}>{CATEGORY_LABELS[cat]}</span>
+                <span className={styles.jumpCount}>{count}</span>
+              </a>
+            );
+          })}
+        </nav>
+
+        <div className={styles.searchRow}>
+          <input
+            type="search"
+            placeholder="Search integrations…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={styles.search}
+          />
+          {query && (
+            <span className={styles.resultCount}>
+              {totalShown} match{totalShown === 1 ? '' : 'es'}
+            </span>
+          )}
         </div>
-      </section>
+      </Section>
 
-      <nav className={styles.jumpNav} aria-label="Jump to category">
-        {CATEGORY_ORDER.map((cat) => {
-          const count = grouped[cat].length;
-          if (count === 0) return null;
-          return (
-            <a
-              key={cat}
-              href={`#cat-${cat}`}
-              data-jump={`cat-${cat}`}
-              className={styles.jumpLink}>
-              <span className={styles.jumpIcon}>
-                <CategoryIcon category={cat} />
-              </span>
-              <span className={styles.jumpLabel}>{CATEGORY_LABELS[cat]}</span>
-              <span className={styles.jumpCount}>{count}</span>
-            </a>
-          );
-        })}
-      </nav>
-
-      <section className={styles.searchRow}>
-        <input
-          type="search"
-          placeholder="Search integrations…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className={styles.search}
-        />
-        {query && (
-          <span className={styles.resultCount}>
-            {totalShown} match{totalShown === 1 ? '' : 'es'}
-          </span>
-        )}
-      </section>
-
-      <div className={styles.sections}>
-        {totalShown === 0 ? (
-          <p className={styles.noResults}>
-            No matches for <strong>{query}</strong>. Try the{' '}
-            <Link to="/integrations/curl">raw HTTP page</Link> — anything that speaks Anthropic or
-            OpenAI works.
-          </p>
-        ) : (
-          CATEGORY_ORDER.map((cat) => (
-            <CategorySection key={cat} category={cat} items={grouped[cat]} />
-          ))
-        )}
-      </div>
-
-      <section className={styles.bottomBlock}>
-        <div>
-          <h3>Don't see your tool?</h3>
-          <p>
-            If your tool accepts an Anthropic or OpenAI base URL, AntSeed already works with
-            it — see the <Link to="/integrations/curl">raw HTTP page</Link> for the contract. Want
-            it added here? Open a PR on{' '}
-            <a
-              href="https://github.com/AntSeed/antseed/blob/main/apps/website/src/integrations/integrations.ts"
-              target="_blank"
-              rel="noopener noreferrer">
-              integrations.ts
-            </a>
-            .
-          </p>
+      <Section width="xl">
+        <div className={styles.sections}>
+          {totalShown === 0 ? (
+            <p className={styles.noResults}>
+              No matches for <strong>{query}</strong>. Try the{' '}
+              <Link to="/integrations/curl">raw HTTP page</Link> — anything that speaks Anthropic or
+              OpenAI works.
+            </p>
+          ) : (
+            CATEGORY_ORDER.map((cat) => (
+              <CategorySection key={cat} category={cat} items={grouped[cat]} />
+            ))
+          )}
         </div>
-        <div>
-          <h3>Building an integration?</h3>
-          <p>
-            Read the <Link to="/docs/guides/using-the-api">protocol guide</Link>, grab{' '}
-            <a href="/skill.md">skill.md</a> for your agent, and ping us in{' '}
-            <a href="https://t.me/antseed" target="_blank" rel="noopener noreferrer">
-              Telegram
-            </a>{' '}
-            for partner verification.
-          </p>
+      </Section>
+
+      <Section tone="tinted">
+        <div className={styles.bottomBlock}>
+          <div>
+            <h3>Don't see your tool?</h3>
+            <p>
+              If your tool accepts an Anthropic or OpenAI base URL, AntSeed already works with
+              it — see the <Link to="/integrations/curl">raw HTTP page</Link> for the contract. Want
+              it added here? Open a PR on{' '}
+              <a
+                href="https://github.com/AntSeed/antseed/blob/main/apps/website/src/integrations/integrations.ts"
+                target="_blank"
+                rel="noopener noreferrer">
+                integrations.ts
+              </a>
+              .
+            </p>
+          </div>
+          <div>
+            <h3>Building an integration?</h3>
+            <p>
+              Read the <Link to="/docs/guides/using-the-api">protocol guide</Link>, grab{' '}
+              <a href="/skill.md">skill.md</a> for your agent, and ping us in{' '}
+              <a href="https://t.me/antseed" target="_blank" rel="noopener noreferrer">
+                Telegram
+              </a>{' '}
+              for partner verification.
+            </p>
+          </div>
         </div>
-      </section>
+      </Section>
+
+      <FinalCta
+        title="Point your tools at AntSeed"
+        sub="Install once, set one environment variable, and keep the workflow you already have."
+        note={
+          <>
+            <a href="/docs/install">Install guide</a>
+            <a href="/docs/guides/using-the-api">Protocol guide</a>
+            <a href="/skill.md">skill.md</a>
+          </>
+        }>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Install AntSeed</Button>
+        <Button to="/providers" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }

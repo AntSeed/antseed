@@ -1,8 +1,17 @@
 import {useState, useEffect} from 'react';
-import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {
+  ArrowRight,
+  Button,
+  FinalCta,
+  PageHero,
+  Reveal,
+  Section,
+  SectionHeader,
+  StatTile,
+} from '../components/ui';
 
 const DUNE_URL = 'https://dune.com/antseed_com/antseed';
 const ANTS_TOKEN_ADDRESS = '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263';
@@ -60,6 +69,16 @@ const INITIAL_EMISSION = 5_000_000;
 const HALVING_INTERVAL = 104;
 
 /* ── SUPPLY BAR ────────────────────────────────────────────────── */
+/* ── SVG icons ─────────────────────────────────────────────────── */
+function ChartIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 3v18h18" />
+      <path d="M7 16l4-8 4 4 5-9" />
+    </svg>
+  );
+}
+
 function SupplyBar({totalSupply}: {totalSupply: number}) {
   const ratio = (totalSupply / MAX_SUPPLY) * 100;
   return (
@@ -120,12 +139,12 @@ function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; curr
   const pillY = curY - 38;
 
   return (
-    <div className={styles.halvingChart}>
+    <div className={`${styles.card} ${styles.halvingChart}`}>
       <svg viewBox={`0 0 ${W} ${H}`} className={styles.halvingSvg}>
         <defs>
           <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--as-green)" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="var(--as-green)" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--as-clay)" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="var(--as-clay)" stopOpacity="0" />
           </linearGradient>
         </defs>
 
@@ -162,7 +181,7 @@ function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; curr
         <path d={areaD} fill="url(#curveFill)" />
 
         {/* Main curve */}
-        <path d={pathD} fill="none" stroke="var(--as-green)" strokeWidth="2" strokeLinejoin="round" />
+        <path d={pathD} fill="none" stroke="var(--as-clay)" strokeWidth="2" strokeLinejoin="round" />
 
         {/* Vertical "now" line */}
         <line
@@ -175,7 +194,7 @@ function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; curr
 
         {/* Pulse + core dot */}
         <circle cx={curX} cy={curY} r="10" className={styles.halvingPulse} />
-        <circle cx={curX} cy={curY} r="5" fill="var(--as-green)" stroke="#fff" strokeWidth="2" />
+        <circle cx={curX} cy={curY} r="5" fill="var(--as-clay)" stroke="var(--as-soil-2)" strokeWidth="2" />
 
         {/* "You are here" pill */}
         <g>
@@ -190,7 +209,7 @@ function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; curr
           </text>
           <path
             d={`M${curX - 4},${pillY + 26} L${curX + 4},${pillY + 26} L${curX},${pillY + 32} Z`}
-            fill="#1a1a1a"
+            fill="var(--as-void)"
           />
         </g>
 
@@ -217,7 +236,7 @@ function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; curr
 /* ── EARN FLOW (animated) ──────────────────────────────────────── */
 function EarnFlow(): JSX.Element {
   return (
-    <div className={styles.flowCard}>
+    <div className={`${styles.card} ${styles.flowCard}`}>
       <svg
         viewBox="0 0 800 220"
         preserveAspectRatio="xMidYMid meet"
@@ -239,21 +258,21 @@ function EarnFlow(): JSX.Element {
 
         {/* Buyer */}
         <g>
-          <rect x="40" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
+          <rect x="40" y="30" width="160" height="80" rx="16" className={styles.flowBox} />
           <text x="120" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Buyer</text>
           <text x="120" y="88" textAnchor="middle" className={styles.flowBoxSub}>deposits USDC</text>
         </g>
 
         {/* Seller */}
         <g>
-          <rect x="320" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
+          <rect x="320" y="30" width="160" height="80" rx="16" className={styles.flowBox} />
           <text x="400" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Seller</text>
           <text x="400" y="88" textAnchor="middle" className={styles.flowBoxSub}>stakes · serves</text>
         </g>
 
         {/* $ANTS Emissions */}
         <g>
-          <rect x="600" y="30" width="160" height="80" rx="14" className={styles.flowBoxMint} />
+          <rect x="600" y="30" width="160" height="80" rx="16" className={styles.flowBoxMint} />
           <text x="680" y="63" textAnchor="middle" className={styles.flowBoxTitleMint}>$ANTS Emissions</text>
           <text x="680" y="88" textAnchor="middle" className={styles.flowBoxSubMint}>epoch tracking</text>
         </g>
@@ -316,128 +335,131 @@ export default function AntsToken(): JSX.Element {
 
   return (
     <Layout
-      title="ANTS Token | AntSeed"
+      title="ANTS Token"
       description="ANTS is intended as a utility and coordination token for the AntSeed ecosystem. Holding ANTS does not represent equity, ownership, debt, or a right to payments."
     >
-
-      {/* ── HERO ── */}
-      <section className={styles.hero}>
-        <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.heroKicker}>$ANTS</a>
-        <h1 className={styles.heroTitle}>
-          A utility token for<br />
-          <em>open AI coordination.</em>
-        </h1>
-        <div className={styles.heroStatus}>
-          <span className={styles.statusDot} />
-          <span className={styles.statusText}>Tokens Restricted</span>
-        </div>
-        <p className={styles.heroSub}>
-          ANTS is intended as a utility and coordination token for the AntSeed ecosystem.
-          Holding ANTS does not represent equity, ownership, debt, profit share, revenue share,
-          claim on assets, or any right to receive payments. ANTS distribution is meant for eligible
-          users and providers who help the network grow.
-        </p>
-        <a
-          href="https://x.com/AntSeedAI/status/2053924623935218044"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.protocolNotice}
-        >
-          Token economics are evolving →
-        </a>
-        <div className={styles.heroCtas}>
-          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
-            Download AntStation →
+      <PageHero
+        accent="clay"
+        kicker={
+          <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.heroKicker}>
+            $ANTS
           </a>
-          <Link to="/docs/lightpaper" className={styles.ctaSecondary}>Lightpaper</Link>
-        </div>
-      </section>
+        }
+        title={
+          <>
+            A utility token for<br />
+            <em>open AI coordination.</em>
+          </>
+        }
+        badge={
+          <span className={styles.statusPill}>
+            <span className={styles.statusDot} aria-hidden="true" />
+            Tokens restricted
+          </span>
+        }
+        lead="ANTS is intended as a utility and coordination token for the AntSeed ecosystem. Holding ANTS does not represent equity, ownership, debt, profit share, revenue share, claim on assets, or any right to receive payments. ANTS distribution is meant for eligible users and providers who help the network grow."
+        note={
+          <a
+            href="https://x.com/AntSeedAI/status/2053924623935218044"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.noticeLink}>
+            Token economics are evolving
+            <ArrowRight size={16} />
+          </a>
+        }>
+        <Button href={download.href} variant="clay" arrow>Download AntStation</Button>
+        <Button to="/docs/lightpaper" variant="ghost">Lightpaper</Button>
+      </PageHero>
 
       {/* ── TOKEN OVERVIEW ── */}
-      <section className={styles.overview}>
-        <div className={styles.overviewHeader}>
-          <h2>Token supply</h2>
-          <p>1.04 billion hard cap. No minting beyond emissions. No admin mint function.</p>
-        </div>
+      <Section tone="tinted">
+        <Reveal>
+          <SectionHeader
+            title="Token supply"
+            lead="1.04 billion hard cap. No minting beyond emissions. No admin mint function."
+          />
+        </Reveal>
 
-        <SupplyBar totalSupply={totalSupply} />
+        <Reveal>
+          <SupplyBar totalSupply={totalSupply} />
+        </Reveal>
 
-        <div className={styles.statsGrid}>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{totalSupply / 1e6}M</div>
-            <div className={styles.statLabel}>Current Supply</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{Math.round(totalSupply / MAX_SUPPLY * 10000) / 100}%</div>
-            <div className={styles.statLabel}>Available</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>Epoch {epoch}</div>
-            <div className={styles.statLabel}>Current Epoch</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{timeLeft}</div>
-            <div className={styles.statLabel}>Until Next Epoch</div>
-          </div>
-        </div>
-      </section>
+        <Reveal className={styles.statsGrid} delay={80}>
+          <StatTile value={`${totalSupply / 1e6}M`} label="Current supply" />
+          <StatTile
+            value={`${Math.round((totalSupply / MAX_SUPPLY) * 10000) / 100}%`}
+            label="Available"
+          />
+          <StatTile value={`Epoch ${epoch}`} label="Current epoch" />
+          <StatTile value={timeLeft} label="Until next epoch" />
+        </Reveal>
+      </Section>
 
       {/* ── HOW TO EARN ── */}
-      <section className={styles.earn}>
-        <div className={styles.earnHeader}>
-          <h2>ANTS incentives</h2>
-          <p>
-            ANTS emissions track eligible real activity on the network. Claimability and distribution may be subject to caps, validation, locking, and anti-abuse checks.
-          </p>
-        </div>
+      <Section>
+        <Reveal>
+          <SectionHeader
+            title="ANTS incentives"
+            lead="ANTS emissions track eligible real activity on the network. Claimability and distribution may be subject to caps, validation, locking, and anti-abuse checks."
+          />
+        </Reveal>
 
-        <EarnFlow />
+        <Reveal>
+          <EarnFlow />
+        </Reveal>
 
         <div className={styles.earnGrid}>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>01</div>
-            <h3>As a seller</h3>
-            <p>Serve real requests and settle on-chain. Seller ANTS emissions come from the 50% Provider Pool and are capped at 50% of that seller bucket per seller per epoch; rewards are currently routed into a locked Provider Pool while stronger validation and proof systems are introduced.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>02</div>
-            <h3>As a buyer</h3>
-            <p>Deposit USDC, use the network, and pay for AI services. Buyer emissions come from the 20% buyer pool and are capped at 5% of that buyer bucket per buyer per epoch, with quality filters and anti-abuse checks for real demand.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>03</div>
-            <h3>Claimability</h3>
-            <p>Eligible buyer emissions may be claimable after epoch finalization. Seller emissions remain locked in the Provider Pool for now and may be subject to future verification or slashing before becoming claimable.</p>
-          </div>
+          {[
+            {
+              step: '1',
+              title: 'As a seller',
+              body: 'Serve real requests and settle on-chain. Seller ANTS emissions come from the 50% Provider Pool and are capped at 50% of that seller bucket per seller per epoch; rewards are currently routed into a locked Provider Pool while stronger validation and proof systems are introduced.',
+            },
+            {
+              step: '2',
+              title: 'As a buyer',
+              body: 'Deposit USDC, use the network, and pay for AI services. Buyer emissions come from the 20% buyer pool and are capped at 5% of that buyer bucket per buyer per epoch, with quality filters and anti-abuse checks for real demand.',
+            },
+            {
+              step: '3',
+              title: 'Claimability',
+              body: 'Eligible buyer emissions may be claimable after epoch finalization. Seller emissions remain locked in the Provider Pool for now and may be subject to future verification or slashing before becoming claimable.',
+            },
+          ].map((c, i) => (
+            <Reveal key={c.title} className={`${styles.card} ${styles.earnCard}`} delay={i * 100}>
+              <span className={styles.earnStep}>{c.step}</span>
+              <h3>{c.title}</h3>
+              <p>{c.body}</p>
+            </Reveal>
+          ))}
         </div>
-      </section>
+      </Section>
 
       {/* ── EMISSIONS ── */}
-      <section className={styles.emissions}>
-        <div className={styles.emissionsHeader}>
-          <h2>Emission schedule</h2>
-          <p>
-            Each epoch (1 week) distributes a fixed ANTS budget. Every 104 epochs (~2 years),
-            the budget halves. Six halvings reduce emissions to near-zero.
-          </p>
-        </div>
+      <Section tone="tinted">
+        <Reveal>
+          <SectionHeader
+            title="Emission schedule"
+            lead="Each epoch (1 week) distributes a fixed ANTS budget. Every 104 epochs (~2 years), the budget halves. Six halvings reduce emissions to near-zero."
+          />
+        </Reveal>
 
-        <HalvingCurve currentEpoch={epoch} currentBudget={epochBudget} />
+        <Reveal>
+          <HalvingCurve currentEpoch={epoch} currentBudget={epochBudget} />
+        </Reveal>
 
-        <div className={styles.emissionsCurrentCard}>
-          <div className={styles.emissionsCurrentTitle}>
+        <Reveal className={`${styles.card} ${styles.budgetCard}`} delay={80}>
+          <span className={styles.budgetLabel}>
             {started ? 'Current epoch budget' : 'First epoch budget'}
-          </div>
-          <div className={styles.emissionsCurrentValue}>
-            {(epochBudget / 1e6).toFixed(0)}M ANTS
-          </div>
-          <div className={styles.emissionsCurrentSub}>
+          </span>
+          <strong className={styles.budgetValue}>{(epochBudget / 1e6).toFixed(0)}M ANTS</strong>
+          <span className={styles.budgetSub}>
             {started
               ? `${emissionRate.toFixed(3)} ANTS/sec · next halving in ${nextHalvingIn} epochs`
-              : 'Emissions begin when the contract is deployed on Base'
-            }
-          </div>
-        </div>
+              : 'Emissions begin when the contract is deployed on Base'}
+          </span>
+        </Reveal>
 
         <div className={styles.splitGrid}>
           {[
@@ -445,52 +467,55 @@ export default function AntsToken(): JSX.Element {
             {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Capped at 5% of the buyer bucket per buyer per epoch; cap overages flow to the reserve.', accent: false},
             {pct: '15%', label: 'Ecosystem Reserve', desc: 'May support long-term network sustainability, trust, utility, grants, incentives, and alignment. Receives seller and buyer cap overages. Tokenholders do not own the reserve.', accent: false},
             {pct: '15%', label: 'Contributors', desc: 'Vested contributor allocation intended to align long-term development and ecosystem health.', accent: false},
-          ].map(s => (
-            <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
+          ].map((s, i) => (
+            <Reveal
+              key={s.label}
+              className={`${styles.card} ${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}
+              delay={i * 80}>
               <div className={styles.splitPct}>{s.pct}</div>
               <div className={styles.splitLabel}>{s.label}</div>
               <p className={styles.splitDesc}>{s.desc}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
-      </section>
+      </Section>
 
       {/* ── NETWORK ACTIVITY (Dune) ── */}
-      <section className={styles.activity}>
-        <div className={styles.activityHeader}>
-          <h2>Network activity</h2>
-          <p>Network usage and settlement data from Base. No token value, burn, distribution, or return is promised.</p>
-        </div>
+      <Section>
+        <Reveal>
+          <SectionHeader
+            title="Network activity"
+            lead="Network usage and settlement data from Base. No token value, burn, distribution, or return is promised."
+          />
+        </Reveal>
 
-        <a href={DUNE_URL} target="_blank" rel="noopener noreferrer" className={styles.duneBanner}>
-          <div className={styles.duneBannerContent}>
-            <div className={styles.duneBannerIcon}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3v18h18"/>
-                <path d="M7 16l4-8 4 4 5-9"/>
-              </svg>
-            </div>
-            <div className={styles.duneBannerText}>
-              <div className={styles.duneBannerTitle}>Live on Dune Analytics</div>
-              <div className={styles.duneBannerSub}>
+        <Reveal>
+          <a
+            href={DUNE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${styles.card} ${styles.duneBanner}`}>
+            <span className={styles.duneIcon}><ChartIcon /></span>
+            <span>
+              <span className={styles.duneTitle}>Live on Dune Analytics</span>
+              <span className={styles.duneSub}>
                 Volume, channels, fees, deposits, and protocol activity, all from on-chain data.
-                Open dashboard →
-              </div>
-            </div>
-          </div>
-        </a>
-      </section>
+              </span>
+            </span>
+          </a>
+        </Reveal>
+      </Section>
 
       {/* ── CONTRACT DETAILS ── */}
-      <section className={styles.contracts}>
-        <div className={styles.contractsHeader}>
-          <h2>On-chain details</h2>
-        </div>
-        <div className={styles.contractsTable}>
-          <div className={styles.contractsRow}>
-            <span className={styles.contractsLabel}>Token contract</span>
-            <span className={styles.contractsValue}>
-              <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.contractsLink}>
+      <Section tone="tinted" width="md">
+        <Reveal>
+          <SectionHeader title="On-chain details" />
+        </Reveal>
+        <Reveal className={`${styles.card} ${styles.factTable}`}>
+          <div className={styles.factRow}>
+            <span className={styles.factLabel}>Token contract</span>
+            <span className={styles.factValue}>
+              <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.factLink}>
                 {ANTS_TOKEN_ADDRESS.slice(0, 6)}...{ANTS_TOKEN_ADDRESS.slice(-4)} on Base
               </a>
             </span>
@@ -508,34 +533,29 @@ export default function AntsToken(): JSX.Element {
             {label: 'Cap overages', value: 'Seller and buyer cap overages are redirected to the Ecosystem Reserve'},
             {label: 'Anti-abuse policy', value: 'Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing'},
             {label: 'Transfers', value: 'Currently restricted'},
-          ].map(r => (
-            <div key={r.label} className={styles.contractsRow}>
-              <span className={styles.contractsLabel}>{r.label}</span>
-              <span className={styles.contractsValue}>{r.value}</span>
+          ].map((r) => (
+            <div key={r.label} className={styles.factRow}>
+              <span className={styles.factLabel}>{r.label}</span>
+              <span className={styles.factValue}>{r.value}</span>
             </div>
           ))}
-        </div>
-      </section>
+        </Reveal>
+      </Section>
 
-      {/* ── BOTTOM CTA ── */}
-      <section className={styles.bottomCta}>
-        <h2>Help build the network</h2>
-        <p>Download AntStation, use the network for real AI work, run a provider, and help improve the open-source protocol.</p>
-        <div className={styles.bottomCtaBtns}>
-          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
-            Download AntStation →
-          </a>
-          <Link to="/providers" className={styles.ctaSecondary}>Become a provider</Link>
-        </div>
-        <div className={styles.bottomLinks}>
-          <Link to="/docs/lightpaper">Lightpaper</Link>
-          <span>·</span>
-          <Link to="/docs/payments">Payment protocol</Link>
-          <span>·</span>
-          <a href={DUNE_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
-        </div>
-      </section>
-
+      {/* ── CLOSING CTA ── */}
+      <FinalCta
+        title="Help build the network"
+        sub="Download AntStation, use the network for real AI work, run a provider, and help improve the open-source protocol."
+        note={
+          <>
+            <a href="/docs/lightpaper">Lightpaper</a>
+            <a href="/docs/payments">Payment protocol</a>
+            <a href={DUNE_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
+          </>
+        }>
+        <Button href={download.href} variant="white" size="lg" arrow>Download AntStation</Button>
+        <Button to="/providers" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }

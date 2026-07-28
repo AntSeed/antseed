@@ -81,9 +81,9 @@ export function WindowsIcon() {
 }
 
 /* hugeicons:arrow-right-02 (20) */
-export function ArrowRight() {
+export function ArrowRight({size = 20}: {size?: number}) {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M15.4167 10H4.16669M10.8334 15C10.8334 15 15.8334 11.3175 15.8334 10C15.8334 8.6825 10.8334 5 10.8334 5" />
     </svg>
   );
@@ -100,8 +100,8 @@ export function Button({
   className,
   children,
 }: {
-  /** dark: ink fill · ghost: white + hairline · light: outline on dark surfaces · white: white fill on dark */
-  variant?: 'dark' | 'ghost' | 'light' | 'white';
+  /** dark: ink fill · ghost: white + hairline · light: outline on dark surfaces · white: white fill on dark · clay: economics pages only */
+  variant?: 'dark' | 'ghost' | 'light' | 'white' | 'clay';
   /** md: 40px (sections) · lg: 48px (hero / final CTA) */
   size?: 'md' | 'lg';
   to?: string;
@@ -118,6 +118,7 @@ export function Button({
     variant === 'ghost' && styles.btnGhost,
     variant === 'light' && styles.btnLight,
     variant === 'white' && styles.btnWhite,
+    variant === 'clay' && styles.btnClay,
     className,
   ]
     .filter(Boolean)
@@ -156,7 +157,7 @@ export function SectionHeader({
 }: {
   kicker?: string;
   title: ReactNode;
-  lead?: string;
+  lead?: ReactNode;
 }) {
   return (
     <>
@@ -164,6 +165,218 @@ export function SectionHeader({
       <h2 className={styles.title}>{title}</h2>
       {lead && <p className={styles.lead}>{lead}</p>}
     </>
+  );
+}
+
+/* ---------- Section — the page rhythm (96/64px bands, 1200 inner) ----------
+   `tone` picks the surface: plain white, the tinted #F4F5F4 well, or the ink
+   band. `width` narrows the content column without breaking the band. */
+export function Section({
+  tone = 'plain',
+  width = 'lg',
+  compact,
+  id,
+  className,
+  innerClassName,
+  children,
+}: {
+  tone?: 'plain' | 'tinted' | 'ink';
+  width?: 'sm' | 'md' | 'lg' | 'xl';
+  /** half-height band, for filter bars and other chrome */
+  compact?: boolean;
+  id?: string;
+  className?: string;
+  innerClassName?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      id={id}
+      className={[
+        styles.section,
+        tone === 'tinted' && styles.sectionTinted,
+        tone === 'ink' && styles.sectionInk,
+        compact && styles.sectionCompact,
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}>
+      <div
+        className={[
+          styles.sectionInner,
+          width === 'sm' && styles.widthSm,
+          width === 'md' && styles.widthMd,
+          width === 'xl' && styles.widthXl,
+          innerClassName,
+        ]
+          .filter(Boolean)
+          .join(' ')}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/* ---------- PageHero — the homepage hero's type scale, for inner pages ----------
+   Same dot-grid backdrop, kicker, display title and 18/26 lead as the home
+   hero, so every page opens in the same voice. */
+export function PageHero({
+  kicker,
+  title,
+  badge,
+  lead,
+  note,
+  accent = 'green',
+  children,
+}: {
+  kicker?: ReactNode;
+  title: ReactNode;
+  /** status pill under the title */
+  badge?: ReactNode;
+  lead?: ReactNode;
+  /** small line under the buttons */
+  note?: ReactNode;
+  /** clay tints the dot grid + <em> for the economics page */
+  accent?: 'green' | 'clay';
+  /** button row */
+  children?: ReactNode;
+}) {
+  return (
+    <header className={`${styles.pageHero} ${accent === 'clay' ? styles.pageHeroClay : ''}`}>
+      <div className={styles.pageHeroDots} aria-hidden="true" />
+      <div className={styles.pageHeroInner}>
+        {kicker && <p className={styles.kicker}>{kicker}</p>}
+        <h1 className={styles.pageHeroTitle}>{title}</h1>
+        {badge && <div className={styles.pageHeroBadge}>{badge}</div>}
+        {lead && <p className={styles.pageHeroLead}>{lead}</p>}
+        {children && <div className={styles.pageHeroCtas}>{children}</div>}
+        {note && <div className={styles.pageHeroNote}>{note}</div>}
+      </div>
+    </header>
+  );
+}
+
+/* ---------- StatTile — the shared number card ---------- */
+export function StatTile({
+  value,
+  label,
+  accent,
+}: {
+  value: ReactNode;
+  label: ReactNode;
+  accent?: boolean;
+}) {
+  return (
+    <div className={styles.statTile}>
+      <strong className={`${styles.statTileValue} ${accent ? styles.statTileAccent : ''}`}>{value}</strong>
+      <span className={styles.statTileLabel}>{label}</span>
+    </div>
+  );
+}
+
+/* ---------- LinkArrow — inline "keep reading" link, ink + arrow glyph ----------
+   Replaces the literal "→" characters that used to be typed into copy. */
+export function LinkArrow({
+  to,
+  href,
+  className,
+  children,
+}: {
+  to?: string;
+  href?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const cls = [styles.linkArrow, className].filter(Boolean).join(' ');
+  const inner = (
+    <>
+      {children}
+      <ArrowRight size={16} />
+    </>
+  );
+  if (to) {
+    return (
+      <Link to={to} className={cls}>
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
+      {inner}
+    </a>
+  );
+}
+
+/* ---------- Ticks — render `backticks` in authored copy as <code> ----------
+   Integration copy is written in markdown-ish plain strings; without this the
+   backticks render literally on the page. */
+const TICK_SPLIT = /(`[^`]+`)/g;
+
+export function Ticks({children}: {children?: string}) {
+  if (!children) return null;
+  return (
+    <>
+      {children.split(TICK_SPLIT).map((part, i) =>
+        part.length > 2 && part.startsWith('`') && part.endsWith('`') ? (
+          <code key={i}>{part.slice(1, -1)}</code>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+/** Same conversion for strings that are injected as HTML. */
+export function ticksToHtml(html: string) {
+  return html.replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/* ---------- Terminal — the ink code card from the homepage ---------- */
+export function Terminal({
+  title,
+  children,
+  className,
+}: {
+  title?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={[styles.terminal, className].filter(Boolean).join(' ')}>
+      <div className={styles.terminalBar}>
+        <span className={styles.terminalDots} aria-hidden="true">
+          <i /><i /><i />
+        </span>
+        {title && <span className={styles.terminalTitle}>{title}</span>}
+      </div>
+      <pre className={styles.terminalBody}>{children}</pre>
+    </div>
+  );
+}
+
+/* ---------- FinalCta — the ink closing band, shared by every page ---------- */
+export function FinalCta({
+  title,
+  sub,
+  note,
+  children,
+}: {
+  title: ReactNode;
+  sub?: ReactNode;
+  note?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.finalCta}>
+      <Reveal className={styles.finalCtaInner}>
+        <h2 className={styles.finalCtaTitle}>{title}</h2>
+        {sub && <p className={styles.finalCtaSub}>{sub}</p>}
+        <div className={styles.finalCtaBtns}>{children}</div>
+        {note && <p className={styles.finalCtaNote}>{note}</p>}
+      </Reveal>
+    </section>
   );
 }
 
