@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { BuyerConversationSummary } from '../../../types/bridge';
 import {
   conversationPinnedServiceId,
   conversationTitle,
@@ -16,6 +15,8 @@ import {
 } from '../../../modules/catalog/recommended';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { buyerConversationsResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { VprPage } from '../vpr/VprKit';
 import { VprModelRowList } from '../vpr/VprModelRows';
@@ -23,8 +24,6 @@ import { chatModelLabel, hasSeenChats, rememberSeenChats, VprChatRow, VprChatRow
 import styles from './VprChatsView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
-
-const POLL_MS = 3_000;
 
 /**
  * Dedicated chats page (no nav-rail item — reached from the Recent chats
@@ -39,10 +38,8 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     discoverRows: state.vprRoutableRows,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
-  // null = the buyer hasn't answered the first conversations query yet.
-  const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
-  // Skeleton only when a previous session actually saw chats — first-run
-  // users go straight to the empty state instead of a placeholder flash.
+  const conversationsResource = useCachedResource(buyerConversationsResource);
+  const conversations = conversationsResource.data;
   const [expectChats] = useState(hasSeenChats);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
@@ -60,22 +57,11 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     setSelectedId(null);
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      // null = buyer unreachable; keep whatever list we last had.
-      const next = await window.antseedDesktop?.buyerConversationsList?.();
-      if (next) {
-        setConversations(next);
-        rememberSeenChats(next.length);
-      }
-    } catch { /* buyer offline — keep the last list */ }
-  }, []);
+  const refresh = buyerConversationsResource.refresh;
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+    if (conversations) rememberSeenChats(conversations.length);
+  }, [conversations]);
 
   const selected = selectedId
     ? conversations?.find((chat) => chat.id === selectedId) ?? null

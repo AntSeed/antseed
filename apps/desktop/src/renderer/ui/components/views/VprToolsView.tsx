@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
-import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
+import type { InstalledAppEntry, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { installedAppsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
 import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
@@ -45,8 +47,9 @@ export function VprToolsView() {
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
-  const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
-  const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
+  const proxyResource = useCachedResource(systemProxyResource);
+  const profiles = proxyResource.data?.profiles ?? [];
+  const proxyState = proxyResource.data?.state ?? null;
   const [busy, setBusy] = useState<string | null>(null);
   // The app being connected right now. Connecting also restarts an app that
   // was already running, so the row has to stay busy well past the click.
@@ -91,8 +94,9 @@ export function VprToolsView() {
   // together with the identity draft by the modal's Save button.
   const [launchDraft, setLaunchDraft] = useState<InstalledAppEntry | null | undefined>(undefined);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [installedApps, setInstalledApps] = useState<InstalledAppEntry[] | null>(null);
-  const [installedAppsError, setInstalledAppsError] = useState<string | null>(null);
+  const installedAppsResourceSnapshot = useCachedResource(installedAppsResource, false);
+  const installedApps = installedAppsResourceSnapshot.data;
+  const installedAppsError = installedAppsResourceSnapshot.error;
 
   // lastPeers is the raw scan, so it has to be filtered too — otherwise an
   // excluded seller would still be offerable as a per-app route here.
@@ -113,22 +117,7 @@ export function VprToolsView() {
 
   const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
 
-  const refresh = useCallback(async () => {
-    const bridge = window.antseedDesktop;
-    try {
-      const [nextProfiles, nextState, nextCa] = await Promise.all([
-        bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
-        bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
-        bridge?.systemProxyCaInfo?.() ?? Promise.resolve(null),
-      ]);
-      setProfiles(nextProfiles);
-      setProxyState(nextState);
-      setCaInfo(nextCa);
-    } catch {
-      setProfiles([]);
-      setProxyState(null);
-    }
-  }, []);
+  const refresh = systemProxyResource.refresh;
 
   // Trust state shells out to the CLI (which queries the OS keychain), so it is
   // fetched on demand — mount, after adding an app, after trusting — never on
@@ -148,11 +137,9 @@ export function VprToolsView() {
   }, []);
 
   useEffect(() => {
-    void refresh();
     void refreshCaTrust();
-    const timer = setInterval(() => { void refresh(); }, 3000);
-    return () => clearInterval(timer);
-  }, [refresh, refreshCaTrust]);
+    void window.antseedDesktop?.systemProxyCaInfo?.().then(setCaInfo);
+  }, [refreshCaTrust]);
 
   const testGui = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -207,9 +194,9 @@ export function VprToolsView() {
       setMessage(result.error ?? 'Unable to connect tool profile');
       return false;
     }
-    setProxyState(result.state ?? null);
+    systemProxyResource.setData({ profiles, state: result.state ?? null });
     return true;
-  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, proxyState?.running]);
+  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
 
   const disconnect = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -217,11 +204,11 @@ export function VprToolsView() {
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);
     if (result?.ok) {
-      setProxyState(result.state ?? null);
+      systemProxyResource.setData({ profiles, state: result.state ?? null });
     } else {
       setMessage(result?.error ?? 'Unable to disconnect tools');
     }
-  }, []);
+  }, [profiles]);
 
   const openUrl = useCallback(async (url: string) => {
     const result = await window.antseedDesktop?.openExternalUrl?.(url);
@@ -326,18 +313,10 @@ export function VprToolsView() {
   // ---------- Per-app settings modal ----------
 
   const ensureInstalledApps = useCallback(() => {
-    // The installed-apps list is fetched once, on first modal open.
-    if (installedApps !== null) return;
-    void window.antseedDesktop?.listInstalledApps?.()
-      .then((result) => {
-        setInstalledApps(result.apps ?? []);
-        setInstalledAppsError(result.ok ? null : result.error ?? 'Could not list applications');
-      })
-      .catch((err: unknown) => {
-        setInstalledApps([]);
-        setInstalledAppsError(err instanceof Error ? err.message : String(err));
-      });
-  }, [installedApps]);
+    if (installedApps === null && !installedAppsResourceSnapshot.loading) {
+      void installedAppsResource.refresh();
+    }
+  }, [installedApps, installedAppsResourceSnapshot.loading]);
 
   const openSettings = useCallback((profile: SystemProxyProfileSummary) => {
     setSettingsFor(profile.name);
@@ -402,7 +381,7 @@ export function VprToolsView() {
       // Sync drafts to the normalized values the main process persisted —
       // including a custom app renamed after its application pick.
       const listed = (await bridge.systemProxyListProfiles?.()) ?? [];
-      setProfiles(listed);
+      systemProxyResource.setData({ profiles: listed, state: proxyState });
       setLaunchDraft(undefined);
       const updated = listed.find((profile) => profile.name === settingsFor);
       if (updated) setIdentityDraft((updated.toolSlugs?.length ? updated.toolSlugs : [updated.name]).join(', '));
@@ -411,7 +390,7 @@ export function VprToolsView() {
     } finally {
       setSettingsSaving(false);
     }
-  }, [activeProfileNames, disconnect, identityDirty, identityDraft, launchDirty, launchDraft, settingsFor, startProfiles]);
+  }, [activeProfileNames, disconnect, identityDirty, identityDraft, launchDirty, launchDraft, proxyState, settingsFor, startProfiles]);
 
   const advanceAddStep = useCallback((step: 2 | 3) => {
     setAddStep(step);

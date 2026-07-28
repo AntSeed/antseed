@@ -37,7 +37,7 @@ export function createDesktopTray(options: DesktopTrayOptions): void {
   }
 
   const image = sourceImage.resize({ width: 18, height: 18 });
-  image.setTemplateImage(false);
+  image.setTemplateImage(true);
 
   tray = new Tray(image);
   currentOptions = options;

@@ -9,7 +9,6 @@ import {
     PowerIcon,
     ArrowReloadHorizontalIcon,
 } from '@hugeicons/core-free-icons';
-import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
@@ -23,6 +22,8 @@ import {
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
 import { connectVprProfile } from '../../../modules/routing/proxy-sync';
+import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
@@ -35,7 +36,6 @@ import styles from './VprHomeView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-const PROXY_STATE_POLL_MS = 3_000;
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
@@ -59,12 +59,11 @@ export function VprHomeView({ onSelectView }: Props) {
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
   }), shallowEqual);
-  const [profiles, setProfiles] = useState<SystemProxyProfileSummary[]>([]);
-  const [proxyState, setProxyState] = useState<RuntimeProcessState | null>(null);
-  // null = the buyer hasn't answered the first conversations query yet (it
-  // boots alongside the app) — the Recent chats card shows a skeleton then,
-  // but only when a previous session actually saw chats (expectChats).
-  const [conversations, setConversations] = useState<BuyerConversationSummary[] | null>(null);
+  const proxyResource = useCachedResource(systemProxyResource);
+  const conversationsResource = useCachedResource(buyerConversationsResource);
+  const profiles = proxyResource.data?.profiles ?? [];
+  const proxyState = proxyResource.data?.state ?? null;
+  const conversations = conversationsResource.data;
   const [expectChats] = useState(hasSeenChats);
   const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
@@ -91,38 +90,13 @@ export function VprHomeView({ onSelectView }: Props) {
     [snap.discoverRows, snap.selection],
   );
   useEffect(() => {
-    let cancelled = false;
-    async function refreshTools(): Promise<void> {
-      const bridge = window.antseedDesktop;
-      try {
-        const [nextProfiles, nextState, nextConversations] = await Promise.all([
-          bridge?.systemProxyListProfiles?.() ?? Promise.resolve([]),
-          bridge?.systemProxyGetState?.() ?? Promise.resolve(null),
-          bridge?.buyerConversationsList?.() ?? Promise.resolve(null),
-        ]);
-        if (cancelled) return;
-        setProfiles(nextProfiles);
-        setProxyState(nextState);
-        // null = buyer unreachable; keep whatever list we last had.
-        if (nextConversations) {
-          setConversations(nextConversations);
-          rememberSeenChats(nextConversations.length);
-        }
-      } catch {
-        if (!cancelled) setProxyState(null);
-      }
-      // Usage tiles: the module throttle absorbs this to one real fetch per
-      // window once data has loaded, but while the payments backend is still
-      // booting (startup) every tick retries, so the tiles fill in as soon
-      // as it's up instead of showing zeros.
-      void actions.refreshPaymentSummary();
-    }
-    void refreshTools();
-    const timer = window.setInterval(() => { void refreshTools(); }, PROXY_STATE_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    if (conversations) rememberSeenChats(conversations.length);
+  }, [conversations]);
+
+  useEffect(() => {
+    void actions.refreshPaymentSummary();
+    const timer = window.setInterval(() => { void actions.refreshPaymentSummary(); }, 3_000);
+    return () => window.clearInterval(timer);
   }, [actions]);
 
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
@@ -202,7 +176,9 @@ export function VprHomeView({ onSelectView }: Props) {
     try {
       const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);
       if (result.ok) {
-        if (result.state !== undefined) setProxyState(result.state);
+        if (result.state !== undefined) {
+          systemProxyResource.setData({ profiles, state: result.state });
+        }
         // Surface the pill right away, dropdown open, so the "start a new
         // session" guidance is in view while the user switches to the tool.
         void actions.openVprFloat?.(profileName, { openMenu: true });
