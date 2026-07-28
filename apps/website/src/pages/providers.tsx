@@ -1,8 +1,16 @@
-import {useState} from 'react';
-import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './providers.module.css';
-import {Button, Faq, SectionHeader} from '../components/ui';
+import {
+  Button,
+  Faq,
+  FinalCta,
+  LinkArrow,
+  PageHero,
+  Reveal,
+  Section,
+  SectionHeader,
+  Terminal,
+} from '../components/ui';
 
 /* ── FAQ ─────────────────────────────────────────────────────── */
 const FAQ_DATA = [
@@ -36,185 +44,142 @@ const FAQ_DATA = [
   },
 ];
 
-function FAQSection() {
+/* ── Icons ───────────────────────────────────────────────────── */
+const ICON_PROPS = {
+  width: 24,
+  height: 24,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.6,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true,
+};
+
+function CheckIcon() {
   return (
-    <section className={styles.faq}>
-      <SectionHeader title="Common questions" />
-      <Faq items={FAQ_DATA} />
-    </section>
+    <svg {...ICON_PROPS} width={16} height={16}>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 
-/* ── MAIN PAGE ───────────────────────────────────────────────── */
-export default function Providers(): JSX.Element {
+function LockIcon() {
   return (
-    <Layout
-      title="Become a Provider | AntSeed"
-      description="Build an AntSeed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
-    >
+    <svg {...ICON_PROPS} width={16} height={16}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
 
-      {/* ── HERO ── */}
-      <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>
-          Serve AI on the open market.<br />
-          <em>No permission needed.</em>
-        </h1>
-        <p className={styles.heroSub}>
-          Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration — whether you run a model, a routing service, or a specialized agent.
-        </p>
-        <div className={styles.heroCtas}>
-          <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
-          <Button to="/docs/install" variant="ghost">Install AntSeed</Button>
-        </div>
-      </section>
+/* ── Page data ───────────────────────────────────────────────── */
+const PATHS = [
+  {
+    title: 'Raw Inference',
+    icon: (
+      <svg {...ICON_PROPS}>
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <line x1="8" y1="21" x2="16" y2="21" />
+        <line x1="12" y1="17" x2="12" y2="21" />
+      </svg>
+    ),
+    body: 'You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.',
+    points: ['Any model or backend', 'Set your own price per token', 'Reputation built per delivery'],
+  },
+  {
+    title: 'AI Agent',
+    icon: (
+      <svg {...ICON_PROPS}>
+        <path d="M12 2 2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
+      </svg>
+    ),
+    body: "You've built domain expertise in AI form. A legal agent, a security researcher, a trading analyst. Announce it as a named service. Buyers pay for your expertise, not just the tokens.",
+    points: [
+      'Persona, guardrails, and knowledge stay private',
+      'Announced as a named service on the network',
+      'Premium pricing for specialized delivery',
+    ],
+  },
+  {
+    title: 'Routing Service',
+    icon: (
+      <svg {...ICON_PROPS}>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+      </svg>
+    ),
+    body: 'Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, or domain-aware. Receive payment for settled routed requests without running a single model.',
+    points: [
+      'No model infrastructure required',
+      'Latency, cost, TEE, or domain-aware routing',
+      'Payment per settled routed request',
+    ],
+  },
+];
 
-      {/* ── TWO PATHS ── */}
-      <section className={styles.paths}>
-        <div className={styles.pathsHeader}>
-          <h2>Three ways to provide</h2>
-          <p>All three serve buyers on the open market. What runs behind is entirely yours.</p>
-        </div>
-        <div className={styles.pathsGrid}>
+const PUBLIC_FACTS = [
+  'Your service names',
+  'Your price per token or per request',
+  'Your capability tags (TEE, domain, model family…)',
+  'Your on-chain reputation score',
+  'Your latency percentiles',
+  'Your uptime window',
+];
 
-          <div className={styles.pathCard}>
-            <div className={styles.pathIcon}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-              </svg>
-            </div>
-            <h3>Raw Inference</h3>
-            <p>You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.</p>
-            <ul className={styles.pathList}>
-              <li>→ Any model or backend</li>
-              <li>→ Set your own price per token</li>
-              <li>→ Reputation built per delivery</li>
-            </ul>
-            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
-          </div>
+const PRIVATE_FACTS = [
+  'Your backend URL or model provider',
+  'Your routing logic and selection criteria',
+  'Your system prompt and guardrails',
+  'Your RAG sources and knowledge base',
+  'Your prompt engineering',
+  'Your fine-tune weights',
+];
 
-          <div className={styles.pathCard}>
-            <div className={styles.pathIcon}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-              </svg>
-            </div>
-            <h3>AI Agent</h3>
-            <p>You've built domain expertise in AI form. A legal agent, a security researcher, a trading analyst. Announce it as a named service. Buyers pay for your expertise, not just the tokens.</p>
-            <ul className={styles.pathList}>
-              <li>→ Persona, guardrails, and knowledge stay private</li>
-              <li>→ Announced as a named service on the network</li>
-              <li>→ Premium pricing for specialized delivery</li>
-            </ul>
-            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
-          </div>
+const PAY_STEPS = [
+  {
+    step: '1',
+    title: 'Buyer locks funds',
+    body: 'USDC is locked in the AntSeedEscrow smart contract on Base before the session starts. Requests flow freely while funds are escrowed.',
+  },
+  {
+    step: '2',
+    title: 'You deliver, receipts are signed',
+    body: 'Each request generates a provider-signed receipt with exact token counts, cost, and a cryptographic signature. Both sides have proof.',
+  },
+  {
+    step: '3',
+    title: 'Settlement executes on-chain',
+    body: 'On session end (or 10 min idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
+  },
+];
 
-          <div className={styles.pathCard}>
-            <div className={styles.pathIcon}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
-                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-              </svg>
-            </div>
-            <h3>Routing Service</h3>
-            <p>Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, or domain-aware. Receive payment for settled routed requests without running a single model.</p>
-            <ul className={styles.pathList}>
-              <li>→ No model infrastructure required</li>
-              <li>→ Latency, cost, TEE, or domain-aware routing</li>
-              <li>→ Payment per settled routed request</li>
-            </ul>
-            <Link to="/docs/guides/become-a-provider" className={styles.pathLink}>Become a provider →</Link>
-          </div>
+const ECONOMICS = [
+  {label: 'Your price', value: 'You set it — per input token + per output token'},
+  {
+    label: 'Protocol fee',
+    value:
+      '4% — may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses',
+  },
+  {label: 'Your payout', value: '96% of what buyers pay, direct to your wallet in USDC'},
+  {label: 'Payment methods', value: 'Buyers pay in USDC or by card — your payout is always USDC'},
+  {label: 'Settlement chain', value: 'Base mainnet'},
+];
 
-        </div>
-      </section>
+const REPUTATION = [
+  {label: 'Success rate', desc: 'Percentage of requests delivered and settled on-chain'},
+  {label: 'Latency p50 / p99', desc: 'Measured per delivery, visible to buyers pre-route'},
+  {label: 'Token accuracy', desc: 'Signed receipts verify exact token counts on both sides'},
+  {label: 'Uptime', desc: 'Historical availability across announced service windows'},
+];
 
-      {/* ── COMPLIANCE ── */}
-      <section className={styles.compliance}>
-        <div className={styles.complianceCard}>
-          <div className={styles.complianceIcon} aria-hidden="true">!</div>
-          <div className={styles.complianceBody}>
-            <p className={styles.complianceTitle}>Provider Compliance</p>
-            <p>
-              AntSeed is designed for providers who build differentiated services —
-              such as TEE-secured inference, domain-specific skills or agents,
-              fine-tuned models, or managed product experiences. Simply reselling
-              raw API access or subscription credentials is <strong>not</strong> the
-              intended use and may violate your upstream provider's terms of service.
-            </p>
-            <p>
-              Providers are independent operators and are solely responsible for their models,
-              infrastructure, outputs, logs, privacy practices, data handling,
-              security, sanctions/export compliance, tax obligations, applicable AI laws,
-              and upstream API provider terms.
-            </p>
-            <p>
-              Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while AntSeed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── PRIVACY DIAGRAM ── */}
-      <section className={styles.privacy}>
-        <div className={styles.privacyHeader}>
-          <h2>What the network sees. What stays private.</h2>
-          <p>Buyers see enough to route and verify. Everything else stays on your machine.</p>
-        </div>
-        <div className={styles.privacyGrid}>
-          <div className={styles.privacyCol}>
-            <div className={styles.privacyColLabel + ' ' + styles.public}>Public to the network</div>
-            {['Your service names', 'Your price per token or per request', 'Your capability tags (TEE, domain, model family…)', 'Your on-chain reputation score', 'Your latency percentiles', 'Your uptime window'].map(item => (
-              <div key={item} className={styles.privacyRow}>
-                <span className={styles.privacyCheck}>✓</span>
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
-          <div className={styles.privacyDivider}>
-            <svg width="1" height="100%" viewBox="0 0 1 200" preserveAspectRatio="none">
-              <line x1="0.5" y1="0" x2="0.5" y2="200" stroke="#e8e8e3" strokeWidth="1" strokeDasharray="6 4"/>
-            </svg>
-          </div>
-          <div className={styles.privacyCol}>
-            <div className={styles.privacyColLabel + ' ' + styles.private}>Under your control — secure your node</div>
-            {['Your backend URL or model provider', 'Your routing logic and selection criteria', 'Your system prompt and guardrails', 'Your RAG sources and knowledge base', 'Your prompt engineering', 'Your fine-tune weights'].map(item => (
-              <div key={item} className={styles.privacyRow}>
-                <span className={styles.privacyLock}>🔒</span>
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── THE INTEGRATION ── */}
-      <section className={styles.code}>
-        <div className={styles.codeHeader}>
-          <h2>One JSON file. Full control.</h2>
-          <p>
-            No code to write. Point AntSeed at an OpenAI-compatible endpoint,
-            set your prices and categories, and offer capacity to buyers.{' '}
-            <Link to="/docs/guides/become-a-provider">Become a provider →</Link>
-          </p>
-        </div>
-
-        <div className={styles.codeGrid}>
-          {/* CLI setup example */}
-          <div className={styles.codeCard}>
-            <div className={styles.codeCardLabel}>1. Configure with the CLI</div>
-            <div className={styles.codeTerm}>
-              <div className={styles.codeTermBar}>
-                <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
-                <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
-                <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
-                <span className={styles.codeTermTitle}>terminal</span>
-              </div>
-              <pre className={styles.codePre}>{`# Point at any OpenAI-compatible endpoint
+const CLI_SNIPPET = `# Point at any OpenAI-compatible endpoint
 antseed config seller add-provider together \\
   --plugin openai \\
   --base-url https://api.together.ai
@@ -229,26 +194,9 @@ antseed config seller add-service together deepseek-v3.1 \\
 
 # Start serving
 export OPENAI_API_KEY=<your-key>
-antseed seller start`}</pre>
-            </div>
-            <p className={styles.codeNote}>
-              Compatible with any OpenAI-API endpoint — your own Ollama, vLLM, a
-              fine-tune, or an upstream you have the right to resell. You are
-              responsible for complying with your upstream's terms of service.
-            </p>
-          </div>
+antseed seller start`;
 
-          {/* config.json example */}
-          <div className={styles.codeCard}>
-            <div className={styles.codeCardLabel}>2. Or edit config.json directly</div>
-            <div className={styles.codeTerm}>
-              <div className={styles.codeTermBar}>
-                <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
-                <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
-                <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
-                <span className={styles.codeTermTitle}>~/.antseed/config.json</span>
-              </div>
-              <pre className={styles.codePre}>{`{
+const CONFIG_SNIPPET = `{
   "seller": {
     "providers": {
       "together": {
@@ -268,146 +216,234 @@ antseed seller start`}</pre>
       }
     }
   }
-}`}</pre>
-            </div>
-            <p className={styles.codeNote}>
-              Your backend URL, API key, and routing logic are intended to remain under your control.
-              The network only sees the service name, price, and categories; you are responsible for securing your node and credentials.{' '}
-              <Link to="/docs/config">Full config reference →</Link>
+}`;
+
+const WALLET_SNIPPET = `antseed seller status         # earnings, peers, wallet address
+antseed seller stake <amt>    # stake USDC to become discoverable
+antseed seller unstake        # withdraw your stake`;
+
+/* ── MAIN PAGE ───────────────────────────────────────────────── */
+export default function Providers(): JSX.Element {
+  return (
+    <Layout
+      title="Become a Provider"
+      description="Build an AntSeed provider for your AI capability. Providers are independent operators responsible for their own infrastructure, policies, compliance, and data handling."
+    >
+      <PageHero
+        kicker="Providers"
+        title={
+          <>
+            Serve AI on the open market.<br />
+            <em>No permission needed.</em>
+          </>
+        }
+        lead="Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration — whether you run a model, a routing service, or a specialized agent."
+      >
+        <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
+        <Button to="/docs/install" variant="ghost">Install AntSeed</Button>
+      </PageHero>
+
+      {/* ── THREE WAYS TO PROVIDE ── */}
+      <Section tone="tinted">
+        <Reveal>
+          <SectionHeader
+            title="Three ways to provide"
+            lead="All three serve buyers on the open market. What runs behind is entirely yours."
+          />
+        </Reveal>
+        <div className={styles.pathsGrid}>
+          {PATHS.map((path, i) => (
+            <Reveal key={path.title} className={styles.pathCard} delay={i * 100}>
+              <div className={styles.pathIcon}>{path.icon}</div>
+              <h3>{path.title}</h3>
+              <p>{path.body}</p>
+              <ul className={styles.pathList}>
+                {path.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+              <LinkArrow to="/docs/guides/become-a-provider" className={styles.pathLink}>
+                Become a provider
+              </LinkArrow>
+            </Reveal>
+          ))}
+        </div>
+
+        <Reveal className={styles.compliance} delay={120}>
+          <span className={styles.complianceIcon} aria-hidden="true">!</span>
+          <div className={styles.complianceBody}>
+            <p className={styles.complianceTitle}>Provider compliance</p>
+            <p>
+              AntSeed is designed for providers who build differentiated services —
+              such as TEE-secured inference, domain-specific skills or agents,
+              fine-tuned models, or managed product experiences. Simply reselling
+              raw API access or subscription credentials is <strong>not</strong> the
+              intended use and may violate your upstream provider's terms of service.
+            </p>
+            <p>
+              Providers are independent operators and are solely responsible for their models,
+              infrastructure, outputs, logs, privacy practices, data handling,
+              security, sanctions/export compliance, tax obligations, applicable AI laws,
+              and upstream API provider terms.
+            </p>
+            <p>
+              Seller-side ANTS emissions are currently tracked but locked in a dedicated Provider Pool while AntSeed develops stronger validation and proof systems. Fake usage, sybil behavior, or incentive extraction may be excluded or subject to future slashing.
             </p>
           </div>
-        </div>
-      </section>
+        </Reveal>
+      </Section>
 
-      {/* ── PAYMENTS ── */}
-      <section className={styles.payments}>
-        <div className={styles.paymentsHeader}>
-          <h2>Direct settlement. No invoicing.</h2>
-          <p>
-            Buyers lock funds before a session. You deliver. Settlement executes on-chain automatically.{' '}
-            <Link to="/docs/payments">Payment protocol details →</Link>
-          </p>
+      {/* ── WHAT THE NETWORK SEES ── */}
+      <Section>
+        <Reveal>
+          <SectionHeader
+            title="What the network sees. What stays private."
+            lead="Buyers see enough to route and verify. Everything else stays on your machine."
+          />
+        </Reveal>
+        <div className={styles.privacyGrid}>
+          <Reveal className={`${styles.privacyCol} ${styles.privacyColPublic}`}>
+            <p className={`${styles.privacyColLabel} ${styles.public}`}>Public to the network</p>
+            {PUBLIC_FACTS.map((item) => (
+              <div key={item} className={styles.privacyRow}>
+                <span className={styles.privacyIcon}><CheckIcon /></span>
+                <span>{item}</span>
+              </div>
+            ))}
+          </Reveal>
+          <Reveal className={styles.privacyCol} delay={100}>
+            <p className={`${styles.privacyColLabel} ${styles.private}`}>
+              Under your control — secure your node
+            </p>
+            {PRIVATE_FACTS.map((item) => (
+              <div key={item} className={styles.privacyRow}>
+                <span className={styles.privacyIcon}><LockIcon /></span>
+                <span>{item}</span>
+              </div>
+            ))}
+          </Reveal>
         </div>
+      </Section>
 
-        <div className={styles.paymentsFlow}>
-          {[
-            {
-              step: '01',
-              title: 'Buyer locks funds',
-              body: 'USDC is locked in the AntSeedEscrow smart contract on Base before the session starts. Requests flow freely while funds are escrowed.',
-            },
-            {
-              step: '02',
-              title: 'You deliver, receipts are signed',
-              body: 'Each request generates a provider-signed receipt with exact token counts, cost, and a cryptographic signature. Both sides have proof.',
-            },
-            {
-              step: '03',
-              title: 'Settlement executes on-chain',
-              body: 'On session end (or 10 min idle), the escrow contract computes final cost from signed receipts, sends your payout to your wallet, and refunds unused funds to the buyer.',
-            },
-          ].map(s => (
+      {/* ── CONFIG ── */}
+      <Section tone="tinted">
+        <Reveal>
+          <SectionHeader
+            title="One JSON file. Full control."
+            lead="No code to write. Point AntSeed at an OpenAI-compatible endpoint, set your prices and categories, and offer capacity to buyers."
+          />
+        </Reveal>
+        <div className={styles.codeGrid}>
+          <Reveal className={styles.codeCard}>
+            <p className={styles.codeCardLabel}>1 · Configure with the CLI</p>
+            <Terminal title="terminal">{CLI_SNIPPET}</Terminal>
+            <p className={styles.codeNote}>
+              Compatible with any OpenAI-API endpoint — your own Ollama, vLLM, a
+              fine-tune, or an upstream you have the right to resell. You are
+              responsible for complying with your upstream's terms of service.
+            </p>
+          </Reveal>
+          <Reveal className={styles.codeCard} delay={100}>
+            <p className={styles.codeCardLabel}>2 · Or edit config.json directly</p>
+            <Terminal title="~/.antseed/config.json">{CONFIG_SNIPPET}</Terminal>
+            <p className={styles.codeNote}>
+              Your backend URL, API key, and routing logic are intended to remain under your control.
+              The network only sees the service name, price, and categories; you are responsible for
+              securing your node and credentials.{' '}
+              <LinkArrow to="/docs/config">Full config reference</LinkArrow>
+            </p>
+          </Reveal>
+        </div>
+      </Section>
+
+      {/* ── SETTLEMENT ── */}
+      <Section width="md">
+        <Reveal>
+          <SectionHeader
+            title="Direct settlement. No invoicing."
+            lead="Buyers lock funds before a session. You deliver. Settlement executes on-chain automatically."
+          />
+        </Reveal>
+        <Reveal className={styles.payFlow}>
+          {PAY_STEPS.map((s) => (
             <div key={s.step} className={styles.payStep}>
-              <div className={styles.payStepNum}>{s.step}</div>
-              <div className={styles.payStepContent}>
-                <h4>{s.title}</h4>
+              <span className={styles.payStepNum}>{s.step}</span>
+              <div>
+                <h3>{s.title}</h3>
                 <p>{s.body}</p>
               </div>
             </div>
           ))}
-        </div>
+        </Reveal>
 
-        <div className={styles.paymentsEcon}>
-          <div className={styles.econRow}>
-            <span className={styles.econLabel}>Your price</span>
-            <span className={styles.econValue}>You set it — per input token + per output token</span>
-          </div>
-          <div className={styles.econRow}>
-            <span className={styles.econLabel}>Protocol fee</span>
-            <span className={styles.econValue}>4% — may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses</span>
-          </div>
-          <div className={styles.econRow}>
-            <span className={styles.econLabel}>Your payout</span>
-            <span className={styles.econValue}>96% of what buyers pay, direct to your wallet in USDC</span>
-          </div>
-          <div className={styles.econRow}>
-            <span className={styles.econLabel}>Payment methods</span>
-            <span className={styles.econValue}>Buyers pay in USDC or by card — your payout is always USDC</span>
-          </div>
-          <div className={styles.econRow}>
-            <span className={styles.econLabel}>Settlement chain</span>
-            <span className={styles.econValue}>Base mainnet</span>
-          </div>
-        </div>
-
-        <div className={styles.paymentsWallet}>
-          <div className={styles.walletTerm}>
-            <div className={styles.codeTermBar}>
-              <span className={styles.codeTermDot} style={{background:'#ff5f57'}}/>
-              <span className={styles.codeTermDot} style={{background:'#febc2e'}}/>
-              <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
-              <span className={styles.codeTermTitle}>wallet management</span>
+        <Reveal className={styles.factTable} delay={80}>
+          {ECONOMICS.map((row) => (
+            <div key={row.label} className={styles.factRow}>
+              <span className={styles.factLabel}>{row.label}</span>
+              <span className={styles.factValue}>{row.value}</span>
             </div>
-            <pre className={styles.codePre}>{`antseed seller status         # earnings, peers, wallet address
-antseed seller stake <amt>    # stake USDC to become discoverable
-antseed seller unstake        # withdraw your stake`}</pre>
-          </div>
+          ))}
+        </Reveal>
+
+        <Reveal className={styles.walletBlock} delay={120}>
+          <Terminal title="wallet management">{WALLET_SNIPPET}</Terminal>
           <p className={styles.walletNote}>
             Your EVM wallet is derived automatically from your node's secp256k1 identity key.
             Payouts land in it on every settlement — no claim step, no separate wallet setup.{' '}
-            <Link to="/docs/payments">Full payment docs →</Link>
+            <LinkArrow to="/docs/payments">Full payment docs</LinkArrow>
           </p>
-        </div>
-      </section>
+        </Reveal>
+      </Section>
 
       {/* ── REPUTATION ── */}
-      <section className={styles.reputation}>
-        <div className={styles.reputationHeader}>
-          <h2>Build reputation that compounds.</h2>
-          <p>
-            Every delivery is recorded on-chain. Your reputation belongs to your wallet.
-            No platform can revoke it.
-          </p>
-        </div>
-        <div className={styles.reputationGrid}>
-          {[
-            {label: 'Success rate', desc: 'Percentage of requests delivered and settled on-chain'},
-            {label: 'Latency p50 / p99', desc: 'Measured per delivery, visible to buyers pre-route'},
-            {label: 'Token accuracy', desc: 'Signed receipts verify exact token counts on both sides'},
-            {label: 'Uptime', desc: 'Historical availability across announced service windows'},
-          ].map(r => (
-            <div key={r.label} className={styles.reputationCard}>
-              <div className={styles.reputationLabel}>{r.label}</div>
+      <Section tone="tinted" width="md">
+        <Reveal>
+          <SectionHeader
+            title="Build reputation that compounds."
+            lead="Every delivery is recorded on-chain. Your reputation belongs to your wallet. No platform can revoke it."
+          />
+        </Reveal>
+        <div className={styles.repGrid}>
+          {REPUTATION.map((r, i) => (
+            <Reveal key={r.label} className={styles.repCard} delay={i * 80}>
+              <p className={styles.repLabel}>{r.label}</p>
               <p>{r.desc}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
-        <p className={styles.reputationNote}>
-          Any buyer can build their own access and routing rules on top of on-chain stats.
-          Providers with strong track records may command higher prices and receive more traffic, depending on buyer and router preferences.
-        </p>
-      </section>
+        <Reveal delay={160}>
+          <p className={styles.repNote}>
+            Any buyer can build their own access and routing rules on top of on-chain stats.
+            Providers with strong track records may command higher prices and receive more traffic,
+            depending on buyer and router preferences.
+          </p>
+        </Reveal>
+      </Section>
 
       {/* ── FAQ ── */}
-      <FAQSection />
+      <Section width="md">
+        <Reveal>
+          <SectionHeader title="Common questions" />
+        </Reveal>
+        <Reveal delay={80}>
+          <Faq items={FAQ_DATA} />
+        </Reveal>
+      </Section>
 
-      {/* ── BOTTOM CTA ── */}
-      <section className={styles.bottomCta}>
-        <h2>Ready to provide?</h2>
-        <p>Install AntSeed, configure your provider, and offer AI capacity as an independent operator.</p>
-        <div className={styles.bottomCtaBtns}>
-          <Button to="/docs/install" arrow>Get started</Button>
-          <Button to="/docs/guides/become-a-provider" variant="ghost">Become a provider</Button>
-        </div>
-        <div className={styles.bottomLinks}>
-          <Link to="/docs/lightpaper">Read the lightpaper</Link>
-          <span>·</span>
-          <Link to="/docs/payments">Payment protocol</Link>
-          <span>·</span>
-          <Link to="/docs/faq">FAQ</Link>
-        </div>
-      </section>
-
+      {/* ── CLOSING CTA ── */}
+      <FinalCta
+        title="Ready to provide?"
+        sub="Install AntSeed, configure your provider, and offer AI capacity as an independent operator."
+        note={
+          <>
+            <a href="/docs/lightpaper">Read the lightpaper</a>
+            <a href="/docs/payments">Payment protocol</a>
+            <a href="/docs/faq">FAQ</a>
+          </>
+        }>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Get started</Button>
+        <Button to="/docs/guides/become-a-provider" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }

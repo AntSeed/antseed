@@ -1,441 +1,477 @@
-/* ANTS Token page — AntSeed brand plate. Clay is used here because this page is economics. */
-.heroKicker,
-.statusText,
-.supplyBarLabels,
-.statLabel,
-.emissionsCurrentTitle,
-.emissionsCurrentSub,
-.splitLabel,
-.flowBoxTitleMint,
-.flowBoxSubMint,
-.flowBoxSub,
-.flowBoxTitleLight,
-.flowBoxSubLight,
-.flowLineLabel,
-.flowLineLabelGreen,
-.flowLegendItem,
-.earnStep,
-.contractsLabel,
-.contractsLink,
-.halvingPillText,
-.halvingXLabel {
+/* ============================================================
+   $ANTS — page-specific pieces only. Rhythm and components come
+   from components/ui; clay is the accent here because this page
+   is economics (per the brand contract).
+   ============================================================ */
+
+/* ---------- hero extras ---------- */
+.heroKicker {
   font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--as-clay) !important;
+  text-decoration: none !important;
 }
 
-.hero {
-  position: relative;
-  text-align: center;
-  padding: clamp(72px, 10vw, 120px) 20px 60px;
-  max-width: 900px;
-  margin: 0 auto;
+.heroKicker:hover {
+  opacity: 0.72;
 }
-.hero::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 430px;
-  background-image: radial-gradient(rgba(161, 98, 7, 0.12) 1px, transparent 1px);
-  background-size: 22px 22px;
-  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent);
-  mask-image: linear-gradient(180deg, #000 55%, transparent);
-  pointer-events: none;
-  z-index: -1;
-}
-.heroKicker {
-  display: inline-block;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--as-clay) !important;
-  letter-spacing: 2px;
-  margin-bottom: 20px;
-  text-decoration: none !important;
-  transition: opacity .15s;
-}
-.heroKicker:hover { opacity: .72; }
-.heroTitle {
-  font-family: var(--as-font-display);
-  font-size: clamp(40px, 6vw, 74px);
-  font-weight: 550;
-  line-height: 1.02;
-  letter-spacing: -0.018em;
-  margin: 0 0 24px;
-  color: var(--as-text);
-  text-wrap: balance;
-}
-.heroTitle em {
-  font-style: normal;
-  font-weight: 480;
-  color: var(--as-clay);
-}
-.heroStatus {
+
+.statusPill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px 8px 12px;
+  padding: 4px 12px 4px 8px;
   border-radius: 999px;
-  background: rgba(232, 163, 61, .08);
-  border: 1px solid rgba(232, 163, 61, .22);
-  margin-bottom: 24px;
+  background: var(--as-clay-dim);
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--as-clay);
 }
+
 .statusDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--as-clay);
-  box-shadow: 0 0 0 3px rgba(232, 163, 61, .16);
   animation: pulseClay 2s ease-in-out infinite;
 }
+
 @keyframes pulseClay {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(232, 163, 61, .16); }
-  50% { box-shadow: 0 0 0 7px rgba(232, 163, 61, .06); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(161, 98, 7, 0.3); }
+  50% { box-shadow: 0 0 0 5px rgba(161, 98, 7, 0); }
 }
-.statusText {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--as-clay);
-  letter-spacing: .7px;
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot { animation: none; }
 }
-.heroSub {
-  font-size: 16px;
-  color: var(--as-text-2);
-  line-height: 1.7;
-  max-width: 700px;
-  margin: 0 auto 36px;
-}
-.heroCtas,
-.bottomCtaBtns {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-.protocolNotice {
+
+.noticeLink {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  margin: -8px auto 32px;
-  padding: 12px 16px;
-  border: 1px solid rgba(232, 163, 61, .28);
+  gap: 4px;
+  padding: 8px 16px;
+  border: 1px solid var(--as-clay-dim);
   border-radius: 999px;
-  background: rgba(232, 163, 61, .07);
+  background: var(--as-clay-dim);
   color: var(--as-clay) !important;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
   text-decoration: none !important;
-  transition: background .15s, border-color .15s, transform .15s;
-}
-.protocolNotice:hover {
-  background: rgba(232, 163, 61, .11);
-  border-color: rgba(232, 163, 61, .45);
-  transform: translateY(-1px);
-}
-.ctaPrimary,
-.ctaSecondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 24px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none !important;
-  transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.ctaPrimary {
-  background: var(--as-clay);
-  border: 1px solid var(--as-clay);
-  color: #211305 !important;
-}
-.ctaPrimary:hover {
-  background: #f2b85b;
-  border-color: #f2b85b;
-  color: #211305 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
-}
-.ctaSecondary {
-  background: transparent;
-  border: 1px solid var(--as-line-strong);
-  color: var(--as-text) !important;
-}
-.ctaSecondary:hover {
-  border-color: rgba(232, 163, 61, .46);
-  color: var(--as-clay) !important;
-  transform: translateY(-1px);
+  transition: border-color 0.15s ease;
 }
 
-.overview,
-.emissions,
-.activity,
-.earn,
-.contracts {
-  padding: clamp(56px, 7vw, 88px) 60px;
-  max-width: 1060px;
-  margin: 0 auto;
-}
-.overviewHeader,
-.emissionsHeader,
-.activityHeader,
-.earnHeader,
-.contractsHeader {
-  text-align: center;
-  margin-bottom: 40px;
-}
-.overviewHeader h2,
-.emissionsHeader h2,
-.activityHeader h2,
-.earnHeader h2,
-.contractsHeader h2,
-.bottomCta h2 {
-  font-family: var(--as-font-display);
-  font-size: clamp(28px, 3.4vw, 44px);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  color: var(--as-text);
-  margin: 0 0 12px;
-}
-.overviewHeader p,
-.emissionsHeader p,
-.activityHeader p,
-.earnHeader p,
-.bottomCta > p {
-  font-size: 15px;
-  color: var(--as-text-2);
-  line-height: 1.65;
-  margin: 0 auto;
-  max-width: 720px;
+.noticeLink:hover {
+  border-color: var(--as-clay);
 }
 
-.supplyBar { margin-bottom: 32px; }
+/* ---------- supply bar ---------- */
+.supplyBar {
+  max-width: 840px;
+  margin: 0 auto 16px;
+}
+
 .supplyBarTrack {
   height: 12px;
-  background: rgba(232, 163, 61, .09);
-  border: 1px solid rgba(232, 163, 61, .16);
   border-radius: 999px;
+  background: var(--as-clay-dim);
   overflow: hidden;
 }
+
 .supplyBarFill {
   height: 100%;
-  background: linear-gradient(90deg, var(--as-clay), #f2c36d);
-  border-radius: 999px;
   min-width: 4px;
-  transition: width .6s ease;
+  border-radius: 999px;
+  background: var(--as-clay);
+  transition: width 0.6s var(--as-ease, ease);
 }
+
 .supplyBarLabels {
   display: flex;
   justify-content: space-between;
   margin-top: 8px;
+  font-family: var(--as-font-data);
   font-size: 12px;
+  line-height: 20px;
   color: var(--as-text-3);
 }
-.statsGrid,
-.splitGrid,
+
+/* ---------- grids ---------- */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.splitGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .earnGrid {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
-.statsGrid { grid-template-columns: repeat(4, 1fr); }
-.splitGrid { grid-template-columns: repeat(4, 1fr); }
-.earnGrid { grid-template-columns: repeat(3, 1fr); }
-.statCard,
-.splitCard,
-.halvingChart,
-.flowCard,
-.earnCard,
-.contractsTable,
-.emissionsCurrentCard,
-.duneBanner {
+
+/* ---------- shared card shell ---------- */
+.card {
   background: var(--as-soil-2);
   border: 1px solid var(--as-line);
-  border-radius: var(--as-radius);
-  box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04);
+  border-radius: 24px;
 }
-.statCard {
+
+/* ---------- incentives ---------- */
+.flowCard {
   padding: 24px;
-  text-align: center;
-}
-.statValue,
-.splitPct,
-.emissionsCurrentValue {
-  font-family: var(--as-font-display);
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--as-text);
-  letter-spacing: -0.01em;
-  margin-bottom: 8px;
-}
-.statLabel,
-.splitLabel {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--as-text-3);
-  letter-spacing: .8px;
-  text-transform: uppercase;
-}
-.halvingChart {
-  padding: 20px 24px 12px;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
   overflow: hidden;
 }
-.halvingSvg { width: 100%; height: auto; display: block; }
-.halvingAxis { stroke: rgba(151,255,199,.16); stroke-width: 1; }
-.halvingCliff { stroke: rgba(151,255,199,.12); stroke-width: 1; stroke-dasharray: 2 4; }
-.halvingTick { stroke: var(--as-text-3); stroke-width: 1.5; }
-.halvingNow { stroke: var(--as-clay); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: .82; }
-.halvingPulse { fill: rgba(232, 163, 61, .3); animation: halvingPulse 2s ease-in-out infinite; }
-@keyframes halvingPulse { 0%, 100% { r: 8; opacity: .55; } 50% { r: 16; opacity: .1; } }
-.halvingPill { fill: #120d07; stroke: rgba(232, 163, 61, .28); }
-.halvingPillText { fill: var(--as-clay); font-size: 11px; font-weight: 700; letter-spacing: .5px; }
-.halvingXLabel { fill: var(--as-text-3); font-size: 11px; letter-spacing: .5px; }
-.emissionsCurrentCard { padding: 28px 32px; text-align: center; margin-bottom: 32px; }
-.emissionsCurrentTitle { font-size: 11px; font-weight: 700; color: var(--as-text-3); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
-.emissionsCurrentValue { color: var(--as-clay); font-size: clamp(28px, 3vw, 42px); }
-.emissionsCurrentSub { font-size: 13px; color: var(--as-text-3); }
-.splitCard { padding: 28px; }
-.splitCardAccent { border-color: rgba(232, 163, 61, .55); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
-.splitCardAccent .splitPct { color: var(--as-clay); }
-.splitDesc,
-.earnCard p,
-.duneBannerSub {
-  font-size: 13px;
+
+.flowSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.flowBox { fill: var(--as-soil-1); stroke: var(--as-line); stroke-width: 1; }
+.flowBoxMint { fill: var(--as-void); stroke: var(--as-clay); stroke-width: 1.5; }
+.flowBoxTitle { fill: var(--as-heading); font-family: var(--as-font-display); font-size: 17px; font-weight: 600; }
+.flowBoxSub { fill: var(--as-text-3); font-family: var(--as-font-data); font-size: 12px; }
+.flowBoxTitleMint { fill: #E8A33D; font-family: var(--as-font-display); font-size: 17px; font-weight: 600; }
+.flowBoxSubMint { fill: rgba(255, 255, 255, 0.5); font-family: var(--as-font-data); font-size: 12px; }
+.flowLine { fill: none; stroke: var(--as-line-strong); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.flowLineGreen { fill: none; stroke: rgba(161, 98, 7, 0.4); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.flowLineLabel { fill: var(--as-text-3); font-family: var(--as-font-data); font-size: 12px; }
+.flowLineLabelGreen { fill: var(--as-clay); font-family: var(--as-font-data); font-size: 12px; font-weight: 500; }
+.flowPellet { fill: var(--as-line-strong); }
+.flowPelletGreen { fill: var(--as-clay); }
+
+.flowLegend {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--as-line);
+}
+
+.flowLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--as-text-3);
+}
+
+.flowLegendDot,
+.flowLegendDotGreen {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.flowLegendDot { background: var(--as-line-strong); }
+.flowLegendDotGreen { background: var(--as-clay); }
+
+.earnCard {
+  padding: 24px;
+}
+
+.earnStep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--as-heading);
+  font-family: var(--as-font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--as-heading);
+  margin-bottom: 12px;
+}
+
+.earnCard h3 {
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+  margin: 0 0 8px;
+}
+
+.earnCard p {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
   color: var(--as-text-2);
-  line-height: 1.62;
   margin: 0;
 }
+
+/* ---------- emissions ---------- */
+.halvingChart {
+  padding: 16px 16px 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.halvingSvg { width: 100%; height: auto; display: block; }
+.halvingAxis { stroke: var(--as-line); stroke-width: 1; }
+.halvingCliff { stroke: var(--as-line); stroke-width: 1; stroke-dasharray: 2 4; }
+.halvingTick { stroke: var(--as-line-strong); stroke-width: 1.5; }
+.halvingNow { stroke: var(--as-clay); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.halvingPulse { fill: rgba(161, 98, 7, 0.22); animation: halvingPulse 2s ease-in-out infinite; }
+
+@keyframes halvingPulse {
+  0%, 100% { r: 8; opacity: 0.55; }
+  50% { r: 16; opacity: 0.1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .halvingPulse { animation: none; }
+}
+
+.halvingPill { fill: var(--as-void); }
+.halvingPillText { fill: #FFFFFF; font-family: var(--as-font-data); font-size: 11px; font-weight: 500; }
+.halvingXLabel { fill: var(--as-text-3); font-family: var(--as-font-data); font-size: 11px; }
+
+.budgetCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 24px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.budgetLabel {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+}
+
+.budgetValue {
+  font-family: var(--as-font-display);
+  font-size: clamp(32px, 3.4vw, 48px);
+  line-height: 54px;
+  font-weight: 500;
+  letter-spacing: -1px;
+  color: var(--as-clay);
+  font-feature-settings: 'tnum';
+}
+
+.budgetSub {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--as-text-3);
+}
+
+.splitCard {
+  padding: 24px;
+}
+
+.splitCardAccent {
+  border-color: var(--as-clay);
+}
+
+.splitPct {
+  font-family: var(--as-font-display);
+  font-size: 36px;
+  line-height: 43px;
+  font-weight: 500;
+  letter-spacing: -1px;
+  color: var(--as-heading);
+  margin-bottom: 4px;
+}
+
+.splitCardAccent .splitPct {
+  color: var(--as-clay);
+}
+
+.splitLabel {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+  margin-bottom: 8px;
+}
+
+.splitDesc {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+/* ---------- dune banner ---------- */
 .duneBanner {
-  display: block;
-  padding: 36px 40px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 24px;
   text-decoration: none !important;
-  transition: background .15s, transform .15s, border-color .15s;
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.duneBanner:hover { background: var(--as-soil-3); border-color: rgba(16,185,129,.25); transform: translateY(-2px); }
-.duneBannerContent { display: flex; align-items: center; gap: 24px; }
-.duneBannerIcon { width: 56px; height: 56px; border-radius: 16px; background: rgba(16,185,129,.09); border: 1px solid rgba(16,185,129,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--as-green); }
-.duneBannerTitle { font-family: var(--as-font-display); font-size: 20px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin-bottom: 8px; }
 
-.flowCard { padding: 32px 28px 24px; margin-bottom: 28px; overflow: hidden; }
-.flowSvg { width: 100%; height: auto; display: block; }
-.flowBox { fill: #03251A; stroke: rgba(151,255,199,.12); stroke-width: 1; }
-.flowBoxDark { fill: #120d07; stroke: rgba(232,163,61,.34); }
-.flowBoxMint { fill: #120d07; stroke: var(--as-clay); stroke-width: 1.5; }
-.flowBoxTitleMint { fill: var(--as-clay); font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-.flowBoxSubMint { fill: var(--as-text-3); font-size: 12px; }
-.flowBoxTitle { fill: var(--as-text); font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-.flowBoxSub { fill: var(--as-text-3); font-size: 12px; }
-.flowBoxTitleLight { fill: #ffe5ad; font-size: 15px; font-weight: 700; }
-.flowBoxSubLight { fill: var(--as-text-3); font-size: 11px; }
-.flowLine { fill: none; stroke: rgba(151,255,199,.18); stroke-width: 1.5; stroke-dasharray: 3 4; }
-.flowLineGreen { fill: none; stroke: rgba(232,163,61,.42); stroke-width: 1.5; stroke-dasharray: 3 4; }
-.flowLineLabel { fill: var(--as-text-3); font-size: 11px; letter-spacing: .3px; }
-.flowLineLabelGreen { fill: var(--as-clay); font-size: 11px; font-weight: 700; letter-spacing: .3px; }
-.flowPellet { fill: var(--as-text-2); }
-.flowPelletGreen { fill: var(--as-clay); filter: drop-shadow(0 0 6px rgba(232,163,61,.65)); }
-.flowLegend { display: flex; justify-content: center; gap: 28px; margin-top: 16px; padding-top: 20px; border-top: 1px solid var(--as-line); }
-.flowLegendItem { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--as-text-3); }
-.flowLegendDot,
-.flowLegendDotGreen { width: 8px; height: 8px; border-radius: 50%; }
-.flowLegendDot { background: var(--as-text-2); }
-.flowLegendDotGreen { background: var(--as-clay); box-shadow: 0 0 6px rgba(232,163,61,.6); }
-.earnCard { padding: 32px; }
-.earnStep { font-size: 12px; font-weight: 700; color: var(--as-clay); margin-bottom: 16px; letter-spacing: 1px; }
-.earnCard h3 { font-family: var(--as-font-display); font-size: 22px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin: 0 0 12px; }
-.contracts { max-width: 940px; }
-.contractsTable { overflow: hidden; }
-.contractsRow { display: flex; align-items: baseline; gap: 20px; padding: 16px 28px; border-bottom: 1px solid var(--as-line); }
-.contractsRow:last-child { border-bottom: none; }
-.contractsLabel { font-size: 11px; font-weight: 700; color: var(--as-clay); letter-spacing: .9px; white-space: nowrap; min-width: 160px; flex-shrink: 0; }
-.contractsValue { font-size: 14px; color: var(--as-text); line-height: 1.5; }
-.contractsLink { color: var(--as-clay) !important; text-decoration: none !important; font-size: 13px; font-weight: 700; border-bottom: 1px solid rgba(232,163,61,.34); padding-bottom: 0px; }
-.contractsLink:hover { border-color: var(--as-clay); }
-.bottomCta { text-align: center; padding: 72px 20px 96px; max-width: 680px; margin: 0 auto; }
-.bottomCta > p { margin-bottom: 32px; }
-.bottomLinks { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
-.bottomLinks a { color: var(--as-clay) !important; text-decoration: none !important; border-bottom: 1px solid rgba(232,163,61,.32); }
-.bottomLinks a:hover { color: #f2b85b !important; }
-.bottomLinks span { color: var(--as-text-3); }
+.duneBanner:hover {
+  border-color: var(--as-line-strong);
+  transform: translateY(-2px);
+}
 
-:global(html[data-theme='light']) .heroTitle,
-:global(html[data-theme='light']) .overviewHeader h2,
-:global(html[data-theme='light']) .emissionsHeader h2,
-:global(html[data-theme='light']) .activityHeader h2,
-:global(html[data-theme='light']) .earnHeader h2,
-:global(html[data-theme='light']) .contractsHeader h2,
-:global(html[data-theme='light']) .bottomCta h2,
-:global(html[data-theme='light']) .statValue,
-:global(html[data-theme='light']) .splitPct,
-:global(html[data-theme='light']) .flowBoxTitle,
-:global(html[data-theme='light']) .duneBannerTitle,
-:global(html[data-theme='light']) .earnCard h3,
-:global(html[data-theme='light']) .contractsValue { color: #001E12; }
-:global(html[data-theme='light']) .heroSub,
-:global(html[data-theme='light']) .overviewHeader p,
-:global(html[data-theme='light']) .emissionsHeader p,
-:global(html[data-theme='light']) .activityHeader p,
-:global(html[data-theme='light']) .earnHeader p,
-:global(html[data-theme='light']) .bottomCta > p,
-:global(html[data-theme='light']) .splitDesc,
-:global(html[data-theme='light']) .earnCard p,
-:global(html[data-theme='light']) .duneBannerSub { color: #4A5A51; }
-:global(html[data-theme='light']) .statCard,
-:global(html[data-theme='light']) .splitCard,
-:global(html[data-theme='light']) .halvingChart,
-:global(html[data-theme='light']) .flowCard,
-:global(html[data-theme='light']) .earnCard,
-:global(html[data-theme='light']) .contractsTable,
-:global(html[data-theme='light']) .emissionsCurrentCard,
-:global(html[data-theme='light']) .duneBanner { background: rgba(255,255,255,.74); border-color: rgba(232,163,61,.18); box-shadow: 0 1px 2px rgba(0, 30, 18, 0.04); }
-:global(html[data-theme='light']) .ctaPrimary { color: #211305 !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #001E12 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
-:global(html[data-theme='light']) .flowBox { fill: #fffaf0; stroke: rgba(232,163,61,.2); }
-:global(html[data-theme='light']) .flowBoxDark,
-:global(html[data-theme='light']) .flowBoxMint { fill: #120d07; }
-:global(html[data-theme='light']) .halvingAxis,
-:global(html[data-theme='light']) .contractsRow,
-:global(html[data-theme='light']) .flowLegend { border-color: rgba(10,14,20,.08); stroke: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .statLabel,
-:global(html[data-theme='light']) .splitLabel,
-:global(html[data-theme='light']) .supplyBarLabels,
-:global(html[data-theme='light']) .emissionsCurrentTitle,
-:global(html[data-theme='light']) .emissionsCurrentSub,
-:global(html[data-theme='light']) .halvingXLabel { color: #8F8E8B; fill: #8F8E8B; }
+.duneIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--as-green-dim);
+  color: var(--as-green-deep);
+}
 
-@media (max-width: 960px) {
-  .overview,
-  .emissions,
-  .activity,
-  .earn,
-  .contracts { padding: 44px 20px 64px; }
+.duneTitle {
+  display: block;
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--as-heading);
+  margin: 0 0 4px;
+}
+
+.duneSub {
+  display: block;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+}
+
+/* ---------- on-chain details ---------- */
+.factTable {
+  overflow: hidden;
+}
+
+.factRow {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  align-items: baseline;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--as-line);
+}
+
+.factRow:last-child {
+  border-bottom: none;
+}
+
+.factLabel {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 22px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--as-text-3);
+}
+
+.factValue {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
+}
+
+.factLink {
+  font-family: var(--as-font-data);
+  color: var(--as-clay) !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--as-clay-dim);
+}
+
+.factLink:hover {
+  text-decoration-color: currentColor;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 996px) {
   .statsGrid,
-  .splitGrid { grid-template-columns: repeat(2, 1fr); }
-  .earnGrid { grid-template-columns: 1fr; }
-  .flowCard { padding: 20px 16px 16px; overflow-x: auto; }
-  .contractsRow { flex-direction: column; gap: 4px; }
-  .contractsLabel { min-width: 0; }
-  .duneBanner { padding: 28px 24px; }
-  .duneBannerContent { gap: 16px; }
+  .splitGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .earnGrid {
+    grid-template-columns: 1fr;
+    max-width: 560px;
+    margin-inline: auto;
+  }
 }
-@media (max-width: 620px) {
-  .hero { padding: 64px 20px 44px; }
-  .heroTitle { font-size: clamp(34px, 11vw, 50px); }
-  .heroSub { font-size: 15px; }
-  .heroCtas,
-  .bottomCtaBtns { flex-direction: column; align-items: stretch; }
-  .ctaPrimary,
-  .ctaSecondary { width: 100%; }
-  .statsGrid { grid-template-columns: 1fr 1fr; }
-  .splitGrid { grid-template-columns: 1fr; }
-  .statCard,
+
+@media (max-width: 640px) {
+  .statsGrid,
+  .splitGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .earnCard,
   .splitCard,
-  .earnCard { padding: 24px; }
-  .contractsRow { padding: 16px 20px; }
-  .duneBannerContent { flex-direction: column; text-align: center; }
-  .flowLegend { flex-direction: column; align-items: center; gap: 12px; }
-  .bottomLinks { flex-direction: column; gap: 8px; }
-  .bottomLinks span { display: none; }
+  .flowCard,
+  .budgetCard,
+  .duneBanner {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .flowCard {
+    overflow-x: auto;
+  }
+
+  .factTable {
+    border-radius: 20px;
+  }
+
+  .factRow {
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 16px 20px;
+  }
+
+  .duneBanner {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .flowLegend {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
 }

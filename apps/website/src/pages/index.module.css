@@ -1134,7 +1134,7 @@
   background: var(--as-void-deep);
   border: 1px solid #676663;
   border-radius: 16px;
-  padding: 8px 12px 48px;
+  padding: 8px 12px 24px;
   font-family: var(--as-font-data);
 }
 
@@ -1160,9 +1160,30 @@
 }
 
 .terminalStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   line-height: 20px;
-  color: var(--as-green);
+  color: #FFFFFF;
+}
+
+.statusDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--as-green);
+  animation: statusPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--as-green-glow); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot { animation: none; }
 }
 
 .terminalTagline {
@@ -1191,6 +1212,25 @@
 .tYellow { color: #EAE784; }
 .tPurple { color: #9D93FF; }
 .tBlue { color: #00AFFF; }
+
+.tCursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 1px;
+  background: var(--as-green);
+  vertical-align: -2px;
+  animation: cursorBlink 1s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tCursor { animation: none; opacity: 1; }
+}
 
 /* flow chips */
 .flowRow {

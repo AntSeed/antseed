@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>AntSeed · Brand System</title>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap">
 <style>
   @font-face {
     font-family: 'Geist Fallback';
@@ -20,8 +21,9 @@
     --text:#001E12; --text-2:#4A5A51; --text-3:#8F8E8B;
     --clay:#A16207; --clay-soft:#E8A33D;
     --line:rgba(0,30,18,.08); --line-strong:rgba(0,30,18,.16);
-    --font-display:'Geist Variable','Geist','Geist Fallback',system-ui,sans-serif;
-    --font-ui:'Geist Variable','Geist','Geist Fallback',system-ui,sans-serif;
+    --font-display:'General Sans','Geist Variable','Geist Fallback',system-ui,sans-serif;
+    --font-ui:'General Sans','Geist Variable','Geist Fallback',system-ui,sans-serif;
+    --font-app:'Geist Variable','Geist','Geist Fallback',system-ui,sans-serif;
     --font-data:'Geist Mono Variable','Geist Mono',Menlo,monospace;
   }
   * { box-sizing:border-box; }
@@ -50,7 +52,7 @@
   .topbar { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-bottom:72px; flex-wrap:wrap; }
   .brand { display:inline-flex; align-items:center; gap:12px; text-decoration:none; }
   .brand img { width:40px; height:40px; }
-  .wordmark { font-family:var(--font-display); font-weight:700; font-size:19px; letter-spacing:-.02em; color:var(--ink); }
+  .wordmark { font-family:var(--font-app); font-weight:700; font-size:19px; letter-spacing:-.02em; color:var(--ink); }
   .nav { display:flex; gap:8px; flex-wrap:wrap; }
   .nav a { font-family:var(--font-data); font-size:11px; letter-spacing:.12em; text-transform:uppercase; text-decoration:none; color:var(--text-2); border:1px solid var(--line); border-radius:999px; padding:9px 14px; background:#fff; }
   .nav a:hover { color:var(--ink); border-color:var(--line-strong); }
@@ -61,14 +63,14 @@
   .green { color:var(--primary-5); }
   .clayTxt { color:var(--clay); }
   .lead { color:var(--text-2); max-width:660px; line-height:1.7; font-size:16px; margin:0; }
-  .heroCard { border:1px solid var(--line); border-radius:16px; padding:24px; background:var(--card); }
+  .heroCard { border:1px solid var(--line); border-radius:24px; padding:24px; background:var(--card); }
   .heroCard b { display:block; font-family:var(--font-data); color:var(--primary-7); font-size:11px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:12px; }
   .heroCard p { color:var(--text-2); line-height:1.65; font-size:13px; margin:0; }
   section { margin-top:76px; }
   h2 { font-family:var(--font-data); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--text-3); border-bottom:1px solid var(--line); padding-bottom:12px; margin:0 0 22px; font-weight:500; }
   h3 { margin:0 0 8px; font-size:17px; font-weight:600; letter-spacing:-.01em; color:var(--ink); }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
-  .card, .sw, .rule, .motif, .sample { border:1px solid var(--line); border-radius:14px; background:#fff; overflow:hidden; }
+  .card, .sw, .rule, .motif, .sample { border:1px solid var(--line); border-radius:24px; background:#fff; overflow:hidden; }
   .card { padding:20px; }
   .card p, .rule p, .motif p, .sample p { color:var(--text-2); line-height:1.65; font-size:13px; margin:0; }
   .sw .chip { height:74px; }
@@ -80,7 +82,7 @@
   .ramp span { flex:1; height:44px; }
   .rampLabel { font-family:var(--font-data); font-size:10px; color:var(--text-3); margin-top:8px; letter-spacing:.08em; }
   .typeRows { display:grid; gap:14px; }
-  .typeRow { display:grid; grid-template-columns:190px 1fr; gap:24px; border:1px solid var(--line); border-radius:14px; padding:22px; background:#fff; align-items:baseline; }
+  .typeRow { display:grid; grid-template-columns:190px 1fr; gap:24px; border:1px solid var(--line); border-radius:24px; padding:22px; background:#fff; align-items:baseline; }
   .label { font-family:var(--font-data); font-size:10px; color:var(--text-3); letter-spacing:.1em; line-height:1.6; text-transform:uppercase; }
   .rules { display:grid; gap:12px; }
   .rule { display:grid; grid-template-columns:54px 1fr; gap:16px; padding:18px; }
@@ -88,8 +90,8 @@
   .rule.money .n { color:var(--clay); }
   .rule b { color:var(--ink); }
   .btnRow { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
-  .btnDark { display:inline-flex; align-items:center; background:var(--ink); color:var(--white); border-radius:10px; padding:12px 22px; font-size:14px; font-weight:500; text-decoration:none; }
-  .btnGhost { display:inline-flex; align-items:center; background:#fff; color:var(--ink); border:1px solid var(--line-strong); border-radius:10px; padding:12px 22px; font-size:14px; font-weight:500; text-decoration:none; }
+  .btnDark { display:inline-flex; align-items:center; background:var(--ink); color:#fff; border-radius:32px; padding:12px 20px; font-size:14px; font-weight:600; text-decoration:none; }
+  .btnGhost { display:inline-flex; align-items:center; background:#fff; color:var(--ink); border:1px solid var(--line-strong); border-radius:32px; padding:12px 20px; font-size:14px; font-weight:600; text-decoration:none; }
   .motifs { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }
   .motif { padding:22px; }
   .trail { display:flex; align-items:center; gap:10px; margin-top:18px; }
@@ -101,7 +103,7 @@
   @keyframes dashm { to { stroke-dashoffset:-10; } }
   .nodeSvg { display:block; margin:10px auto 0; max-width:220px; }
   .logos { display:flex; gap:18px; flex-wrap:wrap; }
-  .logoCell { min-height:122px; display:flex; align-items:center; justify-content:center; gap:16px; padding:26px 34px; border:1px solid var(--line); border-radius:14px; background:#fff; }
+  .logoCell { min-height:122px; display:flex; align-items:center; justify-content:center; gap:16px; padding:26px 34px; border:1px solid var(--line); border-radius:24px; background:#fff; }
   .logoCell.darkCell { background:var(--ink); }
   .logoCell.darkCell .wordmark { color:var(--white); }
   .logoCell img { width:58px; height:58px; }
@@ -142,7 +144,7 @@
     </div>
     <div class="heroCard">
       <b>Design contract</b>
-      <p>One palette: the emerald ramp, the warm gray ramp, brand white, ink, clay. Geist for everything, Geist Mono for data. Buttons are ink, 10px radius. Dot-grid backdrops on hero strips. Content stays readable before anything else.</p>
+      <p>One palette: the emerald ramp, the warm gray ramp, brand white, ink, clay. General Sans for headlines and body, Geist for app chrome, Geist Mono for data. Buttons are ink pills. Cards are 24px radius on a 96px section rhythm. Dot-grid backdrops on hero strips. Content stays readable before anything else.</p>
     </div>
   </header>
 
@@ -174,8 +176,8 @@
   <section id="type">
     <h2>02 · Typography</h2>
     <div class="typeRows">
-      <div class="typeRow"><span class="label">Display / Geist Medium</span><span style="font-family:var(--font-display);font-size:42px;font-weight:500;letter-spacing:-.031em;line-height:1.06;color:var(--ink);">The Open Market <span class="green">for AI Inference</span></span></div>
-      <div class="typeRow"><span class="label">UI + Body / Geist</span><span style="font-size:16px;color:var(--text-2);line-height:1.7;">Quiet and readable. Used for navigation, body text, cards, buttons, and product UI. Headings sit at Medium (500) with tight tracking, never heavier than 600.</span></div>
+      <div class="typeRow"><span class="label">Display / General Sans 600</span><span style="font-family:var(--font-display);font-size:42px;font-weight:500;letter-spacing:-.031em;line-height:1.06;color:var(--ink);">The Open Market <span class="green">for AI Inference</span></span></div>
+      <div class="typeRow"><span class="label">UI + Body / General Sans 500</span><span style="font-size:16px;color:var(--text-2);line-height:1.7;">Quiet and readable. Used for body text, cards, and buttons. Section headings sit at 500 with -1px tracking; card and hero headings at 600. Never heavier than 600. Navigation, footer and stat digits speak Geist.</span></div>
       <div class="typeRow"><span class="label">Data / Geist Mono</span><span style="font-family:var(--font-data);font-size:13px;color:var(--primary-7);line-height:1.7;">$ antseed network browse --service minimax<br><span style="color:var(--text-3)">✓ found 23 peers · sorted by reputation</span></span></div>
     </div>
     <div class="btnRow">
@@ -199,9 +201,9 @@
       <div class="rule"><span class="n">R2</span><p><b>Emerald means network/action/ants.</b> Use it for live network state, accents, pheromone paths, ant animation, and routing. Links on light surfaces use Primary 7.</p></div>
       <div class="rule money"><span class="n">R3</span><p><b>Clay means money.</b> Use clay for $ANTS, $DIEM, USDC, fees, buy/burn, emissions, token pages, contracts, and economics sections.</p></div>
       <div class="rule"><span class="n">R4</span><p><b>Use “fees,” not “revenues.”</b> Economics copy should not imply equity, profit share, revenue share, or guaranteed return.</p></div>
-      <div class="rule"><span class="n">R5</span><p><b>Buttons are ink.</b> Primary actions are #001E12 with 10px radius and brand-white text; secondary actions are white with a hairline border. No green pill buttons.</p></div>
+      <div class="rule"><span class="n">R5</span><p><b>Buttons are ink pills.</b> Primary actions are #001E12 at 32px radius with white text; secondary actions are white with a hairline border. On ink sections they invert: white fill, or a white outline. The green pill is reserved for the navbar download.</p></div>
       <div class="rule"><span class="n">R6</span><p><b>No invisible UI.</b> Pale mint on cream is not allowed. Background decoration — including the dot grid — must never reduce readability.</p></div>
-      <div class="rule"><span class="n">R7</span><p><b>Headings stay Medium.</b> Geist 500 with -0.02em to -0.03em tracking. No 700+ display headings, no italics for emphasis — use color.</p></div>
+      <div class="rule"><span class="n">R7</span><p><b>Headings stay Medium.</b> General Sans 500–600 with -1px tracking at display sizes. No 700+ display headings, no italics for emphasis — use color.</p></div>
       <div class="rule"><span class="n">R8</span><p><b>Preserve content and SEO when redesigning.</b> Visual updates should not rewrite page copy, titles, descriptions, canonical behavior, robots metadata, or structured content unless explicitly requested.</p></div>
     </div>
   </section>

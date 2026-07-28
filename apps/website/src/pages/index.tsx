@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode} from 'react';
+import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
 import Head from '@docusaurus/Head';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
@@ -804,44 +804,224 @@ const LOCALHOST_POINTS = [
   {icon: 'pt-wallet', text: 'Pay per request, straight to the provider. No subscription.'},
 ];
 
+type TToken = {text: string; cls?: keyof typeof styles};
+
+type TBlock = {comment: string; tokens: TToken[]};
+
+const TERMINAL_BLOCKS: TBlock[] = [
+  {
+    comment: '# Route Claude Code through AntSeed',
+    tokens: [
+      {text: '$ ', cls: 'tGreen'},
+      {text: 'antseed', cls: 'tPurple'},
+      {text: ' '},
+      {text: 'claude', cls: 'tBlue'},
+    ],
+  },
+  {
+    comment: '# Codex pinned to the best provider',
+    tokens: [
+      {text: '$ ', cls: 'tGreen'},
+      {text: 'antseed', cls: 'tPurple'},
+      {text: ' '},
+      {text: 'codex', cls: 'tBlue'},
+      {text: ' '},
+      {text: '--model', cls: 'tYellow'},
+      {text: ' '},
+      {text: 'deepseek-v3', cls: 'tOrange'},
+    ],
+  },
+  {
+    comment: '# Or call any compatible client',
+    tokens: [
+      {text: '$ ', cls: 'tGreen'},
+      {text: 'curl', cls: 'tPurple'},
+      {text: ' '},
+      {text: '-X', cls: 'tYellow'},
+      {text: ' '},
+      {text: 'POST', cls: 'tBlue'},
+      {text: ' '},
+      {text: 'http://localhost:8377/v1/chat/completions', cls: 'tBlue'},
+      {text: ' \\\n  '},
+      {text: '-H', cls: 'tYellow'},
+      {text: ' '},
+      {text: '"Content-Type: application/json"', cls: 'tGreen'},
+      {text: ' \\\n  '},
+      {text: '-d', cls: 'tYellow'},
+      {text: " '{"},
+      {text: '"model"', cls: 'tBlue'},
+      {text: ': '},
+      {text: '"deepseek-v3"', cls: 'tOrange'},
+      {text: ',\n    '},
+      {text: '"messages"', cls: 'tBlue'},
+      {text: ': [{'},
+      {text: '"role"', cls: 'tBlue'},
+      {text: ': '},
+      {text: '"user"', cls: 'tGreen'},
+      {text: ','},
+      {text: '"content"', cls: 'tBlue'},
+      {text: ': '},
+      {text: '"hi"', cls: 'tGreen'},
+      {text: "}]}'"},
+    ],
+  },
+];
+
+/** Random per-character delay — fast, with the odd human-like hesitation. */
+function keystrokeDelay(ch: string) {
+  if (ch === '\n') return 100;
+  if (ch === ' ') return 10 + Math.random() * 10;
+  const jitter = Math.random();
+  if (jitter > 0.94) return 35 + Math.random() * 50; // rare pause
+  return 5 + Math.random() * 10;
+}
+
+function Cursor({style}: {style?: CSSProperties} = {}) {
+  return <span className={styles.tCursor} style={style} aria-hidden="true" />;
+}
+
+/**
+ * Renders every token in full so the block's box never resizes as it types —
+ * characters not yet "typed" are kept in the layout via visibility:hidden.
+ */
+function renderTokens(tokens: TToken[], typed: number, cursor: ReactNode) {
+  const nodes: ReactNode[] = [];
+  let remaining = typed;
+  let cursorPlaced = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const {text, cls} = tokens[i];
+    const visibleLen = Math.max(0, Math.min(text.length, remaining));
+    const visible = text.slice(0, visibleLen);
+    const hidden = text.slice(visibleLen);
+    const placeCursorHere = !cursorPlaced && visibleLen < text.length;
+    if (placeCursorHere) cursorPlaced = true;
+    nodes.push(
+      <span key={i} className={cls ? styles[cls] : undefined}>
+        {visible}
+        {placeCursorHere && cursor}
+        {hidden && <span style={{visibility: 'hidden'}}>{hidden}</span>}
+      </span>
+    );
+    remaining -= text.length;
+  }
+  if (!cursorPlaced) nodes.push(cursor);
+  return nodes;
+}
+
 function TerminalCard() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [blockIndex, setBlockIndex] = useState(0);
+  const [phase, setPhase] = useState<'comment' | 'command' | 'done'>('comment');
+  const [typed, setTyped] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || typeof IntersectionObserver === 'undefined') {
+      setBlockIndex(TERMINAL_BLOCKS.length - 1);
+      setPhase('done');
+      setTyped(TERMINAL_BLOCKS[TERMINAL_BLOCKS.length - 1].tokens.reduce((n, t) => n + t.text.length, 0));
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    async function sleep(ms: number) {
+      return new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      });
+    }
+
+    async function typeOut(length: number, onTick: (n: number) => void, text: (i: number) => string) {
+      for (let i = 1; i <= length; i++) {
+        if (cancelled) return;
+        await sleep(keystrokeDelay(text(i - 1)));
+        if (cancelled) return;
+        onTick(i);
+      }
+    }
+
+    async function run() {
+      for (let b = 0; b < TERMINAL_BLOCKS.length; b++) {
+        if (cancelled) return;
+        setBlockIndex(b);
+        setPhase('comment');
+        setTyped(0);
+        const {comment, tokens} = TERMINAL_BLOCKS[b];
+        await typeOut(comment.length, setTyped, (i) => comment[i]);
+        if (cancelled) return;
+        await sleep(60);
+        setPhase('command');
+        setTyped(0);
+        const commandText = tokens.map((t) => t.text).join('');
+        await typeOut(commandText.length, setTyped, (i) => commandText[i]);
+        if (cancelled) return;
+        await sleep(150);
+      }
+      if (!cancelled) setPhase('done');
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          observer.disconnect();
+          run();
+        }
+      },
+      {threshold: 0.35}
+    );
+    observer.observe(el);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, []);
+
   return (
-    <div className={styles.terminal}>
+    <div className={styles.terminal} ref={ref}>
       <div className={styles.terminalBar}>
         <span className={styles.tDots}>
           <i style={{background: '#EF4444'}} />
           <i style={{background: '#F59E0B'}} />
           <i style={{background: '#676663'}} />
         </span>
-        <span className={styles.terminalStatus}>● Connected Localhost:8377</span>
+        <span className={styles.terminalStatus}>
+          <span className={styles.statusDot} aria-hidden="true" />
+          Connected Localhost:8377
+        </span>
         <span className={styles.terminalTagline}>ONE ENDPOINT · EVERY TOOL</span>
       </div>
-      <div className={styles.terminalBlock}>
-        <span className={styles.tComment}># Route Claude Code through AntSeed</span>
-        <span>
-          <span className={styles.tGreen}>$ </span>
-          <span className={styles.tPurple}>antseed</span> <span className={styles.tBlue}>claude</span>
-        </span>
-      </div>
-      <div className={styles.terminalBlock}>
-        <span className={styles.tComment}># Codex pinned to the best provider</span>
-        <span>
-          <span className={styles.tGreen}>$ </span>
-          <span className={styles.tPurple}>antseed</span> <span className={styles.tBlue}>codex</span>{' '}
-          <span className={styles.tYellow}>--model</span> <span className={styles.tOrange}>deepseek-v3</span>
-        </span>
-      </div>
-      <div className={styles.terminalBlock}>
-        <span className={styles.tComment}># Or call any compatible client</span>
-        <span>
-          <span className={styles.tGreen}>$ </span>
-          <span className={styles.tPurple}>curl</span> <span className={styles.tYellow}>-X</span>{' '}
-          <span className={styles.tBlue}>POST</span> <span className={styles.tBlue}>http://localhost:8377/v1/chat/completions</span> \{'\n'}
-          {'  '}<span className={styles.tYellow}>-H</span> <span className={styles.tGreen}>&quot;Content-Type: application/json&quot;</span> \{'\n'}
-          {'  '}<span className={styles.tYellow}>-d</span> &apos;{'{'}<span className={styles.tBlue}>&quot;model&quot;</span>: <span className={styles.tOrange}>&quot;deepseek-v3&quot;</span>,{'\n'}
-          {'    '}<span className={styles.tBlue}>&quot;messages&quot;</span>: [{'{'}<span className={styles.tBlue}>&quot;role&quot;</span>: <span className={styles.tGreen}>&quot;user&quot;</span>,<span className={styles.tBlue}>&quot;content&quot;</span>: <span className={styles.tGreen}>&quot;hi&quot;</span>{'}'}]{'}'}&apos;
-        </span>
-      </div>
+      {TERMINAL_BLOCKS.map((block, i) => {
+        const commandLen = block.tokens.reduce((n, t) => n + t.text.length, 0);
+        const isCurrent = i === blockIndex && phase !== 'done';
+        const commentDone = i < blockIndex || phase === 'done' || (i === blockIndex && phase === 'command');
+        const commandDone = i < blockIndex || phase === 'done';
+        const commentTyped = commentDone ? block.comment.length : isCurrent && phase === 'comment' ? typed : 0;
+        const commandTyped = commandDone ? commandLen : isCurrent && phase === 'command' ? typed : 0;
+        const showCommentCursor = isCurrent && phase === 'comment';
+        const showCommandCursor = isCurrent && phase === 'command';
+        const commentHidden = block.comment.slice(commentTyped);
+        return (
+          <div className={styles.terminalBlock} key={i}>
+            <span className={styles.tComment}>
+              {block.comment.slice(0, commentTyped)}
+              {showCommentCursor && <Cursor />}
+              {commentHidden && <span style={{visibility: 'hidden'}}>{commentHidden}</span>}
+            </span>
+            <span>
+              {renderTokens(block.tokens, commandTyped, showCommandCursor ? <Cursor /> : null)}
+            </span>
+          </div>
+        );
+      })}
+      <Cursor
+        style={{visibility: phase === 'done' && blockIndex === TERMINAL_BLOCKS.length - 1 ? 'visible' : 'hidden'}}
+      />
     </div>
   );
 }
