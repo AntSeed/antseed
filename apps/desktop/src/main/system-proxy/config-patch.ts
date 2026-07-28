@@ -913,6 +913,13 @@ function applyT3CodeConfigPatch(patch: T3CodeConfigPatchDef, peerId: string, ser
     environment: [
       { name: 'ANTHROPIC_BASE_URL', value: patch.baseURL.replace('{buyerPort}', String(buyerPort)), sensitive: false },
       { name: 'ANTHROPIC_API_KEY', value: 'antseed', sensitive: false },
+      { name: 'HTTP_PROXY', value: '', sensitive: false },
+      { name: 'HTTPS_PROXY', value: '', sensitive: false },
+      { name: 'http_proxy', value: '', sensitive: false },
+      { name: 'https_proxy', value: '', sensitive: false },
+      { name: 'NO_PROXY', value: 'localhost,127.0.0.1,::1', sensitive: false },
+      { name: 'no_proxy', value: 'localhost,127.0.0.1,::1', sensitive: false },
+      { name: 'NODE_OPTIONS', value: '', sensitive: false },
     ],
     enabled: true,
     config: { customModels },

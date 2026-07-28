@@ -517,6 +517,13 @@ test('T3 Code patch adds an AntSeed Claude provider and preserves existing setti
       environment: [
         { name: 'ANTHROPIC_BASE_URL', value: 'http://localhost:9456', sensitive: false },
         { name: 'ANTHROPIC_API_KEY', value: 'antseed', sensitive: false },
+        { name: 'HTTP_PROXY', value: '', sensitive: false },
+        { name: 'HTTPS_PROXY', value: '', sensitive: false },
+        { name: 'http_proxy', value: '', sensitive: false },
+        { name: 'https_proxy', value: '', sensitive: false },
+        { name: 'NO_PROXY', value: 'localhost,127.0.0.1,::1', sensitive: false },
+        { name: 'no_proxy', value: 'localhost,127.0.0.1,::1', sensitive: false },
+        { name: 'NODE_OPTIONS', value: '', sensitive: false },
       ],
       enabled: true,
       config: {
