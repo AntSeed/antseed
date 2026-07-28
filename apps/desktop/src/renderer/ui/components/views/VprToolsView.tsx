@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import type { InstalledAppEntry, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
@@ -274,12 +274,13 @@ export function VprToolsView() {
     try {
       const result = await bridge.systemProxyRestartApp(profileName);
       setMessage(result.ok ? `Restarted ${label}` : (result.error ?? `Unable to restart ${label}`));
+      if (result.ok) await refresh();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setActionBusy(null);
     }
-  }, []);
+  }, [refresh]);
 
   const trustCa = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -525,11 +526,7 @@ export function VprToolsView() {
             {telegramVisible ? <TelegramBotCard /> : null}
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
-              const canOpenUrl = connected && profile.appAction === 'open-url' && !!profile.openUrl;
-              const canOpenTool = connected && (profile.appAction === 'open-tool' || !!profile.launchAppName);
-              const canOpen = canOpenUrl || canOpenTool;
-              const canRestart = connected && (profile.canRestart || profile.appAction === 'restart-app');
-              const hasActions = canRestart;
+              const canRestart = connected && profile.canRestart === true;
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
@@ -561,9 +558,9 @@ export function VprToolsView() {
                           )}
                         </span>
                         {connected && (
-                          <span className={styles.appMeta}>
-                            <span className={styles.connectedDot} aria-hidden="true" />
-                            Connected
+                          <span className={`${styles.appMeta}${profile.needsRestart ? ` ${styles.appMetaWarning}` : ''}`}>
+                            <span className={profile.needsRestart ? styles.restartDot : styles.connectedDot} aria-hidden="true" />
+                            {profile.needsRestart ? 'Restart required' : 'Connected'}
                           </span>
                         )}
                       </span>
@@ -575,21 +572,16 @@ export function VprToolsView() {
                         aria-label={`Connecting ${profile.displayName}`}
                         title={`Connecting ${profile.displayName}`}
                       />
-                    ) : canOpen ? (
+                    ) : canRestart ? (
                       <button
                         type="button"
-                        className={styles.appOpen}
-                        onClick={() => {
-                          // A user-picked "Open with" app wins over the
-                          // profile's packaged open-url action.
-                          void (canOpenUrl && !profile.launchAppName
-                            ? openUrl(profile.openUrl!)
-                            : openTool(profile.toolName ?? profile.name));
-                        }}
-                        aria-label={`Open ${profile.displayName}`}
-                        title={`Open ${profile.launchAppName ?? profile.displayName}`}
+                        className={`${styles.appOpen}${profile.needsRestart ? ` ${styles.appRestartNeeded}` : ''}`}
+                        onClick={() => { void restartApp(profile.name, profile.displayName); }}
+                        disabled={actionBusy === profile.name}
+                        aria-label={`Restart ${profile.displayName}`}
+                        title={profile.needsRestart ? `Restart ${profile.displayName} to apply the connection` : `Restart ${profile.displayName}`}
                       >
-                        <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+                        <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={16} strokeWidth={2} />
                       </button>
                     ) : null}
                     <button
@@ -616,21 +608,6 @@ export function VprToolsView() {
                     ) : null}
                   </div>
 
-                  {hasActions && (
-                    <div className={styles.appBody}>
-                      <div className={styles.actions}>
-                        {canRestart ? (
-                          <button
-                            type="button"
-                            onClick={() => { void restartApp(profile.name, profile.displayName); }}
-                            disabled={actionBusy === profile.name}
-                          >
-                            {actionBusy === profile.name ? 'Restarting...' : `Restart ${profile.displayName}`}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -842,7 +819,7 @@ export function VprToolsView() {
                     </div>
                     <p className={styles.settingHint}>
                       The installed application VPR launches for {settingsProfile.displayName} —
-                      used by the open arrow and when jumping back into a chat session.
+                       used by the restart button and when jumping back into a chat session.
                     </p>
                     <button
                       type="button"

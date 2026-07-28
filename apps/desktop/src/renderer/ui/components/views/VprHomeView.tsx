@@ -4,9 +4,10 @@ import {
   ArrowDown01Icon,
   ArrowRight02Icon,
   ArrowUp02Icon,
-  ArrowUpRight01Icon,
-  Cancel01Icon,
-  PowerIcon,
+    ArrowUpRight01Icon,
+    Cancel01Icon,
+    PowerIcon,
+    ArrowReloadHorizontalIcon,
 } from '@hugeicons/core-free-icons';
 import type { BuyerConversationSummary, RuntimeProcessState, SystemProxyProfileSummary } from '../../../types/bridge';
 import type { VprModelCatalogEntry } from '../../../core/state';
@@ -128,6 +129,10 @@ export function VprHomeView({ onSelectView }: Props) {
   const connectedProfiles = useMemo(
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
     [activeProfiles, profiles],
+  );
+  const restartProfiles = useMemo(
+    () => connectedProfiles.filter((profile) => profile.needsRestart),
+    [connectedProfiles],
   );
   const expectedSavingsPct = useMemo(() => {
     const values = snap.catalog
@@ -370,6 +375,17 @@ export function VprHomeView({ onSelectView }: Props) {
           <div className={styles.connectedGroup}>
             {/* Connected apps live on the Apps page — home leads with the
                 chats themselves. */}
+            {restartProfiles.length > 0 ? (
+              <button type="button" className={styles.restartBanner} onClick={() => onSelectView?.('tools')}>
+                <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
+                <span>
+                  <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
+                  <small>Restart to apply the VPR connection.</small>
+                </span>
+                <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+              </button>
+            ) : null}
+
             {recentChats}
 
             <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>

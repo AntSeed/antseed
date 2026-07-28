@@ -142,12 +142,25 @@
   line-height: 20px;
 }
 
-.connectedDot {
+.connectedDot,
+.restartDot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;
+}
+
+.connectedDot {
   background: var(--accent-green, #4ade80);
+}
+
+.restartDot {
+  background: #f59e0b;
+}
+
+.appMetaWarning,
+.appRestartNeeded {
+  color: #f59e0b;
 }
 
 .appOpen {

@@ -40,6 +40,7 @@ import {
 } from './os-settings.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import {
+  systemProxyCaPath,
   systemProxyDataDir,
   systemProxyDesktopStatePath,
   systemProxyPidPath,
@@ -262,7 +263,11 @@ export async function restartConnectedApps(profileNames: string[]): Promise<void
       continue;
     }
     if (!isAppTargetRunning(target)) continue;
-    const result = await restartAppTarget(target);
+    const result = await restartAppTarget(target, {
+      env: profile?.kind === 'proxy'
+        ? { NODE_EXTRA_CA_CERTS: systemProxyCaPath() }
+        : undefined,
+    });
     deps().appendLog(
       'system-proxy',
       'system',

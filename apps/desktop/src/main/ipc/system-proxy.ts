@@ -22,8 +22,9 @@ import {
   setAppLaunchSetting,
 } from '../connected-apps/launch-settings.js';
 import {
+  appTargetNeedsRestart,
   isCertificateTrustError,
-  restartNamedApp,
+  restartAppTarget,
 } from '../connected-apps/launcher.js';
 import {
   effectiveLaunchTarget,
@@ -90,7 +91,8 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
         appAction: profile.appAction,
         openUrl: profile.openUrl,
         toolName: profile.toolName,
-        canRestart: Boolean(profile.restartAppName),
+        canRestart: Boolean(launchTarget),
+        needsRestart: launchTarget ? appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
         toolSlugs: effectiveToolSlugs(profile.name, profile.toolSlugs, profile.label),
         ...(iconDataUri ? { iconDataUri } : {}),
         ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
@@ -109,7 +111,8 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
         kind: 'proxy' as const,
         method: 'HTTPS proxy',
         domains: [record.host],
-        canRestart: false,
+        canRestart: Boolean(launchTarget),
+        needsRestart: launchTarget ? appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
         custom: true,
         toolSlugs: effectiveToolSlugs(record.name, undefined, displayName),
         ...(iconDataUri ? { iconDataUri } : {}),
@@ -324,12 +327,17 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
 
   ipcMain.handle('system-proxy:restart-app', async (_event, opts: { app: string }) => {
     const profileName = typeof opts?.app === 'string' ? opts.app : '';
-    const profile = SYSTEM_PROXY_PROFILES.find((item) => item.name === profileName);
-    const appName = profile?.restartAppName;
-    if (!appName) {
+    const profile = allSystemProxyProfiles().find((item) => item.name === profileName);
+    const target = effectiveLaunchTarget(profileName);
+    if (!profile || !target) {
       return { ok: false, error: `No restart target configured for ${profileName || 'this profile'}.` };
     }
-    return restartNamedApp(appName);
+    const result = await restartAppTarget(target, {
+      force: true,
+      launchIfStopped: true,
+      env: { NODE_EXTRA_CA_CERTS: systemProxyCaPath() },
+    });
+    return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
   });
 
   ipcMain.handle('system-proxy:ca-exists', () => {

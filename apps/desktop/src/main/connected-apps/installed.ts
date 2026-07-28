@@ -175,18 +175,24 @@ export function windowsIconSourcePath(entryPath: string): string {
 
 
 /** Launch a user-picked application target (.app bundle / .lnk shortcut). */
-export function launchAppTarget(target: AppLaunchTarget): { ok: boolean; error?: string } {
+export function launchAppTarget(
+  target: AppLaunchTarget,
+  opts: { env?: Record<string, string> } = {},
+): { ok: boolean; error?: string } {
   try {
     if (process.platform === 'darwin') {
-      execFileSync('open', [target.path], { stdio: 'pipe' });
+      const envArgs = Object.entries(opts.env ?? {}).flatMap(([name, value]) => ['--env', `${name}=${value}`]);
+      const targetArgs = target.path ? [target.path] : ['-a', target.name];
+      execFileSync('open', [...envArgs, ...targetArgs], { stdio: 'pipe' });
       return { ok: true };
     }
     if (process.platform === 'win32') {
       // A packaged app has no path to start — it is addressed by
       // AppUserModelID, and explorer is what resolves those.
+      const childEnv = { ...process.env, ...opts.env };
       const child = isAppsFolderTarget(target.path)
-        ? spawn('explorer.exe', [target.path], { detached: true, stdio: 'ignore' })
-        : spawn('cmd.exe', ['/c', 'start', '', target.path], { detached: true, stdio: 'ignore' });
+        ? spawn('explorer.exe', [target.path], { detached: true, stdio: 'ignore', env: childEnv })
+        : spawn('cmd.exe', ['/c', 'start', '', target.path], { detached: true, stdio: 'ignore', env: childEnv });
       child.unref();
       return { ok: true };
     }

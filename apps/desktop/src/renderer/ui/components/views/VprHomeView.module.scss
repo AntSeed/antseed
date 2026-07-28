@@ -370,6 +370,40 @@
   cursor: default;
 }
 
+.restartBanner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.restartBanner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.restartBanner strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.restartBanner small {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .balanceBanner {
   width: 100%;
   display: flex;

@@ -19,7 +19,15 @@ export function isCertificateTrustError(message: string): boolean {
   return /certificate|cert_|err_cert|authority|trust|ssl|tls/i.test(message);
 }
 
-export function getMacAppProcessInfo(appName: string): { running: boolean; pid?: number; startedAt?: number } {
+export type AppProcessInfo = { running: boolean; pid?: number; startedAt?: number };
+
+const managedAppProcesses = new Map<string, number>();
+
+function appTargetKey(target: AppLaunchTarget): string {
+  return `${target.name}\u0000${target.path}`;
+}
+
+export function getMacAppProcessInfo(appName: string): AppProcessInfo {
   if (process.platform !== 'darwin') {
     return { running: false };
   }
@@ -64,30 +72,61 @@ export function windowsExecutablePath(targetPath: string): string | null {
     matches the bundle's executable directory, so an Electron app's helper
     processes count; Windows matches the executable image name, and a `.lnk`
     shortcut carries no resolvable image so it reads as not running. */
-export function isAppTargetRunning(target: AppLaunchTarget): boolean {
+export function appTargetProcessInfo(target: AppLaunchTarget): AppProcessInfo {
   if (process.platform === 'darwin') {
-    if (!target.path.endsWith('.app')) {
-      return getMacAppProcessInfo(target.name).running;
-    }
+    if (!target.path.endsWith('.app')) return getMacAppProcessInfo(target.name);
     try {
-      execFileSync('pgrep', ['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)], { stdio: 'pipe' });
-      return true;
+      const raw = execFileSync('pgrep', ['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)], { encoding: 'utf8' }).trim();
+      const pid = Number(raw.split('\n')[0]?.trim());
+      if (!Number.isFinite(pid) || pid <= 0) return { running: false };
+      let startedAt: number | undefined;
+      try {
+        const startRaw = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' }).trim();
+        const parsed = Date.parse(startRaw);
+        if (Number.isFinite(parsed)) startedAt = parsed;
+      } catch { /* best-effort */ }
+      return { running: true, pid, startedAt };
     } catch {
-      return false;
+      return { running: false };
     }
   }
   if (process.platform === 'win32') {
     const executable = windowsExecutablePath(target.path);
-    if (!executable) return false;
-    const image = path.basename(executable);
+    if (!executable) return { running: false };
     try {
-      const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/NH'], { encoding: 'utf8' });
-      return out.toLowerCase().includes(image.toLowerCase());
+      const out = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `$p = Get-Process -Name '${path.basename(executable, '.exe').replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($p) { $p.Id.ToString() + '|' + $p.StartTime.ToUniversalTime().ToString('o') }`],
+        { encoding: 'utf8' },
+      ).trim();
+      const [pidText, startedText] = out.split('|');
+      const pid = Number(pidText);
+      const startedAt = startedText ? Date.parse(startedText) : NaN;
+      return Number.isFinite(pid) && pid > 0
+        ? { running: true, pid, ...(Number.isFinite(startedAt) ? { startedAt } : {}) }
+        : { running: false };
     } catch {
-      return false;
+      return { running: false };
     }
   }
-  return false;
+  return { running: false };
+}
+
+export function isAppTargetRunning(target: AppLaunchTarget): boolean {
+  return appTargetProcessInfo(target).running;
+}
+
+export function markAppTargetManaged(target: AppLaunchTarget, launchedAt = Date.now()): void {
+  managedAppProcesses.set(appTargetKey(target), launchedAt);
+}
+
+export function appTargetNeedsRestart(target: AppLaunchTarget, connectedAt: number | null): boolean {
+  const processInfo = appTargetProcessInfo(target);
+  if (!processInfo.running) return false;
+  const managedAt = managedAppProcesses.get(appTargetKey(target));
+  if (!managedAt) return true;
+  if (processInfo.startedAt && processInfo.startedAt > managedAt + 2_000) return true;
+  return connectedAt !== null && managedAt < connectedAt;
 }
 
 /** Name-only targets (`open -a Claude`) carry no bundle path, so the window
@@ -160,7 +199,7 @@ export function killAppTarget(target: AppLaunchTarget): void {
  */
 export async function restartAppTarget(
   target: AppLaunchTarget,
-  opts: { force?: boolean; launchIfStopped?: boolean } = {},
+  opts: { force?: boolean; launchIfStopped?: boolean; env?: Record<string, string> } = {},
 ): Promise<{ ok: boolean; restarted: boolean; error?: string }> {
   if (process.platform !== 'darwin' && process.platform !== 'win32') {
     return { ok: false, restarted: false, error: `Restarting ${target.name} is not supported on this platform.` };
@@ -169,17 +208,11 @@ export async function restartAppTarget(
   // the process to actually come back — the caller's busy state is what tells
   // the user the app is on its way.
   const launch = async (): Promise<{ ok: boolean; restarted: boolean; error?: string }> => {
-    const result = target.path
-      ? launchAppTarget(target)
-      : (() => {
-        try {
-          execFileSync('open', ['-a', target.name], { stdio: 'pipe' });
-          return { ok: true } as { ok: boolean; error?: string };
-        } catch (err) {
-          return { ok: false, error: err instanceof Error ? err.message : String(err) };
-        }
-      })();
-    if (result.ok) await waitForAppTarget(target);
+    const result = launchAppTarget(target, { env: opts.env });
+    if (result.ok) {
+      markAppTargetManaged(target);
+      await waitForAppTarget(target);
+    }
     return { ok: result.ok, restarted: result.ok, ...(result.error ? { error: result.error } : {}) };
   };
 
@@ -232,14 +265,17 @@ export async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 30_0
 /** Restart an app we know only by name. `restartAppTarget` handles macOS and
     Windows; the name is resolved to a real target first because Windows can't
     launch by name alone. */
-export async function restartNamedApp(appName: string): Promise<{ ok: boolean; error?: string }> {
+export async function restartNamedApp(
+  appName: string,
+  opts: { env?: Record<string, string> } = {},
+): Promise<{ ok: boolean; error?: string }> {
   const target = namedAppTarget(appName);
   if (!target) {
     return process.platform === 'darwin' || process.platform === 'win32'
       ? { ok: false, error: `Could not find ${appName} on this device. Quit and reopen it to apply the connection.` }
       : { ok: false, error: `${appName} restart is not supported on this platform.` };
   }
-  const result = await restartAppTarget(target, { force: true, launchIfStopped: true });
+  const result = await restartAppTarget(target, { force: true, launchIfStopped: true, env: opts.env });
   return { ok: result.ok, ...(result.error ? { error: result.error } : {}) };
 }
 

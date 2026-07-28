@@ -21,6 +21,7 @@ import {
   listInstalledAppsWithIcons,
 } from '../connected-apps/installed.js';
 import {
+  markAppTargetManaged,
   namedAppTarget,
   waitForAppTarget,
 } from '../connected-apps/launcher.js';
@@ -30,6 +31,9 @@ import {
 import {
   allSystemProxyProfiles,
 } from '../system-proxy/profiles.js';
+import {
+  systemProxyCaPath,
+} from '../system-proxy/paths.js';
 import {
   applyWindowPreset,
   applyWindowView,
@@ -78,10 +82,15 @@ export function registerDesktopIpc(): void {
       // for known tools) wins over the packaged open action.
       const launchTarget = effectiveLaunchTarget(profile.name);
       if (launchTarget) {
-        const result = launchAppTarget(launchTarget);
+        const result = launchAppTarget(launchTarget, {
+          env: { NODE_EXTRA_CA_CERTS: systemProxyCaPath() },
+        });
         // Resolve only once the app is actually up — the caller's connect
         // spinner runs off this promise.
-        if (result.ok) await waitForAppTarget(launchTarget);
+        if (result.ok) {
+          markAppTargetManaged(launchTarget);
+          await waitForAppTarget(launchTarget);
+        }
         return result;
       }
       if (profile.openUrl) {
@@ -96,12 +105,11 @@ export function registerDesktopIpc(): void {
         try {
           // A resolved path launches the same way everywhere; macOS name-only
           // targets still go through `open -a`.
-          if (target.path) {
-            const result = launchAppTarget(target);
-            if (!result.ok) return result;
-          } else {
-            execFileSync('open', ['-a', target.name], { stdio: 'pipe' });
-          }
+          const result = launchAppTarget(target, {
+            env: { NODE_EXTRA_CA_CERTS: systemProxyCaPath() },
+          });
+          if (!result.ok) return result;
+          markAppTargetManaged(target);
           await waitForAppTarget(target);
           return { ok: true };
         } catch (err) {

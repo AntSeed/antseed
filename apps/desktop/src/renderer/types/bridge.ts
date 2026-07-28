@@ -25,6 +25,7 @@ export type SystemProxyProfileSummary = {
   openUrl?: string;
   toolName?: string;
   canRestart?: boolean;
+  needsRestart?: boolean;
   /** True for user-added custom apps (removable, favicon-based icon). */
   custom?: boolean;
   iconDataUri?: string;
