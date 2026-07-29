@@ -83,7 +83,12 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
         name?: string;
         npm?: string;
         options?: { baseURL?: string; apiKey?: string };
-        models?: Record<string, { name: string; limit: { context: number; output: number } }>;
+        models?: Record<string, {
+          name: string;
+          attachment?: boolean;
+          modalities?: { input: string[]; output: string[] };
+          limit: { context: number; output: number };
+        }>;
       }>;
       model: string;
       disabled_providers?: string[];
@@ -96,7 +101,12 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
     assert.equal(config.provider.antseed?.options?.baseURL, 'http://127.0.0.1:9456/v1');
     assert.equal(config.provider.antseed?.options?.apiKey, 'antseed');
     assert.deepEqual(config.provider.antseed?.models, {
-      antseed: { name: 'AntSeed Auto', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
+      antseed: {
+        name: 'AntSeed Auto',
+        attachment: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      },
       [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
       [`${PEER_ID}@model-b`]: { name: 'model-b', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
     });

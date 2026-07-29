@@ -432,6 +432,8 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
     models: {
       [ROUTED_MODEL_ALIAS]: {
         name: ROUTED_MODEL_ALIAS_LABEL,
+        attachment: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
         limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
       },
       ...buildConfigPatchModels(patch, peerId, selectedService, servedModels),

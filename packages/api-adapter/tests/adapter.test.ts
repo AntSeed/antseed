@@ -223,6 +223,76 @@ describe('transformRequest anthropic to chat', () => {
     });
   });
 
+  it('preserves anthropic image blocks when rendering chat completions', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 128,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'What is in this image?' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' } },
+          ],
+        }],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'What is in this image?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
+    ]);
+  });
+
+  it('preserves chat image URLs when rendering anthropic messages', () => {
+    const transformed = transformRequest(makeRequest({
+      path: '/v1/chat/completions',
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this' },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,anBn' } },
+          ],
+        }],
+      })),
+    }), { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown[] }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'Describe this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'anBn' } },
+    ]);
+  });
+
+  it('preserves responses input images when rendering anthropic messages', () => {
+    const transformed = transformRequest(makeRequest({
+      path: '/v1/responses',
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4o',
+        input: [{
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'Describe this' },
+            { type: 'input_image', image_url: 'data:image/webp;base64,d2VicA==' },
+          ],
+        }],
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown[] }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'Describe this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'd2VicA==' } },
+    ]);
+  });
+
   it('preserves mixed assistant text and tool calls in one chat message', () => {
     const transformed = transformRequest(makeRequest({
       body: new TextEncoder().encode(JSON.stringify({
