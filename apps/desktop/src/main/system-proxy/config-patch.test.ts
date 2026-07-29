@@ -24,7 +24,6 @@ function makePatch(configPath: string): ConfigPatchDef {
     npm: '@antseed/tool-provider',
     providerName: 'AntSeed',
     baseURL: 'http://127.0.0.1:{buyerPort}/v1',
-    modelFormat: 'peer-routed',
   };
 }
 
@@ -76,7 +75,7 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
     }\n`;
     await writeFile(configPath, original, 'utf8');
 
-    applyConfigPatch(makePatch(configPath), PEER_ID, 'model-b', 9456, ['model-a', 'model-b']);
+    applyConfigPatch(makePatch(configPath), PEER_ID, 9456);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as {
       provider: Record<string, {
@@ -107,10 +106,8 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
         modalities: { input: ['text', 'image'], output: ['text'] },
         limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
       },
-      [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
-      [`${PEER_ID}@model-b`]: { name: 'model-b', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
     });
-    assert.equal(config.model, `antseed/${PEER_ID}@model-b`);
+    assert.equal(config.model, 'antseed/antseed');
     assert.deepEqual(config.disabled_providers, ['other']);
     assert.equal(config.notes, 'keep // literal text');
 
@@ -120,51 +117,23 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
 
 test('applyConfigPatch creates a new config file when one does not exist', async () => {
   await withTempConfig(async (_dir, configPath) => {
-    applyConfigPatch(makePatch(configPath), PEER_ID, 'model-a', 8377, ['model-a']);
+    applyConfigPatch(makePatch(configPath), PEER_ID, 8377);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as {
       provider?: Record<string, unknown>;
       model?: string;
     };
     assert.ok(config.provider?.antseed);
-    assert.equal(config.model, `antseed/${PEER_ID}@model-a`);
+    assert.equal(config.model, 'antseed/antseed');
     assert.equal(existsSync(`${configPath}.antseed.bak`), false);
   });
 });
 
-test('applyConfigPatch falls back to an advertised model when no default model is selected', async () => {
-  await withTempConfig(async (_dir, configPath) => {
-    applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, ['model-a']);
-
-    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
-      provider?: Record<string, {
-        models?: Record<string, {
-          name: string;
-          attachment?: boolean;
-          modalities?: { input: string[]; output: string[] };
-          limit: { context: number; output: number };
-        }>;
-      }>;
-      model?: string;
-    };
-    assert.deepEqual(config.provider?.antseed?.models, {
-      antseed: {
-        name: 'AntSeed Auto',
-        attachment: true,
-        modalities: { input: ['text', 'image'], output: ['text'] },
-        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      },
-      [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
-    });
-    assert.equal(config.model, `antseed/${PEER_ID}@model-a`);
-  });
-});
-
-test('applyConfigPatch rejects routes without any selected or advertised model', async () => {
+test('applyConfigPatch rejects routes without a routable peer ID', async () => {
   await withTempConfig(async (_dir, configPath) => {
     assert.throws(
-      () => applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, []),
-      /requires a model/,
+      () => applyConfigPatch(makePatch(configPath), 'not-a-peer-id', 8377),
+      /peer ID/,
     );
     assert.equal(existsSync(configPath), false);
   });
@@ -176,7 +145,7 @@ test('applyConfigPatch leaves malformed existing configs unchanged', async () =>
     await writeFile(configPath, original, 'utf8');
 
     assert.throws(
-      () => applyConfigPatch(makePatch(configPath), PEER_ID, 'model-a', 8377, ['model-a']),
+      () => applyConfigPatch(makePatch(configPath), PEER_ID, 8377),
       /Unable to parse JSONC config/,
     );
 
@@ -193,7 +162,7 @@ test('removeConfigPatch removes only the configured provider and matching model 
       },
     }), 'utf8');
     const patch = makePatch(configPath);
-    applyConfigPatch(patch, PEER_ID, 'model-a', 8377, ['model-a']);
+    applyConfigPatch(patch, PEER_ID, 8377);
 
     assert.equal(removeConfigPatch(patch), true);
 
@@ -236,13 +205,13 @@ test('applyConfigPatch (codex) sets top-level keys before tables and appends a m
     ].join('\n');
     await writeFile(configPath, original, 'utf8');
 
-    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 'model-b', 9456, ['model-a', 'model-b']);
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 9456);
 
     const raw = await readFile(configPath, 'utf8');
     const lines = raw.split('\n');
     const firstTable = lines.findIndex((line) => line.startsWith('['));
     assert.ok(lines.indexOf('model_provider = "antseed"') < firstTable);
-    assert.ok(lines.indexOf(`model = "${PEER_ID}@model-b"`) < firstTable);
+    assert.ok(lines.indexOf('model = "antseed"') < firstTable);
     assert.ok(lines.indexOf(`model_context_window = ${ANTSEED_MODEL_CONTEXT_WINDOW}`) < firstTable);
     assert.equal(lines[0], '# user comment');
     assert.equal(lines.filter((line) => /^\s*model\s*=/.test(line)).length, 1);
@@ -258,12 +227,12 @@ test('applyConfigPatch (codex) sets top-level keys before tables and appends a m
 test('applyConfigPatch (codex) creates the config file and replaces a previous managed table', async () => {
   await withTempConfig(async (dir) => {
     const configPath = path.join(dir, 'config.toml');
-    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 'model-a', 8377, ['model-a']);
-    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 'model-b', 8378, ['model-b']);
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8377);
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8378);
 
     const raw = await readFile(configPath, 'utf8');
     assert.equal(raw.split('[model_providers.antseed]').length, 2);
-    assert.ok(raw.includes(`model = "${PEER_ID}@model-b"`));
+    assert.ok(raw.includes('model = "antseed"'));
     assert.ok(raw.includes('base_url = "http://127.0.0.1:8378/v1"'));
     assert.ok(!raw.includes('8377'));
   });
@@ -274,14 +243,14 @@ test('removeConfigPatch (codex) removes the managed table and model selection bu
     const configPath = path.join(dir, 'config.toml');
     await writeFile(configPath, '[mcp_servers.docs]\ncommand = "docs-server"\n', 'utf8');
     const patch = makeCodexPatch(configPath);
-    applyConfigPatch(patch, PEER_ID, 'model-a', 8377, ['model-a']);
+    applyConfigPatch(patch, PEER_ID, 8377);
 
     assert.equal(removeConfigPatch(patch), true);
 
     const raw = await readFile(configPath, 'utf8');
     assert.ok(raw.includes('[mcp_servers.docs]'));
     assert.ok(!raw.includes('model_provider'));
-    assert.ok(!raw.includes(`model = "${PEER_ID}@model-a"`));
+    assert.ok(!raw.includes('model = "antseed"'));
     assert.ok(!raw.includes('model_context_window'));
     assert.ok(!raw.includes('[model_providers.antseed]'));
 
@@ -317,7 +286,7 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     await writeFile(modelsPath, JSON.stringify({ providers: { ollama: { baseUrl: 'http://localhost:11434/v1' } } }), 'utf8');
     await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }), 'utf8');
 
-    applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 'model-b', 9456, ['model-a', 'model-b']);
+    applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 9456);
 
     const models = JSON.parse(await readFile(modelsPath, 'utf8')) as {
       providers: Record<string, { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string; name: string; contextWindow: number; maxTokens: number }> }>;
@@ -328,14 +297,12 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     assert.equal(models.providers.antseed?.apiKey, 'antseed');
     assert.deepEqual(models.providers.antseed?.models, [
       { id: 'antseed', name: 'AntSeed Auto', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      { id: `${PEER_ID}@model-a`, name: 'model-a', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      { id: `${PEER_ID}@model-b`, name: 'model-b', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
     ]);
 
     const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
     assert.equal(settings['theme'], 'dark');
     assert.equal(settings['defaultProvider'], 'antseed');
-    assert.equal(settings['defaultModel'], `${PEER_ID}@model-b`);
+    assert.equal(settings['defaultModel'], 'antseed');
   });
 });
 
@@ -344,7 +311,7 @@ test('removeConfigPatch (pi) removes only the managed provider and matching defa
     const modelsPath = path.join(dir, 'models.json');
     const settingsPath = path.join(dir, 'settings.json');
     const patch = makePiPatch(modelsPath, settingsPath);
-    applyConfigPatch(patch, PEER_ID, 'model-a', 8377, ['model-a']);
+    applyConfigPatch(patch, PEER_ID, 8377);
 
     assert.equal(removeConfigPatch(patch), true);
 
@@ -358,29 +325,29 @@ test('removeConfigPatch (pi) removes only the managed provider and matching defa
   });
 });
 
-test('applyConfigPatch writes the routed-model alias as the selection when the tool follows the default route', async () => {
+test('applyConfigPatch writes only the routed-model alias across formats', async () => {
   await withTempConfig(async (dir, configPath) => {
-    applyConfigPatch(makePatch(configPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(makePatch(configPath), PEER_ID, 8377);
     const opencode = JSON.parse(await readFile(configPath, 'utf8')) as { model?: string };
     assert.equal(opencode.model, 'antseed/antseed');
 
     const codexPath = path.join(dir, 'config.toml');
-    applyConfigPatch(makeCodexPatch(codexPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(makeCodexPatch(codexPath), PEER_ID, 8377);
     const codexRaw = await readFile(codexPath, 'utf8');
     assert.ok(codexRaw.includes('model = "antseed"'));
-    assert.ok(!codexRaw.includes(`${PEER_ID}@model-a`));
+    assert.ok(!codexRaw.includes(`${PEER_ID}@`));
 
     const modelsPath = path.join(dir, 'models.json');
     const settingsPath = path.join(dir, 'settings.json');
-    applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 8377);
     const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
     assert.equal(settings['defaultModel'], 'antseed');
     const models = JSON.parse(await readFile(modelsPath, 'utf8')) as {
       providers: Record<string, { models?: Array<{ id: string }> }>;
     };
-    // Concrete peer-pinned entries stay listed so the tool's own model picker
-    // can still pin a specific route.
-    assert.deepEqual(models.providers.antseed?.models?.map((entry) => entry.id), ['antseed', `${PEER_ID}@model-a`]);
+    // Model selection lives in the desktop route selector (floating pill /
+    // VPR); tool configs expose only the alias the buyer resolves per request.
+    assert.deepEqual(models.providers.antseed?.models?.map((entry) => entry.id), ['antseed']);
   });
 });
 
@@ -414,7 +381,7 @@ test('applyConfigPatch (crush) writes an openai-compat provider and the large/sm
     const configPath = path.join(dir, 'crush.json');
     await writeFile(configPath, JSON.stringify({ options: { debug: true } }), 'utf8');
 
-    applyConfigPatch(makeCrushPatch(configPath), PEER_ID, 'model-a', 8377, ['model-a', 'model-b']);
+    applyConfigPatch(makeCrushPatch(configPath), PEER_ID, 8377);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
     assert.deepEqual(config['options'], { debug: true });
@@ -423,12 +390,12 @@ test('applyConfigPatch (crush) writes an openai-compat provider and the large/sm
     assert.equal(provider['base_url'], 'http://127.0.0.1:8377/v1');
     assert.deepEqual(
       provider['models'].map((model: Record<string, unknown>) => model['id']),
-      ['antseed', `${PEER_ID}@model-a`, `${PEER_ID}@model-b`],
+      ['antseed'],
     );
     assert.ok(provider['models'].every((model: Record<string, unknown>) => model['context_window'] === ANTSEED_MODEL_CONTEXT_WINDOW));
     assert.ok(provider['models'].every((model: Record<string, unknown>) => model['default_max_tokens'] === ANTSEED_MODEL_MAX_OUTPUT_TOKENS));
-    assert.deepEqual(config['models']['large'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
-    assert.deepEqual(config['models']['small'], { provider: 'antseed', model: `${PEER_ID}@model-a` });
+    assert.deepEqual(config['models']['large'], { provider: 'antseed', model: 'antseed' });
+    assert.deepEqual(config['models']['small'], { provider: 'antseed', model: 'antseed' });
     assert.ok(existsSync(`${configPath}.antseed.bak`));
   });
 });
@@ -472,7 +439,7 @@ test('applyConfigPatch (goose) sets env-style keys while keeping user lines', as
     const configPath = path.join(dir, 'config.yaml');
     await writeFile(configPath, '# my goose setup\nGOOSE_MODE: smart_approve\nGOOSE_MODEL: gpt-4o\n', 'utf8');
 
-    applyConfigPatch(makeGoosePatch(configPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(makeGoosePatch(configPath), PEER_ID, 8377);
 
     const raw = await readFile(configPath, 'utf8');
     const lines = raw.split('\n');
@@ -527,7 +494,7 @@ test('T3 Code patch adds an AntSeed Claude provider and preserves existing setti
       },
     }), 'utf8');
 
-    applyConfigPatch(makeT3CodePatch(configPath), PEER_ID, 'model-a', 9456, ['model-a', 'model-b'], true);
+    applyConfigPatch(makeT3CodePatch(configPath), PEER_ID, 9456);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
     assert.equal(config['theme'], 'dark');
@@ -549,11 +516,7 @@ test('T3 Code patch adds an AntSeed Claude provider and preserves existing setti
       ],
       enabled: true,
       config: {
-        customModels: [
-          'antseed',
-          `${PEER_ID}@model-a`,
-          `${PEER_ID}@model-b`,
-        ],
+        customModels: ['antseed'],
       },
     });
   });
@@ -562,7 +525,7 @@ test('T3 Code patch adds an AntSeed Claude provider and preserves existing setti
 test('T3 Code patch removal only removes the managed AntSeed provider', async () => {
   await withTempConfig(async (_dir, configPath) => {
     const patch = makeT3CodePatch(configPath);
-    applyConfigPatch(patch, PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(patch, PEER_ID, 8377);
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
     (config['providerInstances'] as Record<string, unknown>)['codex'] = { driver: 'codex' };
     await writeFile(configPath, JSON.stringify(config), 'utf8');
@@ -591,7 +554,7 @@ test('applyConfigPatch (zed) writes the openai_compatible provider and agent def
     const configPath = path.join(dir, 'settings.json');
     await writeFile(configPath, '{\n  // zed user settings\n  "theme": "One Dark",\n}\n', 'utf8');
 
-    applyConfigPatch(makeZedPatch(configPath), PEER_ID, 'model-a', 8377, ['model-a'], true);
+    applyConfigPatch(makeZedPatch(configPath), PEER_ID, 8377);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
     assert.equal(config['theme'], 'One Dark');

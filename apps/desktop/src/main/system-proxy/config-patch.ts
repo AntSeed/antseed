@@ -28,7 +28,6 @@ export type OpencodeConfigPatchDef = {
   readonly npm: string;
   readonly providerName: string;
   readonly baseURL: string;
-  readonly modelFormat: 'peer-routed';
 };
 
 export type CodexConfigPatchDef = {
@@ -177,7 +176,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
     npm: readRequiredString(raw, 'npm', profileName),
     providerName: readRequiredString(raw, 'providerName', profileName),
     baseURL,
-    modelFormat: 'peer-routed',
   };
 }
 
@@ -337,86 +335,44 @@ function removeFromStringArray(config: JsonObject, key: string, value: string): 
   else config[key] = filtered;
 }
 
-function buildConfigPatchModels(
-  patch: OpencodeConfigPatchDef,
-  peerId: string,
-  model: string,
-  servedModels: string[],
-): JsonObject {
-  const models: JsonObject = {};
-  const cleanServedModels = servedModels.map((svc) => svc.trim()).filter(Boolean);
-  if (patch.modelFormat === 'peer-routed') {
-    for (const svc of cleanServedModels) {
-      const key = peerId ? `${peerId}@${svc}` : svc;
-      models[key] = {
-        name: svc,
-        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      };
-    }
-    if (model) {
-      const key = peerId ? `${peerId}@${model}` : model;
-      if (!models[key]) {
-        models[key] = {
-          name: model,
-          limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-        };
-      }
-    }
-  }
-  return models;
-}
-
-function routedModelKey(peerId: string, model: string): string {
-  return peerId ? `${peerId}@${model}` : model;
-}
-
-function resolveConfigPatchModel(model: string, servedModels: string[]): string {
-  const requested = model.trim();
-  if (requested) return requested;
-  const fallback = servedModels.map((svc) => svc.trim()).find(Boolean);
-  if (fallback) return fallback;
-  throw new Error('Config-based routing requires a model. Select a peer with advertised models or choose a model before enabling this tool.');
-}
-
 /**
- * Point the tool's config at the buyer proxy. With `useAlias`, the selected
- * model is written as the ROUTED_MODEL_ALIAS instead of a concrete
- * `<peerId>@<service>` key — the buyer resolves the alias to the current VPR
- * route per request, so route changes reach running tool sessions without a
- * config rewrite. Concrete keys are still written for per-app overrides.
+ * Point the tool's config at the buyer proxy. The config exposes a single
+ * model — the ROUTED_MODEL_ALIAS — which the buyer resolves per request to
+ * the route currently selected in the desktop (floating pill / VPR). Concrete
+ * `<peerId>@<service>` entries are no longer written: the only place to pick
+ * a model is the desktop route selector, so route changes reach running tool
+ * sessions without a config rewrite.
  */
-export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: string, buyerPort: number, servedModels: string[], useAlias = false): void {
+export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPort: number): void {
   if (!isBuyerProxyRoutablePeerId(peerId)) {
     throw new Error('Config-based routing requires a 40-character hex peer ID. Select a chain-backed peer before enabling this tool.');
   }
-  const selectedService = resolveConfigPatchModel(model, servedModels);
   if (patch.format === 'codex') {
-    applyCodexConfigPatch(patch, peerId, selectedService, buyerPort, useAlias);
+    applyCodexConfigPatch(patch, buyerPort);
     return;
   }
   if (patch.format === 'pi') {
-    applyPiConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    applyPiConfigPatch(patch, buyerPort);
     return;
   }
   if (patch.format === 'crush') {
-    applyCrushConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    applyCrushConfigPatch(patch, buyerPort);
     return;
   }
   if (patch.format === 'goose') {
-    applyGooseConfigPatch(patch, peerId, selectedService, buyerPort, useAlias);
+    applyGooseConfigPatch(patch, buyerPort);
     return;
   }
   if (patch.format === 'zed') {
-    applyZedConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    applyZedConfigPatch(patch, buyerPort);
     return;
   }
   if (patch.format === 't3code') {
-    applyT3CodeConfigPatch(patch, peerId, selectedService, buyerPort, servedModels, useAlias);
+    applyT3CodeConfigPatch(patch, buyerPort);
     return;
   }
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
-  const selectedModel = useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, selectedService);
   const config = readConfigPatchFile(filePath);
 
   const providers = (config['provider'] && typeof config['provider'] === 'object' && !Array.isArray(config['provider']))
@@ -436,11 +392,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, model: s
         modalities: { input: ['text', 'image'], output: ['text'] },
         limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
       },
-      ...buildConfigPatchModels(patch, peerId, selectedService, servedModels),
     },
   };
   config['provider'] = providers;
-  config['model'] = `${patch.providerKey}/${selectedModel}`;
+  config['model'] = `${patch.providerKey}/${ROUTED_MODEL_ALIAS}`;
   removeFromStringArray(config, 'disabled_providers', patch.providerKey);
 
   writeJsonFile(filePath, config);
@@ -483,20 +438,6 @@ export function removeConfigPatch(patch: ConfigPatchDef): boolean {
   if (!changed) return false;
   writeJsonFile(filePath, config);
   return true;
-}
-
-function routedModelEntries(peerId: string, model: string, servedModels: string[]): Array<{ id: string; name: string }> {
-  const entries: Array<{ id: string; name: string }> = [];
-  const seen = new Set<string>();
-  for (const svc of [...servedModels, model]) {
-    const name = svc.trim();
-    if (!name) continue;
-    const id = routedModelKey(peerId, name);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    entries.push({ id, name });
-  }
-  return entries;
 }
 
 function writeTextFile(filePath: string, content: string): void {
@@ -575,14 +516,14 @@ function removeTomlTopLevelKey(lines: readonly string[], key: string): string[] 
   return [...lines.slice(0, index), ...lines.slice(index + 1)];
 }
 
-function applyCodexConfigPatch(patch: CodexConfigPatchDef, peerId: string, service: string, buyerPort: number, useAlias: boolean): void {
+function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   let lines = raw.length > 0 ? raw.split('\n') : [];
   lines = removeCodexProviderTable(lines, patch.providerKey).lines;
   lines = setTomlTopLevelString(lines, 'model_provider', patch.providerKey);
-  lines = setTomlTopLevelString(lines, 'model', useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service));
+  lines = setTomlTopLevelString(lines, 'model', ROUTED_MODEL_ALIAS);
   lines = setTomlTopLevelValue(lines, 'model_context_window', String(ANTSEED_MODEL_CONTEXT_WINDOW));
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
   lines.push(
@@ -623,7 +564,7 @@ function removeCodexConfigPatch(patch: CodexConfigPatchDef): boolean {
 // provider/model from settings.json. The apiKey is a placeholder — the buyer
 // proxy is keyless, but pi hides models that have no credential at all.
 
-function applyPiConfigPatch(patch: PiConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+function applyPiConfigPatch(patch: PiConfigPatchDef, buyerPort: number): void {
   const modelsPath = expandTilde(patch.configPath);
   backupConfigFile(modelsPath);
   const config = readConfigPatchFile(modelsPath);
@@ -641,12 +582,6 @@ function applyPiConfigPatch(patch: PiConfigPatchDef, peerId: string, service: st
         contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW,
         maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
       },
-      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => ({
-        id,
-        name,
-        contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW,
-        maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
-      })),
     ],
   };
   config['providers'] = providers;
@@ -656,7 +591,7 @@ function applyPiConfigPatch(patch: PiConfigPatchDef, peerId: string, service: st
   backupConfigFile(settingsPath);
   const settings = readConfigPatchFile(settingsPath);
   settings['defaultProvider'] = patch.providerKey;
-  settings['defaultModel'] = useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service);
+  settings['defaultModel'] = ROUTED_MODEL_ALIAS;
   writeJsonFile(settingsPath, settings);
 }
 
@@ -693,7 +628,7 @@ function asObject(value: unknown): JsonObject {
 // `type: "openai-compat"`; the default model selection lives under
 // `models.large` / `models.small` as `{ provider, model }`.
 
-function applyCrushConfigPatch(patch: CrushConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+function applyCrushConfigPatch(patch: CrushConfigPatchDef, buyerPort: number): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
@@ -705,14 +640,11 @@ function applyCrushConfigPatch(patch: CrushConfigPatchDef, peerId: string, servi
     api_key: 'antseed',
     models: [
       { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL, context_window: ANTSEED_MODEL_CONTEXT_WINDOW, default_max_tokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
-        { id, name, context_window: ANTSEED_MODEL_CONTEXT_WINDOW, default_max_tokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS }
-      )),
     ],
   };
   config['providers'] = providers;
   const models = asObject(config['models']);
-  const selection = { provider: patch.providerKey, model: useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service) };
+  const selection = { provider: patch.providerKey, model: ROUTED_MODEL_ALIAS };
   models['large'] = { ...selection };
   models['small'] = { ...selection };
   config['models'] = models;
@@ -794,14 +726,14 @@ function isLoopbackHost(value: string | undefined): boolean {
   return !!value && /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(value);
 }
 
-function applyGooseConfigPatch(patch: GooseConfigPatchDef, peerId: string, service: string, buyerPort: number, useAlias: boolean): void {
+function applyGooseConfigPatch(patch: GooseConfigPatchDef, buyerPort: number): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   let lines = raw.length > 0 ? raw.split('\n') : [];
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
   lines = setYamlTopLevelString(lines, 'GOOSE_PROVIDER', patch.providerKey);
-  lines = setYamlTopLevelString(lines, 'GOOSE_MODEL', useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service));
+  lines = setYamlTopLevelString(lines, 'GOOSE_MODEL', ROUTED_MODEL_ALIAS);
   lines = setYamlTopLevelString(lines, 'OPENAI_HOST', patch.baseURL.replace('{buyerPort}', String(buyerPort)));
   lines = setYamlTopLevelString(lines, 'OPENAI_API_KEY', 'antseed');
   writeTextFile(filePath, `${lines.join('\n')}\n`);
@@ -841,7 +773,7 @@ function removeGooseConfigPatch(patch: GooseConfigPatchDef): boolean {
 // Zed asks for the provider's API key once in its UI — any value satisfies
 // the keyless buyer proxy.
 
-function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+function applyZedConfigPatch(patch: ZedConfigPatchDef, buyerPort: number): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
@@ -851,9 +783,6 @@ function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: 
     api_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
     available_models: [
       { name: ROUTED_MODEL_ALIAS, display_name: ROUTED_MODEL_ALIAS_LABEL, max_tokens: ANTSEED_MODEL_CONTEXT_WINDOW },
-      ...routedModelEntries(peerId, service, servedModels).map(({ id, name }) => (
-        { name: id, display_name: name, max_tokens: ANTSEED_MODEL_CONTEXT_WINDOW }
-      )),
     ],
   };
   languageModels['openai_compatible'] = compatible;
@@ -861,7 +790,7 @@ function applyZedConfigPatch(patch: ZedConfigPatchDef, peerId: string, service: 
   const agent = asObject(config['agent']);
   agent['default_model'] = {
     provider: patch.providerName,
-    model: useAlias ? ROUTED_MODEL_ALIAS : routedModelKey(peerId, service),
+    model: ROUTED_MODEL_ALIAS,
   };
   config['agent'] = agent;
   writeJsonFile(filePath, config);
@@ -899,16 +828,12 @@ function removeZedConfigPatch(patch: ZedConfigPatchDef): boolean {
   return true;
 }
 
-function applyT3CodeConfigPatch(patch: T3CodeConfigPatchDef, peerId: string, service: string, buyerPort: number, servedModels: string[], useAlias: boolean): void {
+function applyT3CodeConfigPatch(patch: T3CodeConfigPatchDef, buyerPort: number): void {
   const filePath = expandTilde(patch.configPath);
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
   const providerInstances = asObject(config['providerInstances']);
-  const routedModels = routedModelEntries(peerId, service, servedModels).map(({ id }) => id);
-  const customModels = [...new Set([
-    ...(useAlias ? [ROUTED_MODEL_ALIAS] : []),
-    ...routedModels,
-  ])];
+  const customModels = [ROUTED_MODEL_ALIAS];
   providerInstances[patch.providerKey] = {
     driver: 'claudeAgent',
     displayName: patch.providerName,

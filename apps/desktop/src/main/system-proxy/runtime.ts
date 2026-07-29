@@ -507,7 +507,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
       // the floating pill / VPR applies to running tool sessions.
-      applyConfigPatch(profile.configPatch, defaultRoute.peerId, defaultRoute.model, buyerProxyPort, defaultRoute.services, true);
+      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort);
       deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
     }
   }
