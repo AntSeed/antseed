@@ -137,11 +137,23 @@ test('applyConfigPatch falls back to an advertised model when no default model i
     applyConfigPatch(makePatch(configPath), PEER_ID, '', 8377, ['model-a']);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as {
-      provider?: Record<string, { models?: Record<string, { name: string; limit: { context: number; output: number } }> }>;
+      provider?: Record<string, {
+        models?: Record<string, {
+          name: string;
+          attachment?: boolean;
+          modalities?: { input: string[]; output: string[] };
+          limit: { context: number; output: number };
+        }>;
+      }>;
       model?: string;
     };
     assert.deepEqual(config.provider?.antseed?.models, {
-      antseed: { name: 'AntSeed Auto', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
+      antseed: {
+        name: 'AntSeed Auto',
+        attachment: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      },
       [`${PEER_ID}@model-a`]: { name: 'model-a', limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS } },
     });
     assert.equal(config.model, `antseed/${PEER_ID}@model-a`);
