@@ -19,6 +19,8 @@ const FETCH_TIMEOUT_MS = 8000;
 export type OpenRouterReferencePrice = {
   input: number | null;
   output: number | null;
+  /** Cache-read price; null when the model has no cache discount listed. */
+  cachedInput: number | null;
 };
 
 export type OpenRouterReferenceMap = Record<string, OpenRouterReferencePrice>;
@@ -26,7 +28,7 @@ export type OpenRouterReferenceMap = Record<string, OpenRouterReferencePrice>;
 type OpenRouterModel = {
   id?: unknown;
   name?: unknown;
-  pricing?: { prompt?: unknown; completion?: unknown } | null;
+  pricing?: { prompt?: unknown; completion?: unknown; input_cache_read?: unknown } | null;
 };
 
 let cache: { at: number; map: OpenRouterReferenceMap } | null = null;
@@ -45,6 +47,7 @@ function buildMap(models: OpenRouterModel[]): OpenRouterReferenceMap {
     const price: OpenRouterReferencePrice = {
       input: perMillion(model.pricing?.prompt),
       output: perMillion(model.pricing?.completion),
+      cachedInput: perMillion(model.pricing?.input_cache_read),
     };
     if (price.input === null && price.output === null) continue;
     for (const raw of [model.id, model.name]) {

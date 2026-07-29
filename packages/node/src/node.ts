@@ -241,6 +241,17 @@ export interface BuyerUsageChannelPoint {
   outputTokens: string;
 }
 
+/** Per-service usage summed across all buyer channels (paid + free).
+    `serviceIdHash` is keccak256(serviceName) — see getServiceMetadataId. */
+export interface BuyerUsageServicePoint {
+  serviceIdHash: string;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+}
+
 export interface BuyerUsageTotals {
   totalRequests: number;
   totalInputTokens: string;
@@ -249,6 +260,7 @@ export interface BuyerUsageTotals {
   uniqueSellers: number;
   activeChannels: number;
   channels: BuyerUsageChannelPoint[];
+  services: BuyerUsageServicePoint[];
 }
 
 const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
@@ -259,6 +271,7 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
   uniqueSellers: 0,
   activeChannels: 0,
   channels: [],
+  services: [],
 };
 
 const EXTERNAL_VERIFICATION_RESULT_TTL_MS = 15 * 60_000;
@@ -1177,6 +1190,17 @@ export class AntseedNode extends EventEmitter {
         outputTokens: c.previousConsumption || '0',
       });
     }
+    // Per-service usage (model attribution for the desktop savings tile).
+    // Documented as lower bounds — requests that raced NeedAuth may lack
+    // service attribution, so Σ services ≤ channel totals.
+    const services = this._channelStore.getBuyerServiceUsageTotals(buyerAddress).map((s) => ({
+      serviceIdHash: s.serviceId,
+      amountUsdc: s.amountUsdc,
+      inputTokens: s.inputTokens,
+      cachedInputTokens: s.cachedInputTokens,
+      outputTokens: s.outputTokens,
+      requestCount: s.requestCount,
+    }));
     return {
       totalRequests,
       totalInputTokens: totalInput.toString(),
@@ -1185,6 +1209,7 @@ export class AntseedNode extends EventEmitter {
       uniqueSellers: sellers.size,
       activeChannels,
       channels,
+      services,
     };
   }
 

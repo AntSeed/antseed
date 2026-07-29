@@ -14,6 +14,8 @@ import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
 import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
+import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { displayModelLabel } from '../../../modules/catalog/model-identity';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
@@ -111,13 +113,30 @@ export function VprHomeView({ onSelectView }: Props) {
     () => connectedProfiles.filter((profile) => profile.needsRestart),
     [connectedProfiles],
   );
-  const expectedSavingsPct = useMemo(() => {
+  // Measured savings: actual USDC paid vs OpenRouter retail for the same
+  // tokens, usage-weighted per model. Falls back to the catalog projection
+  // (average best-vs-worst peer spread) until priced usage exists.
+  const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
+  useEffect(() => {
+    if (referencePrices) return;
+    let cancelled = false;
+    void ensureOpenRouterPrices().then((map) => {
+      if (!cancelled && map) setReferencePrices(map);
+    });
+    return () => { cancelled = true; };
+  }, [referencePrices]);
+  const measuredSavings = useMemo(
+    () => computeMeasuredSavings(snap.usage?.services, referencePrices),
+    [snap.usage?.services, referencePrices],
+  );
+  const projectedSavingsPct = useMemo(() => {
     const values = snap.catalog
       .map((entry) => entry.expectedSavingsPct)
       .filter((value): value is number => value !== null);
     if (values.length === 0) return null;
     return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
   }, [snap.catalog]);
+  const expectedSavingsPct = measuredSavings?.pct ?? projectedSavingsPct;
 
   // The usage tiles come from the payments summary; nudge a refresh when the
   // connected variant becomes visible (module-level throttle absorbs bursts).
@@ -408,7 +427,18 @@ export function VprHomeView({ onSelectView }: Props) {
                 <VprStatTile
                   label="Saving"
                   value={expectedSavingsPct !== null && (snap.usage?.totalRequests ?? 0) > 0
-                    ? <span className={styles.savingValue}>{expectedSavingsPct}%</span>
+                    ? (
+                      <span
+                        className={styles.savingValue}
+                        title={measuredSavings
+                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at OpenRouter prices`
+                          : 'Estimated from current network price spread'}
+                      >
+                        {measuredSavings
+                          ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)} · ${measuredSavings.pct}%`
+                          : `${expectedSavingsPct}%`}
+                      </span>
+                    )
                     : '-'}
                 />
               </VprStatRow>

@@ -11,7 +11,7 @@ import { normalizeModelKey } from '../../../shared/model-key.js';
  * degrades gracefully: no match / no cache → entries pass through unchanged.
  */
 
-type ReferencePrice = { input: number | null; output: number | null };
+type ReferencePrice = { input: number | null; output: number | null; cachedInput?: number | null };
 type ReferenceMap = Record<string, ReferencePrice>;
 
 let cachedMap: ReferenceMap | null = null;

@@ -25,6 +25,7 @@ import {
   normalizeBuyerUsageTotals,
   notePendingSpend,
 } from '../payments/buyer-channels.js';
+import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
   type CreditsInfo,
   getCachedAntsTokenClient,
@@ -323,9 +324,19 @@ export function registerPaymentsIpc(): void {
       return { ok: false, data: null, error: 'buyer proxy unreachable', lastActivityAt: null };
     }
     const lastActivityAt = typeof body['lastActivityAt'] === 'number' ? body['lastActivityAt'] : null;
+    const totals = normalizeBuyerUsageTotals(body['totals']);
+    // Resolve service-id hashes to model names so the renderer can price
+    // usage against the retail baseline for the "Saving" tile.
+    if (totals.services.length > 0) {
+      const names = await resolveServiceIdHashes(totals.services.map((s) => s.serviceIdHash));
+      totals.services = totals.services.map((s) => ({
+        ...s,
+        serviceName: names.get(s.serviceIdHash.toLowerCase()) ?? null,
+      }));
+    }
     return {
       ok: true,
-      data: normalizeBuyerUsageTotals(body['totals']),
+      data: totals,
       error: null,
       lastActivityAt,
     };

@@ -38,6 +38,18 @@ export type SystemProxyProfileSummary = {
   toolSlugs?: string[];
 };
 
+/** Per-service usage from the buyer daemon. `serviceName` is resolved by
+    the main process from the buyer peer cache; null when unresolvable. */
+export type DesktopBuyerServiceUsage = {
+  serviceIdHash: string;
+  serviceName: string | null;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+};
+
 export type DesktopBuyerUsageTotals = {
   totalRequests: number;
   totalInputTokens: string;
@@ -45,6 +57,7 @@ export type DesktopBuyerUsageTotals = {
   totalSettlements: number;
   uniqueSellers: number;
   activeChannels: number;
+  services?: DesktopBuyerServiceUsage[];
 };
 
 export type DesktopPaymentChannelSummary = {

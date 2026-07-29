@@ -9,6 +9,19 @@ import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
 
+/** Per-service usage from the buyer daemon. `serviceIdHash` is
+    keccak256(serviceName); `serviceName` is resolved by the main process from
+    the buyer's peer cache (null when the name is no longer advertised). */
+export type DesktopBuyerServiceUsage = {
+  serviceIdHash: string;
+  serviceName: string | null;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+};
+
 export type DesktopBuyerUsageTotals = {
   totalRequests: number;
   totalInputTokens: string;
@@ -16,6 +29,7 @@ export type DesktopBuyerUsageTotals = {
   totalSettlements: number;
   uniqueSellers: number;
   activeChannels: number;
+  services: DesktopBuyerServiceUsage[];
 };
 
 export type DesktopPaymentChannelSummary = {
@@ -52,6 +66,7 @@ const EMPTY_BUYER_USAGE_TOTALS: DesktopBuyerUsageTotals = {
   totalSettlements: 0,
   uniqueSellers: 0,
   activeChannels: 0,
+  services: [],
 };
 
 export const EMPTY_REWARDS_SUMMARY: DesktopRewardsSummary = {
@@ -75,11 +90,30 @@ function readStringField(raw: Record<string, unknown>, key: string): string {
   return '';
 }
 
+function normalizeBuyerServiceUsage(value: unknown): DesktopBuyerServiceUsage | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const serviceIdHash = readStringField(raw, 'serviceIdHash');
+  if (!serviceIdHash) return null;
+  return {
+    serviceIdHash,
+    serviceName: null,
+    amountUsdc: readStringField(raw, 'amountUsdc') || '0',
+    inputTokens: readStringField(raw, 'inputTokens') || '0',
+    cachedInputTokens: readStringField(raw, 'cachedInputTokens') || '0',
+    outputTokens: readStringField(raw, 'outputTokens') || '0',
+    requestCount: readNumberField(raw, 'requestCount'),
+  };
+}
+
 export function normalizeBuyerUsageTotals(value: unknown): DesktopBuyerUsageTotals {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return EMPTY_BUYER_USAGE_TOTALS;
   }
   const raw = value as Record<string, unknown>;
+  const services = Array.isArray(raw.services)
+    ? raw.services.map(normalizeBuyerServiceUsage).filter((s): s is DesktopBuyerServiceUsage => s !== null)
+    : [];
   return {
     totalRequests: readNumberField(raw, 'totalRequests'),
     totalInputTokens: readStringField(raw, 'totalInputTokens') || '0',
@@ -87,6 +121,7 @@ export function normalizeBuyerUsageTotals(value: unknown): DesktopBuyerUsageTota
     totalSettlements: readNumberField(raw, 'totalSettlements'),
     uniqueSellers: readNumberField(raw, 'uniqueSellers'),
     activeChannels: readNumberField(raw, 'activeChannels'),
+    services,
   };
 }
 
