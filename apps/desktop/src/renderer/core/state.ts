@@ -117,14 +117,14 @@ export type VprModelCatalogEntry = {
   maxInputUsdPerMillion: number | null;
   minOutputUsdPerMillion: number | null;
   maxOutputUsdPerMillion: number | null;
+  minCachedInputUsdPerMillion: number | null;
+  maxCachedInputUsdPerMillion: number | null;
   expectedSavingsPct: number | null;
   bestPeerId: string | null;
   /**
    * Reference/retail price for the equivalent model on the OpenRouter catalog,
-   * in USD per million tokens. Used to render the struck-through baseline next
-   * to the live peer price on the Home "Popular" list. `null`/absent when no
-   * OpenRouter match is found. Populated in projectRowsToVprModelCatalog from
-   * the cached OpenRouter model catalog.
+   * in USD per million tokens. Used to calculate the discount shown on the
+   * Home model list. `null`/absent when no OpenRouter match is found.
    */
   baselineInputUsdPerMillion?: number | null;
   baselineOutputUsdPerMillion?: number | null;

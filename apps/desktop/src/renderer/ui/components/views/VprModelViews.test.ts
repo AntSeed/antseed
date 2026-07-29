@@ -18,6 +18,8 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     maxInputUsdPerMillion: 1,
     minOutputUsdPerMillion: 2,
     maxOutputUsdPerMillion: 2,
+    minCachedInputUsdPerMillion: null,
+    maxCachedInputUsdPerMillion: null,
     expectedSavingsPct: null,
     bestPeerId: null,
     ...overrides,

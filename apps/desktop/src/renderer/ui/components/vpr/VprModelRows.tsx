@@ -2,7 +2,6 @@ import type { JSX } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
-import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
 import { BrandIcon } from '../brand/BrandIcon';
@@ -46,14 +45,20 @@ function isFreeEntry(entry: VprModelCatalogEntry): boolean {
   return input !== null && output !== null && input <= 0 && output <= 0;
 }
 
-function priceRangeLabel(entry: VprModelCatalogEntry): string | null {
-  const min = entry.minInputUsdPerMillion;
-  const max = entry.maxInputUsdPerMillion;
-  if (min === null) return null;
-  if (max !== null && max !== min) {
-    return `${formatUsdShort(min)}-${formatUsdShort(max)}`;
-  }
-  return formatUsdShort(min);
+function discountLabel(entry: VprModelCatalogEntry): string | null {
+  const prices = [
+    [entry.minInputUsdPerMillion, entry.baselineInputUsdPerMillion],
+    [entry.minOutputUsdPerMillion, entry.baselineOutputUsdPerMillion],
+  ].filter((pair): pair is [number, number] => pair[0] !== null && pair[1] !== null && pair[1] !== undefined);
+  if (prices.length === 0) return null;
+  const price = prices.reduce((total, pair) => total + pair[0], 0);
+  const baseline = prices.reduce((total, pair) => total + pair[1], 0);
+  if (baseline <= price || baseline <= 0) return null;
+  return `${Math.round((1 - price / baseline) * 100)}% off`;
+}
+
+function formatPrice(price: number | null): string {
+  return price === null ? '—' : formatUsdShort(price);
 }
 
 function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick }: {
@@ -70,16 +75,17 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   onClick: () => void;
 }): JSX.Element {
   const free = isFreeEntry(entry);
-  const price = priceRangeLabel(entry);
-  const baseline = entry.baselineInputUsdPerMillion ?? null;
+  const hasPrice = entry.minInputUsdPerMillion !== null || entry.minOutputUsdPerMillion !== null;
+  const discount = discountLabel(entry);
 
   const priceParts = free ? (
     <span className={styles.perTok}>Free</span>
-  ) : price !== null ? (
+  ) : hasPrice ? (
     <>
       <span className={styles.priceLine}>
-        {baseline !== null && <s className={styles.baseline}>{formatUsdShort(baseline)}</s>}
-        <span className={styles.price}>{price}</span>
+        <span className={styles.pricePrefix}>From:</span>
+        <span><span className={styles.priceLabel}>In</span> {formatPrice(entry.minInputUsdPerMillion)}</span>
+        <span><span className={styles.priceLabel}>Out</span> {formatPrice(entry.minOutputUsdPerMillion)}</span>
       </span>
       <span className={styles.perTok}>/m tok</span>
     </>
@@ -114,30 +120,20 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
           {/* A pinned seller is the whole story of where the model routes —
               the seller's name replaces the peer count, unlabelled: naming a
               peer already says routing isn't on auto. */}
-          {pinnedPeerLabel ? (
-            <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
-          ) : (
-            `${entry.peerCount} ${entry.peerCount === 1 ? 'peer' : 'peers'}`
-          )}
-          {/* Compact rows trade the category tags for the price, which no
-              longer has a column of its own. */}
-          {compact ? (
-            <span className={styles.metaPrice}>{priceParts}</span>
-          ) : entry.categories.length > 0 && (
-            <>
-              {' | '}
-              {entry.categories.map((category) => formatCategoryLabel(category)).join(', ')}
-            </>
-          )}
+          <span className={styles.peerMeta}>
+            {pinnedPeerLabel ? (
+              <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
+            ) : (
+              `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
+            )}
+          </span>
+          <span className={styles.metaDivider} aria-hidden="true">•</span>
+          <span className={styles.metaPrice}>{priceParts}</span>
         </span>
       </span>
-      {!compact && (
-        <>
-          <span className={styles.priceBlock}>{priceParts}</span>
-          {chevron && (
-            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
-          )}
-        </>
+      {discount && <span className={styles.discount}>{discount}</span>}
+      {!compact && chevron && (
+        <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
       )}
     </button>
   );

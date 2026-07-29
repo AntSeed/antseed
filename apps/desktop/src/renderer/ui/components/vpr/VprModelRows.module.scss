@@ -116,12 +116,19 @@
 
 .metaLine {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  align-items: baseline;
   white-space: nowrap;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
+}
+
+.peerMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The seller a model is pinned to, in place of the peer count — it names
@@ -131,8 +138,7 @@
   font-weight: 500;
 }
 
-/* Compact rows (narrow hosts like the floating pill): tighter box, and the
-   price rides the meta line since there is no room for a right column. */
+/* Compact rows (narrow hosts like the floating pill): tighter box. */
 .rowCompact {
   min-height: 46px;
   gap: 6px;
@@ -143,39 +149,46 @@
   padding-left: 6px;
 }
 
+.metaDivider {
+  flex: 0 0 auto;
+  margin: 0 6px;
+  color: var(--text-muted);
+}
+
 .metaPrice {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  margin-left: 8px;
-}
-
-.priceBlock {
-  flex: 0 0 auto;
-  display: grid;
-  gap: 0;
-  justify-items: end;
-  white-space: nowrap;
 }
 
 .priceLine {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
-}
-
-.baseline {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-}
-
-.price {
+  gap: 8px;
   color: var(--accent-green);
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
+}
+
+.pricePrefix,
+.priceLabel {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.discount {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  min-width: 48px;
+  align-self: stretch;
+  color: var(--accent-green);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
 }
 
 .perTok {

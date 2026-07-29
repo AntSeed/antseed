@@ -67,6 +67,8 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     maxInputUsdPerMillion: maxPrice(group.rows.map((row) => row.inputUsdPerMillion)),
     minOutputUsdPerMillion: bestPricedRoute?.row.outputUsdPerMillion ?? null,
     maxOutputUsdPerMillion: maxPrice(group.rows.map((row) => row.outputUsdPerMillion)),
+    minCachedInputUsdPerMillion: bestPricedRoute?.row.cachedInputUsdPerMillion ?? null,
+    maxCachedInputUsdPerMillion: maxPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
     expectedSavingsPct,
     bestPeerId: bestPricedRoute?.row.peerId ?? firstRow?.peerId ?? null,
   };

@@ -124,9 +124,8 @@ export function VprModelView({ onSelectView }: Props) {
 
         <VprStatRow>
           <VprStatTile
-            label="Price"
+            label={priceValue === 'Free' || priceValue === '-' ? 'Price' : 'Price · /m tok'}
             value={priceValue}
-            suffix={priceValue === 'Free' || priceValue === '-' ? undefined : '/m tok'}
             tone={priceValue === '-' ? undefined : 'success'}
             outlined
           />
