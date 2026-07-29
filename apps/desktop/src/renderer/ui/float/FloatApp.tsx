@@ -202,6 +202,10 @@ export function FloatApp() {
   const targetChat = chatTarget && chatTarget !== 'default'
     ? conversations.find((chat) => chat.id === chatTarget) ?? null
     : null;
+  const targetChatApp = targetChat ? appForTool(targetChat.tool) : null;
+  const targetChatAppLabel = targetChat
+    ? (targetChatApp?.displayName ?? displayToolName(targetChat.tool))
+    : '';
   useEffect(() => {
     if (chatTarget && chatTarget !== 'default' && !targetChat) {
       setNavDir('back');
@@ -407,6 +411,8 @@ export function FloatApp() {
               {!runtimeOn ? null : conversations.length === 0 ? (
                 idleApps.length === 0 ? <div className={styles.menuEmpty}>No tool chats seen yet</div> : null
               ) : conversations.map((chat) => {
+                const app = appForTool(chat.tool);
+                const appLabel = app?.displayName ?? displayToolName(chat.tool);
                 // Name the model the chat runs on: its pin (set by the buyer
                 // on the chat's first request), falling back to the default
                 // route for chats that haven't resolved a request yet.
@@ -421,7 +427,7 @@ export function FloatApp() {
                     onClick={() => drillIn(chat.id)}
                     title={chat.title}
                   >
-                    <AppMark app={appForTool(chat.tool)} tool={chat.tool} size={16} />
+                    <AppMark app={app} tool={chat.tool} size={16} />
                     <span className={styles.menuRowText}>
                       <span className={styles.menuRowTitleLine}>
                         <span className={styles.menuRowTitle}>{chat.title}</span>
@@ -433,7 +439,7 @@ export function FloatApp() {
                       </span>
                       <span className={styles.menuRowMeta}>
                         <span className={styles.menuRowMetaText}>
-                          {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
+                          {appLabel} · {conversationAge(chat.lastActiveAt)}
                         </span>
                         <span className={styles.menuRowModel}>{pinnedLabel ?? modelLabel}</span>
                       </span>
@@ -457,10 +463,10 @@ export function FloatApp() {
                     type="button"
                     className={styles.menuOpenApp}
                     onClick={() => bridge?.vprFloatAction?.({ type: 'open-chat-app', conversationId: targetChat.id })}
-                    title={`Open ${displayToolName(targetChat.tool)}`}
-                    aria-label={`Open ${displayToolName(targetChat.tool)}`}
+                    title={`Open ${targetChatAppLabel}`}
+                    aria-label={`Open ${targetChatAppLabel}`}
                   >
-                    <AppMark app={appForTool(targetChat.tool)} tool={targetChat.tool} size={14} />
+                    <AppMark app={targetChatApp} tool={targetChat.tool} size={14} />
                     <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
                   </button>
                 ) : null}

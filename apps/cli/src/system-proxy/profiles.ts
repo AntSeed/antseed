@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import type { SystemProxyConfigPatch, SystemProxyForwardRule, SystemProxyProfile, SystemProxyProfileMetadata } from './types.js'
+import type { SystemProxyConfigPatch, SystemProxyForwardRule, SystemProxyProfile, SystemProxyProfileMetadata, SystemProxySource } from './types.js'
 
 const PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON'
 const PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE'
@@ -178,6 +178,23 @@ export function resolveProxiedPathPrefixes(profileNames: string[]): Map<string, 
     }
   }
   return prefixesByDomain
+}
+
+export function resolveSystemProxySources(profileNames: string[]): Map<string, Map<string, SystemProxySource>> {
+  const sourcesByDomain = new Map<string, Map<string, SystemProxySource>>()
+  for (const name of profileNames) {
+    const profile = findProfile(name)
+    if (!profile || profile.kind === 'config-patch') continue
+    const source = profile.forward?.source ?? profile.name
+    for (const domain of profile.domains) {
+      const sources = sourcesByDomain.get(domain) ?? new Map<string, SystemProxySource>()
+      for (const prefix of profile.pathPrefixes) {
+        sources.set(prefix, source)
+      }
+      sourcesByDomain.set(domain, sources)
+    }
+  }
+  return sourcesByDomain
 }
 
 export function resolveSystemProxyForwardRules(profileNames: string[]): Map<string, SystemProxyForwardRule> {

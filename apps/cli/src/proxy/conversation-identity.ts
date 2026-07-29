@@ -1,4 +1,5 @@
 import { parseJsonObject } from '@antseed/api-adapter'
+import { SYSTEM_PROXY_SOURCE_HEADER } from './request-utils.js'
 
 /**
  * Per-chat identity extraction for the buyer proxy.
@@ -19,12 +20,12 @@ import { parseJsonObject } from '@antseed/api-adapter'
  * `isUserThread`.
  *
  * The buyer uses this identity to key per-chat routing overrides and the
- * conversations list shown in the desktop app. pi sends no wire identity
- * today, so its requests simply resolve to no conversation.
+ * conversations list shown in the desktop app.
  *
- * Detection is fully generic — no per-tool rules anywhere: the tool name
- * comes from the `x-<tool>-session-id` header name, the `originator` header
- * value, or the User-Agent product token, in that order.
+ * Detection is fully generic — no per-tool rules anywhere: intercepted
+ * traffic is attributed to the System Proxy source profile, otherwise the
+ * tool name comes from the `x-<tool>-session-id` header name, the `originator`
+ * header value, or the User-Agent product token, in that order.
  */
 
 export type ConversationIdentity = {
@@ -148,6 +149,10 @@ function slugifyTool(value: string): string {
  * there); otherwise the User-Agent product token (the part before the first
  * `/`) identifies the client, the same way HTTP intends it to.
  */
+function systemProxySource(headers: Record<string, string>): string {
+  return slugifyTool(getHeader(headers, SYSTEM_PROXY_SOURCE_HEADER))
+}
+
 function detectTool(headers: Record<string, string>): string {
   const originator = slugifyTool(getHeader(headers, 'originator'))
   if (originator) return originator
@@ -197,7 +202,7 @@ export function extractConversationIdentity(
   if (!trimmed) return null
   const parent = getHeader(headers, 'x-parent-session-id').trim()
   return {
-    tool: named?.tool ?? detectTool(headers),
+    tool: systemProxySource(headers) || named?.tool || detectTool(headers),
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
     isUserThread: isUserThread(headers),

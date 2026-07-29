@@ -3,7 +3,7 @@ import * as https from 'node:https'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
-import { SYSTEM_ROUTED_MODEL_HEADER } from '../proxy/request-utils.js'
+import { SYSTEM_PROXY_SOURCE_HEADER, SYSTEM_ROUTED_MODEL_HEADER } from '../proxy/request-utils.js'
 import type { CertCache } from './cert-cache.js'
 import type {
   SystemProxyCorsRule,
@@ -61,6 +61,7 @@ export interface SystemProxyConfig {
   certCache: CertCache
   proxiedDomains: Set<string>
   proxiedPathPrefixes: Map<string, Set<string>>
+  proxiedSources?: Map<string, Map<string, SystemProxySource>>
   systemProxyForwardRules?: Map<string, SystemProxyForwardRule>
   defaultPeerId: string
   defaultModel?: string
@@ -246,6 +247,7 @@ export class SystemProxyServer {
         defaultModel: this.config.defaultModel,
         servedModels: this.config.servedModels,
         prefixesByHost: this.config.proxiedPathPrefixes,
+        sourcesByHost: this.config.proxiedSources,
         forwardRulesByHost: this.config.systemProxyForwardRules,
       })
       const body = buyerRequest?.body ?? rawBody
@@ -297,6 +299,7 @@ export class SystemProxyServer {
       }
       forwardHeaders['host'] = `127.0.0.1:${this.config.buyerProxyPort}`
       forwardHeaders['connection'] = 'close'
+      forwardHeaders[SYSTEM_PROXY_SOURCE_HEADER] = buyerRequest.source
       if (buyerRequest.modelRouted) {
         // The model in this body is ours, not the tool's — let the buyer
         // swap it for the chat's pinned route when one exists.
@@ -592,12 +595,14 @@ export function buildBuyerForwardRequest(opts: {
   defaultModel?: string
   servedModels?: Set<string>
   prefixesByHost: Map<string, Set<string>>
+  sourcesByHost?: Map<string, Map<string, SystemProxySource>>
   forwardRulesByHost?: Map<string, SystemProxyForwardRule>
 }): BuyerForwardRequest | null {
   if (!shouldSystemProxyRequest(opts.host, opts.path, opts.prefixesByHost)) {
     return null
   }
   const forwardRule = opts.forwardRulesByHost?.get(opts.host)
+  const source = forwardRule?.source ?? resolveSystemProxySource(opts.host, opts.path, opts.prefixesByHost, opts.sourcesByHost)
   if (forwardRule?.request) {
     if (!opts.isJson) return null
     const body = transformRequestBody(opts.rawBody, opts.peerId, forwardRule.request, {
@@ -608,7 +613,7 @@ export function buildBuyerForwardRequest(opts: {
     return {
       path: forwardRule?.targetPath ?? opts.path,
       body,
-      source: forwardRule.source,
+      source,
       response: forwardRule.response,
       conversation: forwardRule.response?.kind === 'conversation-sse'
         ? extractConversationForwardContext(opts.rawBody, body, forwardRule.response)
@@ -626,7 +631,7 @@ export function buildBuyerForwardRequest(opts: {
     return {
       path: forwardRule.targetPath ?? opts.path,
       body: rewritten?.body ?? opts.rawBody,
-      source: forwardRule.source,
+      source,
       response: forwardRule.response,
       modelRouted: rewritten?.modelRouted ?? false,
     }
@@ -640,9 +645,32 @@ export function buildBuyerForwardRequest(opts: {
   return {
     path: opts.path,
     body: rewritten?.body ?? opts.rawBody,
-    source: 'standard',
+    source,
     modelRouted: rewritten?.modelRouted ?? false,
   }
+}
+
+function resolveSystemProxySource(
+  host: string,
+  path: string,
+  prefixesByHost: Map<string, Set<string>>,
+  sourcesByHost?: Map<string, Map<string, SystemProxySource>>,
+): SystemProxySource {
+  const sources = sourcesByHost?.get(host)
+  if (!sources || sources.size === 0) return 'standard'
+  const pathname = normalizeRequestPath(path)
+  let best: { prefix: string; source: SystemProxySource } | null = null
+  for (const [prefix, source] of sources.entries()) {
+    if (pathname !== prefix && !pathname.startsWith(`${prefix}/`)) continue
+    if (!best || prefix.length > best.prefix.length) best = { prefix, source }
+  }
+  if (best) return best.source
+
+  // A source map should mirror prefixesByHost, but keep a deterministic
+  // fallback if a caller constructs the maps by hand in tests or integrations.
+  const prefixes = prefixesByHost.get(host)
+  if (!prefixes || prefixes.size === 0) return 'standard'
+  return 'standard'
 }
 
 export function rewriteRequestBody(

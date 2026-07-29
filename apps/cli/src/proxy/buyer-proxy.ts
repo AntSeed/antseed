@@ -37,6 +37,7 @@ import {
   substituteRoutedModelAlias,
   overrideRoutedModelInBody,
   ROUTED_MODEL_ALIAS,
+  SYSTEM_PROXY_SOURCE_HEADER,
   SYSTEM_ROUTED_MODEL_HEADER,
 } from './request-utils.js'
 import {
@@ -1266,6 +1267,9 @@ export class BuyerProxy {
     const conversationIdentity = isConversationRequest
       ? extractConversationIdentity(serializedReq.headers, conversationBody)
       : null
+    // Internal marker from the system proxy: source profile used only for
+    // local conversation attribution. Stripped here so it never reaches a seller.
+    delete serializedReq.headers[SYSTEM_PROXY_SOURCE_HEADER]
     const chatPinnedModel = conversationIdentity
       ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.sessionKey)
         ?? (conversationIdentity.parentSessionKey

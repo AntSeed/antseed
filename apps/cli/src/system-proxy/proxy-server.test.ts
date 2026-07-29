@@ -261,6 +261,26 @@ test('buildBuyerForwardRequest: passes conversation prepare requests through whe
   assert.equal(result, null)
 })
 
+test('buildBuyerForwardRequest: attributes standard proxy routes to the matched profile source', () => {
+  const routes = new Map<string, Set<string>>([
+    ['api.anthropic.com', new Set(['/v1/messages'])],
+  ])
+  const result = buildBuyerForwardRequest({
+    host: 'api.anthropic.com',
+    path: '/v1/messages',
+    rawBody: Buffer.from(JSON.stringify({ model: 'claude', messages: [] })),
+    isJson: true,
+    peerId: 'peer123',
+    prefixesByHost: routes,
+    sourcesByHost: new Map([
+      ['api.anthropic.com', new Map([['/v1/messages', 'custom-api-anthropic-com']])],
+    ]),
+  })
+
+  assert.ok(result)
+  assert.equal(result.source, 'custom-api-anthropic-com')
+})
+
 test('transformRequestBody: converts configured nested message body to responses', () => {
   const body = Buffer.from(JSON.stringify({
     input: {
@@ -601,6 +621,18 @@ async function makeProxy(tmpDir: string, buyerPort: number) {
       ['conversation.com', new Set(['/profile-api/conversation', '/profile-api/conversation/prepare'])],
       ['workflow.example.test', new Set(['/profile-api/workflow'])],
     ]),
+    proxiedSources: new Map([
+      ['api-b.example.test', new Map([
+        ['/v1/audio/transcriptions', 'api-b-profile'],
+        ['/v1/chat/completions', 'api-b-profile'],
+      ])],
+      ['api-a.example.test', new Map([['/v1/messages', 'api-a-profile']])],
+      ['conversation.com', new Map([
+        ['/profile-api/conversation', 'conversation'],
+        ['/profile-api/conversation/prepare', 'conversation'],
+      ])],
+      ['workflow.example.test', new Map([['/profile-api/workflow', 'workflow']])],
+    ]),
     systemProxyForwardRules: new Map([
       ['conversation.com', CONVERSATION_FORWARD_RULE],
       ['workflow.example.test', WORKFLOW_FORWARD_RULE],
@@ -698,6 +730,7 @@ test('Proxy: forwards correct path to buyer proxy', { timeout: 15_000 }, async (
 
       assert.equal(buyer.captured[0]?.path, '/v1/messages', 'path should be preserved')
       assert.equal(buyer.captured[0]?.headers['profile-version'], '2023-06-01', 'non-hop-by-hop headers preserved')
+      assert.equal(buyer.captured[0]?.headers['x-antseed-system-proxy-source'], 'api-a-profile')
     } finally {
       await proxy.stop()
       await buyer.close()

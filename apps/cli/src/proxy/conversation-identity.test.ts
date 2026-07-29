@@ -30,6 +30,20 @@ test('claude code identity comes from x-claude-code-session-id', () => {
   })
 })
 
+test('system proxy source profile wins over SDK client identity for intercepted traffic', () => {
+  const identity = extractConversationIdentity({
+    'user-agent': 'claude-cli/2.1.216 (external, sdk-cli)',
+    'x-antseed-system-proxy-source': 'custom-api-anthropic-com',
+    'x-claude-code-session-id': '43ddc5e7-0b8e-491f-a5d1-f2a6854f689d',
+  }, null)
+  assert.deepEqual(identity, {
+    tool: 'custom-api-anthropic-com',
+    sessionKey: '43ddc5e7-0b8e-491f-a5d1-f2a6854f689d',
+    parentSessionKey: null,
+    isUserThread: true,
+  })
+})
+
 test('turn metadata marks a tool-opened thread as not a user chat', () => {
   const meta = (threadSource: string): string => JSON.stringify({
     thread_id: '019f9adc-ad46-7ba1-bdfc-b9612c116462',

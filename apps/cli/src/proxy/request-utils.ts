@@ -311,6 +311,11 @@ export function substituteRoutedModelAlias(
  */
 export const SYSTEM_ROUTED_MODEL_HEADER = 'x-antseed-system-routed'
 
+/** Internal profile marker stamped by the system proxy so intercepted app
+    traffic is attributed to the Connected App profile that captured it,
+    rather than to a generic SDK User-Agent. Stripped before dispatch. */
+export const SYSTEM_PROXY_SOURCE_HEADER = 'x-antseed-system-proxy-source'
+
 /**
  * Replace a proxy-assigned model with the chat's pinned route. Only used for
  * requests carrying SYSTEM_ROUTED_MODEL_HEADER — client-chosen models are
