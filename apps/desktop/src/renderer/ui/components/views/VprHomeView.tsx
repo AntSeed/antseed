@@ -104,6 +104,9 @@ export function VprHomeView({ onSelectView }: Props) {
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
     [activeProfiles, profiles],
   );
+  // Match the Apps tab ordering in the first-run home preview: Telegram is
+  // the special built-in app row, followed by the first catalog profiles.
+  const homePreviewProfiles = useMemo(() => profiles.slice(0, 2), [profiles]);
   const restartProfiles = useMemo(
     () => connectedProfiles.filter((profile) => profile.needsRestart),
     [connectedProfiles],
@@ -445,32 +448,42 @@ export function VprHomeView({ onSelectView }: Props) {
           <div className={styles.appsGroup}>
             <p className={styles.appsLabel}>Use it on your favorite app</p>
 
-            {profiles.length > 0 && (
-              <div className={styles.toolList}>
-                {/* Top of the catalog only — the full list lives on the Apps
-                    page behind "More apps". */}
-                {profiles.slice(0, 3).map((profile) => (
-                  <button
-                    key={profile.name}
-                    type="button"
-                    className={styles.toolRow}
-                    disabled={connectingProfile !== null}
-                    onClick={() => { void connectApp(profile.name); }}
-                    title={`Connect ${profile.displayName}`}
-                  >
-                    <span className={styles.toolIdentity}>
-                      {profile.iconDataUri
-                        ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
-                        : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
-                      <span className={styles.toolLabel}>{profile.displayName}</span>
-                    </span>
-                    <span className={styles.toolConnect}>
-                      {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className={styles.toolList}>
+              {/* Same lead item as the Apps tab, then the top of the catalog —
+                  the full list lives on the Apps page behind "More apps". */}
+              <button
+                type="button"
+                className={styles.toolRow}
+                onClick={() => onSelectView?.('tools')}
+                title="Set up Telegram Bot"
+              >
+                <span className={styles.toolIdentity}>
+                  <BrandIcon name="telegram" hints={['Telegram Bot']} size={20} />
+                  <span className={styles.toolLabel}>Telegram Bot</span>
+                </span>
+                <span className={styles.toolConnect}>Set up</span>
+              </button>
+              {homePreviewProfiles.map((profile) => (
+                <button
+                  key={profile.name}
+                  type="button"
+                  className={styles.toolRow}
+                  disabled={connectingProfile !== null}
+                  onClick={() => { void connectApp(profile.name); }}
+                  title={`Connect ${profile.displayName}`}
+                >
+                  <span className={styles.toolIdentity}>
+                    {profile.iconDataUri
+                      ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+                      : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
+                    <span className={styles.toolLabel}>{profile.displayName}</span>
+                  </span>
+                  <span className={styles.toolConnect}>
+                    {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
           )}
 
