@@ -1,0 +1,140 @@
+name: Weekly Blog Post
+
+on:
+  schedule:
+    # Tuesdays 07:00 UTC. Gives a human the rest of the week to review and merge.
+    - cron: '0 7 * * 2'
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: 'Force a specific slug from content/blog-queue.yml (optional)'
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - 'apps/website/blog/**'
+
+concurrency:
+  group: weekly-blog-post
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------
+  # Runs on every PR that touches the blog, human-authored or not.
+  # ---------------------------------------------------------------
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install js-yaml@4 --no-save
+
+      # Only lint what this PR touched. Older posts predate these rules and
+      # would otherwise turn every blog PR red for someone else's mistakes.
+      - name: Lint changed posts
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          FILES=$(git diff --name-only --diff-filter=d "origin/${{ github.base_ref }}"...HEAD \
+                  | grep -E '^apps/website/blog/.*\.mdx?$' || true)
+          if [ -z "$FILES" ]; then
+            echo "no blog posts changed"
+            exit 0
+          fi
+          echo "$FILES"
+          node scripts/blog-lint.mjs $FILES
+
+  # ---------------------------------------------------------------
+  # The weekly writer.
+  # ---------------------------------------------------------------
+  write:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install js-yaml@4 --no-save
+
+      - name: Pick the next topic
+        id: pick
+        env:
+          FORCE_SLUG: ${{ inputs.slug }}
+        run: node scripts/blog-next.mjs >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Queue is empty
+        if: steps.pick.outputs.slug == ''
+        run: echo "::warning::content/blog-queue.yml has nothing left with status queued. Add topics."
+
+      - name: Configure git
+        if: steps.pick.outputs.slug != ''
+        run: |
+          git config user.name  "antseed-blog-bot"
+          git config user.email "noreply@antseed.com"
+          git checkout -b "blog/${{ steps.pick.outputs.slug }}"
+
+      - name: Write the post
+        if: steps.pick.outputs.slug != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --max-turns 60
+            --allowed-tools "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(node scripts/blog-lint.mjs*),Bash(git add*),Bash(git commit*),Bash(git push*),Bash(gh pr create*),Bash(ls*),Bash(cat*)"
+          prompt: |
+            You are writing this week's AntSeed blog post.
+
+            First, read `.claude/skills/blog-writer/SKILL.md` in full and follow it
+            exactly. It is the specification for this task. Every rule in it applies.
+
+            The queue entry you are writing:
+
+            ```yaml
+            ${{ steps.pick.outputs.entry_yaml }}
+            ```
+
+            Write the post to:
+              apps/website/blog/${{ steps.pick.outputs.filename }}
+
+            Then, in this order:
+
+            1. Run `node scripts/blog-lint.mjs apps/website/blog/${{ steps.pick.outputs.filename }}`
+               and fix every ERROR it reports. Re-run until it exits clean. Address the
+               WARNs too unless you have a specific reason not to, and say what that
+               reason was in the PR body.
+            2. Edit `content/blog-queue.yml` and change the status of the
+               `${{ steps.pick.outputs.slug }}` entry from `queued` to `drafted`.
+               Change nothing else in that file.
+            3. Commit both files on the current branch `blog/${{ steps.pick.outputs.slug }}`
+               and push it.
+            4. Open a draft PR against `main` with `gh pr create --draft`, using the PR
+               body format in Step 6 of the skill.
+
+            Hard rules for this run:
+            - Do not push to `main`. Do not merge anything.
+            - Do not edit any file other than the new post and the queue entry.
+            - Do not invent numbers. Every figure gets verified against a primary
+              source, or it does not get published.
+            - If the lint still fails after a genuine effort, push what you have and
+              say so plainly at the top of the PR body. A visibly broken draft beats
+              a quietly wrong published page.
+
+      - name: Report
+        if: always() && steps.pick.outputs.slug != ''
+        run: |
+          echo "### Weekly blog run" >> "$GITHUB_STEP_SUMMARY"
+          echo "Slug: \`${{ steps.pick.outputs.slug }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Keyword: ${{ steps.pick.outputs.primary_keyword }}" >> "$GITHUB_STEP_SUMMARY"

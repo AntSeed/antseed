@@ -1,0 +1,586 @@
+# AntSeed blog queue
+#
+# The weekly workflow picks the FIRST item with status: queued, writes it,
+# opens a PR, and flips status to drafted. A human merges and sets published.
+#
+# status: queued | drafted | published | skip
+#
+# Clusters:
+#   access      Permissionless / anonymous access        (pillar: anonymous-ai-complete-guide)
+#   cost        Price and model selection                (pillar: cheapest-claude-gpt-api-access)
+#   compare     Competitor comparisons
+#   agents      Agent payments and agentic commerce      (pillar: ai-agent-payments-explained)
+#   supply      Earning as a provider                    (pillar: earn-money-with-gpu-2026)
+#   howto       Integration and practice
+
+posts:
+  # ---------------------------------------------------------------
+  # Deliberately not written. Kept here so nobody adds it back.
+  # ---------------------------------------------------------------
+  - slug: antseed-vs-openrouter
+    status: skip
+    cluster: compare
+    skip_reason: >
+      Two assets already target this keyword: the /vs/openrouter landing page and the
+      blog post "The Permissionless OpenRouter Alternative". A third would split the
+      signal three ways and rank all three worse. If this keyword needs more work,
+      strengthen /vs/openrouter instead. That is the page with commercial intent.
+
+  - slug: anonymous-vs-private-ai
+    status: queued
+    cluster: access
+    pillar: false
+    intent: informational
+    primary_keyword: "anonymous AI vs private AI"
+    secondary_keywords:
+      - "difference between anonymous and private AI"
+      - "what is anonymous AI"
+      - "private AI meaning"
+    title_draft: "Anonymous AI vs Private AI: They Are Not the Same Thing"
+    angle: >
+      Definitional post. Private means nobody reads your prompts. Anonymous means
+      nobody knows they were yours. Most vendors sell the first and imply the second.
+      Build a clean 2x2: identity known/unknown vs content readable/unreadable, and
+      place real categories in it (hosted API, zero-retention API, TEE provider,
+      local model, P2P). This is the definition every other post in the cluster links back to.
+    target_words: 1200
+    must_link:
+      - /blog/use-claude-deepseek-llama-privately
+      - /docs/
+
+  - slug: anonymous-ai-complete-guide
+    status: queued
+    cluster: access
+    pillar: true
+    intent: informational
+    primary_keyword: "anonymous AI"
+    secondary_keywords:
+      - "anonymous AI guide"
+      - "use AI anonymously"
+      - "AI without identity"
+    title_draft: "Anonymous AI: The Complete Guide"
+    angle: >
+      The cluster pillar. Threat models first (who are you hiding from, and why),
+      then every practical option ranked honestly, including the ones where AntSeed
+      is the wrong answer. Local models win on paranoia, lose on capability.
+      Must include a comparison table and a decision tree. This page will get
+      linked from every other access post, so it has to earn it.
+    target_words: 2200
+    must_link:
+      - /blog/anonymous-vs-private-ai
+      - /blog/use-claude-deepseek-llama-privately
+
+  - slug: llm-api-without-kyc
+    status: queued
+    cluster: access
+    pillar: false
+    intent: informational
+    primary_keyword: "LLM API without KYC"
+    secondary_keywords:
+      - "AI API no verification"
+      - "API without identity verification"
+      - "no signup LLM API"
+    title_draft: "How to Use LLM APIs Without KYC"
+    angle: >
+      Why KYC crept into AI APIs at all (fraud, export controls, abuse), which
+      providers require what today, and the legitimate reasons people need to skip it.
+      Be concrete about the tradeoffs of each no-KYC route: free anonymous tiers are
+      rate limited into uselessness, local needs hardware, P2P needs a funded balance.
+    target_words: 1600
+    must_link:
+      - /blog/anonymous-ai-complete-guide
+      - /docs/
+
+  - slug: no-logs-ai-apis-compared
+    status: queued
+    cluster: access
+    pillar: false
+    intent: commercial
+    primary_keyword: "no logs AI API"
+    secondary_keywords:
+      - "zero retention LLM API"
+      - "AI API that does not store prompts"
+      - "no logging inference provider"
+    title_draft: "No-Logs AI APIs Compared: What the Policies Actually Say"
+    angle: >
+      Read the actual retention policies, not the marketing. Table of provider,
+      stated retention window, what survives it (abuse flags, metadata, billing records),
+      and whether the claim is verifiable or just a promise. The honest punchline is that
+      almost none of it is verifiable, which is the argument for architecture over policy.
+    target_words: 1800
+    must_link:
+      - /blog/anonymous-vs-private-ai
+      - /blog/model-verification-fingerprint-swarm
+
+  - slug: cheapest-claude-gpt-api-access
+    status: queued
+    cluster: cost
+    pillar: true
+    intent: commercial
+    primary_keyword: "cheapest way to access Claude and GPT APIs"
+    secondary_keywords:
+      - "cheap Claude API"
+      - "reduce LLM API costs"
+      - "GPT API cheaper alternative"
+    title_draft: "The Cheapest Way to Access Claude and GPT APIs in 2026"
+    angle: >
+      Cost pillar. Break the bill into its parts: base token price, gateway markup,
+      credit purchase fees, wasted tokens from picking an oversized model, retries.
+      Most teams overpay on the last two, not the first. Include a worked example with
+      real numbers from PRICING.md and the public stats endpoint.
+    target_words: 2000
+    must_link:
+      - /blog/which-model-for-which-task
+      - https://antseedstats.com/network
+
+  - slug: which-model-for-which-task
+    status: queued
+    cluster: cost
+    pillar: false
+    intent: informational
+    primary_keyword: "which AI model for which task"
+    secondary_keywords:
+      - "best model for coding"
+      - "best LLM for summarization"
+      - "model selection guide"
+    title_draft: "Which Model for Which Task: A Practical Routing Guide"
+    angle: >
+      Task-to-model table that a person can actually use. Cheap small model for
+      classification and extraction, mid tier for drafting, frontier only for
+      multi step reasoning and hard code. Include the cost delta per task type,
+      because the whole point is that most requests do not need the expensive model.
+    target_words: 1800
+    must_link:
+      - /blog/cheapest-claude-gpt-api-access
+      - /docs/
+
+  - slug: antseed-vs-together-ai
+    status: queued
+    cluster: compare
+    pillar: false
+    intent: commercial
+    primary_keyword: "AntSeed vs Together AI"
+    secondary_keywords:
+      - "Together AI alternative"
+      - "Together AI vs P2P inference"
+    title_draft: "AntSeed vs Together AI: Different Answers to Different Problems"
+    angle: >
+      Together is a hosted inference provider with its own GPUs and an account model.
+      AntSeed is a market with no account. Be genuinely fair, say clearly where Together
+      wins (dedicated endpoints, predictable SLA, enterprise procurement) and where the
+      open market wins (no signup, price competition, no single point of failure).
+    target_words: 1500
+    must_link:
+      - /vs/openrouter
+      - /docs/
+
+  - slug: antseed-vs-venice-ai
+    status: queued
+    cluster: compare
+    pillar: false
+    intent: commercial
+    primary_keyword: "AntSeed vs Venice AI"
+    secondary_keywords:
+      - "Venice AI alternative"
+      - "Venice AI API comparison"
+    title_draft: "AntSeed vs Venice AI: Product Versus Protocol"
+    angle: >
+      Follow up to the existing Venice post, not a rewrite of it. Venice built a
+      polished private AI product with a curated model list. AntSeed is the rails
+      underneath, which means more setup and more control. Respectful throughout,
+      Venice proved the market exists.
+    target_words: 1400
+    must_link:
+      - /blog/the-infrastructure-layer-for-private-ai
+
+  - slug: antseed-vs-litellm
+    status: queued
+    cluster: compare
+    pillar: false
+    intent: commercial
+    primary_keyword: "AntSeed vs LiteLLM"
+    secondary_keywords:
+      - "LiteLLM alternative"
+      - "self hosted LLM gateway vs P2P"
+    title_domain_note: "closest technical comparison, treat carefully"
+    title_draft: "AntSeed vs LiteLLM: Your Own Gateway or an Open Market"
+    angle: >
+      LiteLLM is a proxy you run over keys you already own. AntSeed removes the need
+      to own the keys at all. These solve adjacent problems and can even coexist,
+      so say that. Include the "run both" architecture diagram.
+    target_words: 1500
+    must_link:
+      - /docs/
+      - /vs/openrouter
+
+  - slug: ai-agent-payments-explained
+    status: queued
+    cluster: agents
+    pillar: true
+    intent: informational
+    primary_keyword: "AI agent payments"
+    secondary_keywords:
+      - "how do AI agents pay for compute"
+      - "autonomous agent payments"
+      - "agent payment protocol"
+    title_draft: "AI Agent Payments: How Autonomous Agents Pay for Compute"
+    angle: >
+      Agents cluster pillar. The problem is structural, an agent cannot sign up for an
+      account or hold a credit card. Walk the request lifecycle end to end. Keep the
+      settlement layer as plumbing, the story is autonomy and cost control.
+    target_words: 2000
+    must_link:
+      - /blog/the-402-flow
+      - /blog/ai-infrastructure-bittorrent-not-spotify
+
+  - slug: agents-that-manage-their-own-budgets
+    status: queued
+    cluster: agents
+    pillar: false
+    intent: informational
+    primary_keyword: "AI agent budget management"
+    secondary_keywords:
+      - "agent spending limits"
+      - "AI agent cost control"
+      - "build agent with own budget"
+    title_draft: "Building Agents That Manage Their Own API Budgets"
+    angle: >
+      Practical build post with code. Give the agent a capped balance, per task ceilings,
+      a downgrade path when the budget runs low, and a hard stop. Show the actual config
+      and a small worked agent loop. This one should be genuinely copy pasteable.
+    target_words: 1800
+    must_link:
+      - /blog/ai-agent-payments-explained
+      - /docs/
+
+  - slug: machine-to-machine-payments-stablecoins
+    status: queued
+    cluster: agents
+    pillar: false
+    intent: informational
+    primary_keyword: "machine to machine payments"
+    secondary_keywords:
+      - "M2M payments stablecoins"
+      - "software paying software"
+      - "micropayments for APIs"
+    title_draft: "Machine to Machine Payments: Why Cards Never Worked for Software"
+    angle: >
+      Card rails assume a human, a dispute window, and a minimum viable transaction size.
+      Sub cent per request breaks all three. Explain the economics, not the chain.
+      Frame stablecoins as the settlement detail, never as the headline.
+    target_words: 1600
+    must_link:
+      - /blog/the-402-flow
+      - /blog/ai-agent-payments-explained
+
+  - slug: what-is-agentic-commerce
+    status: queued
+    cluster: agents
+    pillar: false
+    intent: informational
+    primary_keyword: "what is agentic commerce"
+    secondary_keywords:
+      - "agentic commerce definition"
+      - "agent economy"
+      - "agent to agent transactions"
+    title_draft: "What Is Agentic Commerce?"
+    angle: >
+      Straight definitional explainer built for featured snippets and AI citation.
+      One crisp definition in the first 60 words, then the four layers of the stack,
+      then what actually ships today versus what is still a deck slide. Include the
+      honest note that a chunk of current volume is testing, not commerce.
+    target_words: 1400
+    must_link:
+      - /blog/ai-agent-payments-explained
+
+  - slug: agent-payment-protocols-compared
+    status: queued
+    cluster: agents
+    pillar: false
+    intent: commercial
+    primary_keyword: "x402 vs AP2 vs MPP"
+    secondary_keywords:
+      - "agent payment protocols compared"
+      - "x402 alternative"
+      - "agent payment standard"
+    title_draft: "Agent Payment Protocols Compared: x402, AP2, MPP, and What Sits Between Peers"
+    angle: >
+      Comparison table across who the intermediary is, whether a facilitator is required,
+      chain assumptions, and maturity. AntSeed's angle is the facilitator free path, which
+      the existing 402 Flow post already argues, so link there rather than repeating it.
+    target_words: 1800
+    must_link:
+      - /blog/the-402-flow
+
+  - slug: earn-money-with-gpu-2026
+    status: queued
+    cluster: supply
+    pillar: true
+    intent: commercial
+    primary_keyword: "earn money with GPU"
+    secondary_keywords:
+      - "make money with idle GPU"
+      - "rent out GPU for AI"
+      - "GPU passive income 2026"
+    title_draft: "How to Earn Money With Your GPU in 2026"
+    angle: >
+      Supply side pillar. Realistic numbers, no hype. Electricity cost, utilization rate,
+      which cards are actually worth running, and the blunt truth that a single consumer
+      GPU is a side income and not a business. Cover selling frontier API access with
+      added value as the higher margin path, per the compliance rules.
+    target_words: 2000
+    must_link:
+      - /docs/
+      - /providers
+
+  - slug: gpu-mining-vs-ai-inference
+    status: queued
+    cluster: supply
+    pillar: false
+    intent: commercial
+    primary_keyword: "GPU mining vs AI inference"
+    secondary_keywords:
+      - "is AI inference more profitable than mining"
+      - "repurpose mining rig for AI"
+    title_draft: "Idle GPUs: Mining Versus AI Inference"
+    angle: >
+      For the crowd sitting on mining hardware. Different workload shape entirely,
+      inference is bursty and latency sensitive, mining is steady and latency blind.
+      Cover what a mining rig can and cannot serve, VRAM being the usual wall.
+    target_words: 1600
+    must_link:
+      - /blog/earn-money-with-gpu-2026
+
+  - slug: become-a-provider-guide
+    status: queued
+    cluster: supply
+    pillar: false
+    intent: transactional
+    primary_keyword: "sell AI inference"
+    secondary_keywords:
+      - "become an AI inference provider"
+      - "sell GPU compute for AI"
+    title_draft: "Selling Inference on AntSeed: A Setup Walkthrough"
+    angle: >
+      Step by step from install to first payment. Every command verified against the
+      current CLI. Include the pricing decision, the compliance boundary around
+      subscription resale, and what to expect in week one.
+    target_words: 1800
+    must_link:
+      - /docs/commands
+      - /blog/earn-money-with-gpu-2026
+
+  - slug: antseed-best-practices
+    status: queued
+    cluster: howto
+    pillar: false
+    intent: informational
+    primary_keyword: "AntSeed best practices"
+    secondary_keywords:
+      - "AntSeed setup guide"
+      - "AntSeed with Claude Code"
+      - "open source AI tools with AntSeed"
+    title_draft: "AntSeed Best Practices: Getting the Most Out of the Network"
+    angle: >
+      The post existing users will actually thank you for. Provider scoring, fallback
+      behaviour, which open source tools it slots into cleanly, how to debug a slow peer,
+      what to do when a request fails. Written for someone already running the proxy.
+    target_words: 1800
+    must_link:
+      - /docs/
+      - /integrations
+
+  - slug: openai-compatible-api-explained
+    status: queued
+    cluster: howto
+    pillar: false
+    intent: informational
+    primary_keyword: "OpenAI compatible API"
+    secondary_keywords:
+      - "what does OpenAI compatible mean"
+      - "swap base URL LLM"
+      - "drop in OpenAI replacement"
+    title_draft: "What OpenAI-Compatible Actually Means (and Where It Breaks)"
+    angle: >
+      Everyone claims compatibility. Compatibility usually covers chat completions and
+      stops there. Map what commonly breaks, streaming quirks, tool calling shape,
+      system prompt handling, token counting. Useful to anyone, regardless of AntSeed.
+    target_words: 1500
+    must_link:
+      - /docs/
+      - /integrations
+
+  - slug: run-claude-code-without-an-account
+    status: queued
+    cluster: howto
+    pillar: false
+    intent: transactional
+    primary_keyword: "use Claude Code without account"
+    secondary_keywords:
+      - "Claude Code alternative backend"
+      - "point Claude Code at another API"
+      - "ANTHROPIC_BASE_URL"
+    title_draft: "Pointing Claude Code Somewhere Else: A Base URL Walkthrough"
+    angle: >
+      High intent how to. One environment variable, one local proxy, done. Show the
+      before and after, cover the failure modes, and be straight about the compliance
+      boundary. Keep every command copy pasteable and verified.
+    target_words: 1400
+    must_link:
+      - /docs/
+      - /integrations
+
+  - slug: llm-rate-limits-compared
+    status: queued
+    cluster: cost
+    pillar: false
+    intent: commercial
+    primary_keyword: "LLM API rate limits compared"
+    secondary_keywords:
+      - "OpenAI rate limits 2026"
+      - "Anthropic rate limits"
+      - "API rate limit comparison table"
+    title_draft: "LLM API Rate Limits Compared"
+    angle: >
+      Pure reference table, built to get cited by AI search. Provider, tier, RPM, TPM,
+      what unlocks the next tier, and the date the number was checked. Add a dated
+      "last verified" line because this ages fast. Keep opinion minimal.
+    target_words: 1400
+    must_link:
+      - /blog/cheapest-claude-gpt-api-access
+
+  - slug: model-deprecation-survival-guide
+    status: queued
+    cluster: howto
+    pillar: false
+    intent: informational
+    primary_keyword: "AI model deprecation"
+    secondary_keywords:
+      - "model sunset migration"
+      - "what happens when a model is deprecated"
+    title_draft: "Your Model Is Getting Deprecated. Now What?"
+    angle: >
+      Every provider retires models on their own schedule and your prompts were tuned
+      for the old one. Cover the migration checklist, eval before you swap, why pinning
+      a version is a false comfort, and how a multi seller market changes the deadline
+      pressure.
+    target_words: 1500
+    must_link:
+      - /blog/which-model-for-which-task
+
+  - slug: vendor-lock-in-ai-real-cost
+    status: queued
+    cluster: cost
+    pillar: false
+    intent: informational
+    primary_keyword: "AI vendor lock-in"
+    secondary_keywords:
+      - "LLM provider lock in"
+      - "avoid AI vendor lock in"
+      - "cost of switching AI provider"
+    title_draft: "The Real Cost of AI Vendor Lock-In"
+    angle: >
+      Lock in is not the API surface, that part is easy to swap. It is the prompts you
+      tuned, the evals you built, the quirks you worked around, and the pricing you
+      planned around. Quantify it, then talk about what actually reduces it.
+    target_words: 1600
+    must_link:
+      - /blog/the-permissionless-openrouter-alternative
+
+  - slug: tee-inference-explained
+    status: queued
+    cluster: access
+    pillar: false
+    intent: informational
+    primary_keyword: "TEE inference"
+    secondary_keywords:
+      - "confidential computing AI"
+      - "trusted execution environment LLM"
+      - "attestation AI inference"
+    title_draft: "TEE Inference Explained: Trust That Does Not Require Trust"
+    angle: >
+      What a trusted execution environment actually proves, what it does not, and why
+      attestation matters more than the marketing badge. Honest about the limits,
+      side channels exist and the hardware vendor is still in your trust boundary.
+    target_words: 1600
+    must_link:
+      - /blog/anonymous-vs-private-ai
+      - /blog/model-verification-fingerprint-swarm
+
+  - slug: verify-the-model-you-paid-for
+    status: queued
+    cluster: howto
+    pillar: false
+    intent: informational
+    primary_keyword: "verify AI model identity"
+    secondary_keywords:
+      - "is my API serving the model it claims"
+      - "model substitution detection"
+      - "quantized model swap"
+    title_draft: "How to Check You Got the Model You Paid For"
+    angle: >
+      Practical companion to the existing verification post. Give readers actual probes
+      they can run themselves, fingerprint prompts, latency signatures, token
+      distribution checks. Then explain why a network level solution beats DIY.
+    target_words: 1500
+    must_link:
+      - /blog/model-verification-fingerprint-swarm
+
+  - slug: self-hosted-vs-gateway-vs-p2p
+    status: queued
+    cluster: compare
+    pillar: false
+    intent: commercial
+    primary_keyword: "self hosted vs managed LLM gateway"
+    secondary_keywords:
+      - "AI gateway architecture comparison"
+      - "LLM routing architecture"
+    title_draft: "Self-Hosted, Managed Gateway, or Open Market: Picking an Inference Architecture"
+    angle: >
+      Decision framework rather than a pitch. Four columns, who holds the keys, who
+      sees the traffic, who is the single point of failure, what breaks at scale.
+      Say plainly which situations do not call for AntSeed.
+    target_words: 1800
+    must_link:
+      - /blog/antseed-vs-litellm
+      - /vs/openrouter
+
+  - slug: ai-access-geo-restrictions
+    status: queued
+    cluster: access
+    pillar: false
+    intent: informational
+    primary_keyword: "AI API blocked country"
+    secondary_keywords:
+      - "OpenAI not available in my country"
+      - "AI geo restrictions"
+      - "access LLM API from restricted region"
+    title_draft: "When the AI API Is Not Available in Your Country"
+    angle: >
+      Why geo blocking exists (export controls, sanctions, payment processing, licensing),
+      which regions are affected, and what the legitimate options are. Careful, factual
+      tone. Do not give sanctions evasion advice, do explain the developer reality.
+    target_words: 1600
+    must_link:
+      - /blog/llm-api-without-kyc
+      - /blog/anonymous-ai-complete-guide
+
+  - slug: private-llm-api-options-2026
+    status: queued
+    cluster: access
+    pillar: false
+    intent: commercial
+    primary_keyword: "private LLM API"
+    secondary_keywords:
+      - "private AI API 2026"
+      - "confidential LLM API options"
+    title_draft: "Private LLM API Options in 2026"
+    angle: >
+      Roundup with a clear rubric applied consistently to every option. Publish the
+      rubric before the list so it does not read as a rigged scorecard. Heavy overlap
+      risk with the no-logs post, so this one leans on architecture categories while
+      that one leans on policy text. Check the published no-logs post before writing.
+    target_words: 1800
+    must_link:
+      - /blog/no-logs-ai-apis-compared
+      - /blog/anonymous-ai-complete-guide
