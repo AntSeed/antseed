@@ -241,6 +241,10 @@ test('title turns are recognised so they cannot define a chat model', () => {
       content: [{ type: 'input_text', text: 'Please write a 5-10 word title for the following conversation' }],
     }],
   }), true)
+  // T3 Code's Claude agent title prompt.
+  assert.equal(isTitleGenerationRequest({
+    messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
+  }), true)
 })
 
 test('real turns are not mistaken for title turns', () => {

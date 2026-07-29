@@ -1331,17 +1331,23 @@ export class BuyerProxy {
       // outranks the default route for every later turn, which would strand
       // the whole session on a model the user never picked.
       const titleTurn = isTitleGenerationRequest(conversationBody)
-      const tracked = this._conversations.touch({
-        tool: conversationIdentity.tool,
-        sessionKey: trackedKey,
-        // Extract until a label sticks: a tool's title-generation request can
-        // race ahead of the first real turn and create the row snippet-less.
-        snippet: known?.snippet ? null : extractFirstUserSnippet(conversationBody),
-        lastModel: titleTurn ? null : resolvedModel,
-      })
-      // Bind the request to the chat so its cost can be attributed when the
-      // payment layer signs for it (see _attributeSpend).
-      this._trackRequestConversation(serializedReq.requestId, tracked.id)
+      const snippet = known?.snippet ? null : extractFirstUserSnippet(conversationBody)
+      // Some tools (T3/Claude) fire title-only requests when a new chat opens.
+      // Route them normally, but do not create a blank AntSeed conversation row
+      // until the first genuine user turn arrives.
+      if (known || !titleTurn) {
+        const tracked = this._conversations.touch({
+          tool: conversationIdentity.tool,
+          sessionKey: trackedKey,
+          // Extract until a label sticks: a tool's title-generation request can
+          // race ahead of the first real turn and create the row snippet-less.
+          snippet,
+          lastModel: titleTurn ? null : resolvedModel,
+        })
+        // Bind the request to the chat so its cost can be attributed when the
+        // payment layer signs for it (see _attributeSpend).
+        this._trackRequestConversation(serializedReq.requestId, tracked.id)
+      }
     }
 
     const {

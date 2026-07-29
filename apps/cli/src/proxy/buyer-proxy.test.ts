@@ -1484,21 +1484,22 @@ test('title request racing ahead of the first turn does not name the chat', asyn
         ],
       },
     }))
-    // The embedded real prompt is used, not the title instruction.
-    assert.equal(store.get('opencode:ses_race')?.snippet, 'hi')
+    // Title-only housekeeping routes normally but no longer creates the row.
+    assert.equal(store.get('opencode:ses_race'), null)
 
-    // A Claude Code-style pure title request creates the row unlabeled...
+    // A Claude/T3 Code-style pure title request routes normally but does not
+    // create a blank conversation row.
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/messages',
       headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },
       body: {
         model: 'antseed',
-        messages: [{ role: 'user', content: 'Please write a 5-10 word title for the following conversation:\n...' }],
+        messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
       },
     }))
-    assert.equal(store.get('claude-code:cc_race')?.snippet, '')
+    assert.equal(store.get('claude-code:cc_race'), null)
 
-    // ...and the real first turn upgrades the empty snippet afterwards.
+    // The real first turn creates the conversation afterwards.
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/messages',
       headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },

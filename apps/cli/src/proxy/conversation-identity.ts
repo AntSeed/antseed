@@ -65,6 +65,7 @@ const TITLE_REQUEST_PREFIXES = [
   'generate a title',
   'generate a brief title',
   'please write a 5-10 word title',
+  'you write concise thread titles',
   'write a 5-10 word title',
   'write a short title',
   'summarize this conversation in a title',
