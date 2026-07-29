@@ -52,7 +52,6 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       npm: '@ai-sdk/openai-compatible',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
-      modelFormat: 'peer-routed',
     },
   },
   {

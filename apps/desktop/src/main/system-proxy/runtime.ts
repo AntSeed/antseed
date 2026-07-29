@@ -504,13 +504,11 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
   for (const name of configPatchProfiles) {
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (profile?.configPatch) {
-      const route = routeForTool(opts, name);
-      // Tools on the default route get the alias, so the model picked in the
-      // floating pill / VPR applies to running sessions; per-app overrides
-      // pin a concrete peer@model in the tool config.
-      const followsDefault = route.peerId === defaultRoute.peerId && route.model === defaultRoute.model;
-      applyConfigPatch(profile.configPatch, route.peerId, route.model, buyerProxyPort, route.services, followsDefault);
-      deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(route.peerId)}, model=${followsDefault ? `${route.model || 'auto'} via selection` : route.model || 'auto'})`);
+      // The patched config carries only the routed-model alias; the buyer
+      // resolves it to the default route posted above, so the model picked in
+      // the floating pill / VPR applies to running tool sessions.
+      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort);
+      deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
     }
   }
 
