@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  conversationMatchesApp,
   conversationPinnedServiceId,
   conversationTitle,
   shortSessionId,
@@ -15,7 +16,7 @@ import {
 } from '../../../modules/catalog/recommended';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
-import { buyerConversationsResource } from '../../../modules/app/vpr-resources';
+import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { VprPage } from '../vpr/VprKit';
@@ -39,7 +40,9 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
   const conversationsResource = useCachedResource(buyerConversationsResource);
+  const proxyResource = useCachedResource(systemProxyResource);
   const conversations = conversationsResource.data;
+  const profiles = proxyResource.data?.profiles ?? [];
   const [expectChats] = useState(hasSeenChats);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
@@ -161,7 +164,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                   />
                 </label>
                 <span className={styles.nameMeta}>
-                  {displayToolName(selected.tool)} · {shortSessionId(selected.sessionKey)}
+                  {profiles.find((profile) => conversationMatchesApp(selected.tool, profile))?.displayName ?? displayToolName(selected.tool)} · {shortSessionId(selected.sessionKey)}
                 </span>
               </div>
 
@@ -197,6 +200,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                   key={chat.id}
                   chat={chat}
                   modelLabel={chatModelLabel(chat, snap.catalog, defaultModelLabel)}
+                  profiles={profiles}
                   onClick={() => drillIn(chat.id)}
                 />
               ))}

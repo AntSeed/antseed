@@ -224,6 +224,7 @@ export function VprHomeView({ onSelectView }: Props) {
       conversations={conversations ?? []}
       catalog={snap.catalog}
       defaultModelLabel={defaultModelLabel}
+      profiles={profiles}
       loading={conversations === null && expectChats}
       onOpen={() => onSelectView?.('chats')}
     />

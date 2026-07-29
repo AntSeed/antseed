@@ -66,6 +66,14 @@
   background: var(--bg-hover);
 }
 
+.appIcon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
 .chatText {
   flex: 1 1 auto;
   min-width: 0;

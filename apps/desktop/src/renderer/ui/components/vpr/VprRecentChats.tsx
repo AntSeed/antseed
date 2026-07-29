@@ -2,10 +2,11 @@ import type { JSX } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, ArrowRight02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
-import type { BuyerConversationSummary } from '../../../types/bridge';
+import type { BuyerConversationSummary, SystemProxyProfileSummary } from '../../../types/bridge';
 import {
   conversationAge,
   conversationCost,
+  conversationMatchesApp,
   conversationPinnedServiceId,
   conversationTitle,
   isConversationActive,
@@ -33,16 +34,27 @@ export function chatModelLabel(
 /** One chat row: title + session id on the first line, tool · time on the
     second with the model right-aligned under the cost — the same layout as
     the floating pill's dropdown. */
-export function VprChatRow({ chat, modelLabel, onClick }: {
+function appForConversation(
+  chat: BuyerConversationSummary,
+  profiles: SystemProxyProfileSummary[],
+): SystemProxyProfileSummary | null {
+  return profiles.find((profile) => conversationMatchesApp(chat.tool, profile)) ?? null;
+}
+
+export function VprChatRow({ chat, modelLabel, profiles = [], onClick }: {
   chat: BuyerConversationSummary;
   modelLabel: string;
+  profiles?: SystemProxyProfileSummary[];
   onClick: () => void;
 }): JSX.Element {
   const title = conversationTitle(chat);
   const cost = conversationCost(chat);
+  const app = appForConversation(chat, profiles);
   return (
     <button type="button" className={styles.chatRow} onClick={onClick} title={title}>
-      <BrandIcon name={chat.tool} hints={[chat.tool]} size={18} />
+      {app?.iconDataUri
+        ? <img src={app.iconDataUri} alt="" className={styles.appIcon} />
+        : <BrandIcon name={app?.name ?? chat.tool} hints={[app?.displayName ?? chat.tool]} size={18} />}
       <span className={styles.chatText}>
         <span className={styles.chatTitleLine}>
           <span className={styles.chatTitle}>{title}</span>
@@ -54,7 +66,7 @@ export function VprChatRow({ chat, modelLabel, onClick }: {
         </span>
         <span className={styles.chatMeta}>
           <span className={styles.chatMetaText}>
-            {displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
+            {app?.displayName ?? displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
           </span>
           {modelLabel ? <span className={styles.chatModel}>{modelLabel}</span> : null}
         </span>
@@ -106,10 +118,11 @@ export function VprChatRowsSkeleton({ rows = 2 }: { rows?: number }): JSX.Elemen
     dedicated Chats page (via onOpen), where chats are managed. Shows
     skeleton rows while the chat list is still loading, and renders nothing
     once it's known that no tool chat has been seen. */
-export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, loading, onOpen }: {
+export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, profiles = [], loading, onOpen }: {
   conversations: BuyerConversationSummary[];
   catalog: VprModelCatalogEntry[];
   defaultModelLabel: string | null;
+  profiles?: SystemProxyProfileSummary[];
   loading?: boolean;
   onOpen: () => void;
 }): JSX.Element | null {
@@ -138,6 +151,7 @@ export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, 
           key={chat.id}
           chat={chat}
           modelLabel={chatModelLabel(chat, catalog, defaultModelLabel)}
+          profiles={profiles}
           onClick={onOpen}
         />
       ))}
