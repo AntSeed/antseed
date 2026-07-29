@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Message } from '@mariozechner/pi-ai';
 import { SessionManager } from '@mariozechner/pi-coding-agent';
@@ -25,9 +25,18 @@ import type { AiConversation, AiConversationSummary } from './conversation-types
 export const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 export const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 
-export type SessionPathInfo = {
+type SessionFileStat = {
   path: string;
-  id: string;
+  mtimeMs: number;
+  size: number;
+};
+
+/** `summary: null` records a file that failed to parse, so a corrupted
+    session is skipped without re-reading it on every list. */
+type CachedSummary = {
+  mtimeMs: number;
+  size: number;
+  summary: AiConversationSummary | null;
 };
 
 export type AntseedPeerData = { peerId: string; peerLabel?: string };
@@ -38,11 +47,33 @@ export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData
   );
 }
 
+function summarizeConversation(conversation: AiConversation): AiConversationSummary {
+  const totalTokens = normalizeTokenCount(conversation.usage.inputTokens)
+    + normalizeTokenCount(conversation.usage.outputTokens);
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    service: conversation.service,
+    provider: conversation.provider,
+    messageCount: conversation.messages.length,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    usage: conversation.usage,
+    totalTokens,
+    totalEstimatedCostUsd: deriveCost(conversation.messages),
+    ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
+    ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+    ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
+  };
+}
+
 export class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
   private readonly ready: Promise<void>;
   private readonly pathCache = new Map<string, string>();
   private readonly pendingManagers = new Map<string, SessionManager>();
+  private readonly summaryCache = new Map<string, CachedSummary>();
+  private refreshInFlight: Promise<AiConversationSummary[]> | null = null;
 
   constructor() {
     this.ready = this.ensureDirs();
@@ -60,15 +91,71 @@ export class PiConversationStore {
     return workspaceDir;
   }
 
-  private async listSessionPaths(): Promise<SessionPathInfo[]> {
-    const workspaceDir = await this.ensureWorkspaceDir();
-    const sessions = await SessionManager.list(workspaceDir, this.sessionsDir);
-    const infos = sessions.map((entry) => ({ id: entry.id, path: entry.path }));
-    this.pathCache.clear();
-    for (const info of infos) {
-      this.pathCache.set(info.id, info.path);
+  private async statSessionFiles(): Promise<SessionFileStat[]> {
+    await this.ready;
+    const names = await readdir(this.sessionsDir);
+    const stats = await Promise.all(
+      names
+        .filter((name) => name.endsWith('.jsonl'))
+        .map(async (name) => {
+          const filePath = path.join(this.sessionsDir, name);
+          try {
+            const fileStat = await stat(filePath);
+            return { path: filePath, mtimeMs: fileStat.mtimeMs, size: fileStat.size };
+          } catch {
+            return null;
+          }
+        }),
+    );
+    return stats.filter((entry): entry is SessionFileStat => entry !== null);
+  }
+
+  /**
+   * Summaries for every persisted session, re-parsing only files whose
+   * mtime/size changed since the previous refresh. Session files are
+   * append-only and 100+ accumulate over time, so a full re-parse per call
+   * is what this cache exists to avoid.
+   */
+  private refreshSummaries(): Promise<AiConversationSummary[]> {
+    this.refreshInFlight ??= this.refreshSummariesNow().finally(() => {
+      this.refreshInFlight = null;
+    });
+    return this.refreshInFlight;
+  }
+
+  private async refreshSummariesNow(): Promise<AiConversationSummary[]> {
+    const files = await this.statSessionFiles();
+
+    const alivePaths = new Set(files.map((file) => file.path));
+    for (const cachedPath of this.summaryCache.keys()) {
+      if (!alivePaths.has(cachedPath)) {
+        this.summaryCache.delete(cachedPath);
+      }
     }
-    return infos;
+
+    this.pathCache.clear();
+    const summaries: AiConversationSummary[] = [];
+    for (const file of files) {
+      const cached = this.summaryCache.get(file.path);
+      let entry = cached && cached.mtimeMs === file.mtimeMs && cached.size === file.size
+        ? cached
+        : null;
+      if (!entry) {
+        const conversation = await this.readConversationFromPath(file.path);
+        entry = {
+          mtimeMs: file.mtimeMs,
+          size: file.size,
+          summary: conversation ? summarizeConversation(conversation) : null,
+        };
+        this.summaryCache.set(file.path, entry);
+      }
+      if (!entry.summary) {
+        continue;
+      }
+      this.pathCache.set(entry.summary.id, file.path);
+      summaries.push(entry.summary);
+    }
+    return summaries;
   }
 
   private async buildConversationFromManager(manager: SessionManager): Promise<AiConversation> {
@@ -121,9 +208,8 @@ export class PiConversationStore {
     if (cached && existsSync(cached)) {
       return cached;
     }
-    const all = await this.listSessionPaths();
-    const found = all.find((entry) => entry.id === id);
-    return found?.path ?? null;
+    await this.refreshSummaries();
+    return this.pathCache.get(id) ?? null;
   }
 
   private async readConversationFromPath(sessionPath: string): Promise<AiConversation | null> {
@@ -136,29 +222,9 @@ export class PiConversationStore {
   }
 
   async list(): Promise<AiConversationSummary[]> {
-    const sessionPaths = await this.listSessionPaths();
     const summaryById = new Map<string, AiConversationSummary>();
-    for (const info of sessionPaths) {
-      const conversation = await this.readConversationFromPath(info.path);
-      if (!conversation) {
-        continue;
-      }
-      const totalTokens = normalizeTokenCount(conversation.usage.inputTokens) + normalizeTokenCount(conversation.usage.outputTokens);
-      summaryById.set(conversation.id, {
-        id: conversation.id,
-        title: conversation.title,
-        service: conversation.service,
-        provider: conversation.provider,
-        messageCount: conversation.messages.length,
-        createdAt: conversation.createdAt,
-        updatedAt: conversation.updatedAt,
-        usage: conversation.usage,
-        totalTokens,
-        totalEstimatedCostUsd: deriveCost(conversation.messages),
-        ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
-        ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
-        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
-      });
+    for (const summary of await this.refreshSummaries()) {
+      summaryById.set(summary.id, summary);
     }
 
     for (const [conversationId, manager] of this.pendingManagers.entries()) {
@@ -166,22 +232,7 @@ export class PiConversationStore {
         continue;
       }
       const conversation = await this.buildConversationFromManager(manager);
-      const totalTokens = normalizeTokenCount(conversation.usage.inputTokens) + normalizeTokenCount(conversation.usage.outputTokens);
-      summaryById.set(conversation.id, {
-        id: conversation.id,
-        title: conversation.title,
-        service: conversation.service,
-        provider: conversation.provider,
-        messageCount: conversation.messages.length,
-        createdAt: conversation.createdAt,
-        updatedAt: conversation.updatedAt,
-        usage: conversation.usage,
-        totalTokens,
-        totalEstimatedCostUsd: deriveCost(conversation.messages),
-        ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
-        ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
-        ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
-      });
+      summaryById.set(conversation.id, summarizeConversation(conversation));
     }
 
     return [...summaryById.values()].sort((left, right) => right.updatedAt - left.updatedAt);
@@ -261,6 +312,7 @@ export class PiConversationStore {
     } catch {
       // Session may already be deleted.
     }
+    this.summaryCache.delete(sessionPath);
     this.pathCache.delete(id);
   }
 

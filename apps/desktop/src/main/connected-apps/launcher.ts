@@ -8,10 +8,11 @@
  * `open -a` target has no bundle path at all. Those distinctions live here.
  */
 import { shell } from 'electron';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { AppLaunchTarget } from './launch-settings.js';
 import { launchAppTarget, listInstalledApplications } from './installed.js';
 import { APPS_FOLDER_PREFIX, isAppsFolderTarget } from './windows-start-menu.js';
@@ -27,33 +28,46 @@ type ManagedAppProcess = { launchedAt: number; pid?: number; startedAt?: number 
 const managedAppProcesses = new Map<string, ManagedAppProcess>();
 const windowsPackagedExecutables = new Map<string, string>();
 
+const execFileAsync = promisify(execFile);
+
+/** How long a cached process check may serve the renderer's status polls.
+    Restart flows always query fresh — see `appTargetProcessInfo`. */
+const PROCESS_INFO_TTL_MS = 2_000;
+const processInfoCache = new Map<string, { at: number; info: AppProcessInfo }>();
+
+async function runCommand(
+  command: string,
+  args: string[],
+  opts: { windowsHide?: boolean } = {},
+): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(command, args, { encoding: 'utf8', ...opts });
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+async function macProcessInfoByPgrep(pgrepArgs: string[]): Promise<AppProcessInfo> {
+  const raw = await runCommand('pgrep', pgrepArgs);
+  const pid = Number(raw?.trim().split('\n')[0]?.trim());
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return { running: false };
+  }
+  const startRaw = await runCommand('ps', ['-p', String(pid), '-o', 'lstart=']);
+  const startedAt = startRaw ? Date.parse(startRaw.trim()) : NaN;
+  return { running: true, pid, ...(Number.isFinite(startedAt) ? { startedAt } : {}) };
+}
+
 function appTargetKey(target: AppLaunchTarget): string {
   return `${target.name}\u0000${target.path}`;
 }
 
-export function getMacAppProcessInfo(appName: string): AppProcessInfo {
+export async function getMacAppProcessInfo(appName: string): Promise<AppProcessInfo> {
   if (process.platform !== 'darwin') {
     return { running: false };
   }
-  try {
-    const raw = execFileSync('pgrep', ['-x', appName], { encoding: 'utf8' }).trim();
-    const firstLine = raw.split('\n')[0]?.trim() ?? '';
-    const pid = Number(firstLine);
-    if (!Number.isFinite(pid) || pid <= 0) {
-      return { running: false };
-    }
-    let startedAt: number | undefined;
-    try {
-      const startRaw = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' }).trim();
-      const parsed = Date.parse(startRaw);
-      if (Number.isFinite(parsed)) {
-        startedAt = parsed;
-      }
-    } catch { /* best-effort */ }
-    return { running: true, pid, startedAt };
-  } catch {
-    return { running: false };
-  }
+  return macProcessInfoByPgrep(['-x', appName]);
 }
 
 export function escapeRegExpLiteral(value: string): string {
@@ -96,62 +110,63 @@ export function windowsExecutablePath(targetPath: string): string | null {
   }
 }
 
-/** Whether the application behind a launch target has a live process. macOS
-    matches the bundle's executable directory, so an Electron app's helper
-    processes count; Windows matches the executable image name, and a `.lnk`
-    shortcut carries no resolvable image so it reads as not running. */
-export function appTargetProcessInfo(target: AppLaunchTarget): AppProcessInfo {
+async function queryAppTargetProcessInfo(target: AppLaunchTarget): Promise<AppProcessInfo> {
   if (process.platform === 'darwin') {
     if (!target.path.endsWith('.app')) return getMacAppProcessInfo(target.name);
-    try {
-      const raw = execFileSync('pgrep', ['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)], { encoding: 'utf8' }).trim();
-      const pid = Number(raw.split('\n')[0]?.trim());
-      if (!Number.isFinite(pid) || pid <= 0) return { running: false };
-      let startedAt: number | undefined;
-      try {
-        const startRaw = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' }).trim();
-        const parsed = Date.parse(startRaw);
-        if (Number.isFinite(parsed)) startedAt = parsed;
-      } catch { /* best-effort */ }
-      return { running: true, pid, startedAt };
-    } catch {
-      return { running: false };
-    }
+    return macProcessInfoByPgrep(['-f', escapeRegExpLiteral(`${target.path}/Contents/MacOS/`)]);
   }
   if (process.platform === 'win32') {
     const executable = windowsExecutablePath(target.path);
     if (!executable) return { running: false };
-    try {
-      const out = execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', `$p = Get-Process -Name '${path.basename(executable, '.exe').replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($p) { $p.Id.ToString() + '|' + $p.StartTime.ToUniversalTime().ToString('o') }`],
-        { encoding: 'utf8' },
-      ).trim();
-      const [pidText, startedText] = out.split('|');
-      const pid = Number(pidText);
-      const startedAt = startedText ? Date.parse(startedText) : NaN;
-      return Number.isFinite(pid) && pid > 0
-        ? { running: true, pid, ...(Number.isFinite(startedAt) ? { startedAt } : {}) }
-        : { running: false };
-    } catch {
-      return { running: false };
-    }
+    const out = await runCommand(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `$p = Get-Process -Name '${path.basename(executable, '.exe').replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($p) { $p.Id.ToString() + '|' + $p.StartTime.ToUniversalTime().ToString('o') }`],
+      { windowsHide: true },
+    );
+    const [pidText, startedText] = (out ?? '').trim().split('|');
+    const pid = Number(pidText);
+    const startedAt = startedText ? Date.parse(startedText) : NaN;
+    return Number.isFinite(pid) && pid > 0
+      ? { running: true, pid, ...(Number.isFinite(startedAt) ? { startedAt } : {}) }
+      : { running: false };
   }
   return { running: false };
 }
 
-export function isAppTargetRunning(target: AppLaunchTarget): boolean {
-  return appTargetProcessInfo(target).running;
+/** Whether the application behind a launch target has a live process. macOS
+    matches the bundle's executable directory, so an Electron app's helper
+    processes count; Windows matches the executable image name, and a `.lnk`
+    shortcut carries no resolvable image so it reads as not running.
+
+    `maxAgeMs` lets polled callers accept a recent cached answer instead of
+    spawning `pgrep`/`ps` on every tick; omit it wherever staleness would be
+    observable, like the restart wait loops. */
+export async function appTargetProcessInfo(
+  target: AppLaunchTarget,
+  opts: { maxAgeMs?: number } = {},
+): Promise<AppProcessInfo> {
+  const key = appTargetKey(target);
+  const cached = processInfoCache.get(key);
+  if (cached && opts.maxAgeMs !== undefined && Date.now() - cached.at <= opts.maxAgeMs) {
+    return cached.info;
+  }
+  const info = await queryAppTargetProcessInfo(target);
+  processInfoCache.set(key, { at: Date.now(), info });
+  return info;
+}
+
+export async function isAppTargetRunning(target: AppLaunchTarget): Promise<boolean> {
+  return (await appTargetProcessInfo(target)).running;
 }
 
 export function markAppTargetManaged(target: AppLaunchTarget, launchedAt = Date.now()): void {
   managedAppProcesses.set(appTargetKey(target), { launchedAt });
 }
 
-export function captureManagedAppTarget(target: AppLaunchTarget): void {
+export async function captureManagedAppTarget(target: AppLaunchTarget): Promise<void> {
   const managed = managedAppProcesses.get(appTargetKey(target));
   if (!managed) return;
-  const processInfo = appTargetProcessInfo(target);
+  const processInfo = await appTargetProcessInfo(target);
   if (!processInfo.running) return;
   managedAppProcesses.set(appTargetKey(target), {
     ...managed,
@@ -160,8 +175,8 @@ export function captureManagedAppTarget(target: AppLaunchTarget): void {
   });
 }
 
-export function appTargetNeedsRestart(target: AppLaunchTarget, connectedAt: number | null): boolean {
-  const processInfo = appTargetProcessInfo(target);
+export async function appTargetNeedsRestart(target: AppLaunchTarget, connectedAt: number | null): Promise<boolean> {
+  const processInfo = await appTargetProcessInfo(target, { maxAgeMs: PROCESS_INFO_TTL_MS });
   if (!processInfo.running) return false;
   const managed = managedAppProcesses.get(appTargetKey(target));
   if (!managed) return true;
@@ -193,14 +208,9 @@ export function isElectronAppTarget(target: AppLaunchTarget): boolean {
 /** A Chromium app spawns its renderer helper only once a window is created, so
     this is the closest permission-free signal we have to "the UI is up" — the
     main process alone is alive seconds earlier, while the app is still booting. */
-export function hasAppTargetWindowProcess(target: AppLaunchTarget): boolean {
+export async function hasAppTargetWindowProcess(target: AppLaunchTarget): Promise<boolean> {
   const pattern = `${escapeRegExpLiteral(`${target.path}/Contents/Frameworks/`)}.*${escapeRegExpLiteral('Helper (Renderer)')}`;
-  try {
-    execFileSync('pgrep', ['-f', pattern], { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
+  return (await runCommand('pgrep', ['-f', pattern])) !== null;
 }
 
 export function quitAppTarget(target: AppLaunchTarget): void {
@@ -254,12 +264,12 @@ export async function restartAppTarget(
     if (result.ok) {
       markAppTargetManaged(target);
       await waitForAppTarget(target);
-      captureManagedAppTarget(target);
+      await captureManagedAppTarget(target);
     }
     return { ok: result.ok, restarted: result.ok, ...(result.error ? { error: result.error } : {}) };
   };
 
-  if (!isAppTargetRunning(target)) {
+  if (!(await isAppTargetRunning(target))) {
     if (!opts.launchIfStopped) return { ok: true, restarted: false };
     return { ...(await launch()), restarted: false };
   }
@@ -270,10 +280,10 @@ export async function restartAppTarget(
     // Continue: the app may not respond to AppleScript / may already be gone.
   }
   const startedWaitingAt = Date.now();
-  while (Date.now() - startedWaitingAt < 10_000 && isAppTargetRunning(target)) {
+  while (Date.now() - startedWaitingAt < 10_000 && await isAppTargetRunning(target)) {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
-  if (isAppTargetRunning(target)) {
+  if (await isAppTargetRunning(target)) {
     if (!opts.force) {
       return { ok: false, restarted: false, error: `${target.name} did not quit — restart it manually to pick up the new settings.` };
     }
@@ -295,12 +305,12 @@ export async function restartAppTarget(
 export async function waitForAppTarget(target: AppLaunchTarget, timeoutMs = 30_000): Promise<void> {
   const startedWaitingAt = Date.now();
   const expired = () => Date.now() - startedWaitingAt >= timeoutMs;
-  while (!expired() && !isAppTargetRunning(target)) {
+  while (!expired() && !(await isAppTargetRunning(target))) {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
   const bundle = bundleForAppTarget(target);
   if (!isElectronAppTarget(bundle)) return;
-  while (!expired() && !hasAppTargetWindowProcess(bundle)) {
+  while (!expired() && !(await hasAppTargetWindowProcess(bundle))) {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 }

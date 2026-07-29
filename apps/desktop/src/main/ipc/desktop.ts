@@ -91,7 +91,7 @@ export function registerDesktopIpc(): void {
         if (result.ok) {
           markAppTargetManaged(launchTarget);
           await waitForAppTarget(launchTarget);
-          captureManagedAppTarget(launchTarget);
+          await captureManagedAppTarget(launchTarget);
         }
         return result;
       }
@@ -113,7 +113,7 @@ export function registerDesktopIpc(): void {
           if (!result.ok) return result;
           markAppTargetManaged(target);
           await waitForAppTarget(target);
-          captureManagedAppTarget(target);
+          await captureManagedAppTarget(target);
           return { ok: true };
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };

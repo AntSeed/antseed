@@ -247,7 +247,7 @@ export async function restartConnectedApps(profileNames: string[]): Promise<void
       }
       continue;
     }
-    if (!isAppTargetRunning(target)) continue;
+    if (!(await isAppTargetRunning(target))) continue;
     const result = await restartAppTarget(target, {
       env: profile?.kind === 'proxy'
         ? { NODE_EXTRA_CA_CERTS: systemProxyCaPath() }
@@ -269,9 +269,9 @@ export function firstProbeUrl(): string | null {
   return domain ? `https://${domain}/` : null;
 }
 
-export function restartTargetProcessInfo(): { running: boolean; pid?: number; startedAt?: number } {
+export async function restartTargetProcessInfo(): Promise<{ running: boolean; pid?: number; startedAt?: number }> {
   const appName = SYSTEM_PROXY_PROFILES.find((item) => item.restartAppName)?.restartAppName;
-  return appName ? getMacAppProcessInfo(appName) : { running: false };
+  return appName ? await getMacAppProcessInfo(appName) : { running: false };
 }
 
 export async function runGuiSystemProxyTrustProbe(): Promise<{ ok: boolean; statusCode?: number; error?: string }> {

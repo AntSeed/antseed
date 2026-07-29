@@ -92,7 +92,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
         openUrl: profile.openUrl,
         toolName: profile.toolName,
         canRestart: Boolean(launchTarget),
-        needsRestart: launchTarget ? appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
+        needsRestart: launchTarget ? await appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
         toolSlugs: effectiveToolSlugs(profile.name, profile.toolSlugs, profile.label),
         ...(iconDataUri ? { iconDataUri } : {}),
         ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
@@ -112,7 +112,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
         method: 'HTTPS proxy',
         domains: [record.host],
         canRestart: Boolean(launchTarget),
-        needsRestart: launchTarget ? appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
+        needsRestart: launchTarget ? await appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
         custom: true,
         toolSlugs: effectiveToolSlugs(record.name, undefined, displayName),
         ...(iconDataUri ? { iconDataUri } : {}),
@@ -262,7 +262,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
 
   ipcMain.handle('system-proxy:test-gui', async (_event, opts?: { port?: number }): Promise<SystemProxyGuiTestResult> => {
     const port = opts?.port ?? DEFAULT_SYSTEM_PROXY_PORT;
-    const targetApp = restartTargetProcessInfo();
+    const targetApp = await restartTargetProcessInfo();
     const proxyConfigured = process.platform === 'darwin'
       ? getSystemProxyServices(port).length > 0
       : process.platform === 'win32'

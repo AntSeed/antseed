@@ -1444,6 +1444,20 @@ export function initChatModule({
     }
   }
 
+  let chatConversationsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Coalesce the stream-event refreshers: assistant-done, title-updated and
+      stream-completed can fire in quick bursts, and each refresh re-lists
+      every conversation over IPC. Trailing-edge only, without resetting on
+      repeat events, so a long stream still refreshes at a steady cadence. */
+  function scheduleChatConversationsRefresh(): void {
+    if (chatConversationsRefreshTimer !== null) return;
+    chatConversationsRefreshTimer = setTimeout(() => {
+      chatConversationsRefreshTimer = null;
+      void refreshChatConversations();
+    }, 500);
+  }
+
   async function refreshWorkspace(): Promise<void> {
     if (!bridge?.chatAiGetWorkspace) return;
 
@@ -2450,7 +2464,7 @@ export function initChatModule({
           setConversationSending(data.conversationId, false);
           notifyUiStateChanged();
         }
-        void refreshChatConversations();
+        scheduleChatConversationsRefresh();
       });
     }
 
@@ -2501,7 +2515,7 @@ export function initChatModule({
           uiState.chatConversations = [...conversations];
         }
         notifyUiStateChanged();
-        void refreshChatConversations();
+        scheduleChatConversationsRefresh();
       });
     }
 
@@ -2940,7 +2954,7 @@ export function initChatModule({
           );
         }
 
-        void refreshChatConversations();
+        scheduleChatConversationsRefresh();
       });
     }
 
