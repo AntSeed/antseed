@@ -275,7 +275,7 @@ function makePiPatch(modelsPath: string, settingsPath: string): ConfigPatchDef {
     settingsPath,
     providerKey: 'antseed',
     baseURL: 'http://127.0.0.1:{buyerPort}/v1',
-    api: 'openai-completions',
+    api: 'openai-responses',
   };
 }
 
@@ -293,7 +293,7 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     };
     assert.ok(models.providers.ollama);
     assert.equal(models.providers.antseed?.baseUrl, 'http://127.0.0.1:9456/v1');
-    assert.equal(models.providers.antseed?.api, 'openai-completions');
+    assert.equal(models.providers.antseed?.api, 'openai-responses');
     assert.equal(models.providers.antseed?.apiKey, 'antseed');
     assert.deepEqual(models.providers.antseed?.models, [
       { id: 'antseed', name: 'AntSeed Auto', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },

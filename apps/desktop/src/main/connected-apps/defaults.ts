@@ -100,7 +100,10 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       settingsPath: '~/.pi/agent/settings.json',
       providerKey: 'antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
-      api: 'openai-completions',
+      // Pi's OpenAI Responses transport includes prompt_cache_key with the
+      // Pi session id. The buyer proxy uses that as the conversation key so
+      // Pi chats show up in AntStation/VPR Recent Chats.
+      api: 'openai-responses',
     },
   },
   {
