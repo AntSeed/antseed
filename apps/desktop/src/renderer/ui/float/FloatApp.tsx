@@ -160,9 +160,9 @@ export function FloatApp() {
 
   useEffect(() => bridge?.onVprFloatData?.((next) => {
     setData(next);
-    // A connect-triggered open lands with the dropdown already expanded, so
-    // the "start a new session" guidance is visible without a click. Leave
-    // compact mode first — the dropdown can't render in the chip.
+    // Every open lands with the dropdown already expanded (the chat list is
+    // the pill's payload), so it's visible without a click. Leave compact
+    // mode first — the dropdown can't render in the chip.
     if (next.openMenu) {
       if (compactRef.current) {
         setCompact(false);

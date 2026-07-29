@@ -226,6 +226,10 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
   floatExpanded = false;
 
   floatWindow = new BrowserWindow({
+    // Shown inactive after load: the pill is a passive overlay and must not
+    // steal focus from the app the user is working in — especially when it
+    // auto-opens on incoming traffic.
+    show: false,
     width: FLOAT_WINDOW_WIDTH,
     height: FLOAT_WINDOW_HEIGHT,
     minWidth: FLOAT_WINDOW_COMPACT_SIZE,
@@ -286,6 +290,9 @@ export function openFloatWindow(config: WindowConfig, initialData: unknown): Bro
 
   created.webContents.once('did-finish-load', () => {
     if (created.isDestroyed()) return;
+    created.showInactive();
+    // Windows drops the topmost flag on showInactive() — put it back.
+    if (process.platform === 'win32') created.setAlwaysOnTop(true, 'floating');
     if (initialData !== undefined) {
       created.webContents.send('vpr-float:data', initialData);
     }

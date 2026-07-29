@@ -21,6 +21,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     discoverRows: state.discoverRows,
     lastPeers: state.lastPeers,
+    floatAutoOpen: state.vprFloatAutoOpen,
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
   const [accessOpen, setAccessOpen] = useState(false);
@@ -153,6 +154,23 @@ export function VprPreferencesView({ onSelectView }: Props) {
             </VprCard>
           </div>
         ) : null}
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Floating window</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Open on traffic"
+              hint="Pop up the floating window on its own when a connected app starts sending requests."
+              control={(
+                <VprToggle
+                  checked={snap.floatAutoOpen}
+                  onChange={(next) => actions.setVprFloatAutoOpen?.(next)}
+                  ariaLabel="Open floating window on traffic"
+                />
+              )}
+            />
+          </VprCard>
+        </div>
 
         <div className={styles.appearanceSection}>
           <span className={styles.sectionLabel}>Appearance</span>

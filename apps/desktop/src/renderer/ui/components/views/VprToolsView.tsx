@@ -225,9 +225,10 @@ export function VprToolsView() {
     setConnecting(profileName);
     try {
       if (!await startProfiles(names)) return;
-      // Surface the pill right away, dropdown open, so the "start a new
-      // session" guidance is in view while the user switches to the tool.
-      void actions.openVprFloat?.(profileName, { openMenu: true });
+      // Surface the pill right away — it opens with the chat dropdown
+      // expanded, so the "start a new session" guidance is in view while
+      // the user switches to the tool.
+      void actions.openVprFloat?.(profileName);
       // Bring the app itself forward too — same launch rules as the row's
       // open arrow: a user-picked application wins over the packaged
       // open-url action. Awaited, so the row stays busy until the app is

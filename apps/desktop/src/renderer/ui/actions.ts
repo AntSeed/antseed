@@ -36,8 +36,10 @@ export type AppActions = {
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openVprFloat?: (profileName?: string, opts?: { openMenu?: boolean }) => Promise<void>;
+  /** Open the floating pill (always lands with the chat dropdown expanded). */
+  openVprFloat?: (profileName?: string) => Promise<void>;
   closeVprFloat?: () => Promise<void>;
+  setVprFloatAutoOpen?: (enabled: boolean) => void;
 };
 
 let _actions: AppActions | null = null;

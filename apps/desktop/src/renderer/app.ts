@@ -12,6 +12,7 @@ import {
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
 import { initVprFloatModule } from './modules/app/float';
+import { loadFloatAutoOpen, saveFloatAutoOpen } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
@@ -105,6 +106,7 @@ const uiState = createInitialUiState();
 uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPreferences);
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
 uiState.vprModelPins = loadVprModelPins();
+uiState.vprFloatAutoOpen = loadFloatAutoOpen();
 // Sessions that pinned a seller before pins were stored per model carry the
 // pin only on the selection — seed the store from it so the first model
 // switch doesn't silently drop it.
@@ -628,8 +630,14 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
-  openVprFloat: (profileName?: string, opts?: { openMenu?: boolean }) => vprFloatApi.openFloat(profileName, opts),
+  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
   closeVprFloat: () => vprFloatApi.closeFloat(),
+  setVprFloatAutoOpen: (enabled: boolean) => {
+    uiState.vprFloatAutoOpen = enabled;
+    saveFloatAutoOpen(enabled);
+    vprFloatApi.setAutoOpen(enabled);
+    notifyUiStateChanged();
+  },
 });
 
 /* ------------------------------------------------------------------ */

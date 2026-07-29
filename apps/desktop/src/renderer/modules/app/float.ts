@@ -18,6 +18,7 @@ import {
   shortSessionId,
 } from '../routing/conversations';
 import { loadFavoriteModels } from '../catalog/favorites';
+import { loadFloatAutoOpen } from './float-settings';
 import {
   catalogEntryKey,
   isFreeCatalogEntry,
@@ -39,13 +40,20 @@ const TRAFFIC_HOLD_MS = 1_500;
 const BUYER_ACTIVITY_HOLD_MS = 4_000;
 /** Coalesce burst of completion lines into one forced usage refresh. */
 const COMPLETION_REFRESH_DEBOUNCE_MS = 400;
+/** After the user closes the pill, auto-open stays quiet this long so the
+    same burst of traffic doesn't immediately pop it back up. */
+const AUTO_OPEN_CLOSE_COOLDOWN_MS = 30_000;
 
 export type VprFloatModule = {
-  openFloat: (profileName?: string, opts?: { openMenu?: boolean }) => Promise<void>;
+  /** Open the pill (always with the chat dropdown expanded). */
+  openFloat: (profileName?: string) => Promise<void>;
   closeFloat: () => Promise<void>;
   /** Immediate data push for main-window changes the pill mirrors (route
       selection); no-op while the pill is closed. */
   refresh: () => Promise<void>;
+  /** Persist the auto-open-on-traffic preference and re-arm (or stand down)
+      the closed-pill traffic watcher accordingly. */
+  setAutoOpen: (enabled: boolean) => void;
 };
 
 /**
@@ -65,6 +73,16 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   let profiles: SystemProxyProfileSummary[] = [];
   let selectedApp = '';
   let lastBuyerRequestTotal: number | null = null;
+
+  // --- Auto-open on traffic (opt-in) -------------------------------------
+  // While the pill is closed and the preference is on, the same two traffic
+  // signals that drive the pulse (log lines + buyer lastActivityAt) also
+  // pop the pill open. A cooldown after a manual close keeps the pill from
+  // bouncing back for the burst of traffic the user just dismissed it over.
+  let autoOpenEnabled = loadFloatAutoOpen();
+  let autoOpenSuppressedUntil = 0;
+  let autoOpenInFlight = false;
+  let autoOpenWatchTimer: number | null = null;
 
   async function ensureProfiles(): Promise<void> {
     if (profiles.length > 0) return;
@@ -163,10 +181,16 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
   }
 
   bridge?.onLog?.((event) => {
-    if (!uiState.vprFloatOpen) return;
     if (event.mode !== 'connect' && event.mode !== 'system-proxy') return;
     const line = event.line.replace(/\x1b\[[0-9;]*m/g, '');
     if (line.includes('cors preflight') || !TRAFFIC_LINE_PATTERN.test(line)) return;
+
+    if (!uiState.vprFloatOpen) {
+      // Closed pill: the only thing a traffic line can do is auto-open it.
+      lastTrafficLineAt = Date.now();
+      maybeAutoOpen();
+      return;
+    }
 
     const wasActive = logTrafficActive();
     lastTrafficLineAt = Date.now();
@@ -329,12 +353,46 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     timer = window.setInterval(() => { void tick(); }, FLOAT_UPDATE_INTERVAL_MS);
   }
 
+  /** Pop the pill for incoming traffic — gated on the preference, the
+      post-close cooldown, and a single in-flight open. */
+  function maybeAutoOpen(): void {
+    if (!autoOpenEnabled || uiState.vprFloatOpen || autoOpenInFlight) return;
+    if (Date.now() < autoOpenSuppressedUntil) return;
+    autoOpenInFlight = true;
+    void openFloatInternal()
+      .catch(() => { /* buyer/bridge hiccup — the next signal retries */ })
+      .finally(() => { autoOpenInFlight = false; });
+  }
+
+  /** Closed-pill watcher for buyers whose traffic never reaches the log
+      stream (config-patch tools talking straight to the buyer, logs off):
+      poll the buyer's lastActivityAt at the same cadence as the open-pill
+      tick and auto-open on activity. Runs only while the pill is closed
+      and the preference is on. */
+  function syncAutoOpenWatcher(): void {
+    const shouldWatch = autoOpenEnabled && !uiState.vprFloatOpen;
+    if (shouldWatch && autoOpenWatchTimer === null) {
+      autoOpenWatchTimer = window.setInterval(() => {
+        void buyerProxyTraffic().then(({ active }) => {
+          if (active) maybeAutoOpen();
+        });
+      }, FLOAT_UPDATE_INTERVAL_MS);
+    } else if (!shouldWatch && autoOpenWatchTimer !== null) {
+      window.clearInterval(autoOpenWatchTimer);
+      autoOpenWatchTimer = null;
+    }
+  }
+
   bridge?.onVprFloatClosed?.(() => {
     stopUpdater();
     if (uiState.vprFloatOpen) {
       uiState.vprFloatOpen = false;
       notifyUiStateChanged();
     }
+    // The traffic that prompted this close is likely still flowing — hold
+    // auto-open back so dismissing the pill actually dismisses it.
+    autoOpenSuppressedUntil = Date.now() + AUTO_OPEN_CLOSE_COOLDOWN_MS;
+    syncAutoOpenWatcher();
   });
 
   bridge?.onVprFloatAction?.((action) => {
@@ -380,24 +438,39 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   });
 
-  // Survive a main-window reload while the pill is open (dev HMR, cmd+R).
-  void bridge?.vprFloatIsOpen?.().then((open) => {
-    if (!open) return;
+  async function openFloatInternal(profileName?: string): Promise<void> {
+    if (profileName) selectedApp = profileName;
+    // Fresh numbers on open — don't show a minute-old summary.
+    await refreshUsage(true);
+    const data = await buildData();
+    // Every open lands with the chat dropdown already expanded — the list is
+    // the pill's payload, so surfacing the window means surfacing the chats
+    // (pop-out button, connect, and traffic auto-open alike). Only the open
+    // payload carries the flag; periodic updates must not re-expand a menu
+    // the user collapsed.
+    await bridge?.vprFloatOpen?.({ ...data, openMenu: true });
     uiState.vprFloatOpen = true;
     notifyUiStateChanged();
     startUpdater();
-  });
+    syncAutoOpenWatcher();
+  }
 
-  return {
-    async openFloat(profileName?: string, opts?: { openMenu?: boolean }) {
-      if (profileName) selectedApp = profileName;
-      // Fresh numbers on open — don't show a minute-old summary.
-      await refreshUsage(true);
-      const data = await buildData();
-      await bridge?.vprFloatOpen?.(opts?.openMenu ? { ...data, openMenu: true } : data);
+  // Survive a main-window reload while the pill is open (dev HMR, cmd+R).
+  void bridge?.vprFloatIsOpen?.().then((open) => {
+    if (open) {
       uiState.vprFloatOpen = true;
       notifyUiStateChanged();
       startUpdater();
+    }
+    syncAutoOpenWatcher();
+  });
+
+  return {
+    async openFloat(profileName?: string) {
+      // A deliberate open clears the post-close cooldown — the user wants
+      // the pill back.
+      autoOpenSuppressedUntil = 0;
+      await openFloatInternal(profileName);
     },
     async closeFloat() {
       await bridge?.vprFloatClose?.();
@@ -408,6 +481,11 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     async refresh() {
       if (!uiState.vprFloatOpen) return;
       bridge?.vprFloatUpdate?.(await buildData());
+    },
+    setAutoOpen(enabled: boolean) {
+      autoOpenEnabled = enabled;
+      if (enabled) autoOpenSuppressedUntil = 0;
+      syncAutoOpenWatcher();
     },
   };
 }

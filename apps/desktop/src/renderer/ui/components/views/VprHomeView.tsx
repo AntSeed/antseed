@@ -182,9 +182,10 @@ export function VprHomeView({ onSelectView }: Props) {
         if (result.state !== undefined) {
           systemProxyResource.setData({ profiles, state: result.state });
         }
-        // Surface the pill right away, dropdown open, so the "start a new
-        // session" guidance is in view while the user switches to the tool.
-        void actions.openVprFloat?.(profileName, { openMenu: true });
+        // Surface the pill right away — it opens with the chat dropdown
+        // expanded, so the "start a new session" guidance is in view while
+        // the user switches to the tool.
+        void actions.openVprFloat?.(profileName);
         return;
       }
       onSelectView?.('tools');

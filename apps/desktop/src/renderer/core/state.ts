@@ -345,6 +345,8 @@ export type RendererUiState = {
   vprRoutingPreferences: VprRoutingPreferences;
   /** Whether the detachable always-on-top pill window is currently open. */
   vprFloatOpen: boolean;
+  /** Opt-in: pop the pill open on its own when routed traffic starts. */
+  vprFloatAutoOpen: boolean;
   chatDiscoverRowsLoaded: boolean;
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -498,6 +500,7 @@ export function createInitialUiState(): RendererUiState {
       blockedPeerIds: [],
     },
     vprFloatOpen: false,
+    vprFloatAutoOpen: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',
