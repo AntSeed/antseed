@@ -664,6 +664,21 @@ app.whenReady().then(async () => {
     sendUpdateStatus({ status: 'installing', version: updateVersion });
 
     try {
+      // A ShipIt launchd job left registered by a previous update (observed
+      // after the AntSeed Desktop → AntSeed VPR rename) can make launchd
+      // accept Squirrel's fresh submission without ever starting the helper:
+      // the app quits and the update silently never installs. Clear any
+      // existing registration so Squirrel submits onto a clean slate.
+      const uid = process.getuid?.();
+      if (process.platform === 'darwin' && uid !== undefined) {
+        try {
+          execFileSync('launchctl', ['bootout', `gui/${uid}/com.antseed.desktop.ShipIt`], {
+            stdio: 'ignore',
+          });
+        } catch {
+          // No job registered — the common case.
+        }
+      }
       await stopDesktopServices();
       isQuitting = true;
       autoUpdater.quitAndInstall(false, true);

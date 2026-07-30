@@ -4,6 +4,16 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-30 — Desktop alpha: fix silent macOS update installs
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.23` (prerelease)
+
+### Fixed
+
+- Fixed a macOS auto-update failure where clicking "Restart & update" quit the app but never installed the update or relaunched. A ShipIt launchd job left registered by a previous update (observed after the AntSeed Desktop → AntSeed VPR rename) made launchd accept Squirrel's fresh submission without ever starting the installer helper. The install handler now clears any existing `com.antseed.desktop.ShipIt` registration before handing off to Squirrel. If a machine hits this once more on the way to this version, the pending install can be completed with `launchctl kickstart gui/$(id -u)/com.antseed.desktop.ShipIt` or by simply relaunching the app.
+
 ## 2026-07-30 — Desktop alpha: connect toggle for set-up apps
 
 ### Desktop
