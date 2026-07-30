@@ -4,6 +4,16 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-30 — Desktop alpha: reliable macOS update installs
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.25` (prerelease)
+
+### Fixed
+
+- macOS updates now install reliably even when launchd declines to auto-start Squirrel's ShipIt helper (seen on machines where Background Task Management doesn't recognize the renamed app, leaving the update staged but never installed). Before quitting for an update, the app spawns a detached watchdog that waits for the app to exit and starts the installer itself if launchd didn't — kickstarting the registered job or running the helper directly. The `alpha.23` approach of clearing the previous ShipIt registration is removed: it made the fresh registration fail outright.
+
 ## 2026-07-30 — Desktop alpha: simpler tray menu
 
 ### Desktop
