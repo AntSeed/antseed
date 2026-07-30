@@ -3,7 +3,8 @@ import {
   BrowserWindow,
   ipcMain,
 } from 'electron';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import path from 'node:path';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import { isIP } from 'node:net';
@@ -673,6 +674,40 @@ app.whenReady().then(async () => {
     void autoUpdater.checkForUpdates().catch(() => {});
   }, UPDATE_CHECK_INTERVAL_MS);
 
+  // Squirrel installs updates by registering its ShipIt helper as a launchd
+  // job and quitting; it treats "submitted" as "done". On this machine's
+  // macOS, Background Task Management declines to auto-start the helper
+  // (registration accepted but the job never runs, or the fresh submission
+  // is rejected outright), so the app quits and the update silently never
+  // installs. Running the very same helper manually works every time, so:
+  // spawn a detached watchdog before quitting that waits for the app to
+  // exit and starts ShipIt itself if launchd didn't.
+  const SHIPIT_LABEL = 'com.antseed.desktop.ShipIt';
+  const spawnMacUpdateWatchdog = (): void => {
+    if (process.platform !== 'darwin') return;
+    const contentsDir = path.resolve(path.dirname(process.execPath), '..');
+    const shipIt = path.join(contentsDir, 'Frameworks', 'Squirrel.framework', 'Resources', 'ShipIt');
+    const statePath = path.join(app.getPath('home'), 'Library', 'Caches', SHIPIT_LABEL, 'ShipItState.plist');
+    const appProcessName = path.basename(process.execPath);
+    const script = [
+      'APP_PID="$1"; SHIPIT="$2"; LABEL="$3"; STATE="$4"; APP_NAME="$5"',
+      // Wait for the app process to exit (Squirrel quits it), then give a
+      // launchd-started ShipIt a moment to appear.
+      'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
+      'sleep 6',
+      'launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
+      'pgrep -x "$APP_NAME" >/dev/null 2>&1 && exit 0',
+      '[ -f "$STATE" ] || exit 0',
+      'if launchctl kickstart "gui/$(id -u)/$LABEL" 2>/dev/null; then exit 0; fi',
+      'exec "$SHIPIT" "$LABEL" "$STATE"',
+    ].join('\n');
+    const child = spawn('/bin/sh', ['-c', script, 'antseed-update-watchdog', String(process.pid), shipIt, SHIPIT_LABEL, statePath, appProcessName], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  };
+
   ipcMain.handle('app:install-update', async (): Promise<InstallUpdateResult> => {
     if (isInstallingUpdate) {
       return { ok: true };
@@ -682,21 +717,7 @@ app.whenReady().then(async () => {
     sendUpdateStatus({ status: 'installing', version: updateVersion });
 
     try {
-      // A ShipIt launchd job left registered by a previous update (observed
-      // after the AntSeed Desktop → AntSeed VPR rename) can make launchd
-      // accept Squirrel's fresh submission without ever starting the helper:
-      // the app quits and the update silently never installs. Clear any
-      // existing registration so Squirrel submits onto a clean slate.
-      const uid = process.getuid?.();
-      if (process.platform === 'darwin' && uid !== undefined) {
-        try {
-          execFileSync('launchctl', ['bootout', `gui/${uid}/com.antseed.desktop.ShipIt`], {
-            stdio: 'ignore',
-          });
-        } catch {
-          // No job registered — the common case.
-        }
-      }
+      spawnMacUpdateWatchdog();
       await stopDesktopServices();
       isQuitting = true;
       autoUpdater.quitAndInstall(false, true);
