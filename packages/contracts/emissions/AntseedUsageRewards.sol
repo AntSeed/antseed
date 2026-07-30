@@ -465,7 +465,14 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
         (uint256 buyerBudget, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
-        uint256 allocatedBudget = buyerBudget + sellerBudget;
+
+        // A side with a zero weighted denominator has no possible claimant
+        // (the gate only lets finalized epochs reach this point, so the
+        // denominator can no longer change); its budget is unallocated.
+        IAntseedUsageAccounting accounting = usageAccounting;
+        uint256 allocatedBudget;
+        if (accounting.totalWeightedBuyerPointsByEpoch(epoch) != 0) allocatedBudget += buyerBudget;
+        if (accounting.totalWeightedSellerPointsByEpoch(epoch) != 0) allocatedBudget += sellerBudget;
         if (allocatedBudget >= maxBudget) revert NothingToClaim();
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;

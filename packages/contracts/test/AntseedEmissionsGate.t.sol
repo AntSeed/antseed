@@ -1926,6 +1926,41 @@ contract AntseedEmissionsGateTest is Test {
         usageRewards.settleEpochRemainder(4);
     }
 
+    function test_unclaimableSideBudgetRoutesToRemainder() public {
+        _deployGate(3);
+
+        sellerPools = new AntseedSellerPools(address(realRegistry));
+        usageAccounting.setSellerPools(address(sellerPools));
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
+        _setUsageMinter(address(usageRewards));
+
+        _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+
+        // Buyer-only policy: the mock's seller weight defaults to zero, so an
+        // entire epoch accrues buyer points and no seller points.
+        MockUsagePointsPolicy policy = new MockUsagePointsPolicy();
+        usageAccounting.setPointsPolicy(address(policy));
+
+        _warpGateEpoch(4);
+        usageAccounting.accruePoints(keccak256("buyer-only-volume"), buyer, seller, 1_000);
+
+        _warpGateEpoch(5);
+        uint256 maxBudget = gate.controllerEpochBudget(address(usageRewards), 4);
+        uint256 buyerBudget = usageRewards.buyerEpochBudget(4);
+        uint256 sellerBudget = usageRewards.sellerEpochBudget(4);
+        assertGt(sellerBudget, 0);
+
+        // The seller budget has no possible claimant ...
+        vm.prank(seller);
+        vm.expectRevert(AntseedUsageRewards.NothingToClaim.selector);
+        usageRewards.claimAgentReward(_agentId(seller), 4);
+
+        // ... so it must reach a terminal destination through the remainder.
+        (uint256 burnedAmount, uint256 reserveAmount) = usageRewards.settleEpochRemainder(4);
+        assertEq(burnedAmount + reserveAmount, maxBudget - buyerBudget);
+    }
+
     function test_usageRewardsUsePoolWeightedShareAndOperatorRecipient() public {
         address secondBuyer = address(0x21);
         _deployGate(3);
