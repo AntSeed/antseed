@@ -552,8 +552,11 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (reserve == address(0)) revert InvalidAddress();
     }
 
+    /// @dev The pools contract pins ANTS immutably at deployment; resolving
+    ///      through it keeps principal and rewards on the same asset even if
+    ///      the registry's token address is later repointed.
     function _antsToken() internal view returns (address token) {
-        token = sellerPools.registry().antsToken();
+        token = address(sellerPools.antsToken());
         if (token == address(0)) revert InvalidAddress();
     }
 }

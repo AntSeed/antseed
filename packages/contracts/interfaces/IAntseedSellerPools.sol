@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import { IAntseedRegistry } from "./IAntseedRegistry.sol";
 
 interface IAntseedSellerPools {
@@ -92,6 +94,8 @@ interface IAntseedSellerPools {
         uint256 minEarlyExitSlashBps
     ) external;
     function registry() external view returns (IAntseedRegistry);
+
+    function antsToken() external view returns (IERC20);
     function currentEpoch() external view returns (uint256);
     function agentIdForSeller(address seller) external view returns (uint256);
 

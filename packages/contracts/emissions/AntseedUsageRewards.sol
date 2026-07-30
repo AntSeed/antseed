@@ -530,9 +530,10 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
         _mintReward(epoch, address(this), claimableAmount, reserveAmount);
 
-        address tokenAddress = registry.antsToken();
-        if (tokenAddress == address(0)) revert InvalidAddress();
-        IERC20 token = IERC20(tokenAddress);
+        // Approve the token pools actually pulls — its pinned immutable —
+        // not whatever the mutable registry currently points at.
+        IERC20 token = pools.antsToken();
+        if (address(token) == address(0)) revert InvalidAddress();
         token.forceApprove(address(pools), claimableAmount);
         newPositionId = pools.stakeFor(staker, stakeAgentId, claimableAmount, stakeEpochs);
         token.forceApprove(address(pools), 0);

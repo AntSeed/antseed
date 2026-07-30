@@ -671,6 +671,53 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(seller), budgetBefore);
     }
 
+    function test_rewardsFollowPinnedPoolsTokenAfterRegistryRepoint() public {
+        uint256 positionId = _setupStakerRewardsFixture();
+        usageAccounting.accrueSellerPoints(seller, 10);
+        usageAccounting.accrueBuyerPoints(buyer, 10);
+        _warpGateEpoch(6);
+
+        // The registry is repointed at a different token after deployment.
+        ANTSToken decoyToken = new ANTSToken();
+        realRegistry.setAntsToken(address(decoyToken));
+
+        uint256 budget = sellerPoolsRewards.stakerEpochBudget(5);
+        assertGt(budget, 0);
+        sellerPoolsRewards.indexPoolRewards(_agentId(seller), 10);
+
+        // Rewards must still pay the ANTS the gate mints and pools holds.
+        vm.prank(seller);
+        sellerPoolsRewards.claimStakerRewards(positionId, seller);
+        assertEq(token.balanceOf(seller), budget);
+        assertEq(decoyToken.balanceOf(seller), 0);
+    }
+
+    function test_usageRewardRestakeFollowsPinnedPoolsTokenAfterRegistryRepoint() public {
+        uint256 agentId = _setupUsagePoolNoWarp(seller);
+        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards.setSellerPools(address(sellerPools));
+        sellerPools.setRewardStaker(address(usageRewards), true);
+        _setUsageMinter(address(usageRewards));
+
+        _warpGateEpoch(5);
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+        _warpGateEpoch(6);
+
+        ANTSToken decoyToken = new ANTSToken();
+        realRegistry.setAntsToken(address(decoyToken));
+
+        uint256 pending = usageRewards.pendingAgentReward(agentId, 5);
+        assertGt(pending, 0);
+
+        // The restake path approves and transfers through sellerPools, so it
+        // must use the token pools pulls, not the registry's new one.
+        vm.prank(seller);
+        uint256 newPositionId = usageRewards.stakeAgentReward(agentId, 5, 4);
+        (,, uint256 amount,,,,,) = sellerPools.positions(newPositionId);
+        assertEq(amount, pending);
+    }
+
     function test_zeroUsageEpochRoutesFullStakerBucketToRemainder() public {
         _setupStakerRewardsFixture();
         // Stake is active in epoch 5 but no usage is recorded.
