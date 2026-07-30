@@ -3,7 +3,7 @@
  * the reference implementation of the Figma design. Use these on
  * every page instead of re-implementing buttons/FAQs/headers.
  */
-import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
+import {useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode} from 'react';
 import Link from '@docusaurus/Link';
 import styles from './ui.module.css';
 
@@ -98,6 +98,7 @@ export function Button({
   arrow,
   osIcons,
   className,
+  onClick,
   children,
 }: {
   /** dark: ink fill · ghost: white + hairline · light: outline on dark surfaces · white: white fill on dark · clay: economics pages only */
@@ -109,6 +110,8 @@ export function Button({
   arrow?: boolean;
   osIcons?: boolean;
   className?: string;
+  /** intercept navigation (e.g. reroute mobile taps); may preventDefault */
+  onClick?: (e: MouseEvent<HTMLAnchorElement>) => void;
   children: ReactNode;
 }) {
   const cls = [
@@ -137,13 +140,13 @@ export function Button({
   );
   if (to) {
     return (
-      <Link to={to} className={cls}>
+      <Link to={to} className={cls} onClick={onClick}>
         {inner}
       </Link>
     );
   }
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
+    <a href={href} target="_blank" rel="noopener noreferrer" className={cls} onClick={onClick}>
       {inner}
     </a>
   );

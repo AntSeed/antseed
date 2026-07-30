@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
 import Head from '@docusaurus/Head';
+import {useHistory} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
@@ -419,11 +420,26 @@ function RotatingSub() {
 /* ============================================================
    HERO
    ============================================================ */
+/* On phones (where the label reads "Get Started") the VPR buttons route to
+   the /get-started Telegram flow instead of downloading an installer the
+   device can't run. Desktop keeps the direct download. Matches the 640px
+   breakpoint that swaps the label in custom.css. */
+function useMobileGetStarted() {
+  const history = useHistory();
+  return (e: {preventDefault: () => void}) => {
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      e.preventDefault();
+      history.push('/get-started');
+    }
+  };
+}
+
 function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'lg'}) {
   const download = useLatestDesktopDownload();
+  const onGetStarted = useMobileGetStarted();
   return (
     <div className={styles.ctaBlock}>
-      <Button href={download.href} osIcons size={size} className="vprBtn">
+      <Button href={download.href} osIcons size={size} className="vprBtn" onClick={onGetStarted}>
         <span className="vprLabelDesktop">Download VPR</span>
         <span className="vprLabelMobile">Get Started<ArrowRight /></span>
       </Button>
@@ -562,6 +578,7 @@ const DROP_TRAIL_CYCLE = 1.6;
 
 function PricingSection() {
   const download = useLatestDesktopDownload();
+  const onGetStarted = useMobileGetStarted();
   return (
     <section className={styles.pricingSection}>
       <div className={styles.dropTrail} aria-hidden="true">
@@ -597,7 +614,7 @@ function PricingSection() {
           />
         </Reveal>
         <Reveal className={styles.buttonRow} delay={60}>
-          <Button href={download.href} osIcons className="vprBtn">
+          <Button href={download.href} osIcons className="vprBtn" onClick={onGetStarted}>
             <span className="vprLabelDesktop">Download VPR</span>
             <span className="vprLabelMobile">Get Started<ArrowRight /></span>
           </Button>
@@ -1291,8 +1308,9 @@ function FinalCta() {
 
 function FinalCtaButton() {
   const download = useLatestDesktopDownload();
+  const onGetStarted = useMobileGetStarted();
   return (
-    <Button href={download.href} variant="white" size="lg" osIcons className="vprBtn">
+    <Button href={download.href} variant="white" size="lg" osIcons className="vprBtn" onClick={onGetStarted}>
       <span className="vprLabelDesktop">Download VPR</span>
       <span className="vprLabelMobile">Get Started<ArrowRight /></span>
     </Button>
