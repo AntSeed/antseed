@@ -518,6 +518,9 @@ const api = {
   installUpdate(): Promise<InstallUpdateResult> {
     return ipcRenderer.invoke('app:install-update') as Promise<InstallUpdateResult>;
   },
+  getUpdateStatus(): Promise<UpdateStatus | null> {
+    return ipcRenderer.invoke('app:get-update-status') as Promise<UpdateStatus | null>;
+  },
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
   },

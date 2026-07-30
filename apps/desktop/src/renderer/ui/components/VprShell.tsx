@@ -6,6 +6,7 @@ import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
 import { NetworkAlertBanner } from './NetworkAlertBanner';
+import { UpdateBanner } from './UpdateBanner';
 import { VprNavContext } from './vpr/VprNavContext';
 import styles from './VprShell.module.scss';
 
@@ -133,6 +134,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
           </div>
         )}
         <NetworkAlertBanner />
+        <UpdateBanner />
       </main>
       <footer className={styles.statusStrip}>
         <span

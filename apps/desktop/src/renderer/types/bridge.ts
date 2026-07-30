@@ -367,6 +367,7 @@ export type DesktopBridge = {
   onAppSetupComplete?: (handler: () => void) => () => void;
   onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
   installUpdate?: () => Promise<InstallUpdateResult>;
+  getUpdateStatus?: () => Promise<UpdateStatus | null>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
   /** Prompts a native save dialog and writes the signer private key to the chosen file. */

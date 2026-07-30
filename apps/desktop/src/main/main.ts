@@ -564,9 +564,16 @@ app.whenReady().then(async () => {
   let lastDownloadPercent = 0;
   let updateVersion: string | null = null;
 
+  // Kept for replay: the renderer can mount after update-downloaded fired
+  // (window reopened, dev reload), and electron-updater never re-emits it.
+  let lastUpdateStatus: UpdateStatus | null = null;
+
   const sendUpdateStatus = (status: UpdateStatus) => {
+    lastUpdateStatus = status;
     getMainWindow()?.webContents.send('app:update-status', status);
   };
+
+  ipcMain.handle('app:get-update-status', () => lastUpdateStatus);
 
   const clearStallWatchdog = () => {
     if (downloadStallInterval) {

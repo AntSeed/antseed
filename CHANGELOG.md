@@ -4,6 +4,22 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-30 — Desktop alpha: network trouble alerts + visible auto-updates
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.21` (prerelease)
+
+### Added
+
+- Desktop now detects and explains why the peer-to-peer network is unreachable instead of silently looking connected. A banner distinguishes three cases: no internet connection, a firewall/VPN blocking peer-to-peer (UDP) traffic, and being on the network but finding no providers. The first-launch setup screen shows the same hint when peer discovery stalls, and the Home power button renders as off while the network is unreachable.
+- Detection is driven by a new `GET /_antseed/status` buyer-proxy endpoint reporting the DHT routing-table size and consecutive empty discovery sweeps (blocked UDP produces no errors — lookups silently return nothing, and cached peers keep rendering as online). Grace periods cover DHT bootstrap after startup and re-bootstrap after connectivity returns, so the alerts don't flash during normal recovery.
+- Auto-updates are visible again: a banner shows download progress, an "Update available — Restart & update" action when the new version is ready, and failure details on error. The update UI had been lost in the VPR shell redesign — updates downloaded and installed on quit, but nothing in the app ever showed them.
+
+### Fixed
+
+- Alpha prerelease versioning switched from `-alpha-0.N` to `-alpha.N` so installed alphas auto-update to newer prereleases and graduate to stable releases when one is published. Installs of `0.1.115-alpha-0.20` and earlier can't see the new format — install this release manually once; updates are automatic from then on.
+
 ## 2026-07-16 — Gasless deposit sweep live on Base mainnet
 
 ### Published
