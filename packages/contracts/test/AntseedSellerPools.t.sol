@@ -3,12 +3,21 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
+import { IERC721Receiver } from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import { IERC721Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
 import { ANTSToken } from "../core/ANTSToken.sol";
 import { AntseedRegistry } from "../core/AntseedRegistry.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { MockERC8004Registry } from "./mocks/MockERC8004Registry.sol";
+
+contract PositionReceiver is IERC721Receiver {
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+}
 
 contract MockLegacyStaking {
     mapping(address => uint256) public agentIds;
@@ -591,6 +600,30 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(sellerRegistry.getStake(seller), 0);
         assertEq(sellerRegistry.getStake(newOwner), 100 ether);
         assertEq(pools.poolWeightAtEpoch(agentId, 1), 400 ether);
+    }
+
+    function test_stakeForRevertsWhenContractRecipientCannotReceivePositions() public {
+        token.setTransferWhitelist(staker, true);
+        vm.startPrank(staker);
+        token.approve(address(pools), 100 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, address(token))
+        );
+        pools.stakeFor(address(token), agentId, 100 ether, 4);
+        vm.stopPrank();
+    }
+
+    function test_stakeForMintsToContractImplementingReceiver() public {
+        PositionReceiver receiverContract = new PositionReceiver();
+
+        token.setTransferWhitelist(staker, true);
+        vm.startPrank(staker);
+        token.approve(address(pools), 100 ether);
+        uint256 positionId = pools.stakeFor(address(receiverContract), agentId, 100 ether, 4);
+        vm.stopPrank();
+
+        assertEq(pools.ownerOf(positionId), address(receiverContract));
+        assertEq(pools.stakerTotalActiveStake(address(receiverContract)), 100 ether);
     }
 
     function test_validationAndAdmin() public {

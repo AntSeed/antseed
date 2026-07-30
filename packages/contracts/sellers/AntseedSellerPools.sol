@@ -661,7 +661,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         _positionNormalEndEpoch[positionId].push(startEpoch, stakeEndEpoch);
         _addPowerRange(agentId, startEpoch, stakeEndEpoch, weightAmount);
         _increaseActiveStake(owner, agentId, amount);
-        _mint(owner, positionId);
+        _safeMint(owner, positionId);
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
     }
 

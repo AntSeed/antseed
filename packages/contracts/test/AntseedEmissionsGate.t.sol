@@ -80,6 +80,10 @@ contract MockSellerAgentLookup {
 contract SellerDelegationHarness is AntseedSellerDelegation {
     constructor(address registry_, address operator_) AntseedSellerDelegation(registry_, operator_) { }
 
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
     function pendingSellerEmissions(address account, uint256[] memory epochs) external view returns (uint256) {
         return _pendingSellerEmissions(account, epochs);
     }
@@ -2898,4 +2902,5 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(usageAccounting.totalSellerPointsByEpoch(4), 100);
         assertEq(usageAccounting.buyerPointsByEpoch(4, buyer), 100);
     }
+
 }
