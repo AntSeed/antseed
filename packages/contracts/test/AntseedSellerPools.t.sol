@@ -496,19 +496,21 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(pools.poolActiveStakeAtEpoch(otherAgentId, 1), 100 ether);
     }
 
-    function test_earlyWithdrawClosesAtNextEpochAndSlashes() public {
+    function test_earlyWithdrawClosesInExitEpochAndSlashes() public {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 
+        // Withdrawing during epoch 1 means no epoch was ever served in full,
+        // so the whole term is unserved and the slash is at the max rate.
         vm.warp(block.timestamp + EPOCH_DURATION);
         uint256 expectedSlashBps = pools.earlyExitSlashBps(positionId);
-        assertEq(expectedSlashBps, 3_750);
+        assertEq(expectedSlashBps, 5_000);
 
         vm.prank(staker);
         pools.withdrawStake(positionId);
 
-        assertEq(pools.positionWeightAtEpoch(positionId, 1), 400 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 1), 0);
         assertEq(pools.positionWeightAtEpoch(positionId, 2), 0);
-        assertEq(pools.poolWeightAtEpoch(agentId, 1), 400 ether);
+        assertEq(pools.poolWeightAtEpoch(agentId, 1), 0);
         assertEq(pools.poolWeightAtEpoch(agentId, 2), 0);
 
         uint256 expectedSlash = (100 ether * expectedSlashBps) / 10_000;
@@ -534,15 +536,15 @@ contract AntseedSellerPoolsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
         uint256 expectedSlashBps = pools.earlyExitSlashBps(positionId);
-        assertEq(expectedSlashBps, (pools.maxSlashBps() * 103) / 104);
+        assertEq(expectedSlashBps, pools.maxSlashBps());
 
         vm.prank(staker);
         pools.withdrawStake(positionId);
 
         uint256 expectedSlash = (100 ether * expectedSlashBps) / 10_000;
-        assertEq(pools.positionWeightAtEpoch(positionId, 3), 10_400 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 3), 0);
         assertEq(pools.positionWeightAtEpoch(positionId, 4), 0);
-        assertEq(pools.poolWeightAtEpoch(agentId, 3), 10_400 ether);
+        assertEq(pools.poolWeightAtEpoch(agentId, 3), 0);
         assertEq(pools.poolWeightAtEpoch(agentId, 4), 0);
         assertEq(token.balanceOf(pools.DEAD_ADDRESS()), expectedSlash);
         assertEq(token.balanceOf(staker), 1_000 ether + (100 ether - expectedSlash));
@@ -740,6 +742,54 @@ contract AntseedSellerPoolsTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
         assertTrue(adapter.isStakedAboveMin(newOwner));
         assertFalse(adapter.isStakedAboveMin(oldSeller));
+    }
+
+    function test_withdrawEndsRewardPowerInTheExitEpoch() public {
+        uint256 amount = 100 ether;
+        uint256 positionId = _stake(staker, agentId, amount, 1);
+        uint256 startEpoch = pools.currentEpoch() + 1;
+
+        // Enter the position's only powered epoch and withdraw immediately.
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        assertEq(pools.currentEpoch(), startEpoch);
+        assertGt(pools.positionWeightAtEpoch(positionId, startEpoch), 0);
+
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+
+        // Exiting during the powered epoch is an early exit: it is slashed...
+        assertLt(token.balanceOf(staker) - balanceBefore, amount);
+
+        // ...but the exit epoch earns nothing: reward weight and the stake
+        // metric both drop with the principal, so usage recorded after the
+        // withdrawal cannot reward this position.
+        assertEq(pools.positionWeightAtEpoch(positionId, startEpoch), 0);
+        assertEq(pools.poolWeightAtEpoch(agentId, startEpoch), 0);
+        assertEq(pools.poolActiveStakeAtEpoch(agentId, startEpoch), 0);
+    }
+
+    function test_withdrawBeforeTermStillSlashesAndKeepsEarlierEpochs() public {
+        uint256 amount = 100 ether;
+        uint256 positionId = _stake(staker, agentId, amount, 4);
+        uint256 startEpoch = pools.currentEpoch() + 1;
+
+        // Serve two epochs, then exit early during the third.
+        vm.warp(block.timestamp + 3 * EPOCH_DURATION);
+        uint256 exitEpoch = pools.currentEpoch();
+        assertEq(exitEpoch, startEpoch + 2);
+
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+
+        // Early exit is still slashed.
+        assertLt(token.balanceOf(staker) - balanceBefore, amount);
+
+        // Epochs already served keep their weight; the exit epoch loses it.
+        assertGt(pools.positionWeightAtEpoch(positionId, startEpoch), 0);
+        assertGt(pools.positionWeightAtEpoch(positionId, startEpoch + 1), 0);
+        assertEq(pools.positionWeightAtEpoch(positionId, exitEpoch), 0);
     }
 
     function _stake(address staker_, uint256 agentId_, uint256 amount, uint256 stakeEpochs)

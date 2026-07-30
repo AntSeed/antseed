@@ -916,7 +916,9 @@ contract AntseedEmissionsGateTest is Test {
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         vm.prank(staker);
         sellerPoolsRewards.claimStakerRewards(positionId, staker);
-        assertEq(token.balanceOf(staker), 900 ether + 75 ether + expectedStakerClaim);
+        // Epoch 5 was served in full and still pays out; only the exit epoch
+        // is forfeited, and the deeper slash reflects the extra unserved epoch.
+        assertEq(token.balanceOf(staker), 900 ether + 62.5 ether + expectedStakerClaim);
     }
 
     function test_burnedLantsPositionKeepsPastRewardClaimRightsAfterMove() public {
