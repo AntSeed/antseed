@@ -808,4 +808,82 @@ contract AntseedSellerPoolsTest is Test {
         epochs = new uint256[](1);
         epochs[0] = epoch;
     }
+    function test_agentTransferEndsSellerBindingWithoutNewOwnerRegistering() public {
+        _stake(staker, agentId, 100 ether, 4);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        assertTrue(sellerRegistry.isStakedAboveMin(seller));
+
+        // buyerSeller is already bound to otherAgentId, so it cannot register
+        // the agent it just acquired.
+        vm.prank(seller);
+        identityRegistry.transferAgent(agentId, buyerSeller);
+        vm.prank(buyerSeller);
+        vm.expectRevert(AntseedSellerRegistry.AgentIdMismatch.selector);
+        sellerRegistry.registerSeller(agentId);
+
+        // The previous seller must still lose the binding, the pool stake it
+        // no longer owns, and channel eligibility.
+        assertEq(sellerRegistry.getAgentId(seller), 0);
+        assertEq(sellerRegistry.getStake(seller), 0);
+        assertFalse(sellerRegistry.isStakedAboveMin(seller));
+        assertEq(pools.agentIdForSeller(seller), 0);
+
+        // The pool itself is untouched and keeps paying its stakers.
+        assertEq(pools.poolWeightAtEpoch(agentId, 1), 400 ether);
+    }
+
+    function test_agentTransferEndsLegacyBindingWithoutNewOwnerRegistering() public {
+        MockLegacyStaking legacy = new MockLegacyStaking();
+        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(registry), address(pools), address(legacy));
+
+        address oldSeller = address(0x600);
+        vm.prank(oldSeller);
+        uint256 soldAgentId = identityRegistry.register();
+        legacy.setAgent(oldSeller, soldAgentId);
+        legacy.setStaked(oldSeller, true);
+        assertEq(adapter.getAgentId(oldSeller), soldAgentId);
+        assertTrue(adapter.isStakedAboveMin(oldSeller));
+
+        vm.prank(oldSeller);
+        identityRegistry.transferAgent(soldAgentId, newOwner);
+
+        assertEq(adapter.getAgentId(oldSeller), 0);
+        assertFalse(adapter.isStakedAboveMin(oldSeller));
+    }
+
+    function test_sellerCanRebindAfterSellingItsAgentButNotWhileHoldingTwo() public {
+        vm.prank(seller);
+        identityRegistry.transferAgent(agentId, newOwner);
+
+        vm.prank(seller);
+        uint256 freshAgentId = identityRegistry.register();
+        vm.prank(seller);
+        sellerRegistry.registerSeller(freshAgentId);
+        assertEq(sellerRegistry.getAgentId(seller), freshAgentId);
+
+        // One agent per seller address still holds for an owner of two.
+        vm.prank(seller);
+        uint256 secondAgentId = identityRegistry.register();
+        vm.prank(seller);
+        vm.expectRevert(AntseedSellerRegistry.AgentIdMismatch.selector);
+        sellerRegistry.registerSeller(secondAgentId);
+    }
+
+    function test_getAgentIdFailsClosedWhenIdentityRegistryIsUnset() public {
+        AntseedRegistry blankRegistry = new AntseedRegistry();
+        blankRegistry.setAntsToken(address(token));
+        blankRegistry.setEmissions(address(this));
+        AntseedSellerPools blankPools = new AntseedSellerPools(address(blankRegistry));
+        MockLegacyStaking legacy = new MockLegacyStaking();
+        AntseedSellerRegistry adapter =
+            new AntseedSellerRegistry(address(blankRegistry), address(blankPools), address(legacy));
+
+        legacy.setAgent(seller, agentId);
+        legacy.setStaked(seller, true);
+
+        // Ownership cannot be proven without an identity registry, so the
+        // seller must resolve to nothing rather than the unverified binding.
+        assertEq(adapter.getAgentId(seller), 0);
+        assertFalse(adapter.isStakedAboveMin(seller));
+    }
 }

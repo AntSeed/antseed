@@ -30,8 +30,10 @@ import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
  *           - Seller registration binds a seller address to an ERC-8004 agent
  *             id for routing and legacy compatibility. Economic pool ownership
  *             remains agent-id based in AntseedSellerPools.
- *           - If an agent changes hands, the new owner can register it and the
- *             old seller binding — local or legacy — is superseded.
+ *           - ERC-8004 ownership is the source of truth for that binding. A
+ *             seller resolves to an agent only while it still owns it, so an
+ *             agent transfer immediately ends the old binding — local or
+ *             legacy — without the new owner having to register.
  */
 contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     // ─── External Contracts ──────────────────────────────────────────
@@ -87,11 +89,18 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
         if (agentId == 0) revert InvalidValue();
         if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != msg.sender) revert NotAgentOwner();
 
+        // A seller stays limited to one agent, but an agent it has since sold
+        // must not lock the address out of registering a replacement.
         uint256 existingAgentId = _sellerAgentId[msg.sender];
-        if (existingAgentId != 0 && existingAgentId != agentId) revert AgentIdMismatch();
+        if (existingAgentId != 0 && existingAgentId != agentId) {
+            if (_ownsAgent(msg.sender, existingAgentId)) revert AgentIdMismatch();
+            if (agentSeller[existingAgentId] == msg.sender) agentSeller[existingAgentId] = address(0);
+        }
 
         uint256 legacyAgentId = _legacyAgentId(msg.sender);
-        if (legacyAgentId != 0 && legacyAgentId != agentId) revert AgentIdMismatch();
+        if (legacyAgentId != 0 && legacyAgentId != agentId && _ownsAgent(msg.sender, legacyAgentId)) {
+            revert AgentIdMismatch();
+        }
 
         address existingSeller = agentSeller[agentId];
         if (existingSeller != address(0) && existingSeller != msg.sender && _sellerAgentId[existingSeller] == agentId) {
@@ -123,16 +132,9 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
 
     function getAgentId(address seller) public view returns (uint256) {
         uint256 agentId = _sellerAgentId[seller];
-        if (agentId != 0) return agentId;
-        agentId = _legacyAgentId(seller);
+        if (agentId == 0) agentId = _legacyAgentId(seller);
         if (agentId == 0) return 0;
-        // A local registration by another seller (e.g. the buyer of the agent)
-        // supersedes the legacy binding. Without this, a seller who sold their
-        // agent would keep the binding — and channel eligibility funded by the
-        // new owner's pool stake — until they unstake from legacy staking.
-        address localSeller = agentSeller[agentId];
-        if (localSeller != address(0) && localSeller != seller) return 0;
-        return agentId;
+        return _ownsAgent(seller, agentId) ? agentId : 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -193,6 +195,19 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
 
         try legacy.isStakedAboveMin(seller) returns (bool staked) {
             return staked;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev Fails closed rather than reverting: AntseedChannels is already
+    ///      deployed and calls getAgentId() unguarded while settling and
+    ///      closing, so a revert here would trap buyer funds in a channel.
+    function _ownsAgent(address seller, uint256 agentId) internal view returns (bool) {
+        address identity = registry.identityRegistry();
+        if (identity == address(0)) return false;
+        try IERC8004Registry(identity).ownerOf(agentId) returns (address owner) {
+            return owner == seller;
         } catch {
             return false;
         }
