@@ -4,6 +4,17 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-30 — Desktop alpha: simpler tray menu
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.24` (prerelease)
+
+### Changed
+
+- The menu-bar tray menu is now three actions — show the app, show the floating window, and Connect/Disconnect — replacing the old peer/model/per-app submenus, and it stays in sync with the runtime state. The Connect/Disconnect entry toggles the main routing runtime, and "Show Floating Window" opens the app first when no window is up.
+- Preferences copy: the floating-window auto-open setting now reads "Show on traffic".
+
 ## 2026-07-30 — Desktop alpha: fix silent macOS update installs
 
 ### Desktop
