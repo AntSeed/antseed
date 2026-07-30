@@ -194,6 +194,7 @@ const config: Config = {
           position: 'right',
           className: 'header-docs-link',
         },
+        {to: '/blog', label: 'Blog', position: 'right', className: 'header-blog-link'},
         {
           href: 'https://github.com/antseed',
           'aria-label': 'GitHub',
