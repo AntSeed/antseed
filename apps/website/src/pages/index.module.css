@@ -166,7 +166,10 @@
   margin: 0;
 }
 
-.statAccent {
+/* Compound selector on purpose: single-class .statAccent ties with
+   .statValue on specificity, and cssnano's rule merging reorders them in
+   production — the accent silently lost to the later .statValue rule. */
+.statValue.statAccent {
   color: var(--as-green);
 }
 

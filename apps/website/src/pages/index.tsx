@@ -5,6 +5,8 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {useNetworkStats} from '../lib/useNetworkStats';
+import {useMarketplaceShowcase} from '../lib/useMarketplacePrices';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
 import {HeroDemo, DEMO_BEATS, DEMO_TOTAL_FRAMES} from '../components/HeroDemo';
 import {
@@ -20,6 +22,11 @@ import {
   Minimax,
   Cohere,
   NousResearch,
+  XiaomiMiMo,
+  Tencent,
+  Stepfun,
+  Nvidia,
+  XAI,
 } from '@lobehub/icons';
 
 type IconSize = (props: {size?: number}) => JSX.Element;
@@ -448,14 +455,20 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
   );
 }
 
-const HERO_STATS: {value: string; label: string; accent?: boolean}[] = [
-  {value: '82B+', label: 'Tokens Processed'},
-  {value: '$143K+', label: 'Network Revenue'},
-  {value: '158+', label: 'Providers'},
-  {value: '610+', label: 'Models', accent: true},
-];
+/* Hero stats — tokens/revenue/providers stream from Antscan's on-chain
+   snapshot via useNetworkStats (fallbacks in the hook). Models is still
+   hand-maintained: the model directory lives in the network DHT and has
+   no public API yet. */
+const HERO_MODELS_STAT = {value: '610+', label: 'Models', accent: true};
 
 function Hero() {
+  const stats = useNetworkStats();
+  const heroStats: {value: string; label: string; accent?: boolean}[] = [
+    {value: stats.tokens, label: 'Tokens Processed'},
+    {value: stats.revenue, label: 'Network Revenue'},
+    {value: stats.providers, label: 'Providers'},
+    HERO_MODELS_STAT,
+  ];
   const demoRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef(0);
   const shutdownRef = useRef(0);
@@ -471,7 +484,7 @@ function Hero() {
           <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} />
         </div>
         <dl className={styles.statsRow}>
-          {HERO_STATS.map((s) => (
+          {heroStats.map((s) => (
             <div key={s.label} className={styles.stat}>
               <dd className={`${styles.statValue} ${s.accent ? styles.statAccent : ''}`}>
                 <CountUp value={s.value} />
@@ -545,28 +558,24 @@ function LogoMarquee() {
 /* ============================================================
    PRICING — the same models, a fraction of the price
    ============================================================ */
-const PRICING_ROWS = [
-  {logo: 'logo-anthropic.svg', model: 'Claude Opus 4.8', vendor: 'by Anthropic', official: '$5.00', best: '$0.88', provider: 'Open Bird', save: '82%'},
-  {logo: 'logo-openai.svg', model: 'GPT-5.5', vendor: 'by OpenAI', official: '$5.00', best: '$0.73', provider: 'GPU-Garden', save: '85%'},
-  {logo: 'logo-google.svg', model: 'Gemini 3.5 Flash', vendor: 'by Google', official: '$0.30', best: '$0.08', provider: 'Apex Ant', save: '73%'},
-  {logo: 'logo-anthropic.svg', model: 'Claude Sonnet 5', vendor: 'by Anthropic', official: '$3.00', best: '$0.42', provider: 'Dark Signal', save: '86%'},
-];
+/* The pricing rows are derived live by useMarketplaceShowcase — the
+   models the network sells hardest (most proven sellers on the DHT),
+   matched to OpenRouter's catalog for names and official prices. Logos
+   render from the same Lobehub set as the marquee, keyed by vendor. */
+const VENDOR_GLYPHS = {
+  ...LOBE_ICONS,
+  XiaomiMiMo,
+  Tencent,
+  Stepfun,
+  Nvidia,
+  XAI,
+} as unknown as Record<string, IconSize>;
 
 /* hugeicons:checkmark (12) */
 function CheckIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.25 6.93002L3.6747 8.35472C4.07982 8.75985 4.74183 8.74244 5.1251 8.31658L10 2.90002" />
-    </svg>
-  );
-}
-
-/* hugeicons:user-02 (16) */
-function PersonIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8.00004 7.33333C9.4728 7.33333 10.6667 6.13943 10.6667 4.66667C10.6667 3.19391 9.4728 2 8.00004 2C6.52728 2 5.33337 3.19391 5.33337 4.66667C5.33337 6.13943 6.52728 7.33333 8.00004 7.33333Z" />
-      <path d="M8.00002 9.33337C4.66669 9.33337 2.66669 11 2.66669 12.6667C2.66669 13.0203 2.80716 13.3595 3.05721 13.6095C3.30726 13.8596 3.6464 14 4.00002 14H12C12.3536 14 12.6928 13.8596 12.9428 13.6095C13.1929 13.3595 13.3334 13.0203 13.3334 12.6667C13.3334 11 11.3334 9.33337 8.00002 9.33337Z" />
     </svg>
   );
 }
@@ -579,6 +588,7 @@ const DROP_TRAIL_CYCLE = 1.6;
 function PricingSection() {
   const download = useLatestDesktopDownload();
   const onGetStarted = useMobileGetStarted();
+  const pricingRows = useMarketplaceShowcase();
   return (
     <section className={styles.pricingSection}>
       <div className={styles.dropTrail} aria-hidden="true">
@@ -635,9 +645,11 @@ function PricingSection() {
             </a>
           </div>
           <div className={styles.priceRows}>
-            {PRICING_ROWS.map((row) => (
+            {pricingRows.map((row) => {
+              const Glyph = VENDOR_GLYPHS[row.vendorKey];
+              return (
               <div key={row.model} className={styles.priceRow}>
-                <span className={styles.priceLogo}><img src={`/img/home/${row.logo}`} alt="" loading="lazy" /></span>
+                <span className={styles.priceLogo}>{Glyph ? <Glyph size={22} /> : null}</span>
                 <span className={styles.priceModel}>
                   <strong>{row.model}</strong>
                   <em>{row.vendor}</em>
@@ -653,7 +665,6 @@ function PricingSection() {
                   </span>
                   <span className={styles.priceBestSub}>
                     /M tokens
-                    <span className={styles.providerChip}><PersonIcon /> {row.provider}</span>
                   </span>
                 </span>
                 <span className={styles.priceSave}>
@@ -661,7 +672,8 @@ function PricingSection() {
                   <em>Save</em>
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </Reveal>
         <Reveal className={styles.payNote} delay={160}>
@@ -1181,6 +1193,7 @@ const SELLABLES = [
 ];
 
 function SellSection() {
+  const stats = useNetworkStats();
   return (
     <section className={styles.sellSection}>
       <div className={styles.sectionInner}>
@@ -1219,23 +1232,23 @@ function SellSection() {
                 </span>
               </div>
               <div className={styles.earningsBig}>
-                <strong><CountUp value="$143K" duration={1400} /></strong>
+                <strong><CountUp value={stats.revenueShort} duration={1400} /></strong>
                 <span>Settled to providers on the network</span>
               </div>
               <div className={styles.earningsSmallRow}>
                 <div className={styles.earningsSmall}>
-                  <strong><CountUp value="162" /></strong>
+                  <strong><CountUp value={stats.providersCount} /></strong>
                   <span>Sellers earning</span>
                 </div>
                 <div className={styles.earningsSmall}>
-                  <strong><CountUp value="18,440" /></strong>
+                  <strong><CountUp value={stats.settlementsPerEpoch} /></strong>
                   <span>Settlements · epoch</span>
                 </div>
               </div>
               <p className={styles.earningsNote}>
                 Live figure pulled from{' '}
-                <a href="https://antseedstats.com" target="_blank" rel="noopener noreferrer">
-                  antseedstats.com
+                <a href="https://antscan.co" target="_blank" rel="noopener noreferrer">
+                  antscan.co
                 </a>
               </p>
             </div>
