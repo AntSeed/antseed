@@ -1334,4 +1334,78 @@ describe('SellerPaymentManager', () => {
       expect(getSessionSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('on-chain session recovery with a pending close request', () => {
+    // Reserve fields absent is what routes handleSpendingAuth into recovery.
+    async function buildRecoveryAuth(channelId: string, cumulativeAmount: bigint) {
+      const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount });
+      delete (payload as Record<string, unknown>).reserveSalt;
+      delete (payload as Record<string, unknown>).reserveMaxAmount;
+      delete (payload as Record<string, unknown>).reserveDeadline;
+      return payload;
+    }
+
+    it('recovers a clean active channel', async () => {
+      const channelId = makeChannelId(0x41);
+      vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity) as never,
+      );
+
+      await manager.handleSpendingAuth(buyerIdentity.peerId, await buildRecoveryAuth(channelId, 900_000n), mux);
+
+      expect(mux.sentAuthAcks.length).toBe(1);
+      expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+
+    it('refuses recovery when the buyer has requested close on-chain', async () => {
+      const channelId = makeChannelId(0x42);
+      vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, {
+          closeRequestedAt: BigInt(Math.floor(Date.now() / 1000) - 3600),
+        }) as never,
+      );
+
+      await manager.handleSpendingAuth(buyerIdentity.peerId, await buildRecoveryAuth(channelId, 900_000n), mux);
+
+      expect(mux.sentAuthAcks.length).toBe(0);
+      expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+      expect(store.getChannel(channelId)).toBeNull();
+    });
+
+    it('refuses recovery even while the grace period is still running', async () => {
+      const channelId = makeChannelId(0x43);
+      vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, {
+          closeRequestedAt: BigInt(Math.floor(Date.now() / 1000)),
+        }) as never,
+      );
+
+      await manager.handleSpendingAuth(buyerIdentity.peerId, await buildRecoveryAuth(channelId, 900_000n), mux);
+
+      expect(mux.sentAuthAcks.length).toBe(0);
+      expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
+    });
+
+    it('recovers a close-pending channel when serveWhileClosePending is set', async () => {
+      const channelId = makeChannelId(0x44);
+      const optInConfig: SellerPaymentConfig = {
+        rpcUrl: 'http://127.0.0.1:8545',
+        channelsContractAddress: CONTRACT_ADDR,
+        chainId: CHAIN_ID,
+        dataDir: tempDir,
+        serveWhileClosePending: true,
+      };
+      const mgr = new SellerPaymentManager(sellerIdentity, optInConfig, store);
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, {
+          closeRequestedAt: BigInt(Math.floor(Date.now() / 1000) - 3600),
+        }) as never,
+      );
+
+      await mgr.handleSpendingAuth(buyerIdentity.peerId, await buildRecoveryAuth(channelId, 900_000n), mux);
+
+      expect(mux.sentAuthAcks.length).toBe(1);
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+  });
 });

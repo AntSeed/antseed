@@ -832,6 +832,84 @@ contract AntseedChannelsTest is Test {
         assertEq(usdc.balanceOf(seller), settleAmount - platformFee);
     }
 
+    function test_topUp_cancelsPendingCloseRequest() public {
+        bytes32 salt = keccak256("session-topup-close-pending");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Mature the close timer before the top-up — the exploit precondition.
+        vm.prank(buyerOperator);
+        channels.requestClose(channelId);
+        vm.warp(block.timestamp + 15 minutes + 1);
+
+        uint128 settleAmount = 85_000_000;
+        bytes memory spendingSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+
+        vm.expectEmit(true, true, true, true);
+        emit AntseedChannels.CloseRequestCancelled(channelId, buyer, seller);
+        vm.prank(seller);
+        channels.topUp(channelId, settleAmount, encodeMetadata(5000, 2000), spendingSig, newMax, newDeadline, reserveSig);
+
+        (,,,,,,, uint256 sCloseRequestedAt,) = channels.channels(channelId);
+        assertEq(sCloseRequestedAt, 0);
+
+        vm.prank(buyerOperator);
+        vm.expectRevert(AntseedChannels.CloseNotReady.selector);
+        channels.withdraw(channelId);
+
+        uint128 finalAmount = 120_000_000;
+        bytes memory finalSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 9000, 4000);
+        vm.prank(seller);
+        channels.settle(channelId, finalAmount, encodeMetadata(9000, 4000), finalSig);
+
+        (,,, uint128 sSettled,,,,,) = channels.channels(channelId);
+        assertEq(sSettled, finalAmount);
+    }
+
+    function test_topUp_cancelledCloseCanBeRequestedAgain() public {
+        bytes32 salt = keccak256("session-topup-reclose");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        vm.prank(buyerOperator);
+        channels.requestClose(channelId);
+        vm.warp(block.timestamp + 15 minutes + 1);
+
+        uint128 settleAmount = 85_000_000;
+        bytes memory spendingSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_150, newDeadline);
+        vm.prank(seller);
+        channels.topUp(channelId, settleAmount, encodeMetadata(5000, 2000), spendingSig, USDC_150, newDeadline, reserveSig);
+
+        vm.prank(buyerOperator);
+        channels.requestClose(channelId);
+        vm.warp(block.timestamp + 15 minutes + 1);
+        vm.prank(buyerOperator);
+        channels.withdraw(channelId);
+
+        (,,,,,,,, AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.TimedOut);
+    }
+
+    function test_topUp_leavesCloseRequestUnsetWhenNoneWasMade() public {
+        bytes32 salt = keccak256("session-topup-no-close");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        uint128 settleAmount = 85_000_000;
+        bytes memory spendingSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+
+        vm.prank(seller);
+        channels.topUp(channelId, settleAmount, encodeMetadata(5000, 2000), spendingSig, newMax, newDeadline, reserveSig);
+
+        (,,,,,,, uint256 sCloseRequestedAt,) = channels.channels(channelId);
+        assertEq(sCloseRequestedAt, 0);
+    }
+
     function test_topUp_revert_thresholdNotMet() public {
         bytes32 salt = keccak256("session-topup-fail");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_150);

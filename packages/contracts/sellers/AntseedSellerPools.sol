@@ -389,25 +389,27 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         if (position.withdrawn) revert AlreadyWithdrawn();
         if (position.closedAtEpoch != 0) revert PositionClosed();
 
-        uint256 effectiveCloseEpoch = epoch < position.stakeEndEpoch ? epoch + 1 : epoch;
-        // A position that has not activated yet (stakeActivationDelay > 1) added
-        // power only from stakeStartEpoch onward; never remove before that.
-        if (effectiveCloseEpoch < position.stakeStartEpoch) effectiveCloseEpoch = position.stakeStartEpoch;
-        if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveCloseEpoch) != 0) revert PositionClosed();
+        // Power ends in the epoch of the withdrawal: the principal leaves now, so
+        // it must not keep earning this epoch. A position that has not activated
+        // yet added power only from stakeStartEpoch onward; never remove before that.
+        uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) revert PositionClosed();
         returnedAmount = position.amount;
 
         position.withdrawn = true;
-        position.closedAtEpoch = uint64(effectiveCloseEpoch);
-        uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveCloseEpoch);
+        position.closedAtEpoch = uint64(closeEpoch);
+        uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch);
         if (normalEndEpoch == 0) revert StakeDurationOutOfBounds();
 
-        if (effectiveCloseEpoch < normalEndEpoch) {
-            _removePowerRange(position.agentId, effectiveCloseEpoch, normalEndEpoch, position.weightAmount);
+        if (closeEpoch < normalEndEpoch) {
+            _removePowerRange(position.agentId, closeEpoch, normalEndEpoch, position.weightAmount);
         }
         _decreaseActiveStake(staker, position.agentId, position.amount);
 
-        if (effectiveCloseEpoch < normalEndEpoch) {
-            uint256 slashBps = _earlyExitSlashBps(positionId, effectiveCloseEpoch);
+        // The position stops serving at closeEpoch, so the unserved term — and
+        // the slash — is measured from there.
+        if (closeEpoch < normalEndEpoch) {
+            uint256 slashBps = _earlyExitSlashBps(positionId, closeEpoch);
             slashedAmount = (position.amount * slashBps) / BPS_DENOMINATOR;
             returnedAmount = position.amount - slashedAmount;
         }
@@ -424,10 +426,10 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         Position memory position = positions[positionId];
         if (position.owner == address(0)) revert InvalidPosition();
         uint256 epoch = currentEpoch();
-        if (_positionMaxLockPower[positionId].upperLookupRecent(epoch + 1) != 0) return maxSlashBps;
-        uint256 effectiveCloseEpoch = epoch < position.stakeEndEpoch ? epoch + 1 : epoch;
-        if (effectiveCloseEpoch >= position.stakeEndEpoch) return 0;
-        return _earlyExitSlashBps(positionId, effectiveCloseEpoch);
+        uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) return maxSlashBps;
+        if (closeEpoch >= position.stakeEndEpoch) return 0;
+        return _earlyExitSlashBps(positionId, closeEpoch);
     }
 
     function ownerOf(uint256 positionId) public view override(ERC721, IAntseedSellerPools) returns (address) {
@@ -647,7 +649,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         _positionNormalEndEpoch[positionId].push(startEpoch, stakeEndEpoch);
         _addPowerRange(agentId, startEpoch, stakeEndEpoch, weightAmount);
         _increaseActiveStake(owner, agentId, amount);
-        _mint(owner, positionId);
+        _safeMint(owner, positionId);
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
     }
 
