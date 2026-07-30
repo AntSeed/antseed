@@ -49,6 +49,7 @@ export function SetupScreen() {
     appSetupStep: state.appSetupStep,
     chatServiceCount: state.chatServiceOptions.length,
     runtimeActivityMessage: state.runtimeActivity.message,
+    networkAlert: state.networkAlert,
   }), shallowEqual);
   const [level, setLevel] = useState<ProgressLevel>(0);
 
@@ -103,6 +104,16 @@ export function SetupScreen() {
               <span className={styles.readyDot} />
               Ready
             </div>
+          )}
+
+          {/* networkAlert carries a startup grace period, so this only appears
+              once the network — not slow bootstrap — is the problem. */}
+          {!hasServices && snap.networkAlert !== 'none' && (
+            <p className={styles.networkHint} role="alert">
+              {snap.networkAlert === 'no-internet'
+                ? 'No internet connection detected. Connect to the internet to finish setup.'
+                : 'Having trouble reaching the peer-to-peer network. A firewall or VPN on this network may be blocking it — try disconnecting the VPN or switching networks.'}
+            </p>
           )}
         </div>
       </div>

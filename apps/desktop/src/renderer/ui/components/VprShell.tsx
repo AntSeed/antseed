@@ -5,6 +5,7 @@ import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
+import { NetworkAlertBanner } from './NetworkAlertBanner';
 import { VprNavContext } from './vpr/VprNavContext';
 import styles from './VprShell.module.scss';
 
@@ -131,6 +132,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
             </button>
           </div>
         )}
+        <NetworkAlertBanner />
       </main>
       <footer className={styles.statusStrip}>
         <span

@@ -166,3 +166,21 @@
   background: var(--accent-green);
   flex-shrink: 0;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Network trouble hint                                               */
+/* ------------------------------------------------------------------ */
+
+.networkHint {
+  max-width: 380px;
+  margin-top: 20px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #fbbf24;
+  text-align: left;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 8px;
+  animation: fade-in 0.4s ease;
+}

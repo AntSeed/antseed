@@ -392,6 +392,11 @@ export class AntseedNode extends EventEmitter {
     return this._dht?.getPort() ?? 0;
   }
 
+  /** DHT routing-table size — stays 0 when UDP is blocked or there is no internet. */
+  get dhtNodeCount(): number {
+    return this._dht?.getNodeCount() ?? 0;
+  }
+
   /** Actual signaling/connection port after binding (0 means not started). */
   get signalingPort(): number {
     return this._connectionManager?.getListeningPort() ?? 0;

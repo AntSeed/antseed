@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
+import { net } from 'electron';
 import { DEFAULT_BUYER_STATE_PATH } from '../constants.js';
+import { resolveBuyerProxyPort } from './active-config.js';
 
 export type DashboardNetworkPeer = {
   peerId: string;
@@ -29,6 +31,9 @@ export type DashboardNetworkStats = {
   dhtNodeCount: number;
   dhtHealthy: boolean;
   lastScanAt: number | null;
+  internetOnline?: boolean;
+  proxyReachable?: boolean;
+  proxyUptimeMs?: number | null;
   totalLookups?: number;
   successfulLookups?: number;
   lookupSuccessRate?: number;
@@ -52,6 +57,59 @@ let peerCacheLastScanAt: number | null = null;
 let peerCacheLastRefreshAt = 0;
 let peerCacheLastSignature = '';
 const peersChangedListeners: Array<() => void> = [];
+
+type NetworkHealthProbe = {
+  proxyReachable: boolean;
+  /** null = proxy running but status endpoint unavailable (older CLI). */
+  dhtNodeCount: number | null;
+  consecutiveEmptyDiscoveries: number;
+  proxyUptimeMs: number | null;
+  internetOnline: boolean;
+};
+let lastHealthProbe: NetworkHealthProbe | null = null;
+let healthProbeInFlight: Promise<void> | null = null;
+
+/**
+ * Probe the buyer proxy's /_antseed/status. A firewall/VPN drops DHT traffic
+ * silently — lookups "succeed" with zero results — so the routing-table size
+ * is the only trustworthy signal that we are actually on the network.
+ */
+async function refreshNetworkHealth(): Promise<void> {
+  if (healthProbeInFlight) return healthProbeInFlight;
+  healthProbeInFlight = (async () => {
+    const internetOnline = net.isOnline();
+    try {
+      const port = await resolveBuyerProxyPort();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1_500);
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/_antseed/status`, {
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+        if (response.ok && payload?.['ok'] === true) {
+          lastHealthProbe = {
+            proxyReachable: true,
+            dhtNodeCount: Number(payload['dhtNodeCount']) || 0,
+            consecutiveEmptyDiscoveries: Number(payload['consecutiveEmptyDiscoveries']) || 0,
+            proxyUptimeMs: Number.isFinite(Number(payload['uptimeMs'])) ? Number(payload['uptimeMs']) : null,
+            internetOnline,
+          };
+          return;
+        }
+        // Older CLI without the status endpoint: reachable, DHT state unknown.
+        lastHealthProbe = { proxyReachable: true, dhtNodeCount: null, consecutiveEmptyDiscoveries: 0, proxyUptimeMs: null, internetOnline };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      lastHealthProbe = { proxyReachable: false, dhtNodeCount: null, consecutiveEmptyDiscoveries: 0, proxyUptimeMs: null, internetOnline };
+    }
+  })().finally(() => {
+    healthProbeInFlight = null;
+  });
+  return healthProbeInFlight;
+}
 
 /** Register a callback invoked when the peer set changes. Returns an unsubscribe function. */
 export function onPeersChanged(listener: () => void): () => void {
@@ -155,6 +213,8 @@ export async function refreshPeerCache(): Promise<void> {
   }
   peerCacheLastRefreshAt = now;
 
+  await refreshNetworkHealth();
+
   try {
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -204,14 +264,41 @@ export async function refreshPeerCache(): Promise<void> {
 
 export function getNetworkSnapshot(): DashboardNetworkResult {
   const peers = Array.from(peerCache.values());
+  const probe = lastHealthProbe;
+  const anyOnline = peers.some((p) => p.online);
+
+  // Prefer the live probe: cached peers can look "online" for hours after
+  // switching to a network that blocks P2P traffic.
+  const dhtHealthy = probe?.proxyReachable && probe.dhtNodeCount !== null
+    ? probe.internetOnline && probe.dhtNodeCount > 0 && probe.consecutiveEmptyDiscoveries < 3
+    : anyOnline;
+
+  let healthReason = 'ok';
+  if (!probe || !probe.proxyReachable) {
+    healthReason = 'runtime offline';
+  } else if (!probe.internetOnline) {
+    healthReason = 'no internet';
+  } else if (probe.dhtNodeCount === 0) {
+    healthReason = 'dht unreachable';
+  } else if (probe.dhtNodeCount === null) {
+    healthReason = 'dht status unavailable';
+  } else if (probe.consecutiveEmptyDiscoveries >= 3) {
+    healthReason = 'no peers found';
+  }
+
   return {
     ok: true,
     peers,
     stats: {
       ...defaultNetworkStats(),
       totalPeers: peers.length,
-      dhtHealthy: peers.some((p) => p.online),
+      dhtNodeCount: probe?.dhtNodeCount ?? 0,
+      dhtHealthy,
       lastScanAt: peerCacheLastScanAt,
+      internetOnline: probe?.internetOnline ?? true,
+      proxyReachable: probe?.proxyReachable ?? false,
+      proxyUptimeMs: probe?.proxyUptimeMs ?? null,
+      healthReason,
     },
     error: null,
   };

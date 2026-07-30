@@ -60,6 +60,7 @@ export function VprHomeView({ onSelectView }: Props) {
     usage: state.creditsBuyerUsage,
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
+    networkAlert: state.networkAlert,
   }), shallowEqual);
   const proxyResource = useCachedResource(systemProxyResource);
   const conversationsResource = useCachedResource(buyerConversationsResource);
@@ -220,7 +221,11 @@ export function VprHomeView({ onSelectView }: Props) {
     } catch { /* private mode */ }
   }
 
-  const connected = snap.connectBadge.tone === 'active' || runtimeOn;
+  // Visual-only: with the network unreachable the runtime is still running,
+  // but showing the hero lit would promise routing that can't happen.
+  const networkDown = snap.networkAlert !== 'none';
+  const connected = (snap.connectBadge.tone === 'active' || runtimeOn) && !networkDown;
+  const powerLit = runtimeOn && !networkDown;
 
   // The Add Balance banner is a nudge for low balances only — with more than
   // $5 left it's just noise. Keyed off spendable, not the unreserved slice: an
@@ -277,7 +282,7 @@ export function VprHomeView({ onSelectView }: Props) {
           </button>
           <button
             type="button"
-            className={`${styles.power}${runtimeOn ? ` ${styles.powerOn}` : ` ${styles.powerOff}`}`}
+            className={`${styles.power}${powerLit ? ` ${styles.powerOn}` : ` ${styles.powerOff}`}`}
             onClick={() => { void (runtimeOn ? actions.stopAll() : actions.startAll()); }}
             aria-pressed={runtimeOn}
             aria-label={runtimeOn ? 'Stop routing' : 'Start routing'}
@@ -287,7 +292,9 @@ export function VprHomeView({ onSelectView }: Props) {
           </button>
 
           <div className={`${styles.statusLine}${connected ? ` ${styles.statusOnline}` : ''}`}>
-            {snap.connectBadge.label}
+            {networkDown
+              ? (snap.networkAlert === 'no-internet' ? 'No internet connection' : 'Network unreachable')
+              : snap.connectBadge.label}
           </div>
 
           <div className={styles.modelDropdown} ref={modelMenuRef}>

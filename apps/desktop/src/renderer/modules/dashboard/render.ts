@@ -23,12 +23,39 @@ function defaultNetworkStats() {
     dhtNodeCount: 0,
     dhtHealthy: false,
     lastScanAt: null as number | null,
+    internetOnline: true,
+    proxyReachable: false,
+    proxyUptimeMs: null as number | null,
     totalLookups: 0,
     successfulLookups: 0,
     lookupSuccessRate: 0,
     averageLookupLatencyMs: 0,
     healthReason: 'dashboard offline',
   };
+}
+
+/** An empty routing table is normal while the DHT bootstraps (first ~25s). */
+const NETWORK_ALERT_GRACE_MS = 45_000;
+
+/** When connectivity returns, the DHT needs a moment to re-bootstrap — don't
+    flash "blocked" during recovery. */
+let lastNoInternetAtMs = 0;
+
+function deriveNetworkAlert(
+  stats: ReturnType<typeof defaultNetworkStats>,
+  runtimeRunning: boolean,
+): RendererUiState['networkAlert'] {
+  if (!runtimeRunning || !stats.proxyReachable) return 'none';
+  const reason = safeString(stats.healthReason, '');
+  if (reason === 'no internet') {
+    lastNoInternetAtMs = Date.now();
+    return 'no-internet';
+  }
+  const pastGrace = safeNumber(stats.proxyUptimeMs, 0) > NETWORK_ALERT_GRACE_MS
+    && Date.now() - lastNoInternetAtMs > NETWORK_ALERT_GRACE_MS;
+  if (reason === 'dht unreachable' && pastGrace) return 'blocked';
+  if (reason === 'no peers found' && pastGrace) return 'no-peers';
+  return 'none';
 }
 
 function networkHealth(
@@ -156,6 +183,7 @@ export function initDashboardRenderModule({
   function renderOfflineState(message: string): void {
     uiState.peersMessage = message;
     uiState.configMessage = { text: message, type: 'info' };
+    uiState.networkAlert = 'none';
 
     uiState.ovNodeState = 'offline';
     uiState.ovPeers = '0';
@@ -216,6 +244,8 @@ export function initDashboardRenderModule({
     const configuredProxyPort = safeNumber(configBuyer?.proxyPort, 0);
     const runtimeProxyPort = safeNumber(statusPayload?.proxyPort, 0);
     const proxyPort = runtimeProxyPort > 0 ? runtimeProxyPort : configuredProxyPort;
+
+    uiState.networkAlert = deriveNetworkAlert(stats, buyerRuntimeState === 'connected');
 
     // Overview stats
     uiState.ovNodeState = buyerRuntimeState;

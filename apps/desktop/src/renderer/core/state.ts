@@ -227,6 +227,11 @@ export type RendererUiState = {
   // --- Logs ---
   logs: LogEvent[];
 
+  // --- Network reachability alert ---
+  /** 'blocked' = internet up but DHT unreachable (firewall/VPN dropping UDP);
+      'no-peers' = on the DHT but discovery sweeps keep coming back empty. */
+  networkAlert: 'none' | 'no-internet' | 'blocked' | 'no-peers';
+
   // --- Overview display ---
   overviewBadge: BadgeState;
   ovNodeState: string;
@@ -392,6 +397,9 @@ export function createInitialUiState(): RendererUiState {
 
     // Logs
     logs: [],
+
+    // Network reachability alert
+    networkAlert: 'none',
 
     // Overview
     overviewBadge: { tone: 'idle', label: 'Idle' },

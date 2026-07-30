@@ -406,6 +406,10 @@ export class BuyerProxy {
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
+  private _startedAtMs = 0
+  /** After a network switch the DHT routing table can stay populated with stale
+      nodes, so repeated empty sweeps are the reachability signal — not node count. */
+  private _consecutiveEmptyDiscoveries = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
@@ -507,6 +511,7 @@ export class BuyerProxy {
   }
 
   async start(): Promise<void> {
+    this._startedAtMs = Date.now()
     // Hydrate the in-memory peer cache from the persisted state file BEFORE
     // the server starts accepting requests. This lets the first request after
     // startup route from the warm cache without blocking on DHT discovery.
@@ -841,9 +846,11 @@ export class BuyerProxy {
     this._peerRefreshPromise = (async () => {
       const peers = await this._discoverPeersFromNetwork()
       if (peers.length > 0) {
+        this._consecutiveEmptyDiscoveries = 0
         this._replacePeers(peers)
         return peers
       }
+      this._consecutiveEmptyDiscoveries += 1
 
       const fallbackPeers = previousCachedPeers.length > 0 && this._cacheMutationEpoch === mutationEpochAtStart
         ? [...previousCachedPeers]
@@ -925,6 +932,21 @@ export class BuyerProxy {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
       res.writeHead(204)
       res.end()
+      return
+    }
+
+    if (path === '/_antseed/status' && method === 'GET') {
+      // Network reachability snapshot for UI diagnostics.
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        dhtNodeCount: this._node.dhtNodeCount,
+        consecutiveEmptyDiscoveries: this._consecutiveEmptyDiscoveries,
+        peerCount: this._cachedPeers.length,
+        peersUpdatedAt: this._cacheLastUpdatedAtMs > 0 ? this._cacheLastUpdatedAtMs : null,
+        startedAt: this._startedAtMs,
+        uptimeMs: this._startedAtMs > 0 ? Date.now() - this._startedAtMs : 0,
+      }))
       return
     }
 
