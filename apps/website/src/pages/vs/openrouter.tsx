@@ -54,7 +54,7 @@ const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
 
 const TITLE = 'OpenRouter Alternative: Permissionless P2P AI Inference | AntSeed';
 const DESCRIPTION =
-  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC — no central account.';
+  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC - no central account.';
 
 export default function VsOpenRouter(): JSX.Element {
   return (

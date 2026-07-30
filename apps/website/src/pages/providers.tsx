@@ -11,6 +11,14 @@ import {
   SectionHeader,
   Terminal,
 } from '../components/ui';
+import {HugeiconsIcon} from '@hugeicons/react';
+import {
+  Tick02Icon,
+  LockIcon as HugeLockIcon,
+  ServerStack01Icon,
+  ArtificialIntelligence01Icon,
+  FlowConnectionIcon,
+} from '@hugeicons/core-free-icons';
 
 /* ── FAQ ─────────────────────────────────────────────────────── */
 const FAQ_DATA = [
@@ -36,67 +44,34 @@ const FAQ_DATA = [
   },
   {
     q: 'Can I use any model underneath?',
-    a: 'Yes. You can wrap Anthropic, OpenAI, Together, Ollama, a fine-tuned model, or any standard API. The network only sees what you deliver — not your backend.',
+    a: 'Yes. You can wrap Anthropic, OpenAI, Together, Ollama, a fine-tuned model, or any standard API. The network only sees what you deliver - not your backend.',
   },
   {
     q: 'Can I serve multiple capability types from one node?',
-    a: 'Yes. A single AntSeed node can advertise multiple services — raw inference on one model, a routing service with custom logic, and an AI Agent, all at different price tiers. Each service is announced independently to the DHT.',
+    a: 'Yes. A single AntSeed node can advertise multiple services - raw inference on one model, a routing service with custom logic, and an AI Agent, all at different price tiers. Each service is announced independently to the DHT.',
   },
 ];
 
 /* ── Icons ───────────────────────────────────────────────────── */
-const ICON_PROPS = {
-  width: 24,
-  height: 24,
-  viewBox: '0 0 24 24',
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.6,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-  'aria-hidden': true,
-};
-
 function CheckIcon() {
-  return (
-    <svg {...ICON_PROPS} width={16} height={16}>
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
+  return <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={1.6} aria-hidden="true" />;
 }
 
 function LockIcon() {
-  return (
-    <svg {...ICON_PROPS} width={16} height={16}>
-      <rect x="4" y="10" width="16" height="11" rx="2" />
-      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-    </svg>
-  );
+  return <HugeiconsIcon icon={HugeLockIcon} size={16} strokeWidth={1.6} aria-hidden="true" />;
 }
 
 /* ── Page data ───────────────────────────────────────────────── */
 const PATHS = [
   {
     title: 'Raw Inference',
-    icon: (
-      <svg {...ICON_PROPS}>
-        <rect x="2" y="3" width="20" height="14" rx="2" />
-        <line x1="8" y1="21" x2="16" y2="21" />
-        <line x1="12" y1="17" x2="12" y2="21" />
-      </svg>
-    ),
-    body: 'You run a model or proxy an upstream API — Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.',
+    icon: <HugeiconsIcon icon={ServerStack01Icon} size={24} strokeWidth={1.6} aria-hidden="true" />,
+    body: 'You run a model or proxy an upstream API - Ollama, a fine-tune, a local GPU, OpenAI, Together. Point AntSeed at it with one config entry and announce it to the network. Buyers choose you based on price, latency, and on-chain reputation; payments depend on demand and successful settlement.',
     points: ['Any model or backend', 'Set your own price per token', 'Reputation built per delivery'],
   },
   {
     title: 'AI Agent',
-    icon: (
-      <svg {...ICON_PROPS}>
-        <path d="M12 2 2 7l10 5 10-5-10-5z" />
-        <path d="M2 17l10 5 10-5" />
-        <path d="M2 12l10 5 10-5" />
-      </svg>
-    ),
+    icon: <HugeiconsIcon icon={ArtificialIntelligence01Icon} size={24} strokeWidth={1.6} aria-hidden="true" />,
     body: "You've built domain expertise in AI form. A legal agent, a security researcher, a trading analyst. Announce it as a named service. Buyers pay for your expertise, not just the tokens.",
     points: [
       'Persona, guardrails, and knowledge stay private',
@@ -106,15 +81,7 @@ const PATHS = [
   },
   {
     title: 'Routing Service',
-    icon: (
-      <svg {...ICON_PROPS}>
-        <circle cx="18" cy="5" r="3" />
-        <circle cx="6" cy="12" r="3" />
-        <circle cx="18" cy="19" r="3" />
-        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-      </svg>
-    ),
+    icon: <HugeiconsIcon icon={FlowConnectionIcon} size={24} strokeWidth={1.6} aria-hidden="true" />,
     body: 'Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, or domain-aware. Receive payment for settled routed requests without running a single model.',
     points: [
       'No model infrastructure required',
@@ -161,14 +128,14 @@ const PAY_STEPS = [
 ];
 
 const ECONOMICS = [
-  {label: 'Your price', value: 'You set it — per input token + per output token'},
+  {label: 'Your price', value: 'You set it - per input token + per output token'},
   {
     label: 'Protocol fee',
     value:
-      '4% — may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses',
+      '4% - may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses',
   },
   {label: 'Your payout', value: '96% of what buyers pay, direct to your wallet in USDC'},
-  {label: 'Payment methods', value: 'Buyers pay in USDC or by card — your payout is always USDC'},
+  {label: 'Payment methods', value: 'Buyers pay in USDC or by card - your payout is always USDC'},
   {label: 'Settlement chain', value: 'Base mainnet'},
 ];
 
@@ -185,7 +152,7 @@ antseed config seller add-provider together \\
   --base-url https://api.together.ai
 
 # Announce a service with your price + categories
-# (--cached is optional — set it to charge less for
+# (--cached is optional - set it to charge less for
 # cached-input tokens when your upstream supports them)
 antseed config seller add-service together deepseek-v3.1 \\
   --upstream "deepseek-ai/DeepSeek-V3.1" \\
@@ -237,7 +204,7 @@ export default function Providers(): JSX.Element {
             <em>No permission needed.</em>
           </>
         }
-        lead="Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration — whether you run a model, a routing service, or a specialized agent."
+        lead="Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration - whether you run a model, a routing service, or a specialized agent."
       >
         <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
         <Button to="/docs/install" variant="ghost">Install AntSeed</Button>
@@ -274,7 +241,7 @@ export default function Providers(): JSX.Element {
           <div className={styles.complianceBody}>
             <p className={styles.complianceTitle}>Provider compliance</p>
             <p>
-              AntSeed is designed for providers who build differentiated services —
+              AntSeed is designed for providers who build differentiated services -
               such as TEE-secured inference, domain-specific skills or agents,
               fine-tuned models, or managed product experiences. Simply reselling
               raw API access or subscription credentials is <strong>not</strong> the
@@ -313,7 +280,7 @@ export default function Providers(): JSX.Element {
           </Reveal>
           <Reveal className={styles.privacyCol} delay={100}>
             <p className={`${styles.privacyColLabel} ${styles.private}`}>
-              Under your control — secure your node
+              Under your control - secure your node
             </p>
             {PRIVATE_FACTS.map((item) => (
               <div key={item} className={styles.privacyRow}>
@@ -338,7 +305,7 @@ export default function Providers(): JSX.Element {
             <p className={styles.codeCardLabel}>1 · Configure with the CLI</p>
             <Terminal title="terminal">{CLI_SNIPPET}</Terminal>
             <p className={styles.codeNote}>
-              Compatible with any OpenAI-API endpoint — your own Ollama, vLLM, a
+              Compatible with any OpenAI-API endpoint - your own Ollama, vLLM, a
               fine-tune, or an upstream you have the right to resell. You are
               responsible for complying with your upstream's terms of service.
             </p>
@@ -389,7 +356,7 @@ export default function Providers(): JSX.Element {
           <Terminal title="wallet management">{WALLET_SNIPPET}</Terminal>
           <p className={styles.walletNote}>
             Your EVM wallet is derived automatically from your node's secp256k1 identity key.
-            Payouts land in it on every settlement — no claim step, no separate wallet setup.{' '}
+            Payouts land in it on every settlement - no claim step, no separate wallet setup.{' '}
             <LinkArrow to="/docs/payments">Full payment docs</LinkArrow>
           </p>
         </Reveal>

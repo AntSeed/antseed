@@ -124,9 +124,12 @@ interface HeroDot {
 
 function HeroDotCanvas({
   frameRef,
+  shutdownRef,
   originRef,
 }: {
   frameRef: MutableRefObject<number>;
+  /** 0 while the demo loops; otherwise the manual power-off's virtual frame. */
+  shutdownRef: MutableRefObject<number>;
   originRef: RefObject<HTMLDivElement>;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -248,13 +251,28 @@ function HeroDotCanvas({
       return fading < 12 ? 1 - fading / 12 : 0;
     };
 
-    const drawFrame = (frame: number) => {
+    /**
+     * Manual power-off: the scene frame is frozen, so the dots dissolve off
+     * `shut` — a virtual frame sweeping the loop's own fade-out window. Each
+     * dot keeps its staggered `dissolveAt`, so the ant melts away exactly the
+     * way it does at the end of a loop.
+     */
+    const shutdownAlphaAt = (shut: number, dot: HeroDot) => {
+      if (shut <= 0) return 1;
+      if (!dot.isAnt) return Math.max(0, 1 - (shut - BEATS.fadeOutStart) / 6);
+      if (shut < dot.dissolveAt) return 1;
+      return Math.max(0, 1 - (shut - dot.dissolveAt) / 3);
+    };
+
+    const drawFrame = (frame: number, shut: number) => {
       ctx.clearRect(0, 0, width, height);
       const baseRgb = parseRgb(color);
+      const shutT = shut > 0 ? (shut - BEATS.fadeOutStart) / (BEATS.fadeOutEnd - BEATS.fadeOutStart) : 0;
       for (const dot of dots) {
-        const alpha = dot.isAnt
-          ? antAlphaAt(frame, dot.appearAt, dot.dissolveAt)
-          : rippleAlphaAt(frame - dot.arrival);
+        const alpha =
+          (dot.isAnt
+            ? antAlphaAt(frame, dot.appearAt, dot.dissolveAt)
+            : rippleAlphaAt(frame - dot.arrival)) * shutdownAlphaAt(shut, dot);
         if (alpha <= 0.01) continue;
 
         let pulse = 0;
@@ -265,6 +283,7 @@ function HeroDotCanvas({
             break;
           }
         }
+        if (shut > 0) pulse *= Math.max(0, 1 - shutT);
 
         const radius = 2.6 * dotScale * dot.sizeFactor * (0.5 + 0.5 * alpha) * (1 + 0.6 * pulse);
 
@@ -327,7 +346,7 @@ function HeroDotCanvas({
 
     let raf = 0;
     const loop = () => {
-      drawFrame(frameRef.current % DEMO_TOTAL_FRAMES);
+      drawFrame(frameRef.current % DEMO_TOTAL_FRAMES, shutdownRef.current);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -345,7 +364,7 @@ function HeroDotCanvas({
       resize.disconnect();
       themeWatch.disconnect();
     };
-  }, [frameRef, originRef]);
+  }, [frameRef, shutdownRef, originRef]);
 
   return <canvas ref={canvasRef} className={styles.heroCanvas} aria-hidden="true" />;
 }
@@ -423,16 +442,17 @@ const HERO_STATS: {value: string; label: string; accent?: boolean}[] = [
 function Hero() {
   const demoRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef(0);
+  const shutdownRef = useRef(0);
 
   return (
     <header className={styles.hero}>
-      <HeroDotCanvas frameRef={frameRef} originRef={demoRef} />
+      <HeroDotCanvas frameRef={frameRef} shutdownRef={shutdownRef} originRef={demoRef} />
       <div className={styles.heroInner}>
         <h1 className={styles.heroTitle}>The Open Market for AI Inference</h1>
         <RotatingSub />
         <DownloadCta caption="Start for free. Keep using your tools." />
         <div className={styles.demoFrame} ref={demoRef}>
-          <HeroDemo frameRef={frameRef} />
+          <HeroDemo frameRef={frameRef} shutdownRef={shutdownRef} />
         </div>
         <dl className={styles.statsRow}>
           {HERO_STATS.map((s) => (
@@ -1137,10 +1157,10 @@ function StepsSection() {
    ANYONE CAN SELL INTELLIGENCE
    ============================================================ */
 const SELLABLES = [
-  'Your GPU',
-  'Resold API capacity / Spare API capacity',
-  'A router',
-  'A specialist inference',
+  'OpenSource models running on GPU',
+  'API capacity',
+  'A router you developed',
+  'A specialised inference',
 ];
 
 function SellSection() {
@@ -1216,23 +1236,23 @@ function SellSection() {
 const FAQ_DATA = [
   {
     q: 'How is this different from OpenRouter?',
-    a: "OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide — no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
+    a: "OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
   },
   {
     q: 'What happens when LLMs become so good that anyone can do anything?',
-    a: "Then inference becomes a commodity — and commodities belong on open markets, not behind one company's pricing page. The more capable and interchangeable models get, the more the winner is whoever routes each request to the cheapest, fastest, most private provider. That routing layer should be neutral infrastructure you run yourself, which is exactly what AntSeed is.",
+    a: "Then inference becomes a commodity - and commodities belong on open markets, not behind one company's pricing page. The more capable and interchangeable models get, the more the winner is whoever routes each request to the cheapest, fastest, most private provider. That routing layer should be neutral infrastructure you run yourself, which is exactly what AntSeed is.",
   },
   {
     q: "Isn't this just like P2P file sharing? Netflix killed that.",
-    a: "File sharing died because nobody got paid, so supply dried up the moment a convenient legal option appeared. AntSeed is the opposite: providers earn on every request, settled directly and on-chain. It's a market with working payments, not free copying — the incentives point toward more supply, not less.",
+    a: "File sharing died because nobody got paid, so supply dried up the moment a convenient legal option appeared. AntSeed is the opposite: providers earn on every request, settled directly and on-chain. It's a market with working payments, not free copying - the incentives point toward more supply, not less.",
   },
   {
     q: 'Is AntSeed built for agents specifically?',
-    a: 'It works with anything that speaks the OpenAI or Anthropic API — chat apps, IDEs, scripts — but agents benefit the most. Agents burn tokens continuously, so open-market pricing compounds, and a local endpoint with automatic fallback means long-running loops never stall because one provider throttled you.',
+    a: 'It works with anything that speaks the OpenAI or Anthropic API - chat apps, IDEs, scripts - but agents benefit the most. Agents burn tokens continuously, so open-market pricing compounds, and a local endpoint with automatic fallback means long-running loops never stall because one provider throttled you.',
   },
   {
     q: 'Why would a provider use AntSeed instead of just building their own API?',
-    a: 'Because distribution is the hard part. On AntSeed a provider plugs into existing demand — buyers, discovery, reputation, and on-chain settlement come with the network. No billing stack to build, no customers to acquire, no payment risk to carry. Serve a request, get paid, automatically.',
+    a: 'Because distribution is the hard part. On AntSeed a provider plugs into existing demand - buyers, discovery, reputation, and on-chain settlement come with the network. No billing stack to build, no customers to acquire, no payment risk to carry. Serve a request, get paid, automatically.',
   },
 ];
 
@@ -1301,7 +1321,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. Every model, no middleman. Anonymous and always on. Pay per request — no account, no subscription."
+      description="The open market for AI inference. Every model, no middleman. Anonymous and always on. Pay per request - no account, no subscription."
       wrapperClassName="homepage-wrapper">
       <Head>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>

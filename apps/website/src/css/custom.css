@@ -52,9 +52,9 @@
   --as-text-2: rgba(0, 30, 18, 0.6);  /* secondary text */
   --as-text-3: #676663;            /* muted labels, captions */
 
-  /* CLAY — warm earth accent. ONLY for economics: $ANTS, USDC, burn */
-  --as-clay: #A16207;
-  --as-clay-dim: rgba(161, 98, 7, 0.12);
+  /* CLAY — warm earth accent. ONLY for economics: $ANTS, USDC, burn. */
+  --as-clay: #D79627;
+  --as-clay-dim: rgba(215, 150, 39, 0.12);
 
   /* RISK — legal/compliance/safety warnings, never economics. */
   --as-risk: #c73a3a;
@@ -231,8 +231,8 @@ html[data-theme='dark'] {
   --as-green-glow: rgba(16, 185, 129, 0.45);
   --as-green-dim: rgba(16, 185, 129, 0.1);
   --as-surface-tint: rgba(255, 255, 255, 0.02);
-  --as-clay: #E8A33D;
-  --as-clay-dim: rgba(232, 163, 61, 0.14);
+  --as-clay: #D79627;
+  --as-clay-dim: rgba(215, 150, 39, 0.14);
   --as-risk: #ff6b6b;
   --as-risk-deep: #ff4b4b;
   --as-risk-dim: rgba(255, 107, 107, 0.11);
@@ -455,7 +455,7 @@ html[data-theme='dark'] .header-docs-link::before {
 .navbar__link.header-ants-link:hover,
 .navbar__link.header-ants-link:focus-visible,
 .navbar__link.header-ants-link.navbar__link--active {
-  color: #754800 !important;
+  color: var(--as-clay) !important;
   font-family: var(--as-font-app);
   font-size: 12px;
   font-weight: 600;

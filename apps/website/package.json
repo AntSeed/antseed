@@ -16,6 +16,8 @@
     "@docusaurus/preset-classic": "^3.7.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@hugeicons/core-free-icons": "^4.0.0",
+    "@hugeicons/react": "^1.1.5",
     "@lobehub/icons": "^5.15.0",
     "@mdx-js/react": "^3.0.0",
     "clsx": "^2.1.0",
