@@ -9,6 +9,7 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -133,6 +134,16 @@ function interp(
 const FrameContext = createContext(0);
 const useFrame = () => useContext(FrameContext);
 
+/**
+ * Manual power-off context. While the user-triggered shutdown runs, the scene
+ * frame is frozen (so nothing new appears) and this holds a virtual frame
+ * sweeping `fadeOutStart -> fadeOutEnd`. Every fade-out expression is evaluated
+ * at that virtual frame instead, so a click replays the loop's own closing beat
+ * verbatim — same curves, same duration — from whatever state is on screen.
+ */
+const ShutdownContext = createContext<number | null>(null);
+const useShutdown = () => useContext(ShutdownContext);
+
 /* pop-in: opacity/scale over `dur` frames from `start` */
 function popIn(frame: number, start: number, dur = 10) {
   const t = interp(frame, [start, start + dur], [0, 1], easeOutExp);
@@ -142,6 +153,13 @@ function popIn(frame: number, start: number, dur = 10) {
 /* global fade-out at the end of the loop */
 function fadeOut(frame: number) {
   return interp(frame, [B.fadeOutStart, B.fadeOutEnd], [1, 0], easeInOutCubic);
+}
+
+/* the loop's fade-out, or the manual shutdown's when one is running */
+function useOut() {
+  const frame = useFrame();
+  const shut = useShutdown();
+  return fadeOut(shut !== null ? shut : frame);
 }
 
 function growth(frame: number, start: number, end: number) {
@@ -165,11 +183,15 @@ function pulseFade(t: number) {
 
 const asset = (name: string) => `/img/demo/${name}`;
 
+/* mobile: show only the VPR card + power-on animation, cropped to its own box */
+const VPR_CARD_W = 524;
+const VPR_CARD_H = 648;
+
 /* ============================================================
    Chat cards (desktop `i1` / web `i7`)
    ============================================================ */
 const PROMPT = 'Find why checkout is failing on mobile and fix it';
-const RESPONSE = 'Found it — missing null check in the payment form.\nFixed and verified.';
+const RESPONSE = 'Found it -\nmissing null check in the payment form.\nFixed and verified.';
 
 function WindowDot({color}: {color: string}) {
   return (
@@ -229,11 +251,12 @@ function ArrowUpIcon({size, color, strokeWidth}: {size: number; color: string; s
   );
 }
 
-function LockIcon({size, color, strokeWidth}: {size: number; color: string; strokeWidth: number}) {
+function GlobeIcon({size, color, strokeWidth}: {size: number; color: string; strokeWidth: number}) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      <circle cx="12" cy="12" r="9.25" />
+      <path d="M2.75 12h18.5" />
+      <path d="M12 2.75a13.5 13.5 0 0 1 0 18.5 13.5 13.5 0 0 1 0-18.5" />
     </svg>
   );
 }
@@ -307,7 +330,7 @@ function ChatApp({
               borderRadius: 16,
               padding: '14px 24px',
             }}>
-            <LockIcon size={24} color={MUTED} strokeWidth={2} />
+            <GlobeIcon size={24} color={MUTED} strokeWidth={2} />
             <span style={{fontSize: 24, fontWeight: 500, color: INK, fontFamily: DEMO_FONT}}>
               Any Agentic Web App
             </span>
@@ -421,26 +444,64 @@ function ChatApp({
 /* ============================================================
    VPR card with power button (`av`)
    ============================================================ */
-function VprCard({left = 1110, top = 108}: {left?: number; top?: number}) {
+function VprCard({
+  left = 1110,
+  top = 108,
+  onToggle,
+}: {
+  left?: number;
+  top?: number;
+  /** when set, the power button is a real control that toggles the demo */
+  onToggle?: () => void;
+}) {
   const frame = useFrame();
-  const powerOn =
-    frame < B.fadeOutStart
-      ? interp(frame, [B.powerBtnOnStart, B.powerBtnOnEnd], [0, 1], easeOutExp)
-      : interp(frame, [B.fadeOutStart, B.fadeOutEnd], [1, 0], easeOutExp);
-  const press = interp(
-    frame,
-    [B.powerOnStart, B.powerBtnPressMid, B.powerBtnPressEnd],
-    [1, 0.93, 1],
-    easeInOutCubic,
+  const shut = useShutdown();
+  const [hover, setHover] = useState(false);
+
+  // How far the loop's own closing beat has run: the manual shutdown drives the
+  // exact same curves, just from a virtual frame instead of the scene frame.
+  const closing = interp(
+    shut !== null ? shut : frame,
+    [B.fadeOutStart, B.fadeOutEnd],
+    [1, 0],
+    easeOutExp,
   );
+  const powerOn =
+    interp(frame, [B.powerBtnOnStart, B.powerBtnOnEnd], [0, 1], easeOutExp) * closing;
+  const press =
+    interp(
+      frame,
+      [B.powerOnStart, B.powerBtnPressMid, B.powerBtnPressEnd],
+      [1, 0.93, 1],
+      easeInOutCubic,
+    ) *
+    // the off-click gets the same press dip the on-beat has
+    (shut !== null ? 1 - 0.07 * Math.sin(Math.min(1, (shut - B.fadeOutStart) / 7) * Math.PI) : 1);
   const surface =
     120 * interp(frame, [B.surfaceStart, B.surfaceEnd], [0, 1], easeInOutCubic);
   const mask = `radial-gradient(circle at 50% 20.2%, #000 ${Math.max(0, surface - 26)}%, rgba(0,0,0,0) ${surface}%)`;
-  const cardOpacity =
-    frame < B.fadeOutStart ? 1 : interp(frame, [B.fadeOutStart, B.fadeOutEnd], [1, 0]);
+  const cardOpacity = interp(
+    shut !== null ? shut : frame,
+    [B.fadeOutStart, B.fadeOutEnd],
+    [1, 0],
+  );
   const glowPulse = 0.5 - 0.5 * Math.cos((frame / 40) * Math.PI);
   const btnLeft = 184;
   const btnTop = 52.896;
+  const btnImages = (
+    <>
+      <img
+        src={asset('power-off.svg')}
+        alt=""
+        style={{position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 1 - powerOn, translate: '-1px 5px'}}
+      />
+      <img
+        src={asset('power-on.svg')}
+        alt=""
+        style={{position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: powerOn, translate: '-1px 6px'}}
+      />
+    </>
+  );
 
   return (
     <div style={{position: 'absolute', left, top, width: 524, height: 648, zIndex: 3}}>
@@ -489,16 +550,31 @@ function VprCard({left = 1110, top = 108}: {left?: number; top?: number}) {
           transform: `scale(${press})`,
           transformOrigin: 'center center',
         }}>
-        <img
-          src={asset('power-off.svg')}
-          alt=""
-          style={{position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 1 - powerOn, translate: '-1px 5px'}}
-        />
-        <img
-          src={asset('power-on.svg')}
-          alt=""
-          style={{position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: powerOn, translate: '-1px 6px'}}
-        />
+        {onToggle ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            onPointerEnter={() => setHover(true)}
+            onPointerLeave={() => setHover(false)}
+            aria-label={powerOn > 0.5 ? 'Turn the VPR demo off' : 'Turn the VPR demo on'}
+            aria-pressed={powerOn > 0.5}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              padding: 0,
+              border: 0,
+              borderRadius: '50%',
+              background: 'transparent',
+              cursor: 'pointer',
+              pointerEvents: 'auto',
+              transform: `scale(${hover ? 1.04 : 1})`,
+              transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+            }}>
+            {btnImages}
+          </button>
+        ) : (
+          btnImages
+        )}
       </div>
     </div>
   );
@@ -521,7 +597,7 @@ function UpperConnector() {
     {start: B.endFlowStart, end: B.endFlowEnd, reverse: false},
   ];
   const grow = growth(frame, B.chatLineGrowStart, B.chatLineGrowEnd);
-  const out = fadeOut(frame);
+  const out = useOut();
   if (grow <= 0 || out <= 0) return null;
   const dash = `${84 * grow} 84`;
   const offset = -(84 * (1 - grow));
@@ -558,7 +634,7 @@ function LowerConnector() {
     {start: B.endFlowStart, end: B.endFlowEnd, reverse: true},
   ];
   const grow = growth(frame, B.lowerLineGrowStart, B.lowerLineGrowEnd);
-  const out = fadeOut(frame);
+  const out = useOut();
   if (grow <= 0 || out <= 0) return null;
   const dash = `${79 * grow} 79`;
   const active = flows
@@ -593,7 +669,7 @@ function SavingConnector() {
     {start: B.endFlowStart, end: B.endFlowEnd, reverse: true},
   ];
   const grow = growth(frame, B.savingLineGrowStart, B.savingLineGrowEnd);
-  const out = fadeOut(frame);
+  const out = useOut();
   if (grow <= 0 || out <= 0) return null;
   const dash = `${98 * grow} 98`;
   const active = flows
@@ -656,7 +732,6 @@ function NetworkBar({
             </feMerge>
           </filter>
         </defs>
-        <circle cx={66} cy={25} r={6} fill="#00270A" />
         <circle cx={dotX} cy={dotY} r={3} fill="#38E1A9" filter="url(#sc-dot-glow)" />
       </svg>
     </div>
@@ -808,7 +883,7 @@ function Pop({
 }) {
   const frame = useFrame();
   const {opacity, scale, t} = popIn(frame, start, dur);
-  const out = fadeOut(frame);
+  const out = useOut();
   return (
     <div
       style={{
@@ -826,9 +901,18 @@ function Pop({
 /* ============================================================
    Scene (`aE`) — 2048×1152
    ============================================================ */
-function Scene() {
+function Scene({mobile, onToggle}: {mobile?: boolean; onToggle?: () => void}) {
   const frame = useFrame();
-  const out = fadeOut(frame);
+  const out = useOut();
+
+  if (mobile) {
+    return (
+      <div style={{position: 'absolute', inset: 0}}>
+        <VprCard left={0} top={0} onToggle={onToggle} />
+      </div>
+    );
+  }
+
   const network = popIn(frame, B.networkRevealStart);
   const tokens = popIn(frame, B.tokensRevealStart);
   const chat = popIn(frame, B.chatRevealStart, B.chatRevealEnd - B.chatRevealStart);
@@ -840,7 +924,7 @@ function Scene() {
   return (
     <div style={{position: 'absolute', inset: 0}}>
       <div style={{position: 'absolute', left: 0, top: 0, width: 2048, height: 1152, backgroundColor: 'transparent'}}>
-        <VprCard left={762} />
+        <VprCard left={762} onToggle={onToggle} />
         <UpperConnector />
         <LowerConnector />
         <SavingConnector />
@@ -920,28 +1004,75 @@ function Scene() {
 /* ============================================================
    Player — rAF clock, scales the 2048×1152 scene to fit
    ============================================================ */
+const SHUTDOWN_FRAMES = B.fadeOutEnd - B.fadeOutStart;
+
+/** running = the loop plays; shuttingDown = the manual off beat; off = parked. */
+type PowerMode = 'running' | 'shuttingDown' | 'off';
+
 export function HeroDemo({
   frameRef,
+  shutdownRef,
   className,
 }: {
   /** Shared frame counter (read by the hero dot canvas each rAF). */
   frameRef?: MutableRefObject<number>;
+  /**
+   * Shared manual-shutdown clock: 0 while the loop runs, otherwise a virtual
+   * frame in [fadeOutStart, fadeOutEnd] the dot canvas dissolves the ant with.
+   */
+  shutdownRef?: MutableRefObject<number>;
   className?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(0);
+  const [shut, setShut] = useState<number | null>(null);
+  const [interactive, setInteractive] = useState(false);
   const [scale, setScale] = useState(0.5);
+  const [mobile, setMobile] = useState(false);
+  const modeRef = useRef<PowerMode>('running');
+  const originRef = useRef(0); // clock origin (ms) — frame 0 of the loop
+  const frozenRef = useRef(0); // scene frame held during shutdown
+  const shutStartRef = useRef(0);
+
+  /**
+   * Power button. While the VPR reads as on, a click plays the loop's closing
+   * beat over the frozen frame and parks the demo off; otherwise it restarts
+   * the loop at the button press so the whole opening replays.
+   */
+  const toggle = useCallback(() => {
+    if (modeRef.current === 'shuttingDown') return;
+    const f = frozenRef.current;
+    if (modeRef.current === 'running' && f >= B.powerOnStart && f < B.fadeOutStart) {
+      shutStartRef.current = performance.now();
+      modeRef.current = 'shuttingDown';
+      return;
+    }
+    // off, or inside the loop's own off window: light it up and carry on.
+    originRef.current = performance.now() - (B.powerOnStart / DEMO_FPS) * 1000;
+    modeRef.current = 'running';
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const update = () => setMobile(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  const sceneW = mobile ? VPR_CARD_W : 2048;
+  const sceneH = mobile ? VPR_CARD_H : 1152;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
     const resize = new ResizeObserver(() => {
-      setScale(host.clientWidth / 2048);
+      setScale(host.clientWidth / sceneW);
     });
     resize.observe(host);
-    setScale(host.clientWidth / 2048);
+    setScale(host.clientWidth / sceneW);
     return () => resize.disconnect();
-  }, []);
+  }, [sceneW]);
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -951,34 +1082,59 @@ export function HeroDemo({
       if (frameRef) frameRef.current = restFrame;
       return undefined;
     }
+    setInteractive(true);
     let raf = 0;
-    const t0 = performance.now();
+    originRef.current = performance.now();
     const loop = (now: number) => {
-      const f = (((now - t0) / 1000) * DEMO_FPS) % DEMO_TOTAL_FRAMES;
-      if (frameRef) frameRef.current = f;
-      setFrame(f);
+      if (modeRef.current === 'running') {
+        const f = (((now - originRef.current) / 1000) * DEMO_FPS) % DEMO_TOTAL_FRAMES;
+        frozenRef.current = f;
+        if (frameRef) frameRef.current = f;
+        if (shutdownRef) shutdownRef.current = 0;
+        setFrame(f);
+        setShut(null);
+      } else if (modeRef.current === 'shuttingDown') {
+        const elapsed = ((now - shutStartRef.current) / 1000) * DEMO_FPS;
+        const sf = B.fadeOutStart + Math.min(SHUTDOWN_FRAMES, elapsed);
+        if (frameRef) frameRef.current = frozenRef.current;
+        if (shutdownRef) shutdownRef.current = sf;
+        setFrame(frozenRef.current);
+        setShut(sf);
+        if (elapsed >= SHUTDOWN_FRAMES) modeRef.current = 'off';
+      } else {
+        // parked off: frame 0 is the loop's own off-hold state.
+        frozenRef.current = 0;
+        if (frameRef) frameRef.current = 0;
+        if (shutdownRef) shutdownRef.current = 0;
+        setFrame(0);
+        setShut(null);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [frameRef]);
+  }, [frameRef, shutdownRef]);
 
   return (
-    <div ref={hostRef} className={className} style={{aspectRatio: '2048 / 1152', position: 'relative', overflow: 'visible'}}>
+    <div ref={hostRef} className={className} style={{aspectRatio: `${sceneW} / ${sceneH}`, position: 'relative', overflow: 'visible'}}>
       <div
         style={{
           position: 'absolute',
           left: 0,
           top: 0,
-          width: 2048,
-          height: 1152,
+          width: sceneW,
+          height: sceneH,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
           fontFamily: DEMO_FONT,
           textAlign: 'left',
+          // decorative scenery never eats the power button's clicks
+          pointerEvents: 'none',
         }}>
         <FrameContext.Provider value={frame}>
-          <Scene />
+          <ShutdownContext.Provider value={shut}>
+            <Scene mobile={mobile} onToggle={interactive ? toggle : undefined} />
+          </ShutdownContext.Provider>
         </FrameContext.Provider>
       </div>
     </div>

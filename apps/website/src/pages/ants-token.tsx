@@ -2,6 +2,8 @@ import {useState, useEffect} from 'react';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {HugeiconsIcon} from '@hugeicons/react';
+import {ChartLineData01Icon} from '@hugeicons/core-free-icons';
 import {
   ArrowRight,
   Button,
@@ -71,12 +73,7 @@ const HALVING_INTERVAL = 104;
 /* ── SUPPLY BAR ────────────────────────────────────────────────── */
 /* ── SVG icons ─────────────────────────────────────────────────── */
 function ChartIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 3v18h18" />
-      <path d="M7 16l4-8 4 4 5-9" />
-    </svg>
-  );
+  return <HugeiconsIcon icon={ChartLineData01Icon} size={24} strokeWidth={1.6} aria-hidden="true" />;
 }
 
 function SupplyBar({totalSupply}: {totalSupply: number}) {

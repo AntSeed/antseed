@@ -4,7 +4,7 @@ description: AntSeed Protocol Terms of Service
 slug: /terms-of-service
 ---
 
-# AntSeed Protocol — Terms of Service
+# AntSeed Protocol - Terms of Service
 
 **Last Updated: May 15, 2026**
 
@@ -18,7 +18,7 @@ These Terms of Service ("Terms") govern access to and use of the AntSeed open-so
 
 AntSeed Protocol means the open-source software, peer-to-peer networking components, smart contracts, cryptographic message formats, payment-channel mechanisms, discovery mechanisms, metering mechanisms, and related technical specifications commonly referred to as AntSeed. Buyer means a user or node that consumes AI services from Providers through the AntSeed Protocol. Provider means an independent user or node operator that offers AI inference, routing, agent, workflow, or other services to Buyers through the AntSeed Protocol. Ecosystem Support Entity means any foundation, company, association, committee, multisig, contributor group, maintainer group, grants administrator, reserve administrator, interface publisher, or other organization that supports, funds, documents, promotes, or develops some part of the AntSeed ecosystem. Protocol Reserve or Ecosystem Reserve means any allocation of tokens, fees, assets, or other resources intended to support AntSeed ecosystem development, security, decentralization, adoption, education, research, grants, audits, infrastructure, liquidity-support programs where lawful, token burn programs where lawful, or other ecosystem-support purposes. Tokens means $ANTS or any other cryptographic token associated with or used in connection with the AntSeed ecosystem, excluding DIEM capacity-program participation unless expressly incorporated by separate DIEM terms. Interface means any website, desktop application, CLI, API endpoint, documentation site, dashboard, grants page, or other user-facing access point, excluding diemantseed.com unless expressly stated otherwise.
 
-## 3. What AntSeed Is — And What It Is Not
+## 3. What AntSeed Is - And What It Is Not
 
 ### 3.1 A Communication Protocol, Not a Service Provider
 
@@ -83,7 +83,7 @@ You must be at least 18 years old, or the age of legal majority in your jurisdic
 
 The AntSeed Protocol is open and peer-to-peer, similar to BitTorrent-style infrastructure. AntSeed and Ecosystem Support Entities do not have the practical ability to block, geofence, suspend, terminate, or prevent all access to the decentralized protocol or to independent peer nodes. Interfaces or hosted services controlled by a specific operator may apply access restrictions where technically possible or legally required, but the protocol itself may remain technically accessible. Technical accessibility does not mean that use is lawful in your jurisdiction. You remain solely responsible for sanctions, export-control, AML/CFT, and other legal compliance.
 
-## 10. Peer-to-Peer Network — Unknown Counterparties and No Vetting
+## 10. Peer-to-Peer Network - Unknown Counterparties and No Vetting
 
 The AntSeed network consists of independent, anonymous, pseudonymous, and unverified third-party peers. AntSeed and Ecosystem Support Entities do not generally vet, license, certify, approve, supervise, or background-check Providers or Buyers. When you connect to a Provider node, you may not know who operates that node, where it is located, what model/API/infrastructure it uses, whether it complies with laws or upstream terms, whether it logs or discloses data, or whether claims made by the Provider are accurate. On-chain reputation, settlement volume, channel history, attestations, metadata, provider profiles, or other signals are not endorsements, certifications, guarantees, or legal compliance confirmations. They are merely technical or economic signals that may be incomplete, inaccurate, manipulated, stale, or misunderstood.
 

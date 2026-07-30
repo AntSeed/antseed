@@ -13,64 +13,28 @@ import {
 } from '../integrations/integrations';
 import styles from '../integrations/integrations.module.css';
 import {ArrowRight, Button, FinalCta, PageHero, Section, Ticks} from '../components/ui';
+import {HugeiconsIcon} from '@hugeicons/react';
+import {
+  SourceCodeIcon,
+  NeuralNetworkIcon,
+  FrameworksIcon,
+  ComputerTerminal01Icon,
+} from '@hugeicons/core-free-icons';
 
 /* --------------------------- Category icons --------------------------- *
- * Inline SVG, ~20x20, stroke-based. Centralized so we don't sprinkle
+ * Hugeicons, stroke style, 20x20. Centralized so we don't sprinkle
  * ASCII glyphs around the UI.
  * -------------------------------------------------------------------- */
 
+const CATEGORY_ICON = {
+  'coding-agent': SourceCodeIcon,
+  'agent-platform': NeuralNetworkIcon,
+  framework: FrameworksIcon,
+  cli: ComputerTerminal01Icon,
+} as const;
+
 function CategoryIcon({category}: {category: IntegrationCategory}) {
-  const common = {
-    width: 20,
-    height: 20,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.6,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  };
-  switch (category) {
-    case 'coding-agent':
-      return (
-        <svg {...common}>
-          <polyline points="8 7 3 12 8 17" />
-          <polyline points="16 7 21 12 16 17" />
-          <line x1="14" y1="4" x2="10" y2="20" />
-        </svg>
-      );
-    case 'agent-platform':
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="3.5" />
-          <circle cx="12" cy="4.5" r="1.5" />
-          <circle cx="19.5" cy="12" r="1.5" />
-          <circle cx="12" cy="19.5" r="1.5" />
-          <circle cx="4.5" cy="12" r="1.5" />
-          <line x1="12" y1="6" x2="12" y2="8.5" />
-          <line x1="18" y1="12" x2="15.5" y2="12" />
-          <line x1="12" y1="18" x2="12" y2="15.5" />
-          <line x1="6" y1="12" x2="8.5" y2="12" />
-        </svg>
-      );
-    case 'framework':
-      return (
-        <svg {...common}>
-          <rect x="3.5" y="3.5" width="7" height="7" rx="1" />
-          <rect x="13.5" y="3.5" width="7" height="7" rx="1" />
-          <rect x="3.5" y="13.5" width="7" height="7" rx="1" />
-          <rect x="13.5" y="13.5" width="7" height="7" rx="1" />
-        </svg>
-      );
-    case 'cli':
-      return (
-        <svg {...common}>
-          <rect x="3" y="5" width="18" height="14" rx="2" />
-          <polyline points="7 10 10 12 7 14" />
-          <line x1="12" y1="15" x2="17" y2="15" />
-        </svg>
-      );
-  }
+  return <HugeiconsIcon icon={CATEGORY_ICON[category]} size={20} strokeWidth={1.6} />;
 }
 
 function IntegrationCard({i}: {i: Integration}) {
@@ -205,8 +169,8 @@ export default function ConnectHub(): JSX.Element {
         lead={
           <>
             AntSeed runs a buyer proxy at <code>http://localhost:8377</code> that speaks{' '}
-            <strong>all four major LLM API protocols</strong> — Anthropic Messages,
-            OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions — and
+            <strong>all four major LLM API protocols</strong> - Anthropic Messages,
+            OpenAI Chat Completions, OpenAI Responses, and OpenAI Completions - and
             translates between them on the fly. Pick your tool below; AntSeed makes it fit.
           </>
         }>
@@ -256,7 +220,7 @@ export default function ConnectHub(): JSX.Element {
           {totalShown === 0 ? (
             <p className={styles.noResults}>
               No matches for <strong>{query}</strong>. Try the{' '}
-              <Link to="/integrations/curl">raw HTTP page</Link> — anything that speaks Anthropic or
+              <Link to="/integrations/curl">raw HTTP page</Link> - anything that speaks Anthropic or
               OpenAI works.
             </p>
           ) : (
@@ -273,7 +237,7 @@ export default function ConnectHub(): JSX.Element {
             <h3>Don't see your tool?</h3>
             <p>
               If your tool accepts an Anthropic or OpenAI base URL, AntSeed already works with
-              it — see the <Link to="/integrations/curl">raw HTTP page</Link> for the contract. Want
+              it - see the <Link to="/integrations/curl">raw HTTP page</Link> for the contract. Want
               it added here? Open a PR on{' '}
               <a
                 href="https://github.com/AntSeed/antseed/blob/main/apps/website/src/integrations/integrations.ts"

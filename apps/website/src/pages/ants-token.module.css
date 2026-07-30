@@ -145,7 +145,7 @@
 .flowBoxMint { fill: var(--as-void); stroke: var(--as-clay); stroke-width: 1.5; }
 .flowBoxTitle { fill: var(--as-heading); font-family: var(--as-font-display); font-size: 17px; font-weight: 600; }
 .flowBoxSub { fill: var(--as-text-3); font-family: var(--as-font-data); font-size: 12px; }
-.flowBoxTitleMint { fill: #E8A33D; font-family: var(--as-font-display); font-size: 17px; font-weight: 600; }
+.flowBoxTitleMint { fill: var(--as-clay); font-family: var(--as-font-display); font-size: 17px; font-weight: 600; }
 .flowBoxSubMint { fill: rgba(255, 255, 255, 0.5); font-family: var(--as-font-data); font-size: 12px; }
 .flowLine { fill: none; stroke: var(--as-line-strong); stroke-width: 1.5; stroke-dasharray: 3 4; }
 .flowLineGreen { fill: none; stroke: rgba(161, 98, 7, 0.4); stroke-width: 1.5; stroke-dasharray: 3 4; }

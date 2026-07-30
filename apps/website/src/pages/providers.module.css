@@ -89,8 +89,7 @@
   display: flex;
   gap: 16px;
   align-items: flex-start;
-  max-width: 840px;
-  margin: 12px auto 0;
+  margin: 12px 0 0;
   border: 1px solid var(--as-line);
   border-left: 3px solid var(--as-risk);
   border-radius: 24px;

@@ -685,19 +685,25 @@
 
 .privacySpy {
   position: absolute;
-  left: -56px;
-  top: 37px;
-  width: 240px;
-  height: 304px;
+  left: -76px;
+  bottom: -48px;
+  top: auto;
+  height: 330px;
+  width: auto;
+  aspect-ratio: 622 / 688;
+  object-fit: contain;
   pointer-events: none;
 }
 
 .privacyShield {
   position: absolute;
-  left: 268px;
-  top: 42px;
-  width: 249px;
-  height: 336px;
+  right: -40px;
+  top: 50%;
+  transform: translateY(calc(-50% + 32px));
+  height: 308px;
+  width: auto;
+  aspect-ratio: 622 / 688;
+  object-fit: contain;
   pointer-events: none;
 }
 
@@ -1804,10 +1810,10 @@
   .demoFrame {
     margin-top: 32px;
     transform: none;
-    width: calc(100% + 32px);
-    max-width: none;
-    margin-left: -16px;
-    margin-right: -16px;
+    width: 240px;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .privacyPanel {
@@ -1826,20 +1832,25 @@
 
   .privacySpy {
     left: auto;
-    right: -32px;
+    right: -52px;
     top: auto;
-    bottom: -24px;
-    width: 168px;
-    height: 213px;
+    bottom: -42px;
+    width: auto;
+    height: 241px;
+    aspect-ratio: 622 / 688;
+    object-fit: contain;
   }
 
   .privacyShield {
     left: auto;
-    right: -20px;
+    right: -48px;
     top: auto;
-    bottom: -16px;
-    width: 156px;
-    height: 210px;
+    bottom: -40px;
+    transform: none;
+    width: auto;
+    height: 222px;
+    aspect-ratio: 622 / 688;
+    object-fit: contain;
   }
 
   .privacyCopy,

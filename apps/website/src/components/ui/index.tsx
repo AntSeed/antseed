@@ -217,6 +217,41 @@ export function Section({
   );
 }
 
+/* Grid step must match .pageHeroDotsVisible background-size (9px tiles,
+   same as the brand page's "Dot grid" motif swatch) so the sparkle lands
+   exactly on a real dot. */
+const HERO_GRID_STEP = 9;
+
+function PageHeroSparkle() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [dot, setDot] = useState<{x: number; y: number; key: number} | null>(null);
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    let key = 0;
+    const pick = () => {
+      const el = ref.current;
+      if (!el) return;
+      const {width, height} = el.getBoundingClientRect();
+      const cols = Math.max(1, Math.floor(width / HERO_GRID_STEP));
+      const rows = Math.max(1, Math.floor(height / HERO_GRID_STEP));
+      const col = Math.floor(Math.random() * cols);
+      const row = Math.floor(Math.random() * rows);
+      key += 1;
+      setDot({x: HERO_GRID_STEP / 2 + col * HERO_GRID_STEP, y: HERO_GRID_STEP / 2 + row * HERO_GRID_STEP, key});
+    };
+    pick();
+    const id = setInterval(pick, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div ref={ref} className={styles.pageHeroSparkleLayer} aria-hidden="true">
+      {dot && <span key={dot.key} className={styles.pageHeroSparkleDot} style={{left: dot.x, top: dot.y}} />}
+    </div>
+  );
+}
+
 /* ---------- PageHero — the homepage hero's type scale, for inner pages ----------
    Same dot-grid backdrop, kicker, display title and 18/26 lead as the home
    hero, so every page opens in the same voice. */
@@ -227,6 +262,7 @@ export function PageHero({
   lead,
   note,
   accent = 'green',
+  animatedDots = false,
   children,
 }: {
   kicker?: ReactNode;
@@ -238,12 +274,18 @@ export function PageHero({
   note?: ReactNode;
   /** clay tints the dot grid + <em> for the economics page */
   accent?: 'green' | 'clay';
+  /** swaps in the visible gray dot grid from the brand page's "Dot grid"
+   * motif (instead of the default barely-there grid) plus a single
+   * randomly-picked dot that sparkles on repeat */
+  animatedDots?: boolean;
   /** button row */
   children?: ReactNode;
 }) {
   return (
     <header className={`${styles.pageHero} ${accent === 'clay' ? styles.pageHeroClay : ''}`}>
-      <div className={styles.pageHeroDots} aria-hidden="true" />
+      <div className={`${styles.pageHeroDots} ${animatedDots ? styles.pageHeroDotsVisible : ''}`} aria-hidden="true">
+        {animatedDots && <PageHeroSparkle />}
+      </div>
       <div className={styles.pageHeroInner}>
         {kicker && <p className={styles.kicker}>{kicker}</p>}
         <h1 className={styles.pageHeroTitle}>{title}</h1>
