@@ -28,6 +28,7 @@ import {
   DEFAULT_SYSTEM_PROXY_PORT,
   SYSTEM_PROXY_PROFILES,
   allSystemProxyProfiles,
+  readStringArray,
   removeAllConfigPatches,
   systemProxyProfilesEnv,
 } from './profiles.js';
@@ -89,6 +90,17 @@ export type SystemProxyGuiTestResult = {
 };
 
 
+/** Every profile that has ever been connected — the on-disk `setupProfileNames`
+    plus whatever is (or was last) active, so state files written before the
+    field existed still count their connected apps as set up. */
+function knownSetupProfileNames(metadata: Record<string, unknown>, extras: string[] = []): string[] {
+  return Array.from(new Set([
+    ...readStringArray(metadata['setupProfileNames']),
+    ...readStringArray(metadata['activeProfileNames']),
+    ...extras,
+  ]));
+}
+
 export function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
   // Desktop file first; the CLI child's state file only as a fallback (it
   // exists while the child runs, and older desktop builds persisted there).
@@ -107,9 +119,7 @@ export function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
 
 export function loadPersistedSystemProxyState(): void {
   const metadata = readSystemProxyRuntimeMetadata();
-  const activeProfileNames = Array.isArray(metadata['activeProfileNames'])
-    ? metadata['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
-    : [];
+  const activeProfileNames = readStringArray(metadata['activeProfileNames']);
   const peerId = typeof metadata['peerId'] === 'string' ? metadata['peerId'] : '';
   const defaultModel = typeof metadata['defaultModel'] === 'string' ? metadata['defaultModel'] : '';
   if (activeProfileNames.length === 0 || !peerId) return;
@@ -124,6 +134,7 @@ export function loadPersistedSystemProxyState(): void {
     peerId,
     defaultModel,
     activeProfileNames,
+    setupProfileNames: knownSetupProfileNames(metadata),
     toolRoutes: metadata['toolRoutes'],
   };
   traySystemProxyPeerId = peerId;
@@ -132,9 +143,30 @@ export function loadPersistedSystemProxyState(): void {
 }
 
 export function withSystemProxyRuntimeMetadata(state: RuntimeProcessState | null): RuntimeProcessState | null {
-  if (!state) return null;
+  const metadata = readSystemProxyRuntimeMetadata();
+  const setupProfileNames = knownSetupProfileNames(metadata);
+  if (!state) {
+    if (setupProfileNames.length === 0) return null;
+    return {
+      mode: 'system-proxy',
+      running: false,
+      pid: null,
+      startedAt: Date.now(),
+      lastExitCode: null,
+      lastError: null,
+      ...metadata,
+      activeProfileNames: [],
+      setupProfileNames,
+    } as RuntimeProcessState & Record<string, unknown>;
+  }
   if (state.mode !== 'system-proxy') return state;
-  return { ...state, ...readSystemProxyRuntimeMetadata(), running: state.running };
+  return {
+    ...state,
+    ...metadata,
+    setupProfileNames,
+    activeProfileNames: state.running ? metadata['activeProfileNames'] : [],
+    running: state.running,
+  } as RuntimeProcessState & Record<string, unknown>;
 }
 
 export function getSystemProxyProcessState(): RuntimeProcessState | null {
@@ -158,13 +190,21 @@ export function getSystemProxyProcessState(): RuntimeProcessState | null {
 }
 
 export async function setActiveSystemProxyState(state: RuntimeProcessState & Record<string, unknown>): Promise<void> {
-  activeSystemProxyState = state;
+  const metadata = readSystemProxyRuntimeMetadata();
+  const setupProfileNames = knownSetupProfileNames(metadata, [
+    ...readStringArray(state['setupProfileNames']),
+    ...readStringArray(state['activeProfileNames']),
+  ]);
+  // Kept on the in-memory state too — getSystemProxyProcessState() serves
+  // polls from here without re-reading the disk file.
+  activeSystemProxyState = { ...state, setupProfileNames };
   await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
   await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
     port: state['port'],
     peerId: state['peerId'],
     defaultModel: state['defaultModel'],
     activeProfileNames: state['activeProfileNames'],
+    setupProfileNames,
     toolRoutes: state['toolRoutes'],
     running: state.running,
   }), 'utf8').catch(() => undefined);
@@ -554,6 +594,8 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
   // Last, so the relaunched app reads config patches already on disk and a
   // proxy already listening.
   await restartConnectedApps(newlyConnectedProfiles);
+  const disconnectedProfiles = [...previousProfiles].filter((name) => !allProfiles.includes(name));
+  await restartConnectedApps(disconnectedProfiles);
   return getSystemProxyProcessState();
 }
 
@@ -595,9 +637,20 @@ export async function restoreSystemProxyProfilesAtLaunch(opts: SystemProxyStartR
 }
 
 export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<RuntimeProcessState | null> {
+  const metadata = readSystemProxyRuntimeMetadata();
+  const setupProfileNames = knownSetupProfileNames(metadata);
   const state = await deps().processManager.stop('system-proxy');
   if (clearSettings) {
-    await clearSystemProxySettings();
+    await clearSystemProxyTransportSettings();
+    await unlink(systemProxyPidPath()).catch(() => undefined);
+    await unlink(systemProxyStatePath()).catch(() => undefined);
+    await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+    await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
+      ...metadata,
+      activeProfileNames: [],
+      setupProfileNames,
+      running: false,
+    }), 'utf8').catch(() => undefined);
     removeAllConfigPatches();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;

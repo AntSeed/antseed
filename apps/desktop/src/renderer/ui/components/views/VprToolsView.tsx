@@ -111,6 +111,10 @@ export function VprToolsView() {
   const defaultModel = snap.selection.model?.serviceId || peerOptions.find((peer) => peer.peerId === defaultPeerId)?.services[0] || '';
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
   const activeProfileNames = useMemo(() => activeProfiles ? [...activeProfiles] : [], [activeProfiles]);
+  const setupProfiles = useMemo(() => {
+    const metadata = proxyState as (Record<string, unknown> | null);
+    return new Set(Array.isArray(metadata?.setupProfileNames) ? metadata.setupProfileNames.filter((name): name is string => typeof name === 'string') : []);
+  }, [proxyState]);
   const hasConnectedProxyProfile = useMemo(() => (
     profiles.some((profile) => profile.kind === 'proxy' && (activeProfiles?.has(profile.name) ?? false))
   ), [activeProfiles, profiles]);
@@ -506,6 +510,7 @@ export function VprToolsView() {
             {telegramVisible ? <TelegramBotCard /> : null}
             {visibleProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
+              const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
@@ -574,9 +579,23 @@ export function VprToolsView() {
                     >
                       <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={2} />
                     </button>
-                    {/* Disconnect (and Remove for custom apps) live in the
-                        settings modal — the row only offers Connect. */}
-                    {!connected ? (
+                    {connected || setupComplete ? (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={connected}
+                        className={`${styles.connectedToggle}${connected ? '' : ` ${styles.connectedToggleOff}`}`}
+                        disabled={busy !== null || (!connected && !defaultPeerId)}
+                        onClick={() => {
+                          if (connected) disconnectProfile(profile.name);
+                          else void connectProfile(profile.name);
+                        }}
+                        aria-label={`${connected ? 'Disconnect' : 'Connect'} ${profile.displayName}`}
+                        title={`${connected ? 'Disconnect' : 'Connect'} ${profile.displayName}`}
+                      >
+                        <span />
+                      </button>
+                    ) : (
                       <button
                         type="button"
                         className={styles.connectAction}
@@ -585,7 +604,7 @@ export function VprToolsView() {
                       >
                         Connect
                       </button>
-                    ) : null}
+                    )}
                   </div>
 
                 </div>

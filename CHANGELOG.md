@@ -4,6 +4,17 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-30 — Desktop alpha: connect toggle for set-up apps
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.22` (prerelease)
+
+### Added
+
+- Connected Apps rows now show an on/off toggle for apps that have been set up before, so reconnecting a previously configured tool is one click instead of re-running Connect. The set of ever-connected apps (`setupProfileNames`) persists across app restarts and proxy stops, including state files written by older builds.
+- Disconnecting an app now restarts it so it immediately drops the proxy configuration instead of keeping stale settings until its next manual restart.
+
 ## 2026-07-30 — Desktop alpha: network trouble alerts + visible auto-updates
 
 ### Desktop
