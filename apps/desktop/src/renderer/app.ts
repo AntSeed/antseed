@@ -640,6 +640,10 @@ registerActions({
   },
 });
 
+bridge?.onDesktopOpenFloatingWindow?.(() => { void vprFloatApi.openFloat(); });
+bridge?.onDesktopConnectMain?.(() => { void actionStartAll(); });
+bridge?.onDesktopDisconnectMain?.(() => { void actionStopAll(); });
+
 /* ------------------------------------------------------------------ */
 /*  Mount React (store + actions both ready)                           */
 /* ------------------------------------------------------------------ */

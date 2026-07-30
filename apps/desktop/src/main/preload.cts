@@ -644,6 +644,21 @@ const api = {
     ipcRenderer.on('vpr-float:action', listener);
     return () => ipcRenderer.off('vpr-float:action', listener);
   },
+  onDesktopOpenFloatingWindow(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:open-floating-window', listener);
+    return () => ipcRenderer.off('desktop:open-floating-window', listener);
+  },
+  onDesktopConnectMain(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:connect-main', listener);
+    return () => ipcRenderer.off('desktop:connect-main', listener);
+  },
+  onDesktopDisconnectMain(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:disconnect-main', listener);
+    return () => ipcRenderer.off('desktop:disconnect-main', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

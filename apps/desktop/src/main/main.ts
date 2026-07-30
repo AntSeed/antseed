@@ -267,6 +267,7 @@ function emitRuntimeActivity(activity: RuntimeActivityEvent): void {
 
 function emitRuntimeState(): void {
   getMainWindow()?.webContents.send('runtime:state', getCombinedProcessState());
+  refreshTrayMenu();
 }
 
 function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
@@ -491,11 +492,28 @@ app.whenReady().then(async () => {
   });
   startSystemProxyWatchdog();
 
+  const showFloatingWindow = () => {
+    const win = getMainWindow();
+    if (win) {
+      win.webContents.send('desktop:open-floating-window');
+      return;
+    }
+    showMainWindow();
+    getMainWindow()?.webContents.once('did-finish-load', () => {
+      getMainWindow()?.webContents.send('desktop:open-floating-window');
+    });
+  };
+
+  const toggleMainConnection = () => {
+    const running = getCombinedProcessState().some((state) => state.mode === 'connect' && state.running);
+    getMainWindow()?.webContents.send(running ? 'desktop:disconnect-main' : 'desktop:connect-main');
+  };
+
   createDesktopTray({
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,
     onShow: showMainWindow,
-    buildMenu: () => buildSystemProxyTrayMenu(showMainWindow),
+    buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
   });
   refreshTrayMenu();
 

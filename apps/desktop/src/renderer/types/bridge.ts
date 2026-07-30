@@ -458,6 +458,9 @@ export type DesktopBridge = {
   onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
+  onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
+  onDesktopConnectMain?: (handler: () => void) => () => void;
+  onDesktopDisconnectMain?: (handler: () => void) => () => void;
 };
 
 /** One tool chat session seen by the buyer proxy (per-chat routing). */

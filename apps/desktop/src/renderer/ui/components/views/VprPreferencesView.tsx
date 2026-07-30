@@ -159,13 +159,13 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <span className={styles.sectionLabel}>Floating window</span>
           <VprCard className={styles.card}>
             <VprSettingRow
-              title="Open on traffic"
-              hint="Pop up the floating window on its own when a connected app starts sending requests."
+              title="Show on traffic"
+              hint="Show the floating window on its own when a connected app starts sending requests."
               control={(
                 <VprToggle
                   checked={snap.floatAutoOpen}
                   onChange={(next) => actions.setVprFloatAutoOpen?.(next)}
-                  ariaLabel="Open floating window on traffic"
+                  ariaLabel="Show floating window on traffic"
                 />
               )}
             />

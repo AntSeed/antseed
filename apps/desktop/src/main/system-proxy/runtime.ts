@@ -826,58 +826,17 @@ export async function setTrayProfile(profileName: string, enabled: boolean): Pro
   refreshTrayMenu();
 }
 
-export function buildSystemProxyTrayMenu(showMainWindow: () => void): MenuItemConstructorOptions[] {
-  const state = getSystemProxyProcessState();
-  const running = state?.running === true;
-  const profiles = getTrayProfilesFromState();
-  const peerOptions = getTrayPeerOptions();
-  const selectedPeer = getTraySelectedPeer() ?? peerOptions[0] ?? null;
-  const selectedModel = resolveTrayModelForPeer(selectedPeer);
-  const peerLabel = selectedPeer
-    ? `${selectedPeer.displayName || shortTrayPeerId(selectedPeer.peerId)} (${shortTrayPeerId(selectedPeer.peerId)})`
-    : 'No peer selected';
-
-  const peerSubmenu: MenuItemConstructorOptions[] = peerOptions.length > 0
-    ? peerOptions.slice(0, 20).map((peer) => ({
-      label: `${peer.displayName || shortTrayPeerId(peer.peerId)}${peer.online ? '' : ' (offline)'}`,
-      type: 'radio',
-      checked: selectedPeer?.peerId === peer.peerId,
-      click: () => { void setTrayPeer(peer.peerId); },
-    }))
-    : [{ label: 'No discovered peers', enabled: false }];
-
-  const modelOptions = selectedPeer?.services ?? [];
-  const modelSubmenu: MenuItemConstructorOptions[] = modelOptions.length > 0
-    ? modelOptions.slice(0, 30).map((model) => ({
-      label: model,
-      type: 'radio',
-      checked: selectedModel === model,
-      click: () => { void setTrayModel(model); },
-    }))
-    : [{ label: 'No models for selected peer', enabled: false }];
+export function buildSystemProxyTrayMenu(
+  showMainWindow: () => void,
+  openFloatingWindow: () => void,
+  toggleMainConnection: () => void,
+): MenuItemConstructorOptions[] {
+  const running = deps().processManager.getState().some((entry) => entry.mode === 'connect' && entry.running);
 
   return [
-    { label: running ? 'System Proxy: Connected' : 'System Proxy: No tools connected', enabled: false },
-    { label: `Peer: ${peerLabel}`, enabled: false },
-    { label: `Model: ${selectedModel || 'No model selected'}`, enabled: false },
-    { type: 'separator' },
-    { label: 'Peer', submenu: peerSubmenu },
-    { label: 'Model', submenu: modelSubmenu },
-    { type: 'separator' },
-    ...allSystemProxyProfiles().map((profile): MenuItemConstructorOptions => {
-      const connected = profiles.has(profile.name) && (running || profile.kind === 'config-patch');
-      return {
-        label: `${profile.label}: ${connected ? 'Disconnect' : 'Connect'}`,
-        enabled: selectedPeer !== null,
-        click: () => { void setTrayProfile(profile.name, !connected); },
-      };
-    }),
-    { type: 'separator' },
-    { label: 'Open System Proxy', click: openSystemProxyWindow },
     { label: `Show ${deps().appName}`, click: showMainWindow },
-    ...(running ? [{ label: 'Disconnect All', click: () => { void stopSystemProxyRuntime(true); } } as MenuItemConstructorOptions] : []),
-    { type: 'separator' },
-    { role: 'quit', label: `Quit ${deps().appName}` },
+    { label: 'Show Floating Window', click: openFloatingWindow },
+    { label: running ? 'Disconnect' : 'Connect', click: toggleMainConnection },
   ];
 }
 
