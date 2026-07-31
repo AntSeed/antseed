@@ -7,6 +7,11 @@ import { homedir } from 'node:os'
 
 const execFileAsync = promisify(execFile)
 
+/** Upper bound on a plugin install so an unreachable registry can't hang a caller forever. */
+const INSTALL_TIMEOUT_MS = 120_000
+/** Dedupe concurrent installs of the same package so first-requests can't race npm. */
+const inflightInstalls = new Map<string, Promise<void>>()
+
 export const PLUGINS_DIR = join(homedir(), '.antseed', 'plugins')
 
 function resolvePluginsDir(): string {
@@ -40,8 +45,21 @@ async function ensurePluginsDir(): Promise<void> {
 }
 
 export async function installPlugin(packageName: string): Promise<void> {
-  await ensurePluginsDir()
-  await execFileAsync('npm', ['install', '--ignore-scripts', packageName], { cwd: getPluginsDir() })
+  const existing = inflightInstalls.get(packageName)
+  if (existing) return existing
+  const run = (async () => {
+    await ensurePluginsDir()
+    await execFileAsync('npm', ['install', '--ignore-scripts', packageName], {
+      cwd: getPluginsDir(),
+      timeout: INSTALL_TIMEOUT_MS,
+    })
+  })()
+  inflightInstalls.set(packageName, run)
+  try {
+    await run
+  } finally {
+    inflightInstalls.delete(packageName)
+  }
 }
 
 export async function removePlugin(packageName: string): Promise<void> {

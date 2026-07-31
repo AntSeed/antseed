@@ -81,6 +81,57 @@ describe('BuyerRequestHandler payment mux wiring', () => {
     ).toBeLessThan(sendProxyRequest.mock.invocationCallOrder[0]);
   });
 
+  it('control-plane requests bypass payment negotiation and return 402 verbatim', async () => {
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
+    const request: SerializedHttpRequest = {
+      requestId: 'req-control-plane',
+      method: 'POST',
+      path: '/_antseed/attest/antseed-verifier',
+      headers: { 'content-type': 'application/json' },
+      body: new Uint8Array(0),
+    };
+
+    const conn = { state: 'open' };
+    const sendProxyRequest = vi.fn((
+      _: SerializedHttpRequest,
+      onResponse: (response: SerializedHttpResponse, metadata: { streamingStart: boolean }) => void,
+    ) => {
+      onResponse({
+        requestId: request.requestId,
+        statusCode: 402,
+        headers: {},
+        body: new Uint8Array(0),
+      }, { streamingStart: false });
+    });
+
+    const handle402 = vi.fn();
+    const getOrCreatePaymentMux = vi.fn().mockReturnValue({});
+    const registerPaymentMux = vi.fn();
+    const handler = new BuyerRequestHandler(
+      {},
+      {
+        localPeerId: 'a'.repeat(40) as PeerId,
+        negotiator: {
+          getOrCreatePaymentMux,
+          handle402,
+          estimateCostFromResponse: vi.fn(),
+        } as any,
+        verificationStorage: null,
+        verificationSampler: null,
+        getConnection: vi.fn(async () => conn) as any,
+        getMux: vi.fn(() => ({ sendProxyRequest, cancelProxyRequest: vi.fn() })) as any,
+        getVerificationMux: vi.fn(() => createNoopVerificationMux()) as any,
+        registerPaymentMux,
+      },
+    );
+
+    const response = await handler.sendRequest(peer, request, undefined, { controlPlane: true });
+
+    expect(response.statusCode).toBe(402);
+    expect(handle402).not.toHaveBeenCalled();
+    expect(getOrCreatePaymentMux).not.toHaveBeenCalled();
+  });
+
   it('opens free usage and skips paid cost tracking for advertised zero-price services', async () => {
     const peer = {
       peerId: 'b'.repeat(40),

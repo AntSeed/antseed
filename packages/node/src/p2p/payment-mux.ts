@@ -9,6 +9,8 @@ import type {
   NeedFreeUsageAuthPayload,
   PaymentRequiredPayload,
   NeedAuthPayload,
+  CloseChannelRequestPayload,
+  CloseChannelResultPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
@@ -24,6 +26,8 @@ const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.NeedFreeUsageAuth]: 'NeedFreeUsageAuth',
   [MessageType.PaymentRequired]: 'PaymentRequired',
   [MessageType.NeedAuth]: 'NeedAuth',
+  [MessageType.CloseChannelRequest]: 'CloseChannelRequest',
+  [MessageType.CloseChannelResult]: 'CloseChannelResult',
 };
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
@@ -46,6 +50,8 @@ export class PaymentMux {
   private _onNeedFreeUsageAuth?: PaymentMessageHandler<NeedFreeUsageAuthPayload>;
   private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
   private _onNeedAuth?: PaymentMessageHandler<NeedAuthPayload>;
+  private _onCloseChannelRequest?: PaymentMessageHandler<CloseChannelRequestPayload>;
+  private _onCloseChannelResult?: PaymentMessageHandler<CloseChannelResultPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -76,6 +82,12 @@ export class PaymentMux {
   onNeedAuth(handler: PaymentMessageHandler<NeedAuthPayload>): void {
     this._onNeedAuth = handler;
   }
+  onCloseChannelRequest(handler: PaymentMessageHandler<CloseChannelRequestPayload>): void {
+    this._onCloseChannelRequest = handler;
+  }
+  onCloseChannelResult(handler: PaymentMessageHandler<CloseChannelResultPayload>): void {
+    this._onCloseChannelResult = handler;
+  }
 
   // --- Sending ---
   sendSpendingAuth(payload: SpendingAuthPayload): void {
@@ -101,6 +113,12 @@ export class PaymentMux {
   }
   sendNeedAuth(payload: NeedAuthPayload): void {
     this._send(MessageType.NeedAuth, codec.encodeNeedAuth(payload));
+  }
+  sendCloseChannelRequest(payload: CloseChannelRequestPayload): void {
+    this._send(MessageType.CloseChannelRequest, codec.encodeCloseChannelRequest(payload));
+  }
+  sendCloseChannelResult(payload: CloseChannelResultPayload): void {
+    this._send(MessageType.CloseChannelResult, codec.encodeCloseChannelResult(payload));
   }
 
   // --- Receiving ---
@@ -136,6 +154,12 @@ export class PaymentMux {
       case MessageType.NeedAuth:
         await this._onNeedAuth?.(codec.decodeNeedAuth(frame.payload));
         return true;
+      case MessageType.CloseChannelRequest:
+        await this._onCloseChannelRequest?.(codec.decodeCloseChannelRequest(frame.payload));
+        return true;
+      case MessageType.CloseChannelResult:
+        await this._onCloseChannelResult?.(codec.decodeCloseChannelResult(frame.payload));
+        return true;
       default:
         return false;
     }
@@ -147,7 +171,8 @@ export class PaymentMux {
   }
 
   private _send(type: MessageType, payload: Uint8Array): void {
-    debugLog(`[PaymentMux] → send ${MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`} (${payload.length}b)`);
+    const name = MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`;
+    debugLog(`[PaymentMux] → send ${name} (${payload.length}b)`);
     const frame = encodeFrame({
       type,
       messageId: this._messageIdCounter++ & 0xffffffff,

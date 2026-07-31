@@ -52,8 +52,11 @@ import { VerificationMux } from "./verification/verification-mux.js";
 import { DepositRelayer } from "./payments/deposit-relayer.js";
 import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  peerSupportsCooperativeClose,
   type SweepRequestPayload,
   type SweepReceiptPayload,
+  type CloseChannelResultPayload,
 } from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
@@ -65,6 +68,7 @@ import type {
   ProviderStreamCallbacks,
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
+import type { Prover } from "./interfaces/plugin.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8 } from "./p2p/identity.js";
 import {
@@ -194,6 +198,8 @@ export interface NodeConfig {
   publicAddress?: string;
   /** External ownership claims announced in signed peer metadata. */
   verifications?: PeerVerifications;
+  /** Extra peer capability strings to advertise (e.g. supported verifier SDKs). */
+  capabilities?: string[];
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -268,6 +274,7 @@ export class AntseedNode extends EventEmitter {
   private _dht: DHTNode | null = null;
   private _connectionManager: ConnectionManager | null = null;
   private _providers: Provider[] = [];
+  private _provers: Prover[] = [];
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
@@ -343,6 +350,11 @@ export class AntseedNode extends EventEmitter {
 
   registerProvider(provider: Provider): void {
     this._providers.push(provider);
+  }
+
+  /** Register an embedded verifier prover (serves reserved attestation requests). */
+  registerProver(prover: Prover): void {
+    this._provers.push(prover);
   }
 
   setRouter(router: Router): void {
@@ -967,6 +979,69 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Ask a seller to close our payment channel with it right now, releasing the
+   * reserved deposit without the on-chain `requestClose()` → 15-minute grace →
+   * `withdraw()` round trip.
+   *
+   * The seller refuses while it is still serving (or still owed for) requests
+   * on that channel; those refusals come back as `{ status: 'rejected', code }`
+   * rather than as exceptions. Only a missing session, a peer we can't reach,
+   * or an unanswered request throws.
+   *
+   * By default the buyer attaches its latest SpendingAuth so a seller that lost
+   * the last one can still close at the full amount owed; the seller settles at
+   * whichever cumulative is higher.
+   */
+  async requestChannelClose(
+    sellerPeerId: string,
+    opts: { includeAuth?: boolean; timeoutMs?: number } = {},
+  ): Promise<CloseChannelResultPayload> {
+    const negotiator = this._buyerNegotiator;
+    if (!negotiator) {
+      throw new Error('Buyer payments are not configured on this node');
+    }
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+
+    const peerId = sellerPeerId as PeerId;
+    let conn = this._connectionManager.getConnection(peerId);
+    if (!conn || (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated)) {
+      const peer = await this.findPeer(sellerPeerId);
+      if (!peer) {
+        throw new Error(
+          `Seller ${sellerPeerId.slice(0, 12)}... is not connected and could not be found on the network. ` +
+          `A cooperative close needs the seller online — otherwise use the on-chain request-close flow.`,
+        );
+      }
+      await this.connectToPeer(peer);
+      conn = this._connectionManager.getConnection(peer.peerId);
+      if (!conn) {
+        throw new Error(`Failed to establish a connection to seller ${sellerPeerId.slice(0, 12)}...`);
+      }
+    }
+
+    // A seller that predates this feature drops the 0x59 frame silently, so
+    // without this the buyer would wait out the full 60s response timeout and
+    // get a vague "did not answer". Note the capability must come from the
+    // peer's discovery metadata (`_peerCapabilities`), not
+    // `conn.hasRemoteCapability` — the latter is only populated for *inbound*
+    // connections, so on the buyer's own outbound connection it is always
+    // empty and would reject every close.
+    const capabilities = this._peerCapabilities.get(peerId);
+    if (capabilities && capabilities.size > 0
+      && !peerSupportsCooperativeClose({ capabilities: [...capabilities] })) {
+      throw new Error(
+        `Seller ${sellerPeerId.slice(0, 12)}... does not support cooperative close ` +
+        `(missing ${CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1}). ` +
+        `Use the on-chain request-close flow instead.`,
+      );
+    }
+
+    return negotiator.requestChannelClose(peerId, conn, opts);
+  }
+
+  /**
    * Query session stats for a specific seller peer.
    * Combines channel store data (authoritative payment/session info) with
    * metering events when available.
@@ -1413,6 +1488,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         ...(this._config.verifications ? { verifications: this._config.verifications } : {}),
+        ...(this._config.capabilities ? { capabilities: this._config.capabilities } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1446,6 +1522,7 @@ export class AntseedNode extends EventEmitter {
     this._sellerHandler = new SellerRequestHandler({
       identity,
       providers: this._providers,
+      provers: this._provers,
       sellerPaymentManager: this._sellerPaymentManager,
       sellerFreeUsageManager: this._sellerFreeUsageManager,
       sessionTracker: this._sessionTracker,
@@ -1594,9 +1671,43 @@ export class AntseedNode extends EventEmitter {
             debugWarn(`[Node] SpendingAuth handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
           });
       });
+      paymentMux.onCloseChannelRequest((payload) => {
+        void spm.handleCloseChannelRequest(buyerPeerId, payload, paymentMux)
+          .then((result) => {
+            paymentMux.sendCloseChannelResult(result);
+            if (result.status === 'closed') {
+              this.emit('payment:channel-closed', {
+                buyerPeerId,
+                channelId: result.channelId,
+                txHash: result.txHash,
+                finalAmount: result.finalAmount,
+              });
+            }
+          })
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] CloseChannelRequest handler error for ${buyerPeerId.slice(0, 12)}...: ${message}`);
+            paymentMux.sendCloseChannelResult({
+              version: 1,
+              channelId: payload.channelId,
+              status: 'rejected',
+              code: 'close_failed',
+              reason: message,
+            });
+          });
+      });
     } else {
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
+      });
+      paymentMux.onCloseChannelRequest((payload) => {
+        paymentMux.sendCloseChannelResult({
+          version: 1,
+          channelId: payload.channelId,
+          status: 'rejected',
+          code: 'unsupported',
+          reason: 'This peer has no payment manager configured',
+        });
       });
     }
     if (this._sellerFreeUsageManager) {
