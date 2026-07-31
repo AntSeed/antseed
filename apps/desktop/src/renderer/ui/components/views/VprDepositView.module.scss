@@ -46,12 +46,119 @@
 
 /* ---------- Method chooser (CTAs) ---------- */
 
-.chooseLabel {
+/* Primary Fun CTA: Fun's near-black brand surface with an inverted wordmark
+   chip. Swap the chip for the official asset once their brand kit lands. */
+.funCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
   margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #0e0e12;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.funCta:hover {
+  filter: brightness(1.25);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.funCta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* fun.xyz logo unit: official flag glyph + lowercase wordmark. */
+.funBrand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 20px;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+
+.funBrand svg {
+  display: block;
+}
+
+/* Expander for the secondary deposit methods. */
+.moreLink {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.moreLink:hover {
+  color: var(--text-primary);
+}
+
+.moreLink:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.moreLinkChevron {
+  transition: transform 0.12s ease;
+}
+
+.moreLinkChevronOpen {
+  transform: rotate(180deg);
+}
+
+.optionList {
+  display: grid;
+  gap: 8px;
+}
+
+/* Trailing brand-mark cluster on an option row (USDC/Base, Visa/MC, …). */
+.methodBadges {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.methodBadges svg {
+  display: block;
+}
+
+/* Round filler chip in a badge cluster ("+", QR glyph, …). */
+.badgeChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-hover);
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 1;
 }
 
 .methodCta {

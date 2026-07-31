@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
+  ArrowDown01Icon,
   ArrowRight01Icon,
   ArrowUpRight01Icon,
   Copy01Icon,
   CreditCardIcon,
+  QrCodeIcon,
   SquareLock01Icon,
   Tick02Icon,
   Wallet01Icon,
@@ -143,6 +145,98 @@ function StyledQr({ text, label }: { text: string; label: string }) {
   );
 }
 
+// ─── Payment brand marks ───
+// Hand-authored, recognizable-but-generic geometric marks (same idiom as
+// BrandIcon) — small trust cues on the deposit option rows.
+
+const USDC_BLUE = '#2775CA';
+
+function UsdcMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill={USDC_BLUE} />
+      <text x="12" y="16.6" textAnchor="middle" fontSize="13.5" fontWeight="700" fill="#fff">$</text>
+    </svg>
+  );
+}
+
+function BaseMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#0052FF" />
+      <rect x="1" y="10.95" width="15.85" height="2.1" fill="#fff" />
+    </svg>
+  );
+}
+
+function MastercardMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="9" cy="12" r="7.5" fill="#EB001B" />
+      <circle cx="15" cy="12" r="7.5" fill="#F79E1B" fillOpacity="0.9" />
+    </svg>
+  );
+}
+
+function VisaMark({ size = 18 }: { size?: number }) {
+  const width = Math.round(size * (34 / 24));
+  return (
+    <svg width={width} height={size} viewBox="0 0 34 24" aria-hidden="true">
+      <rect width="34" height="24" rx="5" fill="#1434CB" />
+      <text x="17" y="15.8" textAnchor="middle" fontSize="9" fontWeight="800" fontStyle="italic" fill="#fff">VISA</text>
+    </svg>
+  );
+}
+
+/** Official Meridian (mrdn.finance) mark — the green pinwheel favicon. */
+function MeridianMark({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 542.25 542.25" fill="#34D399" aria-hidden="true">
+      <path d="M493.18,424.48l-106.09,106.09c-7.48,7.48-17.63,11.69-28.21,11.69h-192.03l250.27-250.27,76.06,76.06c15.58,15.58,15.58,40.85,0,56.43Z" />
+      <path d="M375.41,0L125.14,250.27l-76.06-76.06c-15.58-15.58-15.58-40.85,0-56.43L155.16,11.69c7.48-7.48,17.63-11.69,28.21-11.69h192.03Z" />
+      <path d="M542.25,375.41l-250.27-250.27,76.06-76.06c15.58-15.58,40.85-15.58,56.43,0l106.09,106.09c7.48,7.48,11.69,17.63,11.69,28.21v192.03Z" />
+      <path d="M250.27,417.12l-76.06,76.06c-15.58,15.58-40.85,15.58-56.43,0L11.69,387.09c-7.48-7.48-11.69-17.63-11.69-28.21v-192.03l250.27,250.27Z" />
+    </svg>
+  );
+}
+
+/** Official fun.xyz mark — the flag glyph from their favicon. */
+function FunMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={Math.round(size * (15 / 20))} height={size} viewBox="0 0 15 20" fill="currentColor" aria-hidden="true">
+      <path d="M6.44189 1.38892L14.1668 5.5V14.4999L6.44189 18.611V1.38892Z" />
+      <path d="M7.27555 2.775L13.3339 6V13.9972L7.27555 17.2222V2.775ZM5.60889 0V20L15.0006 15V5L5.60889 0Z" />
+      <path d="M2.80615 0V20L4.20893 19.2528V0.747222L2.80615 0Z" />
+      <path d="M0 0V20L1.40278 19.2528V0.747222L0 0Z" />
+    </svg>
+  );
+}
+
+function EthMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#627EEA" />
+      <path d="M12 4l4.5 8.1L12 14.9 7.5 12.1 12 4z" fill="#fff" fillOpacity="0.9" />
+      <path d="M12 16.1l4.5-2.9L12 20l-4.5-6.8 4.5 2.9z" fill="#fff" fillOpacity="0.75" />
+    </svg>
+  );
+}
+
+/** The AntSeed seed mark (from assets/antseed-mark.svg, core shapes only). */
+function AntSeedMark({ size = 22, color = '#1FD87A' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 80 80" fill="none" aria-hidden="true">
+      <ellipse cx="40" cy="22" rx="5" ry="5.5" fill={color} opacity="0.9" />
+      <ellipse cx="40" cy="36" rx="7" ry="8" fill={color} />
+      <ellipse cx="40" cy="55" rx="9" ry="12" fill={color} opacity="0.9" />
+      <line x1="37" y1="17" x2="28" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
+      <line x1="43" y1="17" x2="52" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
+      <circle cx="28" cy="6" r="2.5" fill={color} opacity="0.6" />
+      <circle cx="52" cy="6" r="2.5" fill={color} opacity="0.6" />
+    </svg>
+  );
+}
+
 function explorerTxUrl(chainId: number | undefined, txHash: string): string | null {
   if (chainId === 8453) return `https://basescan.org/tx/${txHash}`;
   if (chainId === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
@@ -195,6 +289,9 @@ export function VprDepositView({ onSelectView }: Props) {
   // Which card option is being paid in-app; null shows the option chooser.
   // Only Crossmint renders in-app; URL providers open an external page.
   const [cardMethod, setCardMethod] = useState<'crossmint' | null>(null);
+  // "More options" expander on the chooser — the Fun CTA leads, everything
+  // else (QR transfer, hosted card pages, Crossmint) sits behind this link.
+  const [moreOpen, setMoreOpen] = useState(false);
   const copyTimer = useRef<number | null>(null);
 
   const goToStage = useCallback((next: Stage) => {
@@ -401,29 +498,97 @@ export function VprDepositView({ onSelectView }: Props) {
             </span>
           </VprCard>
 
-          <span className={styles.chooseLabel}>How would you like to pay?</span>
+          {/* Primary path: deposit through Fun (fun.xyz). The Fun checkout
+              only runs on the web; until our hosted integration is live this
+              opens their site directly. */}
+          <button
+            type="button"
+            className={styles.funCta}
+            onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://fun.xyz')}
+          >
+            <span>Deposit with</span>
+            <span className={styles.funBrand} aria-label="Fun">
+              <FunMark size={16} />
+              <span>fun</span>
+            </span>
+          </button>
+          {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
 
-          <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
-            <span className={styles.methodCtaIcon}>
-              <HugeiconsIcon icon={Wallet01Icon} size={20} strokeWidth={1.8} />
-            </span>
-            <span className={styles.methodCtaText}>
-              <span className={styles.methodCtaTitle}>USDC on Base</span>
-              <span className={styles.methodCtaCaption}>Send from any wallet or exchange</span>
-            </span>
-            <HugeiconsIcon icon={ArrowRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+          <button
+            type="button"
+            className={styles.moreLink}
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            <span>More options</span>
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              size={16}
+              strokeWidth={2}
+              className={`${styles.moreLinkChevron}${moreOpen ? ` ${styles.moreLinkChevronOpen}` : ''}`}
+            />
           </button>
 
-          <button type="button" className={styles.methodCta} onClick={() => goToStage('card')}>
-            <span className={styles.methodCtaIcon}>
-              <HugeiconsIcon icon={CreditCardIcon} size={20} strokeWidth={1.8} />
-            </span>
-            <span className={styles.methodCtaText}>
-              <span className={styles.methodCtaTitle}>Credit Card</span>
-              <span className={styles.methodCtaCaption}>Visa, Mastercard or Apple Pay via Coinbase</span>
-            </span>
-            <HugeiconsIcon icon={ArrowRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
-          </button>
+          {moreOpen && (
+            <div className={styles.optionList}>
+              <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
+                <span className={styles.methodCtaIcon}>
+                  <UsdcMark size={22} />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>USDC on Base</span>
+                  <span className={styles.methodCtaCaption}>No limit · Instant</span>
+                </span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <BaseMark />
+                  <span className={styles.badgeChip}>
+                    <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
+                  </span>
+                </span>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+              </button>
+
+              {/* Fixed lineup — deliberately NOT the configurable card
+                  provider list, which may carry legacy entries. These two ids
+                  always resolve in the main process. */}
+              <button type="button" className={styles.methodCta} onClick={() => openCardProvider('meridian')}>
+                <span className={styles.methodCtaIcon}>
+                  <MeridianMark />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>Meridian</span>
+                  <span className={styles.methodCtaCaption}>Crypto · Cross-chain</span>
+                </span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <EthMark />
+                  <BaseMark />
+                  <span className={styles.badgeChip}>+</span>
+                </span>
+                <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+              </button>
+
+              <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
+                <span className={styles.methodCtaIcon}>
+                  <AntSeedMark color="#F5B90F" />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>AntSeed Pay</span>
+                  <span className={styles.methodCtaCaption}>Card or Apple Pay · Stripe checkout</span>
+                </span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <VisaMark />
+                  <MastercardMark />
+                </span>
+                <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+              </button>
+              {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
+            </div>
+          )}
+
+          <div className={styles.secureNote}>
+            <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
+            <span>Encrypted &amp; secure · Non-custodial escrow on Base</span>
+          </div>
 
           <VprCard className={styles.trustCard}>
             {TRUST_POINTS.map(({ icon, text }) => (

@@ -115,7 +115,8 @@ export function openPaymentsPopup(url: string): void {
 export type CardProvider = { id: string; label: string; url: string };
 
 export const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
-  { id: 'coinbase', label: 'Coinbase', url: 'https://pay.antseed.com/?address={address}&amount={amount}' },
+  { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/' },
+  { id: 'antseed-pay', label: 'AntSeed Pay', url: 'https://antseed-pay.com/' },
 ];
 
 // A configured empty array is respected (zero providers = card disabled);

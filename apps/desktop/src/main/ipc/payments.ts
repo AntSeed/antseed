@@ -45,6 +45,7 @@ import {
   sweepIncomingUsdc,
 } from '../payments/deposit-sweep.js';
 import {
+  DEFAULT_CARD_PROVIDERS,
   PAYMENTS_PORT,
   PAY_PAGE_KINDS,
   type PayPageKind,
@@ -129,8 +130,11 @@ export function registerPaymentsIpc(): void {
       const identity = getSecureIdentity();
       if (!identity) return { ok: false, error: 'Identity not available' };
       const providers = await readCardProviders();
+      // The chooser's fixed lineup (Meridian, AntSeed Pay) must resolve even
+      // when a legacy config overrides the provider list with other entries.
       const provider = opts?.providerId
         ? providers.find((entry) => entry.id === opts.providerId)
+          ?? DEFAULT_CARD_PROVIDERS.find((entry) => entry.id === opts.providerId)
         : providers[0];
       if (!provider) return { ok: false, error: 'card-not-configured' };
 
@@ -155,6 +159,26 @@ export function registerPaymentsIpc(): void {
         for (const [key, value] of [...parsed.searchParams.entries()]) {
           if (value.includes('{amount}')) parsed.searchParams.delete(key);
         }
+      }
+
+      // AntSeed Pay authenticates the request: the page expects the buyer
+      // address, currency and amount plus a personal-sign signature over the
+      // canonical message below, proving the params came from this wallet.
+      // The signed message carries the LOWERCASED address (the URL param stays
+      // checksummed) — verified against the reference sig their page accepts.
+      if (provider.id === 'antseed-pay') {
+        const cur = 'USD';
+        const amountStr = hasAmount ? String(amount) : '';
+        const message = [
+          'AntSeed Pay',
+          `address: ${identity.wallet.address.toLowerCase()}`,
+          `currency: ${cur}`,
+          `amount: ${amountStr}`,
+        ].join('\n');
+        parsed.searchParams.set('address', identity.wallet.address);
+        parsed.searchParams.set('cur', cur);
+        if (amountStr) parsed.searchParams.set('amount', amountStr);
+        parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
       }
       const url = parsed.toString();
 
