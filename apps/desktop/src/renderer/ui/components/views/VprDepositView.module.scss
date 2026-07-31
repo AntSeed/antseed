@@ -78,22 +78,6 @@
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-/* fun.xyz logo unit: official flag glyph + lowercase wordmark. */
-.funBrand {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 20px;
-  letter-spacing: -0.02em;
-  text-transform: lowercase;
-}
-
-.funBrand svg {
-  display: block;
-}
-
 /* Expander for the secondary deposit methods. */
 .moreLink {
   align-self: center;
@@ -165,7 +149,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-card);
@@ -191,9 +175,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
 }
@@ -533,25 +517,38 @@
 
 /* ---------- Trust footer ---------- */
 
-.trustCard {
+/* Compact trust strip: one row of payment/security/crypto marks with a
+   single reassurance line beneath. */
+.trustStrip {
   display: grid;
-  gap: 8px;
-  padding: 12px 16px;
+  justify-items: center;
+  gap: 6px;
+  margin-top: 4px;
 }
 
-.trustRow {
+.trustIcons {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  color: var(--text-secondary);
+}
+
+.trustIcons svg {
+  display: block;
+}
+
+.trustLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
+  text-align: center;
 }
 
-.trustRow svg {
+.trustLine svg {
   flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--accent-green);
 }
 
 .secureNote {

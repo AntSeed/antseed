@@ -10,9 +10,7 @@ import {
   QrCodeIcon,
   SquareLock01Icon,
   Tick02Icon,
-  Wallet01Icon,
 } from '@hugeicons/core-free-icons';
-import type { IconSvgElement } from '@hugeicons/react';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
@@ -200,14 +198,40 @@ function MeridianMark({ size = 20 }: { size?: number }) {
   );
 }
 
-/** Official fun.xyz mark — the flag glyph from their favicon. */
-function FunMark({ size = 16 }: { size?: number }) {
+function ArbitrumMark({ size = 18 }: { size?: number }) {
   return (
-    <svg width={Math.round(size * (15 / 20))} height={size} viewBox="0 0 15 20" fill="currentColor" aria-hidden="true">
-      <path d="M6.44189 1.38892L14.1668 5.5V14.4999L6.44189 18.611V1.38892Z" />
-      <path d="M7.27555 2.775L13.3339 6V13.9972L7.27555 17.2222V2.775ZM5.60889 0V20L15.0006 15V5L5.60889 0Z" />
-      <path d="M2.80615 0V20L4.20893 19.2528V0.747222L2.80615 0Z" />
-      <path d="M0 0V20L1.40278 19.2528V0.747222L0 0Z" />
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#213147" />
+      <path d="M12 4.5l5.5 9.5-2.3 4-5.4-9.4L12 4.5z" fill="#12AAFF" />
+      <path d="M10.4 8.4l4.2 7.3-1.7 3-5.4-9.4 2.9-.9z" fill="#9DCCED" />
+      <path d="M6.5 14l3-8.3 1.6 2.8-2.9 8.2L6.5 14z" fill="#fff" fillOpacity="0.9" />
+    </svg>
+  );
+}
+
+function BnbMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#F3BA2F" />
+      <g fill="#fff">
+        <path d="M12 9.6l2.4 2.4-2.4 2.4-2.4-2.4L12 9.6z" />
+        <path d="M12 4.9l2.4 2.4L12 9.7 9.6 7.3 12 4.9z" />
+        <path d="M12 14.3l2.4 2.4L12 19.1l-2.4-2.4 2.4-2.4z" />
+        <path d="M7.3 9.6l2.4 2.4-2.4 2.4L4.9 12l2.4-2.4z" />
+        <path d="M16.7 9.6l2.4 2.4-2.4 2.4-2.4-2.4 2.4-2.4z" />
+      </g>
+    </svg>
+  );
+}
+
+function PolygonMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#8247E5" />
+      <path
+        d="M15.9 9.8v3l-2.6 1.5v2.9l5.2-3v-5.9l-2.6 1.5zM8.1 8.3l2.6-1.5 2.6 1.5v3L10.7 12 8.1 10.5v-2.2zM5.5 9.8v5.9l5.2 3v-2.9l-2.6-1.5v-3L5.5 9.8z"
+        fill="#fff"
+      />
     </svg>
   );
 }
@@ -222,17 +246,12 @@ function EthMark({ size = 18 }: { size?: number }) {
   );
 }
 
-/** The AntSeed seed mark (from assets/antseed-mark.svg, core shapes only). */
-function AntSeedMark({ size = 22, color = '#1FD87A' }: { size?: number; color?: string }) {
+/** Official Stripe mark — from stripe.com's SVG favicon. */
+function StripeMark({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 80 80" fill="none" aria-hidden="true">
-      <ellipse cx="40" cy="22" rx="5" ry="5.5" fill={color} opacity="0.9" />
-      <ellipse cx="40" cy="36" rx="7" ry="8" fill={color} />
-      <ellipse cx="40" cy="55" rx="9" ry="12" fill={color} opacity="0.9" />
-      <line x1="37" y1="17" x2="28" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
-      <line x1="43" y1="17" x2="52" y2="6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
-      <circle cx="28" cy="6" r="2.5" fill={color} opacity="0.6" />
-      <circle cx="52" cy="6" r="2.5" fill={color} opacity="0.6" />
+    <svg width={size} height={size} viewBox="0 0 512 512" aria-hidden="true">
+      <rect width="512" height="512" rx="64" fill="#533AFD" />
+      <path fillRule="evenodd" clipRule="evenodd" d="M120 392L392 334.317V120L120 178.357V392Z" fill="#fff" />
     </svg>
   );
 }
@@ -250,12 +269,6 @@ type CardOption = { id: string; label: string; kind: 'url' | 'crossmint' };
 
 const CARD_NOT_CONFIGURED_NOTICE =
   'Card payments are not available yet on this install. You can deposit USDC on Base instead.';
-
-const TRUST_POINTS: Array<{ icon: IconSvgElement; text: string }> = [
-  { icon: SquareLock01Icon, text: 'Non-custodial — your credits sit in AntSeed’s on-chain escrow contract, and your in-app signer never holds funds itself.' },
-  { icon: Wallet01Icon, text: 'Withdraw unused credits back to your own wallet at any time.' },
-  { icon: Tick02Icon, text: 'Pay per request — no subscriptions, no lock-in.' },
-];
 
 /**
  * Deposit flow: a method chooser first (two full-width CTAs), then a
@@ -506,11 +519,7 @@ export function VprDepositView({ onSelectView }: Props) {
             className={styles.funCta}
             onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://fun.xyz')}
           >
-            <span>Deposit with</span>
-            <span className={styles.funBrand} aria-label="Fun">
-              <FunMark size={16} />
-              <span>fun</span>
-            </span>
+            Deposit
           </button>
           {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
 
@@ -537,7 +546,6 @@ export function VprDepositView({ onSelectView }: Props) {
                 </span>
                 <span className={styles.methodCtaText}>
                   <span className={styles.methodCtaTitle}>USDC on Base</span>
-                  <span className={styles.methodCtaCaption}>No limit · Instant</span>
                 </span>
                 <span className={styles.methodBadges} aria-hidden="true">
                   <BaseMark />
@@ -556,24 +564,23 @@ export function VprDepositView({ onSelectView }: Props) {
                   <MeridianMark />
                 </span>
                 <span className={styles.methodCtaText}>
-                  <span className={styles.methodCtaTitle}>Meridian</span>
-                  <span className={styles.methodCtaCaption}>Crypto · Cross-chain</span>
+                  <span className={styles.methodCtaTitle}>USDC from any chain</span>
                 </span>
                 <span className={styles.methodBadges} aria-hidden="true">
                   <EthMark />
-                  <BaseMark />
-                  <span className={styles.badgeChip}>+</span>
+                  <ArbitrumMark />
+                  <BnbMark />
+                  <PolygonMark />
                 </span>
                 <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
               </button>
 
               <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
                 <span className={styles.methodCtaIcon}>
-                  <AntSeedMark color="#F5B90F" />
+                  <StripeMark />
                 </span>
                 <span className={styles.methodCtaText}>
-                  <span className={styles.methodCtaTitle}>AntSeed Pay</span>
-                  <span className={styles.methodCtaCaption}>Card or Apple Pay · Stripe checkout</span>
+                  <span className={styles.methodCtaTitle}>Stripe</span>
                 </span>
                 <span className={styles.methodBadges} aria-hidden="true">
                   <VisaMark />
@@ -585,19 +592,22 @@ export function VprDepositView({ onSelectView }: Props) {
             </div>
           )}
 
-          <div className={styles.secureNote}>
-            <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
-            <span>Encrypted &amp; secure · Non-custodial escrow on Base</span>
+          <div className={styles.trustStrip}>
+            <div className={styles.trustIcons} aria-hidden="true">
+              <VisaMark size={16} />
+              <MastercardMark size={16} />
+              <UsdcMark size={16} />
+              <EthMark size={16} />
+            </div>
+            <span className={styles.trustLine}>
+              <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
+              <span>Encrypted &amp; secure · Non-custodial escrow on Base</span>
+            </span>
+            <span className={styles.trustLine}>
+              <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2.5} />
+              <span>Pay per request · No subscriptions, no lock-in</span>
+            </span>
           </div>
-
-          <VprCard className={styles.trustCard}>
-            {TRUST_POINTS.map(({ icon, text }) => (
-              <div key={text} className={styles.trustRow}>
-                <HugeiconsIcon icon={icon} size={14} strokeWidth={2} />
-                <span>{text}</span>
-              </div>
-            ))}
-          </VprCard>
         </div>
         </VprPage>
       );

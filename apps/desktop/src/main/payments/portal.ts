@@ -115,7 +115,7 @@ export function openPaymentsPopup(url: string): void {
 export type CardProvider = { id: string; label: string; url: string };
 
 export const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
-  { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/' },
+  { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/?buyer={address}' },
   { id: 'antseed-pay', label: 'AntSeed Pay', url: 'https://antseed-pay.com/' },
 ];
 
