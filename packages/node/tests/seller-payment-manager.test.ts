@@ -1055,12 +1055,13 @@ describe('SellerPaymentManager', () => {
       status: 0,
     };
 
-    function makeFreshManager() {
+    function makeFreshManager(overrides: Partial<SellerPaymentConfig> = {}) {
       const config: SellerPaymentConfig = {
         rpcUrl: 'http://127.0.0.1:8545',
         channelsContractAddress: CONTRACT_ADDR,
         chainId: CHAIN_ID,
         dataDir: tempDir,
+        ...overrides,
       };
       return new SellerPaymentManager(sellerIdentity, config, store);
     }
@@ -1221,6 +1222,64 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+
+    it('closes channel with stored voucher when close was requested while offline', async () => {
+      const channelId = makeChannelId(121);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { closeRequestedAt: 12345n }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.validateHydratedChannels();
+
+      expect(closeSpy).toHaveBeenCalledOnce();
+      const closeArgs = closeSpy.mock.calls[0]!;
+      expect(closeArgs[1]).toBe(channelId);
+      expect(closeArgs[2]).toBe(1_000_000n);
+      expect(closeArgs[4]).toBe('0xdead');
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.SETTLED);
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+    });
+
+    it('cleans up close-pending channel without a voucher instead of closing', async () => {
+      const channelId = makeChannelId(122);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        authMax: '0',
+        latestSpendingAuthSig: null,
+      });
+
+      const mgr = makeFreshManager();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { closeRequestedAt: 12345n }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.validateHydratedChannels();
+
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.TIMEOUT);
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+    });
+
+    it('keeps close-pending channel when serveWhileClosePending is set', async () => {
+      const channelId = makeChannelId(123);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager({ serveWhileClosePending: true });
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { closeRequestedAt: 12345n }),
+      );
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+
+      await mgr.validateHydratedChannels();
+
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+      expect(store.getChannel(channelId)!.status).toBe(CHANNEL_STATUS.ACTIVE);
     });
   });
 

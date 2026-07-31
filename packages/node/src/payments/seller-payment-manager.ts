@@ -226,6 +226,14 @@ export class SellerPaymentManager {
           continue;
         }
 
+        // Close requested while this seller was offline — the event poller
+        // starts at the current block and would miss it. Handle it as if live.
+        if (onChainState.channel.closeRequestedAt > 0n && !this._serveWhileClosePending) {
+          await this.handleCloseRequested(channel.sessionId);
+          evicted++;
+          continue;
+        }
+
         // Reconcile: if on-chain settled > local spent, update local to avoid double-charging
         const onChainSettled = onChainState.channel.settled;
         const localSpent = this._spent.get(channel.sessionId) ?? 0n;
