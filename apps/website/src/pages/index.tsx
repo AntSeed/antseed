@@ -1275,19 +1275,19 @@ function SellSection() {
 const FAQ_DATA = [
   {
     q: 'How is this different from OpenRouter?',
-    a: "OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
+    a: "OpenRouter is a centralized aggregator: it decides which models are listed, routes every request through its own servers, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
   },
   {
     q: 'What happens when LLMs become so good that anyone can do anything?',
-    a: "Then inference becomes a commodity - and commodities belong on open markets, not behind one company's pricing page. The more capable and interchangeable models get, the more the winner is whoever routes each request to the cheapest, fastest, most private provider. That routing layer should be neutral infrastructure you run yourself, which is exactly what AntSeed is.",
+    a: 'That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers - the supply side grows, not shrinks. But "anyone can do anything" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider.',
   },
   {
     q: "Isn't this just like P2P file sharing? Netflix killed that.",
-    a: "File sharing died because nobody got paid, so supply dried up the moment a convenient legal option appeared. AntSeed is the opposite: providers earn on every request, settled directly and on-chain. It's a market with working payments, not free copying - the incentives point toward more supply, not less.",
+    a: "Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. That logic only applies to humans who care about experience. Agents don't - in a world of agents, UI is not a moat. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability - and on those axes, an open P2P network with no middleman and no markup wins every time.",
   },
   {
     q: 'Is AntSeed built for agents specifically?',
-    a: 'It works with anything that speaks the OpenAI or Anthropic API - chat apps, IDEs, scripts - but agents benefit the most. Agents burn tokens continuously, so open-market pricing compounds, and a local endpoint with automatic fallback means long-running loops never stall because one provider throttled you.',
+    a: 'It works for humans today and is being used by humans now. But the architecture decisions - USDC-native payments, no account system, open discovery, always-on peers - are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use.',
   },
   {
     q: 'Why would a provider use AntSeed instead of just building their own API?',
