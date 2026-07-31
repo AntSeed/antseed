@@ -4,6 +4,17 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-31 — Desktop alpha: deposit chooser polish, faster update handoff
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.27` (prerelease)
+
+### Changed
+
+- Deposit chooser polish: single-line option rows with tighter padding — USDC on Base, USDC from any chain (Meridian behind the scenes, with ETH/Arbitrum/BNB/Polygon chain badges), and Stripe with its official mark. The main CTA now reads just "Deposit", and the verbose trust card is replaced by a compact strip: payment/crypto icon row, the encrypted/non-custodial line, and a pay-per-request line.
+- The macOS update watchdog now steps in after ~2–6 seconds instead of a fixed 6-second wait, shortening the gap between the app closing for an update and reopening on the new version.
+
 ## 2026-07-31 — Desktop alpha: deposit chooser, model browsing, wallet pages in browser
 
 ### Desktop
