@@ -8,6 +8,7 @@ import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo } from '@antseed/
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
+  makeVerifierReach,
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
@@ -1513,4 +1514,29 @@ test('title request racing ahead of the first turn does not name the chat', asyn
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('makeVerifierReach: rejects non-attest paths, sends the attest route as a payment-free control-plane request', async () => {
+  const peer = makePeer('a', ['openai'])
+  const signal = new AbortController().signal
+
+  const rejectNode = { sendRequest: async () => ({ statusCode: 200, headers: {}, body: new Uint8Array() }) }
+  await assert.rejects(
+    makeVerifierReach(rejectNode as never, peer, 'antseed-verifier', signal)({ method: 'POST', path: '/v1/chat/completions' }),
+    /may only call its attestation route/,
+  )
+
+  let opts: Record<string, unknown> | undefined
+  const captureNode = {
+    sendRequest: async (_peer: unknown, _req: unknown, o: Record<string, unknown>) => {
+      opts = o
+      return { statusCode: 200, headers: {}, body: new Uint8Array() }
+    },
+  }
+  const resp = await makeVerifierReach(captureNode as never, peer, 'antseed-verifier', signal)(
+    { method: 'POST', path: '/_antseed/attest/antseed-verifier', body: new Uint8Array([1]) },
+  )
+  assert.equal(resp.statusCode, 200)
+  assert.equal(opts!.controlPlane, true)
+  assert.equal(opts!.signal, signal)
 })

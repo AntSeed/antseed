@@ -4,6 +4,7 @@ import ora from 'ora';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getGlobalOptions } from '../types.js';
+import { parseVerifierCapabilities } from '../../../plugins/verifier.js';
 import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
@@ -156,6 +157,14 @@ function printPeerDetail(peer: PeerInfo, requestedTags: Set<string>): void {
   console.log(`  ID:              ${peer.peerId}`);
   console.log(`  Display name:    ${peer.displayName ?? chalk.dim('—')}`);
   console.log(`  Public address:  ${peer.publicAddress ?? chalk.dim('—')}`);
+
+  const verifiers = parseVerifierCapabilities(peer.capabilities);
+  if (verifiers.supported.length > 0) {
+    const list = verifiers.supported
+      .map((id) => (id === verifiers.default ? `${id} ${chalk.dim('(default)')}` : id))
+      .join(', ');
+    console.log(`  Verifiers:       ${list}`);
+  }
 
   const sellerAddress = sellerAddressForPeer(peer);
   if (isDelegatedSeller(peer)) {

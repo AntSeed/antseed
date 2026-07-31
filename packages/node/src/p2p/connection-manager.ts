@@ -7,7 +7,10 @@ import type {
 } from "node-datachannel";
 import { type PeerId } from "../types/peer.js";
 import { ConnectionState, type ConnectionConfig } from "../types/connection.js";
-import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "../types/protocol.js";
+import {
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+} from "../types/protocol.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
 import type { Wallet } from "ethers";
 import {
@@ -65,7 +68,10 @@ const LINE_SEPARATOR = "\n";
 const INITIAL_LINE_TIMEOUT_MS = 10_000;
 const MAX_INITIAL_LINE_BYTES = 8 * 1024;
 const TCP_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
-const LOCAL_CONNECTION_CAPABILITIES = [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1] as const;
+const LOCAL_CONNECTION_CAPABILITIES = [
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+] as const;
 
 /** Represents a single P2P connection. */
 export class PeerConnection extends EventEmitter {

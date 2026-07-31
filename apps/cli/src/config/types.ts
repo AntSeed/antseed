@@ -125,6 +125,12 @@ export interface SellerCLIConfig {
   verifications?: VerificationConfig;
   /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
+  /**
+   * Verifier SDK ids this seller advertises and runs provers for (first is the
+   * default). Chosen in `antseed seller setup`; overridden at launch by
+   * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
+   */
+  verifiers?: string[];
 }
 
 /**

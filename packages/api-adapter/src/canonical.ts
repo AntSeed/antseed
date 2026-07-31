@@ -502,7 +502,11 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
       if (type !== 'message' && typeof msg.role !== 'string') continue;
 
       const role = msg.role === 'assistant' ? 'assistant' : 'user';
-      request.input.push({ type: 'message', role, content: canonicalContentFromOpenAIResponses(msg.content) });
+      const content = canonicalContentFromOpenAIResponses(msg.content);
+      // Non-message items (reasoning, web_search_call, ...) carry no renderable
+      // text — dropping them avoids injecting empty user messages mid-history.
+      if (type !== 'message' && textFromCanonicalContent(content).length === 0) continue;
+      request.input.push({ type: 'message', role, content });
     }
   }
 

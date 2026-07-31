@@ -54,6 +54,59 @@ The seller calls `settle()` with the latest SpendingAuth to charge the cumulativ
 
 If the seller disappears after the deadline, anyone can call `requestTimeout()`. After a 15-minute grace period, `withdraw()` releases the locked funds back to the buyer's deposit.
 
+### Cooperative close (buyer-requested)
+
+Close is normally seller-initiated. A buyer that wants its reserve back **now** —
+without waiting out the 15-minute timeout grace period — asks the seller to
+close instead, over `CloseChannelRequest` / `CloseChannelResult` (§11).
+
+```
+BUYER                              SELLER                           ON-CHAIN
+  │ ─ CloseChannelRequest ────────► │                                │
+  │   {channelId, [SpendingAuth]}   │  no request in flight?         │
+  │                                  │  no unsigned spend?            │
+  │                                  │  amount = max(own, buyer's)    │
+  │                                  │ ── close(SpendingAuth) ───────►│
+  │ ◄── CloseChannelResult ───────── │                                │
+  │   {status: closed, txHash}       │                                │
+```
+
+The buyer MAY attach its latest SpendingAuth. Attaching costs it nothing — the
+cumulative is unchanged, so it authorizes no more than the seller could already
+claim — but it lets a seller that never received the last auth (lost frame,
+crash before persist) still close at the full amount owed. The seller settles at
+`max(own last-accepted, buyer-supplied)`, so neither party can use this path to
+settle below what is actually owed. A supplied auth must recover to the on-chain
+channel buyer and its `metadataHash` must match its `metadata`, or the request is
+rejected as `invalid_auth`.
+
+The seller agrees only when it is **not mid-accumulation** with that buyer:
+
+- No billable request is in flight. The seller holds the channel open for the
+  whole billable span — provider call, spend recording, and the follow-up
+  NeedAuth — so a close cannot land between serving a request and claiming its
+  cost. Otherwise: `busy`.
+- No served work is unsigned. If `spent` exceeds the highest signed cumulative,
+  the seller waits briefly for a catch-up auth already on the wire; failing
+  that it emits a `NeedAuth` for the outstanding amount and rejects with
+  `pending_auth` plus `requiredCumulativeAmount`. The buyer signs and retries.
+
+Rejections are normal outcomes, not errors — the channel is left untouched and
+the buyer can retry or fall back to `requestTimeout()`. When neither side holds
+a usable auth the seller closes at the current on-chain `settled` amount with an
+empty signature, which the contract accepts without signature verification
+(`finalAmount == settled`) and which claims no unproven spend.
+
+Sellers advertise support with the `payments.cooperative-close.v1` capability in
+discovery metadata and in the connection handshake. A seller predating this
+protocol drops the unrecognized `0x59` frame silently, so buyers MUST check the
+capability before sending and fail fast rather than waiting out the response
+timeout. The check reads the peer's **discovery metadata**; the connection
+handshake's remote-capability set is only populated for inbound connections and
+so is empty on the buyer's own outbound connection. A buyer that has no
+capability data for a peer at all SHOULD attempt the close anyway — absence of
+data is not evidence of non-support.
+
 ## 2. EIP-712 Signed Messages
 
 EIP-712 domain for both message types:
@@ -273,12 +326,25 @@ Contracts reference each other by address (set at deployment, updateable by owne
 
 ## 11. P2P Messages
 
+Payment messages occupy `0x50-0x5F`. Payloads are UTF-8 JSON capped at 64 KiB;
+uint256 values are decimal strings, and receivers MUST validate every field —
+payloads are untrusted peer input.
+
 | Type | Name | Direction | Description |
 |---|---|---|---|
-| 0x50 | `ReserveAuth` | Buyer → Seller | EIP-712 signed reserve authorization |
+| 0x50 | `SpendingAuth` | Buyer → Seller | EIP-712 signed cumulative spending authorization (carries the opening ReserveAuth on the first send) |
 | 0x51 | `AuthAck` | Seller → Buyer | Reservation confirmed |
-| 0x53 | `SellerReceipt` | Seller → Buyer | Running-total receipt after each request |
-| 0x54 | `SpendingAuth` | Buyer → Seller | EIP-712 signed cumulative spending authorization |
+| 0x52 | `FreeUsageOpen` | Buyer → Seller | Open a zero-price usage channel |
+| 0x53 | `FreeUsageAuth` | Buyer → Seller | Signed cumulative zero-price usage record |
+| 0x54 | `FreeUsageAck` | Seller → Buyer | Zero-price open/record accepted |
+| 0x55 | `NeedFreeUsageAuth` | Seller → Buyer | Request a zero-price usage signature |
+| 0x56 | `PaymentRequired` | Seller → Buyer | Payment terms accompanying an HTTP 402 |
+| 0x58 | `NeedAuth` | Seller → Buyer | Per-request cost report + required cumulative |
+| 0x59 | `CloseChannelRequest` | Buyer → Seller | Ask the seller to close the channel now (§1) |
+| 0x5A | `CloseChannelResult` | Seller → Buyer | Close verdict: `closed` + txHash, or `rejected` + code |
+
+`CloseChannelResult` rejection codes: `busy`, `pending_auth`, `no_channel`,
+`invalid_auth`, `close_failed`, `unsupported`.
 
 ## 12. Session Persistence
 
