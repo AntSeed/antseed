@@ -1382,13 +1382,15 @@ export default function Home(): JSX.Element {
       description="The open market for AI inference. Every model, no middleman. Anonymous and always on. Pay per request - no account, no subscription."
       wrapperClassName="homepage-wrapper">
       <Head>
-        <link rel="canonical" href="https://antseed.com/" />
         {/*
           Docusaurus derives og:title / og:description from the Layout title and
           description props above, which override the sitewide values in
           themeConfig.metadata. Declaring them here — after Layout's own tags —
           is what makes the share card copy actually take effect. Keep these in
           sync with the twitter:* values in docusaurus.config.ts.
+
+          rel=canonical and og:url need no declaration — Docusaurus already
+          emits correct per-page values for both.
         */}
         <meta property="og:title" content="Every AI model, best price, no middleman" />
         <meta

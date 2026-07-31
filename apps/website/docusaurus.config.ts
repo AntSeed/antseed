@@ -153,7 +153,6 @@ const config: Config = {
       {property: 'og:title', content: 'Every AI model, best price, no middleman'},
       {property: 'og:description', content: 'AntSeed is an open marketplace where providers compete on price to run any AI model. Use it anonymously, no account, in the AI tools you already use.'},
       {property: 'og:type', content: 'website'},
-      {property: 'og:url', content: 'https://antseed.com/'},
       {property: 'og:site_name', content: 'AntSeed'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:site', content: '@antseedai'},

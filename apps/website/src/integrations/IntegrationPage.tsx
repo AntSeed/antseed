@@ -671,8 +671,6 @@ export default function IntegrationPage({integration}: {integration: Integration
       description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${metaOneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
-        <link rel="canonical" href={pageUrl} />
-        <meta property="og:url" content={pageUrl} />
         <meta property="og:title" content={pageTitle} />
         <meta property="og:description" content={metaOneLiner} />
         <meta name="twitter:title" content={pageTitle} />
