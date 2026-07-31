@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
 import Head from '@docusaurus/Head';
+import Link from '@docusaurus/Link';
 import {useHistory} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
@@ -698,23 +699,31 @@ function PrivateByDesign() {
           <h2 className={styles.privacyGhostTitle}>Private by design</h2>
         </Reveal>
         <div className={styles.privacyGrid}>
-          <Reveal className={styles.privacyCardDark}>
-            <img className={styles.privacySpy} src="/img/home/spy-dots.png" alt="" aria-hidden="true" />
-            <div className={styles.privacyCopy}>
-              <h3>Anonymous</h3>
-              <p>No account, no email, like using AI with VPN.</p>
-            </div>
+          <Reveal>
+            <Link
+              to="/blog/trust-without-a-middleman"
+              className={`${styles.privacyCardDark} ${styles.privacyCardLink}`}>
+              <img className={styles.privacySpy} src="/img/home/spy-dots.png" alt="" aria-hidden="true" />
+              <div className={styles.privacyCopy}>
+                <h3>Anonymous</h3>
+                <p>No account, no email, like using AI with VPN.</p>
+              </div>
+            </Link>
           </Reveal>
-          <Reveal className={styles.privacyCardGreen} delay={110}>
-            <img className={styles.privacyShield} src="/img/home/shield-dots.png" alt="" aria-hidden="true" />
-            <div className={styles.privacyCopyGreen}>
-              <h3>Private</h3>
-              <p>
-                Choose a TEE-verified provider for extra privacy, your request runs end-to-end
-                encrypted inside a sealed hardware enclave, so not even the provider can see your
-                prompt.
-              </p>
-            </div>
+          <Reveal delay={110}>
+            <Link
+              to="/blog/dont-trust-the-tee-label"
+              className={`${styles.privacyCardGreen} ${styles.privacyCardLink}`}>
+              <img className={styles.privacyShield} src="/img/home/shield-dots.png" alt="" aria-hidden="true" />
+              <div className={styles.privacyCopyGreen}>
+                <h3>Private</h3>
+                <p>
+                  Choose a TEE-verified provider for extra privacy, your request runs end-to-end
+                  encrypted inside a sealed hardware enclave, so not even the provider can see your
+                  prompt.
+                </p>
+              </div>
+            </Link>
           </Reveal>
         </div>
       </div>

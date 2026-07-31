@@ -679,6 +679,31 @@
   color: #FFFFFF;
 }
 
+/* Both privacy cards link to their blog posts — same card visuals,
+   block-level anchors with a soft lift on hover. Colors are pinned per
+   card because the copy inherits and the global a:hover would tint it. */
+.privacyCardLink {
+  display: block;
+  height: 100%;
+  text-decoration: none;
+  transition: transform 0.2s var(--as-ease);
+}
+
+.privacyCardLink:hover {
+  text-decoration: none;
+  transform: translateY(-2px);
+}
+
+a.privacyCardDark,
+a.privacyCardDark:hover {
+  color: #FFFFFF;
+}
+
+a.privacyCardGreen,
+a.privacyCardGreen:hover {
+  color: var(--as-ink);
+}
+
 .privacyCardGreen {
   background-image: url('/img/home/gd-card.png');
   background-size: cover;

@@ -32,6 +32,9 @@ const COVER_SLUGS = new Set([
   'use-claude-deepseek-llama-privately',
   'ai-infrastructure-bittorrent-not-spotify',
   'the-infrastructure-layer-for-private-ai',
+  'anonymous-vs-private-ai',
+  'trust-without-a-middleman',
+  'dont-trust-the-tee-label',
 ]);
 
 function coverFor(permalink: string, frontMatterImage?: string): string {
