@@ -196,6 +196,22 @@ export default function ConnectHub(): JSX.Element {
           href="/skill.md"
           title="Agent-readable integration guide"
         />
+        <link rel="canonical" href="https://antseed.com/integrations" />
+        <meta property="og:url" content="https://antseed.com/integrations" />
+        <meta property="og:title" content="Integrations — AntSeed" />
+        <meta property="og:description" content="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
+        <meta name="twitter:title" content="Integrations — AntSeed" />
+        <meta name="twitter:description" content="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
+        <script type="application/ld+json">
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              {'@type': 'ListItem', position: 1, name: 'Home', item: 'https://antseed.com/'},
+              {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations'},
+            ],
+          })}
+        </script>
       </Head>
 
       <section className={styles.hero}>

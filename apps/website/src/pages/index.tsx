@@ -663,12 +663,32 @@ export default function Home(): JSX.Element {
     })),
   };
 
+  // Standalone Organization entity. The SoftwareApplication block in
+  // docusaurus.config.ts references the org as `creator`; this declares it in
+  // its own right so the brand resolves as an entity.
+  const orgLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'AntSeed',
+    url: 'https://antseed.com/',
+    logo: 'https://antseed.com/logo.svg',
+    description:
+      'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
+    sameAs: [
+      'https://github.com/AntSeed/antseed',
+      'https://x.com/antseedai',
+      'https://t.me/antseed',
+    ],
+  };
+
   return (
     <Layout
       title={siteConfig.tagline}
       description="The open market for AI inference. Serve or consume AI peer-to-peer. Onchain payments. Verifiable reputation. Anonymous by design, with independent providers and no central account."
       wrapperClassName="homepage-wrapper">
       <Head>
+        <link rel="canonical" href="https://antseed.com/" />
+        <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
       </Head>
 
