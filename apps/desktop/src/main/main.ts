@@ -692,11 +692,16 @@ app.whenReady().then(async () => {
     const script = [
       'APP_PID="$1"; SHIPIT="$2"; LABEL="$3"; STATE="$4"; APP_NAME="$5"',
       // Wait for the app process to exit (Squirrel quits it), then give a
-      // launchd-started ShipIt a moment to appear.
+      // launchd-started ShipIt a short window to appear — checking every 2s
+      // so a healthy native install ends the watchdog immediately instead of
+      // padding the user-visible gap before the relaunch.
       'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
-      'sleep 6',
-      'launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
-      'pgrep -x "$APP_NAME" >/dev/null 2>&1 && exit 0',
+      'j=0; while [ "$j" -lt 3 ]; do',
+      '  sleep 2',
+      '  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
+      '  pgrep -x "$APP_NAME" >/dev/null 2>&1 && exit 0',
+      '  j=$((j+1))',
+      'done',
       '[ -f "$STATE" ] || exit 0',
       'if launchctl kickstart "gui/$(id -u)/$LABEL" 2>/dev/null; then exit 0; fi',
       'exec "$SHIPIT" "$LABEL" "$STATE"',
