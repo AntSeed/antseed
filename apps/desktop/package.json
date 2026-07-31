@@ -47,8 +47,7 @@
     "electron-updater": "^6.8.3",
     "fflate": "0.8.2",
     "node-datachannel": "^0.7.0",
-    "officeparser": "6.1.0",
-    "open": "^11.0.0"
+    "officeparser": "6.1.0"
   },
   "devDependencies": {
     "@antseed/ui": "workspace:*",

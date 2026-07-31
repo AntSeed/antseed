@@ -1,7 +1,7 @@
 /**
  * IPC surface for deposits, balances, channels and the wallet-signing pages.
  */
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import {
   isDev,
 } from '../app-context.js';
@@ -54,7 +54,6 @@ import {
   readCardProviders,
   readCrossmintClientKey,
   startPaymentsPortal,
-  tryOpenBrowserAppMode,
 } from '../payments/portal.js';
 import {
   lookupPeer,
@@ -74,11 +73,10 @@ export function registerPaymentsIpc(): void {
   // rewards claims) leave the app — everything else renders in-app. The full
   // portal dashboard is retired.
   //
-  // Preferred surface: the user's REAL Chromium browser launched in app mode
-  // (`--app=<url>`) — a chromeless window (no address bar, no tabs) that runs
-  // in their normal profile, so extension wallets like MetaMask work. When no
-  // Chromium browser is installed, fall back to a sandboxed Electron popup
-  // (WalletConnect/QR flows only). Both close themselves after payment.
+  // Preferred surface: a regular tab in the user's default browser, where
+  // extension wallets like MetaMask work in their normal profile. Only when
+  // that fails does a sandboxed Electron popup take over (WalletConnect/QR
+  // flows only).
   ipcMain.handle('payments:open-pay-page', async (_event, opts: { kind?: PayPageKind; amountUsdc?: string; channelId?: string }) => {
     try {
       const kind: PayPageKind = opts?.kind && PAY_PAGE_KINDS.includes(opts.kind) ? opts.kind : 'deposit';
@@ -96,14 +94,17 @@ export function registerPaymentsIpc(): void {
       const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined;
       const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
 
-      // popup=app → real browser in app mode (extensions available);
+      // No popup param → regular browser tab (extensions available);
       // popup=win → Electron fallback (WalletConnect/QR only).
-      const appModeUrl = `${base}?${params.toString()}&popup=app`;
-      if (await tryOpenBrowserAppMode(appModeUrl)) {
-        return { ok: true, url: appModeUrl };
+      const browserUrl = `${base}?${params.toString()}`;
+      try {
+        await shell.openExternal(browserUrl);
+        return { ok: true, url: browserUrl };
+      } catch (err) {
+        console.warn('[payments] system browser launch failed:', err instanceof Error ? err.message : String(err));
       }
       const fallbackUrl = `${base}?${params.toString()}&popup=win`;
-      console.log('[payments] no app-mode browser available — using Electron popup');
+      console.log('[payments] no system browser available — using Electron popup');
       openPaymentsPopup(fallbackUrl);
       return { ok: true, url: fallbackUrl };
     } catch (err) {
@@ -157,10 +158,13 @@ export function registerPaymentsIpc(): void {
       }
       const url = parsed.toString();
 
-      if (await tryOpenBrowserAppMode(url)) {
+      try {
+        await shell.openExternal(url);
         return { ok: true, url };
+      } catch (err) {
+        console.warn('[payments] system browser launch failed:', err instanceof Error ? err.message : String(err));
       }
-      console.log('[payments] no app-mode browser available — using Electron popup');
+      console.log('[payments] no system browser available — using Electron popup');
       openPaymentsPopup(url);
       return { ok: true, url };
     } catch (err) {

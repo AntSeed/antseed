@@ -3,9 +3,9 @@
  * windows that show them.
  *
  * Anything that needs the user's wallet has to leave the app — extensions and
- * WalletConnect only work in a real browser — so a pay page opens either in a
- * borrowed Chromium app-mode window or, failing that, a plain popup. Both
- * close themselves once the payment lands.
+ * WalletConnect only work in a real browser — so a pay page opens in the
+ * user's default browser or, failing that, a plain Electron popup (which
+ * closes itself once the payment lands).
  */
 import { app, BrowserWindow, shell } from 'electron';
 import { createServer as createPaymentsServer } from '@antseed/payments';
@@ -37,9 +37,8 @@ export async function startPaymentsPortal(): Promise<void> {
       port: PAYMENTS_PORT,
       identityHex,
       onPaymentCompleted: () => {
-        // Closing a Chrome app-mode popup hands focus to whatever window the
-        // OS picks (often another Chrome window) — pull the app back up and
-        // let the renderer refresh balances/channels/rewards immediately.
+        // The payment landed in the browser — pull the app back up and let
+        // the renderer refresh balances/channels/rewards immediately.
         focusMainWindow();
         getMainWindow()?.webContents.send('payments:completed');
       },
@@ -64,40 +63,6 @@ export async function stopPaymentsPortal(): Promise<void> {
 
 export type PayPageKind = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel';
 export const PAY_PAGE_KINDS: readonly PayPageKind[] = ['deposit', 'withdraw', 'authorize', 'claim', 'diem', 'close-channel'];
-
-export async function tryOpenBrowserAppMode(url: string): Promise<boolean> {
-  // The `open` package resolves browser install locations per platform —
-  // apps.chrome / apps.edge are cross-platform aliases. Brave has no alias,
-  // so it gets a per-platform name.
-  const { apps, openApp } = await import('open');
-  const brave = process.platform === 'darwin' ? 'Brave Browser'
-    : process.platform === 'win32' ? 'brave'
-    : 'brave-browser';
-  const candidates = [apps.chrome, apps.edge, brave] as const;
-  for (const name of candidates) {
-    try {
-      // newInstance matters on macOS: without it, a running browser is just
-      // focused and the --app argument is silently ignored.
-      const child = await openApp(name, { newInstance: true, arguments: [`--app=${url}`, '--window-size=480,820'] });
-      const launched = await new Promise<boolean>((resolve) => {
-        // macOS/Windows go through a launcher that exits immediately (code 1
-        // when the browser isn't installed); on Linux the browser process
-        // itself is spawned and stays alive — treat "still running" as success.
-        const timer = setTimeout(() => resolve(true), 1_500);
-        child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
-        child.once('error', () => { clearTimeout(timer); resolve(false); });
-      });
-      if (launched) {
-        console.log(`[payments] pay page opened in app-mode browser: ${String(name)}`);
-        return true;
-      }
-      console.warn(`[payments] app-mode launch failed for ${String(name)} (non-zero exit)`);
-    } catch (err) {
-      console.warn(`[payments] app-mode launch error for ${String(name)}:`, err instanceof Error ? err.message : String(err));
-    }
-  }
-  return false;
-}
 
 export let paymentsPopup: BrowserWindow | null = null;
 
