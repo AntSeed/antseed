@@ -394,12 +394,14 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         // yet added power only from stakeStartEpoch onward; never remove before that.
         uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
         if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) revert PositionClosed();
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch + 1) != 0) revert PositionChangePending();
         returnedAmount = position.amount;
 
         position.withdrawn = true;
         position.closedAtEpoch = uint64(closeEpoch);
         uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch);
         if (normalEndEpoch == 0) revert StakeDurationOutOfBounds();
+        if (_positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch + 1) != normalEndEpoch) revert PositionChangePending();
 
         if (closeEpoch < normalEndEpoch) {
             _removePowerRange(position.agentId, closeEpoch, normalEndEpoch, position.weightAmount);

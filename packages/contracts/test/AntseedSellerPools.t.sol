@@ -527,6 +527,47 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(token.balanceOf(staker), 1_000 ether + (100 ether - expectedSlash));
     }
 
+    function test_withdrawRevertsWhileScheduledMaxLockIsPending() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 4);
+        vm.warp(genesis + EPOCH_DURATION);
+
+        vm.prank(staker);
+        pools.enableMaxLock(positionId);
+
+        // The max lock only takes effect next epoch; withdrawing now would
+        // leave its scheduled pool power behind with no position backing it.
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+
+        // Once live, the normal max-lock rule applies.
+        vm.warp(genesis + 2 * EPOCH_DURATION);
+        vm.expectRevert(IAntseedSellerPools.PositionClosed.selector);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+    }
+
+    function test_withdrawRevertsWhileScheduledExtensionIsPending() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 4);
+        vm.warp(genesis + EPOCH_DURATION);
+
+        vm.prank(staker);
+        pools.extendLock(positionId, 4);
+
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+
+        // Next epoch the extension is live and withdrawal removes it in full.
+        vm.warp(genesis + 2 * EPOCH_DURATION);
+        vm.prank(staker);
+        pools.withdrawStake(positionId);
+
+        assertEq(pools.poolWeightAtEpoch(agentId, 2), 0);
+        assertEq(pools.poolWeightAtEpoch(agentId, 6), 0);
+        assertEq(pools.poolActiveStakeAtEpoch(agentId, 2), 0);
+    }
+
     function test_maxLockedPositionMustDisableBeforeWithdrawAndThenSlashesFreshCountdown() public {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
 

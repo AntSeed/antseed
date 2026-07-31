@@ -61,6 +61,7 @@ interface IAntseedSellerPools {
     error NotPositionOwner();
     error StakeDurationOutOfBounds();
     error PositionClosed();
+    error PositionChangePending();
     error AlreadyWithdrawn();
     error NotRewardStaker();
     error EmissionsNotConfigured();
