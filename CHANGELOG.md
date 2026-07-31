@@ -4,6 +4,21 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## 2026-07-31 — Desktop alpha: deposit chooser, model browsing, wallet pages in browser
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.26` (prerelease)
+
+### Added
+
+- Redesigned the deposit page around a Fun-branded primary option, with everything else behind a "More options" expander: USDC on Base (QR flow), Meridian (crypto, cross-chain), and AntSeed Pay (Stripe card checkout), each with official brand marks, payment-network badges, and a non-custodial trust line.
+- Browsing models from Explore no longer changes the active route — the model page's new "Use" button is what applies it, and a "Start chat" link always opens a fresh conversation on the chosen model. The applied model's page shows a checkmark, and category tags self-fit into a single line with a +N chip.
+
+### Changed
+
+- Wallet pay pages (deposit, withdraw, authorize, claims, channel close) and the card-purchase page now open in a regular browser tab in the default browser instead of a chromeless app-mode window.
+
 ## 2026-07-30 — Desktop alpha: reliable macOS update installs
 
 ### Desktop
