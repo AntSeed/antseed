@@ -19,6 +19,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/using-the-api',
         'guides/become-a-provider',
+        'guides/tee-provider',
+        'guides/verify-tee',
         'guides/payments',
         'guides/pricing',
         'guides/metrics',
