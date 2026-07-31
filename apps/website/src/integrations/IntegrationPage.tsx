@@ -610,7 +610,7 @@ export default function IntegrationPage({integration}: {integration: Integration
   const metaOneLiner = i.oneLiner.replace(/`/g, '');
 
   // Mirrors what Docusaurus renders into <title> (Layout title + site title), so
-  // og:title and twitter:title can't drift from the page title.
+  // og:title can't drift from the page title (X falls back to og:title).
   const pageTitle = `${i.name} | AntSeed`;
 
   // Marks up the breadcrumb rendered below so search engines read the hierarchy.
@@ -673,8 +673,6 @@ export default function IntegrationPage({integration}: {integration: Integration
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
         <meta property="og:title" content={pageTitle} />
         <meta property="og:description" content={metaOneLiner} />
-        <meta name="twitter:title" content={pageTitle} />
-        <meta name="twitter:description" content={metaOneLiner} />
         <script type="application/ld+json">{JSON.stringify(breadcrumbLd)}</script>
         <script type="application/ld+json">{JSON.stringify(howToLd)}</script>
       </Head>

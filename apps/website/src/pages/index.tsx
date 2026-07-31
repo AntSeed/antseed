@@ -1379,15 +1379,16 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. Every model, no middleman. Anonymous and always on. Pay per request - no account, no subscription."
+      description="The open market for AI inference. Every model, no middleman, no account, no email. Providers compete on price and you keep your tools. Owned by no one."
       wrapperClassName="homepage-wrapper">
       <Head>
         {/*
           Docusaurus derives og:title / og:description from the Layout title and
           description props above, which override the sitewide values in
           themeConfig.metadata. Declaring them here — after Layout's own tags —
-          is what makes the share card copy actually take effect. Keep these in
-          sync with the twitter:* values in docusaurus.config.ts.
+          is what makes the share card copy actually take effect. X falls back
+          to these when twitter:title / twitter:description are absent, which is
+          why those are not declared anywhere.
 
           rel=canonical and og:url need no declaration — Docusaurus already
           emits correct per-page values for both.
@@ -1395,7 +1396,7 @@ export default function Home(): JSX.Element {
         <meta property="og:title" content="Every AI model, best price, no middleman" />
         <meta
           property="og:description"
-          content="AntSeed is an open marketplace where providers compete on price to run any AI model. Use it anonymously, no account, in the AI tools you already use."
+          content="AntSeed is the open market for AI inference. Every model, no middleman. No account, no email, no company reading your prompts or locking you out. Providers compete on price, you keep the tools you already use. Owned by no one. Available to everyone."
         />
         <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>

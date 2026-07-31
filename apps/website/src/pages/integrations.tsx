@@ -163,8 +163,6 @@ export default function ConnectHub(): JSX.Element {
         />
         <meta property="og:title" content="Integrations | AntSeed" />
         <meta property="og:description" content="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
-        <meta name="twitter:title" content="Integrations | AntSeed" />
-        <meta name="twitter:description" content="Every way to use AntSeed: coding agents, autonomous agents, editors, SDKs, frameworks, partner platforms. Anthropic and OpenAI compatible." />
         <script type="application/ld+json">
           {JSON.stringify({
             '@context': 'https://schema.org',
