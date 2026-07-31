@@ -1383,6 +1383,18 @@ export default function Home(): JSX.Element {
       wrapperClassName="homepage-wrapper">
       <Head>
         <link rel="canonical" href="https://antseed.com/" />
+        {/*
+          Docusaurus derives og:title / og:description from the Layout title and
+          description props above, which override the sitewide values in
+          themeConfig.metadata. Declaring them here — after Layout's own tags —
+          is what makes the share card copy actually take effect. Keep these in
+          sync with the twitter:* values in docusaurus.config.ts.
+        */}
+        <meta property="og:title" content="Every AI model, best price, no middleman" />
+        <meta
+          property="og:description"
+          content="AntSeed is an open marketplace where providers compete on price to run any AI model. Use it anonymously, no account, in the AI tools you already use."
+        />
         <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
       </Head>
