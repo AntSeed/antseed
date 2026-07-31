@@ -13,7 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Changed
 
 - Deposit chooser polish: single-line option rows with tighter padding — USDC on Base, USDC from any chain (Meridian behind the scenes, with ETH/Arbitrum/BNB/Polygon chain badges), and Stripe with its official mark. The main CTA now reads just "Deposit", and the verbose trust card is replaced by a compact strip: payment/crypto icon row, the encrypted/non-custodial line, and a pay-per-request line.
-- The macOS update watchdog now steps in after ~2–6 seconds instead of a fixed 6-second wait, shortening the gap between the app closing for an update and reopening on the new version.
+- Faster, clearer macOS updates: the "Update available" button now appears only after the update is fully staged and signature-verified in the background, so clicking "Restart & update" goes straight to the final bundle swap instead of silently stalling for tens of seconds. The update watchdog also steps in after ~2–6 seconds instead of a fixed wait, and a system notification ("Installing the update — the app will reopen shortly") covers the brief gap while the app is closed.
 
 ## 2026-07-31 — Desktop alpha: deposit chooser, model browsing, wallet pages in browser
 

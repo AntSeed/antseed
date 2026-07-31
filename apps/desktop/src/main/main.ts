@@ -1,5 +1,6 @@
 import {
   app,
+  autoUpdater as nativeAutoUpdater,
   BrowserWindow,
   ipcMain,
 } from 'electron';
@@ -655,14 +656,51 @@ app.whenReady().then(async () => {
       percent,
     });
   });
+  // macOS: electron-updater's update-downloaded fires when ITS download
+  // completes, but Squirrel still has to unpack the zip and deep-verify the
+  // bundle's code signature — tens of seconds for an app this size. A
+  // Restart & update click during that window silently stalls until Squirrel
+  // catches up. Hold the "ready" banner until the native side confirms, so
+  // the click goes straight to the final bundle swap.
+  let nativeSquirrelReady = process.platform !== 'darwin';
+  let pendingReadyVersion: string | null = null;
+  let nativeReadyFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const announceReady = (version: string) => {
+    if (nativeReadyFallbackTimer) {
+      clearTimeout(nativeReadyFallbackTimer);
+      nativeReadyFallbackTimer = null;
+    }
+    pendingReadyVersion = null;
+    sendUpdateStatus({ status: 'ready', version });
+  };
+
+  if (process.platform === 'darwin') {
+    nativeAutoUpdater.on('update-downloaded', () => {
+      nativeSquirrelReady = true;
+      if (pendingReadyVersion) {
+        announceReady(pendingReadyVersion);
+      }
+    });
+  }
+
   autoUpdater.on('update-downloaded', (info) => {
     updateVersion = info.version;
     clearStallWatchdog();
-    sendUpdateStatus({ status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
     }
+    if (nativeSquirrelReady) {
+      announceReady(info.version);
+      return;
+    }
+    // Never strand the banner if the native confirmation doesn't arrive —
+    // the install path still works, it just stalls like before.
+    pendingReadyVersion = info.version;
+    nativeReadyFallbackTimer = setTimeout(() => {
+      if (pendingReadyVersion) announceReady(pendingReadyVersion);
+    }, 3 * 60_000);
   });
   autoUpdater.on('error', (err) => {
     reportUpdateError(err, 'error');
@@ -696,6 +734,8 @@ app.whenReady().then(async () => {
       // so a healthy native install ends the watchdog immediately instead of
       // padding the user-visible gap before the relaunch.
       'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
+      // The install gap has no UI at all — reassure via a system notification.
+      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "AntSeed VPR"\' >/dev/null 2>&1 || true',
       'j=0; while [ "$j" -lt 3 ]; do',
       '  sleep 2',
       '  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
